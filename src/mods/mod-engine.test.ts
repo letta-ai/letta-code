@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
@@ -103,13 +110,17 @@ function createEngine(
 const TOOL_ONLY_MOD_CAPABILITIES: ModCapabilities = {
   tools: true,
   commands: false,
-  events: { lifecycle: false, tools: false, turns: false },
+  events: {
+    lifecycle: false,
+    tools: false,
+    turns: false,
+    compact: false,
+    llm: false,
+  },
   permissions: false,
   providers: false,
   ui: {
     panels: false,
-    statusValues: false,
-    customStatuslineRenderer: false,
   },
 };
 
@@ -157,6 +168,45 @@ describe("mod engine", () => {
       expect(engine.getSnapshot()).toBe(snapshot);
 
       unsubscribe();
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("reload replaces stale runtime dependency cache symlinks", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      const modPath = path.join(modDir, "command.ts");
+      const cacheNodeModules = path.join(root, "mod-cache", "node_modules");
+      const reactLink = path.join(cacheNodeModules, "react");
+      mkdirSync(modDir, { recursive: true });
+      mkdirSync(cacheNodeModules, { recursive: true });
+      symlinkSync(
+        path.join(root, "missing-react"),
+        reactLink,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      writeFileSync(
+        modPath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "hello",
+            description: "Say hello",
+            run() { return { type: "output", output: "hello" }; },
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+
+      expect(getModErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
+      expect(snapshot.loadedPaths).toEqual([modPath]);
+      expect(readlinkSync(reactLink)).not.toContain("missing-react");
+
       engine.dispose();
     } finally {
       rmSync(root, { force: true, recursive: true });
@@ -557,7 +607,7 @@ describe("mod engine", () => {
             });
           }
           if (letta.capabilities.ui.panels) {
-            letta.ui.openPanel({ id: "hidden", content: "hidden" });
+            letta.ui.openPanel({ id: "hidden", render: () => "hidden" });
           }
           if (letta.capabilities.tools) {
             letta.tools.register({
@@ -790,11 +840,13 @@ describe("mod engine", () => {
             description: "Should not register",
             run() { return { type: "handled" }; },
           });
-          letta.ui.openPanel({ id: "hidden", content: "hidden" });
+          letta.ui.openPanel({ id: "hidden", render: () => "hidden" });
           letta.ui.setStatus("hidden", "hidden");
           letta.ui.setStatuslineRenderer(() => "hidden");
           letta.events.on("conversation_open", () => {});
           letta.events.on("tool_start", () => {});
+          letta.events.on("compact_start", () => {});
+          letta.events.on("llm_start", () => {});
           letta.tools.register({
             name: "visible_tool",
             description: "Visible tool",
@@ -811,8 +863,6 @@ describe("mod engine", () => {
       expect(snapshot.commands).toEqual({});
       expect(snapshot.events).toEqual({});
       expect(snapshot.ui.panels).toEqual({});
-      expect(snapshot.ui.statusValues).toEqual({});
-      expect(snapshot.ui.statuslineRenderer).toBeNull();
       expect(Object.keys(snapshot.tools)).toEqual(["visible_tool"]);
     } finally {
       rmSync(root, { force: true, recursive: true });
@@ -834,7 +884,6 @@ describe("mod engine", () => {
             globalThis.__lettaModEvents.push(
               event.reason + ":" + event.agentId + ":" + ctx.agent.name + ":" + ctx.conversation.id,
             );
-            letta.ui.setStatus("lifecycle", event.reason);
           });
           letta.events.on("conversation_open", () => {
             throw new Error("event failed");
@@ -869,13 +918,160 @@ describe("mod engine", () => {
       expect(testGlobal.__lettaModEvents).toEqual([
         "startup:agent-1:Amelia:conversation-1",
       ]);
-      expect(snapshot.ui.statusValues.lifecycle).toBe("startup");
       expect(getModErrorDiagnostics(snapshot.diagnostics).at(-1)).toMatchObject(
         {
           phase: "event",
           error: expect.objectContaining({ message: "event failed" }),
         },
       );
+
+      engine.dispose();
+    } finally {
+      delete testGlobal.__lettaModEvents;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("delivers compact_start and compact_end events to mod handlers", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ModTestGlobal;
+    testGlobal.__lettaModEvents = [];
+
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "compact.ts"),
+        `export default function(letta) {
+          letta.events.on("compact_start", (event) => {
+            globalThis.__lettaModEvents.push(
+              "start:" + event.trigger + ":" + event.conversationId,
+            );
+          });
+          letta.events.on("compact_end", (event) => {
+            globalThis.__lettaModEvents.push(
+              "end:" + event.trigger + ":" + event.messagesBefore + "->" + event.messagesAfter,
+            );
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      expect(engine.getSnapshot().events.compact_start).toHaveLength(1);
+      expect(engine.getSnapshot().events.compact_end).toHaveLength(1);
+
+      await engine.emitEvent(
+        "compact_start",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          trigger: "manual",
+        },
+        createModContext(),
+      );
+      await engine.emitEvent(
+        "compact_end",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          trigger: "context_window_overflow",
+          messagesBefore: 12,
+          messagesAfter: 3,
+          contextTokensBefore: 1000,
+          contextTokensAfter: 200,
+        },
+        createModContext(),
+      );
+
+      expect(testGlobal.__lettaModEvents).toEqual([
+        "start:manual:conversation-1",
+        "end:context_window_overflow:12->3",
+      ]);
+
+      engine.dispose();
+    } finally {
+      delete testGlobal.__lettaModEvents;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("delivers llm_start and llm_end events to mod handlers", async () => {
+    const root = createTempDir();
+    const testGlobal = globalThis as ModTestGlobal;
+    testGlobal.__lettaModEvents = [];
+
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "llm.ts"),
+        `export default function(letta) {
+          letta.events.on("llm_start", (event) => {
+            globalThis.__lettaModEvents.push(
+              "start:" + event.model + ":" + event.messageCount + "/" + event.contextWindow,
+            );
+          });
+          letta.events.on("llm_end", (event) => {
+            globalThis.__lettaModEvents.push(
+              "end:" + event.stopReason + ":" + (event.usage?.totalTokens ?? "no-usage") + ":" + (event.error?.message ?? "no-error") + ":" + event.durationMs + "ms",
+            );
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      expect(engine.getSnapshot().events.llm_start).toHaveLength(1);
+      expect(engine.getSnapshot().events.llm_end).toHaveLength(1);
+
+      await engine.emitEvent(
+        "llm_start",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          model: "anthropic/claude-fable-5",
+          messageCount: 8,
+          contextWindow: 200000,
+        },
+        createModContext(),
+      );
+      await engine.emitEvent(
+        "llm_end",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          model: "anthropic/claude-fable-5",
+          stopReason: "stop",
+          usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 },
+          durationMs: 1234,
+        },
+        createModContext(),
+      );
+      await engine.emitEvent(
+        "llm_end",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          model: "anthropic/claude-fable-5",
+          stopReason: "llm_api_error",
+          usage: null,
+          error: {
+            message: "provider failed",
+            detail: "provider failed\nretry-after-ms: 0",
+            errorType: "llm_error" as const,
+            retryable: true,
+          },
+          durationMs: 42,
+        },
+        createModContext(),
+      );
+
+      expect(testGlobal.__lettaModEvents).toEqual([
+        "start:anthropic/claude-fable-5:8/200000",
+        "end:stop:120:no-error:1234ms",
+        "end:llm_api_error:no-usage:provider failed:42ms",
+      ]);
 
       engine.dispose();
     } finally {
@@ -952,6 +1148,99 @@ describe("mod engine", () => {
     }
   });
 
+  test("lets turn_start handlers cancel with first valid reason", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "turn-start-cancel.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_start", () => ({
+            cancel: { reason: "   " },
+          }));
+          letta.events.on("turn_start", () => ({
+            cancel: { reason: " Run /plan first. " },
+          }));
+          letta.events.on("turn_start", (event) => {
+            event.cancel = { reason: "mutated event should not win" };
+            return { cancel: { reason: "second reason should not win" } };
+          });
+          letta.events.on("turn_start", () => {
+            throw new Error("turn_start failed after cancel");
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event: {
+        agentId: string;
+        cancel?: { reason: string };
+        conversationId: string;
+        input: Array<{ role: "user"; content: string }>;
+      } = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        input: [{ role: "user", content: "hello" }],
+      };
+
+      const result = await engine.emitEvent(
+        "turn_start",
+        event,
+        createModContext(),
+      );
+
+      expect(result).toMatchObject({
+        handlerCount: 4,
+        name: "turn_start",
+      });
+      expect(result.diagnostics).toHaveLength(1);
+      expect(event.cancel).toEqual({ reason: "Run /plan first." });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("ignores turn_start cancel set directly on the event", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "turn-start-cancel-mutation.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_start", (event) => {
+            event.cancel = { reason: "direct mutation should not cancel" };
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event: {
+        agentId: string;
+        cancel?: { reason: string };
+        conversationId: string;
+        input: Array<{ role: "user"; content: string }>;
+      } = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        input: [{ role: "user", content: "hello" }],
+      };
+
+      await engine.emitEvent("turn_start", event, createModContext());
+
+      expect(event.cancel).toBeUndefined();
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("lets tool_start handlers replace args in registration order", async () => {
     const root = createTempDir();
     try {
@@ -1012,6 +1301,349 @@ describe("mod engine", () => {
     }
   });
 
+  test("tool_start result: first handler wins, tool is short-circuited", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "result.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName === "Bash" && event.args.command === "cached") {
+              return { result: { status: "success", output: "cached result" } };
+            }
+          });
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName === "Bash" && event.args.command === "cached") {
+              return { result: { status: "error", output: "should not win" } };
+            }
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        args: { command: "cached" },
+      };
+
+      const result = await engine.emitEvent(
+        "tool_start",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(2);
+      expect(
+        (event as { result?: { status: string; output: string } }).result,
+      ).toEqual({
+        status: "success",
+        output: "cached result",
+      });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("tool_start result: no result when condition not met", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "result.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName === "Bash" && event.args.command === "cached") {
+              return { result: { status: "success", output: "cached result" } };
+            }
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        args: { command: "echo hello" },
+      };
+
+      const result = await engine.emitEvent(
+        "tool_start",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(1);
+      expect((event as { result?: unknown }).result).toBeUndefined();
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("tool_start result: error status populates error field", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "result-error.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_start", (event) => {
+            if (event.toolName === "Bash" && event.args.command === "dangerous") {
+              return { result: { status: "error", output: "blocked: dangerous command" } };
+            }
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        args: { command: "dangerous" },
+      };
+
+      const result = await engine.emitEvent(
+        "tool_start",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(1);
+      expect(
+        (event as { result?: { status: string; output: string } }).result,
+      ).toEqual({
+        status: "error",
+        output: "blocked: dangerous command",
+      });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("tool_end result: first handler wins, replaces the result", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "tool-end.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_end", (event) => {
+            if (event.toolName === "Bash" && event.args.command === "secret") {
+              return { result: { status: "success", output: "redacted" } };
+            }
+          });
+          letta.events.on("tool_end", (event) => {
+            if (event.toolName === "Bash") {
+              return { result: { status: "error", output: "should not win" } };
+            }
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        args: { command: "secret" },
+        status: "success" as const,
+        output: "secret token abc123",
+      };
+
+      const result = await engine.emitEvent(
+        "tool_end",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(2);
+      expect(
+        (event as { result?: { status: string; output: string } }).result,
+      ).toEqual({
+        status: "success",
+        output: "redacted",
+      });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("tool_end result: no result when condition not met", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "tool-end.ts"),
+        `export default function(letta) {
+          letta.events.on("tool_end", (event) => {
+            if (event.toolName === "Read") {
+              return { result: { status: "success", output: "redacted" } };
+            }
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        toolCallId: "toolu-1",
+        toolName: "Bash",
+        args: { command: "echo untouched" },
+        status: "success" as const,
+        output: "untouched",
+      };
+
+      const result = await engine.emitEvent(
+        "tool_end",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(1);
+      expect((event as { result?: unknown }).result).toBeUndefined();
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("turn_end continue: first handler wins", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "turn-end.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_end", () => ({ continue: "first follow-up" }));
+          letta.events.on("turn_end", () => ({ continue: "second follow-up" }));
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        stopReason: "end_turn",
+        assistantMessage: "done",
+      };
+
+      const result = await engine.emitEvent(
+        "turn_end",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(2);
+      expect((event as { continue?: string }).continue).toBe("first follow-up");
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("turn_end continue: no continue when handler returns nothing", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "turn-end.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_end", () => {});
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        stopReason: "end_turn",
+        assistantMessage: "done",
+      };
+
+      const result = await engine.emitEvent(
+        "turn_end",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(1);
+      expect((event as { continue?: string }).continue).toBeUndefined();
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("turn_end continue: empty string is ignored", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "turn-end.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_end", () => ({ continue: "" }));
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        stopReason: "end_turn",
+        assistantMessage: "done",
+      };
+
+      const result = await engine.emitEvent(
+        "turn_end",
+        event,
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(1);
+      expect((event as { continue?: string }).continue).toBeUndefined();
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("reload aborts old activations and ignores stale handles", async () => {
     const root = createTempDir();
     const testGlobal = globalThis as ModTestGlobal;
@@ -1028,7 +1660,7 @@ describe("mod engine", () => {
           globalThis.__lettaModSignal = letta.signal;
           globalThis.__lettaModPanel = letta.ui.openPanel({
             id: "status",
-            content: "first generation",
+            render: () => "first generation",
           });
         }`,
       );
@@ -1055,7 +1687,7 @@ describe("mod engine", () => {
       expect(firstSignal?.aborted).toBe(true);
       expect(Object.values(engine.getSnapshot().ui.panels)).toEqual([]);
 
-      stalePanel?.update({ content: "stale update" });
+      stalePanel?.update();
       const snapshot = engine.getSnapshot();
       expect(Object.values(snapshot.ui.panels)).toEqual([]);
       expect(snapshot.diagnostics.at(-1)).toMatchObject({
@@ -1071,6 +1703,45 @@ describe("mod engine", () => {
     } finally {
       delete testGlobal.__lettaModPanel;
       delete testGlobal.__lettaModSignal;
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("diagnoses panel registrations without render", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      const modPath = path.join(modDir, "panel-content.ts");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        modPath,
+        `export default function(letta) {
+          letta.ui.openPanel({
+            id: "threadkeeper",
+            order: 80,
+            content: ["legacy content panel"],
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+
+      expect(Object.values(snapshot.ui.panels)).toEqual([]);
+      expect(snapshot.diagnostics).toContainEqual(
+        expect.objectContaining({
+          capability: { id: "threadkeeper", kind: "panel" },
+          error: expect.objectContaining({
+            message: expect.stringContaining("requires render(ctx)"),
+          }),
+          phase: "activate",
+          severity: "warning",
+        }),
+      );
+
+      engine.dispose();
+    } finally {
       rmSync(root, { force: true, recursive: true });
     }
   });

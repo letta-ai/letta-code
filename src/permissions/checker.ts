@@ -139,11 +139,10 @@ function shouldAttachTrace(result: PermissionCheckResult): boolean {
  * Check permission for a tool execution.
  *
  * Decision logic:
- * 0. Cross-agent guard (enabled by default for headless + subagents,
- *    unbypassable when enabled) → DENY any tool call targeting another
- *    agent's memory dir unless it targets the current agent, targets an
- *    explicit parent agent for a subagent process, or the parent process
- *    passed --disable-memory-guard.
+ * 0. Cross-agent guard (enabled by default and unbypassable when enabled) →
+ *    DENY any in-process file-tool call targeting another agent's memory dir
+ *    unless it targets the current agent, targets an explicit parent agent for
+ *    a subagent process, or the parent process passed --disable-memory-guard.
  * 1. Check deny rules from settings (first match wins) → DENY
  * 2. Check CLI disallowedTools (--disallowedTools flag) → DENY
  * 3. Check alwaysAsk rules and mod tool alwaysAsk policy → ALWAYS_ASK
@@ -430,12 +429,10 @@ function checkPermissionForEngine(
   const effectiveMode = modeState?.mode ?? permissionMode.getMode();
   const modeOverride = permissionMode.checkModeOverride(
     toolName,
-    toolArgs,
-    workingDirectory,
     effectiveMode,
   );
   if (modeOverride) {
-    const reason = modeOverride.reason ?? `Permission mode: ${effectiveMode}`;
+    const reason = `Permission mode: ${effectiveMode}`;
     traceEvent(trace, "mode-override", reason);
     return {
       result: {
@@ -804,14 +801,14 @@ function matchesPattern(
 /**
  * Subagent types that are safe to auto-approve by default.
  * Some are read-only explorers; others are memory-rooted writers whose
- * mutations are constrained by dedicated permission-mode enforcement.
+ * mutations are constrained by the memory-subagent sandbox.
  */
 const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
   "recall", // Conversation history search - Skill, Bash, Read, TaskOutput
   "Recall",
-  "reflection", // Memory reflection - writes constrained by memory mode
+  "reflection", // Memory reflection - writes constrained by memory-subagent sandbox
   "Reflection",
-  "history-analyzer", // History analysis - writes constrained by memory mode
+  "history-analyzer", // History analysis - writes constrained by memory-subagent sandbox
 ]);
 
 /**

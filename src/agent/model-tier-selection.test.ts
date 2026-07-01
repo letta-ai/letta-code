@@ -280,8 +280,28 @@ describe("getReasoningTierOptionsForHandle", () => {
       "sonnet-4.6-no-reasoning",
       "sonnet-4.6-low",
       "sonnet-4.6-medium",
-      "sonnet",
+      "sonnet-4.6",
       "sonnet-4.6-xhigh",
+    ]);
+  });
+
+  test("returns reasoning options for anthropic sonnet 5", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "anthropic/claude-sonnet-5",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "sonnet-5-no-reasoning",
+      "sonnet-5-low",
+      "sonnet-5-medium",
+      "sonnet",
+      "sonnet-5-xhigh",
     ]);
   });
 

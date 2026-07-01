@@ -11,6 +11,7 @@ import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
   ensureLettaShimDir,
+  getLettaShimDir,
   getShellEnv,
   resolveLettaInvocation,
 } from "@/tools/impl/shell-env";
@@ -219,6 +220,16 @@ describe("shellEnv letta shim", () => {
     });
     expect(versionResult.status).toBe(0);
     expect(versionResult.stdout.trim()).toBe("shimmed-letta --version");
+  });
+
+  test("sandboxed processes place the letta shim under harness state", () => {
+    withTemporaryEnv({ LETTA_SANDBOX: "seatbelt" }, () => {
+      const shimDir = getLettaShimDir();
+
+      expect(shimDir.replace(/\\/g, "/")).toContain(
+        "/.letta/letta-code-shell-shim",
+      );
+    });
   });
 
   test("getShellEnv sets launcher metadata when explicit launcher env is provided", () => {

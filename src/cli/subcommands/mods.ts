@@ -2,7 +2,11 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { type LocalModSource, resolveLocalModSources } from "@/mods/mod-engine";
-import { updateNpmManagedModPackage } from "@/mods/package-installer";
+import {
+  parseGitManagedModPackageInstallSpecifier,
+  updateGitManagedModPackage,
+  updateNpmManagedModPackage,
+} from "@/mods/package-installer";
 import {
   listManagedModPackages,
   type ManagedModPackageDiagnostic,
@@ -62,7 +66,7 @@ function printUsage(): void {
 Usage:
   letta mods list [--agent <id>]
   letta mods package <mod-file> --name <package-name> [--out <dir>]
-  letta mods update <npm-package-spec>
+  letta mods update <npm-package-spec | git-package-spec>
   letta mods enable <package-spec>
   letta mods disable <package-spec>
   letta mods remove <package-spec>
@@ -344,11 +348,12 @@ async function runPackageUpdate(
   }
 
   try {
-    const result = await updateNpmManagedModPackage({
-      modsRoot:
-        options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory(),
-      specifier,
-    });
+    const modsRoot =
+      options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory();
+    const gitParsed = parseGitManagedModPackageInstallSpecifier(specifier);
+    const result = gitParsed
+      ? await updateGitManagedModPackage({ modsRoot, specifier })
+      : await updateNpmManagedModPackage({ modsRoot, specifier });
     const disabledSuffix = result.enabled ? "" : " (disabled)";
     console.log(
       `Updated ${result.source} ${result.previousVersion} -> ${result.version}${disabledSuffix}`,

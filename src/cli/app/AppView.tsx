@@ -225,7 +225,6 @@ type AppViewProps = {
   ) => Promise<void>;
   handleProfileEscapeCancel: () => void;
   handleQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
-  handleGoalLoopExit: () => void;
   handleSleeptimeModeSelect: (
     reflectionSettings: ReflectionSettings,
     commandId?: string | null,
@@ -331,7 +330,6 @@ type AppViewProps = {
   usedContextTokens: number;
   contextWindowSize: number | null | undefined;
   uiPermissionMode: PermissionMode;
-  uiGoalLoopActive: boolean;
   updateAgentName: (name: string) => void;
 };
 
@@ -402,7 +400,6 @@ export function AppView(props: AppViewProps) {
     handlePersonalitySelect,
     handleProfileEscapeCancel,
     handleQuestionSubmit,
-    handleGoalLoopExit,
     handleSleeptimeModeSelect,
     handleSystemPromptSelect,
     handleToolsetSelect,
@@ -477,7 +474,6 @@ export function AppView(props: AppViewProps) {
     usedContextTokens,
     contextWindowSize,
     uiPermissionMode,
-    uiGoalLoopActive,
     updateAgentName,
   } = props;
 
@@ -748,8 +744,6 @@ export function AppView(props: AppViewProps) {
                 }
                 onEscapeCommandCancel={onEscapeCommandCancel}
                 inputDisabled={btwState.status === "complete"}
-                goalLoopActive={uiGoalLoopActive}
-                onGoalLoopExit={handleGoalLoopExit}
                 conversationId={conversationId}
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
