@@ -404,6 +404,28 @@ function resolveSlackSourceThreadTs(
   return firstNonEmptyString(source.threadId, source.messageId);
 }
 
+function resolveSlackProgressThreadTs(
+  source: ChannelTurnSource,
+): string | undefined {
+  if (
+    source.chatType === "direct" ||
+    resolveSlackChatType(source.chatId) === "direct"
+  ) {
+    // Top-level DM replies stay unthreaded, but Slack's assistant status and
+    // native progress stream still need a temporary thread anchor. Use the
+    // inbound DM message ts only for progress/status plumbing.
+    return firstNonEmptyString(source.threadId, source.messageId);
+  }
+  return resolveSlackSourceThreadTs(source);
+}
+
+function resolveSlackOutboundProgressThreadTs(params: {
+  threadId?: string | null;
+  replyToMessageId?: string | null;
+}): string | undefined {
+  return firstNonEmptyString(params.threadId, params.replyToMessageId);
+}
+
 function normalizeSlackReactionName(value: string): string {
   return value.trim().replace(/^:+|:+$/g, "");
 }
@@ -1706,7 +1728,7 @@ export function createSlackAdapter(
     if (source.channel !== "slack" || !isNonEmptyString(source.chatId)) {
       return null;
     }
-    const replyToMessageId = resolveSlackSourceThreadTs(source);
+    const replyToMessageId = resolveSlackProgressThreadTs(source);
     if (!isNonEmptyString(replyToMessageId)) {
       return null;
     }
@@ -1794,7 +1816,7 @@ export function createSlackAdapter(
   }
 
   function getSlackProgressReplyTs(source: ChannelTurnSource): string | null {
-    const replyToMessageId = resolveSlackSourceThreadTs(source);
+    const replyToMessageId = resolveSlackProgressThreadTs(source);
     return isNonEmptyString(replyToMessageId) ? replyToMessageId : null;
   }
 
@@ -1879,7 +1901,7 @@ export function createSlackAdapter(
 
   function canStartSlackStream(source: ChannelTurnSource): boolean {
     if (source.chatType === "direct") {
-      return isNonEmptyString(source.threadId);
+      return isNonEmptyString(getSlackProgressReplyTs(source));
     }
     if (source.chatType !== "channel") {
       return true;
@@ -2433,8 +2455,7 @@ export function createSlackAdapter(
     if (msg.channel !== "slack" || msg.reaction) {
       return;
     }
-    const replyToMessageId = resolveSlackOutboundThreadTs({
-      chatId: msg.chatId,
+    const replyToMessageId = resolveSlackOutboundProgressThreadTs({
       threadId: msg.threadId,
       replyToMessageId: msg.replyToMessageId,
     });
