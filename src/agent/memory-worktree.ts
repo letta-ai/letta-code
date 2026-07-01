@@ -331,7 +331,16 @@ export async function listPendingReflectionMemoryWorktrees(
       branchName,
       "HEAD",
     ]);
-    if (isMerged) continue;
+    if (isMerged) {
+      await cleanupWorktreeAndBranch(resolvedParent, worktreeDir, branchName);
+      debugLog(
+        "memfs-git",
+        "reflection pending scan cleaned already-merged branch=%s worktree=%s",
+        branchName,
+        worktreeDir,
+      );
+      continue;
+    }
 
     pending.push({
       id: branchName.slice("letta/reflection/".length),

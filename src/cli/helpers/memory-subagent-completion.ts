@@ -97,6 +97,14 @@ export async function handleMemorySubagentCompletion(
 
   if (!success) {
     if (subagentType === "reflection") {
+      if (args.successMessageOverride) {
+        const action =
+          subagentLink && canLinkSubagent ? subagentLink : "Dreamed";
+        const defaultMessage = `${action} and made some memories.`;
+        return typeof args.successMessageOverride === "function"
+          ? args.successMessageOverride({ action, defaultMessage })
+          : args.successMessageOverride;
+      }
       const detail = isDebugEnabled() ? `: ${error || "Unknown error"}` : "";
       return `Tried to reflect, but got lost in the palace${detail}`;
     }
