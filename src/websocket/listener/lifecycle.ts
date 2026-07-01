@@ -561,7 +561,7 @@ export async function wireChannelIngress(
         text: buildChannelModelUpdateFailedMessage(
           channelId,
           modelIdentifier,
-          "Model not found. Use /model to see available models.",
+          `Model not found. Use ${channelId === "slack" ? "!model" : "/model"} to see available models.`,
         ),
       };
     }
