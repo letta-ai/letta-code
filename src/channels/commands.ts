@@ -107,6 +107,12 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     kind: "agent-scoped",
     summary: "Start a memory reflection pass for this conversation.",
   },
+  {
+    name: "letta",
+    kind: "direct",
+    summary:
+      "Raw injection: forward text to the listener as if typed in the TUI (e.g. /letta /reload, /letta hello).",
+  },
 ];
 
 function channelDisplayName(channelId: string): string {
@@ -144,6 +150,24 @@ export function parseChannelSlashCommand(
     args: args?.trim() ?? "",
     raw: trimmed,
   };
+}
+
+/**
+ * Detect the `/letta` escape-hatch prefix and return the raw text to inject.
+ *
+ * `/letta /reload` → `/reload` (slash command — dispatched via execute_command)
+ * `/letta hello`    → `hello`    (regular message — injected as a user turn)
+ * `/letta`          → `""`       (caller should send a usage hint)
+ *
+ * Returns `null` when the message is not a `/letta` escape-hatch invocation.
+ */
+export function parseLettaEscapeHatch(text: string): string | null {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^\/letta(?:@[A-Za-z0-9_]+)?(?:\s+(.*))?$/i);
+  if (!match) {
+    return null;
+  }
+  return (match[1] ?? "").trim();
 }
 
 function supportedCommandsText(): string {

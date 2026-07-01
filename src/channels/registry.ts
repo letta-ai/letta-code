@@ -34,6 +34,7 @@ import {
   buildChannelReflectionUnavailableMessage,
   buildChannelResumedMessage,
   parseChannelSlashCommand,
+  parseLettaEscapeHatch,
   tryHandleChannelSlashCommand,
 } from "./commands";
 import { getChannelAccountsPath, getChannelsRoot } from "./config";
@@ -482,6 +483,17 @@ export type ChannelModelHandler = (params: {
   text?: string;
 }>;
 
+export type ChannelExecuteCommandHandler = (params: {
+  text: string;
+  runtime: {
+    agent_id: string;
+    conversation_id: string;
+  };
+}) => Promise<{
+  handled: boolean;
+  text?: string;
+}>;
+
 type ChannelStartupOptions = {
   logger?: ChannelStartupLogger;
 };
@@ -586,6 +598,7 @@ export class ChannelRegistry {
   private cancelHandler: ChannelCancelHandler | null = null;
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
+  private executeCommandHandler: ChannelExecuteCommandHandler | null = null;
   private readonly buffer: ChannelInboundDelivery[] = [];
   private readonly pendingControlRequestsById = new Map<
     string,
@@ -738,6 +751,10 @@ export class ChannelRegistry {
 
   setModelHandler(handler: ChannelModelHandler | null): void {
     this.modelHandler = handler;
+  }
+
+  setExecuteCommandHandler(handler: ChannelExecuteCommandHandler | null): void {
+    this.executeCommandHandler = handler;
   }
 
   setEventHandler(
@@ -1076,6 +1093,7 @@ export class ChannelRegistry {
     this.cancelHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
+    this.executeCommandHandler = null;
   }
 
   /**
@@ -1095,6 +1113,7 @@ export class ChannelRegistry {
     this.cancelHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
+    this.executeCommandHandler = null;
     this.pendingControlRequestsById.clear();
     this.pendingControlRequestIdByScope.clear();
     this.unsubscribeWhatsAppState();
@@ -1453,6 +1472,63 @@ export class ChannelRegistry {
       }
       return statusRoute;
     };
+
+    // /letta escape hatch: raw injection prefix that forwards text to the
+    // listener as if typed in the TUI.  Slash commands (e.g. "/letta /reload")
+    // are dispatched via execute_command; plain text (e.g. "/letta hello")
+    // is injected as a regular user message by stripping the prefix and
+    // letting the normal delivery path take over.
+    const lettaInjection = parseLettaEscapeHatch(msg.text);
+    if (lettaInjection !== null) {
+      if (lettaInjection === "") {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          "Usage: /letta <text> — forwards text to the listener as if typed in the TUI. Examples: /letta /reload, /letta /compact all, /letta hello",
+          msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
+        );
+        return;
+      }
+
+      if (lettaInjection.startsWith("/")) {
+        // Slash command — dispatch via execute_command handler
+        const route = getStatusRoute();
+        if (!route?.enabled) {
+          await adapter.sendDirectReply(
+            msg.chatId,
+            buildChannelNoRouteMessage(msg.channel),
+            msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
+          );
+          return;
+        }
+        if (!this.executeCommandHandler) {
+          await adapter.sendDirectReply(
+            msg.chatId,
+            `${channelDisplayName(msg.channel)} cannot execute /letta commands because the listener is not ready yet. Try again in a moment.`,
+            msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
+          );
+          return;
+        }
+        const result = await this.executeCommandHandler({
+          text: lettaInjection,
+          runtime: {
+            agent_id: route.agentId,
+            conversation_id: route.conversationId,
+          },
+        });
+        if (result.handled && result.text) {
+          await adapter.sendDirectReply(
+            msg.chatId,
+            result.text,
+            msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
+          );
+        }
+        return;
+      }
+
+      // Regular message — strip the /letta prefix and let normal delivery
+      // handle it (route lookup, formatting, agent turn).
+      msg.text = lettaInjection;
+    }
 
     if (
       await tryHandleChannelSlashCommand(adapter, msg, {

@@ -33,6 +33,7 @@ import { isDebugEnabled } from "@/utils/debug";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
+import { handleExecuteCommand } from "./commands";
 import { handleChannelRegistryEvent } from "./commands/channels";
 import {
   applyModelUpdateForRuntime,
@@ -692,6 +693,53 @@ export async function wireChannelIngress(
       handled: true,
       text: "Started a reflection pass for this conversation.",
     };
+  });
+
+  // /letta escape hatch: forwards slash commands from channels to the
+  // listener's execute_command dispatch, as if typed in the TUI.
+  registry.setExecuteCommandHandler(async ({ text, runtime }) => {
+    const trimmed = text.trim();
+    const match = trimmed.match(/^\/([A-Za-z][\w-]*)(?:\s+(.*))?$/);
+    if (!match) {
+      return { handled: true, text: `Unknown command: ${trimmed}` };
+    }
+    const [, commandId, args] = match;
+    if (!commandId) {
+      return { handled: true, text: `Unknown command: ${trimmed}` };
+    }
+
+    const scopedRuntime = getOrCreateScopedRuntime(
+      listener,
+      runtime.agent_id,
+      runtime.conversation_id,
+    );
+
+    try {
+      const output = await handleExecuteCommand(
+        {
+          type: "execute_command",
+          command_id: commandId,
+          request_id: `letta-escape-hatch-${crypto.randomUUID()}`,
+          runtime: {
+            agent_id: runtime.agent_id,
+            conversation_id: runtime.conversation_id,
+          },
+          args: args?.trim() || undefined,
+        },
+        socket as WebSocket,
+        scopedRuntime,
+        {
+          onStatusChange: opts.onStatusChange,
+          onLog: opts.onLog,
+          connectionId: opts.connectionId,
+          connectionName: opts.connectionName,
+        },
+      );
+      return { handled: true, text: output };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { handled: true, text: `Failed: ${message}` };
+    }
   });
 
   registry.setReady();
