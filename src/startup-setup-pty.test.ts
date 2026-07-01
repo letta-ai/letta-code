@@ -1,16 +1,16 @@
 import { describe, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 const projectRoot = process.cwd();
+let builtCliPath: string | null = null;
 
 function ensureBuiltCli(): string {
-  const cliPath = join(projectRoot, "letta.js");
-  if (existsSync(cliPath)) {
-    return cliPath;
+  if (builtCliPath) {
+    return builtCliPath;
   }
 
+  const cliPath = join(projectRoot, "letta.js");
   const result = spawnSync("bun", ["run", "build"], {
     cwd: projectRoot,
     encoding: "utf-8",
@@ -20,6 +20,7 @@ function ensureBuiltCli(): string {
       `Failed to build letta.js\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
     );
   }
+  builtCliPath = cliPath;
   return cliPath;
 }
 

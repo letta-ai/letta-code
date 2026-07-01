@@ -37,6 +37,17 @@ async function waitForExit(getOutput, hasExited, label, timeoutMs = 10000) {
   );
 }
 
+async function waitForRequest(requests, request, label, timeoutMs = 10000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (requests.includes(request)) return;
+    await sleep(25);
+  }
+  throw new Error(
+    `Timed out waiting for ${label}. Requests:\n${requests.join("\n")}`,
+  );
+}
+
 function writeBrokenLocalTranscriptStore(homeDir) {
   const lettaDir = path.join(homeDir, ".letta");
   const conversationDir = path.join(
@@ -308,12 +319,23 @@ async function runAgentLimitFallback() {
       );
     }
 
-    terminal.write("x");
     await sleep(250);
+    if (fakeApi.requests.includes(`GET /v1/agents/${FALLBACK_AGENT_ID}`)) {
+      throw new Error(
+        `CLI continued past acknowledgement before keypress. Requests:\n${fakeApi.requests.join("\n")}`,
+      );
+    }
+
+    terminal.write("x");
+    await waitForRequest(
+      fakeApi.requests,
+      `GET /v1/agents/${FALLBACK_AGENT_ID}`,
+      "selected fallback agent retrieval after acknowledgement",
+    );
 
     if (exited) {
       throw new Error(
-        `CLI exited immediately after fallback acknowledgement. Output:\n${globalThis.stripAnsi(output)}`,
+        `CLI exited while continuing after fallback acknowledgement. Output:\n${globalThis.stripAnsi(output)}`,
       );
     }
   } finally {
@@ -337,6 +359,7 @@ async function runDefaultCreateFailureScenario({
   );
   let terminal;
   let exited = false;
+  let exitCode = null;
   try {
     let output = "";
     terminal = pty.spawn("node", [cliPath, "--backend", "api"], {
@@ -357,8 +380,9 @@ async function runDefaultCreateFailureScenario({
     terminal.onData((data) => {
       output += data;
     });
-    terminal.onExit(() => {
+    terminal.onExit((event) => {
       exited = true;
+      exitCode = event.exitCode;
     });
 
     await waitForOutput(
@@ -374,6 +398,11 @@ async function runDefaultCreateFailureScenario({
       () => exited,
       "startup failure exit",
     );
+    if (exitCode !== 1) {
+      throw new Error(
+        `Expected startup failure to exit 1, got ${exitCode}. Output:\n${globalThis.stripAnsi(output)}`,
+      );
+    }
 
     const stripped = globalThis.stripAnsi(output);
     if (!stripped.includes(expectedOutput)) {

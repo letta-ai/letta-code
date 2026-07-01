@@ -267,4 +267,41 @@ describe("Startup Flow - Default Agent Fallback Wiring", () => {
     expect(createCase).toContain("setSelectedGlobalAgentId(fallbackAgent.id)");
     expect(createCase).toContain('setLoadingState("assembling")');
   });
+
+  test("default agent limit detection stays narrow and acknowledgement remains TTY-gated", () => {
+    const source = readIndexSource();
+    const classifierStart = source.indexOf(
+      "function isDefaultAgentLimitCreateFailure",
+    );
+    const classifierEnd = source.indexOf(
+      "function formatStartupFallbackAgent",
+      classifierStart,
+    );
+    const acknowledgementStart = source.indexOf(
+      "async function waitForStartupFallbackAcknowledgement",
+    );
+    const acknowledgementEnd = source.indexOf(
+      "function timestampMs",
+      acknowledgementStart,
+    );
+
+    expect(classifierStart).toBeGreaterThan(-1);
+    expect(classifierEnd).toBeGreaterThan(classifierStart);
+    expect(acknowledgementStart).toBeGreaterThan(-1);
+    expect(acknowledgementEnd).toBeGreaterThan(acknowledgementStart);
+
+    const classifier = source.slice(classifierStart, classifierEnd);
+    const acknowledgement = source.slice(
+      acknowledgementStart,
+      acknowledgementEnd,
+    );
+
+    expect(classifier).toContain("agents-limit-exceeded");
+    expect(classifier).toContain("you have reached your limit for agents");
+    expect(classifier).not.toContain('message.includes("429")');
+    expect(classifier).not.toContain("statusCode === 429");
+    expect(acknowledgement).toContain(
+      "if (!process.stdin.isTTY || !process.stdout.isTTY) return;",
+    );
+  });
 });

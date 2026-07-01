@@ -544,19 +544,13 @@ function errorMessage(error: unknown): string {
 
 function isDefaultAgentLimitCreateFailure(error: unknown): boolean {
   const message = errorMessage(error).toLowerCase();
-  const status = (error as { status?: unknown } | null)?.status;
-  const statusCode = typeof status === "number" ? status : undefined;
-
   if (message.includes("agents-limit-exceeded")) return true;
 
   return (
-    message.includes("agent") &&
-    message.includes("limit") &&
-    (statusCode === 402 ||
-      statusCode === 429 ||
-      message.includes("402") ||
-      message.includes("429") ||
-      message.includes("you have reached your limit"))
+    message.includes("you have reached your limit for agents") ||
+    message.includes("reached the agent limit") ||
+    message.includes("reached your agent limit") ||
+    message.includes("limit for agents")
   );
 }
 
