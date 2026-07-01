@@ -17,6 +17,11 @@ const pkg = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf-8"));
 const version = pkg.version;
 const useMagick = Bun.env.USE_MAGICK;
 const features = [];
+const NODE_SHEBANG = "#!/usr/bin/env node";
+const POLYGLOT_SHEBANG = `#!/bin/sh
+":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"`;
+const executableShebang =
+  process.platform === "win32" ? NODE_SHEBANG : POLYGLOT_SHEBANG;
 
 console.log(`📦 Building Letta Code v${version}...`);
 if (useMagick) {
@@ -70,7 +75,7 @@ content = content.replace(
   `globalThis.Bun.secrets`,
 );
 
-const withShebang = `#!/usr/bin/env node
+const withShebang = `${executableShebang}
 ${content}`;
 await Bun.write(outputPath, withShebang);
 
