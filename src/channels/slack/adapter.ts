@@ -1003,7 +1003,7 @@ export function createSlackAdapter(
           chatId: channelId,
           senderId: rawMessage.user,
           senderName,
-          text,
+          text: wasMentioned ? normalizeSlackText(text) : text,
           timestamp: slackTimestampToMillis(rawMessage.ts),
           messageId: rawMessage.ts,
           threadId: null,
