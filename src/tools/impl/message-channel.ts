@@ -941,6 +941,34 @@ function normalizeMessageChannelInput(
   };
 }
 
+/**
+ * Validates that a normalized MessageChannel call would actually produce
+ * output (text, media, or a reaction). Returns an error string if the call
+ * is a no-op, or undefined if the call is valid.
+ */
+function validateMessageChannelNoOp(
+  input: NormalizedMessageChannelInput,
+): string | undefined {
+  switch (input.action) {
+    case "send":
+      if (!input.message && !input.mediaPath) {
+        return 'Error: MessageChannel "send" requires a non-empty message or media attachment. Provide a message or media path.';
+      }
+      break;
+    case "react":
+      if (!input.emoji) {
+        return 'Error: MessageChannel "react" requires a non-empty emoji.';
+      }
+      break;
+    case "upload-file":
+      if (!input.mediaPath) {
+        return 'Error: MessageChannel "upload-file" requires a media file path.';
+      }
+      break;
+  }
+  return undefined;
+}
+
 function buildMessageChannelRequest(
   input: NormalizedMessageChannelInput,
   chatId: string,
@@ -1100,6 +1128,20 @@ async function resolveExplicitMessageChannelContext(params: {
 export async function message_channel(
   args: MessageChannelArgs,
 ): Promise<string> {
+  // Normalize and validate input first — these checks don't need the registry.
+  const input = normalizeMessageChannelInput(args);
+  if (typeof input === "string") {
+    return input;
+  }
+
+  // Guard against no-op calls: an agent calling MessageChannel without any
+  // text, media, or reaction would silently send an empty message. Catch
+  // this early so the agent sees an explicit error and can correct itself.
+  const noopError = validateMessageChannelNoOp(input);
+  if (noopError) {
+    return noopError;
+  }
+
   const registry = getChannelRegistry();
   if (!registry) {
     return "Error: Channel system is not initialized. Start with --channels flag.";
@@ -1111,11 +1153,6 @@ export async function message_channel(
   const scope = args.parentScope;
   if (!scope) {
     return "Error: MessageChannel requires execution scope (agentId + conversationId).";
-  }
-
-  const input = normalizeMessageChannelInput(args);
-  if (typeof input === "string") {
-    return input;
   }
 
   try {

@@ -374,3 +374,116 @@ describe("message_channel (signal)", () => {
     );
   });
 });
+
+describe("message_channel (no-op guard)", () => {
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
+    clearAllRoutes();
+  });
+
+  test("send with no message or media returns an error", async () => {
+    const result = await message_channel({
+      action: "send",
+      channel: "slack",
+      chat_id: "C123",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Error");
+    expect(result).toContain("requires a non-empty message or media");
+  });
+
+  test("send with empty message string returns an error", async () => {
+    const result = await message_channel({
+      action: "send",
+      channel: "slack",
+      chat_id: "C123",
+      message: "   ",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Error");
+    expect(result).toContain("requires a non-empty message or media");
+  });
+
+  test("react with no emoji returns an error", async () => {
+    const result = await message_channel({
+      action: "react",
+      channel: "slack",
+      chat_id: "C123",
+      messageId: "msg-1",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Error");
+    expect(result).toContain("requires a non-empty emoji");
+  });
+
+  test("upload-file with no media returns an error", async () => {
+    const result = await message_channel({
+      action: "upload-file",
+      channel: "slack",
+      chat_id: "C123",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Error");
+    expect(result).toContain("requires a media file path");
+  });
+
+  test("send with media but no message text is allowed", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "msg-1" }));
+    const adapter: ChannelAdapter = {
+      id: "discord:discord-1",
+      channelId: "discord",
+      accountId: "discord-1",
+      name: "Discord",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("discord", {
+      accountId: "discord-1",
+      chatId: "DM-123",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "discord",
+      chat_id: "DM-123",
+      media: "/tmp/photo.png",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("discord");
+  });
+});
