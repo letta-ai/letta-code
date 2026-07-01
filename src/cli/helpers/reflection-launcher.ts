@@ -13,7 +13,10 @@ import {
 import { getSubagents } from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
 import type { ReflectionTrigger } from "@/cli/helpers/memory-reminder";
-import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
+import {
+  handleMemorySubagentCompletion,
+  type MemorySubagentSuccessMessageOverride,
+} from "@/cli/helpers/memory-subagent-completion";
 import {
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
@@ -180,21 +183,42 @@ function resolveCompletionConversationId(
 
 function getReflectionCompletionMessage(
   integration: ReflectionMemoryWorktreeFinalizeResult,
-): string | undefined {
+): MemorySubagentSuccessMessageOverride | undefined {
   switch (integration.status) {
     case "merged":
       return undefined;
     case "no_changes":
-      return "Dreamed; no durable memory changes were needed.";
+      return ({ action }) =>
+        `${action}; no durable memory changes were needed.`;
     case "pending_conflict":
-      return "Dreamed and produced memory updates, but a MemFS merge conflict needs manual resolution.";
+      return ({ action }) =>
+        `${action}; memory merge will finish after conflicts are resolved.`;
     case "pending_manual_merge":
-      return "Dreamed and produced memory updates, but the MemFS merge needs manual completion.";
+      return ({ action }) =>
+        `${action}; memory merge will finish after pending memory changes are resolved.`;
     case "dirty_uncommitted":
-      return "Tried to reflect, but left uncommitted memory changes; cleaned up and will retry later.";
+      return "Tried to reflect, but memory changes were not committed cleanly; will retry later.";
     case "failed":
-      return "Tried to reflect, but the run failed after producing memory updates; cleaned up and will retry later.";
+      return "Tried to reflect, but memory updates were not completed cleanly; will retry later.";
   }
+}
+
+function escapeTaskNotificationSummary(summary: string): string {
+  return summary
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function formatReflectionIntegrationNotification(reminder: string): string {
+  return `<task-notification>
+<summary>${escapeTaskNotificationSummary(
+    "Memory reflection merge pending; resolving in parent agent.",
+  )}</summary>
+<result>
+${reminder}
+</result>
+</task-notification>`;
 }
 
 export function formatReflectionIntegrationReminder(
@@ -202,7 +226,7 @@ export function formatReflectionIntegrationReminder(
 ): string {
   const resolveCommands = `cd ${JSON.stringify(integration.parentMemoryDir)}
 git status
-# If parent MemFS has unrelated changes, commit or discard them first.
+# If parent MemFS has unrelated changes, inspect changes, then commit or discard them.
 # Then merge the reflection branch and resolve conflicts if prompted:
 git merge ${JSON.stringify(integration.reflectionBranch)} --no-edit || {
   git status
@@ -213,21 +237,24 @@ git merge ${JSON.stringify(integration.reflectionBranch)} --no-edit || {
 git worktree remove ${JSON.stringify(integration.reflectionWorktreeDir)}
 git branch -d ${JSON.stringify(integration.reflectionBranch)}`;
 
-  return `${SYSTEM_REMINDER_OPEN}
-MEMORY REFLECTION MERGE NEEDED: A background reflection completed and produced committed memory updates, but the harness could not merge them into your main MemFS automatically.
+  const reminder = `${SYSTEM_REMINDER_OPEN}
+ACTION REQUIRED: Resolve pending reflection memory merge.
+
+A background reflection completed and produced committed memory updates, but the harness could not merge them into your main MemFS automatically.
 
 Parent memory dir: ${integration.parentMemoryDir}
 Reflection branch: ${integration.reflectionBranch}
 Reflection worktree: ${integration.reflectionWorktreeDir}
 Status: ${integration.summary}
 
-Resolve when appropriate:
+Resolve as soon as possible (when appropriate):
 \`\`\`bash
 ${resolveCommands}
 \`\`\`
 
 This reminder is one-time. The transcript was already reflected, so do not launch another reflection for the same content just to resolve this merge.
 ${SYSTEM_REMINDER_CLOSE}`;
+  return formatReflectionIntegrationNotification(reminder);
 }
 
 function queueReflectionIntegrationReminder(params: {

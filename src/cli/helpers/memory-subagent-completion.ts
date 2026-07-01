@@ -8,6 +8,10 @@ import {
 
 export type MemorySubagentType = "init" | "reflection";
 
+export type MemorySubagentSuccessMessageOverride =
+  | string
+  | ((args: { action: string; defaultMessage: string }) => string);
+
 type RecompileAgentSystemPromptFn = (
   conversationId: string,
   agentId: string,
@@ -22,7 +26,7 @@ export interface MemorySubagentCompletionArgs {
   error?: string;
   subagentAgentId?: string;
   skipRecompile?: boolean;
-  successMessageOverride?: string;
+  successMessageOverride?: MemorySubagentSuccessMessageOverride;
 }
 
 export interface MemorySubagentCompletionDeps {
@@ -100,20 +104,20 @@ export async function handleMemorySubagentCompletion(
     return `Memory initialization failed: ${normalizedError}`;
   }
 
-  let baseMessage =
-    args.successMessageOverride ??
-    (subagentType === "reflection"
-      ? "Dreamed and made some memories."
-      : "Built a memory palace of you. Visit it with /palace.");
-
-  if (
-    !args.successMessageOverride &&
-    subagentType === "reflection" &&
-    subagentLink &&
-    canLinkSubagent
-  ) {
-    baseMessage = `${subagentLink} and made some memories.`;
-  }
+  const action =
+    subagentType === "reflection" && subagentLink && canLinkSubagent
+      ? subagentLink
+      : subagentType === "reflection"
+        ? "Dreamed"
+        : "Built";
+  const defaultMessage =
+    subagentType === "reflection"
+      ? `${action} and made some memories.`
+      : "Built a memory palace of you. Visit it with /palace.";
+  const baseMessage =
+    typeof args.successMessageOverride === "function"
+      ? args.successMessageOverride({ action, defaultMessage })
+      : (args.successMessageOverride ?? defaultMessage);
 
   if (!recompileError) {
     return baseMessage;

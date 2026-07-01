@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import { debugLog } from "@/utils/debug";
 
 const execFile = promisify(execFileCb);
 
@@ -128,6 +129,16 @@ export async function createReflectionMemoryWorktree(
     "--git-common-dir",
   ]);
   const gitCommonDir = normalizeGitPath(commonDirOut, worktreeDir);
+  debugLog(
+    "memfs-git",
+    "reflection worktree created id=%s branch=%s dir=%s parent=%s baseHead=%s gitCommonDir=%s",
+    id,
+    branchName,
+    worktreeDir,
+    parentMemoryDir,
+    baseHead,
+    gitCommonDir,
+  );
 
   return {
     id,
@@ -310,6 +321,16 @@ export async function listPendingReflectionMemoryWorktrees(
     });
   }
 
+  if (pending.length > 0) {
+    debugLog(
+      "memfs-git",
+      "reflection pending scan found=%d parent=%s branches=%s",
+      pending.length,
+      resolvedParent,
+      pending.map((entry) => entry.reflectionBranch).join(","),
+    );
+  }
+
   return pending;
 }
 
@@ -319,7 +340,8 @@ async function cleanupWorktreeAndBranch(
   branchName: string,
   options: { force?: boolean } = {},
 ): Promise<void> {
-  if (existsSync(worktreeDir)) {
+  const removedWorktree = existsSync(worktreeDir);
+  if (removedWorktree) {
     await runGit(parentMemoryDir, [
       "worktree",
       "remove",
@@ -370,6 +392,12 @@ export async function finalizeReflectionMemoryWorktree(
       worktree.branchName,
       { force: true },
     );
+    debugLog(
+      "memfs-git",
+      "reflection finalized id=%s status=dirty_uncommitted commitCount=%d cleanedUp=true retryable=true",
+      worktree.id,
+      commitCount,
+    );
     return {
       status: "dirty_uncommitted",
       parentMemoryDir: worktree.parentMemoryDir,
@@ -387,6 +415,11 @@ export async function finalizeReflectionMemoryWorktree(
       worktree.parentMemoryDir,
       worktree.worktreeDir,
       worktree.branchName,
+    );
+    debugLog(
+      "memfs-git",
+      "reflection finalized id=%s status=no_changes cleanedUp=true",
+      worktree.id,
     );
     return {
       status: "no_changes",
@@ -406,6 +439,12 @@ export async function finalizeReflectionMemoryWorktree(
       worktree.branchName,
       { force: true },
     );
+    debugLog(
+      "memfs-git",
+      "reflection finalized id=%s status=failed commitCount=%d cleanedUp=true retryable=true",
+      worktree.id,
+      commitCount,
+    );
     return {
       status: "failed",
       parentMemoryDir: worktree.parentMemoryDir,
@@ -420,6 +459,13 @@ export async function finalizeReflectionMemoryWorktree(
 
   const parentStatus = await getStatusPorcelain(worktree.parentMemoryDir);
   if (parentStatus.length > 0) {
+    debugLog(
+      "memfs-git",
+      "reflection finalized id=%s status=pending_manual_merge reason=parent_dirty branch=%s preservedWorktree=%s",
+      worktree.id,
+      worktree.branchName,
+      worktree.worktreeDir,
+    );
     return buildPendingManualResult(
       worktree,
       commitCount,
@@ -428,6 +474,14 @@ export async function finalizeReflectionMemoryWorktree(
     );
   }
 
+  debugLog(
+    "memfs-git",
+    "reflection merge attempt id=%s branch=%s parent=%s commitCount=%d",
+    worktree.id,
+    worktree.branchName,
+    worktree.parentMemoryDir,
+    commitCount,
+  );
   const mergeResult = await tryRunGit(worktree.parentMemoryDir, [
     "merge",
     worktree.branchName,
@@ -435,6 +489,13 @@ export async function finalizeReflectionMemoryWorktree(
   ]);
   if (!mergeResult) {
     await tryRunGit(worktree.parentMemoryDir, ["merge", "--abort"]);
+    debugLog(
+      "memfs-git",
+      "reflection finalized id=%s status=pending_conflict branch=%s mergeAbort=true preservedWorktree=%s",
+      worktree.id,
+      worktree.branchName,
+      worktree.worktreeDir,
+    );
     return {
       status: "pending_conflict",
       parentMemoryDir: worktree.parentMemoryDir,
@@ -453,6 +514,13 @@ export async function finalizeReflectionMemoryWorktree(
     worktree.parentMemoryDir,
     worktree.worktreeDir,
     worktree.branchName,
+  );
+  debugLog(
+    "memfs-git",
+    "reflection finalized id=%s status=merged commitCount=%d parentHead=%s cleanedUp=true",
+    worktree.id,
+    commitCount,
+    mergedHead ?? "<none>",
   );
 
   return {

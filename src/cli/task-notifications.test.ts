@@ -7,6 +7,7 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import {
+  extractTaskNotificationsForDisplay,
   formatTaskNotification,
   type TaskNotification,
 } from "@/utils/task-notifications";
@@ -117,6 +118,22 @@ describe("taskNotifications", () => {
       expect(formatted).toContain("tool_uses: 4");
       expect(formatted).toContain("duration_ms: 5678");
       expect(formatted).toContain("</usage>");
+    });
+
+    test("hides agent-only system reminder notifications from display", () => {
+      const message = `<task-notification>
+<summary>Memory reflection merge pending; resolving in parent agent.</summary>
+<result>
+<system-reminder>
+ACTION REQUIRED: Resolve pending reflection memory merge.
+</system-reminder>
+</result>
+</task-notification>`;
+
+      expect(extractTaskNotificationsForDisplay(message)).toEqual({
+        notifications: [],
+        cleanedText: "",
+      });
     });
   });
 });
