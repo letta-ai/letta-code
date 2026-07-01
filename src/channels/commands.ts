@@ -35,7 +35,15 @@ export type ChannelSlashCommandHandlers = {
     command: ParsedChannelSlashCommand,
     msg: InboundChannelMessage,
   ) => Promise<ChannelSlashCommandHandlerResult>;
+  detach?: (
+    command: ParsedChannelSlashCommand,
+    msg: InboundChannelMessage,
+  ) => Promise<ChannelSlashCommandHandlerResult>;
   model?: (
+    command: ParsedChannelSlashCommand,
+    msg: InboundChannelMessage,
+  ) => Promise<ChannelSlashCommandHandlerResult>;
+  newConversation?: (
     command: ParsedChannelSlashCommand,
     msg: InboundChannelMessage,
   ) => Promise<ChannelSlashCommandHandlerResult>;
@@ -44,6 +52,10 @@ export type ChannelSlashCommandHandlers = {
     msg: InboundChannelMessage,
   ) => Promise<ChannelSlashCommandHandlerResult>;
   reflection?: (
+    command: ParsedChannelSlashCommand,
+    msg: InboundChannelMessage,
+  ) => Promise<ChannelSlashCommandHandlerResult>;
+  reload?: (
     command: ParsedChannelSlashCommand,
     msg: InboundChannelMessage,
   ) => Promise<ChannelSlashCommandHandlerResult>;
@@ -63,6 +75,7 @@ export type ChannelStatusContext = {
 export type ChannelSlashCommandOptions = {
   statusContext?: ChannelStatusContext;
   handlers?: ChannelSlashCommandHandlers;
+  enableBangCommands?: boolean;
 };
 
 const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
@@ -109,6 +122,14 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
   },
 ];
 
+const CHANNEL_BANG_COMMAND_NAMES = [
+  "help",
+  "detach",
+  "model",
+  "new",
+  "reload",
+] as const;
+
 function channelDisplayName(channelId: string): string {
   try {
     return getChannelDisplayName(channelId);
@@ -146,14 +167,55 @@ export function parseChannelSlashCommand(
   };
 }
 
-function supportedCommandsText(): string {
+export function parseChannelBangCommand(
+  text: string,
+): ParsedChannelSlashCommand | null {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^!([A-Za-z][\w-]*)(?:\s+(.*))?$/);
+  if (!match) {
+    return null;
+  }
+  const [, name, args] = match;
+  if (!name) {
+    return null;
+  }
+
+  return {
+    name: name.toLowerCase(),
+    args: args?.trim() ?? "",
+    raw: trimmed,
+  };
+}
+
+function supportedCommandsText(prefix: "/" | "!" = "/"): string {
   return listChannelSlashCommands()
-    .map((definition) => `/${definition.name}`)
+    .map((definition) => `${prefix}${definition.name}`)
     .join(", ");
+}
+
+function supportedBangCommandsText(): string {
+  return CHANNEL_BANG_COMMAND_NAMES.map((name) => `!${name}`).join(", ");
+}
+
+function isSupportedChannelBangCommand(commandName: string): boolean {
+  return CHANNEL_BANG_COMMAND_NAMES.includes(
+    commandName as (typeof CHANNEL_BANG_COMMAND_NAMES)[number],
+  );
 }
 
 export function buildChannelHelpMessage(channelId: string): string {
   const displayName = channelDisplayName(channelId);
+
+  if (channelId === "slack") {
+    return [
+      `${displayName} is connected to Letta Code.`,
+      "Send a normal message here and the connected agent will reply in this chat.",
+      "Use MessageChannel-supported actions by asking naturally, for example: send a message, react, or upload a file when available.",
+      `Supported slash commands here: ${supportedCommandsText()}.`,
+      `In Slack threads, mention the app with bang commands: ${supportedBangCommandsText()}.`,
+      "If this chat is not connected yet, send any non-command message and follow the pairing instructions.",
+    ].join("\n\n");
+  }
 
   return [
     `${displayName} is connected to Letta Code.`,
@@ -169,11 +231,13 @@ export function buildUnsupportedChannelCommandMessage(
   command: ParsedChannelSlashCommand,
 ): string {
   const displayName = channelDisplayName(channelId);
+  const isBang = command.raw.startsWith("!");
+  const commandKind = isBang ? "bang" : "slash";
 
   return [
-    `${displayName} received ${command.raw}, but that slash command is not supported in channels yet.`,
-    `Supported slash commands here: ${supportedCommandsText()}.`,
-    "Send normal messages without a leading slash to talk to the connected agent.",
+    `${displayName} received ${command.raw}, but that ${commandKind} command is not supported in channels yet.`,
+    `Supported ${commandKind} commands here: ${isBang ? supportedBangCommandsText() : supportedCommandsText()}.`,
+    `Send normal messages without a leading ${isBang ? "bang" : "slash"} command to talk to the connected agent.`,
   ].join("\n\n");
 }
 
@@ -204,6 +268,13 @@ export function buildChannelStatusMessage(
     lines.push(`Conversation: ${route.conversationId}.`);
     if (route.threadId) {
       lines.push(`Thread: ${route.threadId}.`);
+    }
+    if (route.detached) {
+      lines.push("Slack thread is detached until the app is mentioned again.");
+    } else if (route.outboundEnabled === false) {
+      lines.push(
+        "Outbound replies are disabled until the app is mentioned again.",
+      );
     }
   } else {
     lines.push(
@@ -293,6 +364,38 @@ export function buildChannelChatUnavailableMessage(
 ): string {
   const displayName = channelDisplayName(channelId);
   return `${displayName} chat UI is not available for local backend agent ${route.agentId}.`;
+}
+
+export function buildChannelDetachUnsupportedMessage(
+  channelId: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} can only detach Slack channel threads.`;
+}
+
+export function buildChannelDetachedMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} detached this thread. I will ignore follow-up replies here until someone mentions the app again.`;
+}
+
+export function buildChannelAlreadyDetachedMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} is already detached from this thread. Mention the app again to reattach.`;
+}
+
+export function buildChannelNewConversationMessage(
+  channelId: string,
+  route: ChannelRoute,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} started a new conversation for this chat. Conversation: ${route.conversationId}.`;
+}
+
+export function buildChannelNewConversationUnavailableMessage(
+  channelId: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} cannot start a new conversation for this chat because no agent is configured.`;
 }
 
 type ChannelModelListEntry = Pick<
@@ -500,6 +603,13 @@ export function buildChannelReflectionUnavailableMessage(
   return `${displayName} cannot start reflection for this chat because the listener is not ready yet. Try again in a moment.`;
 }
 
+export function buildChannelReloadUnavailableMessage(
+  channelId: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} cannot reload listener settings for this chat because the listener is not ready yet. Try again in a moment.`;
+}
+
 async function handleScopedCommand(params: {
   msg: InboundChannelMessage;
   command: ParsedChannelSlashCommand;
@@ -523,9 +633,21 @@ export async function tryHandleChannelSlashCommand(
   msg: InboundChannelMessage,
   options: ChannelSlashCommandOptions = {},
 ): Promise<boolean> {
-  const command = parseChannelSlashCommand(msg.text);
+  const command =
+    parseChannelSlashCommand(msg.text) ??
+    (options.enableBangCommands ? parseChannelBangCommand(msg.text) : null);
   if (!command) {
     return false;
+  }
+  const isBangCommand = command.raw.startsWith("!");
+
+  if (isBangCommand && !isSupportedChannelBangCommand(command.name)) {
+    await adapter.sendDirectReply(
+      msg.chatId,
+      buildUnsupportedChannelCommandMessage(msg.channel, command),
+      msg.threadId ? { replyToMessageId: msg.threadId } : undefined,
+    );
+    return true;
   }
 
   const text = await (async () => {
@@ -566,11 +688,29 @@ export async function tryHandleChannelSlashCommand(
           command,
           handler: options.handlers?.chat,
         });
+      case "detach":
+        if (!isBangCommand) {
+          return buildUnsupportedChannelCommandMessage(msg.channel, command);
+        }
+        return handleScopedCommand({
+          msg,
+          command,
+          handler: options.handlers?.detach,
+        });
       case "model":
         return handleScopedCommand({
           msg,
           command,
           handler: options.handlers?.model,
+        });
+      case "new":
+        if (!isBangCommand) {
+          return buildUnsupportedChannelCommandMessage(msg.channel, command);
+        }
+        return handleScopedCommand({
+          msg,
+          command,
+          handler: options.handlers?.newConversation,
         });
       case "reflect":
       case "reflection":
@@ -578,6 +718,15 @@ export async function tryHandleChannelSlashCommand(
           msg,
           command,
           handler: options.handlers?.reflection,
+        });
+      case "reload":
+        if (!isBangCommand) {
+          return buildUnsupportedChannelCommandMessage(msg.channel, command);
+        }
+        return handleScopedCommand({
+          msg,
+          command,
+          handler: options.handlers?.reload,
         });
       default:
         return buildUnsupportedChannelCommandMessage(msg.channel, command);
