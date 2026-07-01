@@ -23,16 +23,23 @@ import {
 } from "./accounts";
 import {
   buildChannelAlreadyActiveMessage,
+  buildChannelAlreadyDetachedMessage,
   buildChannelAlreadyPausedMessage,
   buildChannelCancelNoActiveTurnMessage,
   buildChannelCancelUnavailableMessage,
   buildChannelChatLinkMessage,
   buildChannelChatUnavailableMessage,
+  buildChannelDetachedMessage,
+  buildChannelDetachUnsupportedMessage,
   buildChannelModelUnavailableMessage,
+  buildChannelNewConversationMessage,
+  buildChannelNewConversationUnavailableMessage,
   buildChannelNoRouteMessage,
   buildChannelPausedMessage,
   buildChannelReflectionUnavailableMessage,
+  buildChannelReloadUnavailableMessage,
   buildChannelResumedMessage,
+  parseChannelBangCommand,
   parseChannelSlashCommand,
   tryHandleChannelSlashCommand,
 } from "./commands";
@@ -516,6 +523,16 @@ export type ChannelModelHandler = (params: {
   text?: string;
 }>;
 
+export type ChannelReloadHandler = (params: {
+  runtime: {
+    agent_id: string;
+    conversation_id: string;
+  };
+}) => Promise<{
+  handled: boolean;
+  text?: string;
+}>;
+
 type ChannelStartupOptions = {
   logger?: ChannelStartupLogger;
 };
@@ -620,6 +637,7 @@ export class ChannelRegistry {
   private cancelHandler: ChannelCancelHandler | null = null;
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
+  private reloadHandler: ChannelReloadHandler | null = null;
   private readonly buffer: ChannelInboundDelivery[] = [];
   private readonly pendingControlRequestsById = new Map<
     string,
@@ -825,6 +843,10 @@ export class ChannelRegistry {
 
   setModelHandler(handler: ChannelModelHandler | null): void {
     this.modelHandler = handler;
+  }
+
+  setReloadHandler(handler: ChannelReloadHandler | null): void {
+    this.reloadHandler = handler;
   }
 
   setEventHandler(
@@ -1163,6 +1185,7 @@ export class ChannelRegistry {
     this.cancelHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
+    this.reloadHandler = null;
   }
 
   /**
@@ -1182,6 +1205,7 @@ export class ChannelRegistry {
     this.cancelHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
+    this.reloadHandler = null;
     this.pendingControlRequestsById.clear();
     this.pendingControlRequestIdByScope.clear();
     this.unsubscribeWhatsAppState();
@@ -1194,8 +1218,12 @@ export class ChannelRegistry {
     adapter: ChannelAdapter,
     msg: InboundChannelMessage,
   ): Promise<boolean> {
-    const slashCommand = parseChannelSlashCommand(msg.text);
-    if (slashCommand) {
+    const channelCommand =
+      parseChannelSlashCommand(msg.text) ??
+      (msg.channel === "slack" && msg.isMention === true
+        ? parseChannelBangCommand(msg.text)
+        : null);
+    if (channelCommand) {
       return false;
     }
 
@@ -1382,6 +1410,122 @@ export class ChannelRegistry {
     };
   }
 
+  private async handleDetachSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    if (
+      msg.channel !== "slack" ||
+      msg.chatType !== "channel" ||
+      !msg.threadId
+    ) {
+      return {
+        handled: true,
+        text: buildChannelDetachUnsupportedMessage(msg.channel),
+      };
+    }
+
+    const existingRoute = this.loadAndFindRawRouteForMessage(msg);
+    if (existingRoute?.detached === true) {
+      return {
+        handled: true,
+        text: buildChannelAlreadyDetachedMessage(msg.channel),
+      };
+    }
+
+    const now = new Date().toISOString();
+    if (existingRoute) {
+      const updatedRoute: ChannelRoute = {
+        ...existingRoute,
+        enabled: true,
+        outboundEnabled: false,
+        detached: true,
+        updatedAt: now,
+      };
+      addRoute(msg.channel, updatedRoute);
+      return {
+        handled: true,
+        text: buildChannelDetachedMessage(msg.channel),
+      };
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const config = getChannelAccount(msg.channel, accountId);
+    if (!config || !isSlackChannelAccount(config) || !config.agentId) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    await this.createSlackRoute(config, msg, {
+      outboundEnabled: false,
+      detached: true,
+    });
+    return {
+      handled: true,
+      text: buildChannelDetachedMessage(msg.channel),
+    };
+  }
+
+  private async handleNewConversationSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    if (msg.channel !== "slack") {
+      return {
+        handled: true,
+        text: buildChannelNewConversationUnavailableMessage(msg.channel),
+      };
+    }
+
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const config = getChannelAccount(msg.channel, accountId);
+    if (!config || !isSlackChannelAccount(config) || !config.agentId) {
+      return {
+        handled: true,
+        text: buildChannelNewConversationUnavailableMessage(msg.channel),
+      };
+    }
+
+    const existingRoute = this.loadAndFindRawRouteForMessage(msg);
+    const agentId = existingRoute?.agentId ?? config.agentId;
+    const conversationId = await this.createConversationForAgent(
+      agentId,
+      buildSlackConversationSummary(msg),
+    );
+    const now = new Date().toISOString();
+    const route: ChannelRoute = {
+      accountId: config.accountId,
+      chatId: msg.chatId,
+      chatType: msg.chatType,
+      threadId:
+        msg.chatType === "channel"
+          ? (msg.threadId ?? msg.messageId ?? null)
+          : null,
+      agentId,
+      conversationId,
+      enabled: true,
+      outboundEnabled: true,
+      detached: false,
+      createdAt: existingRoute?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    addRoute(msg.channel, route);
+    this.eventHandler?.({
+      type: "slack_conversation_created",
+      channelId: "slack",
+      accountId: config.accountId,
+      agentId,
+      conversationId,
+      defaultPermissionMode: config.defaultPermissionMode,
+    });
+
+    return {
+      handled: true,
+      text: buildChannelNewConversationMessage(msg.channel, route),
+    };
+  }
+
   private async handleReflectionSlashCommand(
     msg: InboundChannelMessage,
   ): Promise<{ handled: boolean; text?: string }> {
@@ -1401,6 +1545,32 @@ export class ChannelRegistry {
     }
 
     return this.reflectionHandler({
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+    });
+  }
+
+  private async handleReloadSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.loadAndFindRawRouteForMessage(msg);
+    if (!route?.enabled) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    if (!this.reloadHandler) {
+      return {
+        handled: true,
+        text: buildChannelReloadUnavailableMessage(msg.channel),
+      };
+    }
+
+    return this.reloadHandler({
       runtime: {
         agent_id: route.agentId,
         conversation_id: route.conversationId,
@@ -1473,18 +1643,22 @@ export class ChannelRegistry {
     return matches.length === 1 ? (matches[0] ?? null) : null;
   }
 
-  private hasExactEnabledRouteForMessage(
+  private getExactEnabledRouteForMessage(
     msg: InboundChannelMessage,
     accountId: string,
-  ): boolean {
-    if (getRouteFromStore(msg.channel, msg.chatId, accountId, msg.threadId)) {
-      return true;
+  ): ChannelRoute | null {
+    const existingRoute = getRouteFromStore(
+      msg.channel,
+      msg.chatId,
+      accountId,
+      msg.threadId,
+    );
+    if (existingRoute) {
+      return existingRoute;
     }
 
     loadRoutes(msg.channel);
-    return Boolean(
-      getRouteFromStore(msg.channel, msg.chatId, accountId, msg.threadId),
-    );
+    return getRouteFromStore(msg.channel, msg.chatId, accountId, msg.threadId);
   }
 
   private shouldDropUnroutedSlackThreadInput(
@@ -1492,15 +1666,25 @@ export class ChannelRegistry {
     accountId: string,
     config: ChannelAccount | null,
   ): boolean {
+    if (
+      msg.channel !== "slack" ||
+      msg.chatType !== "channel" ||
+      msg.threadId == null ||
+      msg.isMention === true
+    ) {
+      return false;
+    }
+
+    const exactRoute = this.getExactEnabledRouteForMessage(msg, accountId);
+    if (exactRoute?.detached === true) {
+      return true;
+    }
+
     return (
-      msg.channel === "slack" &&
-      msg.chatType === "channel" &&
-      msg.threadId != null &&
-      msg.isMention !== true &&
       (!config ||
         !isSlackChannelAccount(config) ||
         config.listenMode !== true) &&
-      !this.hasExactEnabledRouteForMessage(msg, accountId)
+      !exactRoute
     );
   }
 
@@ -1552,13 +1736,20 @@ export class ChannelRegistry {
             this.handleCancelSlashCommand(commandMsg),
           chat: async (_command, commandMsg) =>
             this.handleChatSlashCommand(commandMsg),
+          detach: async (_command, commandMsg) =>
+            this.handleDetachSlashCommand(commandMsg),
           model: async (command, commandMsg) =>
             this.handleModelSlashCommand(command, commandMsg),
+          newConversation: async (_command, commandMsg) =>
+            this.handleNewConversationSlashCommand(commandMsg),
           pause: async () => this.handlePauseResumeSlashCommand("pause", msg),
           reflection: async (_command, commandMsg) =>
             this.handleReflectionSlashCommand(commandMsg),
+          reload: async (_command, commandMsg) =>
+            this.handleReloadSlashCommand(commandMsg),
           resume: async () => this.handlePauseResumeSlashCommand("resume", msg),
         },
+        enableBangCommands: msg.channel === "slack" && msg.isMention === true,
       })
     ) {
       return;
@@ -1836,7 +2027,7 @@ export class ChannelRegistry {
   private async createSlackRoute(
     config: SlackChannelAccount,
     msg: InboundChannelMessage,
-    options: { outboundEnabled?: boolean } = {},
+    options: { outboundEnabled?: boolean; detached?: boolean } = {},
   ): Promise<ChannelRoute> {
     if (!config.agentId) {
       throw new Error("Slack app is missing an agent binding.");
@@ -1859,6 +2050,7 @@ export class ChannelRegistry {
       conversationId,
       enabled: true,
       outboundEnabled: options.outboundEnabled !== false,
+      detached: options.detached === true,
       createdAt: now,
       updatedAt: now,
     };
@@ -1932,11 +2124,12 @@ export class ChannelRegistry {
       if (
         msg.chatType === "channel" &&
         msg.isMention === true &&
-        route.outboundEnabled === false
+        (route.outboundEnabled === false || route.detached === true)
       ) {
         const updatedRoute: ChannelRoute = {
           ...route,
           outboundEnabled: true,
+          detached: false,
           updatedAt: new Date().toISOString(),
         };
         addRoute(msg.channel, updatedRoute);
