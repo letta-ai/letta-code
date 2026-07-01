@@ -13,6 +13,7 @@
  */
 
 import { parseArgs } from "node:util";
+import { getBackend } from "@/backend";
 import {
   addTask,
   deleteAllTasks,
@@ -98,9 +99,48 @@ function getConversationId(fromArgs?: string): string {
   return fromArgs || process.env.LETTA_CONVERSATION_ID || "default";
 }
 
+const DEFAULT_CONVERSATION_TARGET = "default";
+const NEW_CONVERSATION_TARGET = "new";
+
+function invalidConversationTargetMessage(conversationId: string): string {
+  return `Invalid conversation target "${conversationId}". --conversation expects "default", "new", or an existing conversation id like "conv-..."; labels/names are not accepted.`;
+}
+
+async function validateConversationTarget(
+  agentId: string,
+  conversationId: string,
+): Promise<void> {
+  // These are scheduler sentinels, not persisted conversation ids resolved here.
+  // Scheduler/runtime resolves "default" to the agent default conversation; "new" creates a fresh one at fire time.
+  if (
+    conversationId === DEFAULT_CONVERSATION_TARGET ||
+    conversationId === NEW_CONVERSATION_TARGET
+  ) {
+    return;
+  }
+
+  // Everything else must be a real id before addTask persists it; labels or
+  // names would create scheduled tasks that cannot be resolved when they run.
+  let conversation: { agent_id?: string | null };
+  try {
+    conversation = await getBackend().retrieveConversation(conversationId);
+  } catch {
+    throw new Error(invalidConversationTargetMessage(conversationId));
+  }
+
+  const conversationAgentId = conversation.agent_id ?? "unknown";
+  if (conversationAgentId !== agentId) {
+    throw new Error(
+      `Conversation "${conversationId}" belongs to agent "${conversationAgentId}", not selected agent "${agentId}".`,
+    );
+  }
+}
+
 // ── Handlers ────────────────────────────────────────────────────────
 
-function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
+async function handleAdd(
+  values: ReturnType<typeof parseCronArgs>["values"],
+): Promise<number> {
   const name = values.name;
   if (!name || typeof name !== "string") {
     console.error("Error: --name is required.");
@@ -189,6 +229,8 @@ function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
   }
 
   try {
+    await validateConversationTarget(agentId, conversationId);
+
     const result = addTask({
       agent_id: agentId,
       conversation_id: conversationId,
