@@ -64,6 +64,7 @@ export interface ChannelThreadContextEntry {
   senderId?: string;
   senderName?: string;
   text: string;
+  attachments?: ChannelMessageAttachment[];
 }
 
 export interface ChannelThreadContext {

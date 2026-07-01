@@ -371,6 +371,16 @@ describe("formatChannelNotification", () => {
           senderId: "U111",
           senderName: "Alice",
           text: "Original question from the thread root",
+          attachments: [
+            {
+              id: "FROOT",
+              kind: "image",
+              localPath: "/tmp/thread-root.png",
+              name: "thread-root.png",
+              mimeType: "image/png",
+              sizeBytes: 7,
+            },
+          ],
         },
         history: [
           {
@@ -378,6 +388,15 @@ describe("formatChannelNotification", () => {
             senderId: "U222",
             senderName: "Bob",
             text: "Some follow-up before the bot was tagged",
+            attachments: [
+              {
+                id: "FHIST",
+                kind: "file",
+                localPath: "/tmp/thread-history.pdf",
+                name: "thread-history.pdf",
+                mimeType: "application/pdf",
+              },
+            ],
           },
         ],
       },
@@ -393,11 +412,15 @@ describe("formatChannelNotification", () => {
       '<thread-starter sender_id="U111" sender_name="Alice" message_id="1712790000.000050">',
     );
     expect(xml).toContain("Original question from the thread root");
+    expect(xml).toContain(
+      '<attachment kind="image" local_path="/tmp/thread-root.png" attachment_id="FROOT" name="thread-root.png" mime_type="image/png" size_bytes="7" />',
+    );
     expect(xml).toContain("<thread-history>");
     expect(xml).toContain(
       '<thread-message sender_id="U222" sender_name="Bob" message_id="1712795000.000060">',
     );
     expect(xml).toContain("Some follow-up before the bot was tagged");
+    expect(xml).toContain('local_path="/tmp/thread-history.pdf"');
     expect(xml).toContain("please help");
   });
 
