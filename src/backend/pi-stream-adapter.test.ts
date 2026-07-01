@@ -14,6 +14,7 @@ import type {
 import {
   PiStreamAdapter,
   type PiStreamFunction,
+  withOpenRouterSessionHeader,
 } from "@/backend/dev/pi-stream-adapter";
 import type {
   LlmEndInfo,
@@ -860,6 +861,228 @@ describe("PiStreamAdapter", () => {
       });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("adds OpenRouter Broadcast session and trace data with pseudonymous IDs", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "pi-stream-openrouter-broadcast-"),
+    );
+    const previousDoNotTrack = process.env.DO_NOT_TRACK;
+    const previousTelemetry = process.env.LETTA_CODE_TELEM;
+    try {
+      delete process.env.DO_NOT_TRACK;
+      delete process.env.LETTA_CODE_TELEM;
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "openrouter",
+        providerName: "lc-openrouter",
+        apiKey: "secret-key",
+      });
+
+      let capturedOptions:
+        | (SimpleStreamOptions & Record<string, unknown>)
+        | undefined;
+      let capturedPayload: unknown;
+      const capturedSessionIds: string[] = [];
+      const stream: PiStreamFunction = (
+        model: Model<string>,
+        _context: Context,
+        options?: SimpleStreamOptions & Record<string, unknown>,
+      ) => {
+        capturedOptions = options;
+        const sessionId = options?.headers?.["x-session-id"];
+        if (sessionId) capturedSessionIds.push(sessionId);
+        const payload = {
+          model: "anthropic/claude-sonnet-4",
+          messages: [{ role: "user", content: "hello" }],
+          session_id: "local-conv-1",
+          trace: {
+            trace_id: "local-conv-1",
+            trace_name: "local-conv-1",
+            span_name: "agent-local-1",
+            generation_name: "agent-local-1",
+            custom_key: "kept",
+          },
+        };
+        const finalMessage = {
+          ...assistantMessage(),
+          api: "openai-completions",
+          provider: "openrouter",
+          model: "anthropic/claude-sonnet-4",
+        } satisfies AssistantMessage;
+        const doneEvent: AssistantMessageEvent = {
+          type: "done",
+          reason: "stop",
+          message: finalMessage,
+        };
+        async function* iterator() {
+          capturedPayload = await options?.onPayload?.(payload, model);
+          yield doneEvent;
+        }
+        return Object.assign(iterator(), {
+          result: async () => finalMessage,
+        });
+      };
+
+      const adapter = new PiStreamAdapter({
+        stream,
+        localProviderAuthStorageDir: storageDir,
+      });
+      const baseInput = input();
+      for await (const _event of adapter.stream({
+        ...baseInput,
+        agent: {
+          ...baseInput.agent,
+          model: "openrouter/anthropic/claude-sonnet-4",
+          model_settings: { provider_type: "openrouter" },
+        },
+      })) {
+        // drain
+      }
+      for await (const _event of adapter.stream({
+        ...baseInput,
+        agent: {
+          ...baseInput.agent,
+          model: "openrouter/anthropic/claude-sonnet-4",
+          model_settings: { provider_type: "openrouter" },
+        },
+      })) {
+        // drain again to verify same input gets same process-local pseudonym
+      }
+
+      const sessionId = capturedOptions?.headers?.["x-session-id"];
+      expect(sessionId).toMatch(/^[a-f0-9]{64}$/);
+      expect(sessionId).not.toBe("local-conv-1");
+      if (!sessionId) throw new Error("Expected OpenRouter session ID");
+      expect(capturedSessionIds).toEqual([sessionId, sessionId]);
+      expect(capturedPayload).toMatchObject({
+        session_id: sessionId,
+        trace: {
+          trace_id: sessionId,
+          trace_name: "letta-code",
+          span_name: "agent-turn",
+          generation_name: "anthropic/claude-sonnet-4",
+          custom_key: "kept",
+        },
+      });
+      const serializedPayload = JSON.stringify(capturedPayload);
+      expect(serializedPayload).not.toContain("local-conv-1");
+      expect(serializedPayload).not.toContain("agent-local-1");
+      expect(serializedPayload).not.toContain("conversation_id");
+      expect(serializedPayload).not.toContain("agent_id");
+
+      for await (const _event of adapter.stream({
+        ...baseInput,
+        conversationId: "local-conv-2",
+        agent: {
+          ...baseInput.agent,
+          model: "openrouter/anthropic/claude-sonnet-4",
+          model_settings: { provider_type: "openrouter" },
+        },
+      })) {
+        // drain a different conversation to verify pseudonyms are not constant
+      }
+      expect(capturedOptions?.headers?.["x-session-id"]).not.toBe(sessionId);
+    } finally {
+      if (previousDoNotTrack === undefined) delete process.env.DO_NOT_TRACK;
+      else process.env.DO_NOT_TRACK = previousDoNotTrack;
+      if (previousTelemetry === undefined) delete process.env.LETTA_CODE_TELEM;
+      else process.env.LETTA_CODE_TELEM = previousTelemetry;
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("normalizes pre-existing OpenRouter session headers case-insensitively", () => {
+    const headers = withOpenRouterSessionHeader(
+      {
+        "X-Session-Id": "local-conv-1",
+        "X-SESSION-ID": "agent-local-1",
+        "x-Session-Id": "local-conv-2",
+        "x-other-header": "kept",
+      },
+      "pseudonymous-session",
+    );
+
+    expect(headers).toEqual({
+      "x-other-header": "kept",
+      "x-session-id": "pseudonymous-session",
+    });
+    expect(JSON.stringify(headers)).not.toContain("local-conv-1");
+    expect(JSON.stringify(headers)).not.toContain("agent-local-1");
+    expect(JSON.stringify(headers)).not.toContain("local-conv-2");
+  });
+
+  test("skips OpenRouter Broadcast trace enrichment when telemetry is opted out", async () => {
+    for (const [envKey, envValue] of [
+      ["DO_NOT_TRACK", "1"],
+      ["LETTA_CODE_TELEM", "0"],
+      ["LETTA_CODE_TELEM", "false"],
+    ] as const) {
+      const storageDir = await mkdtemp(
+        join(tmpdir(), "pi-stream-openrouter-broadcast-opt-out-"),
+      );
+      const previousDoNotTrack = process.env.DO_NOT_TRACK;
+      const previousTelemetry = process.env.LETTA_CODE_TELEM;
+      try {
+        delete process.env.DO_NOT_TRACK;
+        delete process.env.LETTA_CODE_TELEM;
+        process.env[envKey] = envValue;
+        await createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "openrouter",
+          providerName: "lc-openrouter",
+          apiKey: "secret-key",
+        });
+
+        let capturedOptions:
+          | (SimpleStreamOptions & Record<string, unknown>)
+          | undefined;
+        const stream: PiStreamFunction = (
+          _model: Model<string>,
+          _context: Context,
+          options?: SimpleStreamOptions & Record<string, unknown>,
+        ) => {
+          capturedOptions = options;
+          const finalMessage = {
+            ...assistantMessage(),
+            api: "openai-completions",
+            provider: "openrouter",
+            model: "anthropic/claude-sonnet-4",
+          } satisfies AssistantMessage;
+          return streamFromEvents(
+            [{ type: "done", reason: "stop", message: finalMessage }],
+            finalMessage,
+          );
+        };
+
+        const adapter = new PiStreamAdapter({
+          stream,
+          localProviderAuthStorageDir: storageDir,
+        });
+        const baseInput = input();
+        for await (const _event of adapter.stream({
+          ...baseInput,
+          agent: {
+            ...baseInput.agent,
+            model: "openrouter/anthropic/claude-sonnet-4",
+            model_settings: { provider_type: "openrouter" },
+          },
+        })) {
+          // drain
+        }
+
+        expect(capturedOptions?.headers?.["x-session-id"]).toBeUndefined();
+        expect(capturedOptions?.sessionId).toBeUndefined();
+        expect(capturedOptions?.onPayload).toBeUndefined();
+      } finally {
+        if (previousDoNotTrack === undefined) delete process.env.DO_NOT_TRACK;
+        else process.env.DO_NOT_TRACK = previousDoNotTrack;
+        if (previousTelemetry === undefined)
+          delete process.env.LETTA_CODE_TELEM;
+        else process.env.LETTA_CODE_TELEM = previousTelemetry;
+        await rm(storageDir, { recursive: true, force: true });
+      }
     }
   });
 
