@@ -265,7 +265,7 @@ interface ParentMemoryFile {
 }
 
 interface ParentMemorySnapshotOptions {
-  /** Maximum characters for the full rendered parent-memory preview. */
+  /** Maximum characters for the full rendered parent memory preview. */
   maxChars?: number;
 }
 

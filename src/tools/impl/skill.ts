@@ -10,6 +10,7 @@ import {
   getFrontmatterBoolean,
   getFrontmatterStringList,
   isSkillAvailableForAgent,
+  PROJECT_SKILLS_DIR,
   SKILLS_DIR,
 } from "@/agent/skills";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -72,7 +73,7 @@ function hasAdditionalFiles(skillMdPath: string): boolean {
  * Returns both content and the path to the SKILL.md file
  *
  * Search order (highest priority first):
- * 1. Project skills (.skills/)
+ * 1. Project skills (.agents/skills/, then legacy .skills/ fallback)
  * 2. Agent memory skills (~/.letta/agents/{id}/memory/skills/)
  * 3. Agent memory skills fallback ($MEMORY_DIR/skills/)
  * 4. Global skills (~/.letta/skills/)
@@ -84,12 +85,18 @@ export async function readSkillContent(
   agentId?: string,
 ): Promise<{ content: string; path: string }> {
   // 1. Try project skills directory (highest priority)
-  const projectSkillPath = join(skillsDir, skillId, "SKILL.md");
-  try {
-    const content = await readFile(projectSkillPath, "utf-8");
-    return { content, path: projectSkillPath };
-  } catch {
-    // Not in project, continue
+  const projectSkillsDirs = new Set<string>([
+    join(getCurrentWorkingDirectory(), PROJECT_SKILLS_DIR),
+    skillsDir,
+  ]);
+  for (const projectSkillsDir of projectSkillsDirs) {
+    const projectSkillPath = join(projectSkillsDir, skillId, "SKILL.md");
+    try {
+      const content = await readFile(projectSkillPath, "utf-8");
+      return { content, path: projectSkillPath };
+    } catch {
+      // Not in this project skills directory, continue
+    }
   }
 
   // 2. Try agent memory skills directory (if agentId provided)

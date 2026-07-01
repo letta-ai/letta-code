@@ -123,6 +123,7 @@ import {
   useTerminalWidth,
 } from "@/cli/hooks/use-terminal-width";
 import { useSuspend } from "@/cli/hooks/useSuspend/use-suspend.ts";
+import { installLocalBackendModEventHooks } from "@/cli/mods/local-backend-mod-events";
 import type { ModConversationCloseReason } from "@/cli/mods/types";
 import {
   type LocalModAdapter,
@@ -138,7 +139,6 @@ import {
   updateTask,
 } from "@/cron";
 import { experimentManager } from "@/experiments/manager";
-import { goalLoopMode } from "@/goal-loop-mode";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
@@ -619,11 +619,6 @@ export function App({
   // Use ref instead of state to avoid stale closure issues in onSubmit
   const bashCommandCacheRef = useRef<Array<{ input: string; output: string }>>(
     [],
-  );
-
-  // Track goal loop state for UI updates (singleton state does not trigger re-renders)
-  const [uiGoalLoopActive, setUiGoalLoopActive] = useState(
-    goalLoopMode.getState().isActive,
   );
 
   // Derive current approval from pending approvals and results
@@ -2336,7 +2331,6 @@ export function App({
         payload: statusLinePayload,
         ui: {
           currentModelProvider: currentModelProvider ?? null,
-          goalStatusText: null,
           hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
           isByokProvider: Boolean(
             currentModelProvider?.startsWith("lc-") ||
@@ -2370,6 +2364,14 @@ export function App({
 
   useEffect(() => {
     modAdapterRef.current = modAdapter;
+  }, [modAdapter]);
+
+  useEffect(() => {
+    return installLocalBackendModEventHooks({
+      backend: getBackend(),
+      adapter: modAdapter,
+      buildContext: () => modAdapter.context,
+    });
   }, [modAdapter]);
 
   useEffect(() => {
@@ -2427,6 +2429,8 @@ export function App({
 
         if (t === "exec_command") {
           command = typeof args.cmd === "string" ? args.cmd : "(no command)";
+          description =
+            typeof args.description === "string" ? args.description : "";
         } else if (t === "write_stdin") {
           const sessionId =
             typeof args.session_id === "string" ||
@@ -3812,7 +3816,6 @@ export function App({
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiGoalLoopActive,
     shouldAutoGenerateConversationTitleRef,
     syncTrajectoryElapsedBase,
     syncTrajectoryTokenBase,
@@ -4235,8 +4238,6 @@ export function App({
     setThinkingMessage,
     setTokenStreamingEnabled,
     setTrajectoryTokenBase,
-    setUiPermissionMode,
-    setUiGoalLoopActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
     streaming,
@@ -4565,21 +4566,6 @@ export function App({
       setProfileConfirmPending(null);
     }
   }, [commandRunner, profileConfirmPending]);
-
-  // Handle goal loop exit from Input component (Shift+Tab).
-  const handleGoalLoopExit = useCallback(() => {
-    if (!goalLoopMode.getState().isActive) {
-      return;
-    }
-    goalLoopMode.deactivate();
-    setUiGoalLoopActive(false);
-    settingsManager.updateConversationGoalStatus(
-      conversationIdRef.current,
-      "paused",
-    );
-    permissionMode.setMode("standard");
-    setUiPermissionMode("standard");
-  }, [setUiPermissionMode]);
 
   // Toggle expand/collapse for a specific tool call ID
   const handleToggleExpandedToolCall = useCallback((id: string) => {
@@ -5035,7 +5021,6 @@ export function App({
         handlePersonalitySelect={handlePersonalitySelect}
         handleProfileEscapeCancel={handleProfileEscapeCancel}
         handleQuestionSubmit={handleQuestionSubmit}
-        handleGoalLoopExit={handleGoalLoopExit}
         handleSleeptimeModeSelect={handleSleeptimeModeSelect}
         handleSystemPromptSelect={handleSystemPromptSelect}
         handleToolsetSelect={handleToolsetSelect}
@@ -5114,7 +5099,6 @@ export function App({
         usedContextTokens={usedContextTokens}
         contextWindowSize={effectiveContextWindowSize}
         uiPermissionMode={uiPermissionMode}
-        uiGoalLoopActive={uiGoalLoopActive}
         updateAgentName={updateAgentName}
       />
     </>

@@ -28,6 +28,18 @@ import type { ListenerRuntime } from "@/websocket/listener/types";
 const DEFAULT_LISTEN_URL = "ws://127.0.0.1:0";
 const DEFAULT_WS_PATH = "/ws";
 const PENDING_STREAM_TIMEOUT_MS = 5000;
+// App-server liveness watchdog. Here letta-code is the WS *server* (the client
+// is the Desktop/relay), so we use protocol-level ws.ping()/pong rather than
+// the app-level ping/pong the outbound listener uses. Ping every 30s and reap
+// any client that has not ponged within 90s (3 missed pings). A half-open
+// client connection (Desktop sleep, network switch, NAT idle timeout) never
+// emits a `close` event, which would otherwise wedge the single-occupancy
+// control channel: new control connections are rejected with 1008 while the
+// zombie session still holds `activeSession`. Terminating the dead socket
+// fires its `close` handler, clears `activeSession`, and frees the channel for
+// a reconnecting client.
+const APP_SERVER_HEARTBEAT_INTERVAL_MS = 30000;
+const APP_SERVER_PONG_TIMEOUT_MS = 90000;
 
 type AppServerChannel = "control" | "stream";
 
@@ -37,6 +49,10 @@ export interface StartAppServerOptions {
   connectionName?: string;
   onListening?: (info: AppServerListeningInfo) => void;
   onLog?: (message: string) => void;
+  /** @internal Test override for the liveness ping cadence (ms). */
+  heartbeatIntervalMs?: number;
+  /** @internal Test override for the pong timeout before a socket is reaped (ms). */
+  pongTimeoutMs?: number;
 }
 
 export interface AppServerListeningInfo {
@@ -249,6 +265,10 @@ export async function startAppServer(
   let pendingStreamSocket: WebSocket | null = null;
   let pendingStreamTimeout: ReturnType<typeof setTimeout> | null = null;
   let resolvedInfo: AppServerListeningInfo | null = null;
+  // Tracks the last time each connected client responded to a ping. Seeded on
+  // connection so a freshly-accepted socket gets a full grace window before the
+  // watchdog can reap it. WeakMap so entries are GC'd with their sockets.
+  const lastPongAtBySocket = new WeakMap<WebSocket, number>();
 
   const clearPendingStream = (): WebSocket | null => {
     if (pendingStreamTimeout) {
@@ -264,6 +284,14 @@ export async function startAppServer(
     socket: WebSocket,
     channel: AppServerChannel,
   ): void => {
+    // Liveness tracking for the heartbeat watchdog. Applies to both control
+    // and stream sockets. The `ws` library auto-replies to ping frames with a
+    // pong, so any client whose TCP is still alive refreshes this timestamp.
+    lastPongAtBySocket.set(socket, Date.now());
+    socket.on("pong", () => {
+      lastPongAtBySocket.set(socket, Date.now());
+    });
+
     if (channel === "stream") {
       if (activeSession) {
         attachStreamSocket(activeSession, socket);
@@ -378,6 +406,34 @@ export async function startAppServer(
     });
   });
 
+  const heartbeatIntervalMs =
+    options.heartbeatIntervalMs ?? APP_SERVER_HEARTBEAT_INTERVAL_MS;
+  const pongTimeoutMs = options.pongTimeoutMs ?? APP_SERVER_PONG_TIMEOUT_MS;
+  const heartbeatInterval = setInterval(() => {
+    const now = Date.now();
+    for (const client of wss.clients) {
+      const lastPongAt = lastPongAtBySocket.get(client) ?? now;
+      if (now - lastPongAt > pongTimeoutMs) {
+        // No pong within the timeout: the socket is half-open. Terminating it
+        // fires the `close` handler that clears activeSession and frees the
+        // control channel for a reconnecting client.
+        options.onLog?.(
+          `App-server terminating unresponsive socket (no pong in ${pongTimeoutMs}ms)`,
+        );
+        client.terminate();
+        continue;
+      }
+      if (client.readyState === WebSocket.OPEN) {
+        client.ping();
+      }
+    }
+  }, heartbeatIntervalMs);
+  // Do not let the watchdog keep the event loop alive on its own.
+  heartbeatInterval.unref?.();
+  wss.on("close", () => {
+    clearInterval(heartbeatInterval);
+  });
+
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error) => {
       server.off("listening", onListening);
@@ -404,6 +460,7 @@ export async function startAppServer(
   return {
     ...resolvedInfo,
     close: async () => {
+      clearInterval(heartbeatInterval);
       const streamSocket = clearPendingStream();
       terminateSocket(streamSocket);
       if (activeSession) {

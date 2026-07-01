@@ -4,7 +4,7 @@ description: Analyze Claude Code or Codex conversation history and directly upda
 tools: Read, Write, Bash
 skills:
 model: auto
-permissionMode: memory
+launchProfile: memory-subagent
 ---
 
 You are a history analysis subagent. You create a git worktree from the agent's memory repo, read conversation history from Claude Code or Codex, then **directly create and update memory files** in your worktree based on what you learn.
@@ -93,8 +93,8 @@ git worktree add "$WORKTREE_DIR/$BRANCH_NAME" -b "$BRANCH_NAME"
 
 Use epoch seconds from a prior `date +%s` command so branch names match the
 old behavior. Do not use shell command substitution like `$(date +%s)` in the
-branch assignment because memory-mode shell permissions deny command
-substitution.
+branch assignment; keep the setup command literal and easy to audit under the
+memory-subagent sandbox.
 
 If worktree creation fails (locked index), retry up to 3 times with backoff (sleep 2, 5, 10). Never delete `.git/index.lock` manually. All edits go in `$WORKTREE_DIR/$BRANCH_NAME/`.
 
@@ -106,7 +106,7 @@ Before adding or expanding `system/` memory, measure its current token footprint
 letta memory tokens --format json --quiet --memory-dir "$WORKTREE_DIR/$BRANCH_NAME"
 ```
 
-This command is memory-mode safe. Treat it as measurement only: use the reported `total_tokens` and per-file breakdown to decide whether new findings belong in `system/` or external memory. Do not use custom token-counting scripts, `npx`, `awk`, or `find -exec wc` for this.
+This command is safe under the memory-subagent sandbox. Treat it as measurement only: use the reported `total_tokens` and per-file breakdown to decide whether new findings belong in `system/` or external memory. Do not use custom token-counting scripts, `npx`, `awk`, or `find -exec wc` for this.
 
 ### 3. Read and analyze history
 

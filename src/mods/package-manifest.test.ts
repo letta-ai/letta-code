@@ -47,7 +47,7 @@ describe("Letta package manifest", () => {
       letta: {
         manifestVersion: 1,
         mods: ["mods/provider.mjs", "mods/statusline.tsx"],
-        capabilities: ["providers", "ui.statusline", "events.lifecycle"],
+        capabilities: ["providers", "ui.panels", "events.lifecycle"],
         engines: {
           lettaCodeCli: ">=0.28.0",
           lettaCodeDesktop: ">=0.12.0 <0.20.0",
@@ -61,7 +61,7 @@ describe("Letta package manifest", () => {
     expect(result.manifest).toEqual({
       manifestVersion: 1,
       mods: ["mods/provider.mjs", "mods/statusline.tsx"],
-      capabilities: ["providers", "ui.statusline", "events.lifecycle"],
+      capabilities: ["providers", "ui.panels", "events.lifecycle"],
       engines: {
         lettaCodeCli: ">=0.28.0",
         lettaCodeDesktop: ">=0.12.0 <0.20.0",

@@ -89,7 +89,7 @@ export interface PendingExternalToolCall {
 }
 
 export interface ModeChangePayload {
-  mode: "standard" | "acceptEdits" | "memory" | "unrestricted";
+  mode: "standard" | "acceptEdits" | "unrestricted";
 }
 
 export interface ChangeCwdMessage {
@@ -186,6 +186,12 @@ export type ListenerRuntime = {
   streamTransport?: ListenerTransport | null;
   heartbeatInterval: NodeJS.Timeout | null;
   reconnectTimeout: NodeJS.Timeout | null;
+  /**
+   * Epoch ms of the last `pong` observed from the cloud relay. Used by the
+   * heartbeat watchdog to detect a half-open socket (no `close` event) and
+   * force a reconnect. `null` until the first pong on a connection.
+   */
+  lastPongAt: number | null;
   intentionallyClosed: boolean;
   hasSuccessfulConnection: boolean;
   /** True once the WS has connected at least once. Never reset to false. */

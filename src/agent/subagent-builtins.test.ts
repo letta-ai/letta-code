@@ -46,13 +46,59 @@ describe("built-in subagents", () => {
     expect(configs.reflection?.recommendedModel).toBe("inherit");
   });
 
-  test("memory-related built-ins use memory permission mode", async () => {
+  test("memory-related built-ins use the memory-subagent launch profile", async () => {
     const configs = await getAllSubagentConfigs();
 
-    expect(configs.reflection?.permissionMode).toBe("memory");
-    expect(configs["history-analyzer"]?.permissionMode).toBe("memory");
-    expect(configs.memory?.permissionMode).toBe("memory");
-    expect(configs.init?.permissionMode).toBe("memory");
+    expect(configs.reflection?.launchProfile).toBe("memory-subagent");
+    expect(configs["history-analyzer"]?.launchProfile).toBe("memory-subagent");
+    expect(configs.memory?.launchProfile).toBe("memory-subagent");
+    expect(configs.init?.launchProfile).toBe("memory-subagent");
+  });
+
+  test("subagents run in the background by default", async () => {
+    const configs = await getAllSubagentConfigs();
+
+    for (const name of [
+      "fork",
+      "general-purpose",
+      "history-analyzer",
+      "init",
+      "memory",
+      "recall",
+      "reflection",
+    ]) {
+      expect(configs[name]?.background).toBe(true);
+    }
+  });
+
+  test("custom subagents can explicitly opt out of the background default", async () => {
+    tempDir = createTempProjectDir();
+    writeCustomSubagent(
+      tempDir,
+      "background-worker.md",
+      `---
+name: background-worker
+description: Custom background worker
+tools: Read
+---
+Custom prompt body`,
+    );
+    writeCustomSubagent(
+      tempDir,
+      "foreground-worker.md",
+      `---
+name: foreground-worker
+description: Custom foreground worker
+tools: Read
+background: false
+---
+Custom prompt body`,
+    );
+
+    const configs = await getAllSubagentConfigs(tempDir);
+
+    expect(configs["background-worker"]?.background).toBe(true);
+    expect(configs["foreground-worker"]?.background).toBe(false);
   });
 
   test("reflection exposes only Edit among first-class file tools", async () => {

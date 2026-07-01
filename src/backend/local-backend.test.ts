@@ -904,6 +904,153 @@ describe("local backend pi transcript", () => {
     expect(systemPrompts[1]).not.toBe(systemPrompts[0]);
   });
 
+  test("emits compact mod-event hooks around local compaction", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-compact-hooks-"),
+    );
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "ok" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const complete = async (): Promise<AssistantMessage> =>
+      assistantMessage({
+        responseId: "summary-response",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Compacted summary." }],
+      });
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      complete,
+      memfsEnabled: false,
+    });
+    const starts: Array<{ trigger: string; conversationId: string | null }> =
+      [];
+    const ends: Array<{
+      trigger: string;
+      messagesBefore: number;
+      messagesAfter: number;
+      contextTokensBefore: number;
+      contextTokensAfter: number;
+    }> = [];
+    backend.setModEventHooks({
+      onCompactStart: (info) => {
+        starts.push({
+          trigger: info.trigger,
+          conversationId: info.conversationId,
+        });
+      },
+      onCompactEnd: (info) => {
+        ends.push({
+          trigger: info.trigger,
+          messagesBefore: info.messagesBefore,
+          messagesAfter: info.messagesAfter,
+          contextTokensBefore: info.contextTokensBefore,
+          contextTokensAfter: info.contextTokensAfter,
+        });
+      },
+    });
+    const agent = await backend.createAgent({
+      name: "Local",
+      system: "base {CORE_MEMORY}",
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "first" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    await backend.compactConversationMessages(conversation.id, {
+      agent_id: agent.id,
+    } as never);
+
+    expect(starts).toEqual([
+      { trigger: "manual", conversationId: conversation.id },
+    ]);
+    expect(ends).toHaveLength(1);
+    expect(ends[0]?.trigger).toBe("manual");
+    // Compaction never increases the message count.
+    expect(ends[0]?.messagesBefore).toBeGreaterThanOrEqual(
+      ends[0]?.messagesAfter ?? 0,
+    );
+    expect(ends[0]?.messagesAfter ?? 0).toBeGreaterThan(0);
+    expect(ends[0]?.contextTokensBefore ?? -1).toBeGreaterThanOrEqual(0);
+    expect(ends[0]?.contextTokensAfter ?? -1).toBeGreaterThanOrEqual(0);
+  });
+
+  test("a throwing compact hook does not break compaction", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-compact-hook-throws-"),
+    );
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "ok" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const complete = async (): Promise<AssistantMessage> =>
+      assistantMessage({
+        responseId: "summary-response",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Compacted summary." }],
+      });
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      complete,
+      memfsEnabled: false,
+    });
+    backend.setModEventHooks({
+      onCompactStart: () => {
+        throw new Error("start hook boom");
+      },
+      onCompactEnd: () => {
+        throw new Error("end hook boom");
+      },
+    });
+    const agent = await backend.createAgent({
+      name: "Local",
+      system: "base {CORE_MEMORY}",
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "first" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const result = await backend.compactConversationMessages(conversation.id, {
+      agent_id: agent.id,
+    } as never);
+
+    expect(result.summary).toBe("Compacted summary.");
+  });
+
   test("compaction follows the conversation model override, not the agent base", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-compact-model-"),
@@ -1039,10 +1186,12 @@ describe("local backend pi transcript", () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-unconfigured-local-"),
     );
+    const fetchImpl = (async () =>
+      new Response("not found", { status: 404 })) as unknown as typeof fetch;
 
-    const handles = (await listLocalModels(storageDir)).map(
-      (model) => model.handle,
-    );
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
     expect(handles.some((handle) => handle.startsWith("ollama/"))).toBe(false);
     expect(handles.some((handle) => handle.startsWith("lmstudio/"))).toBe(
       false,
@@ -1050,6 +1199,76 @@ describe("local backend pi transcript", () => {
     expect(handles.some((handle) => handle.startsWith("llama.cpp/"))).toBe(
       false,
     );
+  });
+
+  test("auto-detects reachable local model endpoints without saved providers", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-autodetect-local-"),
+    );
+    const calls: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : String(input);
+      calls.push(url);
+      if (url === "http://localhost:11434/api/tags") {
+        return new Response(
+          JSON.stringify({ models: [{ name: "qwen2.5-coder:7b" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url === "http://127.0.0.1:1234/v1/models") {
+        return new Response(
+          JSON.stringify({ data: [{ id: "openai/gpt-oss-20b" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "http://localhost:11434/v1/models",
+        "http://localhost:11434/api/tags",
+        "http://127.0.0.1:1234/v1/models",
+        "http://localhost:8080/v1/models",
+      ]),
+    );
+    expect(handles).toContain("ollama/qwen2.5-coder:7b");
+    expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
+    expect(handles.some((handle) => handle.startsWith("llama.cpp/"))).toBe(
+      false,
+    );
+  });
+
+  test("auto-detects reachable local model endpoints alongside saved providers", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-autodetect-with-provider-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "anthropic",
+      providerName: "lc-anthropic",
+      apiKey: "dummy",
+      storageDir,
+    });
+    const fetchImpl = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : String(input);
+      if (url === "http://127.0.0.1:1234/v1/models") {
+        return new Response(JSON.stringify({ data: [{ id: "local-model" }] }), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(handles).toContain("anthropic/claude-opus-4-7");
+    expect(handles).toContain("lmstudio/local-model");
   });
 
   test("discovers configured LM Studio models from OpenAI-compatible catalog", async () => {
@@ -1067,17 +1286,22 @@ describe("local backend pi transcript", () => {
     const fetchImpl = (async (input: unknown) => {
       const url = typeof input === "string" ? input : String(input);
       calls.push(url);
-      return new Response(
-        JSON.stringify({ data: [{ id: "openai/gpt-oss-20b" }] }),
-        { headers: { "content-type": "application/json" } },
-      );
+      if (url === "http://127.0.0.1:1234/v1/models") {
+        return new Response(
+          JSON.stringify({ data: [{ id: "openai/gpt-oss-20b" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
 
     const handles = (
       await listLocalModels(storageDir, { fetch: fetchImpl })
     ).map((model) => model.handle);
 
-    expect(calls).toEqual(["http://127.0.0.1:1234/v1/models"]);
+    expect(calls).toEqual(
+      expect.arrayContaining(["http://127.0.0.1:1234/v1/models"]),
+    );
     expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
     expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
   });
@@ -1110,10 +1334,12 @@ describe("local backend pi transcript", () => {
       await listLocalModels(storageDir, { fetch: fetchImpl })
     ).map((model) => model.handle);
 
-    expect(calls).toEqual([
-      "http://localhost:11434/v1/models",
-      "http://localhost:11434/api/tags",
-    ]);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "http://localhost:11434/v1/models",
+        "http://localhost:11434/api/tags",
+      ]),
+    );
     expect(handles).toContain("ollama/qwen2.5-coder:7b");
     expect(handles).not.toContain("ollama/llama2");
   });
@@ -1156,7 +1382,12 @@ describe("local backend pi transcript", () => {
 
     const models = await listLocalModels(storageDir, { fetch: fetchImpl });
 
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "http://localhost:11434/v1/models",
+        "http://localhost:8080/v1/models",
+      ]),
+    );
     expect(models).toContainEqual({
       handle: "lmstudio/gemma-4-26B-A4B-it-oQ6",
       max_context_window: 256000,
@@ -1328,18 +1559,25 @@ describe("local backend pi transcript", () => {
     const fetchImpl = (async (input: unknown, init?: RequestInit) => {
       const url = typeof input === "string" ? input : String(input);
       calls.push(url);
-      captured.authorization = new Headers(init?.headers).get("Authorization");
-      return new Response(
-        JSON.stringify({ data: [{ id: "rnj-1:8b" }, { id: "glm-5.1" }] }),
-        { headers: { "content-type": "application/json" } },
-      );
+      if (url === "https://ollama.com/v1/models") {
+        captured.authorization = new Headers(init?.headers).get(
+          "Authorization",
+        );
+        return new Response(
+          JSON.stringify({ data: [{ id: "rnj-1:8b" }, { id: "glm-5.1" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
 
     const handles = (
       await listLocalModels(storageDir, { fetch: fetchImpl })
     ).map((model) => model.handle);
 
-    expect(calls).toEqual(["https://ollama.com/v1/models"]);
+    expect(calls).toEqual(
+      expect.arrayContaining(["https://ollama.com/v1/models"]),
+    );
     expect(captured.authorization).toBe("Bearer ollama-key");
     expect(handles).toContain("ollama-cloud/rnj-1:8b");
     expect(handles).toContain("ollama-cloud/glm-5.1");
@@ -1359,11 +1597,20 @@ describe("local backend pi transcript", () => {
       storageDir,
     });
     const captured: { authorization?: string | null } = {};
-    const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
-      captured.authorization = new Headers(init?.headers).get("Authorization");
-      return new Response(JSON.stringify({ data: [{ id: "secure-model" }] }), {
-        headers: { "content-type": "application/json" },
-      });
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : String(input);
+      if (url === "http://localhost:8000/v1/models") {
+        captured.authorization = new Headers(init?.headers).get(
+          "Authorization",
+        );
+        return new Response(
+          JSON.stringify({ data: [{ id: "secure-model" }] }),
+          {
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+      return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
 
     await withEnv({ LMSTUDIO_API_KEY: "1234" }, async () => {

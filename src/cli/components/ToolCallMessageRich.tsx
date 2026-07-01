@@ -232,6 +232,7 @@ export const ToolCallMessage = memo(
       let args: ReactNode = null;
       let shellCommand: string | null = null;
       let shellSemanticKind: "read" | "list" | "search" | "run" | null = null;
+      let hasShellDescription = false;
       if (!isQuestionTool(rawName)) {
         const parseArgs = (): {
           formatted: ReturnType<typeof formatArgsDisplay> | null;
@@ -277,7 +278,13 @@ export const ToolCallMessage = memo(
           if (formattedArgs.shellSemantic) {
             shellSemanticKind = formattedArgs.shellSemantic.kind;
             displayName = formattedArgs.shellSemantic.label;
-            if (formattedArgs.shellSemantic.kind === "run") {
+            hasShellDescription =
+              typeof formattedArgs.parsed.description === "string" &&
+              formattedArgs.parsed.description.trim().length > 0;
+            if (
+              formattedArgs.shellSemantic.kind === "run" &&
+              !hasShellDescription
+            ) {
               shellCommand = formattedArgs.shellSemantic.rawCommand;
             }
           } else if (formattedArgs.displayName) {
@@ -301,6 +308,7 @@ export const ToolCallMessage = memo(
         !shellCommand &&
         isShellTool(rawName) &&
         argsText.trim() &&
+        !hasShellDescription &&
         (shellSemanticKind === null || shellSemanticKind === "run")
       ) {
         try {

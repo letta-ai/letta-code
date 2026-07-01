@@ -1,6 +1,6 @@
 ---
 name: Context Doctor
-id: context_doctor
+id: context-doctor
 description: Identify and repair degradation in system prompt, external memory, and skills preventing you from following instructions or remembering information as well as you should.
 ---
 

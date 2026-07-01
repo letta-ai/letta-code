@@ -73,9 +73,7 @@ export function buildDefaultStatuslineParts(
   }
 
   const rightCore = rightCoreParts.join("");
-  const right = context.ui.goalStatusText
-    ? chalk.magenta(context.ui.goalStatusText)
-    : " ".repeat(rightPrefixSpaces) + rightCore;
+  const right = " ".repeat(rightPrefixSpaces) + rightCore;
 
   return {
     left: <Text> </Text>,
