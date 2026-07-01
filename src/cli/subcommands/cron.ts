@@ -2,9 +2,9 @@
  * `letta cron` CLI subcommand.
  *
  * Usage:
- *   letta cron add --prompt <text> --every <interval> [--agent <id>] [--conversation <id>]
- *   letta cron add --prompt <text> --at <time> [--once] [--agent <id>]
- *   letta cron add --prompt <text> --cron <expr> [--agent <id>]
+ *   letta cron add --prompt <text> --every <interval> [--agent <id>] [--conversation <id> | --dedicated]
+ *   letta cron add --prompt <text> --at <time> [--once] [--agent <id>] [--conversation <id> | --dedicated]
+ *   letta cron add --prompt <text> --cron <expr> [--agent <id>] [--conversation <id> | --dedicated]
  *   letta cron list [--agent <id>] [--conversation <id>]
  *   letta cron get <id>
  *   letta cron runs --id <id>
@@ -13,6 +13,7 @@
  */
 
 import { parseArgs } from "node:util";
+import { getBackend } from "@/backend";
 import {
   addTask,
   deleteAllTasks,
@@ -49,6 +50,7 @@ Add options:
   --cron <expr>          Raw 5-field cron expression
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
   --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID or "default")
+  --dedicated            Create one stable conversation for this task (conflicts with --conversation)
 
 List/filter options:
   --agent <id>           Filter by agent ID
@@ -75,6 +77,7 @@ const CRON_OPTIONS = {
   cron: { type: "string" },
   agent: { type: "string" },
   conversation: { type: "string" },
+  dedicated: { type: "boolean" },
   all: { type: "boolean" },
   id: { type: "string" },
   limit: { type: "string" },
@@ -98,9 +101,29 @@ function getConversationId(fromArgs?: string): string {
   return fromArgs || process.env.LETTA_CONVERSATION_ID || "default";
 }
 
+function getDedicatedConversationSummary(name: string): string {
+  return `[Schedule] ${name}`;
+}
+
+async function createDedicatedCronConversation(
+  agentId: string,
+  name: string,
+): Promise<string> {
+  const conversation = await getBackend().createConversation({
+    agent_id: agentId,
+    summary: getDedicatedConversationSummary(name),
+  });
+  if (!conversation.id) {
+    throw new Error("Dedicated conversation creation did not return an id.");
+  }
+  return conversation.id;
+}
+
 // ── Handlers ────────────────────────────────────────────────────────
 
-function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
+async function handleAdd(
+  values: ReturnType<typeof parseCronArgs>["values"],
+): Promise<number> {
   const name = values.name;
   if (!name || typeof name !== "string") {
     console.error("Error: --name is required.");
@@ -125,7 +148,12 @@ function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
     return 1;
   }
 
-  const conversationId = getConversationId(values.conversation);
+  const dedicated = values.dedicated === true;
+  // Dedicated mode owns the target; accepting --conversation would be ambiguous.
+  if (dedicated && values.conversation !== undefined) {
+    console.error("Error: --dedicated cannot be used with --conversation.");
+    return 1;
+  }
 
   // Determine schedule type
   const everyValue = values.every;
@@ -189,6 +217,11 @@ function handleAdd(values: ReturnType<typeof parseCronArgs>["values"]): number {
   }
 
   try {
+    // Create it now so the schedule stores one stable, real conversation id.
+    const conversationId = dedicated
+      ? await createDedicatedCronConversation(agentId, name)
+      : getConversationId(values.conversation);
+
     const result = addTask({
       agent_id: agentId,
       conversation_id: conversationId,
