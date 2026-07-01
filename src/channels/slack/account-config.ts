@@ -1,4 +1,7 @@
-import type { ChannelAccountConfigAdapter } from "@/channels/plugin-types";
+import type {
+  ChannelAccountConfigAdapter,
+  ChannelConfigSchema,
+} from "@/channels/plugin-types";
 import {
   DEFAULT_SLACK_PERMISSION_MODE,
   type SlackChannelAccount,
@@ -16,6 +19,21 @@ const SLACK_CONFIG_KEYS = new Set([
   "show_completed_reaction",
   "listen_mode",
 ]);
+
+export const SLACK_CHANNEL_CONFIG_SCHEMA: ChannelConfigSchema = {
+  version: 1,
+  fields: [
+    {
+      type: "boolean",
+      key: "show_completed_reaction",
+      label: "Show completed reaction",
+      description:
+        "Add a :white_check_mark: reaction after successful turns finish. When disabled, successful turns only remove :eyes:.",
+      default: true,
+      scope: "account",
+    },
+  ],
+};
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
