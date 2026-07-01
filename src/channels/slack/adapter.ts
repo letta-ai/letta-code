@@ -1920,8 +1920,10 @@ export function createSlackAdapter(
       debugSlackProgress(
         `[START-OK] ts=${response.ts} chunks=${describeSlackStreamChunks(args.chunks ?? [])}`,
       );
-      // Don't clear the "Agent is thinking..." status here — let it
-      // persist during the turn. It will be cleared in finishSlackProgressCards.
+      // Once the native stream card is visible, clear Slack's assistant
+      // thread status so Slack doesn't render a second "is processing" field
+      // under our task card.
+      await clearSlackAssistantThreadStatus(entry.source);
       return true;
     } catch (error) {
       console.warn(

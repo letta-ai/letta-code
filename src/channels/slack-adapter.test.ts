@@ -1778,6 +1778,15 @@ test("slack adapter streams native task progress and clears thread status", asyn
     toolCallId: "call-1",
     toolName: "shell_exec",
   });
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
+    channel_id: "C123",
+    thread_ts: "1712790000.000050",
+    status: "",
+  });
+  expect(writeClient?.chat.appendStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
     batchId: "batch-1",
@@ -1794,7 +1803,6 @@ test("slack adapter streams native task progress and clears thread status", asyn
     sources: [source],
   });
 
-  const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
   expect(writeClient?.chat.update).not.toHaveBeenCalled();
   expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
