@@ -2360,15 +2360,24 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
+        let startupMemfsFlag: boolean | undefined = autoEnableMemfsForFreshAgent
+          ? true
+          : memfsFlag;
         if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
-          const { hydrateMemfsSettingFromAgent } = await import(
+          const { hydrateMemfsSettingFromAgent, isLettaCloud } = await import(
             "@/agent/memory-filesystem"
           );
           const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
           if (!memfsEnabled) {
-            console.warn(
-              "Warning: this agent does not have git-backed memory enabled. Run `/memfs enable` to enable MemFS.",
-            );
+            if (!noMemfsFlag && (await isLettaCloud())) {
+              // Auto-enable memfs for existing agents that don't have it yet.
+              // Agents can be created outside Letta Code without the tag.
+              startupMemfsFlag = true;
+            } else {
+              console.warn(
+                "Warning: this agent does not have git-backed memory enabled. Run `/memfs enable` to enable MemFS.",
+              );
+            }
           }
         }
 
@@ -2377,9 +2386,6 @@ async function main(): Promise<void> {
         // unless the user explicitly requested a memfs mode toggle.
         const agentId = agent.id;
         const agentTags = agent.tags ?? undefined;
-        const startupMemfsFlag = autoEnableMemfsForFreshAgent
-          ? true
-          : memfsFlag;
         const shouldBlockOnMemfsStartup = Boolean(memfsFlag || noMemfsFlag);
         const memfsSyncPromise = backend.capabilities.remoteMemfs
           ? import("@/agent/memory-filesystem").then(({ applyMemfsFlags }) =>
