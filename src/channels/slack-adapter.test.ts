@@ -2172,13 +2172,11 @@ test("slack adapter anchors direct message progress to the inbound message", asy
   const writeClient = FakeSlackWriteClient.instances[0];
   const statusCalls =
     (writeClient?.assistant.threads.setStatus.mock.calls as Array<
-      [
-        {
-          channel_id: string;
-          thread_ts: string;
-          status: string;
-        },
-      ]
+      Array<{
+        channel_id: string;
+        thread_ts: string;
+        status: string;
+      }>
     >) ?? [];
   expect(statusCalls[0]?.[0]).toMatchObject({
     channel_id: "D123",
