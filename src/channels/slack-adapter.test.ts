@@ -2121,7 +2121,7 @@ test("slack adapter keeps reasoning updates out of concrete task rows", async ()
   );
 });
 
-test("slack adapter does not start thread progress in direct messages", async () => {
+test("slack adapter anchors direct message progress to the inbound message", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -2161,21 +2161,75 @@ test("slack adapter does not start thread progress in direct messages", async ()
     toolCallId: "call-1",
     toolName: "read_file",
   });
-  await adapter.handleTurnLifecycleEvent?.({
-    type: "finished",
-    batchId: "batch-1",
-    outcome: "completed",
-    sources: [source],
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "D123",
+    text: "Done in the DM.",
+    replyToMessageId: "1712800000.000100",
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(
-    writeClient?.assistant.threads.setStatus.mock.calls ?? [],
-  ).toHaveLength(0);
-  expect(writeClient?.chat.startStream.mock.calls ?? []).toHaveLength(0);
-  expect(writeClient?.chat.appendStream.mock.calls ?? []).toHaveLength(0);
-  expect(writeClient?.chat.stopStream.mock.calls ?? []).toHaveLength(0);
-  expect(writeClient?.chat.postMessage.mock.calls ?? []).toHaveLength(0);
+  const statusCalls =
+    (writeClient?.assistant.threads.setStatus.mock.calls as Array<
+      [
+        {
+          channel_id: string;
+          thread_ts: string;
+          status: string;
+        },
+      ]
+    >) ?? [];
+  expect(statusCalls[0]?.[0]).toMatchObject({
+    channel_id: "D123",
+    thread_ts: "1712800000.000100",
+  });
+  expect(["is cogitating...", "is thinking...", "is processing..."]).toContain(
+    statusCalls[0]?.[0]?.status ?? "",
+  );
+  expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
+    channel: "D123",
+    thread_ts: "1712800000.000100",
+    task_display_mode: "plan",
+    chunks: [
+      {
+        type: "plan_update",
+        title: "Read",
+      },
+      {
+        type: "task_update",
+        id: "task_call-1",
+        title: "Read",
+        status: "in_progress",
+      },
+    ],
+  });
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "D123",
+    text: "Done in the DM.",
+  });
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+    channel: "D123",
+    ts: "1712800000.000300",
+    chunks: [
+      {
+        type: "task_update",
+        id: "task_call-1",
+        title: "Read",
+        status: "complete",
+      },
+      {
+        type: "plan_update",
+        title: "Completed",
+      },
+    ],
+  });
+  expect(writeClient?.chat.appendStream).not.toHaveBeenCalled();
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
+    channel_id: "D123",
+    thread_ts: "1712800000.000100",
+    status: "",
+  });
 });
 
 test("slack adapter keeps separate task rows for parallel tool progress", async () => {
