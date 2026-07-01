@@ -10,6 +10,13 @@ import type {
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type { Backend } from "@/backend";
 import { getBackend } from "@/backend";
+import {
+  getPiProviderSpec,
+  localProviderType,
+  type PiProvider,
+  resolveProviderFromModelHandle,
+  resolveProviderFromProviderType,
+} from "@/backend/dev/pi-provider-registry";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
@@ -30,6 +37,15 @@ function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   );
 }
 
+function localEndpointProviderType(
+  provider: PiProvider | undefined,
+): string | undefined {
+  if (!provider) return undefined;
+  return getPiProviderSpec(provider).createCustomModel
+    ? localProviderType(provider)
+    : undefined;
+}
+
 /**
  * Builds model_settings from updateArgs based on provider type.
  * Always ensures parallel_tool_calls is enabled.
@@ -42,6 +58,11 @@ function buildModelSettings(
     typeof updateArgs?.provider_type === "string"
       ? updateArgs.provider_type
       : undefined;
+  const localEndpointType =
+    localEndpointProviderType(resolveProviderFromModelHandle(modelHandle)) ??
+    localEndpointProviderType(
+      resolveProviderFromProviderType(explicitProviderType),
+    );
   // Include ChatGPT OAuth/Codex providers, including user-defined aliases whose
   // provider_type is supplied by the server model catalog.
   const isOpenAICodex =
@@ -74,7 +95,15 @@ function buildModelSettings(
 
   let settings: ModelSettings;
 
-  if (isOpenAI || isOpenRouter) {
+  if (localEndpointType) {
+    settings = {
+      provider_type: localEndpointType,
+      parallel_tool_calls:
+        typeof updateArgs?.parallel_tool_calls === "boolean"
+          ? updateArgs.parallel_tool_calls
+          : true,
+    };
+  } else if (isOpenAI || isOpenRouter) {
     const openaiSettings: OpenAIModelSettings = {
       provider_type: "openai",
       parallel_tool_calls: true,

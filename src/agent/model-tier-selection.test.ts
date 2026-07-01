@@ -5,8 +5,15 @@ import {
   getModelInfo,
   getModelInfoForLlmConfig,
   getReasoningTierOptionsForHandle,
+  resolveModel,
   shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
+
+describe("resolveModel", () => {
+  test("accepts raw Ollama model IDs", () => {
+    expect(resolveModel("llama3.1:latest")).toBe("llama3.1:latest");
+  });
+});
 
 describe("getModelInfo", () => {
   test("points opus alias at Opus 4.8 high", () => {

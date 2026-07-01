@@ -36,6 +36,7 @@ import {
   reasoningForSettings,
   resolvePiModelForAgent,
 } from "./pi-model-factory";
+import { streamOllamaNativeSimple } from "./pi-ollama-native-stream";
 import type {
   LlmEndErrorInfo,
   LlmEndInfo,
@@ -382,6 +383,37 @@ function withAnthropicOutputEffort(
   };
 }
 
+function withOllamaNativeOptions(input: {
+  existing: SimpleStreamOptions["onPayload"] | undefined;
+  contextWindow: number | undefined;
+  maxTokens: number | undefined;
+}): SimpleStreamOptions["onPayload"] | undefined {
+  if (!input.contextWindow && !input.maxTokens) return input.existing;
+  return async (payload, model) => {
+    let next = payload;
+    let upstreamChanged = false;
+    const upstream = await input.existing?.(payload, model);
+    if (upstream !== undefined) {
+      next = upstream;
+      upstreamChanged = true;
+    }
+
+    if (model.provider !== "ollama" || !isRecord(next)) {
+      return upstreamChanged ? next : undefined;
+    }
+
+    const options = isRecord(next.options) ? next.options : {};
+    return {
+      ...next,
+      options: {
+        ...options,
+        ...(input.contextWindow ? { num_ctx: input.contextWindow } : {}),
+        ...(input.maxTokens ? { num_predict: input.maxTokens } : {}),
+      },
+    };
+  };
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -637,6 +669,9 @@ function defaultStream(
   context: Context,
   options?: SimpleStreamOptions & Record<string, unknown>,
 ) {
+  if (model.provider === "ollama") {
+    return streamOllamaNativeSimple(model, context, options);
+  }
   if (model.api === "bedrock-converse-stream") {
     return stream(model, context, options);
   }
@@ -688,9 +723,10 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       modelSettings: input.agent.model_settings,
       storageDir: this.localProviderAuthStorageDir,
     });
+    const effectiveModelSettings = localModel.modelSettings;
     const resolved = await resolvePiModelForAgent(
       localModel.model,
-      localModel.modelSettings,
+      effectiveModelSettings,
       { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
     );
     const context: Context = {
@@ -698,6 +734,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       messages: toPiMessages(input.uiMessages),
       ...(tools ? { tools } : {}),
     };
+    const maxTokens = maxTokensForSettings(effectiveModelSettings);
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
@@ -706,25 +743,22 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,
-      ...(reasoningForSettings(input.agent.model_settings)
-        ? { reasoning: reasoningForSettings(input.agent.model_settings) }
+      ...(reasoningForSettings(effectiveModelSettings)
+        ? { reasoning: reasoningForSettings(effectiveModelSettings) }
         : {}),
-      ...(maxTokensForSettings(input.agent.model_settings)
-        ? { maxTokens: maxTokensForSettings(input.agent.model_settings) }
-        : {}),
-      ...(serviceTierForSettings(resolved.model, input.agent.model_settings)
+      ...(maxTokens ? { maxTokens } : {}),
+      ...(serviceTierForSettings(resolved.model, effectiveModelSettings)
         ? {
             serviceTier: serviceTierForSettings(
               resolved.model,
-              input.agent.model_settings,
+              effectiveModelSettings,
             ),
           }
         : {}),
-      ...(boolValue(input.agent.model_settings.parallel_tool_calls) !==
-      undefined
+      ...(boolValue(effectiveModelSettings.parallel_tool_calls) !== undefined
         ? {
             parallelToolCalls: boolValue(
-              input.agent.model_settings.parallel_tool_calls,
+              effectiveModelSettings.parallel_tool_calls,
             ),
           }
         : {}),
@@ -744,12 +778,19 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       );
       if (
         resolved.model.id.includes("claude-fable-5") &&
-        anthropicEffortForSettings(input.agent.model_settings) === "max"
+        anthropicEffortForSettings(effectiveModelSettings) === "max"
       ) {
         // pi-ai's public ThinkingLevel type currently tops out at xhigh, but
         // Anthropic accepts Fable's max effort through output_config.effort.
         options.onPayload = withAnthropicOutputEffort(options.onPayload, "max");
       }
+    }
+    if (resolved.model.provider === "ollama") {
+      options.onPayload = withOllamaNativeOptions({
+        existing: options.onPayload,
+        contextWindow: resolved.model.contextWindow,
+        maxTokens,
+      });
     }
 
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);

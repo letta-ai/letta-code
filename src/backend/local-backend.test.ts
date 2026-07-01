@@ -25,6 +25,10 @@ import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/ag
 import type { ConversationMessageCreateBody } from "@/backend";
 import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
 import {
+  CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW,
+  CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS,
+} from "@/backend/dev/pi-model-factory";
+import {
   clearRegisteredPiProviders,
   registerPiProvider,
 } from "@/backend/dev/pi-provider-mod-registry";
@@ -33,7 +37,11 @@ import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LocalBackend } from "@/backend/local/local-backend";
 import { emptyLocalUsage } from "@/backend/local/local-message";
 import { LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
-import { listLocalModels } from "@/backend/local/local-model-config";
+import {
+  listLocalModels,
+  localModelSettingsForHandle,
+  resolveAvailableLocalModelForTurn,
+} from "@/backend/local/local-model-config";
 import {
   LocalStore,
   LocalTranscriptMigrationRequiredError,
@@ -1542,6 +1550,69 @@ describe("local backend pi transcript", () => {
       (agent as { llm_config?: { context_window?: number } }).llm_config
         ?.context_window,
     ).toBe(256000);
+  });
+
+  test("adds Ollama provider metadata for raw local model IDs at turn time", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-raw-ollama-provider-"),
+    );
+    try {
+      await createOrUpdateLocalProvider({
+        providerType: "ollama",
+        providerName: "lc-ollama",
+        apiKey: "not-needed",
+        baseURL: "http://localhost:11434/v1",
+        storageDir,
+      });
+
+      const resolved = await resolveAvailableLocalModelForTurn({
+        model: "llama3.1:latest",
+        modelSettings: {},
+        storageDir,
+      });
+
+      expect(resolved.model).toBe("llama3.1:latest");
+      expect(resolved.modelSettings.provider_type).toBe("ollama");
+      expect(resolved.modelSettings.context_window_limit).toBe(
+        CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW,
+      );
+      expect(resolved.modelSettings.max_tokens).toBe(
+        CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS,
+      );
+
+      expect(
+        localModelSettingsForHandle("ollama/llama3.1:latest")
+          ?.context_window_limit,
+      ).toBe(CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW);
+
+      expect(
+        localModelSettingsForHandle("ollama/llama3.1:latest")?.max_tokens,
+      ).toBe(CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS);
+
+      const prefixed = await resolveAvailableLocalModelForTurn({
+        model: "ollama/llama3.1:latest",
+        modelSettings: {},
+        storageDir,
+      });
+
+      expect(prefixed.modelSettings.provider_type).toBe("ollama");
+      expect(prefixed.modelSettings.max_tokens).toBe(
+        CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS,
+      );
+
+      const repaired = await resolveAvailableLocalModelForTurn({
+        model: "llama3.1:latest",
+        modelSettings: { provider_type: "openai" },
+        storageDir,
+      });
+
+      expect(repaired.modelSettings.provider_type).toBe("ollama");
+      expect(repaired.modelSettings.max_tokens).toBe(
+        CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS,
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("discovers configured Ollama Cloud models from OpenAI-compatible catalog", async () => {

@@ -29,8 +29,9 @@ import {
   LOCAL_ZAI_CODING_PROVIDER_NAME,
   LOCAL_ZAI_PROVIDER_NAME,
   type PiProvider,
-  resolveProviderFromModelHandle,
+  resolveProviderFromPrefixedModelHandle,
   resolveProviderFromProviderType,
+  resolveProviderFromRawLocalModelHandle,
   stripProviderHandlePrefix,
 } from "./pi-provider-registry";
 import {
@@ -41,6 +42,10 @@ import {
 
 export const DEFAULT_PI_PROVIDER = "openai" satisfies PiProvider;
 export const UNSELECTED_LOCAL_MODEL_HANDLE = "local/default";
+export const CUSTOM_OPENAI_COMPATIBLE_DEFAULT_CONTEXT_WINDOW = 128000;
+export const CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS = 32000;
+export const CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW = 32768;
+export const CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS = 2048;
 export type { PiProvider } from "./pi-provider-registry";
 
 export function isUnselectedLocalModelHandle(model: unknown): boolean {
@@ -171,13 +176,20 @@ export function resolvePiProviderFromAgent(
   ) as PiProvider | undefined;
   if (registeredProvider) return registeredProvider;
 
-  const handleProvider = resolveProviderFromModelHandle(model);
+  const handleProvider = resolveProviderFromPrefixedModelHandle(model);
   if (handleProvider) return handleProvider;
 
+  const rawLocalProvider = resolveProviderFromRawLocalModelHandle(model);
   const settingsProvider = resolveProviderFromProviderType(
     modelSettings.provider_type,
   );
-  if (settingsProvider) return settingsProvider;
+  if (
+    settingsProvider &&
+    !(settingsProvider === "openai" && rawLocalProvider)
+  ) {
+    return settingsProvider;
+  }
+  if (rawLocalProvider) return rawLocalProvider;
 
   if (model && !isUnselectedLocalModelHandle(model)) {
     const slashIndex = model.indexOf("/");
@@ -331,6 +343,14 @@ function customOpenAICompatibleModel(input: {
   contextWindow?: number;
   maxTokens?: number;
 }): Model<"openai-completions"> {
+  const defaultContextWindow =
+    input.provider === "ollama"
+      ? CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW
+      : CUSTOM_OPENAI_COMPATIBLE_DEFAULT_CONTEXT_WINDOW;
+  const defaultMaxTokens =
+    input.provider === "ollama"
+      ? CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS
+      : CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS;
   return {
     id: input.modelId,
     name: input.modelId,
@@ -348,11 +368,12 @@ function customOpenAICompatibleModel(input: {
         ? ["text", "image"]
         : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: input.contextWindow ?? 128000,
-    maxTokens: input.maxTokens ?? 32000,
+    contextWindow: input.contextWindow ?? defaultContextWindow,
+    maxTokens: input.maxTokens ?? defaultMaxTokens,
     compat: {
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
+      maxTokensField: "max_tokens",
     },
   };
 }

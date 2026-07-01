@@ -35,6 +35,39 @@ describe("local model updates", () => {
     clearAvailableModelsCache();
   });
 
+  test("keeps Ollama provider metadata when updating local model handles", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-model-update-ollama-provider-"),
+    );
+    try {
+      await createOrUpdateLocalProvider({
+        providerType: "ollama",
+        providerName: "lc-ollama",
+        apiKey: "not-needed",
+        baseURL: "http://localhost:11434/v1",
+        storageDir,
+      });
+
+      await withLocalBackendStorage(storageDir, async () => {
+        const backend = getBackend();
+        const agent = await backend.createAgent({ name: "Local" } as never);
+
+        const updated = await updateAgentLLMConfig(
+          agent.id,
+          "ollama/llama3.1:latest",
+          { parallel_tool_calls: true },
+        );
+
+        expect(updated.model).toBe("ollama/llama3.1:latest");
+        expect(
+          (updated.model_settings as Record<string, unknown>).provider_type,
+        ).toBe("ollama");
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("uses pi catalog token settings instead of static Letta model presets", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-model-update-pi-catalog-"),
