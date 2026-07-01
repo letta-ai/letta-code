@@ -6,6 +6,9 @@ export type GoalLoopState = {
   originalPrompt: string;
   currentIteration: number;
   tokenBudget: number | null;
+  // Max number of autonomous continuation turns before the loop stops itself.
+  // `null` means unbounded (the legacy behavior).
+  maxSteps: number | null;
 };
 
 // Use globalThis to ensure singleton across bundle.
@@ -21,6 +24,7 @@ function getDefaultState(): GoalLoopState {
     originalPrompt: "",
     currentIteration: 0,
     tokenBudget: null,
+    maxSteps: null,
   };
 }
 
@@ -38,12 +42,17 @@ function setGlobalState(state: GoalLoopState): void {
 }
 
 class GoalLoopModeManager {
-  activateGoal(objective: string, tokenBudget: number | null = null): void {
+  activateGoal(
+    objective: string,
+    tokenBudget: number | null = null,
+    maxSteps: number | null = null,
+  ): void {
     setGlobalState({
       isActive: true,
       originalPrompt: objective,
       currentIteration: 1,
       tokenBudget,
+      maxSteps,
     });
   }
 
@@ -69,8 +78,20 @@ class GoalLoopModeManager {
     return /<goal_status>\s*complete\s*<\/goal_status>/i.test(text);
   }
 
+  /**
+   * True once the loop has run at least `maxSteps` autonomous turns. Returns
+   * false when no cap is configured (`maxSteps === null`).
+   */
+  hasReachedStepLimit(): boolean {
+    const state = getGlobalState();
+    return state.maxSteps !== null && state.currentIteration >= state.maxSteps;
+  }
+
   shouldContinue(): boolean {
-    return getGlobalState().isActive;
+    const state = getGlobalState();
+    // Defense in depth: even if a caller forgets the explicit step-limit
+    // check, never continue past the configured cap.
+    return state.isActive && !this.hasReachedStepLimit();
   }
 }
 

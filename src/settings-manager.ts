@@ -74,6 +74,9 @@ export interface ConversationGoal {
   activeTimeSeconds: number;
   tokensUsed: number;
   tokenBudget?: number | null;
+  // Max autonomous continuation turns before the goal loop stops itself.
+  // `null`/undefined means unbounded.
+  maxSteps?: number | null;
 }
 
 export interface Settings {
@@ -1536,6 +1539,7 @@ class SettingsManager {
     workingDirectory: string = process.cwd(),
     tokenBudget: number | null = null,
     resetUsage: boolean = true,
+    maxSteps: number | null = null,
   ): ConversationGoal {
     const globalSettings = this.getSettings();
     const serverKey = getCurrentServerKey(globalSettings);
@@ -1552,6 +1556,7 @@ class SettingsManager {
       activeTimeSeconds: resetUsage ? 0 : (previous?.activeTimeSeconds ?? 0),
       tokensUsed: resetUsage ? 0 : (previous?.tokensUsed ?? 0),
       tokenBudget,
+      maxSteps,
     };
     this.updateLocalProjectSettings(
       {
