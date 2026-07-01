@@ -59,7 +59,7 @@ letta.events.on("tool_start", (event, ctx) => {
 
 Lifecycle, turn, tool, compaction, and llm events are wired today.
 
-Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform the outbound input for the next model turn. `tool_start` handlers can transform the tool arguments before execution. Compaction and llm handlers are notification-only.
+Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform or cancel outbound user-message turns. `tool_start` handlers can transform the tool arguments before execution. Compaction and llm handlers are notification-only.
 
 `compact_start`/`compact_end` and `llm_start`/`llm_end` only fire on the **local backend**, where compaction and provider requests run client-side. On the constellation backend that work happens server-side and these events do not fire, so guard with `letta.capabilities.events.compact` / `letta.capabilities.events.llm` for portable mods.
 
@@ -155,16 +155,18 @@ Handlers run in registration order. Later handlers see the current args after ea
   conversationId: string | null;
   toolCallId: string | null;
   toolName: string;
+  args: Record<string, unknown>;
   status: "success" | "error";
   output: string;
 }
 ```
 
-`tool_end` fires immediately after a tool produces a result, before the agent sees it. Handlers can inspect the result, or return `{ result: { status, output } }` to replace it:
+`tool_end` fires immediately after a tool produces a result, before the agent sees it. `event.args` contains the effective tool invocation arguments after `tool_start` transforms, so handlers can react to the specific file, command, query, etc. Handlers can inspect the result, or return `{ result: { status, output } }` to replace it:
 
 ```ts
 letta.events.on("tool_end", (event) => {
   if (event.toolName !== "Bash" || event.status !== "success") return;
+  if (typeof event.args.command !== "string") return;
   return { result: { status: "success", output: redactSecrets(event.output) } };
 });
 ```
@@ -184,7 +186,7 @@ letta.events.on("tool_end", async (event, ctx) => {
 });
 ```
 
-`turn_start` fires before outbound turns that include a user message. In the TUI this includes normal submits and prompt-style command turns. In headless it includes one-shot prompts and bidirectional user turns.
+`turn_start` fires before outbound turns that include a user message. In the TUI this includes normal submits and prompt-style command turns. In headless it includes one-shot prompts and bidirectional user turns. Listener/Desktop skips approval-only continuations so mods do not rewrite approval payloads; do not rely on `turn_start` to block approval-only continuations on every surface.
 
 Handlers can mutate `event.input` directly or return replacement input:
 
@@ -211,6 +213,18 @@ letta.events.on("turn_start", (event) => {
   return { input: event.input };
 });
 ```
+
+Handlers can also cancel a user-message turn before it reaches the backend/model:
+
+```ts
+letta.events.on("turn_start", (event) => {
+  if (!isPlanModeActive(event.conversationId)) {
+    return { cancel: { reason: "Run /plan first." } };
+  }
+});
+```
+
+If multiple handlers cancel, the first valid cancel reason wins. A valid reason is a non-empty string after trimming. Cancellation does not synthesize an assistant response or tool result; it only tells the host not to submit this turn.
 
 Handlers run in registration order. Later handlers see the current input after earlier mutations/returns. If a handler throws, its partial `event.input` mutation is rolled back and the error is recorded as a mod diagnostic.
 
@@ -270,12 +284,18 @@ Handlers run in registration order. Later handlers see the current input after e
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
-  };
+  } | null;
   durationMs: number;
+  error?: {
+    message: string;
+    detail: string;
+    errorType: "llm_error" | "local_backend_error";
+    retryable: boolean;
+  };
 }
 ```
 
-`llm_end` fires once a provider request produces a final message, carrying the stop reason, token usage, and wall-clock duration. A request that fails before producing a final message (e.g. a transport error that triggers a retry) emits no `llm_end`. Both events are notification-only; return values are ignored. A throwing handler is isolated and never breaks the provider request.
+`llm_end` fires when a provider request ends, success or failure. Successful requests include token usage. Requests that fail before usage is available set `usage: null` and include `error`. Retry/failover effects are not supported yet; both events are notification-only and return values are ignored. A throwing handler is isolated and never breaks the provider request.
 
 Handlers also receive:
 

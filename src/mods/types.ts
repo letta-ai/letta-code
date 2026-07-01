@@ -211,8 +211,13 @@ export interface ModTurnStartEvent {
   input: Array<MessageCreate | ApprovalCreate>;
 }
 
+export interface ModTurnStartCancelResult {
+  reason: string;
+}
+
 export interface ModTurnStartResult {
   input?: Array<MessageCreate | ApprovalCreate>;
+  cancel?: ModTurnStartCancelResult;
 }
 
 export interface ModToolStartEvent {
@@ -233,6 +238,7 @@ export interface ModToolEndEvent {
   conversationId: string | null;
   toolCallId: string | null;
   toolName: string;
+  args: Record<string, unknown>;
   status: "success" | "error";
   output: string;
 }
@@ -279,6 +285,13 @@ export interface ModLlmUsage {
   totalTokens: number;
 }
 
+export interface ModLlmEndError {
+  message: string;
+  detail: string;
+  errorType: "llm_error" | "local_backend_error";
+  retryable: boolean;
+}
+
 export interface ModLlmStartEvent {
   agentId: string | null;
   conversationId: string | null;
@@ -292,8 +305,9 @@ export interface ModLlmEndEvent {
   conversationId: string | null;
   model: string;
   stopReason: string;
-  usage: ModLlmUsage;
+  usage: ModLlmUsage | null;
   durationMs: number;
+  error?: ModLlmEndError;
 }
 
 export interface ModEventMap {

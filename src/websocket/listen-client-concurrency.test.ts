@@ -7,7 +7,7 @@ import {
   mock,
   test,
 } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { APIError } from "@letta-ai/letta-client/error";
@@ -274,6 +274,9 @@ mock.module("../agent/approval-recovery", () => ({
 }));
 
 const listenClientModule = await import("@/websocket/listen-client");
+const { createListenerModAdapter } = await import(
+  "@/websocket/listener/mod-adapter"
+);
 const { sendApprovalContinuationWithRetry, sendMessageStreamWithRetry } =
   await import("@/websocket/listener/send");
 const {
@@ -518,6 +521,49 @@ describe("listen-client multi-worker concurrency", () => {
     await turnA;
     expect(runtimeA.isProcessing).toBe(false);
     expect(__listenClientTestUtils.getListenerStatus(listener)).toBe("idle");
+  });
+
+  test("turn_start cancel stops listener turn before sending", async () => {
+    const modsDir = await mkdtemp(join(tmpdir(), "letta-listener-mods-"));
+    const cacheDir = await mkdtemp(join(tmpdir(), "letta-listener-mod-cache-"));
+    try {
+      await writeFile(
+        join(modsDir, "cancel-turn.ts"),
+        `export default function activate(letta) {
+          letta.events.on("turn_start", () => ({
+            cancel: { reason: " Run /plan first. " },
+          }));
+        }`,
+      );
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      listener.modAdapter = createListenerModAdapter({
+        cacheDirectory: cacheDir,
+        globalModsDirectory: modsDir,
+        sessionId: "listener-cancel-test",
+        workingDirectory: modsDir,
+      });
+      await listener.modAdapter.reload();
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-cancel",
+        "conv-cancel",
+      );
+      const socket = new MockSocket();
+
+      await __listenClientTestUtils.handleIncomingMessage(
+        makeIncomingMessage("agent-cancel", "conv-cancel", "hello"),
+        socket as unknown as WebSocket,
+        runtime,
+      );
+
+      expect(sendMessageStreamMock).not.toHaveBeenCalled();
+      expect(runtime.isProcessing).toBe(false);
+      expect(runtime.lastStopReason).toBe("cancelled");
+      expect(JSON.stringify(socket.sentPayloads)).toContain("Run /plan first.");
+    } finally {
+      await rm(modsDir, { recursive: true, force: true });
+      await rm(cacheDir, { recursive: true, force: true });
+    }
   });
 
   test("listener turns skip duplicate shared image normalization", async () => {

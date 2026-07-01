@@ -86,6 +86,7 @@ import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { loadTools } from "./tools/manager";
 import { clearPersistedClientToolRules } from "./tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
+import { startOrphanDetection } from "./utils/orphan-detection";
 import { markMilestone } from "./utils/timing";
 
 // Stable empty array constants to prevent new references on every render
@@ -638,6 +639,11 @@ async function getLocalBackendStartupFallbackSession(
 
 async function main(): Promise<void> {
   markMilestone("CLI_START");
+
+  // Detect if the parent process (Desktop, terminal) dies and we get
+  // orphaned to PID 1. Without this, a detached CLI can run for days
+  // accumulating memory after the parent exits without cleanly killing it.
+  startOrphanDetection();
 
   const rawCliArgs = process.argv.slice(2);
   let subcommandArgs = rawCliArgs;
