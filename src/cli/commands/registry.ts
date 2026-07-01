@@ -131,6 +131,15 @@ export const commands: Record<string, Command> = {
       return "Opening Memory Palace...";
     },
   },
+  "/view": {
+    desc: "Preview a file (image, PDF, Markdown, CSV, HTML, code) in your browser",
+    args: "[path]",
+    order: 16.5,
+    handler: () => {
+      // Handled specially in use-submit-handler to open the artifact viewer
+      return "Opening viewer...";
+    },
+  },
   "/sleeptime": {
     desc: "Configure sleep-time reflection trigger settings",
     order: 15.5,

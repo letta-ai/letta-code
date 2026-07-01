@@ -1383,6 +1383,34 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        // /view - render a file (image, PDF, markdown, csv, html, code) in browser
+        if (trimmed === "/view" || trimmed.startsWith("/view ")) {
+          const target = trimmed.slice("/view".length).trim();
+          const cmd = commandRunner.start("/view", "Opening viewer...");
+          const { generateAndOpenViewViewer } = await import(
+            "@/web/generate-view-viewer"
+          );
+          generateAndOpenViewViewer(target || undefined)
+            .then((result) => {
+              const label = `${result.kind}: ${result.targetPath}`;
+              if (result.opened) {
+                cmd.finish(`Opened ${label}`, true);
+              } else {
+                cmd.finish(
+                  `Open manually: ${result.filePath} (${label})`,
+                  true,
+                );
+              }
+            })
+            .catch((err: unknown) => {
+              cmd.finish(
+                `Failed to open viewer: ${err instanceof Error ? err.message : String(err)}`,
+                false,
+              );
+            });
+          return { submitted: true };
+        }
+
         const connectionCommandResult = await handleConnectionCommand(
           msg,
           trimmed,
