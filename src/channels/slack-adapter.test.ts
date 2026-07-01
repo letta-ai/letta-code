@@ -687,6 +687,50 @@ test("slack adapter forwards threaded DM replies with explicit thread metadata",
   );
 });
 
+test("slack adapter normalizes mentioned DM text", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "D123",
+      user: "U123",
+      text: "<@U0AS42PTEAX>!help",
+      ts: "1712800000.000100",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "slack",
+      chatId: "D123",
+      senderId: "U123",
+      text: "!help",
+      messageId: "1712800000.000100",
+      chatType: "direct",
+      isMention: true,
+    }),
+  );
+});
+
 test("slack adapter forwards app mentions as channel input", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -713,7 +757,7 @@ test("slack adapter forwards app mentions as channel input", async () => {
     event: {
       channel: "C123",
       user: "U123",
-      text: "<@U999> please help",
+      text: "<@U0AS42PTEAX>!help",
       ts: "1712800000.000100",
       thread_ts: "1712790000.000050",
     },
@@ -724,7 +768,7 @@ test("slack adapter forwards app mentions as channel input", async () => {
       channel: "slack",
       chatId: "C123",
       senderId: "U123",
-      text: "please help",
+      text: "!help",
       messageId: "1712800000.000100",
       threadId: "1712790000.000050",
       chatType: "channel",
