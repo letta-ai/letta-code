@@ -6247,7 +6247,11 @@ describe("listen-client post-stop approval recovery policy", () => {
     expect(shouldRecover).toBe(true);
   });
 
-  test("does not retry when approval response is already stale", () => {
+  test("retries no-awaiting-approval as a post-stop desync (strip-and-retry recovery)", () => {
+    // Previously this returned false ("don't retry"): the only recovery was
+    // re-deny, which re-trips the same error in a loop. The no-awaiting desync
+    // now has a distinct disposition (strip the stale approval, retry as a
+    // regular message), so post-stop recovery is attempted for this class.
     const shouldRecover =
       __listenClientTestUtils.shouldAttemptPostStopApprovalRecovery({
         stopReason: "error",
@@ -6257,7 +6261,7 @@ describe("listen-client post-stop approval recovery policy", () => {
         latestErrorText: null,
       });
 
-    expect(shouldRecover).toBe(false);
+    expect(shouldRecover).toBe(true);
   });
 
   test("does not retry once retry budget is exhausted", () => {

@@ -27,6 +27,7 @@ import {
   normalizeStreamErrorTypeToStopReason,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
+  selectStaleApprovalRecoveryApprovals,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import {
@@ -1031,21 +1032,42 @@ export async function handleIncomingMessage(
               await getResumeDataFromBackend(agent, requestedConversationId);
             currentInput = rebuildInputWithFreshDenials(
               currentInput,
-              existingApprovals ?? [],
+              selectStaleApprovalRecoveryApprovals(
+                existingApprovals ?? [],
+                errorDetail,
+                latestErrorText,
+                fallbackError,
+              ),
               "Auto-denied: stale approval from interrupted session",
             );
           } catch {
             currentInput = rebuildInputWithFreshDenials(currentInput, [], "");
           }
 
-          setLoopStatus(runtime, "SENDING_API_REQUEST", {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          });
           const isPureApprovalContinuationRetry =
             isApprovalOnlyInput(currentInput);
           const retryInputWithSkillContent =
             injectQueuedSkillContent(currentInput);
+          // Stripping a no-longer-awaiting approval can leave nothing to send;
+          // finalize cleanly instead of issuing an empty regular-message request.
+          if (retryInputWithSkillContent.length === 0) {
+            runtime.lastStopReason = "end_turn";
+            runtime.isProcessing = false;
+            clearActiveRunState(runtime);
+            setLoopStatus(runtime, "WAITING_ON_INPUT", {
+              agent_id: agentId,
+              conversation_id: conversationId,
+            });
+            emitRuntimeStateUpdates(runtime, {
+              agent_id: agentId,
+              conversation_id: conversationId,
+            });
+            break;
+          }
+          setLoopStatus(runtime, "SENDING_API_REQUEST", {
+            agent_id: agentId,
+            conversation_id: conversationId,
+          });
           stream = isPureApprovalContinuationRetry
             ? await sendApprovalContinuationWithRetry(
                 conversationId,

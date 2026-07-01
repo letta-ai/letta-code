@@ -23,10 +23,12 @@ import {
   isApprovalPendingError,
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
+  isNoAwaitingApprovalError,
   isQuotaLimitErrorDetail,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
+  selectStaleApprovalRecoveryApprovals,
   shouldAttemptApprovalRecovery,
 } from "@/agent/approval-recovery";
 import { getAvailableModelHandles } from "@/agent/available-models";
@@ -848,6 +850,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 otid: randomUUID(),
               },
             ];
+          }
+
+          // A recovery that stripped a no-longer-awaiting approval (see
+          // selectStaleApprovalRecoveryApprovals) can leave nothing to send.
+          // Stop cleanly instead of issuing an empty regular-message request.
+          if (currentInput.length === 0) {
+            setStreaming(false);
+            return;
           }
 
           // Stream one turn - use ref to always get the latest conversationId
@@ -2501,7 +2511,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           // interrupt may have been rejected by the backend.
           const approvalPendingDetected =
             isApprovalPendingError(detailFromRun) ||
-            isApprovalPendingError(latestErrorText);
+            isApprovalPendingError(latestErrorText) ||
+            isNoAwaitingApprovalError(detailFromRun) ||
+            isNoAwaitingApprovalError(latestErrorText);
 
           if (
             shouldAttemptApprovalRecovery({
@@ -2524,7 +2536,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 );
               currentInput = rebuildInputWithFreshDenials(
                 currentInput,
-                existingApprovals ?? [],
+                selectStaleApprovalRecoveryApprovals(
+                  existingApprovals ?? [],
+                  detailFromRun,
+                  latestErrorText,
+                ),
                 "Auto-denied: stale approval from interrupted session",
               );
             } catch {

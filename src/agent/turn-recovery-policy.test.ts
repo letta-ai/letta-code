@@ -11,11 +11,13 @@ import {
   isEmptyResponseError,
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
+  isNoAwaitingApprovalError,
   isNonRetryableProviderErrorDetail,
   isRetryableProviderErrorDetail,
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
+  selectStaleApprovalRecoveryApprovals,
   shouldAttemptApprovalRecovery,
   shouldRetryPreStreamTransientError,
   shouldRetryRunMetadataError,
@@ -47,6 +49,93 @@ describe("isApprovalPendingError", () => {
   test("rejects non-string", () => {
     expect(isApprovalPendingError(42)).toBe(false);
     expect(isApprovalPendingError(null)).toBe(false);
+  });
+});
+
+describe("isNoAwaitingApprovalError", () => {
+  const SERVER_DETAIL =
+    "No tool call is currently awaiting approval. Please send a regular message to interact with the agent.";
+
+  test("detects the server desync string (case-insensitive)", () => {
+    expect(isNoAwaitingApprovalError(SERVER_DETAIL)).toBe(true);
+    expect(isNoAwaitingApprovalError(SERVER_DETAIL.toUpperCase())).toBe(true);
+  });
+
+  test("keeps no-awaiting out of approval-pending / deny-oriented classifiers", () => {
+    // Opposite state from "waiting for approval"; must never route to re-deny.
+    expect(isApprovalPendingError(SERVER_DETAIL)).toBe(false);
+    expect(isInvalidToolCallIdsError(SERVER_DETAIL)).toBe(false);
+  });
+
+  test("does not match waiting-for-approval", () => {
+    expect(isNoAwaitingApprovalError("the agent is waiting for approval")).toBe(
+      false,
+    );
+  });
+
+  test("rejects non-string", () => {
+    expect(isNoAwaitingApprovalError(42)).toBe(false);
+    expect(isNoAwaitingApprovalError(null)).toBe(false);
+  });
+});
+
+describe("selectStaleApprovalRecoveryApprovals", () => {
+  const pending = [{ toolCallId: "call_1", toolName: "Skill", toolArgs: "{}" }];
+  const NO_AWAITING = "No tool call is currently awaiting approval";
+
+  test("returns [] for the no-awaiting desync (strip-and-retry, no denials)", () => {
+    expect(selectStaleApprovalRecoveryApprovals(pending, NO_AWAITING)).toEqual(
+      [],
+    );
+  });
+
+  test("detects the desync in any error slot", () => {
+    expect(
+      selectStaleApprovalRecoveryApprovals(pending, null, NO_AWAITING),
+    ).toEqual([]);
+  });
+
+  test("keeps approvals for invalid-tool-ids / waiting-for-approval / unrelated", () => {
+    expect(
+      selectStaleApprovalRecoveryApprovals(pending, "invalid tool call ids"),
+    ).toBe(pending);
+    expect(
+      selectStaleApprovalRecoveryApprovals(pending, "waiting for approval"),
+    ).toBe(pending);
+    expect(selectStaleApprovalRecoveryApprovals(pending, "rate limit")).toBe(
+      pending,
+    );
+  });
+
+  test("strip-and-retry produces no ApprovalCreate in the rebuilt input", () => {
+    const userMsg = {
+      type: "message" as const,
+      role: "user" as const,
+      content: "run the skill",
+    };
+    const input = [
+      { type: "approval" as const, approvals: [] as never[] },
+      userMsg,
+    ];
+    const result = rebuildInputWithFreshDenials(
+      input,
+      selectStaleApprovalRecoveryApprovals(pending, NO_AWAITING),
+      "Auto-denied: stale approval from interrupted session",
+    );
+    expect(result.some((item) => item.type === "approval")).toBe(false);
+    expect(result.some((item) => item.type === "message")).toBe(true);
+  });
+
+  test("stripping a pure stale approval yields an empty input (callers guard it)", () => {
+    // No regular message to carry -> rebuilt input is empty; the listener and TUI
+    // loops guard this and finalize instead of sending an empty request.
+    const input = [{ type: "approval" as const, approvals: [] as never[] }];
+    const result = rebuildInputWithFreshDenials(
+      input,
+      selectStaleApprovalRecoveryApprovals(pending, NO_AWAITING),
+      "",
+    );
+    expect(result).toHaveLength(0);
   });
 });
 
