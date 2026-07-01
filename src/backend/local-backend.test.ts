@@ -1436,9 +1436,92 @@ describe("local backend pi transcript", () => {
         ?.context_window,
     ).toBe(256000);
     expect(
+      (agent as { llm_config?: { model_endpoint_type?: string } }).llm_config
+        ?.model_endpoint_type,
+    ).toBe("lmstudio_openai");
+    expect(
       (agent as { llm_config?: { max_tokens?: number } }).llm_config
         ?.max_tokens,
     ).toBe(8192);
+  });
+
+  test("projects canonical provider in local agent llm_config", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-anthropic-llm-config-"),
+    );
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const agent = await backend.createAgent({
+      name: "Local",
+      model: "anthropic/claude-sonnet-4-6",
+    } as never);
+
+    expect(agent.model).toBe("anthropic/claude-sonnet-4-6");
+    expect(
+      (agent as { llm_config?: { model?: string } }).llm_config?.model,
+    ).toBe("claude-sonnet-4-6");
+    expect(
+      (agent as { llm_config?: { model_endpoint_type?: string } }).llm_config
+        ?.model_endpoint_type,
+    ).toBe("anthropic");
+  });
+
+  test("normalizes unique bare model names before storing local agents", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-bare-anthropic-model-"),
+    );
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const agent = await backend.createAgent({
+      name: "Local",
+      model: "claude-sonnet-4-6",
+    } as never);
+
+    expect(agent.model).toBe("anthropic/claude-sonnet-4-6");
+    expect(
+      (agent as { llm_config?: { model_endpoint_type?: string } }).llm_config
+        ?.model_endpoint_type,
+    ).toBe("anthropic");
+  });
+
+  test("normalizes persisted stale OpenAI conversation overrides", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-stale-openai-conversation-"),
+    );
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    const conversationPath = join(
+      localConversationDir(storageDir, conversation.id),
+      "conversation.json",
+    );
+    const persisted = JSON.parse(
+      await readFile(conversationPath, "utf8"),
+    ) as Record<string, unknown>;
+    await writeFile(
+      conversationPath,
+      `${JSON.stringify(
+        {
+          ...persisted,
+          model: "openai/claude-sonnet-4-6",
+          model_settings: { provider_type: "openai" },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const reloadedBackend = new LocalBackend({
+      storageDir,
+      memfsEnabled: false,
+    });
+    const reloadedConversation = await reloadedBackend.retrieveConversation(
+      conversation.id,
+    );
+
+    expect((reloadedConversation as { model?: string }).model).toBe(
+      "anthropic/claude-sonnet-4-6",
+    );
   });
 
   test("resets persisted output-token settings when switching local models", async () => {

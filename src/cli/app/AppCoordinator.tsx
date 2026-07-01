@@ -3473,7 +3473,9 @@ export function App({
       }
 
       const currentLlmConfig = llmConfigRef.current;
-      const rawModelHandle = buildModelHandleFromLlmConfig(currentLlmConfig);
+      const rawModelHandle =
+        currentModelHandleRef.current ??
+        buildModelHandleFromLlmConfig(currentLlmConfig);
       if (!rawModelHandle) {
         return;
       }
