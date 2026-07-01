@@ -210,7 +210,6 @@ export function buildChannelHelpMessage(channelId: string): string {
     return [
       `${displayName} is connected to Letta Code.`,
       "Send a normal message here and the connected agent will reply in this chat.",
-      "Use MessageChannel-supported actions by asking naturally, for example: send a message, react, or upload a file when available.",
       `Supported slash commands here: ${supportedCommandsText()}.`,
       `In Slack threads, mention the app with bang commands: ${supportedBangCommandsText()}.`,
       "If this chat is not connected yet, send any non-command message and follow the pairing instructions.",
@@ -220,7 +219,6 @@ export function buildChannelHelpMessage(channelId: string): string {
   return [
     `${displayName} is connected to Letta Code.`,
     "Send a normal message here and the connected agent will reply in this chat.",
-    "Use MessageChannel-supported actions by asking naturally, for example: send a message, react, or upload a file when available.",
     `Supported slash commands here: ${supportedCommandsText()}.`,
     "If this chat is not connected yet, send any non-command message and follow the pairing instructions.",
   ].join("\n\n");
