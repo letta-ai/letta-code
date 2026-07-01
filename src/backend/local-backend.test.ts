@@ -235,7 +235,29 @@ describe("local backend pi transcript", () => {
     }
   });
 
-  test("rejects updates to the virtual default conversation", async () => {
+  test("allows title updates to the virtual default conversation", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-default-conversation-title-update-"),
+    );
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+
+      const updated = await backend.updateConversation("default", {
+        summary: "First user request",
+      } as never);
+
+      expect(updated.summary).toBe("First user request");
+      await expect(
+        backend.retrieveConversation("default"),
+      ).resolves.toMatchObject({
+        summary: "First user request",
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects non-title updates to the virtual default conversation", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-default-conversation-update-"),
     );
@@ -244,9 +266,9 @@ describe("local backend pi transcript", () => {
 
       expect(() =>
         backend.updateConversation("default", {
-          summary: "Default rename",
+          archived: true,
         } as never),
-      ).toThrow("Default conversation cannot be updated");
+      ).toThrow("Default conversation only supports title updates");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

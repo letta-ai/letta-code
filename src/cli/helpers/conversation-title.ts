@@ -59,6 +59,21 @@ Rules:
  * Strip whitespace, surrounding quotes, and clamp to {@link CONVERSATION_TITLE_MAX_LENGTH}.
  * Returns null when the input doesn't yield a usable title (empty, slash command, etc.).
  */
+
+export function shouldPersistAutoConversationTitle(
+  conversationId: string | null | undefined,
+  backendCapabilities: { localModelCatalog?: boolean },
+): boolean {
+  if (!conversationId) {
+    return false;
+  }
+
+  return (
+    conversationId !== "default" ||
+    backendCapabilities.localModelCatalog === true
+  );
+}
+
 export function normalizeConversationTitle(value: string): string | null {
   let normalized = value.replace(/\s+/g, " ").trim();
 
