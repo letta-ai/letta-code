@@ -1,19 +1,29 @@
 /// <reference types="bun-types" />
 // src/utils/secrets.ts
-// Secure storage utilities for tokens using Bun's secrets API with Node.js fallback
+// Secure storage utilities for tokens using Bun's secrets API, with a
+// Windows Credential Manager fallback for the npm/Node CLI runtime.
 
 import { debugWarn } from "./debug.js";
+import {
+  deleteWindowsCredential,
+  getWindowsCredential,
+  getWindowsCredentials,
+  isWindowsCredentialManagerAvailable,
+  setWindowsCredential,
+} from "./windows-credential-manager.js";
 
-let secrets: typeof Bun.secrets;
-let secretsAvailable = false;
+type BunSecrets = typeof Bun.secrets;
 
-// Try to import Bun's secrets API, fallback if unavailable
-try {
-  secrets = require("bun").secrets;
-  secretsAvailable = true;
-} catch {
-  // Running in Node.js or Bun secrets unavailable
-  secretsAvailable = false;
+interface SecretBackend {
+  kind: "bun" | "windows-credential-manager";
+  get(options: { service: string; name: string }): Promise<string | null>;
+  getMany?(options: {
+    service: string;
+    names: string[];
+  }): Promise<Record<string, string | null>>;
+  set(options: { service: string; name: string; value: string }): Promise<void>;
+  delete(options: { service: string; name: string }): Promise<boolean>;
+  isAvailable(): Promise<boolean>;
 }
 
 let SERVICE_NAME = "letta-code";
@@ -37,11 +47,54 @@ function isDuplicateKeychainItemError(error: unknown): boolean {
   );
 }
 
+function getBunSecrets(): BunSecrets | null {
+  const runtime = globalThis as typeof globalThis & {
+    Bun?: { secrets?: BunSecrets };
+  };
+  return runtime.Bun?.secrets ?? null;
+}
+
+function getSecretBackend(): SecretBackend | null {
+  const bunSecrets = getBunSecrets();
+  if (bunSecrets) {
+    return {
+      kind: "bun",
+      get: (options) => bunSecrets.get(options),
+      set: (options) => bunSecrets.set(options),
+      delete: (options) => bunSecrets.delete(options),
+      isAvailable: async () => {
+        await bunSecrets.get({
+          service: SERVICE_NAME,
+          name: API_KEY_NAME,
+        });
+        return true;
+      },
+    };
+  }
+
+  if (process.platform === "win32") {
+    return {
+      kind: "windows-credential-manager",
+      get: (options) => getWindowsCredential(options.service, options.name),
+      getMany: (options) =>
+        getWindowsCredentials(options.service, options.names),
+      set: (options) =>
+        setWindowsCredential(options.service, options.name, options.value),
+      delete: (options) =>
+        deleteWindowsCredential(options.service, options.name),
+      isAvailable: () => isWindowsCredentialManagerAvailable(),
+    };
+  }
+
+  return null;
+}
+
 export async function getSecretValue(
   name: string,
   label: string,
 ): Promise<string | null> {
-  if (!secretsAvailable && !secretGetOverrideForTests) {
+  const backend = getSecretBackend();
+  if (!backend && !secretGetOverrideForTests) {
     return null;
   }
 
@@ -52,9 +105,9 @@ export async function getSecretValue(
     };
     const value = secretGetOverrideForTests
       ? await secretGetOverrideForTests(options)
-      : await secrets.get(options);
+      : await backend?.get(options);
     warnedSecretReadFailures.delete(name);
-    return value;
+    return value ?? null;
   } catch (error) {
     const message = `Failed to retrieve ${label} from secrets: ${error}`;
     if (!warnedSecretReadFailures.has(name)) {
@@ -71,26 +124,27 @@ export async function setSecretValue(
   name: string,
   value: string,
 ): Promise<void> {
-  if (!secretsAvailable) {
+  const backend = getSecretBackend();
+  if (!backend) {
     throw new Error("Secrets API unavailable");
   }
 
   try {
-    await secrets.set({
+    await backend.set({
       service: SERVICE_NAME,
       name,
       value,
     });
     return;
   } catch (error) {
-    if (!isDuplicateKeychainItemError(error)) {
+    if (backend.kind !== "bun" || !isDuplicateKeychainItemError(error)) {
       throw error;
     }
   }
 
   // Replace existing keychain item and retry once.
   try {
-    await secrets.delete({
+    await backend.delete({
       service: SERVICE_NAME,
       name,
     });
@@ -98,7 +152,7 @@ export async function setSecretValue(
     // Ignore delete errors and retry set below.
   }
 
-  await secrets.set({
+  await backend.set({
     service: SERVICE_NAME,
     name,
     value,
@@ -106,12 +160,13 @@ export async function setSecretValue(
 }
 
 export async function deleteSecretValue(name: string): Promise<boolean> {
-  if (!secretsAvailable) {
+  const backend = getSecretBackend();
+  if (!backend) {
     return false;
   }
 
   try {
-    return await secrets.delete({
+    return await backend.delete({
       service: SERVICE_NAME,
       name,
     });
@@ -128,9 +183,8 @@ export function setServiceName(name: string): void {
   SERVICE_NAME = name;
 }
 
-// Note: When secrets API is unavailable (Node.js), tokens will be managed
-// by the settings manager which falls back to storing in the settings file
-// This provides persistence across restarts
+// Note: On platforms without an OS secret backend, tokens are managed by the
+// settings manager fallback so authentication still persists across restarts.
 
 export interface SecureTokens {
   apiKey?: string;
@@ -141,11 +195,6 @@ export interface SecureTokens {
  * Store API key in system secrets
  */
 export async function setApiKey(apiKey: string): Promise<void> {
-  if (!secretsAvailable) {
-    // When secrets unavailable, let the settings manager handle fallback
-    throw new Error("Secrets API unavailable");
-  }
-
   await setSecretValue(API_KEY_NAME, apiKey);
 }
 
@@ -160,11 +209,6 @@ export async function getApiKey(): Promise<string | null> {
  * Store refresh token in system secrets
  */
 export async function setRefreshToken(refreshToken: string): Promise<void> {
-  if (!secretsAvailable) {
-    // When secrets unavailable, let the settings manager handle fallback
-    throw new Error("Secrets API unavailable");
-  }
-
   await setSecretValue(REFRESH_TOKEN_NAME, refreshToken);
 }
 
@@ -179,6 +223,35 @@ export async function getRefreshToken(): Promise<string | null> {
  * Get both tokens from secrets
  */
 export async function getSecureTokens(): Promise<SecureTokens> {
+  const backend = getSecretBackend();
+  if (!secretGetOverrideForTests && backend?.getMany) {
+    try {
+      const values = await backend.getMany({
+        service: SERVICE_NAME,
+        names: [API_KEY_NAME, REFRESH_TOKEN_NAME],
+      });
+      warnedSecretReadFailures.delete(API_KEY_NAME);
+      warnedSecretReadFailures.delete(REFRESH_TOKEN_NAME);
+      return {
+        apiKey: values[API_KEY_NAME] || undefined,
+        refreshToken: values[REFRESH_TOKEN_NAME] || undefined,
+      };
+    } catch (error) {
+      const message = `Failed to retrieve secure tokens from secrets: ${error}`;
+      if (
+        !warnedSecretReadFailures.has(API_KEY_NAME) ||
+        !warnedSecretReadFailures.has(REFRESH_TOKEN_NAME)
+      ) {
+        warnedSecretReadFailures.add(API_KEY_NAME);
+        warnedSecretReadFailures.add(REFRESH_TOKEN_NAME);
+        console.warn(message);
+      } else {
+        debugWarn("secrets", message);
+      }
+      return {};
+    }
+  }
+
   const [apiKey, refreshToken] = await Promise.allSettled([
     getApiKey(),
     getRefreshToken(),
@@ -217,40 +290,14 @@ export async function setSecureTokens(tokens: SecureTokens): Promise<void> {
  * Remove API key from system secrets
  */
 export async function deleteApiKey(): Promise<void> {
-  if (secretsAvailable) {
-    try {
-      await secrets.delete({
-        service: SERVICE_NAME,
-        name: API_KEY_NAME,
-      });
-      return;
-    } catch (error) {
-      console.warn(`Failed to delete API key from secrets: ${error}`);
-    }
-  }
-
-  // When secrets unavailable, deletion is handled by settings manager
-  // No action needed here
+  await deleteSecretValue(API_KEY_NAME);
 }
 
 /**
  * Remove refresh token from system secrets
  */
 export async function deleteRefreshToken(): Promise<void> {
-  if (secretsAvailable) {
-    try {
-      await secrets.delete({
-        service: SERVICE_NAME,
-        name: REFRESH_TOKEN_NAME,
-      });
-      return;
-    } catch (error) {
-      console.warn(`Failed to delete refresh token from secrets: ${error}`);
-    }
-  }
-
-  // When secrets unavailable, deletion is handled by settings manager
-  // No action needed here
+  await deleteSecretValue(REFRESH_TOKEN_NAME);
 }
 
 /**
@@ -279,17 +326,14 @@ export async function isKeychainAvailable(): Promise<boolean> {
     return false;
   }
 
-  if (!secretsAvailable) {
+  const backend = getSecretBackend();
+  if (!backend) {
     return false;
   }
 
   try {
     // Non-mutating probe: if this call succeeds (even with null), keychain is usable.
-    await secrets.get({
-      service: SERVICE_NAME,
-      name: API_KEY_NAME,
-    });
-    return true;
+    return await backend.isAvailable();
   } catch {
     return false;
   }

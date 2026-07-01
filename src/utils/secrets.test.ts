@@ -2,6 +2,7 @@
 // Tests for secrets utility functions
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import {
   __resetSecretWarningStateForTests,
   __setSecretGetOverrideForTests,
@@ -16,9 +17,23 @@ import {
   setApiKey,
   setRefreshToken,
   setSecureTokens,
+  setServiceName,
 } from "@/utils/secrets";
+import {
+  deleteWindowsCredential,
+  getWindowsCredential,
+  getWindowsCredentials,
+  isWindowsCredentialManagerAvailable,
+  setWindowsCredential,
+} from "@/utils/windows-credential-manager";
+
+const TEST_SERVICE_NAME = `letta-code-test-${randomUUID()}`;
+setServiceName(TEST_SERVICE_NAME);
 
 const keychainAvailablePrecompute = await isKeychainAvailable();
+const bunSecretsForTests = (
+  globalThis as typeof globalThis & { Bun?: { secrets?: typeof Bun.secrets } }
+).Bun?.secrets;
 
 describe("Secrets utilities", () => {
   const originalConsoleWarn = console.warn;
@@ -280,3 +295,55 @@ describe("Secrets utilities", () => {
     expect(String(warn.mock.calls[1]?.[0])).toContain("api key failure 2");
   });
 });
+
+describe.skipIf(process.platform !== "win32")(
+  "Windows Credential Manager adapter",
+  () => {
+    test("stores, reads, and deletes UTF-8 credentials", async () => {
+      if (!(await isWindowsCredentialManagerAvailable())) {
+        return;
+      }
+
+      const service = `letta-code-windows-test-${randomUUID()}`;
+      const name = "probe-secret";
+      const value = "utf8-test-🔐-mañana-東京";
+
+      try {
+        await setWindowsCredential(service, name, value);
+        expect(await getWindowsCredential(service, name)).toBe(value);
+        expect(await getWindowsCredentials(service, [name])).toEqual({
+          [name]: value,
+        });
+        expect(await deleteWindowsCredential(service, name)).toBe(true);
+        expect(await getWindowsCredential(service, name)).toBe(null);
+      } finally {
+        await deleteWindowsCredential(service, name);
+      }
+    }, 20_000);
+
+    test.skipIf(!bunSecretsForTests)(
+      "reads credentials written by Bun.secrets",
+      async () => {
+        if (
+          !(await isWindowsCredentialManagerAvailable()) ||
+          !bunSecretsForTests
+        ) {
+          return;
+        }
+
+        const service = `letta-code-bun-compat-test-${randomUUID()}`;
+        const name = "probe-secret";
+        const value = "bun-compatible-secret";
+
+        try {
+          await bunSecretsForTests.set({ service, name, value });
+          expect(await getWindowsCredential(service, name)).toBe(value);
+        } finally {
+          await bunSecretsForTests.delete({ service, name });
+          await deleteWindowsCredential(service, name);
+        }
+      },
+      20_000,
+    );
+  },
+);
