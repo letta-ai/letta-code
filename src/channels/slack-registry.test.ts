@@ -275,6 +275,40 @@ describe("slack channel registry", () => {
     expect(deliveries).toHaveLength(2);
   });
 
+  test("mention bang help in a DM is handled before agent delivery", async () => {
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const replies: string[] = [];
+    const adapter = {
+      ...createAdapter(),
+      sendDirectReply: async (_chatId: string, text: string) => {
+        replies.push(text);
+      },
+    };
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "D123",
+        chatType: "direct",
+        threadId: null,
+        isMention: true,
+        text: "!help",
+        messageId: "1712800001.000300",
+      }),
+    );
+
+    expect(deliveries).toEqual([]);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toContain("mention the app with bang commands");
+  });
+
   test("unmentioned bang text stays normal routed Slack input", async () => {
     const { ChannelRegistry } = await import("@/channels/registry");
     const registry = new ChannelRegistry();
