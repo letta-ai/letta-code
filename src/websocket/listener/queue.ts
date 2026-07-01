@@ -103,6 +103,14 @@ function mergeDequeuedBatchContent(
         kind: "cron_prompt",
         text: item.text,
       });
+      continue;
+    }
+    if (item.kind === "mod_continue") {
+      // A continue is plain user text — merge it as user content.
+      queuedInputs.push({
+        kind: "user",
+        content: item.text,
+      });
     }
   }
 
@@ -413,6 +421,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasMessage = false;
   let hasTaskNotification = false;
   let hasCronPrompt = false;
+  let hasModContinue = false;
   for (const item of queuedItems) {
     if (
       !isCoalescable(item.kind) ||
@@ -431,10 +440,16 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     if (item.kind === "cron_prompt") {
       hasCronPrompt = true;
     }
+    if (item.kind === "mod_continue") {
+      hasModContinue = true;
+    }
   }
 
   if (
-    (!hasMessage && !hasTaskNotification && !hasCronPrompt) ||
+    (!hasMessage &&
+      !hasTaskNotification &&
+      !hasCronPrompt &&
+      !hasModContinue) ||
     queueLen === 0
   ) {
     return null;

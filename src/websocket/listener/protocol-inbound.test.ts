@@ -241,7 +241,7 @@ describe("discord protocol-inbound validators", () => {
       channel_id: "discord",
       request_id: "r1",
       account: {
-        config: { token: "test-token", default_permission_mode: "memory" },
+        config: { token: "test-token", default_permission_mode: "banana" },
       },
     };
     expect(isChannelAccountCreateCommand(msg)).toBe(false);

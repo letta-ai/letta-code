@@ -26,7 +26,7 @@ file first.
 - `commandRouting.ts`: slash command queue-bypass classification.
 - `approvalDiffs.ts`, `approvalQuestions.ts`: approval helpers.
 - `ids.ts`, `layout.ts`, `contentParts.ts`, `systemReminders.ts`: transcript and content utilities.
-- `goal-loop.ts`, `reflection.ts`, `retry.ts`, `session.ts`, `notifications.ts`, `errors.ts`: focused runtime helpers.
+- `reflection.ts`, `retry.ts`, `session.ts`, `notifications.ts`, `errors.ts`: focused runtime helpers.
 - `StaticTranscript.tsx`, `ExitStats.tsx`: render-only pieces extracted from the coordinator.
 - `types.ts`: app props and static transcript item types.
 

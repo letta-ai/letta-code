@@ -1264,6 +1264,103 @@ describe("Settings Manager - Agents Array Migration", () => {
   });
 });
 
+describe("Settings Manager - Pinned Agents", () => {
+  test("getPinnedAgents excludes a local-backend agent id from a cloud session", async () => {
+    await settingsManager.initialize();
+
+    // Both pins land in the cloud bucket (no baseUrl), but the local-style id
+    // is incompatible with the cloud server key and must be filtered out.
+    settingsManager.updateSettings({
+      agents: [
+        { agentId: "agent-cloud-1", pinned: true },
+        { agentId: "agent-local-stray", pinned: true },
+      ],
+    });
+
+    expect(settingsManager.getPinnedAgents()).toEqual(["agent-cloud-1"]);
+  });
+
+  test("getPinnedAgents excludes a cloud agent id from a local-backend session", async () => {
+    await settingsManager.initialize();
+
+    const storageDir = join(testHomeDir, "lc-local-backend");
+    const localKey = `local:${resolve(storageDir)}`;
+    process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+
+    // Both pins land in the local bucket (baseUrl === localKey), but the
+    // cloud-style id is incompatible with the local server key.
+    settingsManager.updateSettings({
+      agents: [
+        { agentId: "agent-local-1", baseUrl: localKey, pinned: true },
+        { agentId: "agent-cloud-stray", baseUrl: localKey, pinned: true },
+      ],
+    });
+
+    expect(settingsManager.getPinnedAgents()).toEqual(["agent-local-1"]);
+  });
+
+  test("getPinnedAgentsForBackendMode returns the other mode's pins from a cloud session", async () => {
+    await settingsManager.initialize();
+
+    const storageDir = join(testHomeDir, "lc-local-backend");
+    const localKey = `local:${resolve(storageDir)}`;
+    // Make the local server key deterministic without switching the active
+    // session into local mode.
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+
+    settingsManager.updateSettings({
+      agents: [
+        { agentId: "agent-cloud-1", pinned: true },
+        { agentId: "agent-local-1", baseUrl: localKey, pinned: true },
+      ],
+    });
+
+    // Active session is cloud.
+    expect(settingsManager.getPinnedAgents()).toEqual(["agent-cloud-1"]);
+    // ...but we can still look up the local pins by mode (the old
+    // configureBackendMode dance returned [] here).
+    expect(settingsManager.getPinnedAgentsForBackendMode("local")).toEqual([
+      "agent-local-1",
+    ]);
+    expect(settingsManager.getPinnedAgentsForBackendMode("api")).toEqual([
+      "agent-cloud-1",
+    ]);
+  });
+
+  test("getPinnedAgentsForBackendMode('api') is scoped to the configured base URL", async () => {
+    await settingsManager.initialize();
+
+    const originalBaseUrl = process.env.LETTA_BASE_URL;
+    process.env.LETTA_BASE_URL = "https://selfhost.example.com";
+
+    try {
+      settingsManager.updateSettings({
+        agents: [
+          { agentId: "agent-cloud-1", pinned: true },
+          {
+            agentId: "agent-selfhost-1",
+            baseUrl: "selfhost.example.com",
+            pinned: true,
+          },
+        ],
+      });
+
+      // Only the pin for the active self-hosted server is returned; the
+      // api.letta.com pin belongs to a different server bucket.
+      expect(settingsManager.getPinnedAgentsForBackendMode("api")).toEqual([
+        "agent-selfhost-1",
+      ]);
+    } finally {
+      if (originalBaseUrl === undefined) {
+        delete process.env.LETTA_BASE_URL;
+      } else {
+        process.env.LETTA_BASE_URL = originalBaseUrl;
+      }
+    }
+  });
+});
+
 describe("Settings Manager - Toolset Preferences", () => {
   test("getToolsetPreference defaults to auto", async () => {
     await settingsManager.initialize();
@@ -1507,234 +1604,6 @@ describe("Settings Manager - Managed Keys Preservation", () => {
 });
 
 // ============================================================================
-// Conversation Goal Tests
-// ============================================================================
-
-describe("Settings Manager - Conversation Goals", () => {
-  async function initGoalTest() {
-    await settingsManager.initialize();
-    await settingsManager.loadLocalProjectSettings(testProjectDir);
-  }
-
-  test("setConversationGoal creates an active goal", async () => {
-    await initGoalTest();
-    const goal = settingsManager.setConversationGoal(
-      "conv-1",
-      "fix the bug",
-      testProjectDir,
-    );
-    expect(goal.objective).toBe("fix the bug");
-    expect(goal.status).toBe("active");
-    expect(goal.tokensUsed).toBe(0);
-  });
-
-  test("getConversationGoal retrieves a goal", async () => {
-    await initGoalTest();
-    settingsManager.setConversationGoal(
-      "conv-1",
-      "fix the bug",
-      testProjectDir,
-    );
-    const goal = settingsManager.getConversationGoal("conv-1", testProjectDir);
-    expect(goal).not.toBeNull();
-    expect(goal?.objective).toBe("fix the bug");
-  });
-
-  test("getConversationGoal returns null for missing conversation", async () => {
-    await initGoalTest();
-    const goal = settingsManager.getConversationGoal(
-      "nonexistent",
-      testProjectDir,
-    );
-    expect(goal).toBeNull();
-  });
-
-  test("updateConversationGoalStatus transitions active -> paused", async () => {
-    await initGoalTest();
-    settingsManager.setConversationGoal(
-      "conv-1",
-      "fix the bug",
-      testProjectDir,
-    );
-    const updated = settingsManager.updateConversationGoalStatus(
-      "conv-1",
-      "paused",
-      testProjectDir,
-    );
-    expect(updated).not.toBeNull();
-    expect(updated?.status).toBe("paused");
-    expect(updated?.activeStartedAt).toBeNull();
-  });
-
-  test("updateConversationGoalStatus transitions paused -> active", async () => {
-    await initGoalTest();
-    settingsManager.setConversationGoal(
-      "conv-1",
-      "fix the bug",
-      testProjectDir,
-    );
-    settingsManager.updateConversationGoalStatus(
-      "conv-1",
-      "paused",
-      testProjectDir,
-    );
-    const resumed = settingsManager.updateConversationGoalStatus(
-      "conv-1",
-      "active",
-      testProjectDir,
-    );
-    expect(resumed?.status).toBe("active");
-    expect(resumed?.activeStartedAt).not.toBeNull();
-  });
-
-  test("updateConversationGoalStatus transitions active -> blocked", async () => {
-    await initGoalTest();
-    settingsManager.setConversationGoal(
-      "conv-1",
-      "fix the bug",
-      testProjectDir,
-    );
-    const updated = settingsManager.updateConversationGoalStatus(
-      "conv-1",
-      "blocked",
-      testProjectDir,
-    );
-    expect(updated).not.toBeNull();
-    expect(updated?.status).toBe("blocked");
-    expect(updated?.activeStartedAt).toBeNull();
-  });
-
-  test("updateConversationGoalStatus returns null for missing conversation", async () => {
-    await initGoalTest();
-    const result = settingsManager.updateConversationGoalStatus(
-      "nonexistent",
-      "paused",
-      testProjectDir,
-    );
-    expect(result).toBeNull();
-  });
-
-  test("accountConversationGoalUsage adds tokens", async () => {
-    await initGoalTest();
-    settingsManager.setConversationGoal(
-      "conv-1",
-      "fix the bug",
-      testProjectDir,
-    );
-    const updated = settingsManager.accountConversationGoalUsage(
-      "conv-1",
-      500,
-      testProjectDir,
-    );
-    expect(updated?.tokensUsed).toBe(500);
-  });
-
-  test("accountConversationGoalUsage accumulates across calls", async () => {
-    await initGoalTest();
-    settingsManager.setConversationGoal(
-      "conv-1",
-      "fix the bug",
-      testProjectDir,
-    );
-    settingsManager.accountConversationGoalUsage("conv-1", 500, testProjectDir);
-    const updated = settingsManager.accountConversationGoalUsage(
-      "conv-1",
-      300,
-      testProjectDir,
-    );
-    expect(updated?.tokensUsed).toBe(800);
-  });
-
-  test("accountConversationGoalUsage returns null for missing conversation", async () => {
-    await initGoalTest();
-    const result = settingsManager.accountConversationGoalUsage(
-      "nonexistent",
-      500,
-      testProjectDir,
-    );
-    expect(result).toBeNull();
-  });
-
-  test("clearConversationGoal removes a goal", async () => {
-    await initGoalTest();
-    settingsManager.setConversationGoal(
-      "conv-1",
-      "fix the bug",
-      testProjectDir,
-    );
-    const hadGoal = settingsManager.clearConversationGoal(
-      "conv-1",
-      testProjectDir,
-    );
-    expect(hadGoal).toBe(true);
-    expect(
-      settingsManager.getConversationGoal("conv-1", testProjectDir),
-    ).toBeNull();
-  });
-
-  test("clearConversationGoal returns false for missing conversation", async () => {
-    await initGoalTest();
-    const hadGoal = settingsManager.clearConversationGoal(
-      "nonexistent",
-      testProjectDir,
-    );
-    expect(hadGoal).toBe(false);
-  });
-
-  test("setConversationGoal with tokenBudget stores budget", async () => {
-    await initGoalTest();
-    const goal = settingsManager.setConversationGoal(
-      "conv-1",
-      "fix the bug",
-      testProjectDir,
-      50000,
-    );
-    expect(goal.tokenBudget).toBe(50000);
-  });
-
-  test("setConversationGoal preserves createdAt on replace", async () => {
-    await initGoalTest();
-    const first = settingsManager.setConversationGoal(
-      "conv-1",
-      "first objective",
-      testProjectDir,
-    );
-    const originalCreatedAt = first.createdAt;
-    const second = settingsManager.setConversationGoal(
-      "conv-1",
-      "second objective",
-      testProjectDir,
-    );
-    expect(second.createdAt).toBe(originalCreatedAt);
-    expect(second.objective).toBe("second objective");
-  });
-
-  test("goal tools enabled flag works", async () => {
-    await initGoalTest();
-    expect(
-      settingsManager.areConversationGoalToolsEnabled("conv-1", testProjectDir),
-    ).toBe(false);
-
-    settingsManager.setConversationGoalToolsEnabled(
-      "conv-1",
-      true,
-      testProjectDir,
-    );
-    expect(
-      settingsManager.areConversationGoalToolsEnabled("conv-1", testProjectDir),
-    ).toBe(true);
-
-    settingsManager.setConversationGoalToolsEnabled(
-      "conv-1",
-      false,
-      testProjectDir,
-    );
-    expect(
-      settingsManager.areConversationGoalToolsEnabled("conv-1", testProjectDir),
-    ).toBe(false);
-  });
-});
-
 describe("readStartupBackendSettingsSync", () => {
   let tmpHome: string;
   const savedHome = process.env.HOME;

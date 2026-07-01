@@ -81,11 +81,10 @@ export async function runPostTurnMemorySync(
   try {
     const syncResult = await syncPendingMemoryCommitsAfterTurn(params.agentId);
     const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
-    if (!syncReminder) {
-      return;
+    if (syncReminder) {
+      params.enqueueReminder?.(syncReminder);
+      await params.emitWarning?.(syncReminder);
     }
-    params.enqueueReminder?.(syncReminder);
-    await params.emitWarning?.(syncReminder);
   } catch (error) {
     debugWarn(
       "memfs-git",

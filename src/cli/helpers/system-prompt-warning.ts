@@ -1,6 +1,6 @@
 /**
  * Startup system prompt warning
- * Uses same heuristic as context_doctor to estimate system prompt token count on startup
+ * Uses same heuristic as context-doctor to estimate system prompt token count on startup
  */
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";

@@ -6,7 +6,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
@@ -146,10 +146,24 @@ function shellEscape(arg: string): string {
   return `'${arg.replaceAll("'", `'"'"'`)}'`;
 }
 
+const SHELL_SHIM_DIR_NAME = "letta-code-shell-shim";
+
+export function getLettaShimDir(env: NodeJS.ProcessEnv = process.env): string {
+  // Subagents with the memory-subagent profile run under a write-restricted filesystem sandbox. The
+  // default OS temp dir is intentionally not writable there, so keep the shim in
+  // harness state when already sandboxed. `~/.letta` is writable in that profile,
+  // while the cross-agent memory subtrees inside it remain masked.
+  if (env.LETTA_SANDBOX) {
+    return path.join(homedir(), ".letta", SHELL_SHIM_DIR_NAME);
+  }
+
+  return path.join(tmpdir(), SHELL_SHIM_DIR_NAME);
+}
+
 export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
   if (!invocation.command) return null;
 
-  const shimDir = path.join(tmpdir(), "letta-code-shell-shim");
+  const shimDir = getLettaShimDir();
   mkdirSync(shimDir, { recursive: true });
 
   if (process.platform === "win32") {

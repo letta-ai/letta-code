@@ -206,7 +206,11 @@ export function toSelectorModelForHandle(handle: string): UiModel {
   };
 }
 
-const API_GATED_MODEL_HANDLES = new Set(["letta/auto", "letta/auto-fast"]);
+const API_GATED_MODEL_HANDLES = new Set([
+  "letta/auto",
+  "letta/auto-fast",
+  "letta/glm",
+]);
 
 export function filterModelsByAvailabilityForSelector<
   T extends { handle: string },
