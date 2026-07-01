@@ -1,3 +1,5 @@
+import { describe, expect, test } from "bun:test";
+
 import { listChannelSlashCommands } from "@/channels/commands";
 import {
   buildSlackAppManifest,
@@ -8,9 +10,11 @@ import {
   SLACK_APP_MANIFEST_COMMAND_URL_PLACEHOLDER,
 } from "@/channels/slack/manifest";
 
-function expectedNativeSlackSlashCommands(): string[] {
+function expectedNativeSlackSlashCommands(): `/${string}`[] {
   return listChannelSlashCommands().flatMap((definition) =>
-    [definition.name, ...(definition.aliases ?? [])].map((name) => `/${name}`),
+    [definition.name, ...(definition.aliases ?? [])].map(
+      (name) => `/${name}` as `/${string}`,
+    ),
   );
 }
 
