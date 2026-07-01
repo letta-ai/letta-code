@@ -26,7 +26,10 @@ import {
   buildChannelSecretName,
   getActiveChannelCredentialsStoreMode,
 } from "@/channels/credential-store";
-import type { SlackChannelAccount } from "@/channels/types";
+import type {
+  SlackChannelAccount,
+  TelegramChannelAccount,
+} from "@/channels/types";
 
 function readAccountsFile(root: string, channelId: string): unknown {
   return JSON.parse(
@@ -46,6 +49,23 @@ function makeSlackAccount(): SlackChannelAccount {
     defaultPermissionMode: "acceptEdits",
     dmPolicy: "pairing",
     allowedUsers: [],
+    createdAt: "2026-05-26T00:00:00.000Z",
+    updatedAt: "2026-05-26T00:00:00.000Z",
+  };
+}
+
+function makeTelegramAccount(): TelegramChannelAccount {
+  return {
+    channel: "telegram",
+    accountId: "telegram-account",
+    enabled: true,
+    token: "telegram-secret",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    binding: {
+      agentId: null,
+      conversationId: null,
+    },
     createdAt: "2026-05-26T00:00:00.000Z",
     updatedAt: "2026-05-26T00:00:00.000Z",
   };
@@ -141,6 +161,28 @@ describe("channel credential storage", () => {
     expect(persistedText).not.toContain("xoxb-secret");
     expect(persistedText).not.toContain("xapp-secret");
     expect(persistedText).toContain("__letta_secret_refs");
+  });
+
+  test("missing keyring reads preserve Telegram secret refs", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    await upsertChannelAccountWithSecrets("telegram", makeTelegramAccount());
+    await flushPendingChannelSecretWrites();
+
+    secrets.clear();
+    clearChannelAccountStores();
+
+    await hydrateChannelAccountSecrets("telegram");
+
+    const persisted = readAccountsFile(channelsRoot, "telegram") as {
+      accounts: Array<Record<string, unknown>>;
+    };
+    expect(persisted.accounts[0]).toMatchObject({
+      __letta_secret_refs: {
+        token: true,
+      },
+    });
+    expect(persisted.accounts[0]).not.toHaveProperty("token", "");
   });
 
   test("deleting an account removes keyring secrets", async () => {

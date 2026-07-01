@@ -158,16 +158,6 @@ function markSecretRef(account: ChannelAccount, fieldPath: string): void {
   };
 }
 
-function unmarkSecretRef(account: ChannelAccount, fieldPath: string): void {
-  const refs = getSecretRefs(account);
-  delete refs[fieldPath];
-  if (Object.keys(refs).length === 0) {
-    delete (account as ChannelAccountWithSecretRefs)[CHANNEL_SECRET_REFS_KEY];
-    return;
-  }
-  (account as ChannelAccountWithSecretRefs)[CHANNEL_SECRET_REFS_KEY] = refs;
-}
-
 function applySecretPlaceholders(account: ChannelAccount): void {
   const refs = getSecretRefs(account);
   for (const fieldPath of Object.keys(refs)) {
@@ -597,7 +587,6 @@ export async function hydrateChannelAccountSecrets(
   }
 
   let migratedPlaintextSecrets = false;
-  let removedMissingSecretRefs = false;
 
   for (const account of store.accounts) {
     for (const fieldPath of getSecretFieldPaths(account)) {
@@ -620,17 +609,16 @@ export async function hydrateChannelAccountSecrets(
           );
           if (storedValue) {
             setSecretValueOnAccount(account, fieldPath, storedValue);
-          } else {
-            unmarkSecretRef(account, fieldPath);
-            setSecretValueOnAccount(account, fieldPath, "");
-            removedMissingSecretRefs = true;
           }
+          // A missing read can mean the secure store is temporarily unavailable.
+          // Keep the ref/placeholder intact instead of persisting an empty token
+          // over a recoverable account.
         }
       }
     }
   }
 
-  if (migratedPlaintextSecrets || removedMissingSecretRefs) {
+  if (migratedPlaintextSecrets) {
     saveChannelAccounts(channelId);
     await flushPendingChannelSecretWrites();
   }
