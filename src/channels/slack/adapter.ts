@@ -2393,7 +2393,11 @@ export function createSlackAdapter(
     await Promise.all(
       uniqueSources.map(async (source) => {
         const key = getOrCreateSlackProgressCardKey(source, batchId);
-        const entry = key ? progressCardByReplyKey.get(key) : undefined;
+        if (!key) {
+          await clearSlackAssistantThreadStatus(source);
+          return;
+        }
+        const entry = progressCardByReplyKey.get(key);
         if (!entry) {
           await clearSlackAssistantThreadStatus(source);
           return;
@@ -2444,6 +2448,35 @@ export function createSlackAdapter(
         if (replyKey && activeProgressCardKeyByReplyKey.get(replyKey) === key) {
           activeProgressCardKeyByReplyKey.delete(replyKey);
         }
+        await clearSlackAssistantThreadStatus(source);
+      }),
+    );
+  }
+
+  async function flushSlackProgressCardsForCompletedLifecycle(
+    sources: ChannelTurnSource[],
+    batchId?: string,
+  ): Promise<void> {
+    const uniqueSources = getUniqueSlackProgressSources(sources);
+    await Promise.all(
+      uniqueSources.map(async (source) => {
+        const key = getOrCreateSlackProgressCardKey(source, batchId);
+        if (!key) {
+          await clearSlackAssistantThreadStatus(source);
+          return;
+        }
+        const entry = progressCardByReplyKey.get(key);
+        if (!entry) {
+          await clearSlackAssistantThreadStatus(source);
+          return;
+        }
+        if (entry.pendingTimer) {
+          clearTimeout(entry.pendingTimer);
+          entry.pendingTimer = undefined;
+        }
+        entry.source = source;
+        entry.updatedAt = Date.now();
+        await flushSlackProgressCard(key, entry);
         await clearSlackAssistantThreadStatus(source);
       }),
     );
@@ -3000,12 +3033,21 @@ export function createSlackAdapter(
         return;
       }
 
-      await finishSlackProgressCards(
-        event.sources,
-        event.outcome,
-        event.batchId,
-        event.error,
-      );
+      if (event.outcome === "completed") {
+        // Completed lifecycle events can be internal continuation boundaries;
+        // the final Slack send still closes the active progress card.
+        await flushSlackProgressCardsForCompletedLifecycle(
+          event.sources,
+          event.batchId,
+        );
+      } else {
+        await finishSlackProgressCards(
+          event.sources,
+          event.outcome,
+          event.batchId,
+          event.error,
+        );
+      }
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
       if (!errorText) {

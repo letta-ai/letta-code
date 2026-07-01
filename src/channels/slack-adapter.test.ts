@@ -1852,22 +1852,7 @@ test("slack adapter streams native task progress and clears thread status", asyn
     status: "complete",
   });
   expect(JSON.stringify(appendCall?.chunks)).not.toContain("token=abc");
-  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
-    channel: "C123",
-    ts: "1712800000.000300",
-    chunks: [
-      {
-        type: "task_update",
-        id: "task_call-1",
-        title: "Ran",
-        status: "complete",
-      },
-      {
-        type: "plan_update",
-        title: "Completed",
-      },
-    ],
-  });
+  expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
     channel_id: "C123",
     thread_ts: "1712790000.000050",
@@ -2369,26 +2354,7 @@ test("slack adapter keeps separate task rows for parallel tool progress", async 
       }),
     ]),
   );
-  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
-    channel: "C123",
-    ts: "1712800000.000300",
-    chunks: expect.arrayContaining([
-      expect.objectContaining({
-        id: "task_call-web",
-        title: "Searched articles",
-        status: "complete",
-      }),
-      expect.objectContaining({
-        id: "task_call-read",
-        title: "Read",
-        status: "complete",
-      }),
-      expect.objectContaining({
-        type: "plan_update",
-        title: "Completed",
-      }),
-    ]),
-  });
+  expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
 });
 
 test("slack adapter renders approval progress without thread status noise", async () => {
@@ -2721,6 +2687,97 @@ test("slack adapter keeps one active progress card slot until finalized", async 
   });
 });
 
+test("slack adapter keeps progress cards active across completed continuation lifecycles", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-2",
+    sources: [{ ...source, messageId: "1712800001.000100" }],
+    kind: "tool",
+    state: "started",
+    message: "Searching files",
+    toolCallId: "call-2",
+    toolName: "grep",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: expect.arrayContaining([
+      expect.objectContaining({
+        id: "task_call-2",
+        title: "Search",
+        status: "in_progress",
+      }),
+    ]),
+  });
+
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Done.",
+    threadId: "1712790000.000050",
+  });
+
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledTimes(1);
+
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-3",
+    sources: [{ ...source, messageId: "1712800002.000100" }],
+    kind: "tool",
+    state: "started",
+    message: "Reading again",
+    toolCallId: "call-3",
+    toolName: "read_file",
+  });
+
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(2);
+});
+
 test("slack adapter treats already-closed stream stop errors as benign", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -2763,11 +2820,12 @@ test("slack adapter treats already-closed stream stop errors as benign", async (
     error: "message_not_in_streaming_state",
   });
 
-  await adapter.handleTurnLifecycleEvent?.({
-    type: "finished",
-    batchId: "batch-1",
-    outcome: "completed",
-    sources: [source],
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Done.",
+    threadId: "1712790000.000050",
   });
 
   expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
@@ -2785,7 +2843,11 @@ test("slack adapter treats already-closed stream stop errors as benign", async (
       }),
     ]),
   });
-  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "C123",
+    text: "Done.",
+    thread_ts: "1712790000.000050",
+  });
   expect(writeClient?.chat.update).not.toHaveBeenCalled();
 });
 
