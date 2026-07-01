@@ -22,7 +22,6 @@ const dirs = [
   "src/reminders",
   "src/sandbox",
   "src/skills",
-  "src/telemetry",
   "src/test-utils",
   "src/tools",
   "src/types",
@@ -58,6 +57,13 @@ const channelTestFiles = findTestFiles("src/channels", [
   "src/channels/slack-media.test.ts",
 ]);
 
+// flush-auth mutates process.env plus telemetry/settings singletons while
+// asserting constellation/self-hosted routing. Bun runs test files in shared
+// workers, so unrelated env-mutating tests can race it. Keep it isolated.
+const telemetryTestFiles = findTestFiles("src/telemetry", [
+  "src/telemetry/flush-auth.test.ts",
+]);
+
 const opts = { stdio: "inherit", shell: process.platform === "win32" };
 let exitCode = 0;
 
@@ -68,10 +74,21 @@ try {
   exitCode = e.status ?? 1;
 }
 
+// Run telemetry flush-auth in isolation (clean env/settings globals)
+try {
+  execSync("bun test src/telemetry/flush-auth.test.ts --timeout 15000", opts);
+} catch (e) {
+  exitCode = e.status ?? 1;
+}
+
 // Run everything else
 try {
   execSync(
-    `bun test ${[...dirs, ...channelTestFiles].join(" ")} --timeout 15000`,
+    `bun test ${[
+      ...dirs,
+      ...telemetryTestFiles,
+      ...channelTestFiles,
+    ].join(" ")} --timeout 15000`,
     opts,
   );
 } catch (e) {

@@ -27,6 +27,7 @@ export interface TelemetryEvent {
     | "session_start"
     | "session_end"
     | "tool_usage"
+    | "tool_call_error"
     | "error"
     | "user_input"
     | "reflection_start"
@@ -67,6 +68,31 @@ export interface ToolUsageData {
   response_length?: number;
   error_type?: string;
   stderr?: string;
+}
+
+export type ToolCallErrorToolType = "built_in" | "external" | "mod" | "unknown";
+
+export type ToolCallErrorReason =
+  | "tool_returned_error"
+  | "tool_exception"
+  | "tool_not_found"
+  | "tool_context_not_found"
+  | "permission_denied"
+  | "pre_tool_hook_blocked";
+
+export interface ToolCallErrorData {
+  tool_name: string;
+  tool_type: ToolCallErrorToolType;
+  status: "error";
+  reason: ToolCallErrorReason;
+  error_type?: string;
+  tool_call_id?: string;
+  agent_id?: string;
+  conversation_id?: string;
+  step_id?: string;
+  os_platform: string;
+  os_arch: string;
+  node_version: string;
 }
 
 export interface ErrorData {
@@ -422,14 +448,22 @@ class TelemetryManager {
       | SessionStartData
       | SessionEndData
       | ToolUsageData
+      | ToolCallErrorData
       | ErrorData
       | UserInputData
       | ReflectionStartData
       | ReflectionEndData,
+    options?: { backend?: TelemetryBackend },
   ) {
     if (!this.isTelemetryEnabled()) {
       return;
     }
+
+    const dataRecord = data as Record<string, unknown>;
+    const eventAgentId =
+      typeof dataRecord.agent_id === "string" && dataRecord.agent_id.length > 0
+        ? dataRecord.agent_id
+        : this.currentAgentId || undefined;
 
     const event: TelemetryEvent = {
       type,
@@ -437,9 +471,9 @@ class TelemetryManager {
       data: {
         ...data,
         session_id: this.sessionId,
-        agent_id: this.currentAgentId || undefined,
+        agent_id: eventAgentId,
         surface: this.surface,
-        backend: resolveTelemetryBackend(),
+        backend: options?.backend ?? resolveTelemetryBackend(),
       },
     };
 
@@ -639,6 +673,43 @@ class TelemetryManager {
       stderr,
     };
     this.track("tool_usage", data);
+  }
+
+  /**
+   * Track tool call failures with safe, constellation-only metadata.
+   * Do not include tool arguments, tool output, stderr, user content, or
+   * raw exception messages here.
+   */
+  trackToolCallError(options: {
+    toolName: string;
+    toolType: ToolCallErrorToolType;
+    reason: ToolCallErrorReason;
+    errorType?: string;
+    toolCallId?: string;
+    agentId?: string | null;
+    conversationId?: string | null;
+    stepId?: string | null;
+  }) {
+    const backend = resolveTelemetryBackend();
+    if (backend !== "constellation") {
+      return;
+    }
+
+    const data: ToolCallErrorData = {
+      tool_name: options.toolName,
+      tool_type: options.toolType,
+      status: "error",
+      reason: options.reason,
+      error_type: options.errorType,
+      tool_call_id: options.toolCallId,
+      agent_id: options.agentId ?? undefined,
+      conversation_id: options.conversationId ?? undefined,
+      step_id: options.stepId ?? undefined,
+      os_platform: process.platform,
+      os_arch: process.arch,
+      node_version: process.version,
+    };
+    this.track("tool_call_error", data, { backend });
   }
 
   /**
