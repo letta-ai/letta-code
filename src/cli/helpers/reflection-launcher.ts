@@ -3,7 +3,7 @@ import {
   buildReflectionMemoryScope,
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
-  listPendingReflectionMemoryWorktrees,
+  integratePendingReflectionMemoryWorktrees,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
   reflectionIntegrationConsumesTranscript,
@@ -79,6 +79,7 @@ export interface ReflectionLaunchOptions {
   description: string;
   instruction?: string;
   systemPrompt?: string;
+  skipPendingWorktreeReminderScan?: boolean;
   completionConversationId?: string | (() => string);
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
@@ -213,7 +214,7 @@ function escapeTaskNotificationSummary(summary: string): string {
 function formatReflectionIntegrationNotification(reminder: string): string {
   return `<task-notification>
 <summary>${escapeTaskNotificationSummary(
-    "Memory reflection merge pending; resolving in parent agent.",
+    "Memory reflection merge is pending.",
   )}</summary>
 <result>
 ${reminder}
@@ -242,16 +243,18 @@ git worktree remove ${JSON.stringify(integration.reflectionWorktreeDir)}
 git branch -d "$reflection_branch"`;
 
   const reminder = `${SYSTEM_REMINDER_OPEN}
-ACTION REQUIRED: Resolve pending reflection memory merge.
+BACKGROUND MEMORY MAINTENANCE: A reflection memory merge is pending.
 
 A background reflection completed and produced committed memory updates, but the harness could not merge them into your main MemFS automatically.
+
+Do not interrupt the user's current request just because of this reminder, and do not invoke a skill solely because this reminder arrived. If you are already responding to the user, finish that response first. Resolve this later when appropriate, or when the user asks you to handle pending memory merges.
 
 Parent memory dir: ${integration.parentMemoryDir}
 Reflection branch: ${integration.reflectionBranch}
 Reflection worktree: ${integration.reflectionWorktreeDir}
 Status: ${integration.summary}
 
-Resolve as soon as possible (when appropriate):
+When you decide to resolve it, use standard git commands like:
 \`\`\`bash
 ${resolveCommands}
 \`\`\`
@@ -274,27 +277,18 @@ function queueReflectionIntegrationReminder(params: {
   });
 }
 
-async function queuePendingReflectionWorktreeReminders(params: {
+export async function queuePendingReflectionWorktreeReminders(params: {
   agentId: string;
   conversationId: string;
 }): Promise<void> {
   const memoryDir = getScopedMemoryFilesystemRoot(params.agentId);
-  const pendingWorktrees =
-    await listPendingReflectionMemoryWorktrees(memoryDir);
-  for (const pending of pendingWorktrees) {
+  const unresolvedIntegrations =
+    await integratePendingReflectionMemoryWorktrees(memoryDir);
+  for (const integration of unresolvedIntegrations) {
     queueReflectionIntegrationReminder({
       agentId: params.agentId,
       conversationId: params.conversationId,
-      integration: {
-        status: "pending_manual_merge",
-        parentMemoryDir: pending.parentMemoryDir,
-        reflectionWorktreeDir: pending.reflectionWorktreeDir,
-        reflectionBranch: pending.reflectionBranch,
-        commitCount: pending.commitCount,
-        head: pending.head,
-        summary:
-          "A previously unresolved reflection memory worktree is still unmerged.",
-      },
+      integration,
     });
   }
 }
@@ -395,7 +389,10 @@ export async function launchReflectionSubagent(
     return { launched: false, reason: "memfs_disabled" };
   }
 
-  if (triggerSource === "compaction-event") {
+  if (
+    triggerSource === "compaction-event" &&
+    !options.skipPendingWorktreeReminderScan
+  ) {
     try {
       await queuePendingReflectionWorktreeReminders({
         agentId,

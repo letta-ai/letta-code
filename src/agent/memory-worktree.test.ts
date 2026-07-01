@@ -13,6 +13,7 @@ import { join } from "node:path";
 import {
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
+  integratePendingReflectionMemoryWorktrees,
   listPendingReflectionMemoryWorktrees,
   reflectionIntegrationConsumesTranscript,
   reflectionIntegrationNeedsReminder,
@@ -167,6 +168,11 @@ describe("reflection memory worktrees", () => {
     git(mergedWorktree.worktreeDir, ["add", "merged.md"]);
     git(mergedWorktree.worktreeDir, ["commit", "-m", "merged"]);
     git(memoryDir, ["merge", mergedWorktree.branchName, "--no-edit"]);
+    writeFileSync(
+      join(mergedWorktree.worktreeDir, "dirty-after-merge.md"),
+      "dirty\n",
+      "utf-8",
+    );
 
     const pending = await listPendingReflectionMemoryWorktrees(memoryDir);
 
@@ -176,6 +182,121 @@ describe("reflection memory worktrees", () => {
     expect(pending[0]?.reflectionWorktreeDir).toBe(
       realpathSync(pendingWorktree.worktreeDir),
     );
+    expect(existsSync(mergedWorktree.worktreeDir)).toBe(false);
+    expect(
+      git(memoryDir, ["branch", "--list", mergedWorktree.branchName]).trim(),
+    ).toBe("");
+  });
+
+  test("integrates clean pending reflection worktrees in the background", async () => {
+    const pendingWorktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(
+      join(pendingWorktree.worktreeDir, "pending.md"),
+      "pending\n",
+      "utf-8",
+    );
+    git(pendingWorktree.worktreeDir, ["add", "pending.md"]);
+    git(pendingWorktree.worktreeDir, [
+      "commit",
+      "-m",
+      "fix(reflection): add pending memory",
+    ]);
+
+    const unresolved =
+      await integratePendingReflectionMemoryWorktrees(memoryDir);
+
+    expect(unresolved).toEqual([]);
+    expect(readFileSync(join(memoryDir, "pending.md"), "utf-8")).toBe(
+      "pending\n",
+    );
+    expect(existsSync(pendingWorktree.worktreeDir)).toBe(false);
+    expect(
+      git(memoryDir, ["branch", "--list", pendingWorktree.branchName]).trim(),
+    ).toBe("");
+    expect(git(memoryDir, ["status", "--porcelain"]).trim()).toBe("");
+  });
+
+  test("preserves conflicted pending reflection worktrees for reminders", async () => {
+    const pendingWorktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(
+      join(pendingWorktree.worktreeDir, "persona.md"),
+      "reflection\n",
+      "utf-8",
+    );
+    git(pendingWorktree.worktreeDir, ["add", "persona.md"]);
+    git(pendingWorktree.worktreeDir, ["commit", "-m", "reflection"]);
+
+    writeMemoryFile("persona.md", "parent\n");
+    git(memoryDir, ["add", "persona.md"]);
+    git(memoryDir, ["commit", "-m", "parent"]);
+
+    const unresolved =
+      await integratePendingReflectionMemoryWorktrees(memoryDir);
+
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0]?.status).toBe("pending_conflict");
+    expect(unresolved[0]?.reflectionBranch).toBe(pendingWorktree.branchName);
+    expect(readFileSync(join(memoryDir, "persona.md"), "utf-8")).toBe(
+      "parent\n",
+    );
+    expect(git(memoryDir, ["status", "--porcelain"]).trim()).toBe("");
+    expect(existsSync(pendingWorktree.worktreeDir)).toBe(true);
+  });
+
+  test("defers pending reflection integration when parent memory is dirty", async () => {
+    const pendingWorktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(
+      join(pendingWorktree.worktreeDir, "pending.md"),
+      "pending\n",
+      "utf-8",
+    );
+    git(pendingWorktree.worktreeDir, ["add", "pending.md"]);
+    git(pendingWorktree.worktreeDir, ["commit", "-m", "pending"]);
+    writeMemoryFile("parent-dirty.md", "dirty\n");
+
+    const unresolved =
+      await integratePendingReflectionMemoryWorktrees(memoryDir);
+
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0]?.status).toBe("pending_manual_merge");
+    expect(unresolved[0]?.summary).toContain(
+      "parent memory repo has uncommitted changes",
+    );
+    expect(unresolved[0]?.reflectionBranch).toBe(pendingWorktree.branchName);
+    expect(existsSync(pendingWorktree.worktreeDir)).toBe(true);
+  });
+
+  test("defers pending reflection integration when reflection worktree is dirty", async () => {
+    const pendingWorktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(
+      join(pendingWorktree.worktreeDir, "pending.md"),
+      "pending\n",
+      "utf-8",
+    );
+    git(pendingWorktree.worktreeDir, ["add", "pending.md"]);
+    git(pendingWorktree.worktreeDir, ["commit", "-m", "pending"]);
+    writeFileSync(
+      join(pendingWorktree.worktreeDir, "dirty.md"),
+      "dirty\n",
+      "utf-8",
+    );
+
+    const unresolved =
+      await integratePendingReflectionMemoryWorktrees(memoryDir);
+
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0]?.status).toBe("pending_manual_merge");
+    expect(unresolved[0]?.summary).toContain("uncommitted changes");
+    expect(unresolved[0]?.reflectionBranch).toBe(pendingWorktree.branchName);
+    expect(existsSync(pendingWorktree.worktreeDir)).toBe(true);
   });
 
   test("defers merge when parent memory has uncommitted changes", async () => {

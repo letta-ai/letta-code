@@ -59,10 +59,37 @@ describe("maybeLaunchPostTurnReflection", () => {
     expect(launch).not.toHaveBeenCalled();
   });
 
+  test("runs compaction maintenance even when reflection trigger is step-count", async () => {
+    const launch = mock(async () => true);
+    const onCompaction = mock(async () => {});
+    const contextTracker = createContextTracker();
+    const reminderState = createSharedReminderState();
+    contextTracker.pendingReflectionTrigger = true;
+
+    const didLaunch = await maybeLaunchPostTurnReflection({
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      memfsEnabled: true,
+      reflectionSettings: { trigger: "step-count", stepCount: 3 },
+      reminderState,
+      contextTracker,
+      getTranscriptState: transcriptStateWith(2),
+      launch,
+      onCompaction,
+    });
+
+    expect(didLaunch).toBe(false);
+    expect(onCompaction).toHaveBeenCalledTimes(1);
+    expect(contextTracker.pendingReflectionTrigger).toBe(false);
+    expect(reminderState.pendingReflectionTrigger).toBe(false);
+    expect(launch).not.toHaveBeenCalled();
+  });
+
   test("launches compaction reflection when a compaction event is pending and consumes the flag", async () => {
     const reminderState = createSharedReminderState();
     const contextTracker = createContextTracker();
     contextTracker.pendingReflectionTrigger = true;
+    const onCompaction = mock(async () => {});
     const launches: string[] = [];
 
     const didLaunch = await maybeLaunchPostTurnReflection({
@@ -76,9 +103,11 @@ describe("maybeLaunchPostTurnReflection", () => {
         launches.push(trigger);
         return true;
       }),
+      onCompaction,
     });
 
     expect(didLaunch).toBe(true);
+    expect(onCompaction).toHaveBeenCalledTimes(1);
     expect(launches).toEqual(["compaction-event"]);
     expect(contextTracker.pendingReflectionTrigger).toBe(false);
     expect(reminderState.pendingReflectionTrigger).toBe(false);

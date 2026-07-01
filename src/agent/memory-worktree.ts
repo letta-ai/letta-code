@@ -217,6 +217,24 @@ export interface PendingReflectionMemoryWorktree {
   head?: string;
 }
 
+function buildPendingResultFromPending(
+  pending: PendingReflectionMemoryWorktree,
+  status: "pending_conflict" | "pending_manual_merge",
+  summary: string,
+  error?: string,
+): ReflectionMemoryWorktreeFinalizeResult {
+  return {
+    status,
+    parentMemoryDir: pending.parentMemoryDir,
+    reflectionWorktreeDir: pending.reflectionWorktreeDir,
+    reflectionBranch: pending.reflectionBranch,
+    commitCount: pending.commitCount,
+    head: pending.head,
+    summary,
+    error,
+  };
+}
+
 export function reflectionIntegrationConsumesTranscript(
   result: ReflectionMemoryWorktreeFinalizeResult,
 ): boolean {
@@ -332,7 +350,9 @@ export async function listPendingReflectionMemoryWorktrees(
       "HEAD",
     ]);
     if (isMerged) {
-      await cleanupWorktreeAndBranch(resolvedParent, worktreeDir, branchName);
+      await cleanupWorktreeAndBranch(resolvedParent, worktreeDir, branchName, {
+        force: true,
+      });
       debugLog(
         "memfs-git",
         "reflection pending scan cleaned already-merged branch=%s worktree=%s",
@@ -363,6 +383,120 @@ export async function listPendingReflectionMemoryWorktrees(
   }
 
   return pending;
+}
+
+export async function integratePendingReflectionMemoryWorktrees(
+  parentMemoryDir: string,
+): Promise<ReflectionMemoryWorktreeFinalizeResult[]> {
+  const pendingWorktrees =
+    await listPendingReflectionMemoryWorktrees(parentMemoryDir);
+  const unresolved: ReflectionMemoryWorktreeFinalizeResult[] = [];
+
+  for (const pending of pendingWorktrees) {
+    const isMerged = await tryRunGit(pending.parentMemoryDir, [
+      "merge-base",
+      "--is-ancestor",
+      pending.reflectionBranch,
+      "HEAD",
+    ]);
+    if (isMerged) {
+      await cleanupWorktreeAndBranch(
+        pending.parentMemoryDir,
+        pending.reflectionWorktreeDir,
+        pending.reflectionBranch,
+        { force: true },
+      );
+      debugLog(
+        "memfs-git",
+        "reflection pending integration cleaned already-merged branch=%s worktree=%s",
+        pending.reflectionBranch,
+        pending.reflectionWorktreeDir,
+      );
+      continue;
+    }
+
+    const worktreeStatus = await getStatusPorcelain(
+      pending.reflectionWorktreeDir,
+    );
+    if (worktreeStatus.length > 0) {
+      unresolved.push(
+        buildPendingResultFromPending(
+          pending,
+          "pending_manual_merge",
+          "A previously unresolved reflection memory worktree has uncommitted changes. Background merge was deferred.",
+        ),
+      );
+      debugLog(
+        "memfs-git",
+        "reflection pending integration deferred branch=%s reason=worktree_dirty worktree=%s",
+        pending.reflectionBranch,
+        pending.reflectionWorktreeDir,
+      );
+      continue;
+    }
+
+    const parentStatus = await getStatusPorcelain(pending.parentMemoryDir);
+    if (parentStatus.length > 0) {
+      unresolved.push(
+        buildPendingResultFromPending(
+          pending,
+          "pending_manual_merge",
+          "A previously unresolved reflection memory worktree is still unmerged, and the parent memory repo has uncommitted changes. Background merge was deferred.",
+        ),
+      );
+      debugLog(
+        "memfs-git",
+        "reflection pending integration deferred branch=%s reason=parent_dirty",
+        pending.reflectionBranch,
+      );
+      continue;
+    }
+
+    const mergeMessage = await buildReflectionMergeMessage(
+      pending.parentMemoryDir,
+      pending.reflectionBranch,
+    );
+    const mergeResult = await tryRunGit(pending.parentMemoryDir, [
+      "merge",
+      pending.reflectionBranch,
+      "-m",
+      mergeMessage,
+    ]);
+    if (!mergeResult) {
+      await tryRunGit(pending.parentMemoryDir, ["merge", "--abort"]);
+      unresolved.push(
+        buildPendingResultFromPending(
+          pending,
+          "pending_conflict",
+          "A previously unresolved reflection memory worktree still has conflicts. The parent merge was aborted and the reflection worktree was preserved.",
+        ),
+      );
+      debugLog(
+        "memfs-git",
+        "reflection pending integration conflicted branch=%s mergeAbort=true preservedWorktree=%s",
+        pending.reflectionBranch,
+        pending.reflectionWorktreeDir,
+      );
+      continue;
+    }
+
+    const mergedHead = await getHead(pending.parentMemoryDir);
+    await cleanupWorktreeAndBranch(
+      pending.parentMemoryDir,
+      pending.reflectionWorktreeDir,
+      pending.reflectionBranch,
+      { force: true },
+    );
+    debugLog(
+      "memfs-git",
+      "reflection pending integration merged branch=%s commitCount=%d parentHead=%s cleanedUp=true",
+      pending.reflectionBranch,
+      pending.commitCount,
+      mergedHead ?? "<none>",
+    );
+  }
+
+  return unresolved;
 }
 
 async function cleanupWorktreeAndBranch(
