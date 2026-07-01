@@ -86,6 +86,12 @@ function json(res, status, body) {
   res.end(`${JSON.stringify(body)}\n`);
 }
 
+function normalizeRequestPath(pathname) {
+  return pathname.length > 1 && pathname.endsWith("/")
+    ? pathname.slice(0, -1)
+    : pathname;
+}
+
 async function readRequestBody(req) {
   for await (const _chunk of req) {
     // Drain request bodies so the client can finish cleanly.
@@ -111,9 +117,10 @@ async function startAgentLimitServer(options = {}) {
   };
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://127.0.0.1");
-    requests.push(`${req.method} ${url.pathname}`);
+    const requestPath = normalizeRequestPath(url.pathname);
+    requests.push(`${req.method} ${requestPath}`);
 
-    if (req.method === "GET" && url.pathname === "/v1/models/") {
+    if (req.method === "GET" && requestPath === "/v1/models") {
       json(res, 200, [
         {
           handle: "openai/gpt-4o-mini",
@@ -126,20 +133,20 @@ async function startAgentLimitServer(options = {}) {
       return;
     }
 
-    if (req.method === "POST" && url.pathname === "/v1/agents/") {
+    if (req.method === "POST" && requestPath === "/v1/agents") {
       await readRequestBody(req);
       json(res, createStatus, createBody);
       return;
     }
 
-    if (req.method === "GET" && url.pathname === "/v1/agents/") {
+    if (req.method === "GET" && requestPath === "/v1/agents") {
       json(res, listStatus, listBody ?? [fallbackAgent]);
       return;
     }
 
     if (
       req.method === "GET" &&
-      url.pathname === `/v1/agents/${FALLBACK_AGENT_ID}`
+      requestPath === `/v1/agents/${FALLBACK_AGENT_ID}`
     ) {
       json(res, 200, fallbackAgent);
       return;
@@ -418,7 +425,7 @@ async function runDefaultCreateFailureScenario({
     }
 
     const listAgentRequests = fakeApi.requests.filter(
-      (request) => request === "GET /v1/agents/",
+      (request) => request === "GET /v1/agents",
     ).length;
     if (expectListAgents && listAgentRequests === 0) {
       throw new Error(
