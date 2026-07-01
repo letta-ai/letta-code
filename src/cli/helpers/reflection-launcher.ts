@@ -190,32 +190,25 @@ function getReflectionCompletionMessage(
     case "pending_manual_merge":
       return "Dreamed and produced memory updates, but the MemFS merge needs manual completion.";
     case "dirty_uncommitted":
-      return "Tried to reflect, but left uncommitted memory changes in its worktree.";
-    case "preserved":
-      return "Tried to reflect, but the memory worktree was preserved for manual inspection.";
+      return "Tried to reflect, but left uncommitted memory changes; cleaned up and will retry later.";
+    case "failed":
+      return "Tried to reflect, but the run failed after producing memory updates; cleaned up and will retry later.";
   }
 }
 
 export function formatReflectionIntegrationReminder(
   integration: ReflectionMemoryWorktreeFinalizeResult,
 ): string {
-  const conflictWorktree = integration.integrationWorktreeDir;
-  const integrationBranch = integration.integrationBranch;
-  const resolveCommands = conflictWorktree
-    ? `cd ${JSON.stringify(conflictWorktree)}
+  const resolveCommands = `cd ${JSON.stringify(integration.parentMemoryDir)}
 git status
-# resolve conflicted memory files, then:
-git add -A
-git commit --no-edit
+# If parent MemFS has unrelated changes, commit or discard them first.
+# Then merge the reflection branch and resolve conflicts if prompted:
+git merge ${JSON.stringify(integration.reflectionBranch)} --no-edit || {
+  git status
+  echo "Resolve conflicted memory files, then run: git add -A && git commit --no-edit"
+  exit 1
+}
 
-cd ${JSON.stringify(integration.parentMemoryDir)}
-git merge --ff-only ${JSON.stringify(integrationBranch ?? "<integration-branch>")}
-git worktree remove ${JSON.stringify(conflictWorktree)}
-git branch -d ${JSON.stringify(integration.reflectionBranch)} ${JSON.stringify(integrationBranch ?? "<integration-branch>")}`
-    : `cd ${JSON.stringify(integration.parentMemoryDir)}
-git status
-# commit or discard any unrelated parent MemFS changes, then:
-git merge ${JSON.stringify(integration.reflectionBranch)} --no-edit
 git worktree remove ${JSON.stringify(integration.reflectionWorktreeDir)}
 git branch -d ${JSON.stringify(integration.reflectionBranch)}`;
 
@@ -224,7 +217,8 @@ MEMORY REFLECTION MERGE NEEDED: A background reflection completed and produced c
 
 Parent memory dir: ${integration.parentMemoryDir}
 Reflection branch: ${integration.reflectionBranch}
-${integration.integrationBranch ? `Integration branch: ${integration.integrationBranch}\n` : ""}${integration.integrationWorktreeDir ? `Conflict worktree: ${integration.integrationWorktreeDir}\n` : ""}Status: ${integration.summary}
+Reflection worktree: ${integration.reflectionWorktreeDir}
+Status: ${integration.summary}
 
 Resolve when appropriate:
 \`\`\`bash

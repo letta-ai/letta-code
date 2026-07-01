@@ -91,7 +91,7 @@ describe("reflection memory worktrees", () => {
     ).toBe("");
   });
 
-  test("preserves a conflicted integration worktree and leaves parent main clean", async () => {
+  test("aborts conflicted parent merges and preserves the reflection worktree", async () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,
     });
@@ -119,11 +119,10 @@ describe("reflection memory worktrees", () => {
       "parent\n",
     );
     expect(git(memoryDir, ["status", "--porcelain"]).trim()).toBe("");
-    expect(result.integrationWorktreeDir).toBeTruthy();
-    expect(existsSync(result.integrationWorktreeDir as string)).toBe(true);
+    expect(existsSync(worktree.worktreeDir)).toBe(true);
     expect(
-      git(result.integrationWorktreeDir as string, ["status", "--porcelain"]),
-    ).toContain("UU persona.md");
+      git(memoryDir, ["branch", "--list", worktree.branchName]).trim(),
+    ).toContain(worktree.branchName);
   });
 
   test("cleans up a no-op reflection worktree", async () => {
@@ -143,7 +142,34 @@ describe("reflection memory worktrees", () => {
     ).toBe("");
   });
 
-  test("leaves dirty uncommitted reflection worktrees unresolved", async () => {
+  test("defers merge when parent memory has uncommitted changes", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+
+    writeFileSync(
+      join(worktree.worktreeDir, "reflection.md"),
+      "dream\n",
+      "utf-8",
+    );
+    git(worktree.worktreeDir, ["add", "reflection.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+
+    writeMemoryFile("parent.md", "dirty\n");
+
+    const result = await finalizeReflectionMemoryWorktree(worktree, {
+      shouldMerge: true,
+    });
+
+    expect(result.status).toBe("pending_manual_merge");
+    expect(reflectionIntegrationConsumesTranscript(result)).toBe(true);
+    expect(reflectionIntegrationNeedsReminder(result)).toBe(true);
+    expect(existsSync(worktree.worktreeDir)).toBe(true);
+    expect(readFileSync(join(memoryDir, "parent.md"), "utf-8")).toBe("dirty\n");
+    expect(git(memoryDir, ["status", "--porcelain"])).toContain("?? parent.md");
+  });
+
+  test("cleans up dirty uncommitted reflection worktrees for retry", async () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,
     });
@@ -155,6 +181,34 @@ describe("reflection memory worktrees", () => {
 
     expect(result.status).toBe("dirty_uncommitted");
     expect(reflectionIntegrationConsumesTranscript(result)).toBe(false);
-    expect(existsSync(worktree.worktreeDir)).toBe(true);
+    expect(existsSync(worktree.worktreeDir)).toBe(false);
+    expect(
+      git(memoryDir, ["branch", "--list", worktree.branchName]).trim(),
+    ).toBe("");
+  });
+
+  test("cleans up failed committed reflection worktrees for retry", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+
+    writeFileSync(
+      join(worktree.worktreeDir, "reflection.md"),
+      "dream\n",
+      "utf-8",
+    );
+    git(worktree.worktreeDir, ["add", "reflection.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+
+    const result = await finalizeReflectionMemoryWorktree(worktree, {
+      shouldMerge: false,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(reflectionIntegrationConsumesTranscript(result)).toBe(false);
+    expect(existsSync(worktree.worktreeDir)).toBe(false);
+    expect(
+      git(memoryDir, ["branch", "--list", worktree.branchName]).trim(),
+    ).toBe("");
   });
 });

@@ -1,7 +1,7 @@
 import { execFile as execFileCb } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -162,15 +162,13 @@ export type ReflectionMemoryWorktreeFinalizeStatus =
   | "pending_conflict"
   | "pending_manual_merge"
   | "dirty_uncommitted"
-  | "preserved";
+  | "failed";
 
 export interface ReflectionMemoryWorktreeFinalizeResult {
   status: ReflectionMemoryWorktreeFinalizeStatus;
   parentMemoryDir: string;
   reflectionWorktreeDir: string;
   reflectionBranch: string;
-  integrationWorktreeDir?: string;
-  integrationBranch?: string;
   commitCount: number;
   head?: string;
   summary: string;
@@ -229,23 +227,21 @@ async function cleanupWorktreeAndBranch(
   parentMemoryDir: string,
   worktreeDir: string,
   branchName: string,
+  options: { force?: boolean } = {},
 ): Promise<void> {
   if (existsSync(worktreeDir)) {
-    await runGit(parentMemoryDir, ["worktree", "remove", worktreeDir]);
+    await runGit(parentMemoryDir, [
+      "worktree",
+      "remove",
+      ...(options.force ? ["--force"] : []),
+      worktreeDir,
+    ]);
   }
-  await tryRunGit(parentMemoryDir, ["branch", "-d", branchName]);
-}
-
-async function cleanupWorktreeOnly(
-  parentMemoryDir: string,
-  worktreeDir: string,
-): Promise<void> {
-  if (!existsSync(worktreeDir)) return;
-  await tryRunGit(parentMemoryDir, ["worktree", "remove", worktreeDir]);
-}
-
-async function cleanupDirectory(path: string): Promise<void> {
-  await rm(path, { recursive: true, force: true });
+  await tryRunGit(parentMemoryDir, [
+    "branch",
+    options.force ? "-D" : "-d",
+    branchName,
+  ]);
 }
 
 function buildPendingManualResult(
@@ -254,8 +250,6 @@ function buildPendingManualResult(
   summary: string,
   options: {
     error?: string;
-    integrationWorktreeDir?: string;
-    integrationBranch?: string;
     head?: string;
   } = {},
 ): ReflectionMemoryWorktreeFinalizeResult {
@@ -264,8 +258,6 @@ function buildPendingManualResult(
     parentMemoryDir: worktree.parentMemoryDir,
     reflectionWorktreeDir: worktree.worktreeDir,
     reflectionBranch: worktree.branchName,
-    integrationWorktreeDir: options.integrationWorktreeDir,
-    integrationBranch: options.integrationBranch,
     commitCount,
     head: options.head,
     summary,
@@ -282,6 +274,12 @@ export async function finalizeReflectionMemoryWorktree(
   const head = await getHead(worktree.worktreeDir);
 
   if (status.length > 0) {
+    await cleanupWorktreeAndBranch(
+      worktree.parentMemoryDir,
+      worktree.worktreeDir,
+      worktree.branchName,
+      { force: true },
+    );
     return {
       status: "dirty_uncommitted",
       parentMemoryDir: worktree.parentMemoryDir,
@@ -290,7 +288,7 @@ export async function finalizeReflectionMemoryWorktree(
       commitCount,
       head,
       summary:
-        "Reflection memory worktree has uncommitted changes; leaving it for manual inspection.",
+        "Reflection memory worktree had uncommitted changes; it was cleaned up so the transcript can be retried.",
     };
   }
 
@@ -312,15 +310,21 @@ export async function finalizeReflectionMemoryWorktree(
   }
 
   if (!options.shouldMerge) {
+    await cleanupWorktreeAndBranch(
+      worktree.parentMemoryDir,
+      worktree.worktreeDir,
+      worktree.branchName,
+      { force: true },
+    );
     return {
-      status: "preserved",
+      status: "failed",
       parentMemoryDir: worktree.parentMemoryDir,
       reflectionWorktreeDir: worktree.worktreeDir,
       reflectionBranch: worktree.branchName,
       commitCount,
       head,
       summary:
-        "Reflection produced committed memory updates, but the subagent did not complete successfully; leaving the worktree for manual inspection.",
+        "Reflection produced committed memory updates, but the subagent did not complete successfully; the worktree was cleaned up so the transcript can be retried.",
     };
   }
 
@@ -334,72 +338,31 @@ export async function finalizeReflectionMemoryWorktree(
     );
   }
 
-  const integrationBranch = `letta/reflection-merge/${worktree.id}`;
-  const integrationWorktreeDir = join(
-    worktree.worktreeBaseDir,
-    `reflection-merge-${worktree.id}`,
-  );
-
-  await cleanupDirectory(integrationWorktreeDir);
-  await runGit(worktree.parentMemoryDir, [
-    "worktree",
-    "add",
-    integrationWorktreeDir,
-    "-b",
-    integrationBranch,
-    "HEAD",
-  ]);
-
-  const mergeResult = await tryRunGit(integrationWorktreeDir, [
+  const mergeResult = await tryRunGit(worktree.parentMemoryDir, [
     "merge",
     worktree.branchName,
     "--no-edit",
   ]);
   if (!mergeResult) {
-    await cleanupWorktreeOnly(worktree.parentMemoryDir, worktree.worktreeDir);
+    await tryRunGit(worktree.parentMemoryDir, ["merge", "--abort"]);
     return {
       status: "pending_conflict",
       parentMemoryDir: worktree.parentMemoryDir,
       reflectionWorktreeDir: worktree.worktreeDir,
       reflectionBranch: worktree.branchName,
-      integrationWorktreeDir,
-      integrationBranch,
       commitCount,
-      head: await getHead(integrationWorktreeDir),
+      head,
       summary:
-        "Reflection produced memory updates, but merging them into the parent memory repo has conflicts. The conflicted integration worktree was preserved.",
+        "Reflection produced memory updates, but merging them into the parent memory repo has conflicts. The parent merge was aborted and the reflection worktree was preserved for manual merge.",
     };
   }
 
-  const integrationHead = await getHead(integrationWorktreeDir);
-  const fastForward = await tryRunGit(worktree.parentMemoryDir, [
-    "merge",
-    "--ff-only",
-    integrationBranch,
-  ]);
-  if (!fastForward) {
-    await cleanupWorktreeOnly(worktree.parentMemoryDir, worktree.worktreeDir);
-    return buildPendingManualResult(
-      worktree,
-      commitCount,
-      "Reflection memory updates merged in an integration worktree, but parent main could not be fast-forwarded. Manual merge is required.",
-      {
-        integrationWorktreeDir,
-        integrationBranch,
-        head: integrationHead,
-      },
-    );
-  }
+  const mergedHead = await getHead(worktree.parentMemoryDir);
 
   await cleanupWorktreeAndBranch(
     worktree.parentMemoryDir,
     worktree.worktreeDir,
     worktree.branchName,
-  );
-  await cleanupWorktreeAndBranch(
-    worktree.parentMemoryDir,
-    integrationWorktreeDir,
-    integrationBranch,
   );
 
   return {
@@ -407,10 +370,8 @@ export async function finalizeReflectionMemoryWorktree(
     parentMemoryDir: worktree.parentMemoryDir,
     reflectionWorktreeDir: worktree.worktreeDir,
     reflectionBranch: worktree.branchName,
-    integrationWorktreeDir,
-    integrationBranch,
     commitCount,
-    head: integrationHead,
+    head: mergedHead,
     summary: `Merged ${commitCount} reflection memory commit(s) into parent memory main.`,
   };
 }
