@@ -3107,6 +3107,119 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(2);
 });
 
+test("slack adapter shows responding while MessageChannel runs with an active progress card", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Searching web",
+    toolCallId: "call-web",
+    toolName: "web_search",
+    toolTitle: "Searching articles",
+    toolDetails: "letta blog",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "completed",
+    message: "Tool finished",
+    toolCallId: "call-web",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Preparing tool: MessageChannel",
+    toolCallId: "call-message-channel",
+    toolName: "MessageChannel",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(2);
+  const appendCalls = writeClient?.chat.appendStream.mock
+    .calls as unknown as Array<
+    [
+      {
+        channel: string;
+        ts: string;
+        chunks?: Array<Record<string, unknown>>;
+      },
+    ]
+  >;
+  const respondingAppend = appendCalls[1]?.[0];
+  expect(respondingAppend).toMatchObject({
+    channel: "C123",
+    ts: "1712800000.000300",
+  });
+  expect(respondingAppend?.chunks).toEqual([
+    {
+      type: "plan_update",
+      title: "Responding",
+    },
+    {
+      type: "task_update",
+      id: "task_channel_response",
+      title: "Responding",
+      status: "in_progress",
+    },
+  ]);
+
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Done — found it.",
+    threadId: "1712790000.000050",
+  });
+
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: expect.arrayContaining([
+      expect.objectContaining({
+        id: "task_channel_response",
+        title: "Responded",
+        status: "complete",
+      }),
+      expect.objectContaining({
+        type: "plan_update",
+        title: "Completed",
+      }),
+    ]),
+  });
+});
+
 test("slack adapter suppresses internal channel delivery tools from progress cards", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,

@@ -438,6 +438,7 @@ const SLACK_PROGRESS_CARD_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const SLACK_PROGRESS_CARD_STATE_MAX = 2_000;
 const SLACK_STREAM_CHUNK_TEXT_MAX = 256;
 const SLACK_LIFECYCLE_ERROR_TASK_ID = "task_lifecycle_error";
+const SLACK_CHANNEL_RESPONSE_TASK_ID = "task_channel_response";
 const DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS = 1_000;
 const SLACK_PROGRESS_DEBUG_LOG = join(
   homedir(),
@@ -763,8 +764,57 @@ function isSlackToolActionProgress(update: ChannelTurnProgressEvent): boolean {
   );
 }
 
-function isSlackHiddenToolName(toolName: string): boolean {
+function isSlackMessageChannelToolName(toolName: string): boolean {
   return toolName.toLowerCase() === "messagechannel";
+}
+
+function isSlackHiddenToolName(toolName: string): boolean {
+  return isSlackMessageChannelToolName(toolName);
+}
+
+function isSlackMessageChannelToolUpdate(
+  entry: SlackProgressCardEntry | undefined,
+  update: ChannelTurnProgressEvent,
+): boolean {
+  return Boolean(
+    update.kind === "tool" &&
+      ((update.toolName && isSlackMessageChannelToolName(update.toolName)) ||
+        (update.toolCallId &&
+          entry?.hiddenToolCallIds?.has(update.toolCallId))),
+  );
+}
+
+function hasVisibleSlackProgressTask(
+  entry: SlackProgressCardEntry | undefined,
+): boolean {
+  if (!entry) {
+    return false;
+  }
+  for (const task of entry.toolTasksById?.values() ?? []) {
+    if (task.id !== SLACK_CHANNEL_RESPONSE_TASK_ID) {
+      return true;
+    }
+  }
+  return Boolean(
+    entry.pendingStreamChunks?.some(
+      (chunk) =>
+        chunk.type === "task_update" &&
+        chunk.id !== SLACK_CHANNEL_RESPONSE_TASK_ID,
+    ),
+  );
+}
+
+function shouldShowSlackChannelResponseProgress(
+  entry: SlackProgressCardEntry | undefined,
+  update: ChannelTurnProgressEvent,
+): entry is SlackProgressCardEntry {
+  if (!entry || !isSlackMessageChannelToolUpdate(entry, update)) {
+    return false;
+  }
+  if (entry.toolTasksById?.has(SLACK_CHANNEL_RESPONSE_TASK_ID)) {
+    return true;
+  }
+  return hasVisibleSlackProgressTask(entry);
 }
 
 function formatSlackToolNameForDisplay(
@@ -865,6 +915,15 @@ function formatSlackToolTitleForTerminalStatus(
   }
   if (title === "Bash") {
     return status === "complete" ? "Ran" : "Running";
+  }
+  if (title === "Responding") {
+    if (status === "complete") {
+      return "Responded";
+    }
+    if (status === "error") {
+      return "Response failed";
+    }
+    return "Responding";
   }
   if (title === "Search the web") {
     if (status === "complete") {
@@ -1061,6 +1120,57 @@ function toSlackStreamTaskStatus(
   return "in_progress";
 }
 
+function formatSlackChannelResponseTitle(
+  status: SlackStreamTaskStatus,
+): string {
+  if (status === "complete") {
+    return "Responded";
+  }
+  if (status === "error") {
+    return "Response failed";
+  }
+  return "Responding";
+}
+
+function buildSlackChannelResponseProgressChunks(
+  entry: SlackProgressCardEntry,
+  update: ChannelTurnProgressEvent,
+): SlackStreamChunk[] {
+  const status = toSlackStreamTaskStatus(update);
+  const title = formatSlackChannelResponseTitle(status);
+  const prevTask = entry.toolTasksById?.get(SLACK_CHANNEL_RESPONSE_TASK_ID);
+  if (prevTask?.title === title && prevTask.status === status) {
+    debugSlackProgress(
+      `[RESPONSE-SKIP-SAME] id=${SLACK_CHANNEL_RESPONSE_TASK_ID} title=${title} status=${status}`,
+    );
+    return [];
+  }
+
+  const task: SlackProgressToolTask = {
+    id: SLACK_CHANNEL_RESPONSE_TASK_ID,
+    kind: "responding",
+    title,
+    status,
+  };
+  entry.toolTasksById ??= new Map();
+  entry.reasoningActive = false;
+  entry.toolTasksById.set(task.id, task);
+
+  const chunks: SlackStreamChunk[] = [
+    buildSlackPlanUpdateChunk(entry),
+    {
+      type: "task_update",
+      id: task.id,
+      title: task.title,
+      status: task.status,
+    },
+  ];
+  debugSlackProgress(
+    `[RESPONSE-CHUNKS] id=${task.id} title=${title} status=${status} chunks=${describeSlackStreamChunks(chunks)}`,
+  );
+  return chunks;
+}
+
 function buildSlackStreamProgressChunks(
   entry: SlackProgressCardEntry,
   update: ChannelTurnProgressEvent,
@@ -1085,6 +1195,10 @@ function buildSlackStreamProgressChunks(
       `[REASONING] kind=${update.kind} state=${update.state} active=${reasoningActive} mode=${entry.mode ?? "none"} chunks=${describeSlackStreamChunks(chunks)}`,
     );
     return chunks;
+  }
+
+  if (isSlackMessageChannelToolUpdate(entry, update)) {
+    return buildSlackChannelResponseProgressChunks(entry, update);
   }
 
   // Slack replaces task rows that reuse an id, so visible tool calls need
@@ -2281,7 +2395,11 @@ export function createSlackAdapter(
     const existingEntry = progressCardByReplyKey.get(key);
     if (options.update?.kind === "tool") {
       if (isSlackHiddenToolUpdate(existingEntry, options.update)) {
-        return;
+        if (
+          !shouldShowSlackChannelResponseProgress(existingEntry, options.update)
+        ) {
+          return;
+        }
       }
       if (!existingEntry && !options.update.toolName) {
         return;
