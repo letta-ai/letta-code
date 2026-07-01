@@ -245,6 +245,8 @@ export interface ChannelMessageActionRequest {
   mediaPath?: string;
   filename?: string;
   title?: string;
+  /** Channel/plugin-owned tool fields advertised through describeMessageTool(). */
+  pluginFields?: Record<string, unknown>;
 }
 
 export interface ChannelResolvedMessageTarget {
