@@ -12,7 +12,7 @@ This skill lets you create, list, and manage scheduled tasks using the `letta cr
 - User asks to be reminded of something ("remind me to X at Y")
 - User wants a recurring check-in ("every morning ask me about X")
 - User wants a one-shot delayed message ("in 30 minutes, check on X")
-- User wants to see or cancel existing scheduled tasks
+- User wants to see, edit, or cancel existing scheduled tasks
 
 ## CLI Usage
 
@@ -46,6 +46,7 @@ letta cron add --name <short-name> --description <text> --prompt <text> <schedul
 |------|-------------|
 | `--agent <id>` | Agent ID (defaults to `LETTA_AGENT_ID` from the current shell/session) |
 | `--conversation <id>` | Conversation ID (defaults to `LETTA_CONVERSATION_ID` from the current shell/session, otherwise `"default"`) |
+| `--timezone <iana>` | Timezone used for cron matching (defaults to the local timezone) |
 
 ### Listing Tasks
 
@@ -59,6 +60,18 @@ Optional filters: `--agent <id>`, `--conversation <id>`
 
 ```bash
 letta cron get <task-id>
+```
+
+### Updating Tasks
+
+Patch an existing task in place instead of deleting and recreating it. This preserves the task ID and run metadata.
+
+```bash
+letta cron update <task-id> --prompt "Updated prompt"
+letta cron update <task-id> --prompt-file ./prompt.txt
+letta cron update <task-id> --cron "0 9 * * 1-5"
+letta cron update <task-id> --timezone "America/Los_Angeles"
+letta cron update <task-id> --at "in 30m"
 ```
 
 ### Binding a Task to the Right Conversation
@@ -147,6 +160,16 @@ If you need to confirm the exact conversation a task is bound to, list with expl
 
 ```bash
 letta cron list --agent "$AGENT_ID" --conversation "$CONVERSATION_ID"
+```
+
+### "Change the dog walk reminder prompt"
+
+First list to find the task ID, then update it in place:
+
+```bash
+letta cron list
+# Find the task ID from the output, then:
+letta cron update <task-id> --prompt "Hey! Walk the dog before standup."
 ```
 
 ### "Cancel the dog walk reminder"
