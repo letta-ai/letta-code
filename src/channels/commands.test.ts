@@ -214,13 +214,16 @@ describe("channel slash commands", () => {
     expect(text).toContain("Slack model selector");
     expect(text).toContain("Recent models:");
     expect(text).toContain(
-      "• Claude Sonnet 4.6 — anthropic/claude-sonnet-4-6 (/model sonnet)",
+      "• Claude Sonnet 4.6 — anthropic/claude-sonnet-4-6 (!model sonnet)",
     );
     expect(text).toContain("Available models:");
-    expect(text).toContain("• GPT-5 — openai/gpt-5 (/model gpt)");
+    expect(text).toContain("• GPT-5 — openai/gpt-5 (!model gpt)");
     expect(text).toContain("…and 1 more.");
     expect(text).not.toContain("missing/model");
-    expect(text).toContain("Use /model <handle-or-id>");
+    expect(text).toContain(
+      "Mention the app with !model <handle-or-id> to switch this thread's routed model.",
+    );
+    expect(text).not.toContain("/model <handle-or-id>");
   });
 
   test("builds model update and unavailable messages", () => {

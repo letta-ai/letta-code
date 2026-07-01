@@ -81,8 +81,7 @@ describe("registry copy: first-party channels", () => {
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).toContain("Send a normal message");
     expect(text).toContain("connected agent will reply in this chat");
-    expect(text).toContain("react");
-    expect(text).toContain("upload a file");
+    expect(text).not.toContain("MessageChannel");
     expect(text).not.toContain("open Channels >");
   });
 });
