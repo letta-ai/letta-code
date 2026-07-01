@@ -68,7 +68,7 @@ export const signalMessageActions: ChannelMessageActionAdapter = {
           media: {
             type: "string",
             description:
-              "Absolute local file path to send through Signal as an attachment. The signal-cli-rest-api daemon must be able to read this path.",
+              "Absolute local file path to send through Signal as an attachment. The signal-cli daemon must be able to read this path.",
           },
           messageId: {
             type: "string",

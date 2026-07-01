@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { renderSignalQrTerminal } from "./runtime";
 import {
   extractSignalAccountsFromResponse,
-  getSignalDockerRunCommand,
+  getNativeSignalCliDaemonCommand,
+  getSignalHealthCheckCommand,
   getSignalQrLinkUrl,
   hasSignalSetupRestEndpoints,
   normalizeSignalBaseUrl,
@@ -16,7 +17,7 @@ import {
 } from "./setup";
 
 describe("Signal setup helpers", () => {
-  test("normalizes base URLs for signal-cli-rest-api", () => {
+  test("normalizes base URLs for Signal daemon", () => {
     expect(normalizeSignalBaseUrl("")).toBe("http://127.0.0.1:8080");
     expect(normalizeSignalBaseUrl("http://127.0.0.1:8080/")).toBe(
       "http://127.0.0.1:8080",
@@ -43,12 +44,16 @@ describe("Signal setup helpers", () => {
     ]);
   });
 
-  test("documents the Docker daemon command used by interactive setup", () => {
-    const command = getSignalDockerRunCommand();
-    expect(command).toContain("bbernhard/signal-cli-rest-api:latest");
-    expect(command).toContain("MODE=json-rpc");
-    expect(command).toContain("8080:8080");
-    expect(command).toContain("letta-signal-cli-data");
+  test("documents the native daemon command used by interactive setup", () => {
+    const command = getNativeSignalCliDaemonCommand();
+    expect(command).toContain("signal-cli -c");
+    expect(command).toContain("daemon");
+    expect(command).toContain("--http 127.0.0.1:8080");
+    expect(command).toContain("--receive-mode on-connection");
+    expect(command).toContain("--ignore-stories");
+    expect(getSignalHealthCheckCommand()).toBe(
+      "curl -i --max-time 2 http://127.0.0.1:8080/api/v1/check",
+    );
   });
 
   test("extracts account numbers from daemon account responses", () => {

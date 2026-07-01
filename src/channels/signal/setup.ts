@@ -17,11 +17,9 @@ import {
 const DEFAULT_SIGNAL_BASE_URL = "http://127.0.0.1:8080";
 const DEFAULT_SIGNAL_ACCOUNT_ID = "personal";
 const DEFAULT_SIGNAL_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
-const SIGNAL_DOCKER_CONTAINER = "letta-signal-cli";
-const SIGNAL_DOCKER_VOLUME = "letta-signal-cli-data";
-const SIGNAL_DOCKER_IMAGE = "bbernhard/signal-cli-rest-api:latest";
 const SIGNAL_CAPTCHA_URL =
   "https://signalcaptchas.org/registration/generate.html";
+const SIGNAL_NATIVE_EXAMPLE_CONFIG_DIR = "~/.local/share/signal-cli-letta";
 
 function parseYesNo(input: string, defaultValue: boolean): boolean {
   const trimmed = input.trim().toLowerCase();
@@ -77,15 +75,24 @@ function parseMediaMaxBytes(input: string): number | undefined {
   return Math.trunc(parsed);
 }
 
-export function getSignalDockerRunCommand(): string {
+export function getNativeSignalCliDaemonCommand(
+  configDir = SIGNAL_NATIVE_EXAMPLE_CONFIG_DIR,
+): string {
   return [
-    "docker run -d",
-    `--name ${SIGNAL_DOCKER_CONTAINER}`,
-    "-p 8080:8080",
-    "-e MODE=json-rpc",
-    `-v ${SIGNAL_DOCKER_VOLUME}:/home/.local/share/signal-cli`,
-    SIGNAL_DOCKER_IMAGE,
+    "signal-cli",
+    "-c",
+    configDir,
+    "daemon",
+    "--http 127.0.0.1:8080",
+    "--receive-mode on-connection",
+    "--ignore-stories",
   ].join(" ");
+}
+
+export function getSignalHealthCheckCommand(
+  baseUrl = DEFAULT_SIGNAL_BASE_URL,
+): string {
+  return `curl -i --max-time 2 ${baseUrl}/api/v1/check`;
 }
 
 function commandExists(command: string): boolean {
@@ -331,94 +338,31 @@ async function openUrl(url: string): Promise<boolean> {
   }
 }
 
-async function waitForSignalDaemon(baseUrl: string): Promise<boolean> {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    if (await probeSignalDaemon(baseUrl)) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-  }
-  return false;
-}
-
-async function startSignalDockerDaemon(): Promise<void> {
-  execFileSync("docker", ["volume", "create", SIGNAL_DOCKER_VOLUME], {
-    stdio: "ignore",
-    timeout: 30_000,
-  });
-  execFileSync("docker", ["rm", "-f", SIGNAL_DOCKER_CONTAINER], {
-    stdio: "ignore",
-    timeout: 30_000,
-  });
-  execFileSync(
-    "docker",
-    [
-      "run",
-      "-d",
-      "--name",
-      SIGNAL_DOCKER_CONTAINER,
-      "-p",
-      "8080:8080",
-      "-e",
-      "MODE=json-rpc",
-      "-v",
-      `${SIGNAL_DOCKER_VOLUME}:/home/.local/share/signal-cli`,
-      SIGNAL_DOCKER_IMAGE,
-    ],
-    { stdio: "inherit", timeout: 60_000 },
-  );
-}
-
 async function configureSignalDaemonUrl(
   rl: ReturnType<typeof createInterface>,
 ): Promise<string | null> {
-  console.log("Checking for a local signal-cli-rest-api daemon...");
+  console.log("Checking for a local Signal JSON-RPC/SSE daemon...");
   if (await probeSignalDaemon(DEFAULT_SIGNAL_BASE_URL)) {
-    console.log(`✓ Found signal-cli-rest-api at ${DEFAULT_SIGNAL_BASE_URL}\n`);
+    console.log(
+      `✓ Found compatible Signal daemon at ${DEFAULT_SIGNAL_BASE_URL}\n`,
+    );
     return DEFAULT_SIGNAL_BASE_URL;
   }
 
-  console.log(`No daemon responded at ${DEFAULT_SIGNAL_BASE_URL}.`);
-  if (commandExists("docker")) {
-    console.log(
-      "Docker is available, so Letta can start signal-cli-rest-api for you.",
-    );
-    console.log(
-      "This creates a persistent Docker volume named letta-signal-cli-data.",
-    );
-    const startInput = await rl.question(
-      "Start a local Signal daemon with Docker now? [Y/n]: ",
-    );
-    if (parseYesNo(startInput, true)) {
-      try {
-        await startSignalDockerDaemon();
-        console.log("Waiting for signal-cli-rest-api to become ready...");
-        if (await waitForSignalDaemon(DEFAULT_SIGNAL_BASE_URL)) {
-          console.log(
-            `✓ Started Signal daemon at ${DEFAULT_SIGNAL_BASE_URL}\n`,
-          );
-          return DEFAULT_SIGNAL_BASE_URL;
-        }
-        console.error(
-          "Docker container started, but signal-cli-rest-api did not become ready in time.",
-        );
-      } catch (error) {
-        console.error(
-          `Could not start Signal Docker container: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-  } else {
-    console.log("Docker was not found on PATH.");
-  }
-
-  console.log("\nManual Docker command:");
-  console.log(`  docker volume create ${SIGNAL_DOCKER_VOLUME}`);
-  console.log(`  ${getSignalDockerRunCommand()}\n`);
+  console.log(`No compatible daemon responded at ${DEFAULT_SIGNAL_BASE_URL}.`);
+  console.log(
+    "Letta expects native signal-cli daemon HTTP endpoints: /api/v1/check, /api/v1/rpc, and /api/v1/events.",
+  );
+  console.log(
+    "Do not use bbernhard/signal-cli-rest-api MODE=json-rpc as the runtime base_url; that wrapper exposes /v1/* setup/REST endpoints and does not provide Letta's /api/v1/* contract.",
+  );
+  console.log("\nStart native signal-cli in another terminal, for example:");
+  console.log(`  ${getNativeSignalCliDaemonCommand()}`);
+  console.log("Then smoke-test the endpoint Letta uses:");
+  console.log(`  ${getSignalHealthCheckCommand()}\n`);
 
   const customInput = await rl.question(
-    `Custom signal-cli-rest-api base URL, or blank to use ${DEFAULT_SIGNAL_BASE_URL}: `,
+    `Compatible Signal daemon base URL, or blank to use ${DEFAULT_SIGNAL_BASE_URL}: `,
   );
   const baseUrl = normalizeSignalBaseUrl(customInput);
   if (!baseUrl) {
@@ -430,11 +374,14 @@ async function configureSignalDaemonUrl(
   if (parseYesNo(probeInput, true)) {
     if (!(await probeSignalDaemon(baseUrl))) {
       console.error(
-        `Could not reach signal-cli-rest-api at ${baseUrl}. Start it with MODE=json-rpc and try again.`,
+        `Could not reach a compatible Signal daemon at ${baseUrl}. Expected ${getSignalHealthCheckCommand(baseUrl)} to succeed.`,
+      );
+      console.error(
+        "Use native `signal-cli daemon --http`, or a bridge that exposes /api/v1/check, /api/v1/rpc, and /api/v1/events.",
       );
       return null;
     }
-    console.log("✓ signal-cli-rest-api responded.\n");
+    console.log("✓ Signal JSON-RPC/SSE daemon responded.\n");
   }
   return baseUrl;
 }
@@ -491,7 +438,7 @@ async function linkSignalAccountWithQr(
   console.log("  1. Open this URL in a browser:");
   console.log(`     ${qrUrl}`);
   console.log("  2. In Signal mobile: Settings → Linked Devices → +");
-  console.log("  3. Scan the QR code shown by signal-cli-rest-api.\n");
+  console.log("  3. Scan the QR code shown by the setup endpoint.\n");
   const openInput = await rl.question("Open the QR page now? [Y/n]: ");
   if (parseYesNo(openInput, true)) {
     await openUrl(qrUrl);
@@ -747,7 +694,7 @@ async function configureSignalAccountIdentity(
   const hasSetupRest = await hasSignalSetupRestEndpoints(baseUrl);
   if (!hasSetupRest) {
     console.log(
-      "\nThis daemon exposes Letta's runtime JSON-RPC endpoints, but not signal-cli-rest-api setup endpoints like /v1/accounts or /v1/qrcodelink.",
+      "\nThis daemon exposes Letta's runtime JSON-RPC/SSE endpoints, but not optional setup endpoints like /v1/accounts or /v1/qrcodelink.",
     );
     console.log("Letta can still use it after the Signal account is linked.");
     console.log(
@@ -768,7 +715,7 @@ async function configureSignalAccountIdentity(
       "After link/register succeeds, come back here and enter that Signal phone number.",
     );
     console.log(
-      "If you want Letta to drive QR/SMS setup, use a signal-cli-rest-api container exposing /v1/* setup endpoints.\n",
+      "The published bbernhard/signal-cli-rest-api /v1/* surface is not a Letta runtime base_url unless it also passes the /api/v1/check smoke test.\n",
     );
     if (commandExists("signal-cli")) {
       console.log(
@@ -844,13 +791,13 @@ export async function runSignalSetup(): Promise<boolean> {
   try {
     console.log("\n📱 Signal Setup\n");
     console.log(
-      "Letta talks to Signal through native signal-cli daemon or a compatible JSON-RPC/SSE bridge.",
+      "Letta talks to Signal through native signal-cli daemon HTTP endpoints: /api/v1/check, /api/v1/rpc, and /api/v1/events.",
     );
     console.log(
       "Recommended: use a dedicated Signal number for the agent. If you use your personal Signal account, self-message loop protection may ignore your own messages.",
     );
     console.log(
-      "Before continuing, start a native signal-cli daemon or signal-cli-rest-api with MODE=json-rpc, and register/link the Signal account. See src/channels/signal/README.md for examples.\n",
+      "Before continuing, start native `signal-cli daemon --http`, run the /api/v1/check smoke test, and register/link the Signal account. See src/channels/signal/README.md for examples.\n",
     );
 
     await ensureSignalRuntimeInstalled().catch((error) => {

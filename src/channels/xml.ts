@@ -94,7 +94,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
     lines.splice(
       lines.length - 2,
       0,
-      'On Signal, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Replies are sent as the linked Signal account through signal-cli-rest-api.',
+      'On Signal, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Replies are sent as the linked Signal account through signal-cli daemon.',
     );
   }
   if (msg.attachments?.length) {

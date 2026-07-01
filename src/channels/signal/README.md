@@ -4,9 +4,11 @@ Letta's first-party Signal channel talks to an external Signal bridge over
 JSON-RPC + server-sent events. The recommended runtime is native `signal-cli
 daemon` (`/api/v1/check`, `/api/v1/rpc`, `/api/v1/events`). The configure
 wizard can also use native `signal-cli` commands for account linking and SMS /
-voice registration, or use
-[`signal-cli-rest-api`](https://github.com/bbernhard/signal-cli-rest-api)
-setup endpoints (`/v1/*`) when that wrapper is available.
+voice registration. Do not point `base_url` at the published
+[`bbernhard/signal-cli-rest-api`](https://github.com/bbernhard/signal-cli-rest-api)
+container unless it passes the `/api/v1/check` smoke test; its documented
+`MODE=json-rpc` surface exposes `/v1/*` REST setup endpoints, not Letta's
+runtime `/api/v1/*` contract.
 
 ## TL;DR
 
@@ -17,6 +19,8 @@ signal-cli -c ~/.local/share/signal-cli-letta daemon \
   --http 127.0.0.1:8080 \
   --receive-mode on-connection \
   --ignore-stories
+
+curl -i --max-time 2 http://127.0.0.1:8080/api/v1/check
 
 letta channels configure signal
 letta server --channels signal
@@ -43,33 +47,28 @@ that mode only permits messages to/from the linked account itself.
      --ignore-stories
    ```
 
-   Alternative: start `signal-cli-rest-api` in JSON-RPC mode. The interactive
-   configure wizard can start this Docker container for you when Docker is
-   available.
+   Smoke-test the runtime endpoint before configuring Letta:
 
-   Docker example:
-
-   ```yaml
-   services:
-     signal-cli:
-       image: bbernhard/signal-cli-rest-api:latest
-       environment:
-         MODE: json-rpc
-       ports:
-         - "8080:8080"
-       volumes:
-         - signal-cli-data:/home/.local/share/signal-cli
+   ```bash
+   curl -i --max-time 2 http://127.0.0.1:8080/api/v1/check
    ```
+
+   The `bbernhard/signal-cli-rest-api` Docker image is not a drop-in runtime
+   for this adapter. Even with `MODE=json-rpc`, current reports and upstream
+   docs show a `/v1/*` and `/v2/send` REST surface; Letta requires
+   `/api/v1/check`, `/api/v1/rpc`, and `/api/v1/events`.
 
 2. Register or link the Signal account in the daemon/config directory.
 
    `letta channels configure signal` can help with this after it starts/probes
    the daemon:
 
-   - It lists already-linked accounts from `/v1/accounts` when available.
-   - It can open the `/v1/qrcodelink` QR page for device linking.
-   - It can request SMS/voice registration with `/v1/register/{number}` and
-     verify the code with `/v1/register/{number}/verify/{code}`.
+   - When a compatible bridge also exposes setup endpoints, it can list
+     already-linked accounts from `/v1/accounts`.
+   - It can open a compatible `/v1/qrcodelink` QR page for device linking.
+   - It can request SMS/voice registration with compatible
+     `/v1/register/{number}` endpoints and verify the code with
+     `/v1/register/{number}/verify/{code}`.
    - If Signal requires captcha, it points you at `signalcaptchas.org` and asks
      for the returned `signalcaptcha://...` URL.
    - Native `signal-cli daemon` exposes only Letta's runtime JSON-RPC paths
@@ -100,11 +99,10 @@ that mode only permits messages to/from the linked account itself.
    letta channels configure signal
    ```
 
-   The wizard first checks `http://127.0.0.1:8080`. If no daemon responds and
-   Docker is installed, it can run the container command above automatically
-   using the persistent volume `letta-signal-cli-data`. If a native daemon is
-   already running, it detects the daemon's config directory and can run native
-   setup commands against that directory.
+   The wizard first checks `http://127.0.0.1:8080`. If no compatible daemon
+   responds, it prints the native daemon command and the `/api/v1/check` smoke
+   test. If a native daemon is already running, it detects the daemon's config
+   directory and can run native setup commands against that directory.
 
 4. Start Letta with Signal enabled:
 
@@ -305,11 +303,14 @@ If `ffmpeg` is missing, the agent receives an
 ## Troubleshooting
 
 - **No inbound messages:** confirm the native daemon is listening on
-  `/api/v1/events` or the wrapper is running in JSON-RPC mode, and that Letta's
-  `base_url` points at it.
+  `/api/v1/events` and that Letta's `base_url` points at it.
+- **`/api/v1/check` returns 404:** that is not Letta's Signal runtime surface.
+  This commonly happens with `bbernhard/signal-cli-rest-api`, whose public REST
+  API is `/v1/*` and `/v2/send`. Use native `signal-cli daemon --http` or a
+  bridge that exposes `/api/v1/check`, `/api/v1/rpc`, and `/api/v1/events`.
 - **Don't know what base URL to use:** run `letta channels configure signal` on
-  the same machine as the listener and let it start/probe the local Docker
-  daemon. Use a custom URL only when the daemon runs elsewhere.
+  the same machine as the listener and let it probe the local native daemon. Use
+  a custom URL only when the daemon runs elsewhere.
 - **No account listed by the daemon:** use the configure wizard's QR link flow
   or SMS/voice registration flow, then rerun account detection.
 - **QR page says 404:** your daemon exposes runtime JSON-RPC but not `/v1/*`
@@ -335,6 +336,8 @@ If `ffmpeg` is missing, the agent receives an
 - Letta does not install or supervise `signal-cli`; you still need a running
   native daemon or compatible wrapper.
 - Runtime support targets native `signal-cli` JSON-RPC/SSE. Wrapper `/v1/*`
-  endpoints are used only for setup when available.
+  endpoints are setup-only and are not sufficient for `base_url` unless the
+  same service also exposes `/api/v1/check`, `/api/v1/rpc`, and
+  `/api/v1/events`.
 - Group support is intentionally conservative; start with `group_mode:
   disabled` or `mention` before using `open`.
