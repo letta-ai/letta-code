@@ -260,7 +260,9 @@ export function buildConnectProviderEntries(
       provider_type: provider.providerType,
       provider_name: provider.providerName,
       provider_names: uniqueProviderNames(provider),
-      ...(provider.isOAuth ? { is_oauth: true } : {}),
+      ...(provider.isOAuth || provider.providerType === "chatgpt_oauth"
+        ? { is_oauth: true }
+        : {}),
       ...(provider.oauthProviderId
         ? { oauth_provider_id: provider.oauthProviderId }
         : {}),
