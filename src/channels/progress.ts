@@ -55,7 +55,11 @@ function truncate(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
     return value;
   }
-  return `${value.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+  const marker = "...";
+  if (maxLength <= marker.length) {
+    return marker.slice(0, Math.max(0, maxLength));
+  }
+  return `${value.slice(0, maxLength - marker.length).trimEnd()}${marker}`;
 }
 
 function replaceControlCharacters(value: string): string {
@@ -122,7 +126,7 @@ function summarizeShellCommand(command: string): string {
   const withoutPipeline = previewSource.split(/\s*\|\s*/)[0] ?? previewSource;
   const withoutHugePattern = withoutPipeline.replace(
     /\s+-Pattern\s+.*$/i,
-    " -Pattern …",
+    " -Pattern ...",
   );
   const withoutLineVariable = withoutHugePattern.replace(
     /^\$lines\s*=\s*/i,
