@@ -7,7 +7,10 @@ import {
   type InboundDebouncer,
 } from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
-import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
+import {
+  formatChannelLifecycleErrorMessage,
+  getChannelLifecycleErrorDisplay,
+} from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -412,6 +415,7 @@ const SLACK_PROGRESS_CARD_TEXT_MAX = 300;
 const SLACK_PROGRESS_CARD_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const SLACK_PROGRESS_CARD_STATE_MAX = 2_000;
 const SLACK_STREAM_CHUNK_TEXT_MAX = 256;
+const SLACK_LIFECYCLE_ERROR_TASK_ID = "task_lifecycle_error";
 const DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS = 1_000;
 const SLACK_PROGRESS_DEBUG_LOG = join(
   homedir(),
@@ -549,6 +553,26 @@ export function formatSlackProgressCardText(
     : statusLine;
 }
 
+function buildSlackLifecycleErrorTaskChunk(
+  errorText: string | null | undefined,
+): SlackStreamChunk {
+  const display = getChannelLifecycleErrorDisplay(errorText);
+  const title =
+    sanitizeSlackProgressText(display.title, SLACK_STREAM_CHUNK_TEXT_MAX) ||
+    "Turn failed";
+  const details = sanitizeSlackProgressText(
+    display.body,
+    SLACK_STREAM_CHUNK_TEXT_MAX,
+  );
+  return {
+    type: "task_update",
+    id: SLACK_LIFECYCLE_ERROR_TASK_ID,
+    title,
+    status: "error",
+    details,
+  };
+}
+
 function formatSlackControlRequestBlocks(
   event: ChannelControlRequestEvent,
 ): SlackBlock[] | undefined {
@@ -584,6 +608,7 @@ function formatSlackControlRequestBlocks(
 function buildTerminalSlackStreamChunks(
   entry: SlackProgressCardEntry,
   terminalTaskStatus: SlackStreamTaskStatus,
+  finalErrorChunk?: SlackStreamChunk,
 ): SlackStreamChunk[] {
   // Deduplicate pending chunks by task ID, keeping only the latest.
   // pendingStreamChunks can accumulate multiple updates for the same task
@@ -609,6 +634,9 @@ function buildTerminalSlackStreamChunks(
     if (task.status !== "complete" && task.status !== "error") {
       entry.toolTasksById?.set(task.id, terminalTask);
     }
+  }
+  if (finalErrorChunk) {
+    rawPending.push(finalErrorChunk);
   }
   const chunks = compactSlackStreamChunks(rawPending, entry);
   if (chunks.some((chunk) => chunk.type === "task_update")) {
@@ -952,6 +980,13 @@ function buildSlackPlanUpdateChunk(
     return {
       type: "plan_update",
       title: entry.reasoningActive ? "Thinking" : "Working",
+    };
+  }
+
+  if (entry.status === "error") {
+    return {
+      type: "plan_update",
+      title: "Failed",
     };
   }
 
@@ -1981,6 +2016,7 @@ export function createSlackAdapter(
 
   async function stopSlackProgressStream(
     entry: SlackProgressCardEntry,
+    finalErrorChunk?: SlackStreamChunk,
   ): Promise<boolean> {
     if (!entry.streamTs) {
       return true;
@@ -1997,7 +2033,11 @@ export function createSlackAdapter(
         : entry.status === "cancelled"
           ? "error"
           : "complete";
-    const chunks = buildTerminalSlackStreamChunks(entry, terminalTaskStatus);
+    const chunks = buildTerminalSlackStreamChunks(
+      entry,
+      terminalTaskStatus,
+      finalErrorChunk,
+    );
     debugSlackProgress(
       `[STOP-ARGS] terminal=${terminalTaskStatus} chunks=${describeSlackStreamChunks(chunks)}`,
     );
@@ -2320,8 +2360,13 @@ export function createSlackAdapter(
     sources: ChannelTurnSource[],
     outcome: ChannelTurnOutcome,
     batchId?: string,
+    errorText?: string | null,
   ): Promise<void> {
     const progress = resolveSlackLifecycleProgressText(outcome);
+    const finalErrorChunk =
+      progress.status === "error"
+        ? buildSlackLifecycleErrorTaskChunk(errorText)
+        : undefined;
     const uniqueSources = getUniqueSlackProgressSources(sources);
     await Promise.all(
       uniqueSources.map(async (source) => {
@@ -2341,7 +2386,7 @@ export function createSlackAdapter(
         delete entry.latestUpdate;
         entry.updatedAt = Date.now();
         if (entry.mode === "stream") {
-          const didStop = await stopSlackProgressStream(entry);
+          const didStop = await stopSlackProgressStream(entry, finalErrorChunk);
           if (didStop) {
             entry.lastSentText = formatSlackProgressCardText(
               entry.status,
@@ -2938,6 +2983,7 @@ export function createSlackAdapter(
         event.sources,
         event.outcome,
         event.batchId,
+        event.error,
       );
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;

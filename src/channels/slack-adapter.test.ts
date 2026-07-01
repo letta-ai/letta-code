@@ -2737,6 +2737,78 @@ test("slack adapter treats already-closed stream stop errors as benign", async (
   expect(writeClient?.chat.update).not.toHaveBeenCalled();
 });
 
+test("slack adapter includes final error details in rich progress streams", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "error",
+    error:
+      "Boom TOKEN=abc <payload> @channel & friends\nView agent: https://app.letta.com/chat/secret",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: expect.arrayContaining([
+      expect.objectContaining({
+        id: "task_call-1",
+        title: "Read",
+        status: "error",
+      }),
+      expect.objectContaining({
+        type: "task_update",
+        id: "task_lifecycle_error",
+        title: "Turn failed",
+        status: "error",
+        details: "Boom TOKEN=[redacted] payload @\u200bchannel and friends",
+      }),
+      expect.objectContaining({
+        type: "plan_update",
+        title: "Failed",
+      }),
+    ]),
+  });
+  expect(JSON.stringify(writeClient?.chat.stopStream.mock.calls)).not.toContain(
+    "app.letta.com",
+  );
+});
+
 test("slack adapter shows a progress card while a no-tool turn is running", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
