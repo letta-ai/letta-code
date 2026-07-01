@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { Readable, Writable } from "node:stream";
 import { render } from "ink";
+import type { ComponentProps } from "react";
 import stripAnsi from "strip-ansi";
 import { InlineQuestionApproval } from "./InlineQuestionApproval";
 
@@ -29,7 +30,9 @@ function createInputStream(): NodeJS.ReadStream {
   return input;
 }
 
-async function renderQuestion(question: string): Promise<string> {
+type QuestionsProp = ComponentProps<typeof InlineQuestionApproval>["questions"];
+
+async function renderWithQuestions(questions: QuestionsProp): Promise<string> {
   const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
   const originalWrite = process.stdout.write;
   process.stdout.write = (() => true) as typeof process.stdout.write;
@@ -37,18 +40,7 @@ async function renderQuestion(question: string): Promise<string> {
   try {
     const instance = render(
       <InlineQuestionApproval
-        questions={[
-          {
-            header: "Review plan",
-            question,
-            options: [
-              { label: "Approve", description: "Proceed" },
-              { label: "Revise", description: "Keep planning" },
-            ],
-            multiSelect: false,
-            allowOther: false,
-          },
-        ]}
+        questions={questions}
         onSubmit={() => {}}
         isFocused={false}
       />,
@@ -70,6 +62,21 @@ async function renderQuestion(question: string): Promise<string> {
   }
 }
 
+async function renderQuestion(question: string): Promise<string> {
+  return renderWithQuestions([
+    {
+      header: "Review plan",
+      question,
+      options: [
+        { label: "Approve", description: "Proceed" },
+        { label: "Revise", description: "Keep planning" },
+      ],
+      multiSelect: false,
+      allowOther: false,
+    },
+  ]);
+}
+
 test("InlineQuestionApproval renders multiline markdown question text", async () => {
   const output = await renderQuestion(
     [
@@ -85,4 +92,62 @@ test("InlineQuestionApproval renders multiline markdown question text", async ()
   expect(output).toContain("- Update InlineQuestionApproval");
   expect(output).toContain("Approve");
   expect(output).toContain("Revise");
+});
+
+test("InlineQuestionApproval coerces non-array `options` instead of throwing (defense-in-depth)", async () => {
+  // Regression: a malformed AskUserQuestion payload can carry `options` as a
+  // non-iterable value (e.g. {} or a number). Spreading it would throw
+  // "...iterable not be null or undefined" / "object is not iterable" and brick
+  // the TUI. The component must coerce to an empty array and keep rendering.
+  const renderWithOptions = (options: unknown) =>
+    renderWithQuestions([
+      {
+        header: "H",
+        question: "Q?",
+        options,
+        multiSelect: false,
+      },
+    ] as QuestionsProp);
+
+  for (const bad of [undefined, null, { a: 1 }, 42, "nope"]) {
+    const output = await renderWithOptions(bad);
+    expect(typeof output).toBe("string");
+  }
+
+  // An `options` array containing null/non-object entries must not throw when
+  // the render path reads option.label/option.description. The component
+  // filters out non-object entries (and non-string label/description) as
+  // defense-in-depth.
+  const renderWithEntries = (options: unknown) =>
+    renderWithQuestions([
+      {
+        header: "H",
+        question: "Q?",
+        options,
+        multiSelect: false,
+      },
+    ] as QuestionsProp);
+  for (const badEntries of [
+    [null],
+    [42],
+    [null, { label: "A", description: "" }],
+    [{ label: "A", description: "" }, "bad"],
+    // Object entries with non-string label/description would throw when
+    // rendered as React children / used as a key — the filter drops them.
+    [
+      { label: {}, description: "" } as unknown as {
+        label: string;
+        description: string;
+      },
+    ],
+    [
+      { label: "A", description: {} } as unknown as {
+        label: string;
+        description: string;
+      },
+    ],
+  ]) {
+    const output = await renderWithEntries(badEntries);
+    expect(typeof output).toBe("string");
+  }
 });
