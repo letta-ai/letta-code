@@ -11,7 +11,10 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS } from "@/backend/dev/pi-model-factory";
+import {
+  CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW,
+  CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS,
+} from "@/backend/dev/pi-model-factory";
 import {
   PiStreamAdapter,
   type PiStreamFunction,
@@ -83,6 +86,10 @@ async function closeServer(
       resolve();
     });
   });
+}
+
+function ndjson(chunks: unknown[]): string {
+  return `${chunks.map((chunk) => JSON.stringify(chunk)).join("\n")}\n`;
 }
 
 function input(): ProviderTurnInput {
@@ -162,18 +169,21 @@ describe("PiStreamAdapter", () => {
 
       expect(calls[0]?.model.provider).toBe("ollama");
       expect(calls[0]?.model.id).toBe("llama3.1:latest");
+      expect(calls[0]?.model.contextWindow).toBe(
+        CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW,
+      );
       expect(calls[0]?.options?.maxTokens).toBe(
-        CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
+        CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS,
       );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
   });
 
-  test("downgrades images through Pi-AI payload conversion for text-only local models", async () => {
+  test("sends Ollama native context and output options for raw models", async () => {
     let capturedPayload: unknown;
     const server = createServer(async (req, res) => {
-      if (req.method !== "POST" || req.url !== "/v1/chat/completions") {
+      if (req.method !== "POST" || req.url !== "/api/chat") {
         res.writeHead(404);
         res.end();
         return;
@@ -185,49 +195,111 @@ describe("PiStreamAdapter", () => {
       }
       capturedPayload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
 
-      const responseChunks = [
-        {
-          id: "chatcmpl-test",
-          object: "chat.completion.chunk",
-          created: 0,
-          model: "deepseek-r1:8b",
-          choices: [
-            {
-              index: 0,
-              delta: { content: "ok" },
-              finish_reason: null,
-            },
-          ],
-        },
-        {
-          id: "chatcmpl-test",
-          object: "chat.completion.chunk",
-          created: 0,
-          model: "deepseek-r1:8b",
-          choices: [
-            {
-              index: 0,
-              delta: {},
-              finish_reason: "stop",
-            },
-          ],
-          usage: {
-            prompt_tokens: 1,
-            completion_tokens: 1,
-            total_tokens: 2,
-          },
-        },
-      ];
-
       res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
+        "Content-Type": "application/x-ndjson",
         Connection: "close",
       });
       res.end(
-        `${responseChunks
-          .map((chunk) => `data: ${JSON.stringify(chunk)}`)
-          .join("\n\n")}\n\ndata: [DONE]\n\n`,
+        ndjson([
+          {
+            model: "gemma4:latest",
+            message: { role: "assistant", content: "PONG" },
+            done: false,
+          },
+          {
+            model: "gemma4:latest",
+            message: { role: "assistant", content: "" },
+            done: true,
+            done_reason: "stop",
+            prompt_eval_count: 1,
+            eval_count: 1,
+          },
+        ]),
+      );
+    });
+
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("expected tcp server address");
+    }
+
+    const previousOllamaBaseUrl = process.env.OLLAMA_BASE_URL;
+    process.env.OLLAMA_BASE_URL = `http://127.0.0.1:${address.port}/v1`;
+
+    try {
+      const baseInput = input();
+      const events = await collectEvents(
+        new PiStreamAdapter().stream({
+          ...baseInput,
+          agent: {
+            ...baseInput.agent,
+            model: "gemma4:latest",
+            model_settings: {},
+          },
+        }),
+      );
+
+      expect(events.some((event) => event.type === "local-message")).toBe(true);
+      const payload = capturedPayload as {
+        model?: unknown;
+        stream?: unknown;
+        tools?: unknown;
+        options?: { num_ctx?: unknown; num_predict?: unknown };
+      };
+      expect(payload.model).toBe("gemma4:latest");
+      expect(payload.stream).toBe(true);
+      expect("tools" in payload).toBe(false);
+      expect(payload.options).toMatchObject({
+        num_ctx: CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW,
+        num_predict: CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS,
+      });
+    } finally {
+      if (previousOllamaBaseUrl === undefined) {
+        delete process.env.OLLAMA_BASE_URL;
+      } else {
+        process.env.OLLAMA_BASE_URL = previousOllamaBaseUrl;
+      }
+      await closeServer(server);
+    }
+  });
+
+  test("downgrades images in Ollama native payloads for text-only local models", async () => {
+    let capturedPayload: unknown;
+    const server = createServer(async (req, res) => {
+      if (req.method !== "POST" || req.url !== "/api/chat") {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      capturedPayload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+
+      res.writeHead(200, {
+        "Content-Type": "application/x-ndjson",
+        Connection: "close",
+      });
+      res.end(
+        ndjson([
+          {
+            model: "deepseek-r1:8b",
+            message: { role: "assistant", content: "ok" },
+            done: false,
+          },
+          {
+            model: "deepseek-r1:8b",
+            message: { role: "assistant", content: "" },
+            done: true,
+            done_reason: "stop",
+            prompt_eval_count: 1,
+            eval_count: 1,
+          },
+        ]),
       );
     });
 

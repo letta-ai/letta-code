@@ -24,7 +24,10 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
 import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
-import { CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS } from "@/backend/dev/pi-model-factory";
+import {
+  CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW,
+  CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS,
+} from "@/backend/dev/pi-model-factory";
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
@@ -1570,13 +1573,21 @@ describe("local backend pi transcript", () => {
 
       expect(resolved.model).toBe("llama3.1:latest");
       expect(resolved.modelSettings.provider_type).toBe("ollama");
+      expect(resolved.modelSettings.context_window_limit).toBe(
+        CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW,
+      );
       expect(resolved.modelSettings.max_tokens).toBe(
-        CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
+        CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS,
       );
 
       expect(
+        localModelSettingsForHandle("ollama/llama3.1:latest")
+          ?.context_window_limit,
+      ).toBe(CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW);
+
+      expect(
         localModelSettingsForHandle("ollama/llama3.1:latest")?.max_tokens,
-      ).toBe(CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS);
+      ).toBe(CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS);
 
       const prefixed = await resolveAvailableLocalModelForTurn({
         model: "ollama/llama3.1:latest",
@@ -1586,7 +1597,7 @@ describe("local backend pi transcript", () => {
 
       expect(prefixed.modelSettings.provider_type).toBe("ollama");
       expect(prefixed.modelSettings.max_tokens).toBe(
-        CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
+        CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS,
       );
 
       const repaired = await resolveAvailableLocalModelForTurn({
@@ -1597,7 +1608,7 @@ describe("local backend pi transcript", () => {
 
       expect(repaired.modelSettings.provider_type).toBe("ollama");
       expect(repaired.modelSettings.max_tokens).toBe(
-        CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
+        CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS,
       );
     } finally {
       await rm(storageDir, { recursive: true, force: true });

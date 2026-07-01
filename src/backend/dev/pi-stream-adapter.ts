@@ -36,6 +36,7 @@ import {
   reasoningForSettings,
   resolvePiModelForAgent,
 } from "./pi-model-factory";
+import { streamOllamaNativeSimple } from "./pi-ollama-native-stream";
 import type {
   LlmEndErrorInfo,
   LlmEndInfo,
@@ -382,6 +383,37 @@ function withAnthropicOutputEffort(
   };
 }
 
+function withOllamaNativeOptions(input: {
+  existing: SimpleStreamOptions["onPayload"] | undefined;
+  contextWindow: number | undefined;
+  maxTokens: number | undefined;
+}): SimpleStreamOptions["onPayload"] | undefined {
+  if (!input.contextWindow && !input.maxTokens) return input.existing;
+  return async (payload, model) => {
+    let next = payload;
+    let upstreamChanged = false;
+    const upstream = await input.existing?.(payload, model);
+    if (upstream !== undefined) {
+      next = upstream;
+      upstreamChanged = true;
+    }
+
+    if (model.provider !== "ollama" || !isRecord(next)) {
+      return upstreamChanged ? next : undefined;
+    }
+
+    const options = isRecord(next.options) ? next.options : {};
+    return {
+      ...next,
+      options: {
+        ...options,
+        ...(input.contextWindow ? { num_ctx: input.contextWindow } : {}),
+        ...(input.maxTokens ? { num_predict: input.maxTokens } : {}),
+      },
+    };
+  };
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -637,6 +669,9 @@ function defaultStream(
   context: Context,
   options?: SimpleStreamOptions & Record<string, unknown>,
 ) {
+  if (model.provider === "ollama") {
+    return streamOllamaNativeSimple(model, context, options);
+  }
   if (model.api === "bedrock-converse-stream") {
     return stream(model, context, options);
   }
@@ -699,6 +734,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       messages: toPiMessages(input.uiMessages),
       ...(tools ? { tools } : {}),
     };
+    const maxTokens = maxTokensForSettings(effectiveModelSettings);
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
@@ -710,9 +746,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ...(reasoningForSettings(effectiveModelSettings)
         ? { reasoning: reasoningForSettings(effectiveModelSettings) }
         : {}),
-      ...(maxTokensForSettings(effectiveModelSettings)
-        ? { maxTokens: maxTokensForSettings(effectiveModelSettings) }
-        : {}),
+      ...(maxTokens ? { maxTokens } : {}),
       ...(serviceTierForSettings(resolved.model, effectiveModelSettings)
         ? {
             serviceTier: serviceTierForSettings(
@@ -750,6 +784,13 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         // Anthropic accepts Fable's max effort through output_config.effort.
         options.onPayload = withAnthropicOutputEffort(options.onPayload, "max");
       }
+    }
+    if (resolved.model.provider === "ollama") {
+      options.onPayload = withOllamaNativeOptions({
+        existing: options.onPayload,
+        contextWindow: resolved.model.contextWindow,
+        maxTokens,
+      });
     }
 
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);

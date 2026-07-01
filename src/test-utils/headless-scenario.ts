@@ -215,6 +215,9 @@ async function runCLI(args: Args): Promise<RunResult> {
   if (args.backend === "api") {
     cliArgs.push("--no-memfs");
   }
+  if (args.smoke) {
+    cliArgs.push("--tools", "none");
+  }
   cliArgs.push(
     "--base-tools",
     args.backend === "local"

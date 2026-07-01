@@ -1,5 +1,8 @@
 import { type Api, getModels, type Model } from "@earendil-works/pi-ai";
 import {
+  CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW,
+  CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS,
+  CUSTOM_OPENAI_COMPATIBLE_DEFAULT_CONTEXT_WINDOW,
   CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
   DEFAULT_PI_PROVIDER,
   isUnselectedLocalModelHandle,
@@ -325,9 +328,18 @@ export function localModelSettingsForHandle(
   const providerTypeSettings = {
     provider_type: localProviderTypeForModelConfig(provider),
   };
+  const defaultContextWindow =
+    provider === "ollama"
+      ? CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW
+      : CUSTOM_OPENAI_COMPATIBLE_DEFAULT_CONTEXT_WINDOW;
+  const defaultMaxTokens =
+    provider === "ollama"
+      ? CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS
+      : CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS;
   const customModelSettings = {
     ...providerTypeSettings,
-    max_tokens: CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS,
+    context_window_limit: defaultContextWindow,
+    max_tokens: defaultMaxTokens,
   };
   return (
     registeredModelSettingsForProviderModel(provider, modelId) ??
