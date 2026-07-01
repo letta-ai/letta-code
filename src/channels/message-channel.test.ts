@@ -216,7 +216,7 @@ describe("MessageChannel", () => {
           chatId: "C123",
           chatType: "channel",
           messageId: "1712790000.000050",
-          threadId: "1712790000.000050",
+          threadId: null,
           agentId: "agent-1",
           conversationId: "conv-channel",
         },
@@ -406,7 +406,64 @@ describe("MessageChannel", () => {
       chatId: "DM-123",
       text: "hello dm",
       replyToMessageId: undefined,
-      threadId: "DM-123",
+      threadId: null,
+      mediaPath: undefined,
+      fileName: undefined,
+      title: undefined,
+      parseMode: undefined,
+    });
+  });
+
+  test("keeps Discord guild routes pointed at the routed thread", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "discord-msg-thread" }));
+
+    const adapter: ChannelAdapter = {
+      id: "discord:discord-1",
+      channelId: "discord",
+      accountId: "discord-1",
+      name: "Discord",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("discord", {
+      accountId: "discord-1",
+      chatId: "guild-channel-123",
+      chatType: "channel",
+      threadId: "guild-thread-456",
+      agentId: "agent-1",
+      conversationId: "guild-conv",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "discord",
+      chat_id: "guild-channel-123",
+      message: "hello guild thread",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "guild-conv",
+      },
+    });
+
+    expect(result).toContain("Message sent to discord");
+    expect(sendMessage).toHaveBeenCalledWith({
+      channel: "discord",
+      accountId: "discord-1",
+      chatId: "guild-channel-123",
+      text: "hello guild thread",
+      replyToMessageId: undefined,
+      threadId: "guild-thread-456",
       mediaPath: undefined,
       fileName: undefined,
       title: undefined,
@@ -1146,6 +1203,75 @@ describe("MessageChannel", () => {
       targetMessageId: "99",
       reaction: "👍",
       removeReaction: undefined,
+    });
+  });
+
+  test("does not treat Discord DM message IDs as thread IDs", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "discord-msg-2" }));
+
+    const adapter: ChannelAdapter = {
+      id: "discord:account-1",
+      channelId: "discord",
+      accountId: "account-1",
+      name: "Discord",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("discord", {
+      accountId: "account-1",
+      chatId: "dm-channel-1",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "discord",
+      chat_id: "dm-channel-1",
+      message: "hello from Discord DM",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+      channelTurnSources: [
+        {
+          channel: "discord",
+          accountId: "account-1",
+          chatId: "dm-channel-1",
+          chatType: "direct",
+          messageId: "inbound-discord-message-id",
+          threadId: null,
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      ],
+    });
+
+    expect(result).toContain("Message sent to discord");
+    expect(sendMessage).toHaveBeenCalledWith({
+      channel: "discord",
+      accountId: "account-1",
+      chatId: "dm-channel-1",
+      text: "hello from Discord DM",
+      replyToMessageId: undefined,
+      threadId: null,
+      mediaPath: undefined,
+      fileName: undefined,
+      title: undefined,
+      parseMode: undefined,
     });
   });
 

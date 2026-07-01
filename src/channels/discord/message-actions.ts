@@ -7,7 +7,7 @@ function resolveDiscordRouteThreadId(
   ctx: ChannelMessageActionContext,
 ): string | null {
   if (ctx.route.chatType === "direct") {
-    return ctx.route.chatId;
+    return null;
   }
 
   const threadId = ctx.request.threadId ?? ctx.route.threadId ?? null;
