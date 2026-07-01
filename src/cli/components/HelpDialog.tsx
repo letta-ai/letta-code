@@ -79,6 +79,10 @@ export function HelpDialog({ onClose }: HelpDialogProps) {
         description: "Interrupt operation / exit (double press)",
       },
       { keys: "Ctrl+V", description: "Paste content or image" },
+      {
+        keys: "Ctrl+PageUp / Ctrl+PageDown",
+        description: "Switch to previous / next conversation thread",
+      },
     ];
   }, []);
 

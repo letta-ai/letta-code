@@ -898,6 +898,7 @@ export function Input({
   onExit,
   onInterrupt,
   onCtrlO,
+  onRotateConversation,
   onCtrlD,
   queueMode = "immediate",
   deferModeSupported = false,
@@ -951,6 +952,7 @@ export function Input({
   onExit?: () => void;
   onInterrupt?: () => void;
   onCtrlO?: () => void;
+  onRotateConversation?: (direction: "next" | "prev") => void | Promise<void>;
   onCtrlD?: () => void;
   queueMode?: "immediate" | "defer";
   deferModeSupported?: boolean;
@@ -1387,6 +1389,13 @@ export function Input({
     // Handle CTRL-O to expand/collapse the last tool call output
     if (input === "o" && key.ctrl) {
       if (onCtrlO) onCtrlO();
+      return;
+    }
+
+    // Ctrl+PageUp / Ctrl+PageDown rotate through conversation threads (like
+    // switching browser tabs). PageUp = previous thread, PageDown = next.
+    if (onRotateConversation && key.ctrl && (key.pageUp || key.pageDown)) {
+      void onRotateConversation(key.pageUp ? "prev" : "next");
       return;
     }
 

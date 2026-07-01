@@ -76,6 +76,11 @@ import {
   resetContextHistory,
 } from "@/cli/helpers/context-tracker";
 import {
+  type ConversationRotationDirection,
+  computeRotatedConversationId,
+  withCurrentConversation,
+} from "@/cli/helpers/conversation-rotation";
+import {
   generateConversationTitleFromSummary,
   getConversationTitleSettings,
   listConversationTitleMessages,
@@ -4624,6 +4629,74 @@ export function App({
     }
   }, [lastShellToolCallId, handleToggleExpandedToolCall]);
 
+  // Ctrl+PageUp / Ctrl+PageDown rotate through the agent's recent conversation
+  // threads, like switching browser tabs. The switch is performed by running
+  // the existing `/resume <id>` command so the transcript backfill, goal
+  // pause, and switch-alert behavior are identical to a manual resume.
+  const handleRotateConversation = useCallback(
+    async (direction: ConversationRotationDirection) => {
+      const currentAgentId = agentIdRef.current ?? agentId;
+      const currentConversationId = conversationIdRef.current ?? conversationId;
+      if (!currentAgentId || !currentConversationId) return;
+
+      let orderedIds: string[];
+      try {
+        const backend = getBackend();
+        // Rotate across the most recently active threads (matches the
+        // ConversationSelector ordering); one page is plenty for tab cycling.
+        const rawPage: unknown = await backend.listConversations({
+          agent_id: currentAgentId,
+          limit: 25,
+          order: "desc",
+          order_by: "last_run_completion",
+        });
+        const items = (
+          Array.isArray(rawPage)
+            ? rawPage
+            : ((
+                rawPage as { getPaginatedItems?: () => unknown[] }
+              ).getPaginatedItems?.() ?? [])
+        ) as Array<{ id?: string }>;
+        orderedIds = items
+          .map((conversation) => conversation.id)
+          .filter((id): id is string => typeof id === "string");
+      } catch (error) {
+        commandRunner
+          .start(
+            direction === "next" ? "(next thread)" : "(previous thread)",
+            "Switching thread...",
+          )
+          .fail(
+            `Failed to list threads: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        return;
+      }
+
+      const rotatable = withCurrentConversation(
+        orderedIds,
+        currentConversationId,
+      );
+      const targetId = computeRotatedConversationId(
+        rotatable,
+        currentConversationId,
+        direction,
+      );
+      if (!targetId) {
+        commandRunner
+          .start(
+            direction === "next" ? "(next thread)" : "(previous thread)",
+            "Switching thread...",
+          )
+          .finish("No other threads to switch to", true);
+        return;
+      }
+
+      // Reuse the canonical direct-switch path (full transcript backfill).
+      void onSubmit(`/resume ${targetId}`);
+    },
+    [agentId, conversationId, commandRunner, onSubmit],
+  );
+
   // Handle permission mode changes from the Input component (e.g., shift+tab cycling)
   const handlePermissionModeChange = useCallback(
     (mode: PermissionMode) => {
@@ -5014,6 +5087,7 @@ export function App({
         expandedToolCallId={expandedToolCallId}
         lastShellToolCallId={lastShellToolCallId}
         handleCtrlO={handleCtrlO}
+        handleRotateConversation={handleRotateConversation}
         queueMode={queueMode}
         deferModeSupported={deferModeSupported}
         handleCtrlD={handleCtrlD}
