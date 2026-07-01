@@ -23,7 +23,10 @@ export interface MemoryGitSyncReminder {
   text: string;
 }
 
-export type SessionContextReason = "initial_attach" | "cwd_changed";
+export type SessionContextReason =
+  | "initial_attach"
+  | "cwd_changed"
+  | "environment_changed";
 
 export interface SharedReminderState {
   hasSentAgentInfo: boolean;

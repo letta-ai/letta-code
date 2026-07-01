@@ -52,7 +52,10 @@ function listenContext(
     agentDescription?: string | null;
     agentLastRunAt?: string | null;
     workingDirectory?: string;
-    sessionContextReason?: "initial_attach" | "cwd_changed";
+    sessionContextReason?:
+      | "initial_attach"
+      | "cwd_changed"
+      | "environment_changed";
   },
 ) {
   return buildListenReminderContext({
