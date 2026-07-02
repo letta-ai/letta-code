@@ -11,6 +11,11 @@ import {
   formatChannelLifecycleErrorMessage,
   getChannelLifecycleErrorDisplay,
 } from "@/channels/lifecycle-error";
+import {
+  isSkillToolName,
+  sanitizeChannelProgressCore,
+  truncateChannelProgressText,
+} from "@/channels/progress";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -450,6 +455,8 @@ type SlackProgressCardState =
 type SlackProgressToolTask = {
   id: string;
   kind: ChannelTurnProgressEvent["kind"];
+  /** Raw tool name, when known. Titles are re-derived from this per status. */
+  toolName?: string;
   title: string;
   status: SlackStreamTaskStatus;
   details?: string;
@@ -463,7 +470,6 @@ type SlackProgressCardEntry = {
   latestText: string;
   latestUpdate?: ChannelTurnProgressEvent;
   toolNamesByCallId?: Map<string, string>;
-  toolTitlesByCallId?: Map<string, string>;
   toolDetailsByCallId?: Map<string, string>;
   toolTasksById?: Map<string, SlackProgressToolTask>;
   sentTaskDetailsById?: Map<string, string>;
@@ -478,31 +484,6 @@ type SlackProgressCardEntry = {
   requeuedFailedChunks?: boolean;
   updatedAt: number;
 };
-
-function debugSlackProgress(message: string): void {
-  if (process.env.LETTA_SLACK_PROGRESS_DEBUG === "1") {
-    console.debug(`[Slack progress] ${message}`);
-  }
-}
-
-function describeSlackStreamChunk(
-  chunk: SlackStreamChunk,
-): Record<string, unknown> {
-  if (chunk.type !== "task_update") {
-    return chunk;
-  }
-  return {
-    type: chunk.type,
-    id: chunk.id,
-    title: chunk.title,
-    status: chunk.status,
-    details: chunk.details,
-  };
-}
-
-function describeSlackStreamChunks(chunks: SlackStreamChunk[]): string {
-  return JSON.stringify(chunks.map(describeSlackStreamChunk));
-}
 
 export function resolveSlackProgressUpdateThrottleMs(): number {
   const raw = process.env.LETTA_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
@@ -528,31 +509,15 @@ export function resolveSlackProgressStreamKeepaliveMs(): number {
   return Math.min(Math.trunc(parsed), 300_000);
 }
 
-function replaceSlackControlCharacters(value: string): string {
-  let result = "";
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index] ?? "";
-    const code = character.charCodeAt(0);
-    result += code <= 31 || code === 127 ? " " : character;
-  }
-  return result;
-}
-
 function sanitizeSlackProgressText(text: string, maxLength: number): string {
-  const redacted = text.replace(
-    /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|ACCESS[_-]?KEY)[A-Z0-9_]*)\s*=\s*("[^"]*"|'[^']*'|\S+)/gi,
-    "$1=[redacted]",
-  );
-  const normalized = replaceSlackControlCharacters(redacted)
+  // Shared channel sanitization (secrets, control characters, mentions) plus
+  // Slack-specific mrkdwn escaping and Slack's ellipsis truncation marker.
+  const normalized = sanitizeChannelProgressCore(text)
     .replace(/[<>]/g, "")
     .replace(/&/g, "and")
-    .replace(/@(?=channel|here|everyone|[A-Za-z0-9._-]+)/gi, "@\u200b")
     .replace(/\s+/g, " ")
     .trim();
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
+  return truncateChannelProgressText(normalized, maxLength, "…");
 }
 
 export function formatSlackProgressCardText(
@@ -647,10 +612,7 @@ function buildTerminalSlackStreamChunks(
         ? task
         : {
             ...task,
-            title: formatSlackToolTitleForTerminalStatus(
-              task.title,
-              terminalTaskStatus,
-            ),
+            title: formatSlackTaskTitleForStatus(task, terminalTaskStatus),
             status: terminalTaskStatus,
           };
     rawPending.push(toSlackTaskUpdateChunk(terminalTask));
@@ -669,7 +631,7 @@ function buildTerminalSlackStreamChunks(
 }
 
 function toSlackTaskUpdateChunk(task: SlackProgressToolTask): SlackStreamChunk {
-  const { kind: _kind, details, ...chunkTask } = task;
+  const { kind: _kind, toolName: _toolName, details, ...chunkTask } = task;
   return {
     type: "task_update",
     ...chunkTask,
@@ -710,9 +672,6 @@ function compactSlackStreamChunks(
       return [chunk];
     }
     if (lastByTaskId.get(chunk.id) !== i) {
-      debugSlackProgress(
-        `[COMPACT-DROP-OLDER] id=${chunk.id} status=${chunk.status} details=${chunk.details ?? "none"}`,
-      );
       return [];
     }
 
@@ -722,9 +681,6 @@ function compactSlackStreamChunks(
     }
     if (entry.sentTaskDetailsById?.get(chunk.id) === pendingDetails) {
       const { details: _details, ...chunkWithoutDetails } = chunk;
-      debugSlackProgress(
-        `[COMPACT-SUPPRESS-SENT-DETAILS] id=${chunk.id} status=${chunk.status} details=${pendingDetails}`,
-      );
       return [chunkWithoutDetails];
     }
     if (chunk.details === pendingDetails) {
@@ -732,9 +688,6 @@ function compactSlackStreamChunks(
     }
     return [{ ...chunk, details: pendingDetails }];
   });
-  debugSlackProgress(
-    `[COMPACT] raw=${describeSlackStreamChunks(rawChunks)} compacted=${describeSlackStreamChunks(compacted)}`,
-  );
   return compacted;
 }
 
@@ -748,9 +701,6 @@ function rememberSlackStreamTaskDetails(
     }
     entry.sentTaskDetailsById ??= new Map();
     entry.sentTaskDetailsById.set(chunk.id, chunk.details);
-    debugSlackProgress(
-      `[REMEMBER-DETAILS] id=${chunk.id} details=${chunk.details}`,
-    );
   }
 }
 
@@ -817,26 +767,55 @@ function shouldShowSlackChannelResponseProgress(
   return hasVisibleSlackProgressTask(entry);
 }
 
-function formatSlackToolNameForDisplay(
-  toolName: string,
-  update?: ChannelTurnProgressEvent,
-): string {
+function formatSlackToolNameForDisplay(toolName: string): string {
   if (isTaskTool(toolName)) {
     return "Subagent";
   }
-  if (update && isShellTool(toolName)) {
-    return update.state === "completed" ? "Ran" : "Running";
+  return getDisplayToolName(toolName);
+}
+
+/**
+ * Single source of truth for tool task titles. Titles are always derived
+ * from the raw tool name plus the task status, never re-parsed from
+ * previously rendered display strings.
+ */
+function formatSlackToolTaskTitle(
+  toolName: string,
+  status: SlackStreamTaskStatus,
+  details?: string,
+): string {
+  if (isSkillToolName(toolName)) {
+    return details ? `Skill: ${details}` : "Skill";
   }
-  if (update && isWebSearchToolName(toolName)) {
-    if (update.state === "completed") {
+  if (isTaskTool(toolName)) {
+    return "Subagent";
+  }
+  if (isShellTool(toolName)) {
+    return status === "complete" ? "Ran" : "Running";
+  }
+  if (isWebSearchToolName(toolName)) {
+    if (status === "complete") {
       return "Searched the web";
     }
-    if (update.state === "error") {
+    if (status === "error") {
       return "Attempted to search the web";
     }
     return "Searching the web";
   }
   return getDisplayToolName(toolName);
+}
+
+function formatSlackTaskTitleForStatus(
+  task: SlackProgressToolTask,
+  status: SlackStreamTaskStatus,
+): string {
+  if (task.kind === "responding") {
+    return formatSlackChannelResponseTitle(status);
+  }
+  if (task.toolName) {
+    return formatSlackToolTaskTitle(task.toolName, status, task.details);
+  }
+  return task.title;
 }
 
 function rememberSlackToolName(
@@ -850,17 +829,12 @@ function rememberSlackToolName(
     entry.hiddenToolCallIds ??= new Set();
     entry.hiddenToolCallIds.add(update.toolCallId);
     entry.toolNamesByCallId?.delete(update.toolCallId);
-    entry.toolTitlesByCallId?.delete(update.toolCallId);
     entry.toolDetailsByCallId?.delete(update.toolCallId);
     return;
   }
   if (update.toolName) {
     entry.toolNamesByCallId ??= new Map();
     entry.toolNamesByCallId.set(update.toolCallId, update.toolName);
-  }
-  if (update.toolTitle) {
-    entry.toolTitlesByCallId ??= new Map();
-    entry.toolTitlesByCallId.set(update.toolCallId, update.toolTitle);
   }
   if (update.toolDetails) {
     entry.toolDetailsByCallId ??= new Map();
@@ -878,104 +852,31 @@ function isSlackHiddenToolUpdate(
   );
 }
 
-function formatSlackToolTitleForState(
-  title: string,
-  update: ChannelTurnProgressEvent,
-): string {
-  if (title === "Running") {
-    return update.state === "completed" ? "Ran" : "Running";
-  }
-  if (title === "Bash") {
-    return update.state === "completed" ? "Ran" : "Running";
-  }
-  if (title === "Search the web") {
-    if (update.state === "completed") {
-      return "Searched the web";
-    }
-    if (update.state === "error") {
-      return "Attempted to search the web";
-    }
-    return "Searching the web";
-  }
-  if (update.state === "completed" && title.startsWith("Searching ")) {
-    return `Searched ${title.slice("Searching ".length)}`;
-  }
-  if (update.state === "error" && title.startsWith("Searching ")) {
-    return `Attempted to search ${title.slice("Searching ".length)}`;
-  }
-  return title;
-}
-
-function formatSlackToolTitleForTerminalStatus(
-  title: string,
-  status: SlackStreamTaskStatus,
-): string {
-  if (title === "Running") {
-    return status === "complete" ? "Ran" : "Running";
-  }
-  if (title === "Bash") {
-    return status === "complete" ? "Ran" : "Running";
-  }
-  if (title === "Responding") {
-    if (status === "complete") {
-      return "Responded";
-    }
-    if (status === "error") {
-      return "Response failed";
-    }
-    return "Responding";
-  }
-  if (title === "Search the web") {
-    if (status === "complete") {
-      return "Searched the web";
-    }
-    if (status === "error") {
-      return "Attempted to search the web";
-    }
-    return "Searching the web";
-  }
-  if (status === "complete" && title.startsWith("Searching ")) {
-    return `Searched ${title.slice("Searching ".length)}`;
-  }
-  if (status === "error" && title.startsWith("Searching ")) {
-    return `Attempted to search ${title.slice("Searching ".length)}`;
-  }
-  return title;
-}
-
 function resolveSlackToolActionName(
   entry: SlackProgressCardEntry,
   update: ChannelTurnProgressEvent,
+  details?: string,
 ): string | null {
   if (update.toolCallId && entry.hiddenToolCallIds?.has(update.toolCallId)) {
     return null;
   }
-  const rememberedTitle = update.toolCallId
-    ? entry.toolTitlesByCallId?.get(update.toolCallId)
-    : undefined;
-  const toolTitle = update.toolTitle ?? rememberedTitle;
   const approvalPrefix = update.kind === "approval" ? "Approval needed: " : "";
-  if (toolTitle) {
-    return sanitizeSlackProgressText(
-      `${approvalPrefix}${formatSlackToolTitleForState(toolTitle, update)}`,
-      SLACK_STREAM_CHUNK_TEXT_MAX,
-    );
-  }
-  if (update.toolName) {
-    if (isSlackHiddenToolName(update.toolName)) {
+  const toolName =
+    update.toolName ??
+    (update.toolCallId
+      ? entry.toolNamesByCallId?.get(update.toolCallId)
+      : undefined);
+  if (toolName) {
+    if (isSlackHiddenToolName(toolName)) {
       return null;
     }
-    return sanitizeSlackProgressText(
-      `${approvalPrefix}${formatSlackToolNameForDisplay(update.toolName, update)}`,
-      SLACK_STREAM_CHUNK_TEXT_MAX,
+    const title = formatSlackToolTaskTitle(
+      toolName,
+      toSlackStreamTaskStatus(update),
+      details,
     );
-  }
-  const rememberedName = update.toolCallId
-    ? entry.toolNamesByCallId?.get(update.toolCallId)
-    : undefined;
-  if (rememberedName) {
     return sanitizeSlackProgressText(
-      `${approvalPrefix}${formatSlackToolNameForDisplay(rememberedName, update)}`,
+      `${approvalPrefix}${title}`,
       SLACK_STREAM_CHUNK_TEXT_MAX,
     );
   }
@@ -1143,9 +1044,6 @@ function buildSlackChannelResponseProgressChunks(
   const title = formatSlackChannelResponseTitle(status);
   const prevTask = entry.toolTasksById?.get(SLACK_CHANNEL_RESPONSE_TASK_ID);
   if (prevTask?.title === title && prevTask.status === status) {
-    debugSlackProgress(
-      `[RESPONSE-SKIP-SAME] id=${SLACK_CHANNEL_RESPONSE_TASK_ID} title=${title} status=${status}`,
-    );
     return [];
   }
 
@@ -1159,7 +1057,7 @@ function buildSlackChannelResponseProgressChunks(
   entry.reasoningActive = false;
   entry.toolTasksById.set(task.id, task);
 
-  const chunks: SlackStreamChunk[] = [
+  return [
     buildSlackPlanUpdateChunk(entry),
     {
       type: "task_update",
@@ -1168,10 +1066,6 @@ function buildSlackChannelResponseProgressChunks(
       status: task.status,
     },
   ];
-  debugSlackProgress(
-    `[RESPONSE-CHUNKS] id=${task.id} title=${title} status=${status} chunks=${describeSlackStreamChunks(chunks)}`,
-  );
-  return chunks;
 }
 
 function buildSlackStreamProgressChunks(
@@ -1182,9 +1076,6 @@ function buildSlackStreamProgressChunks(
   if (update.kind === "thinking" || update.kind === "responding") {
     const reasoningActive = update.state !== "completed";
     if (entry.reasoningActive === reasoningActive) {
-      debugSlackProgress(
-        `[REASONING-SKIP] kind=${update.kind} state=${update.state} active=${reasoningActive}`,
-      );
       return [];
     }
     entry.reasoningActive = reasoningActive;
@@ -1192,12 +1083,7 @@ function buildSlackStreamProgressChunks(
     // exists because visible tools ran earlier in the turn, update the native
     // plan/header title without adding synthetic task rows. Synthetic rows
     // become stale next to concrete tool rows because Slack keeps every task id.
-    const chunks =
-      entry.mode === "stream" ? [buildSlackPlanUpdateChunk(entry)] : [];
-    debugSlackProgress(
-      `[REASONING] kind=${update.kind} state=${update.state} active=${reasoningActive} mode=${entry.mode ?? "none"} chunks=${describeSlackStreamChunks(chunks)}`,
-    );
-    return chunks;
+    return entry.mode === "stream" ? [buildSlackPlanUpdateChunk(entry)] : [];
   }
 
   if (isSlackMessageChannelToolUpdate(entry, update)) {
@@ -1208,14 +1094,6 @@ function buildSlackStreamProgressChunks(
   // stable per-call task ids to preserve parallel tool history in the card.
   const id = resolveSlackToolActionTaskId(update);
   if (!id) {
-    debugSlackProgress(`[NO-ID] kind=${update.kind} state=${update.state}`);
-    return [];
-  }
-  const title = resolveSlackToolActionName(entry, update);
-  if (!title) {
-    debugSlackProgress(
-      `[NO-TITLE] id=${id} kind=${update.kind} state=${update.state} tool=${update.toolName ?? "none"}`,
-    );
     return [];
   }
   const status = toSlackStreamTaskStatus(update);
@@ -1227,6 +1105,10 @@ function buildSlackStreamProgressChunks(
     sentDetails && resolvedDetails && sentDetails !== resolvedDetails
       ? sentDetails
       : resolvedDetails;
+  const title = resolveSlackToolActionName(entry, update, details);
+  if (!title) {
+    return [];
+  }
 
   // Skip the entire appendStream call if nothing has changed for this task.
   // Slack's streaming API re-renders details on every appendStream, so even
@@ -1236,9 +1118,6 @@ function buildSlackStreamProgressChunks(
   // both a "completed" and an "error" tool_return for the same call; the
   // completed event arrives first and is the reliable one.
   if (prevTask && prevTask.status === "complete" && status === "error") {
-    debugSlackProgress(
-      `[SKIP-DOWNGRADE] id=${id} title=${title} details=${details ?? "none"}`,
-    );
     return [];
   }
   if (
@@ -1247,14 +1126,17 @@ function buildSlackStreamProgressChunks(
     prevTask.status === status &&
     (prevTask.details ?? "") === (details ?? "")
   ) {
-    debugSlackProgress(
-      `[SKIP-SAME] id=${id} title=${title} status=${status} details=${details ?? "none"}`,
-    );
     return [];
   }
+  const toolName =
+    update.toolName ??
+    (update.toolCallId
+      ? entry.toolNamesByCallId?.get(update.toolCallId)
+      : undefined);
   const task: SlackProgressToolTask = {
     id,
     kind: update.kind,
+    ...(toolName ? { toolName } : {}),
     title,
     status,
     ...(details ? { details } : {}),
@@ -1282,10 +1164,6 @@ function buildSlackStreamProgressChunks(
       ? { details }
       : {}),
   });
-
-  debugSlackProgress(
-    `[BUILD-CHUNKS] id=${id} title=${title} status=${status} details=${details ?? "none"} detailsChanged=${detailsChanged} chunks=${describeSlackStreamChunks(chunks)}`,
-  );
 
   return chunks;
 }
@@ -1970,9 +1848,6 @@ export function createSlackAdapter(
       args.recipient_user_id = entry.source.senderId;
       args.recipient_team_id = recipientTeamId;
     }
-    debugSlackProgress(
-      `[START-ARGS] chunks=${describeSlackStreamChunks(args.chunks ?? [])}`,
-    );
     return args;
   }
 
@@ -2011,9 +1886,6 @@ export function createSlackAdapter(
       entry.streamTs = response.ts;
       rememberMessageThread(response.ts, replyToMessageId);
       rememberSlackStreamTaskDetails(entry, args.chunks ?? []);
-      debugSlackProgress(
-        `[START-OK] ts=${response.ts} chunks=${describeSlackStreamChunks(args.chunks ?? [])}`,
-      );
       // Once the native stream card is visible, clear Slack's assistant
       // thread status so Slack doesn't render a second "is processing" field
       // under our task card.
@@ -2037,7 +1909,6 @@ export function createSlackAdapter(
     }
     const chunks = compactSlackStreamChunks(rawChunks, entry);
     if (chunks.length === 0) {
-      debugSlackProgress("[APPEND-SKIP-EMPTY]");
       return true;
     }
     await ensureApp();
@@ -2060,9 +1931,6 @@ export function createSlackAdapter(
         return false;
       }
       rememberSlackStreamTaskDetails(entry, chunks);
-      debugSlackProgress(
-        `[APPEND-OK] chunks=${describeSlackStreamChunks(chunks)}`,
-      );
       return true;
     } catch (error) {
       console.warn(
@@ -2097,9 +1965,6 @@ export function createSlackAdapter(
       terminalTaskStatus,
       finalErrorChunk,
     );
-    debugSlackProgress(
-      `[STOP-ARGS] terminal=${terminalTaskStatus} chunks=${describeSlackStreamChunks(chunks)}`,
-    );
     try {
       const args: SlackStopStreamArgs = {
         channel: entry.source.chatId,
@@ -2120,9 +1985,6 @@ export function createSlackAdapter(
         return false;
       }
       rememberSlackStreamTaskDetails(entry, chunks);
-      debugSlackProgress(
-        `[STOP-OK] chunks=${describeSlackStreamChunks(chunks)}`,
-      );
       return true;
     } catch (error) {
       if (isSlackMessageNotStreamingStateError(error)) {
@@ -2272,11 +2134,7 @@ export function createSlackAdapter(
           chunksToSend,
         );
       } else if (entry.mode === "stream") {
-        const didAppend = await appendSlackProgressStream(entry, chunksToSend);
-        didSend = didAppend;
-        if (!didAppend) {
-          debugSlackProgress("[APPEND-FAILED-PRESERVE-STREAM]");
-        }
+        didSend = await appendSlackProgressStream(entry, chunksToSend);
       }
 
       if (!didSend && chunksToSend.length > 0) {
@@ -2404,11 +2262,6 @@ export function createSlackAdapter(
     entry.latestText = progressText;
     entry.latestUpdate = options.update;
     rememberSlackToolName(entry, options.update);
-    if (options.update) {
-      debugSlackProgress(
-        `[EVENT] kind=${options.update.kind} state=${options.update.state} toolCallId=${options.update.toolCallId ?? "none"} toolName=${options.update.toolName ?? "none"} toolTitle=${options.update.toolTitle ?? "none"} toolDetails=${options.update.toolDetails ?? "none"}`,
-      );
-    }
     const streamChunks = options.update
       ? buildSlackStreamProgressChunks(entry, options.update)
       : [];
@@ -2420,9 +2273,6 @@ export function createSlackAdapter(
       options.update?.kind === "thinking" ||
       options.update?.kind === "responding";
     if (options.update && streamChunks.length === 0 && !isReasoningEvent) {
-      debugSlackProgress(
-        `[UPSERT-SKIP-NO-CHUNKS] kind=${options.update.kind} state=${options.update.state}`,
-      );
       return;
     }
     if (streamChunks.length > 0) {
@@ -2441,9 +2291,6 @@ export function createSlackAdapter(
     // can be delayed by the reasoning timestamp and appear only once it has
     // already completed.
     if (isReasoningEvent && streamChunks.length === 0) {
-      debugSlackProgress(
-        `[UPSERT-REASONING-NO-FLUSH] kind=${options.update?.kind} state=${options.update?.state}`,
-      );
       return;
     }
 
@@ -2465,15 +2312,9 @@ export function createSlackAdapter(
       progressUpdateThrottleMs === 0 ||
       elapsed >= progressUpdateThrottleMs
     ) {
-      debugSlackProgress(
-        `[UPSERT-FLUSH] force=${Boolean(options.force)} hasNewTaskDetails=${hasNewTaskDetails} lastSentAt=${entry.lastSentAt} elapsed=${elapsed} pending=${entry.pendingStreamChunks?.length ?? 0}`,
-      );
       await flushSlackProgressCard(key, entry);
       return;
     }
-    debugSlackProgress(
-      `[UPSERT-SCHEDULE] delay=${Math.max(0, progressUpdateThrottleMs - elapsed)} hasNewTaskDetails=${hasNewTaskDetails} pending=${entry.pendingStreamChunks?.length ?? 0}`,
-    );
     scheduleProgressCardFlush(
       key,
       entry,
@@ -2543,7 +2384,6 @@ export function createSlackAdapter(
         entry.toolTasksById = undefined;
         entry.pendingStreamChunks = undefined;
         entry.toolNamesByCallId = undefined;
-        entry.toolTitlesByCallId = undefined;
         entry.toolDetailsByCallId = undefined;
         entry.sentTaskDetailsById = undefined;
         entry.reasoningActive = undefined;

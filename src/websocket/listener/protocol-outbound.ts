@@ -5,7 +5,6 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
-import { buildChannelTurnProgressUpdatesFromDelta } from "@/channels/progress";
 import { getChannelRegistry } from "@/channels/registry";
 import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -1133,17 +1132,22 @@ export function createLifecycleMessageBase<TMessageType extends string>(
 function getActiveChannelTurnProgressContext(runtime: RuntimeCarrier): {
   sources: NonNullable<ConversationRuntime["activeChannelTurnSources"]>;
   batchId: string | null;
+  progressBuilder: NonNullable<
+    ConversationRuntime["activeChannelTurnProgress"]
+  >;
 } | null {
   if (!runtime || !("activeChannelTurnSources" in runtime)) {
     return null;
   }
   const sources = runtime.activeChannelTurnSources;
-  if (!sources || sources.length === 0) {
+  const progressBuilder = runtime.activeChannelTurnProgress;
+  if (!sources || sources.length === 0 || !progressBuilder) {
     return null;
   }
   return {
     sources,
     batchId: runtime.activeChannelTurnBatchId,
+    progressBuilder,
   };
 }
 
@@ -1155,7 +1159,7 @@ function dispatchChannelTurnProgressFromDelta(
   if (!context) {
     return;
   }
-  const updates = buildChannelTurnProgressUpdatesFromDelta(delta);
+  const updates = context.progressBuilder.buildUpdates(delta);
   if (updates.length === 0) {
     return;
   }
