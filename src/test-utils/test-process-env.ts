@@ -9,6 +9,9 @@ export function createIsolatedCliTestEnv(
 
   Object.assign(env, {
     LETTA_DISABLE_SESSION_PERSIST: "1",
+    // Isolated CLI tests use temporary HOME directories; probing the macOS
+    // keychain there can block on system UI instead of exercising the test.
+    LETTA_SKIP_KEYCHAIN_CHECK: "1",
     DISABLE_AUTOUPDATER: "1",
   });
 
