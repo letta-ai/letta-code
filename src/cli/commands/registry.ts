@@ -4,7 +4,16 @@
 import { handleMemoryRepositoryCommand } from "./memory-repository";
 import { handleSecretCommand } from "./secret";
 
-type CommandHandler = (args: string[]) => Promise<string> | string;
+type CommandHandlerResult =
+  | string
+  | {
+      output: string;
+      refreshSecretsInfo?: boolean;
+    };
+
+type CommandHandler = (
+  args: string[],
+) => Promise<CommandHandlerResult> | CommandHandlerResult;
 
 interface Command {
   desc: string;
@@ -60,18 +69,9 @@ export const commands: Record<string, Command> = {
       return "Processing memory request...";
     },
   },
-  "/goal": {
-    desc: "Manage goal: /goal [status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
-    args: "[status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
-    order: 14,
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Managing conversation goal...";
-    },
-  },
   "/reflect": {
-    desc: "Launch reflection (/reflect [transcript_file])",
-    args: "[transcript_file]",
+    desc: "Launch reflection (/reflect [--recent N | --conversation ID ... | --auto] [--instruction TEXT])",
+    args: "[--recent N | --conversation ID ... | --auto] [--instruction TEXT]",
     order: 50,
     handler: () => {
       // Handled specially in App.tsx
@@ -231,7 +231,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/pin": {
-    desc: "Pin current agent or conversation (/pin [name]|agent [name]|convo)",
+    desc: "Pin current agent (/pin [name])",
     order: 22,
     handler: () => {
       // Handled specially in App.tsx
@@ -239,7 +239,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/unpin": {
-    desc: "Unpin current agent globally, or use -l for local only",
+    desc: "Unpin current agent",
     order: 23,
     handler: () => {
       // Handled specially in App.tsx
@@ -297,6 +297,15 @@ export const commands: Record<string, Command> = {
       return "Reloading...";
     },
   },
+  "/mods": {
+    desc: "Run mod learning targets",
+    order: 27.3,
+    args: "learn [memory-citations] [options] | generate-env [request]",
+    handler: () => {
+      // Handled specially in use-submit-handler.ts to stream mod learning progress
+      return "Starting mod learning...";
+    },
+  },
   "/ade": {
     desc: "Open agent in ADE (browser)",
     order: 28,
@@ -347,10 +356,7 @@ export const commands: Record<string, Command> = {
     desc: "Manage secrets for shell commands",
     order: 33,
     args: "<set|list|unset> [key] [value]",
-    handler: async (args: string[]) => {
-      const result = await handleSecretCommand(args);
-      return result.output;
-    },
+    handler: (args: string[]) => handleSecretCommand(args),
   },
   "/memory-repository": {
     desc: "Push this agent's memory repo to an additional git remote",
@@ -635,12 +641,29 @@ export const commands: Record<string, Command> = {
   },
 };
 
+export interface CommandExecutionResult {
+  success: boolean;
+  output: string;
+  notFound?: boolean;
+  refreshSecretsInfo?: boolean;
+}
+
+function normalizeCommandHandlerResult(result: CommandHandlerResult): {
+  output: string;
+  refreshSecretsInfo?: boolean;
+} {
+  if (typeof result === "string") {
+    return { output: result };
+  }
+  return result;
+}
+
 /**
  * Execute a command and return the result
  */
 export async function executeCommand(
   input: string,
-): Promise<{ success: boolean; output: string; notFound?: boolean }> {
+): Promise<CommandExecutionResult> {
   const [command, ...args] = input.trim().split(/\s+/);
 
   if (!command) {
@@ -667,8 +690,8 @@ export async function executeCommand(
   }
 
   try {
-    const output = await handler.handler(args);
-    return { success: true, output };
+    const result = normalizeCommandHandlerResult(await handler.handler(args));
+    return { success: true, ...result };
   } catch (error) {
     return {
       success: false,

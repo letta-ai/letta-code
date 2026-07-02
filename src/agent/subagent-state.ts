@@ -20,6 +20,7 @@ export interface SubagentState {
   id: string;
   type: string; // "General-purpose", "Recall", "code-reviewer", etc.
   description: string;
+  prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agentId?: string | null;
   agentURL: string | null;
@@ -171,6 +172,7 @@ export function registerSubagent(
     agentId?: string | null;
     conversationId?: string | null;
   },
+  prompt?: string,
 ): void {
   // Capitalize type for display (recall -> Recall)
   const displayType = type.charAt(0).toUpperCase() + type.slice(1);
@@ -179,6 +181,7 @@ export function registerSubagent(
     id,
     type: displayType,
     description,
+    prompt,
     status: "pending",
     agentId: null,
     agentURL: null,

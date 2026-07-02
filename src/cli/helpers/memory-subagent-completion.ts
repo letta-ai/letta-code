@@ -1,5 +1,6 @@
 import { recompileAgentSystemPrompt } from "@/agent/modify";
 import { isDebugEnabled } from "@/utils/debug";
+import { buildAgentTerminalLink, isLocalAgentId } from "./app-urls";
 import {
   estimateSystemTokens,
   setSystemPromptDoctorState,
@@ -19,6 +20,7 @@ export interface MemorySubagentCompletionArgs {
   subagentType: MemorySubagentType;
   success: boolean;
   error?: string;
+  subagentAgentId?: string;
 }
 
 export interface MemorySubagentCompletionDeps {
@@ -37,6 +39,12 @@ export async function handleMemorySubagentCompletion(
   deps: MemorySubagentCompletionDeps,
 ): Promise<string> {
   const { agentId, conversationId, subagentType, success, error } = args;
+  const subagentLink = args.subagentAgentId
+    ? buildAgentTerminalLink(args.subagentAgentId, undefined, "Dreamed")
+    : null;
+  const canLinkSubagent = args.subagentAgentId
+    ? !isLocalAgentId(args.subagentAgentId)
+    : false;
   const recompileAgentSystemPromptFn =
     deps.recompileAgentSystemPromptImpl ?? recompileAgentSystemPrompt;
   let recompileError: string | null = null;
@@ -90,10 +98,14 @@ export async function handleMemorySubagentCompletion(
     return `Memory initialization failed: ${normalizedError}`;
   }
 
-  const baseMessage =
+  let baseMessage =
     subagentType === "reflection"
-      ? "Reflected on /palace, the halls remember more now."
+      ? "Dreamed and made some memories."
       : "Built a memory palace of you. Visit it with /palace.";
+
+  if (subagentType === "reflection" && subagentLink && canLinkSubagent) {
+    baseMessage = `${subagentLink} and made some memories.`;
+  }
 
   if (!recompileError) {
     return baseMessage;

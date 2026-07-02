@@ -18,6 +18,7 @@ import type {
   ChannelDefaultPermissionMode,
   CustomChannelAccount,
   DiscordChannelAccount,
+  SignalChannelAccount,
   SlackChannelAccount,
   SupportedChannelId,
   TelegramChannelAccount,
@@ -28,6 +29,7 @@ import {
   isCustomChannelAccount,
   isDiscordChannelAccount,
   isFirstPartyChannelId,
+  isSignalChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
   isWhatsAppChannelAccount,
@@ -40,16 +42,25 @@ import {
  * account object; the canonicalized snake_case form is emitted on save.
  */
 const SNAKE_TO_CAMEL: Record<string, string> = {
+  account_uuid: "accountUuid",
   allowed_channels: "allowedChannels",
+  allowed_groups: "allowedGroups",
   auto_thread_on_mention: "autoThreadOnMention",
+  base_url: "baseUrl",
   acknowledge_message_reaction: "acknowledgeMessageReaction",
   group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
+  listen_mode: "listenMode",
+  media_max_bytes: "mediaMaxBytes",
+  mention_patterns: "mentionPatterns",
+  recipient_aliases: "recipientAliases",
   remove_stale_routes: "removeStaleRoutes",
   rich_draft_streaming: "richDraftStreaming",
   rich_private_chat_default: "richPrivateChatDefault",
+  show_completed_reaction: "showCompletedReaction",
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
+  download_media: "downloadMedia",
 };
 
 let warnedAboutDualKeys = false;
@@ -228,6 +239,18 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
     ];
   }
 
+  if (isSignalChannelAccount(account)) {
+    (cloned as SignalChannelAccount).allowedGroups = [
+      ...(account.allowedGroups ?? []),
+    ];
+    (cloned as SignalChannelAccount).mentionPatterns = [
+      ...(account.mentionPatterns ?? []),
+    ];
+    (cloned as SignalChannelAccount).recipientAliases = {
+      ...(account.recipientAliases ?? {}),
+    };
+  }
+
   if ("config" in account) {
     (cloned as CustomChannelAccount).config = { ...account.config };
   }
@@ -283,7 +306,8 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     (isDiscordChannelAccount(next) &&
       (next.displayName === "Discord bot" ||
         next.displayName === "Migrated Discord bot")) ||
-    (isWhatsAppChannelAccount(next) && next.displayName === "WhatsApp")
+    (isWhatsAppChannelAccount(next) && next.displayName === "WhatsApp") ||
+    (isSignalChannelAccount(next) && next.displayName === "Signal")
   ) {
     next.displayName = undefined;
   }
@@ -297,6 +321,10 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
       DEFAULT_SLACK_PERMISSION_MODE;
     (next as SlackChannelAccount).transcribeVoice =
       (next as SlackChannelAccount).transcribeVoice === true;
+    (next as SlackChannelAccount).showCompletedReaction =
+      (next as SlackChannelAccount).showCompletedReaction !== false;
+    (next as SlackChannelAccount).listenMode =
+      (next as SlackChannelAccount).listenMode === true;
   }
   if (isDiscordChannelAccount(next)) {
     const migrated = migratePermissionMode(
@@ -319,6 +347,15 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
     next.downloadMedia = next.downloadMedia === true;
     next.transcribeVoice = next.transcribeVoice === true;
+  }
+  if (isSignalChannelAccount(next)) {
+    next.baseUrl = next.baseUrl ?? "";
+    next.selfChatMode = next.selfChatMode === true;
+    next.groupMode = next.groupMode ?? "disabled";
+    next.allowedGroups = [...(next.allowedGroups ?? [])];
+    next.mentionPatterns = [...(next.mentionPatterns ?? [])];
+    next.recipientAliases = { ...(next.recipientAliases ?? {}) };
+    next.downloadMedia = next.downloadMedia !== false;
   }
   if (isTelegramChannelAccount(next)) {
     next.richPrivateChatDefault = next.richPrivateChatDefault !== false;
@@ -400,6 +437,31 @@ function makeDefaultLegacyAccount(
     };
   }
 
+  if (config.channel === "signal") {
+    return {
+      channel: "signal",
+      accountId: LEGACY_CHANNEL_ACCOUNT_ID,
+      enabled: config.enabled,
+      baseUrl: config.baseUrl,
+      account: config.account,
+      accountUuid: config.accountUuid,
+      dmPolicy: config.dmPolicy,
+      allowedUsers: [...config.allowedUsers],
+      agentId: config.agentId,
+      selfChatMode: config.selfChatMode === true,
+      groupMode: config.groupMode ?? "disabled",
+      allowedGroups: config.allowedGroups ? [...config.allowedGroups] : [],
+      mentionPatterns: config.mentionPatterns
+        ? [...config.mentionPatterns]
+        : [],
+      recipientAliases: { ...(config.recipientAliases ?? {}) },
+      downloadMedia: config.downloadMedia !== false,
+      mediaMaxBytes: config.mediaMaxBytes,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   return {
     channel: "slack",
     accountId: LEGACY_CHANNEL_ACCOUNT_ID,
@@ -412,6 +474,8 @@ function makeDefaultLegacyAccount(
     agentId: null,
     defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: config.transcribeVoice === true,
+    showCompletedReaction: config.showCompletedReaction !== false,
+    listenMode: config.listenMode === true,
     createdAt: now,
     updatedAt: now,
   };
@@ -465,7 +529,8 @@ export function loadChannelAccounts(channelId: string): void {
     channelId === "telegram" ||
     channelId === "slack" ||
     channelId === "discord" ||
-    channelId === "whatsapp"
+    channelId === "whatsapp" ||
+    channelId === "signal"
   ) {
     const legacyConfig = readChannelConfig(channelId);
     if (legacyConfig) {

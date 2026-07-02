@@ -41,6 +41,10 @@ import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { CustomCommand } from "@/cli/commands/custom";
+import {
+  handleModsCommand,
+  parseModsGenerateEnvCommand,
+} from "@/cli/commands/mods";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
@@ -55,21 +59,13 @@ import { resetContextHistory } from "@/cli/helpers/context-tracker";
 import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
-  buildGoalReminder,
-  formatGoalSummary,
-  GOAL_USAGE,
-  GOAL_USAGE_HINT,
-  goalStatusLabel,
-  parseGoalArgs,
-  validateGoalObjective,
-} from "@/cli/helpers/goal-command";
-import {
   buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
 import { buildLogoutSuccessMessage } from "@/cli/helpers/logout-message";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
@@ -78,7 +74,18 @@ import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-to
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
+  releaseReflectionLaunch,
+  tryReserveReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
+import {
+  buildMultiReflectionPayload,
+  buildParentMemorySnapshot,
+  buildReflectionAutoPayload,
+  buildReflectionSelectorPrompt,
+  buildReflectionSubagentPrompt,
+  finalizeMultiReflectionPayload,
+  readReflectionAutoSelection,
+} from "@/cli/helpers/reflection-transcript";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
@@ -102,15 +109,12 @@ import {
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
-import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
   runSessionStartHooks,
   runUserPromptSubmitHooks,
 } from "@/hooks";
 import { createModConversationHandle } from "@/mods/conversation-handle";
-import type { PermissionMode } from "@/permissions/mode";
-import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
 import {
   buildSharedReminderParts,
@@ -119,18 +123,19 @@ import {
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
   enqueueMemoryGitSyncReminder,
+  markSecretsInfoReminderPending,
   type SharedReminderState,
 } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { detectShellContext } from "@/utils/shell-context";
 import { extractTaskNotificationsForDisplay } from "@/utils/task-notifications";
 import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-change";
 
 import { shouldSlashCommandBypassQueue } from "./command-routing";
 import { buildTextParts } from "./content-parts";
-import { buildGoalPrompt } from "./goal-loop";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
 import { saveLastSessionBeforeExit } from "./session";
 import { handleConnectionCommand } from "./submit-connection-commands";
@@ -284,7 +289,6 @@ type SubmitHandlerContext = {
   markLocalModelsAvailable: () => void;
   setModelSelectorOptions: Dispatch<SetStateAction<ModelSelectorOptions>>;
   setNeedsEagerApprovalCheck: Dispatch<SetStateAction<boolean>>;
-  setPinDialogLocal: Dispatch<SetStateAction<boolean>>;
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
   >;
@@ -299,8 +303,6 @@ type SubmitHandlerContext = {
   setThinkingMessage: Dispatch<SetStateAction<string>>;
   setTokenStreamingEnabled: Dispatch<SetStateAction<boolean>>;
   setTrajectoryTokenBase: Dispatch<SetStateAction<number>>;
-  setUiPermissionMode: (mode: PermissionMode) => void;
-  setUiGoalLoopActive: Dispatch<SetStateAction<boolean>>;
   sharedReminderStateRef: MutableRefObject<SharedReminderState>;
   shouldAutoGenerateConversationTitleRef: MutableRefObject<boolean>;
 
@@ -324,6 +326,133 @@ type SubmitHandlerContext = {
   userCancelledRef: MutableRefObject<boolean>;
   onReload?: () => Promise<void>;
 };
+
+type ReflectCommandArgs =
+  | { instruction?: string; kind: "single" }
+  | { instruction?: string; kind: "recent"; limit: number }
+  | { conversationIds: string[]; instruction?: string; kind: "conversations" }
+  | { instruction?: string; kind: "auto" };
+
+function isReflectCommandFlag(value: string): boolean {
+  return (
+    value === "--" ||
+    value === "--auto" ||
+    value === "--conversation" ||
+    value === "--instruction" ||
+    value === "--instructions" ||
+    value === "--recent" ||
+    value === "-i" ||
+    value.startsWith("--instruction=")
+  );
+}
+
+function parseReflectCommandArgs(input: string): ReflectCommandArgs {
+  const trimmed = input.trim();
+  const command = trimmed.split(/\s+/, 1)[0] ?? "/reflect";
+  const parts = parseModCommandArgv(trimmed.slice(command.length).trim());
+  if (parts.length === 0) {
+    return { kind: "single" };
+  }
+
+  let recentLimit: number | null = null;
+  const conversationIds: string[] = [];
+  const instructions: string[] = [];
+  let auto = false;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (!part) continue;
+    if (
+      part === "--instruction" ||
+      part === "--instructions" ||
+      part === "-i"
+    ) {
+      let instructionEnd = index + 1;
+      while (instructionEnd < parts.length) {
+        const instructionPart = parts[instructionEnd];
+        if (!instructionPart || isReflectCommandFlag(instructionPart)) break;
+        instructionEnd += 1;
+      }
+      const instruction = parts
+        .slice(index + 1, instructionEnd)
+        .join(" ")
+        .trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      index = instructionEnd - 1;
+      continue;
+    }
+    if (part.startsWith("--instruction=")) {
+      const instruction = part.slice("--instruction=".length).trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      continue;
+    }
+    if (part === "--") {
+      const instruction = parts
+        .slice(index + 1)
+        .join(" ")
+        .trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect -- <instruction>");
+      }
+      instructions.push(instruction);
+      break;
+    }
+    if (part === "--auto") {
+      auto = true;
+      continue;
+    }
+    if (part === "--recent") {
+      const raw = parts[index + 1];
+      const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error("Usage: /reflect --recent <positive integer>");
+      }
+      recentLimit = parsed;
+      index += 1;
+      continue;
+    }
+    if (part === "--conversation") {
+      const conversationId = parts[index + 1];
+      if (!conversationId) {
+        throw new Error("Usage: /reflect --conversation <conversation-id>");
+      }
+      conversationIds.push(conversationId);
+      index += 1;
+      continue;
+    }
+    throw new Error(
+      "Usage: /reflect [--recent N | --conversation <id> ... | --auto] [--instruction <instruction>]",
+    );
+  }
+
+  const instruction = instructions.join("\n").trim() || undefined;
+  const modes = [recentLimit !== null, conversationIds.length > 0, auto].filter(
+    Boolean,
+  ).length;
+  if (modes > 1) {
+    throw new Error("Use only one of --recent, --conversation, or --auto.");
+  }
+  if (auto) {
+    return { instruction, kind: "auto" };
+  }
+  if (recentLimit !== null) {
+    return { instruction, kind: "recent", limit: recentLimit };
+  }
+  if (conversationIds.length > 0) {
+    return { conversationIds, instruction, kind: "conversations" };
+  }
+  return { instruction, kind: "single" };
+}
+
+function aliasBareExitCommand(input: string): string {
+  if (input === "exit" || input === "quit") return "/exit";
+  return input;
+}
 
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
   const {
@@ -406,7 +535,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
-    setPinDialogLocal,
     setProfileConfirmPending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled,
@@ -417,8 +545,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setThinkingMessage,
     setTokenStreamingEnabled,
     setTrajectoryTokenBase,
-    setUiPermissionMode,
-    setUiGoalLoopActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
 
@@ -447,6 +573,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       const { notifications: taskNotifications, cleanedText } =
         extractTaskNotificationsForDisplay(msg);
       const userTextForInput = cleanedText.trim();
+      const routedUserText = aliasBareExitCommand(userTextForInput);
       const isSystemOnly =
         taskNotifications.length > 0 && userTextForInput.length === 0;
 
@@ -474,21 +601,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       }
 
       if (!msg && !hasOverrideContent) return { submitted: false };
-
-      // Auto-dismiss completed/budget-limited goals on the next user turn
-      const existingGoal = conversationIdRef.current
-        ? settingsManager.getConversationGoal(conversationIdRef.current)
-        : null;
-      if (
-        existingGoal &&
-        (existingGoal.status === "complete" ||
-          existingGoal.status === "budget_limited")
-      ) {
-        settingsManager.clearConversationGoal(
-          conversationIdRef.current,
-          process.cwd(),
-        );
-      }
 
       // If the user just cycled reasoning tiers, flush the final choice before
       // sending the next message so the upcoming run uses the selected tier.
@@ -577,9 +689,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         setDequeueEpoch((e: number) => e + 1);
       }
 
-      const isSlashCommand = userTextForInput.startsWith("/");
+      const isSlashCommand = routedUserText.startsWith("/");
       const parsedModCommand = isSlashCommand
-        ? parseModSlashCommand(userTextForInput.trim())
+        ? parseModSlashCommand(routedUserText.trim())
         : null;
       const parsedSlashCommandName = parsedModCommand?.command ?? null;
       const matchedCustomCommand = parsedSlashCommandName
@@ -592,15 +704,15 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
       const shouldBypassQueue =
         isSlashCommand &&
-        shouldSlashCommandBypassQueue(userTextForInput, {
+        shouldSlashCommandBypassQueue(routedUserText, {
           hasCustomCommand: Boolean(matchedCustomCommand),
           ...(matchedModCommand ? { modCommand: matchedModCommand } : {}),
         });
 
       if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
-        const attemptedCommand = userTextForInput.split(/\s+/)[0] || "/";
+        const attemptedCommand = routedUserText.split(/\s+/)[0] || "/";
         const disabledMessage = `'${attemptedCommand}' is disabled while the agent is running.`;
-        const cmd = commandRunner.start(userTextForInput, disabledMessage);
+        const cmd = commandRunner.start(routedUserText, disabledMessage);
         cmd.fail(disabledMessage);
         return { submitted: true }; // Clears input
       }
@@ -619,10 +731,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // Note: userCancelledRef.current was already reset above before the queue check
       // to ensure the dequeue effect isn't blocked by a stale cancellation flag.
 
-      let aliasedMsg = msg;
-      if (msg === "exit" || msg === "quit") {
-        aliasedMsg = "/exit";
-      }
+      const aliasedMsg = routedUserText;
 
       // Handle commands (messages starting with "/")
       if (aliasedMsg.startsWith("/")) {
@@ -788,6 +897,71 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             }
           }
 
+          return { submitted: true };
+        }
+
+        const modsGenerateEnvCommand = parseModsGenerateEnvCommand(trimmed);
+        if (modsGenerateEnvCommand) {
+          const args = modsGenerateEnvCommand.args;
+          const cmd = commandRunner.start(
+            trimmed,
+            args
+              ? `Starting mod env generation for: ${args}`
+              : "Starting mod env generation...",
+          );
+
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /mods generate-env.",
+            );
+            return { submitted: false };
+          }
+
+          setCommandRunning(true);
+          try {
+            const { loadRenderedSkillContent, wrapSkillContent } = await import(
+              "@/tools/impl/skill"
+            );
+            const skillContent = await loadRenderedSkillContent(
+              "generating-mod-envs",
+              {
+                agentId,
+                args,
+                allowDisabledModelInvocation: true,
+              },
+            );
+            const request = args
+              ? `The user ran \`/mods generate-env ${args}\`. Use the loaded skill to help them generate, review, validate, or improve a mod learning env JSON.`
+              : "The user ran `/mods generate-env` without arguments. Use the loaded skill's bare behavior for mod learning env generation.";
+
+            cmd.finish("Running mod env generation...", true);
+            await processConversationWithQueuedApprovals([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(
+                  `${wrapSkillContent("generating-mod-envs", skillContent)}\n\n${SYSTEM_REMINDER_OPEN}\n${request}\n${SYSTEM_REMINDER_CLOSE}`,
+                ),
+                otid: randomUUID(),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to run /mods generate-env: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
+        const modsCommand = handleModsCommand(trimmed, {
+          commandRunner,
+          currentModelId,
+          cwd: getCurrentWorkingDirectory(),
+        });
+        if (modsCommand.handled) {
           return { submitted: true };
         }
 
@@ -1562,17 +1736,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
-          // Pause any active goal for the current conversation before switching
           const prevConversationId = conversationIdRef.current;
-          const prevGoal = prevConversationId
-            ? settingsManager.getConversationGoal(prevConversationId)
-            : null;
-          if (prevGoal?.status === "active") {
-            settingsManager.updateConversationGoalStatus(
-              prevConversationId,
-              "paused",
-            );
-          }
 
           // Run SessionEnd hooks for current session before starting new one
           await runEndHooks("new");
@@ -1663,17 +1827,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
-          // Pause any active goal for the current conversation before forking
           const forkPrevConversationId = conversationIdRef.current;
-          const forkPrevGoal = forkPrevConversationId
-            ? settingsManager.getConversationGoal(forkPrevConversationId)
-            : null;
-          if (forkPrevGoal?.status === "active") {
-            settingsManager.updateConversationGoalStatus(
-              forkPrevConversationId,
-              "paused",
-            );
-          }
 
           await runEndHooks("fork");
 
@@ -1774,17 +1928,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
-          // Pause any active goal for the current conversation before clearing
           const clearPrevConversationId = conversationIdRef.current;
-          const clearPrevGoal = clearPrevConversationId
-            ? settingsManager.getConversationGoal(clearPrevConversationId)
-            : null;
-          if (clearPrevGoal?.status === "active") {
-            settingsManager.updateConversationGoalStatus(
-              clearPrevConversationId,
-              "paused",
-            );
-          }
 
           // Run SessionEnd hooks for current session before clearing
           await runEndHooks("new");
@@ -1867,174 +2011,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           } finally {
             setCommandRunning(false);
           }
-          return { submitted: true };
-        }
-
-        if (trimmed === "/goal" || trimmed.startsWith("/goal ")) {
-          const objective = trimmed.slice("/goal".length).trim();
-          const cmd = commandRunner.start(trimmed, "Managing goal...");
-          const currentConversationId = conversationIdRef.current;
-
-          if (!currentConversationId) {
-            cmd.fail("No active conversation.");
-            return { submitted: true };
-          }
-
-          const lowerGoalArg = objective.toLowerCase();
-          if (
-            !objective ||
-            lowerGoalArg === "show" ||
-            lowerGoalArg === "status"
-          ) {
-            const goal = settingsManager.getConversationGoal(
-              currentConversationId,
-            );
-            if (!goal) {
-              cmd.finish(
-                `${GOAL_USAGE}\n${GOAL_USAGE_HINT}\nNo goal is currently set.`,
-                true,
-              );
-              return { submitted: true };
-            }
-            cmd.finish(
-              `Goal ${goalStatusLabel(goal.status)}\n${formatGoalSummary(goal)}`,
-              true,
-            );
-            return { submitted: true };
-          }
-
-          if (lowerGoalArg === "clear" || lowerGoalArg === "disable") {
-            const cleared = settingsManager.clearConversationGoal(
-              currentConversationId,
-            );
-            settingsManager.setConversationGoalToolsEnabled(
-              currentConversationId,
-              false,
-            );
-            if (goalLoopMode.getState().isActive) {
-              goalLoopMode.deactivate();
-              setUiGoalLoopActive(false);
-              permissionMode.setMode("standard");
-              setUiPermissionMode("standard");
-            }
-            cmd.finish(
-              cleared || lowerGoalArg === "disable"
-                ? lowerGoalArg === "disable"
-                  ? "Goal disabled; goal tools removed for this conversation."
-                  : "Goal cleared"
-                : "No goal to clear. This conversation does not currently have a goal.",
-              true,
-            );
-            return { submitted: true };
-          }
-
-          if (
-            lowerGoalArg === "pause" ||
-            lowerGoalArg === "resume" ||
-            lowerGoalArg === "complete"
-          ) {
-            const status = lowerGoalArg === "resume" ? "active" : lowerGoalArg;
-            const goal = settingsManager.updateConversationGoalStatus(
-              currentConversationId,
-              status as "active" | "paused" | "complete",
-            );
-            if (!goal) {
-              cmd.fail(
-                `${GOAL_USAGE}\nThe session must have a goal before you can ${lowerGoalArg} it.`,
-              );
-              return { submitted: true };
-            }
-            if (lowerGoalArg === "pause" || lowerGoalArg === "complete") {
-              if (goalLoopMode.getState().isActive) {
-                goalLoopMode.deactivate();
-                setUiGoalLoopActive(false);
-                permissionMode.setMode("standard");
-                setUiPermissionMode("standard");
-              }
-            } else if (lowerGoalArg === "resume") {
-              settingsManager.setConversationGoalToolsEnabled(
-                currentConversationId,
-                true,
-              );
-              goalLoopMode.activateGoal(goal.objective, goal.tokenBudget);
-              setUiGoalLoopActive(true);
-              permissionMode.setMode("unrestricted");
-              setUiPermissionMode("unrestricted");
-              const goalState = goalLoopMode.getState();
-              const systemMsg = buildGoalPrompt(
-                goalState,
-                currentConversationId,
-              );
-              processConversationWithQueuedApprovals([
-                {
-                  type: "message",
-                  role: "user",
-                  content: buildTextParts(systemMsg),
-                  otid: randomUUID(),
-                },
-              ]);
-            }
-            cmd.finish(
-              `Goal ${goalStatusLabel(goal.status)}\n${formatGoalSummary(goal)}`,
-              true,
-            );
-            return { submitted: true };
-          }
-
-          const parsedGoal = parseGoalArgs(objective);
-          if (parsedGoal.error) {
-            cmd.fail(`${parsedGoal.error}\n${GOAL_USAGE}\n${GOAL_USAGE_HINT}`);
-            return { submitted: true };
-          }
-
-          const validationError = validateGoalObjective(parsedGoal.objective);
-          if (validationError) {
-            cmd.fail(`${validationError}\n${GOAL_USAGE}\n${GOAL_USAGE_HINT}`);
-            return { submitted: true };
-          }
-
-          const previousGoal = settingsManager.getConversationGoal(
-            currentConversationId,
-          );
-          if (previousGoal && !parsedGoal.replace) {
-            cmd.fail(
-              `A goal already exists. Run /goal --replace ${parsedGoal.objective} to replace it, or /goal clear first.`,
-            );
-            return { submitted: true };
-          }
-          settingsManager.setConversationGoalToolsEnabled(
-            currentConversationId,
-            true,
-          );
-          const goal = settingsManager.setConversationGoal(
-            currentConversationId,
-            parsedGoal.objective,
-            process.cwd(),
-            parsedGoal.tokenBudget,
-            true,
-          );
-          goalLoopMode.activateGoal(
-            parsedGoal.objective,
-            parsedGoal.tokenBudget,
-          );
-          setUiGoalLoopActive(true);
-          permissionMode.setMode("unrestricted");
-          setUiPermissionMode("unrestricted");
-          const replaced = previousGoal ? " replaced" : " active";
-          cmd.finish(
-            `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`,
-            true,
-          );
-          const goalState = goalLoopMode.getState();
-          const systemMsg = buildGoalPrompt(goalState, currentConversationId);
-          processConversationWithQueuedApprovals([
-            {
-              type: "message",
-              role: "user",
-              content: buildTextParts(systemMsg),
-              otid: randomUUID(),
-            },
-          ]);
           return { submitted: true };
         }
 
@@ -2412,14 +2388,12 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         const profileCommandResult = await handleProfileCommand(msg, trimmed, {
           agentId,
           agentName,
-          conversationId,
           buffersRef,
           commandRunner,
           handleAgentSelect,
           refreshDerived,
           openOverlay,
           setCommandRunning,
-          setPinDialogLocal,
           setProfileConfirmPending,
           updateAgentName,
         });
@@ -2946,7 +2920,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         }
 
         // Special handling for /reflect command - manually launch reflection subagent
-        if (trimmed === "/reflect") {
+        if (trimmed === "/reflect" || trimmed.startsWith("/reflect ")) {
           const cmd = commandRunner.start(msg, "Launching reflection agent...");
 
           if (!isActiveMemfsEnabled(agentId)) {
@@ -2956,57 +2930,366 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             return { submitted: true };
           }
 
+          let reflectionReserved = false;
+          let reflectionReservationDelegated = false;
+          const releaseReflectionReservation = () => {
+            if (!reflectionReserved) return;
+            releaseReflectionLaunch(agentId);
+            reflectionReserved = false;
+          };
+
           try {
+            const reflectArgs = parseReflectCommandArgs(trimmed);
             const reflectionConversationId =
               conversationIdRef.current ?? "default";
-            const result = await launchReflectionSubagent({
-              agentId,
-              conversationId: reflectionConversationId,
-              memfsEnabled: isActiveMemfsEnabled(agentId),
-              triggerSource: "manual",
-              description: "Reflecting on conversation",
-              completionConversationId: () => conversationIdRef.current,
-              recompileByConversation:
-                systemPromptRecompileByConversationRef.current,
-              recompileQueuedByConversation:
-                queuedSystemPromptRecompileByConversationRef.current,
-              onCompletionMessage: (completionMessage) => {
-                appendTaskNotificationEvents([completionMessage]);
-              },
-              feedbackContext: {
-                parentAgentName: agentName,
-                parentAgentDescription: agentDescription,
-                surface: "letta_code_tui",
-                model: currentModelId,
-              },
-            });
 
-            if (!result.launched) {
-              if (result.reason === "already_active") {
-                cmd.fail(
-                  "A reflection agent is already running in the background.",
-                );
-              } else if (result.reason === "no_payload") {
-                cmd.fail("No new transcript content to reflect on.");
-              } else if (result.reason === "memfs_disabled") {
-                cmd.fail(
-                  "Memory filesystem is not enabled. Use /remember instead.",
-                );
-              } else {
-                const errorDetails = formatErrorDetails(
-                  result.error ?? "Unknown error",
-                  agentId,
-                );
-                cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
+            if (reflectArgs.kind === "single") {
+              const result = await launchReflectionSubagent({
+                agentId,
+                conversationId: reflectionConversationId,
+                memfsEnabled: isActiveMemfsEnabled(agentId),
+                triggerSource: "manual",
+                description: AUTO_REFLECTION_DESCRIPTION,
+                instruction: reflectArgs.instruction,
+                completionConversationId: () => conversationIdRef.current,
+                recompileByConversation:
+                  systemPromptRecompileByConversationRef.current,
+                recompileQueuedByConversation:
+                  queuedSystemPromptRecompileByConversationRef.current,
+                onCompletionMessage: (completionMessage) => {
+                  appendTaskNotificationEvents([completionMessage]);
+                },
+                feedbackContext: {
+                  parentAgentName: agentName,
+                  parentAgentDescription: agentDescription,
+                  surface: "letta_code_tui",
+                  model: currentModelId,
+                },
+              });
+
+              if (!result.launched) {
+                if (result.reason === "already_active") {
+                  cmd.fail(
+                    "A reflection agent is already running in the background.",
+                  );
+                } else if (result.reason === "no_payload") {
+                  cmd.fail("No new transcript content to reflect on.");
+                } else if (result.reason === "memfs_disabled") {
+                  cmd.fail(
+                    "Memory filesystem is not enabled. Use /remember instead.",
+                  );
+                } else {
+                  const errorDetails = formatErrorDetails(
+                    result.error ?? "Unknown error",
+                    agentId,
+                  );
+                  cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
+                }
+                return { submitted: true };
               }
+
+              cmd.finish(
+                `Reflecting on the recent conversation. View the transcript here: ${result.payloadPath}`,
+                true,
+              );
               return { submitted: true };
             }
 
+            if (!tryReserveReflectionLaunch(agentId)) {
+              cmd.fail(
+                "A reflection agent is already running in the background.",
+              );
+              return { submitted: true };
+            }
+            reflectionReserved = true;
+
+            // Fetch the agent's system prompt so multi-transcript reflection
+            // payloads include the core behavioural instructions (filtered to
+            // strip dynamic content).
+            let systemPrompt: string | undefined;
+            try {
+              const agent = await getBackend().retrieveAgent(agentId);
+              systemPrompt = agent.system ?? undefined;
+            } catch {
+              // Non-fatal — the reflection payload will just omit the system prompt.
+            }
+
+            if (reflectArgs.kind === "auto") {
+              const autoPayload = await buildReflectionAutoPayload({
+                agentId,
+                currentConversationId: reflectionConversationId,
+                instruction: reflectArgs.instruction,
+              });
+              if (!autoPayload) {
+                releaseReflectionReservation();
+                cmd.fail("No transcript candidates found for auto selection.");
+                return { submitted: true };
+              }
+
+              const { spawnBackgroundSubagentTask } = await import(
+                "@/tools/impl/task"
+              );
+              const { subagentId: selectorSubagentId } =
+                spawnBackgroundSubagentTask({
+                  subagentType: "reflection",
+                  prompt: buildReflectionSelectorPrompt({
+                    instruction: reflectArgs.instruction,
+                  }),
+                  description: "Selecting reflection transcripts",
+                  silentCompletion: true,
+                  transcriptPath: autoPayload.candidatesPath,
+                  parentScope: {
+                    agentId,
+                    conversationId: reflectionConversationId,
+                  },
+                  onComplete: async ({ success, error, report }) => {
+                    if (!success) {
+                      releaseReflectionReservation();
+                      appendTaskNotificationEvents([
+                        `Automatic reflection selection failed: ${error ?? "selector failed"}`,
+                      ]);
+                      return;
+                    }
+
+                    let finalReflectionSpawned = false;
+                    try {
+                      const selectedConversations =
+                        await readReflectionAutoSelection({
+                          selectionReport: report,
+                          candidates: autoPayload.candidates,
+                        });
+                      if (selectedConversations.length === 0) {
+                        releaseReflectionReservation();
+                        appendTaskNotificationEvents([
+                          "Automatic reflection selected no transcript candidates.",
+                        ]);
+                        return;
+                      }
+
+                      const autoReflectionPayload =
+                        await buildMultiReflectionPayload({
+                          agentId,
+                          selectionPolicy: {
+                            mode: "auto-selected",
+                            selectedConversations,
+                            candidatesPath: autoPayload.candidatesPath,
+                          },
+                          instruction: reflectArgs.instruction,
+                          systemPrompt,
+                        });
+                      if (!autoReflectionPayload) {
+                        releaseReflectionReservation();
+                        appendTaskNotificationEvents([
+                          "Automatic reflection selected transcript candidates, but no transcript content was available.",
+                        ]);
+                        return;
+                      }
+
+                      const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+                      const parentMemory =
+                        await buildParentMemorySnapshot(memoryDir);
+                      const reflectionPrompt = buildReflectionSubagentPrompt({
+                        instruction: reflectArgs.instruction,
+                        memoryDir,
+                        parentMemory,
+                      });
+
+                      spawnBackgroundSubagentTask({
+                        subagentType: "reflection",
+                        prompt: reflectionPrompt,
+                        description: "Reflecting on auto-selected transcripts",
+                        silentCompletion: true,
+                        transcriptPath: autoReflectionPayload.payloadPath,
+                        parentScope: {
+                          agentId,
+                          conversationId: reflectionConversationId,
+                        },
+                        onComplete: async ({
+                          success: reflectionSuccess,
+                          error: reflectionError,
+                          agentId: reflectionAgentId,
+                        }) => {
+                          try {
+                            telemetry.trackReflectionEnd(
+                              "manual",
+                              reflectionSuccess,
+                              {
+                                subagentId: reflectionAgentId ?? undefined,
+                                conversationId: reflectionConversationId,
+                                error: reflectionError,
+                              },
+                            );
+                            await finalizeMultiReflectionPayload(
+                              agentId,
+                              autoReflectionPayload.manifest,
+                              reflectionSuccess,
+                            );
+                            const msg = await handleMemorySubagentCompletion(
+                              {
+                                agentId,
+                                conversationId: conversationIdRef.current,
+                                subagentType: "reflection",
+                                success: reflectionSuccess,
+                                error: reflectionError,
+                                subagentAgentId: reflectionAgentId ?? undefined,
+                              },
+                              {
+                                recompileByConversation:
+                                  systemPromptRecompileByConversationRef.current,
+                                recompileQueuedByConversation:
+                                  queuedSystemPromptRecompileByConversationRef.current,
+                                logRecompileFailure: (message) =>
+                                  debugWarn("memory", message),
+                              },
+                            );
+                            appendTaskNotificationEvents([msg]);
+                          } finally {
+                            releaseReflectionReservation();
+                          }
+                        },
+                      });
+                      reflectionReservationDelegated = true;
+                      finalReflectionSpawned = true;
+
+                      telemetry.trackReflectionStart("manual", {
+                        conversationId: reflectionConversationId,
+                        startMessageId: autoReflectionPayload.startMessageId,
+                        endMessageId: autoReflectionPayload.endMessageId,
+                      });
+                      appendTaskNotificationEvents([
+                        `Automatic reflection selected ${selectedConversations.length} transcript(s); launched reflection. Payload: ${autoReflectionPayload.payloadPath}`,
+                      ]);
+                    } catch (selectionError) {
+                      if (!finalReflectionSpawned) {
+                        releaseReflectionReservation();
+                      }
+                      const errorDetails = formatErrorDetails(
+                        selectionError,
+                        agentId,
+                      );
+                      appendTaskNotificationEvents([
+                        `Automatic reflection failed after selection: ${errorDetails}`,
+                      ]);
+                    }
+                  },
+                });
+              reflectionReservationDelegated = true;
+
+              telemetry.trackReflectionStart("manual", {
+                subagentId: selectorSubagentId,
+                conversationId: reflectionConversationId,
+              });
+              cmd.finish(
+                `Reviewing ${autoPayload.candidates.candidates.length} candidate transcript(s) for reflection. View the transcript candidates here: ${autoPayload.candidatesPath}`,
+                true,
+              );
+              return { submitted: true };
+            }
+
+            const reflectionPayload = await buildMultiReflectionPayload({
+              agentId,
+              selectionPolicy:
+                reflectArgs.kind === "recent"
+                  ? { mode: "recent", limit: reflectArgs.limit }
+                  : {
+                      mode: "explicit-conversations",
+                      conversationIds: reflectArgs.conversationIds,
+                    },
+              instruction: reflectArgs.instruction,
+              systemPrompt,
+            });
+
+            if (!reflectionPayload) {
+              releaseReflectionReservation();
+              cmd.fail(
+                "No transcript content found for the selected conversations.",
+              );
+              return { submitted: true };
+            }
+
+            const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+            const parentMemory = await buildParentMemorySnapshot(memoryDir);
+            const reflectionPrompt = buildReflectionSubagentPrompt({
+              instruction: reflectArgs.instruction,
+              memoryDir,
+              parentMemory,
+            });
+
+            const {
+              spawnBackgroundSubagentTask,
+              waitForBackgroundSubagentAgentId,
+            } = await import("@/tools/impl/task");
+            const { subagentId } = spawnBackgroundSubagentTask({
+              subagentType: "reflection",
+              prompt: reflectionPrompt,
+              description: "Reflecting on conversation",
+              silentCompletion: true,
+              transcriptPath: reflectionPayload.payloadPath,
+              parentScope: {
+                agentId,
+                conversationId: reflectionConversationId,
+              },
+              onComplete: async ({
+                success,
+                error,
+                agentId: reflectionAgentId,
+              }) => {
+                try {
+                  telemetry.trackReflectionEnd("manual", success, {
+                    subagentId: reflectionAgentId ?? undefined,
+                    conversationId: reflectionConversationId,
+                    error,
+                  });
+                  await finalizeMultiReflectionPayload(
+                    agentId,
+                    reflectionPayload.manifest,
+                    success,
+                  );
+
+                  const msg = await handleMemorySubagentCompletion(
+                    {
+                      agentId,
+                      conversationId: conversationIdRef.current,
+                      subagentType: "reflection",
+                      success,
+                      error,
+                      subagentAgentId: reflectionAgentId ?? undefined,
+                    },
+                    {
+                      recompileByConversation:
+                        systemPromptRecompileByConversationRef.current,
+                      recompileQueuedByConversation:
+                        queuedSystemPromptRecompileByConversationRef.current,
+                      logRecompileFailure: (message) =>
+                        debugWarn("memory", message),
+                    },
+                  );
+                  appendTaskNotificationEvents([msg]);
+                } finally {
+                  releaseReflectionReservation();
+                }
+              },
+            });
+            reflectionReservationDelegated = true;
+            const reflectionAgentId = await waitForBackgroundSubagentAgentId(
+              subagentId,
+              1000,
+            );
+            telemetry.trackReflectionStart("manual", {
+              subagentId: reflectionAgentId ?? undefined,
+              conversationId: reflectionConversationId,
+              startMessageId: reflectionPayload.startMessageId,
+              endMessageId: reflectionPayload.endMessageId,
+            });
+
             cmd.finish(
-              `Reflecting on the recent conversation. View the transcript here: ${result.payloadPath}`,
+              `Reflecting on ${reflectionPayload.manifest.transcripts.length} transcript(s). View the payload here: ${reflectionPayload.payloadPath}`,
               true,
             );
           } catch (error) {
+            if (!reflectionReservationDelegated) {
+              releaseReflectionReservation();
+            }
             const errorDetails = formatErrorDetails(error, agentId);
             cmd.fail(`Failed to start reflection agent: ${errorDetails}`);
           }
@@ -3284,6 +3567,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           // Don't treat as command - continue to regular message handling below
         } else {
           // Known command - show in transcript and handle result
+          if (result.success && result.refreshSecretsInfo) {
+            markSecretsInfoReminderPending(sharedReminderStateRef.current);
+          }
           if (registryCmd) {
             registryCmd.finish(result.output, result.success);
           }
@@ -3317,17 +3603,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       setStreaming(true);
       openTrajectorySegment();
       refreshDerived();
-
-      // If a goal loop is active and the user sends an interstitial message,
-      // keep the loop context attached to the turn.
-      let goalLoopReminder = "";
-      if (goalLoopMode.getState().isActive) {
-        goalLoopMode.incrementIteration();
-        const goalState = goalLoopMode.getState();
-        goalLoopReminder = `${buildGoalPrompt(goalState, conversationIdRef.current)}
-
-`;
-      }
 
       // Inject SessionStart hook feedback (stdout on exit 2) into first message only
       let sessionStartHookFeedback = "";
@@ -3398,6 +3673,7 @@ ${SYSTEM_REMINDER_CLOSE}
           contentParts as unknown as MessageCreate["content"],
         systemInfoReminderEnabled,
         skillSources: getSkillSources(),
+        shellContext: detectShellContext(),
       });
       for (const part of sharedReminderParts) {
         reminderParts.push(part);
@@ -3419,16 +3695,9 @@ ${SYSTEM_REMINDER_CLOSE}
 
       pushReminder(sessionStartHookFeedback);
       pushReminder(conversationSwitchAlert);
-      pushReminder(goalLoopReminder);
       pushReminder(bashCommandPrefix);
       pushReminder(userPromptSubmitHookFeedback);
       pushReminder(memoryGitReminder);
-      const currentGoal = settingsManager.getConversationGoal(
-        conversationIdRef.current,
-      );
-      if (currentGoal) {
-        pushReminder(buildGoalReminder(currentGoal));
-      }
       const messageContent = prependReminderPartsToContent(
         contentParts as MessageCreate["content"],
         reminderParts,

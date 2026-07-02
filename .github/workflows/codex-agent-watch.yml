@@ -1,0 +1,109 @@
+name: Codex Agent Watch
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      since_tag:
+        description: "Previous stable openai/codex tag to compare from"
+        required: false
+        type: string
+      current_tag:
+        description: "Current stable openai/codex tag to compare to"
+        required: false
+        type: string
+      dry_run:
+        description: "Print/update nothing and do not invoke Amelia"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.0
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check latest stable Codex release
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ARGS=(--analysis-file "$RUNNER_TEMP/codex-watch-analysis.json")
+          if [ -n "${{ inputs.since_tag }}" ]; then
+            ARGS+=(--since "${{ inputs.since_tag }}")
+          fi
+          if [ -n "${{ inputs.current_tag }}" ]; then
+            ARGS+=(--current "${{ inputs.current_tag }}")
+          fi
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS+=(--dry-run)
+          fi
+          bun scripts/codex-watch/agent-watch.ts "${ARGS[@]}"
+
+      - name: Build Amelia prompt
+        id: prompt
+        if: steps.detect.outputs.should_run_agent == 'true'
+        env:
+          TRACKER_ISSUE: ${{ steps.detect.outputs.tracker_issue }}
+          TRACKER_ISSUE_URL: ${{ steps.detect.outputs.tracker_issue_url }}
+          ANALYSIS_FILE: ${{ steps.detect.outputs.analysis_file }}
+          CURRENT_TAG: ${{ steps.detect.outputs.current_tag }}
+          PREVIOUS_TAG: ${{ steps.detect.outputs.previous_tag }}
+          VERDICT: ${{ steps.detect.outputs.verdict }}
+        run: |
+          {
+            echo "prompt<<AMELIA_PROMPT_EOF"
+            cat .github/agent-prompts/codex-agent-watch.md
+            echo
+            echo "## Run inputs"
+            echo
+            echo "- Tracker issue: #$TRACKER_ISSUE ($TRACKER_ISSUE_URL)"
+            echo "- Analysis file: $ANALYSIS_FILE"
+            echo "- Current tag: $CURRENT_TAG"
+            echo "- Previous tag: $PREVIOUS_TAG"
+            echo "- Detector verdict: $VERDICT"
+            echo
+            echo "The same values are available in the environment as TRACKER_ISSUE, TRACKER_ISSUE_URL, ANALYSIS_FILE, CURRENT_TAG, PREVIOUS_TAG, and VERDICT."
+            echo
+            echo "## Analysis JSON"
+            echo
+            echo '```json'
+            cat "$ANALYSIS_FILE"
+            echo '```'
+            echo "AMELIA_PROMPT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Ask Amelia to review actionable Codex drift
+        if: steps.detect.outputs.should_run_agent == 'true'
+        uses: letta-ai/letta-code-action@daa80f29e345315623ff759f5ecf5018946bbc15
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          TRACKER_ISSUE: ${{ steps.detect.outputs.tracker_issue }}
+          TRACKER_ISSUE_URL: ${{ steps.detect.outputs.tracker_issue_url }}
+          ANALYSIS_FILE: ${{ steps.detect.outputs.analysis_file }}
+          CURRENT_TAG: ${{ steps.detect.outputs.current_tag }}
+          PREVIOUS_TAG: ${{ steps.detect.outputs.previous_tag }}
+          VERDICT: ${{ steps.detect.outputs.verdict }}
+        with:
+          letta_api_key: ${{ secrets.AMELIA_LETTA_API_KEY }}
+          github_token: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          agent_id: agent-cd664b86-4d28-49b7-8ad6-60677eaff9be
+          track_progress: ""
+          tracking_comment: "false"
+          model: auto
+          prompt: ${{ steps.prompt.outputs.prompt }}

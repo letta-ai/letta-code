@@ -35,8 +35,7 @@ import {
 
 const ORIGINAL_LETTA_BASE_URL = process.env.LETTA_BASE_URL;
 const ORIGINAL_LETTA_MEMFS_BASE_URL = process.env.LETTA_MEMFS_BASE_URL;
-const ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL =
-  process.env.LETTA_DESKTOP_DEBUG_PANEL;
+const ORIGINAL_LETTA_DESKTOP_MODE = process.env.LETTA_DESKTOP_MODE;
 const ORIGINAL_LETTA_MEMFS_GIT_PROXY_BASE_URL =
   process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL;
 const ORIGINAL_LETTA_API_KEY = process.env.LETTA_API_KEY;
@@ -64,10 +63,10 @@ afterEach(() => {
     process.env.LETTA_MEMFS_BASE_URL = ORIGINAL_LETTA_MEMFS_BASE_URL;
   }
 
-  if (ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL === undefined) {
-    delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+  if (ORIGINAL_LETTA_DESKTOP_MODE === undefined) {
+    delete process.env.LETTA_DESKTOP_MODE;
   } else {
-    process.env.LETTA_DESKTOP_DEBUG_PANEL = ORIGINAL_LETTA_DESKTOP_DEBUG_PANEL;
+    process.env.LETTA_DESKTOP_MODE = ORIGINAL_LETTA_DESKTOP_MODE;
   }
 
   if (ORIGINAL_LETTA_MEMFS_GIT_PROXY_BASE_URL === undefined) {
@@ -173,7 +172,7 @@ describe("normalizeCredentialBaseUrl", () => {
     test("defaults to api.letta.com when LETTA_MEMFS_BASE_URL is unset, even if LETTA_BASE_URL is localhost", () => {
       process.env.LETTA_BASE_URL = "http://localhost:51338";
       delete process.env.LETTA_MEMFS_BASE_URL;
-      delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+      delete process.env.LETTA_DESKTOP_MODE;
       expect(getGitRemoteUrl("agent-123")).toBe(
         "https://api.letta.com/v1/git/agent-123/state.git",
       );
@@ -182,7 +181,7 @@ describe("normalizeCredentialBaseUrl", () => {
     test("keeps canonical memfs URL stable in desktop proxy transport sessions", () => {
       process.env.LETTA_BASE_URL = "http://localhost:51338";
       delete process.env.LETTA_MEMFS_BASE_URL;
-      process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+      process.env.LETTA_DESKTOP_MODE = "1";
       process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL = "http://localhost:51338";
 
       expect(getMemfsServerUrl()).toBe("https://api.letta.com");

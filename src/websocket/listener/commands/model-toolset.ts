@@ -73,6 +73,29 @@ type ModelScopeSnapshot = {
   } | null;
 };
 
+function inferProviderTypeFromRegistryHandle(
+  modelHandle: string,
+): string | undefined {
+  const provider = modelHandle.split("/")[0];
+  if (!provider) return undefined;
+  if (provider === "openai-codex" || provider === "chatgpt-plus-pro") {
+    return "chatgpt_oauth";
+  }
+  if (
+    provider === "anthropic" ||
+    provider === "bedrock" ||
+    provider === "google_ai" ||
+    provider === "google_vertex" ||
+    provider === "minimax" ||
+    provider === "openai" ||
+    provider === "openrouter" ||
+    provider === "zai"
+  ) {
+    return provider;
+  }
+  return undefined;
+}
+
 function buildModelHandleFromConfig(
   config: ModelScopeSnapshot["llmConfig"],
 ): string | null {
@@ -81,6 +104,13 @@ function buildModelHandleFromConfig(
     return `${config.model_endpoint_type}/${config.model}`;
   }
   return config.model ?? null;
+}
+
+function providerTypeFromModelSettings(
+  modelSettings: Record<string, unknown> | null,
+): string | null {
+  const providerType = modelSettings?.provider_type;
+  return typeof providerType === "string" ? providerType : null;
 }
 
 function withContextWindow(
@@ -163,15 +193,25 @@ export function resolveModelForUpdate(payload: {
         payload.model_handle.length > 0
           ? payload.model_handle
           : null;
+      const updateArgs =
+        byId.updateArgs && typeof byId.updateArgs === "object"
+          ? ({ ...byId.updateArgs } as Record<string, unknown>)
+          : undefined;
+      const providerType = inferProviderTypeFromRegistryHandle(byId.handle);
+      if (
+        explicitHandle &&
+        updateArgs &&
+        providerType &&
+        typeof updateArgs.provider_type !== "string"
+      ) {
+        updateArgs.provider_type = providerType;
+      }
 
       return {
         id: byId.id,
         handle: explicitHandle ?? byId.handle,
         label: byId.label,
-        updateArgs:
-          byId.updateArgs && typeof byId.updateArgs === "object"
-            ? ({ ...byId.updateArgs } as Record<string, unknown>)
-            : undefined,
+        updateArgs,
       };
     }
   }
@@ -370,6 +410,10 @@ export async function applyModelUpdateForRuntime(params: {
       agentId,
       conversationId,
       overrideModel: model.handle,
+      overrideProviderType:
+        providerTypeFromModelSettings(modelSettings) ??
+        inferProviderTypeFromRegistryHandle(model.handle) ??
+        null,
       modEvents: ensureListenerModAdapter(listener).events,
     });
     nextToolset = preparedToolContext.toolset;

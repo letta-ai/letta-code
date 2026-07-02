@@ -12,7 +12,7 @@ export interface LocalModAdapter {
   context: ModContext;
   events: ModAdapter["events"];
   getBackend: ModAdapter["getBackend"];
-  hadStatuslineRenderer: boolean; // Used to prevent flicker on reload
+  hadModPanels: boolean; // Used to prevent flicker on reload
   hasModSources: boolean;
   engine: ModAdapter["engine"];
   isLoading: boolean;
@@ -22,17 +22,19 @@ export interface LocalModAdapter {
 
 export function useLocalModAdapter(
   context: ModContext,
-  options: { disabled?: boolean } = {},
+  options: { agentModsDirectory?: string | null; disabled?: boolean } = {},
 ): LocalModAdapter {
-  // biome-ignore lint/correctness/useExhaustiveDependencies: the adapter is process-local; context updates are pushed through updateContext below.
+  const agentModsDirectory = options.agentModsDirectory ?? undefined;
+  const disabled = options.disabled;
   const adapter = useMemo(
     () =>
       createModAdapter({
-        disabled: options.disabled,
+        ...(agentModsDirectory ? { agentModsDirectory } : {}),
+        disabled,
         getBackend,
         getClient,
       }),
-    [],
+    [agentModsDirectory, disabled],
   );
 
   const snapshot = useSyncExternalStore(
@@ -54,7 +56,7 @@ export function useLocalModAdapter(
       context,
       events: adapter.events,
       getBackend: adapter.getBackend,
-      hadStatuslineRenderer: snapshot.hadStatuslineRenderer,
+      hadModPanels: snapshot.hadModPanels,
       hasModSources: snapshot.hasModSources,
       engine: adapter.engine,
       isLoading: snapshot.isLoading,

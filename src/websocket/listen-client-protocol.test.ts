@@ -223,9 +223,9 @@ describe("listen-client parseServerMessage", () => {
           createAgentForPersonality: createAgentForPersonalityMock,
         }));
 
-        const originalPinGlobal = settingsManager.pinGlobal;
-        const pinGlobalMock = mock(() => {});
-        settingsManager.pinGlobal = pinGlobalMock;
+        const originalPinAgent = settingsManager.pinAgent;
+        const pinAgentMock = mock(() => {});
+        settingsManager.pinAgent = pinAgentMock;
 
         await __listenClientTestUtils.handleCreateAgentCommand(
           {
@@ -236,14 +236,14 @@ describe("listen-client parseServerMessage", () => {
           socket as unknown as WebSocket,
         );
 
-        settingsManager.pinGlobal = originalPinGlobal;
+        settingsManager.pinAgent = originalPinAgent;
 
         expect(createAgentForPersonalityMock).toHaveBeenCalledTimes(1);
         expect(createAgentForPersonalityMock).toHaveBeenCalledWith({
           personalityId: personality,
           model: undefined,
         });
-        expect(pinGlobalMock).toHaveBeenCalledWith(`agent-${personality}`);
+        expect(pinAgentMock).toHaveBeenCalledWith(`agent-${personality}`);
 
         const messages = socket.sentPayloads.map((payload) =>
           JSON.parse(payload),
@@ -261,7 +261,7 @@ describe("listen-client parseServerMessage", () => {
       }
     });
 
-    test("does not globally pin when pin_global is false", async () => {
+    test("does not pin when pin_global is false", async () => {
       const socket = new MockSocket(WebSocket.OPEN);
       const createAgentForPersonalityMock = mock(async () => ({
         agent: {
@@ -275,9 +275,9 @@ describe("listen-client parseServerMessage", () => {
         createAgentForPersonality: createAgentForPersonalityMock,
       }));
 
-      const originalPinGlobal = settingsManager.pinGlobal;
-      const pinGlobalMock = mock(() => {});
-      settingsManager.pinGlobal = pinGlobalMock;
+      const originalPinAgent = settingsManager.pinAgent;
+      const pinAgentMock = mock(() => {});
+      settingsManager.pinAgent = pinAgentMock;
 
       await __listenClientTestUtils.handleCreateAgentCommand(
         {
@@ -289,8 +289,8 @@ describe("listen-client parseServerMessage", () => {
         socket as unknown as WebSocket,
       );
 
-      settingsManager.pinGlobal = originalPinGlobal;
-      expect(pinGlobalMock).not.toHaveBeenCalled();
+      settingsManager.pinAgent = originalPinAgent;
+      expect(pinAgentMock).not.toHaveBeenCalled();
     });
   });
 
@@ -1413,6 +1413,85 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("disconnect_provider");
   });
 
+  test("parses disconnect_provider command with a provider name", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "disconnect_provider",
+          request_id: "disconnect-provider-2",
+          target: "local",
+          provider_id: "codex",
+          provider_name: "chatgpt-work",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("disconnect_provider");
+  });
+
+  test("parses chatgpt_usage_read command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-1",
+          target: "local",
+          provider_name: "chatgpt-work",
+          force_refresh: true,
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("chatgpt_usage_read");
+  });
+
+  test("parses chatgpt_usage_read command for api target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-2",
+          target: "api",
+          provider_name: "chatgpt-work",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("chatgpt_usage_read");
+  });
+
+  test("rejects chatgpt_usage_read command for unknown target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-3",
+          target: "project",
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
+  test("rejects chatgpt_usage_read command with bad force_refresh", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-4",
+          target: "local",
+          force_refresh: "true",
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
   test("parses update_model command with model_id", () => {
     const parsed = parseServerMessage(
       Buffer.from(
@@ -1629,7 +1708,6 @@ describe("listen-client parseServerMessage", () => {
   test("advertises context-limit and parses the legacy set-max-context alias", () => {
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("context-limit");
     expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("set-max-context");
-    expect(SUPPORTED_REMOTE_COMMANDS).toContain("goal");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("compact");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("reload");
 
@@ -3536,6 +3614,7 @@ describe("listen-client permission mode scope keys", () => {
 
   test("slack conversation created event seeds the new conversation permission mode", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
+    listener.workingDirectoryByConversation.delete("conversation:conv-slack-1");
     const socket = new MockSocket(WebSocket.OPEN);
 
     __listenClientTestUtils.handleChannelRegistryEvent(
@@ -3562,10 +3641,34 @@ describe("listen-client permission mode scope keys", () => {
     ).toEqual({
       mode: "unrestricted",
     });
+    expect(
+      listener.workingDirectoryByConversation.get("conversation:conv-slack-1"),
+    ).toBe(listener.bootWorkingDirectory);
+
+    const emittedStatus = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload),
+    )[0];
+    expect(emittedStatus).toMatchObject({
+      type: "update_device_status",
+      runtime: {
+        agent_id: "agent-123",
+        conversation_id: "conv-slack-1",
+      },
+      device_status: {
+        current_working_directory: listener.bootWorkingDirectory,
+        cwd_map: {
+          "conversation:conv-slack-1": listener.bootWorkingDirectory,
+        },
+        boot_working_directory: listener.bootWorkingDirectory,
+      },
+    });
   });
 
   test("discord conversation created event seeds the new conversation permission mode", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
+    listener.workingDirectoryByConversation.delete(
+      "conversation:conv-discord-1",
+    );
     const socket = new MockSocket(WebSocket.OPEN);
 
     __listenClientTestUtils.handleChannelRegistryEvent(
@@ -3592,6 +3695,72 @@ describe("listen-client permission mode scope keys", () => {
     ).toEqual({
       mode: "acceptEdits",
     });
+    expect(
+      listener.workingDirectoryByConversation.get(
+        "conversation:conv-discord-1",
+      ),
+    ).toBe(listener.bootWorkingDirectory);
+
+    const emittedStatus = socket.sentPayloads.map((payload) =>
+      JSON.parse(payload),
+    )[0];
+    expect(emittedStatus).toMatchObject({
+      type: "update_device_status",
+      runtime: {
+        agent_id: "agent-123",
+        conversation_id: "conv-discord-1",
+      },
+      device_status: {
+        current_working_directory: listener.bootWorkingDirectory,
+        cwd_map: {
+          "conversation:conv-discord-1": listener.bootWorkingDirectory,
+        },
+        boot_working_directory: listener.bootWorkingDirectory,
+      },
+    });
+  });
+});
+
+describe("listen-client conversation working directory", () => {
+  test("falls back to boot dir and prunes a stale (deleted) persisted cwd", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const scopeKey = "agent:agent-123::conversation:default";
+
+    // Simulate a worktree dir that was persisted, then cleaned up.
+    const staleDir = await mkdtemp(join(os.tmpdir(), "ws-stale-cwd-"));
+    listener.workingDirectoryByConversation.set(scopeKey, staleDir);
+    await rm(staleDir, { recursive: true, force: true });
+
+    const resolved = __listenClientTestUtils.getConversationWorkingDirectory(
+      listener,
+      "agent-123",
+      "default",
+    );
+
+    expect(resolved).toBe(listener.bootWorkingDirectory);
+    // The dead entry should be pruned so it isn't served again.
+    expect(listener.workingDirectoryByConversation.has(scopeKey)).toBe(false);
+  });
+
+  test("returns a persisted cwd that still exists", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const scopeKey = "agent:agent-123::conversation:default";
+
+    const liveDir = await mkdtemp(join(os.tmpdir(), "ws-live-cwd-"));
+    try {
+      listener.workingDirectoryByConversation.set(scopeKey, liveDir);
+
+      const resolved = __listenClientTestUtils.getConversationWorkingDirectory(
+        listener,
+        "agent-123",
+        "default",
+      );
+
+      expect(resolved).toBe(liveDir);
+      expect(listener.workingDirectoryByConversation.has(scopeKey)).toBe(true);
+    } finally {
+      await rm(liveDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -4597,32 +4766,39 @@ describe("listen-client v2 status builders", () => {
     expect(runtime.recoveredApprovalState).toBeNull();
   });
 
-  test("scopes working directory to requested agent and conversation", () => {
+  test("scopes working directory to requested agent and conversation", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    __listenClientTestUtils.setConversationWorkingDirectory(
-      runtime,
-      "agent-a",
-      "conv-a",
-      "/repo/a",
-    );
-    __listenClientTestUtils.setConversationWorkingDirectory(
-      runtime,
-      "agent-b",
-      "default",
-      "/repo/b",
-    );
+    const repoA = await mkdtemp(join(os.tmpdir(), "ws-scope-cwd-a-"));
+    const repoB = await mkdtemp(join(os.tmpdir(), "ws-scope-cwd-b-"));
+    try {
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        runtime,
+        "agent-a",
+        "conv-a",
+        repoA,
+      );
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        runtime,
+        "agent-b",
+        "default",
+        repoB,
+      );
 
-    const activeStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
-      agent_id: "agent-a",
-      conversation_id: "conv-a",
-    });
-    expect(activeStatus.current_working_directory).toBe("/repo/a");
+      const activeStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
+        agent_id: "agent-a",
+        conversation_id: "conv-a",
+      });
+      expect(activeStatus.current_working_directory).toBe(repoA);
 
-    const defaultStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
-      agent_id: "agent-b",
-      conversation_id: "default",
-    });
-    expect(defaultStatus.current_working_directory).toBe("/repo/b");
+      const defaultStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
+        agent_id: "agent-b",
+        conversation_id: "default",
+      });
+      expect(defaultStatus.current_working_directory).toBe(repoB);
+    } finally {
+      await rm(repoA, { recursive: true, force: true });
+      await rm(repoB, { recursive: true, force: true });
+    }
   });
 
   test("scoped loop status is not suppressed just because another conversation is processing", () => {
@@ -5626,11 +5802,11 @@ describe("listen-client recoverable status notices", () => {
   test("suppresses stale approval recovery from transcript and mirrors it to desktop logs", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket();
-    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalFlag = process.env.LETTA_DESKTOP_MODE;
     const originalWrite = process.stderr.write.bind(process.stderr);
     const mirroredLines: string[] = [];
 
-    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.env.LETTA_DESKTOP_MODE = "1";
     process.stderr.write = ((chunk: string | Uint8Array) => {
       mirroredLines.push(
         typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
@@ -5650,9 +5826,9 @@ describe("listen-client recoverable status notices", () => {
     } finally {
       process.stderr.write = originalWrite as typeof process.stderr.write;
       if (originalFlag === undefined) {
-        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+        delete process.env.LETTA_DESKTOP_MODE;
       } else {
-        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+        process.env.LETTA_DESKTOP_MODE = originalFlag;
       }
     }
 
@@ -5677,11 +5853,11 @@ describe("listen-client recoverable status notices", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const firstSocket = new MockSocket();
     const secondSocket = new MockSocket();
-    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalFlag = process.env.LETTA_DESKTOP_MODE;
     const originalWrite = process.stderr.write.bind(process.stderr);
     const mirroredLines: string[] = [];
 
-    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.env.LETTA_DESKTOP_MODE = "1";
     process.stderr.write = ((chunk: string | Uint8Array) => {
       mirroredLines.push(
         typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
@@ -5718,9 +5894,9 @@ describe("listen-client recoverable status notices", () => {
     } finally {
       process.stderr.write = originalWrite as typeof process.stderr.write;
       if (originalFlag === undefined) {
-        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+        delete process.env.LETTA_DESKTOP_MODE;
       } else {
-        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+        process.env.LETTA_DESKTOP_MODE = originalFlag;
       }
     }
 
@@ -5881,14 +6057,14 @@ describe("listen-client loop error notices", () => {
   test("suppresses abort-like loop errors from transcript and mirrors them to desktop logs", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket();
-    const originalFlag = process.env.LETTA_DESKTOP_DEBUG_PANEL;
+    const originalFlag = process.env.LETTA_DESKTOP_MODE;
     const originalWrite = process.stderr.write.bind(process.stderr);
     const mirroredLines: string[] = [];
     const abortError = Object.assign(new Error("The operation was aborted"), {
       name: "AbortError",
     });
 
-    process.env.LETTA_DESKTOP_DEBUG_PANEL = "1";
+    process.env.LETTA_DESKTOP_MODE = "1";
     process.stderr.write = ((chunk: string | Uint8Array) => {
       mirroredLines.push(
         typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8"),
@@ -5906,9 +6082,9 @@ describe("listen-client loop error notices", () => {
     } finally {
       process.stderr.write = originalWrite as typeof process.stderr.write;
       if (originalFlag === undefined) {
-        delete process.env.LETTA_DESKTOP_DEBUG_PANEL;
+        delete process.env.LETTA_DESKTOP_MODE;
       } else {
-        process.env.LETTA_DESKTOP_DEBUG_PANEL = originalFlag;
+        process.env.LETTA_DESKTOP_MODE = originalFlag;
       }
     }
 

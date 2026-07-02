@@ -29,7 +29,8 @@ export function listEligibleProactiveSlackAccounts(params: {
     if (
       route.agentId !== params.agentId ||
       route.conversationId !== params.conversationId ||
-      !route.enabled
+      !route.enabled ||
+      route.outboundEnabled === false
     ) {
       continue;
     }

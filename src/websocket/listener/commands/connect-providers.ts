@@ -65,6 +65,7 @@ export async function buildDisconnectProviderResponse(
   const result = await disconnectProvider({
     target: command.target,
     providerId: command.provider_id,
+    ...(command.provider_name ? { providerName: command.provider_name } : {}),
   });
   clearAvailableModelsCache();
   return {

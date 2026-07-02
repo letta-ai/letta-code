@@ -62,9 +62,9 @@ test("Handle whitespace in tool list", () => {
 });
 
 test("tracks memory guard disabled state", () => {
-  expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
-  cliPermissions.setMemoryGuardDisabled(false);
   expect(cliPermissions.isMemoryGuardDisabled()).toBe(false);
+  cliPermissions.setMemoryGuardDisabled(true);
+  expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
 });
 
 test("stores singleton on global symbol for bundled duplicate modules", () => {
@@ -75,9 +75,9 @@ test("stores singleton on global symbol for bundled duplicate modules", () => {
 });
 
 test("clear resets disable-memory-guard CLI override", () => {
-  cliPermissions.setMemoryGuardDisabled(false);
+  cliPermissions.setMemoryGuardDisabled(true);
   cliPermissions.clear();
-  expect(cliPermissions.isMemoryGuardDisabled()).toBe(true);
+  expect(cliPermissions.isMemoryGuardDisabled()).toBe(false);
 });
 
 // ============================================================================

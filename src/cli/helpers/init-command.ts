@@ -131,13 +131,13 @@ export function buildDoctorMessage(args: {
   return `${SYSTEM_REMINDER_OPEN}
 The user has requested a memory structure check via /doctor.
 ${memfsSection}
-## 1. Invoke the context_doctor skill
+## 1. Invoke the context-doctor skill
 
-Use the \`Skill\` tool with \`skill: "context_doctor"\` to load guidance for memory structure refinement.
+Use the \`Skill\` tool with \`skill: "context-doctor"\` to load guidance for memory structure refinement.
 
 ## 2. Follow the skill instructions
 
-Once invoked, follow the instructions from the \`context_doctor\` skill.
+Once invoked, follow the instructions from the \`context-doctor\` skill.
 
 ${args.gitContext}
 ${SYSTEM_REMINDER_CLOSE}`;

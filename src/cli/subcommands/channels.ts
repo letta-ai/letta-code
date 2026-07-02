@@ -86,31 +86,44 @@ Note: "configure" and "status" are standalone-safe. "route add/remove" and
 "pair" modify files but do NOT update a running listener — use the /channels
 WS command from ADE/desktop for live changes, or restart the server.
 
-Recommended Telegram flow:
-  1. letta channels install telegram          # optional, configure will auto-install too
-  2. letta channels configure telegram
-  3. letta server --channels telegram
-  4. Message the bot from Telegram once to get a pairing code
+Recommended first-party flow:
+  1. letta channels install <channel>         # optional for most channels
+  2. letta channels configure <channel>       # when an interactive wizard exists
+  3. letta server --channels <channel>
+  4. Message the channel once to get a pairing code
   5. In the target ADE/desktop conversation, run:
-     /channels telegram pair <code>
+     /channels <channel> pair <code>
+
+Signal notes:
+  - Signal requires a running native signal-cli JSON-RPC/SSE daemon (or a
+    compatible signal-cli-rest-api JSON-RPC/SSE wrapper) at the configured
+    base_url.
+  - The configure wizard can bootstrap/probe a local daemon, run native
+    signal-cli link/register/verify flows, handle captcha, and render native
+    link QR codes.
+  - self_chat_mode is the safe personal-number mode: only Note to Self/self
+    messages route, and outbound sends to non-self Signal targets are rejected.
+  - Signal account config supports download_media, media_max_bytes, and
+    transcribe_voice. Voice transcription requires OPENAI_API_KEY; unsupported
+    audio formats such as raw .aac are converted with ffmpeg when available.
 
 Headless deploy flow:
   letta server --channels telegram --install-channel-runtimes
 
 Local backend flow:
-  1. letta channels install telegram
-  2. letta channels configure telegram
-  3. letta server --backend local --channels telegram
+  1. letta channels install <channel>
+  2. letta channels configure <channel>
+  3. letta server --backend local --channels <channel>
   4. Message the bot once to get a pairing code
-  5. letta channels pair --channel telegram --code <code> --agent <agent-id> --conversation default
+  5. letta channels pair --channel <channel> --code <code> --agent <agent-id> --conversation default
 
 Only set LETTA_BASE_URL when targeting a separate self-hosted server. Do not set
 a dummy LETTA_BASE_URL for --backend local.
 
 State files:
-  ~/.letta/channels/telegram/accounts.json
-  ~/.letta/channels/telegram/pairing.yaml
-  ~/.letta/channels/telegram/routing.yaml
+  ~/.letta/channels/<channel>/accounts.json
+  ~/.letta/channels/<channel>/pairing.yaml
+  ~/.letta/channels/<channel>/routing.yaml
 
 Output is JSON.
 `.trim(),

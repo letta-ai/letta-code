@@ -88,7 +88,7 @@ describe("registry copy: first-party channels", () => {
 });
 
 describe("registry copy: community channels", () => {
-  // Any channel id that isn't telegram/slack/discord/whatsapp is a community plugin.
+  // Any channel id that isn't telegram/slack/discord/whatsapp/signal is a community plugin.
   // We don't need a real plugin installed — `isFirstPartyChannelPlugin` only
   // checks the FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS map.
 
@@ -142,8 +142,8 @@ describe("registry copy: community channels", () => {
   });
 
   test("community unbound copy embeds the channel id and chat id in the CLI command", () => {
-    const text = buildUnboundRouteInstructions("signal", "+15551234567");
-    expect(text).toContain("--channel signal");
+    const text = buildUnboundRouteInstructions("custom-signal", "+15551234567");
+    expect(text).toContain("--channel custom-signal");
     expect(text).toContain("--chat-id +15551234567");
     expect(text).toContain("--agent <agent-id>");
   });

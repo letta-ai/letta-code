@@ -12,48 +12,74 @@ This is a trusted, user-owned global mod file. Project mods are intentionally un
 
 ## Activation
 
-Export a default function or named `activate` function:
+Export a default function or named `activate` function. The statusline is a panel at `order: 0`:
 
 ```tsx
 export default function activate(letta) {
-  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+  if (!letta.capabilities.ui.panels) return;
 
-  letta.ui.setStatuslineRenderer((context) => {
-    const { Text } = context.components;
-    return <Text>{context.agent.name} · {context.model.displayName}</Text>;
+  const panel = letta.ui.openPanel({
+    id: "statusline",
+    order: 0, // primary line: overrides the built-in agent · model
+    render: ({ width, agent, model, row, chalk }) => {
+      const left = chalk.cyan(agent.name ?? "Letta");
+      const right = chalk.dim(model.displayName ?? "no model");
+      return row(left, right, width);
+    },
   });
+
+  return () => panel.close();
 }
 ```
 
 ## API
 
 ```ts
-letta.capabilities.ui.statusValues: boolean
-letta.capabilities.ui.customStatuslineRenderer: boolean
+letta.capabilities.ui.panels: boolean
 
-letta.ui.setStatus(key: string, value: string | null | undefined | ((context) => string | null)): void
-letta.ui.clearStatus(key: string): void
-letta.ui.setStatuslineRenderer(renderer: StatuslineRenderer | ((context) => ReactNode | null)): void
+letta.ui.openPanel(options: {
+  id: string;
+  order?: number; // default 100
+  render: (ctx) => string | string[];
+}): { close(): void; update(opts?: { order?: number }): void }
+
+letta.ui.closePanel(id: string): void
 ```
 
-`setStatus` stores named string values. Renderers read evaluated values from `context.statuses`.
+`openPanel` registers (or replaces, by `id`) a panel. `render` returns the panel body as a string or an array of strings (one per line). Call the returned handle's `update()` to re-render after state changes, and `close()` to remove it.
 
-```tsx
-letta.ui.setStatus("branch", "main");
+## Order placement
 
-letta.ui.setStatuslineRenderer((context) => {
-  const { Text } = context.components;
-  return <Text>{context.statuses.branch}</Text>;
-});
+`order` is a signed coordinate around the input:
+
+- `order > 0` — above the input. Higher numbers render nearer the top. Default when omitted is `100`.
+- `order === 0` — the primary line just below the input. Overrides the built-in `agent · model`. Use this for the statusline.
+- `order < 0` — stacks below the primary line. `-1` sits closest to it, more-negative lower.
+
+A panel whose `render` returns empty (`""` or `[]`, or only blank lines) is hidden entirely — no blank row.
+
+## Render context
+
+```ts
+render(ctx: {
+  width: number;            // visible columns available to the panel
+  agent: { id, name };      // live at render time
+  model: { id, displayName, provider, reasoningEffort };
+  row(left, right, width): string;     // left + right, right-aligned, ANSI-aware
+  columns(parts: string[], width): string; // spread parts evenly, ANSI-aware
+  chalk: ChalkInstance;     // color helper
+}): string | string[]
 ```
 
-## Renderer rules
+- `row`/`columns` measure visible width with ANSI stripped, so chalk-colored segments align correctly.
+- The host clips each line to `width` and caps total height; the mod owns layout within that.
 
-- Renderer owns the entire idle bottom row.
-- Renderer must be synchronous.
-- Do not run shell commands, network requests, file reads, or awaits inside render.
-- Do async work in setup code or intervals, store results with `setStatus`, then render `context.statuses`.
-- Return `null` only when intentionally rendering nothing.
+## Render rules
+
+- `render` must be synchronous and side-effect-free.
+- Do not run shell commands, network requests, file reads, or awaits inside `render`.
+- Do async work in setup code or intervals, store the result in a closure variable, then call `panel.update()`.
+- Return `""` (or `[]`) to render nothing.
 
 ## Async state pattern
 
@@ -66,92 +92,54 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export default function activate(letta) {
-  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+  if (!letta.capabilities.ui.panels) return;
+
+  let branch = "";
+
+  const panel = letta.ui.openPanel({
+    id: "statusline",
+    order: 0,
+    render: ({ width, agent, row, chalk }) => {
+      const left = branch ? chalk.green(`\u2442 ${branch}`) : (agent.name ?? "Letta");
+      return row(left, "", width);
+    },
+  });
 
   const update = async () => {
     try {
       const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
         cwd: process.cwd(),
       });
-      if (letta.capabilities.ui.statusValues) {
-        letta.ui.setStatus("branch", stdout.trim());
-      }
+      branch = stdout.trim();
     } catch {
-      if (letta.capabilities.ui.statusValues) {
-        letta.ui.clearStatus("branch");
-      }
+      branch = "";
     }
+    panel.update();
   };
-
-  letta.ui.setStatuslineRenderer((context) => {
-    const { Text } = context.components;
-    const branch = context.statuses.branch;
-    return <Text>{branch ? `branch ${branch}` : context.agent.name}</Text>;
-  });
 
   void update();
   const timer = setInterval(update, 30_000);
 
   return () => {
     clearInterval(timer);
-    if (letta.capabilities.ui.statusValues) {
-      letta.ui.clearStatus("branch");
-    }
+    panel.close();
   };
 }
 ```
 
-## Context fields
-
-The app statusline render context source types live near:
-
-```text
-src/cli/display/statusline/types.ts
-src/cli/display/statusline/context.ts
-```
-
-Common fields:
-
-```ts
-context.components      // Display components such as Text, Box, Spacer
-context.statuses        // evaluated mod status strings
-context.app.version
-context.workspace.cwd
-context.workspace.currentDir
-context.workspace.projectDir
-context.agent.name
-context.agent.id
-context.model.id
-context.model.displayName
-context.model.provider
-context.model.reasoningEffort
-context.permissionMode
-context.terminalWidth
-context.contextWindow.usedPercentage
-context.contextWindow.remainingPercentage
-context.cost.totalDurationMs
-context.cost.totalCostUsd
-context.reflection
-context.memfs
-context.backgroundAgents
-context.rawPayload      // compatibility payload for advanced cases
-```
-
-Prefer semantic fields over `rawPayload` unless migrating old command statuslines.
-
 ## Full-row layout
 
-New statuslines do not have a host left/right API. To create left/right visual alignment, do it inside the renderer:
+There is no host left/right API. Build left/right alignment inside `render` with `row`:
 
 ```tsx
-return (
-  <Box flexDirection="row">
-    <Box flexGrow={1}>
-      <Text>left content</Text>
-    </Box>
-    <Text>right content</Text>
-  </Box>
-);
+render: ({ width, agent, model, row, chalk }) =>
+  row(chalk.dim("Press / for commands"), `${agent.name ?? "Letta"} \u00b7 ${model.displayName ?? ""}`, width),
+```
+
+Use `columns` for three or more evenly-spread segments:
+
+```tsx
+render: ({ width, columns }) => columns(["left", "middle", "right"], width),
 ```
 
 ## Reload behavior
@@ -162,4 +150,4 @@ After editing `~/.letta/mods/statusline.tsx`, tell the user to run:
 /reload
 ```
 
-The runtime tracks mod loading separately from “no custom statusline,” so a custom statusline should not flash back to the built-in default during reload.
+The runtime tracks mod loading so a custom statusline does not flash back to the built-in default during reload.

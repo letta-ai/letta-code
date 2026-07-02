@@ -49,6 +49,12 @@ function makeOverlay(): Omit<
   return { kind: "overlay_action", source: "system", text: "plan_mode" };
 }
 
+function makeContinue(
+  text = "keep going",
+): Omit<Extract<QueueItem, { kind: "mod_continue" }>, "id" | "enqueuedAt"> {
+  return { kind: "mod_continue", source: "system", text };
+}
+
 // ── Enqueue ───────────────────────────────────────────────────────
 
 describe("enqueue basics", () => {
@@ -191,6 +197,16 @@ describe("dequeue coalescable items", () => {
     expect(batch).not.toBeNull();
     expect(batch?.items).toHaveLength(3);
     expect(batch?.mergedCount).toBe(3);
+  });
+
+  test("mod_continue items are coalescable and dequeue as a batch", () => {
+    const q = new QueueRuntime();
+    q.enqueue(makeContinue("keep going"));
+    const batch = q.tryDequeue(null);
+    expect(batch).not.toBeNull();
+    expect(batch?.items).toHaveLength(1);
+    expect(batch?.items[0]?.kind).toBe("mod_continue");
+    expect(q.length).toBe(0);
   });
 
   test("onDequeued fires with correct batch metadata", () => {

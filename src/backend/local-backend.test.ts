@@ -35,10 +35,13 @@ import { emptyLocalUsage } from "@/backend/local/local-message";
 import { LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 import { listLocalModels } from "@/backend/local/local-model-config";
 import {
+  LocalStore,
   LocalTranscriptMigrationRequiredError,
   LocalTranscriptRepairRequiredError,
 } from "@/backend/local/local-store";
+import { LOCAL_BACKEND_DIR_ENV } from "@/backend/local/paths";
 import { migrateLocalBackendTranscripts } from "@/backend/local/transcript-migration";
+import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
 
 async function firstConversationDir(storageDir: string): Promise<string> {
   const entries = await readdir(join(storageDir, "conversations"));
@@ -94,6 +97,11 @@ async function collect(stream: AsyncIterable<unknown>): Promise<unknown[]> {
 
 function pageItems<T>(value: T[] | { getPaginatedItems(): T[] }): T[] {
   return Array.isArray(value) ? value : value.getPaginatedItems();
+}
+
+function localAgentListIds(page: unknown): string[] {
+  const items = (page as { items?: Array<{ id: string }> }).items;
+  return Array.isArray(items) ? items.map((agent) => agent.id) : [];
 }
 
 async function withEnv<T>(
@@ -302,6 +310,95 @@ describe("local backend pi transcript", () => {
     }
   });
 
+  test("hides local hidden agents from backend and disk listings", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-hidden-agents-"),
+    );
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+      const visible = await backend.createAgent({ name: "Visible" } as never);
+      const hidden = await backend.createAgent({
+        name: "Hidden",
+        hidden: true,
+      } as never);
+      const legacySubagentId = "agent-local-legacy-subagent";
+      const legacySubagentPath = join(
+        storageDir,
+        "agents",
+        `${Buffer.from(legacySubagentId).toString("base64url")}.json`,
+      );
+      await writeFile(
+        legacySubagentPath,
+        `${JSON.stringify(
+          {
+            id: legacySubagentId,
+            name: "Legacy subagent",
+            description: null,
+            system: "",
+            tags: [
+              "origin:letta-code",
+              "role:subagent",
+              "type:general-purpose",
+            ],
+            model: "local/default",
+            model_settings: {},
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      expect((hidden as { hidden?: boolean }).hidden).toBe(true);
+
+      const listedIds = localAgentListIds(
+        await backend.listAgents({ limit: 10 } as never),
+      );
+      expect(listedIds).toContain(visible.id);
+      expect(listedIds).not.toContain(hidden.id);
+
+      await withEnv({ [LOCAL_BACKEND_DIR_ENV]: storageDir }, async () => {
+        const diskListedIds = listLocalAgentsFromDisk().map(
+          (agent) => agent.id,
+        );
+        expect(diskListedIds).toContain(visible.id);
+        expect(diskListedIds).not.toContain(hidden.id);
+        expect(diskListedIds).not.toContain(legacySubagentId);
+      });
+
+      const reloaded = new LocalBackend({ storageDir, memfsEnabled: false });
+      const reloadedListedIds = localAgentListIds(
+        await reloaded.listAgents({ limit: 10 } as never),
+      );
+      expect(reloadedListedIds).toContain(visible.id);
+      expect(reloadedListedIds).not.toContain(hidden.id);
+      expect(reloadedListedIds).not.toContain(legacySubagentId);
+
+      const retrievedHidden = await reloaded.retrieveAgent(hidden.id);
+      expect((retrievedHidden as { hidden?: boolean }).hidden).toBe(true);
+      const retrievedLegacySubagent =
+        await reloaded.retrieveAgent(legacySubagentId);
+      expect((retrievedLegacySubagent as { hidden?: boolean }).hidden).toBe(
+        true,
+      );
+
+      const migratedLegacySubagent = JSON.parse(
+        await readFile(legacySubagentPath, "utf8"),
+      ) as Record<string, unknown>;
+      expect(migratedLegacySubagent.hidden).toBe(true);
+
+      await withEnv({ [LOCAL_BACKEND_DIR_ENV]: storageDir }, async () => {
+        const diskListedIds = listLocalAgentsFromDisk().map(
+          (agent) => agent.id,
+        );
+        expect(diskListedIds).toContain(visible.id);
+        expect(diskListedIds).not.toContain(hidden.id);
+        expect(diskListedIds).not.toContain(legacySubagentId);
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("repairs legacy synthetic transcript timestamps from manifest and file mtime", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-backend-time-"));
     const agentId = "agent-local-default";
@@ -505,6 +602,74 @@ describe("local backend pi transcript", () => {
       await backendForDirectLookup.retrieveMessage("ui-msg-latest");
     expect(latestVariants[0]?.id).toBe("ui-msg-latest");
     expect(latestVariants[0]?.date).toBe("2026-01-01T00:02:00.000Z");
+  });
+
+  test("fork skips ids already on disk from a separate LocalStore instance", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-store-fork-collision-"),
+    );
+    const agentId = "agent-fork";
+    const sourceId = "conv-source";
+    const existingId = "conv-existing";
+
+    // Store A creates a source conversation and an existing conversation that
+    // occupies the next seq slot, simulating a second LocalStore process that
+    // wrote a conversation to the shared storage directory.
+    const storeA = new LocalStore(agentId, { storageDir });
+    storeA.appendTurnInput(sourceId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "hello" }],
+    });
+    storeA.appendTurnInput(existingId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "existing" }],
+    });
+
+    // Store B loads from the same storage dir — it sees both conversations and
+    // sets conversationSeq to the max existing value.  A fork from Store B
+    // must not clobber the existing conversation even if its raw seq would
+    // land on that slot.
+    const storeB = new LocalStore(agentId, { storageDir });
+    const { id: forkedId } = storeB.forkConversation(sourceId);
+
+    // The fork must not reuse any id that already exists on disk.
+    expect(forkedId).not.toBe(sourceId);
+    expect(forkedId).not.toBe(existingId);
+
+    // The existing conversation must still be intact.
+    const existing = storeB.retrieveConversation(existingId);
+    expect(existing.id).toBe(existingId);
+  });
+
+  test("interrupt rolls back unpersisted partial assistant message before reload", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-store-interrupt-"));
+    const agentId = "agent-interrupt";
+    const conversationId = "conv-interrupt";
+
+    const store = new LocalStore(agentId, { storageDir });
+    store.appendTurnInput(conversationId, {
+      agent_id: agentId,
+      messages: [{ role: "user", content: "hello" }],
+    });
+    store.appendStreamChunk(conversationId, agentId, {
+      message_type: "assistant_message",
+      content: [{ type: "text", text: "partial" }],
+    } as LettaStreamingResponse);
+
+    const conversationBeforeReload = store.retrieveConversation(conversationId);
+    const partialAssistantId =
+      conversationBeforeReload.in_context_message_ids?.at(-1);
+    expect(partialAssistantId).toBe("ui-msg-2");
+
+    store.settleInterruptedToolCalls(conversationId, { agentId });
+
+    const reloaded = new LocalStore(agentId, { storageDir });
+    const conversationAfterReload =
+      reloaded.retrieveConversation(conversationId);
+    expect(conversationAfterReload.in_context_message_ids).not.toContain(
+      partialAssistantId,
+    );
+    expect(reloaded.retrieveMessage(partialAssistantId ?? "")).toEqual([]);
   });
 
   test("recompiles cached system prompt when committed memory changes", async () => {
@@ -739,6 +904,153 @@ describe("local backend pi transcript", () => {
     expect(systemPrompts[1]).not.toBe(systemPrompts[0]);
   });
 
+  test("emits compact mod-event hooks around local compaction", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-compact-hooks-"),
+    );
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "ok" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const complete = async (): Promise<AssistantMessage> =>
+      assistantMessage({
+        responseId: "summary-response",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Compacted summary." }],
+      });
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      complete,
+      memfsEnabled: false,
+    });
+    const starts: Array<{ trigger: string; conversationId: string | null }> =
+      [];
+    const ends: Array<{
+      trigger: string;
+      messagesBefore: number;
+      messagesAfter: number;
+      contextTokensBefore: number;
+      contextTokensAfter: number;
+    }> = [];
+    backend.setModEventHooks({
+      onCompactStart: (info) => {
+        starts.push({
+          trigger: info.trigger,
+          conversationId: info.conversationId,
+        });
+      },
+      onCompactEnd: (info) => {
+        ends.push({
+          trigger: info.trigger,
+          messagesBefore: info.messagesBefore,
+          messagesAfter: info.messagesAfter,
+          contextTokensBefore: info.contextTokensBefore,
+          contextTokensAfter: info.contextTokensAfter,
+        });
+      },
+    });
+    const agent = await backend.createAgent({
+      name: "Local",
+      system: "base {CORE_MEMORY}",
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "first" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    await backend.compactConversationMessages(conversation.id, {
+      agent_id: agent.id,
+    } as never);
+
+    expect(starts).toEqual([
+      { trigger: "manual", conversationId: conversation.id },
+    ]);
+    expect(ends).toHaveLength(1);
+    expect(ends[0]?.trigger).toBe("manual");
+    // Compaction never increases the message count.
+    expect(ends[0]?.messagesBefore).toBeGreaterThanOrEqual(
+      ends[0]?.messagesAfter ?? 0,
+    );
+    expect(ends[0]?.messagesAfter ?? 0).toBeGreaterThan(0);
+    expect(ends[0]?.contextTokensBefore ?? -1).toBeGreaterThanOrEqual(0);
+    expect(ends[0]?.contextTokensAfter ?? -1).toBeGreaterThanOrEqual(0);
+  });
+
+  test("a throwing compact hook does not break compaction", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-compact-hook-throws-"),
+    );
+    const executor: HeadlessTurnExecutor = {
+      async execute() {
+        return lettaStreamFromChunks([
+          {
+            message_type: "assistant_message",
+            content: [{ type: "text", text: "ok" }],
+          } as LettaStreamingResponse,
+          {
+            message_type: "stop_reason",
+            stop_reason: "end_turn",
+          } as LettaStreamingResponse,
+        ]);
+      },
+    };
+    const complete = async (): Promise<AssistantMessage> =>
+      assistantMessage({
+        responseId: "summary-response",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Compacted summary." }],
+      });
+    const backend = new LocalBackend({
+      storageDir,
+      executor,
+      complete,
+      memfsEnabled: false,
+    });
+    backend.setModEventHooks({
+      onCompactStart: () => {
+        throw new Error("start hook boom");
+      },
+      onCompactEnd: () => {
+        throw new Error("end hook boom");
+      },
+    });
+    const agent = await backend.createAgent({
+      name: "Local",
+      system: "base {CORE_MEMORY}",
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "first" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const result = await backend.compactConversationMessages(conversation.id, {
+      agent_id: agent.id,
+    } as never);
+
+    expect(result.summary).toBe("Compacted summary.");
+  });
+
   test("compaction follows the conversation model override, not the agent base", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-compact-model-"),
@@ -827,7 +1139,10 @@ describe("local backend pi transcript", () => {
     const handles = (await listLocalModels(storageDir)).map(
       (model) => model.handle,
     );
+    const zaiHandles = handles.filter((handle) => handle.startsWith("zai/"));
+    expect(zaiHandles[0]).toBe("zai/glm-5.2");
     expect(handles).toContain("zai/glm-4.5-air");
+    expect(handles).toContain("zai/glm-5.2");
     expect(handles).toContain("zai/glm-5.1");
   });
 
@@ -871,10 +1186,12 @@ describe("local backend pi transcript", () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-unconfigured-local-"),
     );
+    const fetchImpl = (async () =>
+      new Response("not found", { status: 404 })) as unknown as typeof fetch;
 
-    const handles = (await listLocalModels(storageDir)).map(
-      (model) => model.handle,
-    );
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
     expect(handles.some((handle) => handle.startsWith("ollama/"))).toBe(false);
     expect(handles.some((handle) => handle.startsWith("lmstudio/"))).toBe(
       false,
@@ -882,6 +1199,76 @@ describe("local backend pi transcript", () => {
     expect(handles.some((handle) => handle.startsWith("llama.cpp/"))).toBe(
       false,
     );
+  });
+
+  test("auto-detects reachable local model endpoints without saved providers", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-autodetect-local-"),
+    );
+    const calls: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : String(input);
+      calls.push(url);
+      if (url === "http://localhost:11434/api/tags") {
+        return new Response(
+          JSON.stringify({ models: [{ name: "qwen2.5-coder:7b" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url === "http://127.0.0.1:1234/v1/models") {
+        return new Response(
+          JSON.stringify({ data: [{ id: "openai/gpt-oss-20b" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "http://localhost:11434/v1/models",
+        "http://localhost:11434/api/tags",
+        "http://127.0.0.1:1234/v1/models",
+        "http://localhost:8080/v1/models",
+      ]),
+    );
+    expect(handles).toContain("ollama/qwen2.5-coder:7b");
+    expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
+    expect(handles.some((handle) => handle.startsWith("llama.cpp/"))).toBe(
+      false,
+    );
+  });
+
+  test("auto-detects reachable local model endpoints alongside saved providers", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-autodetect-with-provider-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "anthropic",
+      providerName: "lc-anthropic",
+      apiKey: "dummy",
+      storageDir,
+    });
+    const fetchImpl = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : String(input);
+      if (url === "http://127.0.0.1:1234/v1/models") {
+        return new Response(JSON.stringify({ data: [{ id: "local-model" }] }), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(handles).toContain("anthropic/claude-opus-4-7");
+    expect(handles).toContain("lmstudio/local-model");
   });
 
   test("discovers configured LM Studio models from OpenAI-compatible catalog", async () => {
@@ -899,17 +1286,22 @@ describe("local backend pi transcript", () => {
     const fetchImpl = (async (input: unknown) => {
       const url = typeof input === "string" ? input : String(input);
       calls.push(url);
-      return new Response(
-        JSON.stringify({ data: [{ id: "openai/gpt-oss-20b" }] }),
-        { headers: { "content-type": "application/json" } },
-      );
+      if (url === "http://127.0.0.1:1234/v1/models") {
+        return new Response(
+          JSON.stringify({ data: [{ id: "openai/gpt-oss-20b" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
 
     const handles = (
       await listLocalModels(storageDir, { fetch: fetchImpl })
     ).map((model) => model.handle);
 
-    expect(calls).toEqual(["http://127.0.0.1:1234/v1/models"]);
+    expect(calls).toEqual(
+      expect.arrayContaining(["http://127.0.0.1:1234/v1/models"]),
+    );
     expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
     expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
   });
@@ -942,10 +1334,12 @@ describe("local backend pi transcript", () => {
       await listLocalModels(storageDir, { fetch: fetchImpl })
     ).map((model) => model.handle);
 
-    expect(calls).toEqual([
-      "http://localhost:11434/v1/models",
-      "http://localhost:11434/api/tags",
-    ]);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "http://localhost:11434/v1/models",
+        "http://localhost:11434/api/tags",
+      ]),
+    );
     expect(handles).toContain("ollama/qwen2.5-coder:7b");
     expect(handles).not.toContain("ollama/llama2");
   });
@@ -988,7 +1382,12 @@ describe("local backend pi transcript", () => {
 
     const models = await listLocalModels(storageDir, { fetch: fetchImpl });
 
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "http://localhost:11434/v1/models",
+        "http://localhost:8080/v1/models",
+      ]),
+    );
     expect(models).toContainEqual({
       handle: "lmstudio/gemma-4-26B-A4B-it-oQ6",
       max_context_window: 256000,
@@ -1160,18 +1559,25 @@ describe("local backend pi transcript", () => {
     const fetchImpl = (async (input: unknown, init?: RequestInit) => {
       const url = typeof input === "string" ? input : String(input);
       calls.push(url);
-      captured.authorization = new Headers(init?.headers).get("Authorization");
-      return new Response(
-        JSON.stringify({ data: [{ id: "rnj-1:8b" }, { id: "glm-5.1" }] }),
-        { headers: { "content-type": "application/json" } },
-      );
+      if (url === "https://ollama.com/v1/models") {
+        captured.authorization = new Headers(init?.headers).get(
+          "Authorization",
+        );
+        return new Response(
+          JSON.stringify({ data: [{ id: "rnj-1:8b" }, { id: "glm-5.1" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
 
     const handles = (
       await listLocalModels(storageDir, { fetch: fetchImpl })
     ).map((model) => model.handle);
 
-    expect(calls).toEqual(["https://ollama.com/v1/models"]);
+    expect(calls).toEqual(
+      expect.arrayContaining(["https://ollama.com/v1/models"]),
+    );
     expect(captured.authorization).toBe("Bearer ollama-key");
     expect(handles).toContain("ollama-cloud/rnj-1:8b");
     expect(handles).toContain("ollama-cloud/glm-5.1");
@@ -1191,11 +1597,20 @@ describe("local backend pi transcript", () => {
       storageDir,
     });
     const captured: { authorization?: string | null } = {};
-    const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
-      captured.authorization = new Headers(init?.headers).get("Authorization");
-      return new Response(JSON.stringify({ data: [{ id: "secure-model" }] }), {
-        headers: { "content-type": "application/json" },
-      });
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : String(input);
+      if (url === "http://localhost:8000/v1/models") {
+        captured.authorization = new Headers(init?.headers).get(
+          "Authorization",
+        );
+        return new Response(
+          JSON.stringify({ data: [{ id: "secure-model" }] }),
+          {
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+      return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
 
     await withEnv({ LMSTUDIO_API_KEY: "1234" }, async () => {

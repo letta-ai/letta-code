@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -14,6 +16,8 @@ import {
   type PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
 import type {
+  LlmEndInfo,
+  LlmStartInfo,
   ProviderStreamEvent,
   ProviderTurnInput,
 } from "@/backend/dev/provider-turn-executor";
@@ -66,6 +70,20 @@ async function collectEvents(
   return collected;
 }
 
+async function closeServer(
+  server: ReturnType<typeof createServer>,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 function input(): ProviderTurnInput {
   return {
     conversationId: "local-conv-1",
@@ -100,6 +118,128 @@ function emptyTextBlocks(messages: Context["messages"]) {
 }
 
 describe("PiStreamAdapter", () => {
+  test("downgrades images through Pi-AI payload conversion for text-only local models", async () => {
+    let capturedPayload: unknown;
+    const server = createServer(async (req, res) => {
+      if (req.method !== "POST" || req.url !== "/v1/chat/completions") {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      capturedPayload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+
+      const responseChunks = [
+        {
+          id: "chatcmpl-test",
+          object: "chat.completion.chunk",
+          created: 0,
+          model: "deepseek-r1:8b",
+          choices: [
+            {
+              index: 0,
+              delta: { content: "ok" },
+              finish_reason: null,
+            },
+          ],
+        },
+        {
+          id: "chatcmpl-test",
+          object: "chat.completion.chunk",
+          created: 0,
+          model: "deepseek-r1:8b",
+          choices: [
+            {
+              index: 0,
+              delta: {},
+              finish_reason: "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: 1,
+            completion_tokens: 1,
+            total_tokens: 2,
+          },
+        },
+      ];
+
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "close",
+      });
+      res.end(
+        `${responseChunks
+          .map((chunk) => `data: ${JSON.stringify(chunk)}`)
+          .join("\n\n")}\n\ndata: [DONE]\n\n`,
+      );
+    });
+
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("expected tcp server address");
+    }
+
+    const previousOllamaBaseUrl = process.env.OLLAMA_BASE_URL;
+    process.env.OLLAMA_BASE_URL = `http://127.0.0.1:${address.port}/v1`;
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "pi-stream-text-image-downgrade-"),
+    );
+
+    try {
+      const baseInput = input();
+      const events = await collectEvents(
+        new PiStreamAdapter({ localProviderAuthStorageDir: storageDir }).stream(
+          {
+            ...baseInput,
+            agent: {
+              ...baseInput.agent,
+              model: "ollama/deepseek-r1:8b",
+              model_settings: { provider_type: "ollama" },
+            },
+            uiMessages: [
+              {
+                id: "ui-msg-image",
+                role: "user",
+                content: [
+                  { type: "text", text: "describe this" },
+                  { type: "image", mimeType: "image/png", data: "abc" },
+                ],
+                timestamp: Date.now(),
+              },
+            ],
+          },
+        ),
+      );
+
+      expect(events.some((event) => event.type === "local-message")).toBe(true);
+      expect(capturedPayload).toMatchObject({
+        model: "deepseek-r1:8b",
+        stream: true,
+      });
+      const payloadJson = JSON.stringify(capturedPayload);
+      expect(payloadJson).toContain(
+        "(image omitted: model does not support images)",
+      );
+      expect(payloadJson).not.toContain("image_url");
+      expect(payloadJson).not.toContain("data:image/png;base64,abc");
+    } finally {
+      if (previousOllamaBaseUrl === undefined) {
+        delete process.env.OLLAMA_BASE_URL;
+      } else {
+        process.env.OLLAMA_BASE_URL = previousOllamaBaseUrl;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+      await closeServer(server);
+    }
+  });
+
   test("routes clean provider overflow errors into compaction and retries", async () => {
     let providerCalls = 0;
     const stream: PiStreamFunction = () => {
@@ -1167,5 +1307,136 @@ describe("PiStreamAdapter", () => {
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
+  });
+
+  test("emits llm_start and llm_end around a provider request", async () => {
+    const finalMessage: AssistantMessage = {
+      ...assistantMessage(),
+      usage: { ...emptyLocalUsage(), input: 11, output: 7, totalTokens: 18 },
+    };
+    const stream: PiStreamFunction = () =>
+      streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+
+    const starts: LlmStartInfo[] = [];
+    const ends: LlmEndInfo[] = [];
+    const adapter = new PiStreamAdapter({
+      stream,
+      onLlmStart: (info) => {
+        starts.push(info);
+      },
+      onLlmEnd: (info) => {
+        ends.push(info);
+      },
+    });
+    await collectEvents(adapter.stream(input()));
+
+    expect(starts).toHaveLength(1);
+    expect(starts[0]).toMatchObject({
+      agentId: "agent-local-1",
+      conversationId: "local-conv-1",
+      model: "bedrock/us.anthropic.claude-sonnet-4-6",
+      messageCount: 1,
+    });
+    expect(starts[0]?.contextWindow).toBeGreaterThan(0);
+
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toMatchObject({
+      agentId: "agent-local-1",
+      conversationId: "local-conv-1",
+      model: "bedrock/us.anthropic.claude-sonnet-4-6",
+      stopReason: "stop",
+      usage: { promptTokens: 11, completionTokens: 7, totalTokens: 18 },
+    });
+    expect(ends[0]?.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test("emits llm_end for failed and successful provider requests across retries", async () => {
+    let calls = 0;
+    const stream: PiStreamFunction = () => {
+      calls += 1;
+      if (calls === 1) {
+        const error = assistantErrorMessage(
+          "WebSocket closed 1006 Connection ended\nretry-after-ms: 0",
+        );
+        return streamFromEvents(
+          [{ type: "error", reason: "error", error }],
+          error,
+        );
+      }
+      const finalMessage = assistantMessage();
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    let startCount = 0;
+    const ends: LlmEndInfo[] = [];
+    const adapter = new PiStreamAdapter({
+      stream,
+      onLlmStart: () => {
+        startCount += 1;
+      },
+      onLlmEnd: (info) => {
+        ends.push(info);
+      },
+    });
+    await collectEvents(adapter.stream(input()));
+
+    expect(calls).toBe(2);
+    expect(startCount).toBe(2);
+    expect(ends).toHaveLength(2);
+    expect(ends[0]).toMatchObject({
+      stopReason: "llm_api_error",
+      usage: null,
+      error: {
+        errorType: "llm_error",
+        retryable: true,
+      },
+    });
+    expect(ends[0]?.error?.message).toContain("WebSocket closed");
+    expect(ends[1]).toMatchObject({
+      stopReason: "stop",
+    });
+    expect(ends[1]?.error).toBeUndefined();
+    expect(ends[1]?.usage).not.toBeNull();
+  });
+
+  test("emits one llm_end with error details for final error messages", async () => {
+    const finalMessage = assistantErrorMessage("usage limit reached");
+    const stream: PiStreamFunction = () =>
+      streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+
+    const ends: LlmEndInfo[] = [];
+    const adapter = new PiStreamAdapter({
+      stream,
+      onLlmEnd: (info) => {
+        ends.push(info);
+      },
+    });
+
+    await expect(collectEvents(adapter.stream(input()))).rejects.toThrow(
+      "usage limit reached",
+    );
+
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toMatchObject({
+      stopReason: "error",
+      usage: {
+        promptTokens: finalMessage.usage.input,
+        completionTokens: finalMessage.usage.output,
+        totalTokens: finalMessage.usage.totalTokens,
+      },
+      error: {
+        message: "usage limit reached",
+        retryable: false,
+      },
+    });
   });
 });

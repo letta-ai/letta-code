@@ -16,7 +16,7 @@ import { debugLog } from "@/utils/debug";
 const RUNTIME_DIAGNOSTICS_WRITE_DELAY_MS = 30_000;
 
 export interface ModAdapterLoadState {
-  hadStatuslineRenderer: boolean;
+  hadModPanels: boolean;
   hasModSources: boolean;
   isLoading: boolean;
 }
@@ -67,7 +67,7 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
   let disposed = false;
   const initialHasModSources = hasModSources(engineOptions);
   let loadState: ModAdapterLoadState = {
-    hadStatuslineRenderer: false,
+    hadModPanels: false,
     hasModSources: initialHasModSources,
     isLoading: initialHasModSources,
   };
@@ -158,11 +158,11 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
     clearPendingDiagnosticsWrite();
 
     const previousSnapshot = engine.getSnapshot();
-    const previousHadStatuslineRenderer =
-      Boolean(previousSnapshot.ui.statuslineRenderer) ||
-      loadState.hadStatuslineRenderer;
+    const previousHadModPanels =
+      Object.keys(previousSnapshot.ui.panels).length > 0 ||
+      loadState.hadModPanels;
     loadState = {
-      hadStatuslineRenderer: previousHadStatuslineRenderer,
+      hadModPanels: previousHadModPanels,
       hasModSources: hasModSources(engineOptions),
       isLoading: true,
     };
@@ -176,10 +176,10 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
 
     debugLog(
       "mods",
-      "loaded %s mod(s) from %s source(s); renderer=%s",
+      "loaded %s mod(s) from %s source(s); panels=%s",
       nextRegistry.loadedPaths.length,
       nextRegistry.sources.length,
-      nextRegistry.ui.statuslineRenderer?.id ?? "(none)",
+      Object.keys(nextRegistry.ui.panels).length,
     );
 
     for (const diagnostic of getModErrorDiagnostics(nextRegistry.diagnostics)) {
@@ -198,7 +198,7 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
     }
 
     loadState = {
-      hadStatuslineRenderer: Boolean(nextRegistry.ui.statuslineRenderer),
+      hadModPanels: Object.keys(nextRegistry.ui.panels).length > 0,
       hasModSources: nextRegistry.sources.some(
         (source) => source.files.length > 0,
       ),

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   type AppServerSocketLike,
+  type AppServerSocketOptions,
   createAppServerClient,
   resolveAppServerChannelUrl,
 } from "./app-server-client";
@@ -14,7 +15,10 @@ class FakeSocket implements AppServerSocketLike {
   readonly sent: string[] = [];
   private readonly listeners = new Map<string, Set<Listener>>();
 
-  constructor(readonly url: string) {
+  constructor(
+    readonly url: string,
+    readonly options?: AppServerSocketOptions,
+  ) {
     FakeSocket.instances.push(this);
   }
 
@@ -79,6 +83,29 @@ describe("app-server client", () => {
         "stream",
       ),
     ).toBe("wss://example.test/ws?channel=stream&token=abc");
+  });
+
+  test("passes capability token as websocket authorization header", () => {
+    createAppServerClient({
+      url: "http://127.0.0.1:4500",
+      authToken: " super-secret-token\n",
+      WebSocket: FakeSocket,
+    });
+    const [control, stream] = FakeSocket.instances;
+    expect(control?.options).toEqual({
+      headers: { Authorization: "Bearer super-secret-token" },
+    });
+    expect(stream?.options).toEqual({
+      headers: { Authorization: "Bearer super-secret-token" },
+    });
+
+    expect(() =>
+      createAppServerClient({
+        url: "http://127.0.0.1:4500",
+        authToken: " \n",
+        WebSocket: FakeSocket,
+      }),
+    ).toThrow(/auth token must not be empty/);
   });
 
   test("connects both sockets and resolves request_id responses", async () => {
@@ -192,6 +219,36 @@ describe("app-server client", () => {
       payload: { kind: "create_message" },
     });
     expect(sent).toEqual(["sync", "abort_message", "input"]);
+  });
+
+  test("wraps conversation list requests", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const responsePromise = client.conversationList({
+      query: { agent_id: "agent-1", limit: 10 },
+    });
+
+    expect(JSON.parse(control.sent[0] ?? "{}")).toMatchObject({
+      type: "conversation_list",
+      request_id: "conversation-list-1",
+      query: { agent_id: "agent-1", limit: 10 },
+    });
+
+    control.receive({
+      type: "conversation_list_response",
+      request_id: "conversation-list-1",
+      success: true,
+      conversations: [{ id: "conv-1", agent_id: "agent-1" }],
+    });
+
+    const response = await responsePromise;
+    expect(response.success).toBe(true);
+    expect(response.conversations).toEqual([
+      { id: "conv-1", agent_id: "agent-1" },
+    ]);
   });
 
   test("starts runtimes with external tools and responds to external tool calls", async () => {
@@ -318,6 +375,153 @@ describe("app-server client", () => {
     });
   });
 
+  test("runTurn waits through intermediate requires_approval stop_reason", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const turn = client.runTurn({
+      runtime,
+      payload: {
+        kind: "create_message",
+        messages: [{ role: "user", content: "use a tool" }],
+      },
+    });
+
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 1,
+      emitted_at: "2026-06-11T00:00:00.000Z",
+      idempotency_key: "stream-1",
+      delta: {
+        type: "message",
+        message_type: "approval_request_message",
+        run_id: "run-approval",
+        tool_calls: [
+          {
+            tool_call_id: "call-1",
+            name: "Bash",
+            arguments: '{"command":"pwd"}',
+          },
+        ],
+      },
+    });
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 2,
+      emitted_at: "2026-06-11T00:00:00.001Z",
+      idempotency_key: "stream-2",
+      delta: {
+        type: "message",
+        message_type: "stop_reason",
+        run_id: "run-approval",
+        stop_reason: "requires_approval",
+      },
+    });
+    stream.receive({
+      type: "update_loop_status",
+      runtime,
+      event_seq: 3,
+      emitted_at: "2026-06-11T00:00:00.002Z",
+      idempotency_key: "loop-1",
+      loop_status: {
+        status: "EXECUTING_CLIENT_SIDE_TOOL",
+        active_run_ids: ["run-approval"],
+      },
+    });
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 4,
+      emitted_at: "2026-06-11T00:00:00.003Z",
+      idempotency_key: "stream-3",
+      delta: {
+        type: "message",
+        message_type: "stop_reason",
+        run_id: "run-final",
+        stop_reason: "end_turn",
+      },
+    });
+
+    expect(await turn).toMatchObject({
+      runtime,
+      stopReason: "end_turn",
+      runIds: ["run-approval", "run-final"],
+      completedBy: "stop_reason",
+    });
+  });
+
+  test("runTurn resolves requires_approval only when listener is waiting on approval", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const turn = client.runTurn({
+      runtime,
+      payload: {
+        kind: "create_message",
+        messages: [{ role: "user", content: "use a tool" }],
+      },
+    });
+
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 1,
+      emitted_at: "2026-06-11T00:00:00.000Z",
+      idempotency_key: "stream-1",
+      delta: {
+        type: "message",
+        message_type: "approval_request_message",
+        run_id: "run-approval",
+        tool_calls: [
+          {
+            tool_call_id: "call-1",
+            name: "Bash",
+            arguments: '{"command":"rm -rf tmp"}',
+          },
+        ],
+      },
+    });
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 2,
+      emitted_at: "2026-06-11T00:00:00.001Z",
+      idempotency_key: "stream-2",
+      delta: {
+        type: "message",
+        message_type: "stop_reason",
+        run_id: "run-approval",
+        stop_reason: "requires_approval",
+      },
+    });
+    stream.receive({
+      type: "update_loop_status",
+      runtime,
+      event_seq: 3,
+      emitted_at: "2026-06-11T00:00:00.002Z",
+      idempotency_key: "loop-1",
+      loop_status: {
+        status: "WAITING_ON_APPROVAL",
+        active_run_ids: ["run-approval"],
+      },
+    });
+
+    expect(await turn).toMatchObject({
+      runtime,
+      stopReason: "requires_approval",
+      runIds: ["run-approval"],
+      completedBy: "loop_status_waiting_on_approval",
+    });
+  });
+
   test("runTurn does not treat idle status alone as terminal", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();
@@ -346,6 +550,70 @@ describe("app-server client", () => {
     });
 
     await expect(turn).rejects.toThrow("Timed out waiting for app-server turn");
+  });
+
+  test("runTurn ignores waiting-on-approval status before turn evidence", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const turn = client.runTurn(
+      {
+        runtime,
+        payload: {
+          kind: "create_message",
+          messages: [{ role: "user", content: "hello" }],
+        },
+      },
+      { allowLoopStatusFallback: true },
+    );
+
+    stream.receive({
+      type: "update_loop_status",
+      runtime,
+      event_seq: 1,
+      emitted_at: "2026-06-11T00:00:00.000Z",
+      idempotency_key: "loop-1",
+      loop_status: {
+        status: "WAITING_ON_APPROVAL",
+        active_run_ids: ["stale-run"],
+      },
+    });
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 2,
+      emitted_at: "2026-06-11T00:00:00.001Z",
+      idempotency_key: "stream-1",
+      delta: {
+        type: "message",
+        message_type: "assistant_message",
+        run_id: "run-1",
+        content: "done",
+      },
+    });
+    stream.receive({
+      type: "stream_delta",
+      runtime,
+      event_seq: 3,
+      emitted_at: "2026-06-11T00:00:00.002Z",
+      idempotency_key: "stream-2",
+      delta: {
+        type: "message",
+        message_type: "stop_reason",
+        run_id: "run-1",
+        stop_reason: "end_turn",
+      },
+    });
+
+    expect(await turn).toMatchObject({
+      runtime,
+      stopReason: "end_turn",
+      runIds: ["run-1"],
+      completedBy: "stop_reason",
+    });
   });
 
   test("runTurn rejects concurrent turns for the same runtime", async () => {

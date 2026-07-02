@@ -40,6 +40,7 @@ export function getModDiagnosticSeverity(
     case "command_override":
       return "warning";
     case "deprecated_api":
+    case "legacy_extension":
       return severity ?? "warning";
     case "report":
       return severity ?? "error";

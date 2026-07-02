@@ -24,10 +24,6 @@ function createDisabledModRegistry(): LocalModRegistry {
     tools: {},
     ui: {
       panels: {},
-      statusRecorders: {},
-      statuslineRenderer: null,
-      statusOwners: {},
-      statusValues: {},
     },
   };
 }
@@ -58,7 +54,7 @@ export function createDisabledModAdapter() {
   const registry = createDisabledModRegistry();
   const engine = createDisabledModEngine(registry);
   const snapshot = {
-    hadStatuslineRenderer: false,
+    hadModPanels: false,
     hasModSources: false,
     isLoading: false,
     registry,

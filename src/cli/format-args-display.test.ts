@@ -80,6 +80,36 @@ describe("formatArgsDisplay compact plan/todo headers", () => {
     });
   });
 
+  test("uses Codex unified exec description when present", () => {
+    const args = JSON.stringify({
+      cmd: "git status --short",
+      description: "Show working tree status",
+    });
+
+    const formatted = formatArgsDisplay(args, "exec_command");
+    expect(formatted.display).toBe("Show working tree status");
+    expect(formatted.shellSemantic).toMatchObject({
+      kind: "run",
+      label: "Run",
+      rawCommand: "git status --short",
+    });
+  });
+
+  test("uses Gemini shell description when present", () => {
+    const args = JSON.stringify({
+      command: "git status --short",
+      description: "Show working tree status",
+    });
+
+    const formatted = formatArgsDisplay(args, "RunShellCommand");
+    expect(formatted.display).toBe("Show working tree status");
+    expect(formatted.shellSemantic).toMatchObject({
+      kind: "run",
+      label: "Run",
+      rawCommand: "git status --short",
+    });
+  });
+
   test("summarizes Codex write_stdin without raw polling args", () => {
     const args = JSON.stringify({
       session_id: 8,

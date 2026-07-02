@@ -8,18 +8,18 @@ import type { ListenerRuntime } from "./types";
 
 export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
   tools: true,
-  commands: false,
+  commands: true,
   events: {
     lifecycle: false,
-    tools: false,
-    turns: false,
+    tools: true,
+    turns: true,
+    compact: false,
+    llm: false,
   },
   permissions: false,
   providers: true,
   ui: {
     panels: false,
-    statusValues: false,
-    customStatuslineRenderer: false,
   },
 };
 

@@ -3,7 +3,6 @@ import { getSubagents } from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
 import type { ReflectionTrigger } from "@/cli/helpers/memory-reminder";
 import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
-import { isReflectionSubagentActive } from "@/cli/helpers/reflection-gate";
 import {
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
@@ -18,6 +17,9 @@ export const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
 
 /** Max background wait for the reflection subagent's agent ID before emitting `reflection_start` (previously 1s inline, timed out ~100% of the time). */
 export const REFLECTION_AGENT_ID_WAIT_MS = 30_000;
+
+const reservedReflectionAgentIds = new Set<string>();
+const pendingReflectionLaunches = new Map<string, ReflectionLaunchOptions>();
 
 export type ReflectionLaunchTriggerSource =
   | "manual"
@@ -59,6 +61,7 @@ export interface ReflectionLaunchOptions {
   memfsEnabled: boolean;
   triggerSource: ReflectionLaunchTriggerSource;
   description: string;
+  instruction?: string;
   systemPrompt?: string;
   completionConversationId?: string | (() => string);
   recompileByConversation: Map<string, Promise<void>>;
@@ -77,6 +80,59 @@ export interface ReflectionLaunchOptions {
     model?: string | null;
     surface?: string;
   };
+}
+
+function isReflectionSubagentActiveForAgent(agentId: string): boolean {
+  return getSubagents().some((agent) => {
+    if (agent.type.toLowerCase() !== "reflection") {
+      return false;
+    }
+    if (agent.status !== "pending" && agent.status !== "running") {
+      return false;
+    }
+    return agent.parentAgentId === agentId;
+  });
+}
+
+export function tryReserveReflectionLaunch(agentId: string): boolean {
+  if (reservedReflectionAgentIds.has(agentId)) {
+    return false;
+  }
+  if (isReflectionSubagentActiveForAgent(agentId)) {
+    return false;
+  }
+  reservedReflectionAgentIds.add(agentId);
+  return true;
+}
+
+export function releaseReflectionLaunch(agentId: string): void {
+  reservedReflectionAgentIds.delete(agentId);
+  schedulePendingReflectionLaunch(agentId);
+}
+
+function queuePendingReflectionLaunch(options: ReflectionLaunchOptions): void {
+  pendingReflectionLaunches.set(options.agentId, options);
+  debugLog(
+    "memory",
+    `Queued reflection launch (${options.triggerSource}) until active reflection finishes`,
+  );
+}
+
+function schedulePendingReflectionLaunch(agentId: string): void {
+  const pendingOptions = pendingReflectionLaunches.get(agentId);
+  if (!pendingOptions) return;
+  pendingReflectionLaunches.delete(agentId);
+
+  queueMicrotask(() => {
+    void launchReflectionSubagent(pendingOptions).catch((error) => {
+      debugWarn(
+        "memory",
+        `Failed to launch queued reflection (${pendingOptions.triggerSource}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+  });
 }
 
 async function resolveSystemPrompt(
@@ -127,14 +183,18 @@ export async function launchReflectionSubagent(
     return { launched: false, reason: "memfs_disabled" };
   }
 
-  if (isReflectionSubagentActive(getSubagents(), agentId, conversationId)) {
+  if (!tryReserveReflectionLaunch(agentId)) {
     debugLog(
       "memory",
       `Skipping reflection launch (${triggerSource}) because one is already active`,
     );
+    if (reservedReflectionAgentIds.has(agentId)) {
+      queuePendingReflectionLaunch(options);
+    }
     return { launched: false, reason: "already_active" };
   }
 
+  let releaseOnComplete = false;
   try {
     const systemPrompt = await resolveSystemPrompt(
       agentId,
@@ -150,12 +210,14 @@ export async function launchReflectionSubagent(
         "memory",
         `Skipping reflection launch (${triggerSource}) because transcript has no new content`,
       );
+      releaseReflectionLaunch(agentId);
       return { launched: false, reason: "no_payload" };
     }
 
     const memoryDir = getScopedMemoryFilesystemRoot(agentId);
     const parentMemory = await buildParentMemorySnapshot(memoryDir);
     const reflectionPrompt = buildReflectionSubagentPrompt({
+      instruction: options.instruction,
       memoryDir,
       parentMemory,
     });
@@ -188,61 +250,67 @@ export async function launchReflectionSubagent(
         stepCount,
         durationMs,
       }) => {
-        telemetry.trackReflectionEnd(triggerSource, success, {
-          subagentId: reflectionAgentId ?? undefined,
-          conversationId,
-          error,
-          stepCount,
-          durationMs,
-        });
-        drainReflectionTelemetry();
-        maybeSendReflectionThresholdFeedback({
-          parentAgentId: agentId,
-          parentAgentName: options.feedbackContext?.parentAgentName,
-          parentAgentDescription:
-            options.feedbackContext?.parentAgentDescription,
-          reflectionSubagentId: reflectionAgentId ?? undefined,
-          conversationId,
-          triggerSource,
-          success,
-          error,
-          stepCount,
-          durationMs,
-          surface: options.feedbackContext?.surface,
-          model: options.feedbackContext?.model,
-        });
-        await finalizeAutoReflectionPayload(
-          agentId,
-          conversationId,
-          autoPayload.payloadPath,
-          autoPayload.endSnapshotLine,
-          success,
-        );
-
-        const completionMessage = await handleMemorySubagentCompletion(
-          {
-            agentId,
-            conversationId: resolveCompletionConversationId(
-              options.completionConversationId,
-              conversationId,
-            ),
-            subagentType: "reflection",
+        try {
+          telemetry.trackReflectionEnd(triggerSource, success, {
+            subagentId: reflectionAgentId ?? undefined,
+            conversationId,
+            error,
+            stepCount,
+            durationMs,
+          });
+          drainReflectionTelemetry();
+          maybeSendReflectionThresholdFeedback({
+            parentAgentId: agentId,
+            parentAgentName: options.feedbackContext?.parentAgentName,
+            parentAgentDescription:
+              options.feedbackContext?.parentAgentDescription,
+            reflectionSubagentId: reflectionAgentId ?? undefined,
+            conversationId,
+            triggerSource,
             success,
             error,
-          },
-          {
-            recompileByConversation,
-            recompileQueuedByConversation,
-            logRecompileFailure: (message) => debugWarn("memory", message),
-          },
-        );
-        await onCompletionMessage?.(completionMessage, {
-          success,
-          error,
-          reflectionAgentId: reflectionAgentId ?? undefined,
-        });
+            stepCount,
+            durationMs,
+            surface: options.feedbackContext?.surface,
+            model: options.feedbackContext?.model,
+          });
+          await finalizeAutoReflectionPayload(
+            agentId,
+            conversationId,
+            autoPayload.payloadPath,
+            autoPayload.endSnapshotLine,
+            success,
+          );
+
+          const completionMessage = await handleMemorySubagentCompletion(
+            {
+              agentId,
+              conversationId: resolveCompletionConversationId(
+                options.completionConversationId,
+                conversationId,
+              ),
+              subagentType: "reflection",
+              success,
+              error,
+              subagentAgentId: reflectionAgentId ?? undefined,
+            },
+            {
+              recompileByConversation,
+              recompileQueuedByConversation,
+              logRecompileFailure: (message) => debugWarn("memory", message),
+            },
+          );
+          await onCompletionMessage?.(completionMessage, {
+            success,
+            error,
+            reflectionAgentId: reflectionAgentId ?? undefined,
+          });
+        } finally {
+          releaseReflectionLaunch(agentId);
+        }
       },
     });
+    releaseOnComplete = true;
     // Fire-and-forget: emit `reflection_start` when the agent ID resolves or after timeout.
     void waitForBackgroundSubagentAgentId(
       subagentId,
@@ -271,6 +339,9 @@ export async function launchReflectionSubagent(
       endMessageId: autoPayload.endMessageId,
     };
   } catch (error) {
+    if (!releaseOnComplete) {
+      releaseReflectionLaunch(agentId);
+    }
     debugWarn(
       "memory",
       `Failed to launch reflection subagent (${triggerSource}): ${

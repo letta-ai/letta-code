@@ -5,7 +5,6 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import {
   getResumeDataFromBackend,
   type ResumeData,
@@ -87,6 +86,7 @@ import { startStartupAutoUpdateCheck } from "./startup-auto-update";
 import { loadTools } from "./tools/manager";
 import { clearPersistedClientToolRules } from "./tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "./utils/debug";
+import { startOrphanDetection } from "./utils/orphan-detection";
 import { markMilestone } from "./utils/timing";
 
 // Stable empty array constants to prevent new references on every render
@@ -181,11 +181,12 @@ USAGE
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
+  letta mods ...        List and manage local mods
   letta app-server ...  Run local app-server websocket transport
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
-  letta install ...     Install a skill into an agent memfs repository
+  letta install ...     Install a skill or mod package
   letta skills ...      List or delete installed agent skills
 
 OPTIONS
@@ -205,9 +206,14 @@ SUBCOMMANDS
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
+  letta mods list [--agent <id>]
+  letta mods package <mod-file> --name <package-name> [--out <dir>]
+  letta mods enable <package-spec>
+  letta mods disable <package-spec>
+  letta mods remove <package-spec>
   letta app-server [--listen ws://127.0.0.1:4500]
   letta connect <provider> [options]
-  letta install <skill> [--agent <id> | -n <name>]
+  letta install <thing> [--agent <id> | -n <name>]
   letta skills list [--agent <id> | -n <name>]
   letta skills delete <skill_name> --agent <id>
   letta backend [api|local]
@@ -216,12 +222,10 @@ SUBCOMMANDS
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
   - If profiles exist, you'll be prompted to select one or create a new agent
-  - Profiles can be "pinned" to specific projects for quick access
+  - Agents can be pinned for quick access with /pin
   - Use /profile save <name> to bookmark your current agent
 
-  Profiles are stored in:
-  - Global: ~/.letta/settings.json (available everywhere)
-  - Local: .letta/settings.local.json (pinned to project)
+  Agent pins are stored in ~/.letta/settings.json.
 
   If no credentials are configured, you'll be prompted to authenticate via
   Letta Cloud OAuth on first run.
@@ -232,12 +236,13 @@ EXAMPLES
   letta --new              # Create new conversation
   letta --agent agent_123  # Open specific agent
   letta install official/finance/stocks --agent agent-123
+  letta install npm:@letta-ai/mod-plan-mode
 
   # inside the interactive session
   /profile save MyAgent    # Save current agent as profile
   /profiles                # Open profile selector
-  /pin                     # Pin current profile to project
-  /unpin                   # Unpin profile from project
+  /pin                     # Pin current agent
+  /unpin                   # Unpin current agent
   /logout                  # Clear saved credentials and exit
 
   # headless with JSON output (includes stats)
@@ -265,19 +270,14 @@ async function printInfo() {
   await settingsManager.loadLocalProjectSettings(cwd);
 
   // Get pinned agents
-  const localPinned = settingsManager.getLocalPinnedAgents(cwd);
-  const globalPinned = settingsManager.getGlobalPinnedAgents();
+  const pinned = settingsManager.getPinnedAgents();
   const localSettings = settingsManager.getLocalProjectSettings(cwd);
   const lastAgent = localSettings.lastAgent;
 
   // Try to fetch agent names from API (if authenticated)
   const agentNames: Record<string, string> = {};
   const allAgentIds = [
-    ...new Set([
-      ...localPinned,
-      ...globalPinned,
-      ...(lastAgent ? [lastAgent] : []),
-    ]),
+    ...new Set([...pinned, ...(lastAgent ? [lastAgent] : [])]),
   ];
 
   if (allAgentIds.length > 0) {
@@ -315,7 +315,7 @@ async function printInfo() {
   // Show which agent will be resumed
   if (lastAgent) {
     console.log(`Will resume: ${formatAgent(lastAgent)}`);
-  } else if (localPinned.length > 0 || globalPinned.length > 0) {
+  } else if (pinned.length > 0) {
     console.log("Will resume: (will show selector)");
   } else {
     console.log("Will resume: (will create new agent)");
@@ -323,30 +323,17 @@ async function printInfo() {
 
   console.log("");
 
-  // Locally pinned agents
-  if (localPinned.length > 0) {
-    console.log("Locally pinned agents (this project):");
-    for (const id of localPinned) {
+  // Pinned agents
+  if (pinned.length > 0) {
+    console.log("Pinned agents:");
+    for (const id of pinned) {
       const isLast = id === lastAgent;
       const prefix = isLast ? "→ " : "  ";
       const suffix = isLast ? " (last used)" : "";
       console.log(`  ${prefix}${formatAgent(id)}${suffix}`);
     }
   } else {
-    console.log("Locally pinned agents: (none)");
-  }
-
-  console.log("");
-
-  // Globally pinned agents
-  if (globalPinned.length > 0) {
-    console.log("Globally pinned agents:");
-    for (const id of globalPinned) {
-      const isLocal = localPinned.includes(id);
-      console.log(`    ${formatAgent(id)}${isLocal ? " (also local)" : ""}`);
-    }
-  } else {
-    console.log("Globally pinned agents: (none)");
+    console.log("Pinned agents: (none)");
   }
 }
 
@@ -371,23 +358,6 @@ function getModelForToolLoading(
   }
   // Otherwise, use the specified model (or undefined for auto-detection)
   return specifiedModel;
-}
-
-function getCurrentBackendMode(): BackendMode {
-  return isExperimentalLocalBackendEnabled() ? "local" : "api";
-}
-
-function getPinnedAgentIdsForBackendMode(backendMode: BackendMode): string[] {
-  const previousBackendMode = getCurrentBackendMode();
-  configureBackendMode(backendMode);
-  try {
-    return settingsManager
-      .getMergedPinnedAgents()
-      .map((entry) => entry.agentId)
-      .filter((id) => isAgentIdCompatibleWithBackend(id, backendMode));
-  } finally {
-    configureBackendMode(previousBackendMode);
-  }
 }
 
 async function findLocalAgentsByName(name: string): Promise<AgentState[]> {
@@ -443,7 +413,8 @@ async function resolveAgentByName(
 
   for (const backendMode of backendLookupOrder) {
     const backend = getBackendForMode(backendMode);
-    const pinnedAgents = getPinnedAgentIdsForBackendMode(backendMode);
+    const pinnedAgents =
+      settingsManager.getPinnedAgentsForBackendMode(backendMode);
 
     const matches: Array<{
       id: string;
@@ -510,7 +481,8 @@ async function getPinnedAgentNames(
   const agents: { id: string; name: string }[] = [];
   for (const backendMode of backendLookupOrder) {
     const backend = getBackendForMode(backendMode);
-    const pinnedAgents = getPinnedAgentIdsForBackendMode(backendMode);
+    const pinnedAgents =
+      settingsManager.getPinnedAgentsForBackendMode(backendMode);
 
     await Promise.all(
       pinnedAgents.map(async (id) => {
@@ -667,6 +639,11 @@ async function getLocalBackendStartupFallbackSession(
 
 async function main(): Promise<void> {
   markMilestone("CLI_START");
+
+  // Detect if the parent process (Desktop, terminal) dies and we get
+  // orphaned to PID 1. Without this, a detached CLI can run for days
+  // accumulating memory after the parent exits without cleanly killing it.
+  startOrphanDetection();
 
   const rawCliArgs = process.argv.slice(2);
   let subcommandArgs = rawCliArgs;
@@ -1761,11 +1738,6 @@ async function main(): Promise<void> {
           LETTA_CLOUD_API_URL;
         const isCustomApiBackend =
           startupBackendMode !== "local" && !baseURL.includes("api.letta.com");
-        const isCredentiallessLocalStartup =
-          startupBackendMode === "local" &&
-          !isCustomApiBackend &&
-          !settings.refreshToken &&
-          !apiKey;
         setStartupHasCloudCredentials(Boolean(settings.refreshToken || apiKey));
         const startupModelsPromise =
           startupBackendMode === "local"
@@ -1874,16 +1846,12 @@ async function main(): Promise<void> {
           const globalSession = settingsManager.getGlobalLastSession();
           const globalAgentId = globalSession?.agentId;
 
+          // Both LRU getters already filter by the active server key (which
+          // encodes the backend mode), so no extra compatibility check is
+          // needed here.
           const preferredResumeAgentId =
-            startupBackendMode === "local"
-              ? localAgentId &&
-                isAgentIdCompatibleWithBackend(localAgentId, "local")
-                ? localAgentId
-                : null
-              : globalAgentId &&
-                  isAgentIdCompatibleWithBackend(globalAgentId, "api")
-                ? globalAgentId
-                : null;
+            (startupBackendMode === "local" ? localAgentId : globalAgentId) ??
+            null;
 
           if (preferredResumeAgentId) {
             try {
@@ -1943,32 +1911,20 @@ async function main(): Promise<void> {
           process.cwd(),
         );
         const rawGlobalAgentId = settingsManager.getGlobalLastAgentId();
-        const localPinnedAgentIds = settingsManager
-          .getLocalPinnedAgents(process.cwd())
-          .filter((agentId) =>
-            isAgentIdCompatibleWithBackend(agentId, startupBackendMode),
-          );
-        const localPinnedAgentId =
-          localPinnedAgentIds.length === 1
-            ? (localPinnedAgentIds[0] ?? null)
-            : null;
+        const pinnedAgentIds =
+          settingsManager.getPinnedAgentsForBackendMode(startupBackendMode);
         const localAgentId =
-          startupBackendMode === "local" &&
-          rawLocalAgentId &&
-          isAgentIdCompatibleWithBackend(rawLocalAgentId, "local")
-            ? rawLocalAgentId
-            : null;
+          startupBackendMode === "local" ? rawLocalAgentId : null;
         const globalAgentId =
-          startupBackendMode === "api" &&
-          rawGlobalAgentId &&
-          isAgentIdCompatibleWithBackend(rawGlobalAgentId, "api")
-            ? rawGlobalAgentId
-            : null;
+          startupBackendMode === "api" ? rawGlobalAgentId : null;
 
-        // Fetch local pin + LRU agents in parallel, de-duping shared IDs.
+        // Validate every pinned agent (not just a lone one) alongside the LRU
+        // agents, de-duping shared IDs. Validating all pins lets the decision
+        // below count only pins that exist in the active org, so stale or
+        // cross-org pins don't inflate the count and force the selector.
         const agentIdsToValidate = [
           ...new Set(
-            [localPinnedAgentId, localAgentId, globalAgentId].filter(
+            [...pinnedAgentIds, localAgentId, globalAgentId].filter(
               (agentId): agentId is string => Boolean(agentId),
             ),
           ),
@@ -1988,9 +1944,17 @@ async function main(): Promise<void> {
           }
         }
 
-        const localPinnedAgentExists = localPinnedAgentId
-          ? cachedAgents.has(localPinnedAgentId)
-          : false;
+        // Base the pinned-agent decision on pins that actually exist in the
+        // active org: a single existing pin resumes directly, while stale or
+        // cross-org pins are ignored instead of forcing the selector.
+        const existingPinnedIds = pinnedAgentIds.filter((id) =>
+          cachedAgents.has(id),
+        );
+        const pinnedAgentId =
+          existingPinnedIds.length === 1
+            ? (existingPinnedIds[0] ?? null)
+            : null;
+        const pinnedAgentExists = pinnedAgentId !== null;
         let localAgentExists = false;
         let globalAgentExists = false;
         if (localAgentId) {
@@ -2006,12 +1970,12 @@ async function main(): Promise<void> {
         }
         markMilestone("STARTUP_LRU_FETCH_DONE");
 
-        // Step 3: Resolve startup target using pure decision logic
-        const mergedPinned = isCredentiallessLocalStartup
-          ? settingsManager
-              .getMergedPinnedAgents(process.cwd())
-              .filter((entry) => entry.isLocal)
-          : settingsManager.getMergedPinnedAgents(process.cwd());
+        // Step 3: Resolve startup target using pure decision logic.
+        // pinnedCount is the raw configured count (drives the "any pins → show
+        // the selector" fallback); existingPinnedCount counts pins that resolve
+        // in the active org (drives single-resume / multi-pin select).
+        const pinnedCount = pinnedAgentIds.length;
+        const existingPinnedCount = existingPinnedIds.length;
         const fallbackSession =
           startupBackendMode === "local" &&
           !localAgentExists &&
@@ -2023,9 +1987,10 @@ async function main(): Promise<void> {
         );
         const localSession = settingsManager.getLocalLastSession(process.cwd());
         const target = resolveStartupTarget({
-          localPinnedAgentId,
-          localPinnedAgentExists,
-          localPinnedCount: localPinnedAgentIds.length,
+          pinnedAgentId,
+          pinnedAgentExists,
+          pinnedCount,
+          existingPinnedCount,
           localAgentId,
           localConversationId: localSession?.conversationId ?? null,
           localAgentExists,
@@ -2033,7 +1998,6 @@ async function main(): Promise<void> {
           globalAgentExists,
           fallbackAgentId: fallbackSession?.agentId ?? null,
           fallbackConversationId: fallbackSession?.conversationId ?? null,
-          mergedPinnedCount: mergedPinned.length,
           forceNew: false, // forceNew short-circuited above
           needsModelPicker,
         });
@@ -2187,10 +2151,7 @@ async function main(): Promise<void> {
             startupBackendMode === "local"
               ? settingsManager.getLocalLastAgentId()
               : settingsManager.getGlobalLastAgentId();
-          if (
-            recentAgentId &&
-            isAgentIdCompatibleWithBackend(recentAgentId, startupBackendMode)
-          ) {
+          if (recentAgentId) {
             try {
               await backend.retrieveAgent(recentAgentId);
               resumingAgentId = recentAgentId;
@@ -2399,15 +2360,24 @@ async function main(): Promise<void> {
         // Set agent context for tools that need it (e.g., Skill tool)
         setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
 
+        let startupMemfsFlag: boolean | undefined = autoEnableMemfsForFreshAgent
+          ? true
+          : memfsFlag;
         if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
-          const { hydrateMemfsSettingFromAgent } = await import(
+          const { hydrateMemfsSettingFromAgent, isLettaCloud } = await import(
             "@/agent/memory-filesystem"
           );
           const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
           if (!memfsEnabled) {
-            console.warn(
-              "Warning: this agent does not have git-backed memory enabled. Run `/memfs enable` to enable MemFS.",
-            );
+            if (!noMemfsFlag && (await isLettaCloud())) {
+              // Auto-enable memfs for existing agents that don't have it yet.
+              // Agents can be created outside Letta Code without the tag.
+              startupMemfsFlag = true;
+            } else {
+              console.warn(
+                "Warning: this agent does not have git-backed memory enabled. Run `/memfs enable` to enable MemFS.",
+              );
+            }
           }
         }
 
@@ -2416,9 +2386,6 @@ async function main(): Promise<void> {
         // unless the user explicitly requested a memfs mode toggle.
         const agentId = agent.id;
         const agentTags = agent.tags ?? undefined;
-        const startupMemfsFlag = autoEnableMemfsForFreshAgent
-          ? true
-          : memfsFlag;
         const shouldBlockOnMemfsStartup = Boolean(memfsFlag || noMemfsFlag);
         const memfsSyncPromise = backend.capabilities.remoteMemfs
           ? import("@/agent/memory-filesystem").then(({ applyMemfsFlags }) =>

@@ -40,6 +40,18 @@
       "isFeatured": true
     },
     {
+      "id": "glm",
+      "handle": "letta/glm",
+      "label": "Letta GLM",
+      "description": "Route directly to Letta-hosted GLM 5.2",
+      "free": true,
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 28000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "fable",
       "handle": "anthropic/claude-fable-5",
       "label": "Fable 5",
@@ -325,10 +337,77 @@
     },
     {
       "id": "sonnet",
+      "handle": "anthropic/claude-sonnet-5",
+      "label": "Sonnet 5",
+      "description": "Sonnet 5 (high reasoning)",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "high",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-5-no-reasoning",
+      "handle": "anthropic/claude-sonnet-5",
+      "label": "Sonnet 5",
+      "description": "Sonnet 5 with no reasoning (faster)",
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "none",
+        "enable_reasoner": false,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-5-low",
+      "handle": "anthropic/claude-sonnet-5",
+      "label": "Sonnet 5",
+      "description": "Sonnet 5 (low reasoning)",
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "low",
+        "enable_reasoner": true,
+        "max_reasoning_tokens": 4000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-5-medium",
+      "handle": "anthropic/claude-sonnet-5",
+      "label": "Sonnet 5",
+      "description": "Sonnet 5 (med reasoning)",
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "medium",
+        "enable_reasoner": true,
+        "max_reasoning_tokens": 12000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-5-xhigh",
+      "handle": "anthropic/claude-sonnet-5",
+      "label": "Sonnet 5",
+      "description": "Sonnet 5 (max reasoning)",
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "xhigh",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-4.6",
       "handle": "anthropic/claude-sonnet-4-6",
       "label": "Sonnet 4.6",
       "description": "Sonnet 4.6 (high reasoning)",
-      "isFeatured": true,
       "updateArgs": {
         "context_window": 200000,
         "max_output_tokens": 128000,
@@ -694,6 +773,19 @@
       "label": "Bedrock Sonnet 4.6",
       "shortLabel": "Sonnet 4.6 BR",
       "description": "Sonnet 4.6 via AWS Bedrock",
+      "updateArgs": {
+        "context_window": 180000,
+        "max_output_tokens": 64000,
+        "max_reasoning_tokens": 31999,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "bedrock-sonnet-5",
+      "handle": "bedrock/us.anthropic.claude-sonnet-5",
+      "label": "Bedrock Sonnet 5",
+      "shortLabel": "Sonnet 5 BR",
+      "description": "Sonnet 5 via AWS Bedrock",
       "updateArgs": {
         "context_window": 180000,
         "max_output_tokens": 64000,
@@ -1699,11 +1791,22 @@
       }
     },
     {
+      "id": "kimi-k2.7",
+      "handle": "openrouter/moonshotai/kimi-k2.7-code",
+      "label": "Kimi K2.7 Code",
+      "description": "Moonshot AI's coding-focused Kimi K2.7 model for long-context agentic programming tasks",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 262144,
+        "max_output_tokens": 16384,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "kimi-k2.6",
       "handle": "openrouter/moonshotai/kimi-k2.6",
       "label": "Kimi K2.6",
       "description": "Moonshot AI's next-gen multimodal coding and agent model",
-      "isFeatured": true,
       "updateArgs": {
         "context_window": 200000,
         "max_output_tokens": 64000,

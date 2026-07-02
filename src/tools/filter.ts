@@ -44,7 +44,7 @@ class ToolFilterManager {
    * Get list of enabled tools (null means all tools)
    */
   getEnabledTools(): string[] | null {
-    return this.enabledTools ? [...this.enabledTools] : null;
+    return this.enabledTools === null ? null : [...this.enabledTools];
   }
 
   /**

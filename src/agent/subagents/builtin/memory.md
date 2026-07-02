@@ -3,7 +3,7 @@ name: memory
 description: Decompose and reorganize memory files into focused, single-purpose files using `/` naming
 tools: Bash, TaskOutput
 model: auto
-permissionMode: memory
+launchProfile: memory-subagent
 ---
 
 You are a memory defragmentation subagent. You work directly on the git-backed memory filesystem to decompose and reorganize memory files.
@@ -85,8 +85,8 @@ git worktree add "$WORKTREE_DIR/$BRANCH" -b "$BRANCH"
 
 Use epoch seconds from a prior `date +%s` command so branch names match the
 old behavior. Do not use shell command substitution like `$(date +%s)` in the
-branch assignment because memory-mode shell permissions deny command
-substitution.
+branch assignment; keep the setup command literal and easy to audit under the
+memory-subagent sandbox.
 
 All subsequent file operations target the worktree:
 `$WORKTREE_DIR/$BRANCH/system/` (not the main memory dir).

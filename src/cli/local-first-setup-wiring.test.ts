@@ -163,8 +163,6 @@ describe("local-first setup wiring", () => {
       'settingsManager.updateSettings({ preferredBackendMode: "local" })',
     );
     expect(setupSegment).toContain("await settingsManager.flush();");
-    expect(source).toContain("isCredentiallessLocalStartup");
-    expect(source).toContain(".filter((entry) => entry.isLocal)");
   });
 
   test("local transcript migration errors do not block setup login fallback", () => {

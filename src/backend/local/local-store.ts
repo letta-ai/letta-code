@@ -72,10 +72,48 @@ const LEGACY_LOCAL_CONTEXT_WINDOW_LIMIT = 128000;
 const DEFAULT_LOCAL_CONVERSATION_ID_PREFIX = "local-conv-";
 const DEFAULT_LOCAL_STORED_MESSAGE_ID_PREFIX = "letta-msg-";
 const DEFAULT_LOCAL_UI_MESSAGE_ID_PREFIX = "ui-msg-";
+const LETTA_CODE_SUBAGENT_TAG = "role:subagent";
 
 function isStringArray(value: unknown): value is string[] {
   return (
     Array.isArray(value) && value.every((item) => typeof item === "string")
+  );
+}
+
+function normalizeAgentHiddenFlag(
+  hidden: unknown,
+  tags: string[],
+): boolean | null | undefined {
+  if (typeof hidden === "boolean") return hidden;
+  if ((hidden === undefined || hidden === null) && isSubagentTags(tags)) {
+    return true;
+  }
+  return hidden === null ? null : undefined;
+}
+
+function isSubagentTags(tags: string[]): boolean {
+  return tags.includes(LETTA_CODE_SUBAGENT_TAG);
+}
+
+export function isHiddenLocalAgentRecord(record: {
+  hidden?: boolean | null;
+  tags?: unknown;
+}): boolean {
+  const tags = isStringArray(record.tags) ? record.tags : [];
+  return (
+    record.hidden === true || (record.hidden == null && isSubagentTags(tags))
+  );
+}
+
+function shouldPersistSubagentHiddenBackfill(
+  raw: unknown,
+  record: LocalAgentRecord,
+): boolean {
+  return (
+    isRecord(raw) &&
+    (raw.hidden === undefined || raw.hidden === null) &&
+    record.hidden === true &&
+    isSubagentTags(record.tags)
   );
 }
 
@@ -132,14 +170,17 @@ function createLocalAgentRecord(
   defaultAgentModel: string,
 ): LocalAgentRecord {
   const bodyRecord = body as Record<string, unknown>;
+  const tags = isStringArray(bodyRecord.tags) ? bodyRecord.tags : [];
+  const hidden = normalizeAgentHiddenFlag(bodyRecord.hidden, tags);
   return {
     id: `agent-local-${randomUUID()}`,
     name: optionalString(bodyRecord.name) ?? defaultAgentName,
     description: optionalStringOrNull(bodyRecord.description) ?? null,
     system: optionalString(bodyRecord.system) ?? "",
-    tags: isStringArray(bodyRecord.tags) ? bodyRecord.tags : [],
+    tags,
     model: optionalString(bodyRecord.model) ?? defaultAgentModel,
     model_settings: supportedModelSettingsFromBody(bodyRecord),
+    ...(hidden !== undefined ? { hidden } : {}),
   };
 }
 
@@ -303,17 +344,20 @@ function normalizeAgentRecord(
   }
 
   const compactionSettings = optionalRecordOrNull(value.compaction_settings);
+  const tags = isStringArray(value.tags) ? value.tags : [];
+  const hidden = normalizeAgentHiddenFlag(value.hidden, tags);
   return {
     id: value.id,
     name: optionalString(value.name) ?? "Letta Code",
     description: optionalStringOrNull(value.description) ?? null,
     system: optionalString(value.system) ?? "",
-    tags: isStringArray(value.tags) ? value.tags : [],
+    tags,
     model:
       optionalString(value.model) ??
       optionalString(legacyLlmConfig.model) ??
       defaultAgentModel,
     model_settings: modelSettings,
+    ...(hidden !== undefined ? { hidden } : {}),
     ...(compactionSettings !== undefined
       ? { compaction_settings: compactionSettings }
       : {}),
@@ -326,6 +370,7 @@ export function projectLocalAgentState(
   inContextMessageIds: string[] = messageIds,
   lastRunCompletion?: string | null,
 ): AgentState {
+  const hidden = normalizeAgentHiddenFlag(record.hidden, record.tags);
   const nestedReasoning = isRecord(record.model_settings.reasoning)
     ? record.model_settings.reasoning
     : undefined;
@@ -353,6 +398,7 @@ export function projectLocalAgentState(
     tags: record.tags,
     model: record.model,
     model_settings: record.model_settings,
+    ...(hidden !== undefined ? { hidden } : {}),
     ...(record.compaction_settings !== undefined
       ? { compaction_settings: record.compaction_settings }
       : {}),
@@ -1147,6 +1193,11 @@ export class LocalStore {
     LocalCompiledSystemPrompt
   >();
   private readonly messagesById = new Map<string, StoredMessage[]>();
+  // Tracks local assistant message ids that have received a stop_reason chunk,
+  // meaning the turn completed (or was cancelled normally). Used by
+  // rollbackUnpersistedTrailingAssistantMessage to distinguish a clean completed
+  // turn from one that was cut off before stop_reason.
+  private readonly settledLocalMessageIds = new Set<string>();
   private conversationRecordsScanned = false;
   private conversationSeq = 0;
   private messageSeq = 0;
@@ -1196,9 +1247,9 @@ export class LocalStore {
     const tags = isStringArray(bodyRecord.tags) ? bodyRecord.tags : [];
     const after = optionalString(bodyRecord.after);
     const limit = typeof bodyRecord.limit === "number" ? bodyRecord.limit : 20;
-    let agents = [...this.agents.values()].map((agent) =>
-      this.projectAgent(agent),
-    );
+    let agents = [...this.agents.values()]
+      .filter((agent) => !isHiddenLocalAgentRecord(agent))
+      .map((agent) => this.projectAgent(agent));
 
     if (tags.length > 0) {
       agents = agents.filter((agent) =>
@@ -1336,6 +1387,9 @@ export class LocalStore {
       }),
       ...(isStringArray(bodyRecord.tags) && { tags: bodyRecord.tags }),
       ...(nextModel && { model: nextModel }),
+      ...(typeof bodyRecord.hidden === "boolean" && {
+        hidden: bodyRecord.hidden,
+      }),
       model_settings: nextModelSettings,
     };
     this.agents.set(agentId, updated);
@@ -1581,9 +1635,9 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Agent", targetAgentId);
     }
     this.ensureAgent(targetAgentId);
-    this.conversationSeq += 1;
+    const forkedConversationId = this.nextConversationId(targetAgentId);
     const forked = createLocalConversationRecord(
-      `${this.conversationIdPrefix}${this.conversationSeq}`,
+      forkedConversationId,
       targetAgentId,
       this.conversationSeq,
       {
@@ -2229,6 +2283,8 @@ export class LocalStore {
     const conversation = this.findConversation(conversationId, agentId);
     if (!conversation) return 0;
 
+    this.rollbackUnpersistedTrailingAssistantMessage(conversation, agentId);
+
     const messages = this.localMessagesForConversation(
       conversation.id,
       agentId,
@@ -2252,6 +2308,43 @@ export class LocalStore {
 
     if (settledCount > 0) this.rebuildMessageIndex();
     return settledCount;
+  }
+
+  private rollbackUnpersistedTrailingAssistantMessage(
+    conversation: StoredConversation,
+    agentId: string,
+  ): void {
+    const key = this.conversationKey(conversation.id, agentId);
+    const messages = this.localMessagesForConversation(
+      conversation.id,
+      agentId,
+    );
+    const last = messages.at(-1);
+    if (last?.role !== "assistant") return;
+    // If a stop_reason chunk was received for this message, the turn completed
+    // normally — do not roll it back. Works for both disk-backed and in-memory stores.
+    if (this.settledLocalMessageIds.has(last.id)) return;
+    // For disk-backed stores also check the persisted transcript index as a
+    // belt-and-suspenders fallback (covers messages loaded from a previous session).
+    if (this.sessionEntryIdsByMessageId(key).has(last.id)) return;
+
+    messages.pop();
+    this.localMessagesByConversationKey.set(key, messages);
+    conversation.in_context_message_ids =
+      conversation.in_context_message_ids.filter((id) => id !== last.id);
+    const previousLastMessage = messages.at(-1);
+    conversation.last_message_at = previousLastMessage
+      ? localMessageDate(
+          previousLastMessage,
+          conversation.last_message_at ?? currentIsoTimestamp(),
+        )
+      : conversation.created_at;
+    conversation.updated_at = currentIsoTimestamp();
+    this.conversations.set(key, conversation);
+    this.persistConversationState(conversation.id, agentId, {
+      transcript: "skip",
+    });
+    this.rebuildMessageIndex();
   }
 
   private findToolCall(
@@ -2760,6 +2853,9 @@ export class LocalStore {
       });
       return;
     }
+    // Mark as settled regardless of storageDir so rollback detection works for
+    // in-memory backends too (persistConversationState is a no-op without storageDir).
+    this.settledLocalMessageIds.add(last.id);
     this.persistConversationState(conversationId, agentId, {
       transcript: "append",
       message: last,
@@ -3061,12 +3157,13 @@ export class LocalStore {
     if (existsSync(agentsDir)) {
       for (const file of readdirSync(agentsDir)) {
         if (!file.endsWith(".json")) continue;
-        const agent = normalizeAgentRecord(
-          readJsonFile<unknown>(join(agentsDir, file)),
-          this.defaultAgentModel,
-        );
+        const raw = readJsonFile<unknown>(join(agentsDir, file));
+        const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
         if (agent?.id) {
           this.agents.set(agent.id, agent);
+          if (shouldPersistSubagentHiddenBackfill(raw, agent)) {
+            this.persistAgent(agent.id);
+          }
         }
       }
     }
@@ -3445,11 +3542,12 @@ export class LocalStore {
     return conversation;
   }
 
-  private nextConversationId(): string {
+  private nextConversationId(agentId?: string): string {
+    const resolvedAgentId = agentId ?? this.defaultAgentId;
     for (;;) {
       this.conversationSeq += 1;
       const conversationId = `${this.conversationIdPrefix}${this.conversationSeq}`;
-      const key = this.conversationKey(conversationId, this.defaultAgentId);
+      const key = this.conversationKey(conversationId, resolvedAgentId);
       if (this.conversations.has(key)) continue;
       const conversationDir = this.conversationDirForKey(key);
       if (conversationDir && existsSync(conversationDir)) continue;

@@ -139,7 +139,7 @@ export const CLI_FLAG_CATALOG = {
     mode: "headless",
     help: {
       description:
-        "Disable the headless cross-agent memory guard for this parent agent process.",
+        "Disable the cross-agent memory guard for this parent agent process.",
       continuationLines: [
         "Allows intentional access to other agents' memory directories.",
         "Ignored by subagents; their memory guard remains enabled.",

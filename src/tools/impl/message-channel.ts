@@ -29,6 +29,7 @@ import type {
 } from "@/channels/types";
 
 const TELEGRAM_CHANNEL_ID = "telegram";
+const SIGNAL_CHANNEL_ID = "signal";
 const TELEGRAM_PLACEHOLDER_PREFIX = "LCTELEGRAMHTMLPLACEHOLDER";
 const TELEGRAM_PLACEHOLDER_SUFFIX = "X";
 const TELEGRAM_PLACEHOLDER_PATTERN = /LCTELEGRAMHTMLPLACEHOLDER(\d+)X/g;
@@ -39,7 +40,7 @@ const SLACK_ANGLE_TOKEN_RE = /<[^>\n]+>/g;
 
 type OutboundChannelFormatter = (
   text: string,
-) => Pick<OutboundChannelMessage, "text" | "parseMode">;
+) => Pick<OutboundChannelMessage, "text" | "parseMode" | "textStyle">;
 
 function decodeBasicXmlEntities(text: string): string {
   return text
@@ -484,9 +485,291 @@ export function markdownToSlackMrkdwn(text: string): string {
   return formatSlackText(text);
 }
 
+type SignalMarkdownStyle =
+  | "BOLD"
+  | "ITALIC"
+  | "SPOILER"
+  | "STRIKETHROUGH"
+  | "MONOSPACE";
+
+type SignalMarkdownRange = {
+  start: number;
+  length: number;
+  style: SignalMarkdownStyle;
+};
+
+type SignalMarkdownState = {
+  text: string;
+  ranges: SignalMarkdownRange[];
+};
+
+type SignalInlineMarker = {
+  delimiter: string;
+  styles: SignalMarkdownStyle[];
+  requireWordBoundary?: boolean;
+};
+
+const SIGNAL_INLINE_MARKERS: SignalInlineMarker[] = [
+  { delimiter: "***", styles: ["BOLD", "ITALIC"] },
+  { delimiter: "___", styles: ["BOLD", "ITALIC"] },
+  { delimiter: "**", styles: ["BOLD"] },
+  { delimiter: "__", styles: ["BOLD"] },
+  { delimiter: "~~", styles: ["STRIKETHROUGH"] },
+  { delimiter: "||", styles: ["SPOILER"] },
+  { delimiter: "*", styles: ["ITALIC"], requireWordBoundary: true },
+  { delimiter: "_", styles: ["ITALIC"], requireWordBoundary: true },
+];
+
+function isEscaped(text: string, index: number): boolean {
+  let slashCount = 0;
+  for (let i = index - 1; i >= 0 && text[i] === "\\"; i--) {
+    slashCount++;
+  }
+  return slashCount % 2 === 1;
+}
+
+function isWordLike(char: string | undefined): boolean {
+  return !!char && /[A-Za-z0-9_]/.test(char);
+}
+
+function addSignalStyle(
+  state: SignalMarkdownState,
+  start: number,
+  style: SignalMarkdownStyle,
+): void {
+  const length = state.text.length - start;
+  if (length <= 0) {
+    return;
+  }
+  state.ranges.push({ start, length, style });
+}
+
+function canOpenSignalMarker(
+  text: string,
+  index: number,
+  marker: SignalInlineMarker,
+): boolean {
+  const next = text[index + marker.delimiter.length];
+  if (!next || /\s/.test(next)) {
+    return false;
+  }
+  if (!marker.requireWordBoundary) {
+    return true;
+  }
+  const previous = text[index - 1];
+  return !isWordLike(previous);
+}
+
+function isValidSignalMarkerContent(
+  text: string,
+  closeIndex: number,
+  content: string,
+  marker: SignalInlineMarker,
+): boolean {
+  if (content.length === 0 || /^\s|\s$/.test(content)) {
+    return false;
+  }
+  if (!marker.requireWordBoundary) {
+    return true;
+  }
+  const next = text[closeIndex + marker.delimiter.length];
+  return !isWordLike(next);
+}
+
+function findSignalClosingMarker(
+  text: string,
+  contentStart: number,
+  marker: SignalInlineMarker,
+): number {
+  let searchIndex = contentStart;
+  while (searchIndex < text.length) {
+    const closeIndex = text.indexOf(marker.delimiter, searchIndex);
+    if (closeIndex < 0) {
+      return -1;
+    }
+    if (isEscaped(text, closeIndex)) {
+      searchIndex = closeIndex + marker.delimiter.length;
+      continue;
+    }
+    const content = text.slice(contentStart, closeIndex);
+    if (isValidSignalMarkerContent(text, closeIndex, content, marker)) {
+      return closeIndex;
+    }
+    searchIndex = closeIndex + marker.delimiter.length;
+  }
+  return -1;
+}
+
+function parseSignalInline(text: string, state: SignalMarkdownState): void {
+  let index = 0;
+  while (index < text.length) {
+    if (text[index] === "\\" && index + 1 < text.length) {
+      state.text += text[index + 1] ?? "";
+      index += 2;
+      continue;
+    }
+
+    if (text[index] === "`") {
+      const closeIndex = text.indexOf("`", index + 1);
+      if (
+        closeIndex > index + 1 &&
+        !text.slice(index + 1, closeIndex).includes("\n")
+      ) {
+        const start = state.text.length;
+        state.text += text.slice(index + 1, closeIndex);
+        addSignalStyle(state, start, "MONOSPACE");
+        index = closeIndex + 1;
+        continue;
+      }
+    }
+
+    if (text[index] === "[") {
+      const link = parseMarkdownLink(text, index);
+      if (link) {
+        parseSignalInline(link.label, state);
+        state.text += ` (${link.url})`;
+        index = link.endIndex;
+        continue;
+      }
+    }
+
+    const marker = SIGNAL_INLINE_MARKERS.find(
+      (candidate) =>
+        text.startsWith(candidate.delimiter, index) &&
+        !isEscaped(text, index) &&
+        canOpenSignalMarker(text, index, candidate),
+    );
+    if (marker) {
+      const contentStart = index + marker.delimiter.length;
+      const closeIndex = findSignalClosingMarker(text, contentStart, marker);
+      if (closeIndex >= 0) {
+        const start = state.text.length;
+        parseSignalInline(text.slice(contentStart, closeIndex), state);
+        for (const style of marker.styles) {
+          addSignalStyle(state, start, style);
+        }
+        index = closeIndex + marker.delimiter.length;
+        continue;
+      }
+    }
+
+    state.text += text[index] ?? "";
+    index++;
+  }
+}
+
+function parseSignalMarkdownLine(
+  line: string,
+  state: SignalMarkdownState,
+): void {
+  const lineStyles: SignalMarkdownStyle[] = [];
+  let content = line;
+
+  const headingMatch = content.match(/^\s{0,3}#{1,6}\s+(.+)$/);
+  if (headingMatch) {
+    content = headingMatch[1]?.trim() ?? "";
+    lineStyles.push("BOLD");
+  } else {
+    const quoteMatch = content.match(/^\s{0,3}> ?(.*)$/);
+    if (quoteMatch) {
+      content = quoteMatch[1] ?? "";
+      lineStyles.push("ITALIC");
+    } else {
+      const bulletMatch = content.match(/^(\s*)[+*]\s+(.+)$/);
+      if (bulletMatch) {
+        content = `${bulletMatch[1] ?? ""}- ${bulletMatch[2] ?? ""}`;
+      }
+    }
+  }
+
+  const start = state.text.length;
+  parseSignalInline(content, state);
+  for (const style of lineStyles) {
+    addSignalStyle(state, start, style);
+  }
+}
+
+function flushSignalCodeBlock(
+  state: SignalMarkdownState,
+  lines: string[],
+): void {
+  const code = lines.join("\n").trimEnd();
+  if (code.length === 0) {
+    return;
+  }
+  const start = state.text.length;
+  state.text += code;
+  addSignalStyle(state, start, "MONOSPACE");
+}
+
+function signalTextStyleToString(range: SignalMarkdownRange): string {
+  return `${range.start}:${range.length}:${range.style}`;
+}
+
+export function markdownToSignalTextStyles(
+  text: string,
+): Pick<OutboundChannelMessage, "text" | "textStyle"> {
+  const state: SignalMarkdownState = { text: "", ranges: [] };
+  const lines = text.split("\n");
+  let inCodeBlock = false;
+  let codeBlockLines: string[] = [];
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] ?? "";
+    const isLastLine = index === lines.length - 1;
+
+    if (inCodeBlock) {
+      if (/^\s{0,3}```\s*$/.test(line)) {
+        flushSignalCodeBlock(state, codeBlockLines);
+        codeBlockLines = [];
+        inCodeBlock = false;
+        if (!isLastLine) {
+          state.text += "\n";
+        }
+      } else {
+        codeBlockLines.push(line);
+      }
+      continue;
+    }
+
+    if (/^\s{0,3}```[^`]*$/.test(line)) {
+      inCodeBlock = true;
+      codeBlockLines = [];
+      continue;
+    }
+
+    parseSignalMarkdownLine(line, state);
+    if (!isLastLine) {
+      state.text += "\n";
+    }
+  }
+
+  if (inCodeBlock) {
+    flushSignalCodeBlock(state, codeBlockLines);
+  }
+
+  const seenStyles = new Set<string>();
+  const textStyle = state.ranges
+    .map(signalTextStyleToString)
+    .filter((style) => {
+      if (seenStyles.has(style)) {
+        return false;
+      }
+      seenStyles.add(style);
+      return true;
+    });
+  return {
+    text: state.text,
+    ...(textStyle.length > 0 ? { textStyle } : {}),
+  };
+}
+
 const CHANNEL_OUTBOUND_FORMATTERS: Partial<
   Record<string, OutboundChannelFormatter>
 > = {
+  [SIGNAL_CHANNEL_ID](text) {
+    return markdownToSignalTextStyles(text);
+  },
   [TELEGRAM_CHANNEL_ID](text) {
     return {
       text: markdownToTelegramHtml(text),
@@ -503,7 +786,7 @@ const CHANNEL_OUTBOUND_FORMATTERS: Partial<
 export function formatOutboundChannelMessage(
   channel: string,
   text: string,
-): Pick<OutboundChannelMessage, "text" | "parseMode"> {
+): Pick<OutboundChannelMessage, "text" | "parseMode" | "textStyle"> {
   const normalizedText = decodeBasicXmlEntities(text);
   const formatter = CHANNEL_OUTBOUND_FORMATTERS[channel];
   if (!formatter) {
@@ -578,8 +861,14 @@ function firstDefinedBoolean(...values: unknown[]): boolean | undefined {
   return undefined;
 }
 
-function normalizeChatTarget(value: string): string {
+function normalizeChatTarget(
+  channel: SupportedChannelId,
+  value: string,
+): string {
   const trimmed = value.trim();
+  if (channel === "signal") {
+    return trimmed;
+  }
   const parts = trimmed
     .split(":")
     .map((part) => part.trim())
@@ -637,7 +926,7 @@ function normalizeMessageChannelInput(
   return {
     action,
     channel,
-    ...(rawChatId ? { chatId: normalizeChatTarget(rawChatId) } : {}),
+    ...(rawChatId ? { chatId: normalizeChatTarget(channel, rawChatId) } : {}),
     ...(rawTarget ? { target: rawTarget } : {}),
     accountId: firstNonEmptyString(args.accountId),
     message: firstNonEmptyString(args.message),

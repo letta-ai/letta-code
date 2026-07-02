@@ -98,7 +98,7 @@ describe("disabled mod adapter", () => {
       const adapter = createDisabledModAdapter();
 
       expect(adapter.getSnapshot()).toMatchObject({
-        hadStatuslineRenderer: false,
+        hadModPanels: false,
         hasModSources: false,
         isLoading: false,
       });
@@ -111,7 +111,6 @@ describe("disabled mod adapter", () => {
       expect(adapter.getSnapshot().registry.permissions).toEqual({});
       expect(adapter.getSnapshot().registry.tools).toEqual({});
       expect(adapter.getSnapshot().registry.ui.panels).toEqual({});
-      expect(adapter.getSnapshot().registry.ui.statuslineRenderer).toBeNull();
       expect(adapter.getBackend()).toBeUndefined();
       expect(getModPermissionDefinition("stale-permission")).toBeUndefined();
       expect(getModToolDefinition("stale_mod_tool")).toBeUndefined();

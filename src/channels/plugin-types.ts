@@ -7,6 +7,7 @@ import type {
   DiscordChannelMode,
   DmPolicy,
   OutboundChannelMessage,
+  SignalGroupMode,
   SlackChannelMode,
   TelegramGroupMode,
   WhatsAppGroupMode,
@@ -146,22 +147,35 @@ export interface ChannelCommonAccountPatch {
 }
 
 export interface ChannelPluginAccountPatch {
+  // Built-in channel account patches are intentionally flattened here because
+  // the channels service applies plugin config through one shared
+  // create/update path. ChannelAccountConfigAdapter maps protocol snake_case
+  // config into these camelCase fields before the service builds the concrete
+  // account type. This is channel-specific today; a future cleanup can replace
+  // this bag with discriminated per-channel patch types.
   token?: string;
   botToken?: string;
   appToken?: string;
   mode?: SlackChannelMode;
-  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode | SignalGroupMode;
   agentId?: string | null;
+  baseUrl?: string;
+  account?: string;
+  accountUuid?: string;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
+  showCompletedReaction?: boolean;
+  listenMode?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];
+  /** Signal UUID/identity -> replyable recipient aliases, e.g. UUID to E.164 phone. */
+  recipientAliases?: Record<string, string>;
   transcribeVoice?: boolean;
   richPrivateChatDefault?: boolean;
   richDraftStreaming?: boolean;
@@ -244,9 +258,15 @@ export interface ChannelMessageActionContext {
   request: ChannelMessageActionRequest;
   route: ChannelRoute;
   adapter: ChannelAdapter;
+  /**
+   * Format user-authored markdown/plain text for the target channel before the
+   * plugin sends it. The shared MessageChannel tool owns cross-channel text
+   * normalization, while action adapters decide how to pass the result to their
+   * concrete ChannelAdapter (e.g. Telegram HTML, Slack mrkdwn, Signal styles).
+   */
   formatText: (
     text: string,
-  ) => Pick<OutboundChannelMessage, "text" | "parseMode">;
+  ) => Pick<OutboundChannelMessage, "text" | "parseMode" | "textStyle">;
 }
 
 /**

@@ -29,6 +29,7 @@ import type {
   ChannelAccountSnapshot as ProtocolChannelAccountSnapshot,
   ChannelConfigSnapshot as ProtocolChannelConfigSnapshot,
 } from "@/types/protocol_v2";
+import { seedConversationWorkingDirectory } from "@/websocket/listener/cwd";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -55,6 +56,8 @@ import {
   isChannelTargetBindCommand,
   isChannelTargetsListCommand,
 } from "@/websocket/listener/protocol-inbound";
+import { emitDeviceStatusUpdate } from "@/websocket/listener/protocol-outbound";
+import { getOrCreateConversationRuntime } from "@/websocket/listener/runtime";
 import type { ListenerTransport } from "@/websocket/listener/transport";
 import type {
   IncomingMessage,
@@ -396,6 +399,7 @@ export async function handleChannelsProtocolCommand(
     agent_id: route.agentId,
     conversation_id: route.conversationId,
     enabled: route.enabled,
+    outbound_enabled: route.outboundEnabled,
     created_at: route.createdAt,
     updated_at: route.updatedAt,
   });
@@ -1419,4 +1423,21 @@ export function handleChannelRegistryEvent(
   );
   permissionModeState.mode = event.defaultPermissionMode;
   persistPermissionModeMapForRuntime(runtime);
+
+  const seededWorkingDirectory = seedConversationWorkingDirectory(
+    runtime,
+    event.agentId,
+    event.conversationId,
+    runtime.bootWorkingDirectory,
+  );
+  if (seededWorkingDirectory) {
+    emitDeviceStatusUpdate(
+      socket,
+      getOrCreateConversationRuntime(
+        runtime,
+        event.agentId,
+        event.conversationId,
+      ),
+    );
+  }
 }

@@ -39,6 +39,8 @@ import {
   ensureChannelRegistry,
   getChannelRegistry,
 } from "./registry";
+import type { ChannelRestoreAgentScope } from "./restore-scope";
+import { shouldRestoreChannelAccountForAgentScope } from "./restore-scope";
 import {
   addRoute,
   getRoute,
@@ -67,6 +69,7 @@ import type {
   DiscordChannelMode,
   DmPolicy,
   PendingPairing,
+  SignalGroupMode,
   SlackChannelMode,
   SupportedChannelId,
   TelegramGroupMode,
@@ -75,6 +78,7 @@ import type {
 import {
   DEFAULT_SLACK_PERMISSION_MODE,
   isDiscordChannelAccount,
+  isSignalChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
   isWhatsAppChannelAccount,
@@ -105,18 +109,21 @@ export interface ChannelConfigSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
-  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode | SignalGroupMode;
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
+  showCompletedReaction?: boolean;
+  listenMode?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];
+  recipientAliases?: Record<string, string>;
   transcribeVoice?: boolean;
   richPrivateChatDefault?: boolean;
   richDraftStreaming?: boolean;
@@ -143,6 +150,7 @@ export interface ChannelRouteSnapshot {
   agentId: string;
   conversationId: string;
   enabled: boolean;
+  outboundEnabled?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -177,6 +185,24 @@ function normalizeWhatsAppGroupMode(
     : undefined;
 }
 
+function normalizeSignalGroupMode(
+  value: ChannelAccountPatch["groupMode"],
+): SignalGroupMode | undefined {
+  return value === "disabled" || value === "mention" || value === "open"
+    ? value
+    : undefined;
+}
+
+function normalizeOptionalConfigString(
+  value: string | null | undefined,
+): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 export interface ChannelAccountSnapshot {
   [key: string]: unknown;
   channelId: string;
@@ -192,7 +218,7 @@ export interface ChannelAccountSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
-  groupMode?: TelegramGroupMode | WhatsAppGroupMode;
+  groupMode?: TelegramGroupMode | WhatsAppGroupMode | SignalGroupMode;
   transcribeVoice?: boolean;
   richPrivateChatDefault?: boolean;
   richDraftStreaming?: boolean;
@@ -206,11 +232,14 @@ export interface ChannelAccountSnapshot {
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
+  showCompletedReaction?: boolean;
+  listenMode?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];
+  recipientAliases?: Record<string, string>;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
   createdAt: string;
@@ -269,6 +298,10 @@ async function resolveChannelAccountDisplayName(
       return normalizeDisplayName(
         await resolveDiscordAccountDisplayName(account.token),
       );
+    }
+
+    if (isSignalChannelAccount(account)) {
+      return normalizeDisplayName(account.account ?? account.baseUrl);
     }
 
     if (!isSlackChannelAccount(account)) {
@@ -407,6 +440,7 @@ function toRouteSnapshot(
     agentId: route.agentId,
     conversationId: route.conversationId,
     enabled: route.enabled,
+    outboundEnabled: route.outboundEnabled !== false,
     createdAt: route.createdAt,
     updatedAt: route.updatedAt ?? route.createdAt,
   };
@@ -440,6 +474,10 @@ function isAccountConfigured(account: ChannelAccount): boolean {
 
   if (isWhatsAppChannelAccount(account)) {
     return true;
+  }
+
+  if (isSignalChannelAccount(account)) {
+    return account.baseUrl.trim().length > 0;
   }
 
   if (!isSlackChannelAccount(account)) {
@@ -555,6 +593,31 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     };
   }
 
+  if (isSignalChannelAccount(account)) {
+    return {
+      channelId: "signal",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      configured: isAccountConfigured(account),
+      running,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelAccountProtocolConfig(account),
+      agentId: account.agentId,
+      selfChatMode: account.selfChatMode,
+      groupMode: account.groupMode,
+      allowedGroups: [...(account.allowedGroups ?? [])],
+      mentionPatterns: [...(account.mentionPatterns ?? [])],
+      recipientAliases: { ...(account.recipientAliases ?? {}) },
+      transcribeVoice: account.transcribeVoice === true,
+      downloadMedia: account.downloadMedia === true,
+      mediaMaxBytes: account.mediaMaxBytes,
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    };
+  }
+
   if (!isSlackChannelAccount(account)) {
     return {
       channelId: account.channel,
@@ -588,6 +651,8 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     defaultPermissionMode:
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: account.transcribeVoice === true,
+    showCompletedReaction: account.showCompletedReaction !== false,
+    listenMode: account.listenMode === true,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -669,6 +734,32 @@ function createAccountFromPatch(
     };
   }
 
+  if (channelId === "signal") {
+    return {
+      channel: "signal",
+      accountId,
+      displayName: normalizeDisplayName(normalizedPatch.displayName),
+      enabled: normalizedPatch.enabled ?? false,
+      baseUrl: normalizedPatch.baseUrl ?? "",
+      account: normalizeOptionalConfigString(normalizedPatch.account),
+      accountUuid: normalizeOptionalConfigString(normalizedPatch.accountUuid),
+      agentId: normalizedPatch.agentId ?? null,
+      selfChatMode: normalizedPatch.selfChatMode === true,
+      dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
+      allowedUsers: normalizedPatch.allowedUsers ?? [],
+      groupMode:
+        normalizeSignalGroupMode(normalizedPatch.groupMode) ?? "disabled",
+      allowedGroups: normalizedPatch.allowedGroups ?? [],
+      mentionPatterns: normalizedPatch.mentionPatterns ?? [],
+      recipientAliases: normalizedPatch.recipientAliases ?? {},
+      transcribeVoice: normalizedPatch.transcribeVoice === true,
+      downloadMedia: normalizedPatch.downloadMedia ?? true,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
   if (channelId !== "slack") {
     return {
       channel: channelId,
@@ -695,6 +786,8 @@ function createAccountFromPatch(
     defaultPermissionMode:
       normalizedPatch.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: normalizedPatch.transcribeVoice === true,
+    showCompletedReaction: normalizedPatch.showCompletedReaction !== false,
+    listenMode: normalizedPatch.listenMode === true,
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
     createdAt: now,
@@ -799,6 +892,44 @@ function mergeAccountPatch(
     };
   }
 
+  if (isSignalChannelAccount(existing)) {
+    return {
+      ...existing,
+      displayName:
+        normalizedPatch.displayName !== undefined
+          ? normalizeDisplayName(normalizedPatch.displayName)
+          : existing.displayName,
+      enabled: normalizedPatch.enabled ?? existing.enabled,
+      baseUrl: normalizedPatch.baseUrl ?? existing.baseUrl,
+      account:
+        normalizedPatch.account !== undefined
+          ? normalizeOptionalConfigString(normalizedPatch.account)
+          : existing.account,
+      accountUuid:
+        normalizedPatch.accountUuid !== undefined
+          ? normalizeOptionalConfigString(normalizedPatch.accountUuid)
+          : existing.accountUuid,
+      agentId: normalizedPatch.agentId ?? existing.agentId,
+      selfChatMode: normalizedPatch.selfChatMode ?? existing.selfChatMode,
+      dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
+      groupMode:
+        normalizeSignalGroupMode(normalizedPatch.groupMode) ??
+        existing.groupMode,
+      allowedGroups: normalizedPatch.allowedGroups ?? existing.allowedGroups,
+      mentionPatterns:
+        normalizedPatch.mentionPatterns ?? existing.mentionPatterns,
+      recipientAliases:
+        normalizedPatch.recipientAliases ?? existing.recipientAliases,
+      transcribeVoice:
+        normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+      downloadMedia:
+        normalizedPatch.downloadMedia ?? existing.downloadMedia ?? true,
+      mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
+      updatedAt: nextUpdatedAt,
+    };
+  }
+
   if (!isSlackChannelAccount(existing)) {
     // Custom channels (and user-installed plugins) hold all plugin-specific
     // state in the generic `config` bag. Snapshots returned to clients redact
@@ -840,6 +971,11 @@ function mergeAccountPatch(
       DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice:
       normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
+    showCompletedReaction:
+      normalizedPatch.showCompletedReaction ??
+      existing.showCompletedReaction ??
+      true,
+    listenMode: normalizedPatch.listenMode ?? existing.listenMode ?? false,
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
     updatedAt: nextUpdatedAt,
@@ -882,9 +1018,18 @@ export function listChannelSummaries(): ChannelSummary[] {
   });
 }
 
-export function listEnabledChannelIds(): SupportedChannelId[] {
+export function listEnabledChannelIds(options?: {
+  restoreAgentScope?: ChannelRestoreAgentScope | null;
+}): SupportedChannelId[] {
   return getSupportedChannelIds().filter((channelId) =>
-    listChannelAccounts(channelId).some((account) => account.enabled),
+    listChannelAccounts(channelId).some(
+      (account) =>
+        account.enabled &&
+        shouldRestoreChannelAccountForAgentScope(
+          account,
+          options?.restoreAgentScope,
+        ),
+    ),
   );
 }
 
@@ -960,6 +1105,27 @@ export function getChannelConfigSnapshot(
     };
   }
 
+  if (isSignalChannelAccount(account)) {
+    return {
+      channelId: "signal",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelConfigSnapshotProtocolConfig(account),
+      agentId: account.agentId,
+      selfChatMode: account.selfChatMode,
+      groupMode: account.groupMode,
+      allowedGroups: [...(account.allowedGroups ?? [])],
+      mentionPatterns: [...(account.mentionPatterns ?? [])],
+      recipientAliases: { ...(account.recipientAliases ?? {}) },
+      transcribeVoice: account.transcribeVoice === true,
+      downloadMedia: account.downloadMedia === true,
+      mediaMaxBytes: account.mediaMaxBytes,
+    };
+  }
+
   if (!isSlackChannelAccount(account)) {
     return {
       channelId: account.channel,
@@ -987,6 +1153,8 @@ export function getChannelConfigSnapshot(
     defaultPermissionMode:
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: account.transcribeVoice === true,
+    showCompletedReaction: account.showCompletedReaction !== false,
+    listenMode: account.listenMode === true,
   };
 }
 
@@ -1027,9 +1195,14 @@ export async function setChannelConfigLive(
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
       threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
+      showCompletedReaction: normalizedPatch.showCompletedReaction,
+      listenMode: normalizedPatch.listenMode,
       removeStaleRoutes: normalizedPatch.removeStaleRoutes,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       selfChatMode: normalizedPatch.selfChatMode,
+      baseUrl: normalizedPatch.baseUrl,
+      account: normalizedPatch.account,
+      accountUuid: normalizedPatch.accountUuid,
       groupMode: normalizedPatch.groupMode,
       allowedGroups: normalizedPatch.allowedGroups,
       mentionPatterns: normalizedPatch.mentionPatterns,
@@ -1062,9 +1235,14 @@ export async function setChannelConfigLive(
         autoThreadOnMention: normalizedPatch.autoThreadOnMention,
         threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
         acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
+        showCompletedReaction: normalizedPatch.showCompletedReaction,
+        listenMode: normalizedPatch.listenMode,
         removeStaleRoutes: normalizedPatch.removeStaleRoutes,
         inboundDebounceMs: normalizedPatch.inboundDebounceMs,
         selfChatMode: normalizedPatch.selfChatMode,
+        baseUrl: normalizedPatch.baseUrl,
+        account: normalizedPatch.account,
+        accountUuid: normalizedPatch.accountUuid,
         groupMode: normalizedPatch.groupMode,
         allowedGroups: normalizedPatch.allowedGroups,
         mentionPatterns: normalizedPatch.mentionPatterns,
@@ -1303,9 +1481,12 @@ export function updateChannelAccountLive(
 
   const nextAccount = mergeAccountPatch(existing, patch);
   const shouldResetRoutes =
-    (isSlackChannelAccount(existing) || isDiscordChannelAccount(existing)) &&
+    (isSlackChannelAccount(existing) ||
+      isDiscordChannelAccount(existing) ||
+      isSignalChannelAccount(existing)) &&
     (isSlackChannelAccount(nextAccount) ||
-      isDiscordChannelAccount(nextAccount)) &&
+      isDiscordChannelAccount(nextAccount) ||
+      isSignalChannelAccount(nextAccount)) &&
     typeof nextAccount.agentId === "string" &&
     nextAccount.agentId !== existing.agentId;
 
@@ -1357,9 +1538,12 @@ export async function updateChannelAccountLiveWithSecrets(
 
   const nextAccount = mergeAccountPatch(existing, patch);
   const shouldResetRoutes =
-    (isSlackChannelAccount(existing) || isDiscordChannelAccount(existing)) &&
+    (isSlackChannelAccount(existing) ||
+      isDiscordChannelAccount(existing) ||
+      isSignalChannelAccount(existing)) &&
     (isSlackChannelAccount(nextAccount) ||
-      isDiscordChannelAccount(nextAccount)) &&
+      isDiscordChannelAccount(nextAccount) ||
+      isSignalChannelAccount(nextAccount)) &&
     typeof nextAccount.agentId === "string" &&
     nextAccount.agentId !== existing.agentId;
 
@@ -1451,9 +1635,10 @@ export function bindChannelAccountLive(
   } else if (
     isSlackChannelAccount(existing) ||
     isDiscordChannelAccount(existing) ||
-    isWhatsAppChannelAccount(existing)
+    isWhatsAppChannelAccount(existing) ||
+    isSignalChannelAccount(existing)
   ) {
-    // Slack, Discord, and WhatsApp use a top-level agentId.
+    // Slack, Discord, WhatsApp, and Signal use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId,
@@ -1491,9 +1676,10 @@ export function unbindChannelAccountLive(
   } else if (
     isSlackChannelAccount(existing) ||
     isDiscordChannelAccount(existing) ||
-    isWhatsAppChannelAccount(existing)
+    isWhatsAppChannelAccount(existing) ||
+    isSignalChannelAccount(existing)
   ) {
-    // Slack, Discord, and WhatsApp use a top-level agentId.
+    // Slack, Discord, WhatsApp, and Signal use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId: null,
@@ -1710,6 +1896,7 @@ export function bindChannelTarget(
     agentId,
     conversationId,
     enabled: true,
+    outboundEnabled: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -1828,6 +2015,7 @@ export function updateChannelRouteLive(
     }),
     agentId,
     conversationId,
+    outboundEnabled: existingRoute?.outboundEnabled ?? true,
     updatedAt: new Date().toISOString(),
   };
 

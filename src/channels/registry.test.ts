@@ -36,6 +36,7 @@ import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
   InboundChannelMessage,
+  SignalChannelAccount,
 } from "@/channels/types";
 
 beforeEach(() => {
@@ -115,6 +116,73 @@ describe("ChannelRegistry", () => {
     expect(logs).toContain("[Channels] requested: telegram");
     expect(logs.some((line) => line.includes("root:"))).toBe(true);
     expect(logs.some((line) => line.includes("accounts=0"))).toBe(true);
+  });
+
+  test("startChannelAccount rejects Signal accounts sharing one daemon", async () => {
+    const now = "2026-06-17T00:00:00.000Z";
+    const makeSignalAccount = (
+      accountId: string,
+      account: string,
+    ): SignalChannelAccount => ({
+      channel: "signal",
+      accountId,
+      displayName: accountId,
+      enabled: true,
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      createdAt: now,
+      updatedAt: now,
+      baseUrl: "http://127.0.0.1:8080/",
+      account,
+      agentId: null,
+      selfChatMode: false,
+      groupMode: "disabled",
+      allowedGroups: [],
+      mentionPatterns: [],
+      recipientAliases: {},
+      downloadMedia: true,
+    });
+    __testOverrideLoadChannelAccounts(() => [
+      makeSignalAccount("one", "+15555550100"),
+      makeSignalAccount("two", "+15555550101"),
+    ]);
+    const registry = new ChannelRegistry();
+
+    await expect(registry.startChannelAccount("signal", "one")).rejects.toThrow(
+      /share base_url/,
+    );
+  });
+
+  test("initializeChannels does not start accounts outside the restore scope", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "slack",
+        accountId: "acct-cloud-slack",
+        enabled: true,
+        mode: "socket",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-cloud",
+        defaultPermissionMode: "unrestricted",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        createdAt: "2026-06-17T00:00:00.000Z",
+        updatedAt: "2026-06-17T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+    const logs: string[] = [];
+
+    await expect(
+      initializeChannels(["slack"], {
+        restoreAgentScope: "local",
+        logger: (message) => logs.push(message),
+      }),
+    ).resolves.toBeInstanceOf(ChannelRegistry);
+
+    expect(logs).toContain(
+      '[Channels] Channel "slack" has no enabled accounts in local restore scope.',
+    );
   });
 
   test("/help gets a direct channel reply instead of being delivered to the agent", async () => {
@@ -1723,5 +1791,84 @@ describe("ChannelRegistry buffer behavior", () => {
 
     // Should have delivered the buffered message
     expect(delivered.length).toBe(1);
+  });
+
+  test("uses buffered delivery account when notifying buffer drops", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        enabled: true,
+        token: "test-token",
+        dmPolicy: "open",
+        allowedUsers: [],
+        binding: { agentId: null, conversationId: null },
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+      },
+    ]);
+    __testOverrideSaveChannelAccounts(() => {});
+
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter({
+      id: "telegram:acct-telegram",
+      channelId: "telegram",
+      accountId: "acct-telegram",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    addRoute("telegram", {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-15T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("telegram", "acct-telegram");
+    for (let index = 0; index < 101; index += 1) {
+      await adapter?.onMessage?.({
+        channel: "telegram",
+        accountId: "acct-telegram",
+        chatId: "123",
+        senderId: "456",
+        senderName: "Alice",
+        text: `Buffered message ${index}`,
+        timestamp: Date.now(),
+        messageId: `msg-${index}`,
+        chatType: "direct",
+      });
+    }
+
+    const dropReplies = replies.filter((reply) =>
+      reply.text.includes("couldn't deliver"),
+    );
+    expect(dropReplies).toEqual([
+      expect.objectContaining({
+        chatId: "123",
+        replyToMessageId: "msg-0",
+      }),
+    ]);
   });
 });

@@ -7,7 +7,6 @@ import { Text } from "./Text";
 
 interface PinDialogProps {
   currentName: string;
-  local: boolean;
   onSubmit: (newName: string | null) => void; // null means keep current name
   onCancel: () => void;
 }
@@ -47,12 +46,7 @@ export function isDefaultAgentName(name: string): boolean {
   return name === DEFAULT_AGENT_NAME;
 }
 
-export function PinDialog({
-  currentName,
-  local,
-  onSubmit,
-  onCancel,
-}: PinDialogProps) {
+export function PinDialog({ currentName, onSubmit, onCancel }: PinDialogProps) {
   const isDefault = isDefaultAgentName(currentName);
   const [mode, setMode] = useState<"choose" | "input">(
     isDefault ? "input" : "choose",
@@ -60,8 +54,6 @@ export function PinDialog({
   const [nameInput, setNameInput] = useState("");
   const [selectedOption, setSelectedOption] = useState(0);
   const [error, setError] = useState("");
-
-  const scopeText = local ? "to this project" : "globally";
 
   useInput((input, key) => {
     // CTRL-C: immediately cancel (bypasses mode transitions)
@@ -123,7 +115,7 @@ export function PinDialog({
         {isDefault && (
           <Box marginBottom={1}>
             <Text dimColor>
-              Give your agent a memorable name before pinning {scopeText}.
+              Give your agent a memorable name before pinning.
             </Text>
           </Box>
         )}
@@ -167,7 +159,7 @@ export function PinDialog({
     <Box flexDirection="column" paddingY={1}>
       <Box marginBottom={1}>
         <Text color={colors.approval.header} bold>
-          Pin agent {scopeText}
+          Pin agent
         </Text>
       </Box>
 
