@@ -3287,6 +3287,7 @@ async function runBidirectionalMode(
       conversationId,
       memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
       triggerSource,
+      reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
       systemPrompt: agent.system ?? undefined,
       recompileByConversation: systemPromptRecompileByConversation,
