@@ -116,7 +116,8 @@ Review changes, then commit with a descriptive message:
 cd $MEMORY_DIR
 git status                # Review what changed before staging
 git add <specific files>  # Stage targeted paths — avoid blind `git add -A`
-git commit --author="<AGENT_NAME> <<ACTUAL_AGENT_ID>@letta.com>" -m "fix(doctor): <summary> 🏥
+author_name="${AGENT_NAME:-$AGENT_ID}"
+git commit --author="$author_name <$AGENT_ID@letta.com>" -m "fix(doctor): <summary> 🏥
 
 <identified issues and implemented solutions>"
 
