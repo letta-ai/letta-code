@@ -145,6 +145,7 @@ export type ConversationRuntime = {
   recoveredApprovalState: RecoveredApprovalState | null;
   lastStopReason: string | null;
   lastTerminalLoopErrorMessage: string | null;
+  lastTerminalLoopErrorRunId: string | null;
   isProcessing: boolean;
   activeWorkingDirectory: string | null;
   expectedWorktreePath: string | null;

@@ -612,9 +612,13 @@ function getTelegramLifecycleErrorReplyKey(
   ].join(":");
 }
 
-function formatTelegramLifecycleErrorMessage(errorText: string): string {
+function formatTelegramLifecycleErrorMessage(
+  errorText: string,
+  runId?: string | null,
+): string {
   return formatChannelLifecycleErrorMessage(errorText, {
     maxLength: TELEGRAM_LIFECYCLE_ERROR_TEXT_MAX,
+    runId,
   });
 }
 
@@ -1089,12 +1093,13 @@ export function createTelegramAdapter(
   function rememberLifecycleErrorReport(
     source: ChannelTurnSource,
     errorText: string,
+    runId?: string | null,
   ): string {
     pruneLifecycleErrorReports();
     const token = randomUUID();
     lifecycleErrorReports.set(token, {
       expiresAt: Date.now() + TELEGRAM_LIFECYCLE_ERROR_REPORT_TTL_MS,
-      report: buildChannelLifecycleErrorReport(source, errorText),
+      report: buildChannelLifecycleErrorReport(source, errorText, { runId }),
       submitted: false,
     });
     return `${TELEGRAM_REPORT_CALLBACK_PREFIX}${token}`;
@@ -1164,6 +1169,7 @@ export function createTelegramAdapter(
   async function sendLifecycleErrorReply(
     source: ChannelTurnSource,
     errorText: string,
+    runId?: string | null,
   ): Promise<void> {
     const key = getTelegramLifecycleErrorReplyKey(source);
     if (!key || !rememberLifecycleErrorReply(key)) {
@@ -1190,7 +1196,11 @@ export function createTelegramAdapter(
         [
           {
             text: "Report error",
-            callback_data: rememberLifecycleErrorReport(source, errorText),
+            callback_data: rememberLifecycleErrorReport(
+              source,
+              errorText,
+              runId,
+            ),
           },
         ],
       ],
@@ -1198,7 +1208,7 @@ export function createTelegramAdapter(
 
     await telegramBot.api.sendMessage(
       source.chatId,
-      formatTelegramLifecycleErrorMessage(errorText),
+      formatTelegramLifecycleErrorMessage(errorText, runId),
       options,
     );
   }
@@ -1504,7 +1514,11 @@ export function createTelegramAdapter(
       await Promise.all(
         Array.from(uniqueSources.values()).map(async (source) => {
           try {
-            await sendLifecycleErrorReply(source, event.error ?? "Turn failed");
+            await sendLifecycleErrorReply(
+              source,
+              event.error ?? "Turn failed",
+              event.runId,
+            );
           } catch (error) {
             console.warn(
               `[Telegram] Failed to send lifecycle error reply for ${source.chatId}:`,
