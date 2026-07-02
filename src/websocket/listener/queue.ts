@@ -1,5 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { clearToolCallArgumentsCache } from "@/channels/progress";
+import { createChannelTurnProgressBuilder } from "@/channels/progress";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
 import type {
@@ -554,6 +554,10 @@ async function drainQueuedMessages(
       let didThrow = false;
       runtime.activeChannelTurnSources = channelTurnSources;
       runtime.activeChannelTurnBatchId = dequeuedBatch.batchId;
+      runtime.activeChannelTurnProgress =
+        channelTurnSources.length > 0
+          ? createChannelTurnProgressBuilder()
+          : null;
       try {
         await processQueuedTurn(queuedTurn, dequeuedBatch);
       } catch (error) {
@@ -563,8 +567,8 @@ async function drainQueuedMessages(
       } finally {
         runtime.activeChannelTurnSources = null;
         runtime.activeChannelTurnBatchId = null;
+        runtime.activeChannelTurnProgress = null;
         if (channelTurnSources.length > 0) {
-          clearToolCallArgumentsCache();
           const outcome = mapTurnLifecycleOutcome(
             runtime.lastStopReason,
             didThrow,
