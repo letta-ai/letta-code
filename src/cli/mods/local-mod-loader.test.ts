@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -622,6 +623,89 @@ export default function(letta) {
         entry.startsWith(".letta-mod-index-"),
       );
       expect(generatedFiles).toHaveLength(1);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("loads agent managed package mods without writing import caches into memory", async () => {
+    const root = createTempDir();
+    try {
+      const options = createLoadOptions(root);
+      const agentMods = path.join(root, "memory", "mods");
+      const packageRoot = path.join(
+        agentMods,
+        "packages",
+        "npm",
+        "@caren",
+        "agent-dep-mod",
+      );
+      const modDir = path.join(packageRoot, "mods");
+      const dependencyRoot = path.join(packageRoot, "node_modules", "fake-dep");
+      mkdirSync(modDir, { recursive: true });
+      mkdirSync(dependencyRoot, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "index.js"),
+        `import { label } from "fake-dep";
+export default function(letta) {
+  letta.ui.openPanel({ id: "agent-dep", render: () => label });
+}
+`,
+      );
+      writeFileSync(
+        path.join(dependencyRoot, "package.json"),
+        JSON.stringify({
+          name: "fake-dep",
+          version: "1.0.0",
+          type: "module",
+          exports: "./index.js",
+        }),
+      );
+      writeFileSync(
+        path.join(dependencyRoot, "index.js"),
+        `export const label = "agent dependency";\n`,
+      );
+      writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          name: "@caren/agent-dep-mod",
+          version: "0.1.0",
+          letta: {
+            manifestVersion: 1,
+            mods: ["mods/index.js"],
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(agentMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/agent-dep-mod",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/agent-dep-mod",
+              entries: ["mods/index.js"],
+            },
+          ],
+        }),
+      );
+
+      const registry = await loadLocalMods({
+        ...options,
+        agentModsDirectory: agentMods,
+      });
+
+      expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
+      const panel = Object.values(registry.ui.panels)[0];
+      expect(panel?.render(renderCtx(80))).toBe("agent dependency");
+      const generatedFiles = readdirSync(modDir).filter((entry) =>
+        entry.startsWith(".letta-mod-index-"),
+      );
+      expect(generatedFiles).toHaveLength(0);
+      expect(
+        existsSync(path.join(options.cacheDirectory, "managed-packages")),
+      ).toBe(true);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

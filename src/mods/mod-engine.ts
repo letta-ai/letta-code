@@ -552,13 +552,67 @@ function isPathInsideOrEqual(childPath: string, parentPath: string): boolean {
 
 function getManagedPackageImportCacheDirectory(
   modPath: string,
+  cacheDirectory: string,
   source: LocalModSource,
 ): string | null {
   const matchingRoot = source.managedPackageRoots?.find((packageRoot) =>
     isPathInsideOrEqual(modPath, packageRoot),
   );
   if (!matchingRoot) return null;
-  return path.dirname(modPath);
+  if (source.scope !== "agent") return path.dirname(modPath);
+
+  const packageRootHash = createHash("sha256")
+    .update(path.resolve(matchingRoot))
+    .digest("hex")
+    .slice(0, 16);
+  const packageCacheRoot = path.join(
+    cacheDirectory,
+    "managed-packages",
+    packageRootHash,
+  );
+  const packageNodeModules = path.join(matchingRoot, "node_modules");
+  if (existsSync(packageNodeModules)) {
+    mkdirSync(packageCacheRoot, { recursive: true });
+    const cacheNodeModules = path.join(packageCacheRoot, "node_modules");
+    try {
+      const stats = lstatSync(cacheNodeModules);
+      if (stats.isSymbolicLink()) {
+        const existingTarget = readlinkSync(cacheNodeModules);
+        const resolvedTarget = path.resolve(packageCacheRoot, existingTarget);
+        if (
+          normalizeRuntimeDependencyPath(resolvedTarget) !==
+          normalizeRuntimeDependencyPath(path.resolve(packageNodeModules))
+        ) {
+          unlinkSync(cacheNodeModules);
+          symlinkSync(
+            packageNodeModules,
+            cacheNodeModules,
+            process.platform === "win32" ? "junction" : "dir",
+          );
+        }
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      symlinkSync(
+        packageNodeModules,
+        cacheNodeModules,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    }
+  }
+
+  const relativeModDirectory = path.relative(
+    matchingRoot,
+    path.dirname(modPath),
+  );
+  if (
+    !relativeModDirectory ||
+    relativeModDirectory.startsWith("..") ||
+    path.isAbsolute(relativeModDirectory)
+  ) {
+    return packageCacheRoot;
+  }
+  return path.join(packageCacheRoot, relativeModDirectory);
 }
 
 function formatTranspileDiagnostic(diagnostic: ts.Diagnostic): string {
@@ -608,11 +662,11 @@ function createImportableModPath(
   cacheDirectory: string,
   source: LocalModSource,
 ): string {
+  ensureModCache(cacheDirectory);
   const importCacheDirectory =
-    getManagedPackageImportCacheDirectory(modPath, source) ?? cacheDirectory;
-  if (importCacheDirectory === cacheDirectory) {
-    ensureModCache(importCacheDirectory);
-  } else {
+    getManagedPackageImportCacheDirectory(modPath, cacheDirectory, source) ??
+    cacheDirectory;
+  if (importCacheDirectory !== cacheDirectory) {
     mkdirSync(importCacheDirectory, { recursive: true });
   }
 
