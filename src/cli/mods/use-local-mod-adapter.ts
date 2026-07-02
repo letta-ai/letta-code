@@ -12,7 +12,7 @@ export interface LocalModAdapter {
   context: ModContext;
   events: ModAdapter["events"];
   getBackend: ModAdapter["getBackend"];
-  hadStatuslineRenderer: boolean; // Used to prevent flicker on reload
+  hadModPanels: boolean; // Used to prevent flicker on reload
   hasModSources: boolean;
   engine: ModAdapter["engine"];
   isLoading: boolean;
@@ -56,7 +56,7 @@ export function useLocalModAdapter(
       context,
       events: adapter.events,
       getBackend: adapter.getBackend,
-      hadStatuslineRenderer: snapshot.hadStatuslineRenderer,
+      hadModPanels: snapshot.hadModPanels,
       hasModSources: snapshot.hasModSources,
       engine: adapter.engine,
       isLoading: snapshot.isLoading,

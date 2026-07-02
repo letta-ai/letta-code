@@ -108,3 +108,10 @@ See [docs/nix.md](docs/nix.md) for Home Manager and NixOS service examples.
 ---
 
 Made with 💜 in San Francisco
+
+<img
+  referrerpolicy="no-referrer-when-downgrade"
+  src="https://static.scarf.sh/a.png?x-pxid=76801c33-8e75-4055-8eea-2c8092519a90&page=README.md"
+  alt=""
+  aria-hidden="true"
+/>

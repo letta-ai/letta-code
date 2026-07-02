@@ -250,7 +250,90 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     expect(resolved?.updateArgs?.reasoning_effort).toBe("medium");
   });
 
-  test("returns Anthropic effort settings for BYOK Opus 4.8 max update", async () => {
+  test("preserves ChatGPT OAuth provider type for alias-backed model id updates", () => {
+    const resolved = __listenClientTestUtils.resolveModelForUpdate({
+      model_id: "gpt-5.5-plus-pro-high",
+      model_handle: "chatgpt-jin/gpt-5.5",
+    });
+
+    expect(resolved).not.toBeNull();
+    expect(resolved?.handle).toBe("chatgpt-jin/gpt-5.5");
+    expect(resolved?.updateArgs?.provider_type).toBe("chatgpt_oauth");
+    expect(resolved?.updateArgs?.reasoning_effort).toBe("high");
+  });
+
+  test("switches ChatGPT alias model id updates to Codex toolset", async () => {
+    const storageDir = await mkdtemp(
+      join(os.tmpdir(), "ws-chatgpt-alias-model-id-"),
+    );
+    const previousHome = process.env.HOME;
+    try {
+      process.env.HOME = storageDir;
+      await settingsManager.reset();
+      await settingsManager.initialize();
+
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "ChatGPT Alias Agent",
+        model: "anthropic/claude-sonnet-4-6",
+        model_settings: {
+          provider_type: "anthropic",
+          effort: "high",
+          parallel_tool_calls: true,
+        },
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const scopedRuntime =
+        __listenClientTestUtils.getOrCreateConversationRuntime(
+          listener,
+          agent.id,
+          conversation.id,
+        );
+      const model = __listenClientTestUtils.resolveModelForUpdate({
+        model_id: "gpt-5.5-plus-pro-high",
+        model_handle: "chatgpt-jin/gpt-5.5",
+      });
+      if (!model) {
+        throw new Error("Expected gpt-5.5-plus-pro-high model fixture");
+      }
+
+      const response = await __listenClientTestUtils.applyModelUpdateForRuntime(
+        {
+          socket: new MockSocket() as unknown as WebSocket,
+          listener,
+          scopedRuntime,
+          requestId: "chatgpt-alias-model-id",
+          model,
+        },
+      );
+
+      expect(response.success).toBe(true);
+      expect(response.model_id).toBe("gpt-5.5-plus-pro-high");
+      expect(response.model_handle).toBe("chatgpt-jin/gpt-5.5");
+      expect(response.model_settings).toMatchObject({
+        provider_type: "chatgpt_oauth",
+        reasoning: { reasoning_effort: "high" },
+      });
+      expect(scopedRuntime.currentToolset).toBe("codex");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("switches BYOK Opus 4.8 max update from stale ChatGPT provider state to default toolset", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "ws-byok-opus-max-"));
     const previousHome = process.env.HOME;
     try {
@@ -265,10 +348,10 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
       __testSetBackend(backend);
       const agent = await backend.createAgent({
         name: "BYOK Opus Agent",
-        model: "lc-anthropic/claude-opus-4-8",
+        model: "chatgpt-jin/gpt-5.5",
         model_settings: {
-          provider_type: "anthropic",
-          effort: "high",
+          provider_type: "chatgpt_oauth",
+          reasoning: { reasoning_effort: "high" },
           parallel_tool_calls: true,
         },
       } as AgentCreateBody);
@@ -306,6 +389,9 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
         provider_type: "anthropic",
         effort: "max",
       });
+      expect(scopedRuntime.currentToolset).toBe("default");
+      expect(scopedRuntime.currentLoadedTools).toContain("Edit");
+      expect(scopedRuntime.currentLoadedTools).not.toContain("exec_command");
       expect(
         (response.model_settings as Record<string, unknown> | null)?.reasoning,
       ).toBeUndefined();

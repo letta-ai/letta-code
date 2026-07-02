@@ -32,7 +32,11 @@ import {
   registerModPermission,
 } from "@/mods/permission-registry";
 import { clearModTools, registerModTool } from "@/mods/tool-registry";
-import type { ModDiagnostic, ModToolStartEvent } from "@/mods/types";
+import type {
+  ModDiagnostic,
+  ModToolEndEvent,
+  ModToolStartEvent,
+} from "@/mods/types";
 import {
   LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
   runWithRuntimeContext,
@@ -253,6 +257,65 @@ describe("tool execution context snapshot", () => {
       "mod permission:execution-gate",
     );
     expect(asText(result.toolReturn)).toContain("mutated path blocked");
+  });
+
+  test("applies a tool_end result override to replace the tool result", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const prepared = await prepareCurrentToolExecutionContext({
+      modEvents: {
+        async emit(name, event) {
+          if (name === "tool_start") {
+            const toolStartEvent = event as ModToolStartEvent;
+            toolStartEvent.args = {
+              ...toolStartEvent.args,
+              file_path: "package.json",
+            };
+          }
+          if (name === "tool_end") {
+            expect((event as ModToolEndEvent).args).toEqual({
+              file_path: "package.json",
+            });
+            (
+              event as ModToolEndEvent & {
+                result?: { status: "success" | "error"; output: string };
+              }
+            ).result = { status: "success", output: "redacted by mod" };
+          }
+          return { diagnostics: [], handlerCount: 0, name, results: [] };
+        },
+      },
+    });
+
+    const result = await executeTool(
+      "Read",
+      { file_path: "README.md" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe("redacted by mod");
+  });
+
+  test("passes the tool result through when no tool_end override", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const prepared = await prepareCurrentToolExecutionContext({
+      modEvents: {
+        async emit(name, _event) {
+          return { diagnostics: [], handlerCount: 0, name, results: [] };
+        },
+      },
+    });
+
+    const result = await executeTool(
+      "Read",
+      { file_path: "README.md" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).not.toBe("redacted by mod");
   });
 
   test("reports execution-phase ask decisions as blocked approval requests", async () => {

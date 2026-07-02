@@ -63,6 +63,23 @@ const RULES = [
     description:
       "telemetry/ is a leaf observer — it must not import from cli/, agent/, websocket/, or tools/ (only backend/api/ for submitting data is permitted)",
   },
+  {
+    layer: "sandbox",
+    forbidden: [
+      "cli",
+      "agent",
+      "tools",
+      "websocket",
+      "backend",
+      "providers",
+      "permissions",
+      "channels",
+      "cron",
+      "telemetry",
+    ],
+    description:
+      "sandbox/ is a pure leaf — it generates sandbox argv/profiles from plain paths. It must not import from any domain layer; callers resolve paths and pass them in",
+  },
 ];
 
 // Matches: import ... from "@/forbidden/..." (static imports only)

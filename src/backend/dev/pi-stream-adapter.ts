@@ -29,6 +29,7 @@ import {
   isRetryableLocalProviderError,
   localProviderRetryDelayMs,
   localProviderRetryMessage,
+  normalizeLocalProviderError,
 } from "./local-provider-errors";
 import {
   applyPiEnvOverrides,
@@ -36,6 +37,9 @@ import {
   resolvePiModelForAgent,
 } from "./pi-model-factory";
 import type {
+  LlmEndErrorInfo,
+  LlmEndInfo,
+  LlmStartInfo,
   ProviderStreamAdapter,
   ProviderStreamEvent,
   ProviderTurnInput,
@@ -111,6 +115,8 @@ export interface PiStreamAdapterOptions {
     summary: string;
     stats?: LocalCompactionStats;
   } | null>;
+  onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
+  onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
 }
 
 class PiProviderError extends Error {
@@ -458,6 +464,22 @@ function isModelOutputEvent(event: ProviderStreamEvent): boolean {
   }
 }
 
+function llmEndErrorFromError(error: unknown): {
+  error: LlmEndErrorInfo;
+  stopReason: string;
+} {
+  const info = normalizeLocalProviderError(error);
+  return {
+    error: {
+      message: info.message,
+      detail: info.detail,
+      errorType: info.error_type,
+      retryable: info.retryable,
+    },
+    stopReason: info.stop_reason,
+  };
+}
+
 function isOverflowError(error: unknown, contextWindow?: number): boolean {
   if (error instanceof PiProviderError) {
     return isContextOverflow(error.assistant, contextWindow);
@@ -627,6 +649,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
   private readonly localProviderAuthStorageDir?: string;
   private readonly onContextWindowOverflow?: PiStreamAdapterOptions["onContextWindowOverflow"];
   private readonly onContextUsage?: PiStreamAdapterOptions["onContextUsage"];
+  private readonly onLlmStart?: PiStreamAdapterOptions["onLlmStart"];
+  private readonly onLlmEnd?: PiStreamAdapterOptions["onLlmEnd"];
 
   constructor(options: PiStreamAdapterOptions = {}) {
     this.runStream = options.stream ?? defaultStream;
@@ -634,6 +658,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     this.localProviderAuthStorageDir = options.localProviderAuthStorageDir;
     this.onContextWindowOverflow = options.onContextWindowOverflow;
     this.onContextUsage = options.onContextUsage;
+    this.onLlmStart = options.onLlmStart;
+    this.onLlmEnd = options.onLlmEnd;
   }
 
   private async *emitCompactionChunks(
@@ -727,7 +753,31 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     }
 
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
+    const llmStartedAt = Date.now();
+    let llmEnded = false;
+    const emitLlmEnd = async (
+      info: Omit<
+        LlmEndInfo,
+        "agentId" | "conversationId" | "durationMs" | "model"
+      >,
+    ): Promise<void> => {
+      llmEnded = true;
+      await this.onLlmEnd?.({
+        agentId: input.agentId,
+        conversationId: input.conversationId,
+        model: input.agent.model,
+        durationMs: Date.now() - llmStartedAt,
+        ...info,
+      });
+    };
     try {
+      await this.onLlmStart?.({
+        agentId: input.agentId,
+        conversationId: input.conversationId,
+        model: input.agent.model,
+        messageCount: context.messages.length,
+        contextWindow: resolved.model.contextWindow,
+      });
       const result = this.runStream(
         resolved.model as Model<string>,
         context,
@@ -758,6 +808,20 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       if (streamError) throw streamError;
       finalMessage ??= await result.result();
+      const finalMessageError =
+        finalMessage.stopReason === "error" ||
+        finalMessage.stopReason === "aborted"
+          ? llmEndErrorFromError(new PiProviderError(finalMessage)).error
+          : undefined;
+      await emitLlmEnd({
+        stopReason: finalMessage.stopReason,
+        usage: {
+          promptTokens: finalMessage.usage.input,
+          completionTokens: finalMessage.usage.output,
+          totalTokens: finalMessage.usage.totalTokens,
+        },
+        ...(finalMessageError ? { error: finalMessageError } : {}),
+      });
       if (
         finalMessage.stopReason === "error" ||
         finalMessage.stopReason === "aborted"
@@ -770,6 +834,16 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           yield* this.emitCompactionChunks(compaction, "context_window_limit");
         }
       }
+    } catch (error) {
+      if (!llmEnded) {
+        const endError = llmEndErrorFromError(error);
+        await emitLlmEnd({
+          stopReason: endError.stopReason,
+          usage: null,
+          error: endError.error,
+        });
+      }
+      throw error;
     } finally {
       restoreEnv();
     }

@@ -382,6 +382,11 @@ export function createListenerMessageHandler(
     try {
       const lifecycleMessage = parseServerLifecycleMessage(data);
       if (lifecycleMessage) {
+        // Record relay pongs so the heartbeat watchdog can detect a half-open
+        // socket (no pong within the timeout) and force a reconnect.
+        if (lifecycleMessage.type === "pong") {
+          runtime.lastPongAt = Date.now();
+        }
         safeEmitWsEvent("recv", "lifecycle", lifecycleMessage);
         return;
       }

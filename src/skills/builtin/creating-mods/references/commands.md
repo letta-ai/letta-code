@@ -96,9 +96,10 @@ export default function activate(letta) {
         return { type: "output", output: `hello ${ctx.args || "there"}` };
       }
 
+      const greeting = `hello ${ctx.args || "there"}`;
       const panel = letta.ui.openPanel({
         id: "hello-panel",
-        content: [`hello ${ctx.args || "there"}`],
+        render: () => greeting,
       });
       setTimeout(() => panel.close(), 5_000);
       return { type: "handled" };

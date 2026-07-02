@@ -13,6 +13,7 @@ import {
   getChatGptFastRegistryHandleForModelHandle,
   getLocalModelLabel,
   getModelInfo,
+  isLocalModelHandle,
   models,
   normalizeModelHandleForRegistry,
 } from "@/agent/model";
@@ -206,7 +207,18 @@ export function toSelectorModelForHandle(handle: string): UiModel {
   };
 }
 
-const API_GATED_MODEL_HANDLES = new Set(["letta/auto", "letta/auto-fast"]);
+const API_GATED_MODEL_HANDLES = new Set([
+  "letta/auto",
+  "letta/auto-fast",
+  "letta/glm",
+]);
+
+export function includeUnknownBackendHandleInRecommended(
+  handle: string,
+): boolean {
+  const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+  return isLocalModelHandle(registryHandle);
+}
 
 export function filterModelsByAvailabilityForSelector<
   T extends { handle: string },
@@ -697,13 +709,21 @@ export function ModelSelector({
     return filtered;
   }, [availableHandles, allApiHandles, searchQuery, isByokHandle]);
 
-  // Server-recommended models: models.json entries available on the server (for self-hosted)
+  // Server-recommended models: models.json entries available on the server.
+  // Discoverable local endpoint providers (Ollama, LM Studio, llama.cpp) do
+  // not have a static models.json catalog, so include their live-discovered
+  // handles here instead of hiding them until the user switches to "All".
   // Filter out letta/letta-free legacy model
   const serverRecommendedModels = useMemo(() => {
     if (!backendModelCatalog || availableHandles === undefined) return [];
     let available = allApiHandles
       .filter((handle) => handle !== "letta/letta-free")
-      .flatMap((handle) => modelsForBackendHandle(handle, false));
+      .flatMap((handle) =>
+        modelsForBackendHandle(
+          handle,
+          includeUnknownBackendHandleInRecommended(handle),
+        ),
+      );
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       available = available.filter(

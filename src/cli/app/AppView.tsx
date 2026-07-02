@@ -5,6 +5,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { Box } from "ink";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { pinAgentForCurrentUser } from "@/agent/favorites";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import type { ModelReasoningEffort } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality";
@@ -70,7 +71,6 @@ import {
   type ReflectionSettings,
 } from "@/cli/helpers/memory-reminder";
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
-import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
@@ -80,6 +80,7 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
+import type { ModContext } from "@/cli/mods/types";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
@@ -150,7 +151,6 @@ type AppViewProps = {
   currentModelId: string | null;
   currentModelServiceTier: string | null;
   currentModelProvider: string | null;
-  isLocalBackend: boolean;
   currentPersonalityId: PersonalityId | null;
   currentReasoningEffort: ModelReasoningEffort | null;
   currentSystemPromptId: string | null;
@@ -225,7 +225,6 @@ type AppViewProps = {
   ) => Promise<void>;
   handleProfileEscapeCancel: () => void;
   handleQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
-  handleGoalLoopExit: () => void;
   handleSleeptimeModeSelect: (
     reflectionSettings: ReflectionSettings,
     commandId?: string | null,
@@ -317,7 +316,7 @@ type AppViewProps = {
   ) => CommandHandle;
   staticItems: StaticItem[];
   staticRenderEpoch: number;
-  statusLinePayload: StatusLinePayload;
+  modContext: ModContext;
   statusLinePrompt: string;
   terminalTitleData: WindowTitleData;
   onTitlePreview: (title: string | null) => void;
@@ -331,7 +330,6 @@ type AppViewProps = {
   usedContextTokens: number;
   contextWindowSize: number | null | undefined;
   uiPermissionMode: PermissionMode;
-  uiGoalLoopActive: boolean;
   updateAgentName: (name: string) => void;
 };
 
@@ -363,7 +361,6 @@ export function AppView(props: AppViewProps) {
     currentModelId,
     currentModelServiceTier,
     currentModelProvider,
-    isLocalBackend,
     currentPersonalityId,
     currentReasoningEffort,
     currentSystemPromptId,
@@ -402,7 +399,6 @@ export function AppView(props: AppViewProps) {
     handlePersonalitySelect,
     handleProfileEscapeCancel,
     handleQuestionSubmit,
-    handleGoalLoopExit,
     handleSleeptimeModeSelect,
     handleSystemPromptSelect,
     handleToolsetSelect,
@@ -464,7 +460,7 @@ export function AppView(props: AppViewProps) {
     openOverlay,
     staticItems,
     staticRenderEpoch,
-    statusLinePayload,
+    modContext,
     statusLinePrompt,
     terminalTitleData,
     onTitlePreview,
@@ -477,7 +473,6 @@ export function AppView(props: AppViewProps) {
     usedContextTokens,
     contextWindowSize,
     uiPermissionMode,
-    uiGoalLoopActive,
     updateAgentName,
   } = props;
 
@@ -737,7 +732,6 @@ export function AppView(props: AppViewProps) {
                 agentName={agentName}
                 currentModel={currentModelDisplay}
                 currentModelProvider={currentModelProvider}
-                isLocalBackend={isLocalBackend}
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 currentReasoningEffort={currentReasoningEffort}
                 fileAutocompleteFdPath={fileAutocompleteFdPath}
@@ -748,8 +742,6 @@ export function AppView(props: AppViewProps) {
                 }
                 onEscapeCommandCancel={onEscapeCommandCancel}
                 inputDisabled={btwState.status === "complete"}
-                goalLoopActive={uiGoalLoopActive}
-                onGoalLoopExit={handleGoalLoopExit}
                 conversationId={conversationId}
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
@@ -758,7 +750,7 @@ export function AppView(props: AppViewProps) {
                 executionPhase={executionPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
-                statusLinePayload={statusLinePayload}
+                modContext={modContext}
                 modAdapter={modAdapter}
                 statusLinePrompt={statusLinePrompt}
                 footerNotification={footerUpdateText}
@@ -1696,11 +1688,14 @@ export function AppView(props: AppViewProps) {
                       updateAgentName(newName);
                     }
 
-                    // Pin the agent
-                    settingsManager.pinAgent(agentId);
+                    const pinStatus = await pinAgentForCurrentUser(agentId);
 
                     if (newName && newName !== agentName) {
                       cmd.agentHint = `Your name is now "${newName}" — acknowledge this and save your new name to memory.`;
+                    }
+                    if (pinStatus === "already-pinned") {
+                      cmd.finish("This agent is already pinned.", false);
+                      return;
                     }
                     cmd.finish(
                       `Pinned "${newName || agentName || agentId.slice(0, 12)}".`,

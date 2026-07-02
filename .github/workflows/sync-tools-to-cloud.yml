@@ -84,7 +84,14 @@ jobs:
                ```
                Make the necessary edits. Keep the change minimal and focused on what the letta-code PR actually changed.
 
-            6. Push the branch and open a PR, tagging the original author as reviewer:
+            6. Before committing, run the type checker to catch any type errors introduced by the edits:
+               ```bash
+               cd /tmp/letta-cloud
+               npm run type-check
+               ```
+               If type errors are reported, fix them in the same branch before proceeding. Do not push broken types.
+
+            7. Push the branch and open a PR, tagging the original author as reviewer:
                ```bash
                cd /tmp/letta-cloud
                git add -A
@@ -97,7 +104,7 @@ jobs:
                  --reviewer "$PR_AUTHOR"
                ```
 
-            7. Respond with exactly: `PR_CREATED <url>` where `<url>` is the letta-cloud PR URL.
+            8. Respond with exactly: `PR_CREATED <url>` where `<url>` is the letta-cloud PR URL.
 
             ## Voice
             You are Amelia. Work quietly and precisely. Do not leave comments or reviews — just open the PR.

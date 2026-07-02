@@ -1,6 +1,6 @@
 # Statusline Migration
 
-Use this reference when migrating legacy command statuslines, standalone `.sh` statusline scripts, or shell PS1 prompts.
+Use this reference when migrating legacy command statuslines, standalone `.sh` statusline scripts, or shell PS1 prompts into `~/.letta/mods/statusline.tsx`.
 
 ## Legacy Letta command statusline
 
@@ -40,10 +40,10 @@ When migrating:
 
 - Preserve old config and referenced files unless the user explicitly asks to delete them.
 - If `command` references a `.sh` file, read it before writing the new mod.
-- Translate polling (`refreshIntervalMs`) to `setInterval`.
-- Translate direct command output into cached status plus synchronous rendering.
-- If the command output used `\x1e` to split left/right output, convert it to internal full-row layout with `Box`; do not create a new left/right API.
-- Treat old prompt customization separately. The new statusline controls the bottom row, not necessarily the input prompt.
+- Translate polling (`refreshIntervalMs`) to `setInterval` + `panel.update()`.
+- Translate direct command output into a cached closure variable plus synchronous rendering.
+- If the command output used `\x1e` to split left/right output, convert it to `row(left, right, width)`; there is no separate left/right API.
+- Treat old prompt customization separately. The statusline controls the primary row, not necessarily the input prompt.
 
 Old model:
 
@@ -59,17 +59,36 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-const update = async () => {
-  const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
-    cwd: process.cwd(),
-  });
-  letta.ui.setStatus("branch", stdout.trim());
-};
+export default function activate(letta) {
+  if (!letta.capabilities.ui.panels) return;
 
-letta.ui.setStatuslineRenderer((context) => {
-  const { Text } = context.components;
-  return <Text>{context.statuses.branch ?? ""}</Text>;
-});
+  let branch = "";
+
+  const panel = letta.ui.openPanel({
+    id: "statusline",
+    order: 0,
+    render: ({ width, row }) => row(branch, "", width),
+  });
+
+  const update = async () => {
+    try {
+      const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
+        cwd: process.cwd(),
+      });
+      branch = stdout.trim();
+    } catch {
+      branch = "";
+    }
+    panel.update();
+  };
+
+  void update();
+  const timer = setInterval(update, 30_000);
+  return () => {
+    clearInterval(timer);
+    panel.close();
+  };
+}
 ```
 
 ## Standalone `.sh` file migration
@@ -79,11 +98,11 @@ If the user provides a `.sh` path:
 1. Read the script.
 2. Identify commands, expected stdin JSON, environment variables, and output shape.
 3. Port shell commands to async setup/update code.
-4. Store results with `letta.ui.setStatus(key, value)`.
-5. Render cached status synchronously.
-6. Preserve graceful fallbacks for missing tools, not-a-git-repo, no PR, etc.
+4. Store results in closure variables.
+5. Render cached state synchronously and call `panel.update()` after each refresh.
+6. Preserve graceful fallbacks for missing tools, not-a-git-repo, no PR, etc. (return `""` to hide the line).
 
-If a script depends heavily on stdin JSON, use `context.rawPayload` as a temporary migration aid, but prefer semantic context fields for new code.
+Map the script's stdin JSON to the render context's semantic fields (`agent`, `model`, `width`); compute anything else in setup/update code.
 
 ## Shell PS1 import
 
@@ -127,4 +146,4 @@ If no PS1 is found and the user did not provide other instructions, ask for one 
 2. a description of what their prompt shows
 3. the current prompt output as it appears in their terminal
 
-Preserve colors where practical using display components. If the PS1 is too dynamic to port exactly, ask whether to approximate it or port specific commands.
+Preserve colors where practical with `chalk`. If the PS1 is too dynamic to port exactly, ask whether to approximate it or port specific commands.

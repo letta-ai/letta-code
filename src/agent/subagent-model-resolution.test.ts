@@ -204,7 +204,7 @@ describe("resolveSubagentWorkingDirectory", () => {
     expect(cwd).toBe("/tmp/repo-root");
   });
 
-  test("reflection memory-mode subagents run from the inherited parent memory root", () => {
+  test("reflection subagents with the memory-subagent profile run from the inherited parent memory root", () => {
     const cwd = resolveSubagentWorkingDirectory(
       {
         USER_CWD: "/tmp/project-root",
@@ -212,7 +212,7 @@ describe("resolveSubagentWorkingDirectory", () => {
       "/tmp/fallback-root",
       {
         subagentType: "reflection",
-        permissionMode: "memory",
+        launchProfile: "memory-subagent",
         inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
       },
     );
@@ -228,7 +228,7 @@ describe("resolveSubagentWorkingDirectory", () => {
       "/tmp/fallback-root",
       {
         subagentType: "general-purpose",
-        permissionMode: "memory",
+        launchProfile: "memory-subagent",
         inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
       },
     );
@@ -247,6 +247,7 @@ describe("buildSubagentArgs", () => {
     skills: [],
     fork: false,
     background: false,
+    launchProfile: "default",
   };
 
   test("adds --no-memfs for newly spawned subagents by default", () => {
@@ -326,19 +327,19 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--no-memfs");
   });
 
-  test("passes memory permission mode through when configured", () => {
+  test("subagents always use unrestricted permission mode", () => {
     const args = buildSubagentArgs(
       "test-subagent",
       {
         ...baseConfig,
-        permissionMode: "memory",
+        launchProfile: "memory-subagent",
       },
       null,
       "hello",
     );
 
     expect(args).toContain("--permission-mode");
-    expect(args).toContain("memory");
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("unrestricted");
   });
 
   test("caps reflection system prompt plus initial message to startup budget", () => {

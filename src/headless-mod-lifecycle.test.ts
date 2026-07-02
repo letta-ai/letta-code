@@ -42,13 +42,13 @@ describe("headless mod adapter", () => {
         lifecycle: true,
         tools: true,
         turns: true,
+        compact: true,
+        llm: true,
       },
       permissions: true,
       providers: true,
       ui: {
         panels: false,
-        statusValues: false,
-        customStatuslineRenderer: false,
       },
     });
   });
@@ -164,7 +164,6 @@ describe("headless mod adapter", () => {
       expect(snapshot.tools[toolName]).toBeDefined();
       expect(snapshot.commands).toEqual({});
       expect(snapshot.ui.panels).toEqual({});
-      expect(snapshot.ui.statusValues).toEqual({});
       expect(getModToolDefinition(toolName)).toBeDefined();
 
       const prepared =
@@ -338,7 +337,6 @@ describe("headless mod adapter", () => {
       expect(snapshot.registry.loadedPaths).toEqual([]);
       expect(snapshot.registry.commands).toEqual({});
       expect(snapshot.registry.tools).toEqual({});
-      expect(snapshot.registry.ui.statuslineRenderer).toBeNull();
       expect(getModToolDefinition(toolName)).toBeUndefined();
       expect(process.env[LETTA_DISABLE_MODS_ENV]).toBe("1");
 

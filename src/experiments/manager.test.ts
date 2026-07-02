@@ -8,6 +8,7 @@ import { settingsManager } from "@/settings-manager";
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
 const originalNodeFlag = process.env.LETTA_NODE;
+const originalArtifactsFlag = process.env.LETTA_ARTIFACTS;
 
 let testHomeDir = "";
 
@@ -17,6 +18,7 @@ beforeEach(async () => {
   process.env.HOME = testHomeDir;
   process.env.USERPROFILE = testHomeDir;
   delete process.env.LETTA_NODE;
+  delete process.env.LETTA_ARTIFACTS;
   await settingsManager.initialize();
 });
 
@@ -39,9 +41,26 @@ afterEach(async () => {
   } else {
     process.env.LETTA_NODE = originalNodeFlag;
   }
+
+  if (originalArtifactsFlag === undefined) {
+    delete process.env.LETTA_ARTIFACTS;
+  } else {
+    process.env.LETTA_ARTIFACTS = originalArtifactsFlag;
+  }
 });
 
 describe("experimentManager", () => {
+  test("falls back to LETTA_ARTIFACTS when no override is stored", () => {
+    process.env.LETTA_ARTIFACTS = "true";
+
+    expect(experimentManager.getSnapshot("artifacts")).toMatchObject({
+      id: "artifacts",
+      enabled: true,
+      source: "env",
+      override: null,
+    });
+  });
+
   test("falls back to LETTA_NODE when no override is stored", () => {
     process.env.LETTA_NODE = "1";
 

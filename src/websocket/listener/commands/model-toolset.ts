@@ -78,7 +78,9 @@ function inferProviderTypeFromRegistryHandle(
 ): string | undefined {
   const provider = modelHandle.split("/")[0];
   if (!provider) return undefined;
-  if (provider === "openai-codex") return "chatgpt_oauth";
+  if (provider === "openai-codex" || provider === "chatgpt-plus-pro") {
+    return "chatgpt_oauth";
+  }
   if (
     provider === "anthropic" ||
     provider === "bedrock" ||
@@ -102,6 +104,13 @@ function buildModelHandleFromConfig(
     return `${config.model_endpoint_type}/${config.model}`;
   }
   return config.model ?? null;
+}
+
+function providerTypeFromModelSettings(
+  modelSettings: Record<string, unknown> | null,
+): string | null {
+  const providerType = modelSettings?.provider_type;
+  return typeof providerType === "string" ? providerType : null;
 }
 
 function withContextWindow(
@@ -401,6 +410,10 @@ export async function applyModelUpdateForRuntime(params: {
       agentId,
       conversationId,
       overrideModel: model.handle,
+      overrideProviderType:
+        providerTypeFromModelSettings(modelSettings) ??
+        inferProviderTypeFromRegistryHandle(model.handle) ??
+        null,
       modEvents: ensureListenerModAdapter(listener).events,
     });
     nextToolset = preparedToolContext.toolset;

@@ -36,6 +36,37 @@ export interface ProviderTurnInput {
   clientSkills: unknown[];
 }
 
+/** Provider-request start info emitted at the model-call boundary. */
+export interface LlmStartInfo {
+  agentId: string;
+  conversationId: string;
+  model: string;
+  messageCount: number;
+  contextWindow: number;
+}
+
+export interface LlmEndErrorInfo {
+  message: string;
+  detail: string;
+  errorType: "llm_error" | "local_backend_error";
+  retryable: boolean;
+}
+
+/** Provider-request completion info emitted once a final message is produced. */
+export interface LlmEndInfo {
+  agentId: string;
+  conversationId: string;
+  model: string;
+  stopReason: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  } | null;
+  durationMs: number;
+  error?: LlmEndErrorInfo;
+}
+
 export type ProviderStreamEvent =
   | { type: "provider-part"; part: ProviderStreamPart }
   | { type: "local-message"; message: LocalMessage }

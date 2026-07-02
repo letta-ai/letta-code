@@ -9,44 +9,43 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
-import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
-import type { StatuslineRenderContext } from "@/cli/display/statusline/types";
-import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
+import chalk from "chalk";
+import { columns, row } from "@/cli/display/statusline/formatting";
+import { buildCliModContext } from "@/cli/helpers/cli-mod-context";
 import { runModCommandWithTimeout } from "@/cli/mods/command-runtime";
 import {
   disposeLocalMods,
-  evaluateLocalModStatuses,
   loadLocalMods,
   resolveLocalModSources,
 } from "@/cli/mods/local-mod-loader";
 import { getModErrorDiagnostics } from "@/mods/mod-diagnostics";
 import { clearModTools } from "@/mods/tool-registry";
-import type { ModDiagnostic } from "@/mods/types";
+import type { ModContext, ModDiagnostic } from "@/mods/types";
 
 function createTempDir(): string {
   return mkdtempSync(path.join(tmpdir(), "letta-mods-"));
 }
 
-function createStatuslineContext(): StatuslineRenderContext {
-  return buildStatuslineRenderContext({
-    payload: buildStatusLinePayload({
-      agentName: "Letta Code",
-      currentDirectory: "/tmp/project",
-      modelDisplayName: "Sonnet 4.6",
-      projectDirectory: "/tmp/project",
-      toolset: "default",
-    }),
-    statuses: { mode: "fast" },
-    ui: {
-      currentModelProvider: "anthropic",
-      goalStatusText: null,
-      hasTemporaryModelOverride: false,
-      isByokProvider: false,
-      isLocalBackend: true,
-      isOpenAICodexProvider: false,
-      rightColumnWidth: 80,
-    },
+function createModContext(): ModContext {
+  return buildCliModContext({
+    agentName: "Letta Code",
+    currentDirectory: "/tmp/project",
+    modelDisplayName: "Sonnet 4.6",
+    modelProvider: "anthropic",
+    projectDirectory: "/tmp/project",
+    toolset: "default",
   });
+}
+
+function renderCtx(width: number) {
+  const context = createModContext();
+  return {
+    ...context,
+    width,
+    row,
+    columns,
+    chalk,
+  };
 }
 
 function createLoadOptions(root: string) {
@@ -346,104 +345,15 @@ describe("local mod loader", () => {
       writeFileSync(
         path.join(modDir, "status.ts"),
         `export default function(letta) {
-          letta.ui.setStatus("mode", "fast");
+          letta.ui.openPanel({ id: "mode", render: () => "fast" });
         }`,
       );
 
       const registry = await loadLocalMods(options);
 
       expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
-      expect(
-        evaluateLocalModStatuses(registry, createStatuslineContext()),
-      ).toEqual({ mode: "fast" });
-    } finally {
-      rmSync(root, { force: true, recursive: true });
-    }
-  });
-
-  test("loads mods that register statuses and statusline renderers", async () => {
-    const root = createTempDir();
-    try {
-      const options = createLoadOptions(root);
-      const modDir = options.globalModsDirectory;
-      const modPath = path.join(modDir, "statusline.ts");
-      mkdirSync(modDir, { recursive: true });
-      writeFileSync(
-        modPath,
-        `export default function(letta) {
-          letta.ui.setStatus("mode", "fast");
-          letta.ui.setStatus("agent", (ctx) => ctx.agent.name);
-          letta.ui.setStatuslineRenderer((ctx) => "first:" + ctx.statuses.mode);
-        }`,
-      );
-
-      const firstRegistry = await loadLocalMods(options);
-      expect(getModErrorDiagnostics(firstRegistry.diagnostics)).toEqual([]);
-      expect(firstRegistry.loadedPaths).toEqual([modPath]);
-      expect(
-        evaluateLocalModStatuses(firstRegistry, createStatuslineContext()),
-      ).toEqual({ agent: "Letta Code", mode: "fast" });
-      expect(
-        firstRegistry.ui.statuslineRenderer?.render({
-          ...createStatuslineContext(),
-          statuses: evaluateLocalModStatuses(
-            firstRegistry,
-            createStatuslineContext(),
-          ),
-        }),
-      ).toBe("first:fast");
-
-      writeFileSync(
-        modPath,
-        `export default function(letta) {
-          letta.ui.setStatus("mode", "slow");
-          letta.ui.setStatuslineRenderer((ctx) => "second:" + ctx.statuses.mode);
-        }`,
-      );
-
-      const secondRegistry = await loadLocalMods(options);
-      expect(getModErrorDiagnostics(secondRegistry.diagnostics)).toEqual([]);
-      expect(
-        evaluateLocalModStatuses(secondRegistry, createStatuslineContext()),
-      ).toEqual({ mode: "slow" });
-      expect(
-        secondRegistry.ui.statuslineRenderer?.render({
-          ...createStatuslineContext(),
-          statuses: evaluateLocalModStatuses(
-            secondRegistry,
-            createStatuslineContext(),
-          ),
-        }),
-      ).toBe("second:slow");
-    } finally {
-      rmSync(root, { force: true, recursive: true });
-    }
-  });
-
-  test("records status evaluation diagnostics", async () => {
-    const root = createTempDir();
-    try {
-      const options = createLoadOptions(root);
-      const modDir = options.globalModsDirectory;
-      mkdirSync(modDir, { recursive: true });
-      writeFileSync(
-        path.join(modDir, "bad-status.ts"),
-        `export default function(letta) {
-          letta.ui.setStatus("bad", () => {
-            throw new Error("ctx.getContext is not a function");
-          });
-        }`,
-      );
-
-      const registry = await loadLocalMods(options);
-      expect(
-        evaluateLocalModStatuses(registry, createStatuslineContext()),
-      ).toEqual({});
-      expect(registry.diagnostics.at(-1)).toMatchObject({
-        capability: { id: "bad", kind: "status" },
-        error: { message: "ctx.getContext is not a function" },
-        phase: "status.evaluate",
-      });
+      const panel = Object.values(registry.ui.panels)[0];
+      expect(panel?.render(renderCtx(80))).toBe("fast");
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -465,7 +375,6 @@ describe("local mod loader", () => {
               letta.ui.clearStatus("branch");
             }
           };
-          letta.ui.setStatuslineRenderer(() => "ok");
           void update();
         }`,
       );
@@ -473,7 +382,6 @@ describe("local mod loader", () => {
       const registry = await loadLocalMods(options);
 
       expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
-      expect(registry.ui.statuslineRenderer).toBeDefined();
       expect(registry.diagnostics).toContainEqual(
         expect.objectContaining({
           capability: { id: "letta.getContext", kind: "api" },
@@ -540,40 +448,6 @@ describe("local mod loader", () => {
     }
   });
 
-  test("deprecated status ctx getContext trap records even when caught", async () => {
-    const root = createTempDir();
-    try {
-      const options = createLoadOptions(root);
-      const modDir = options.globalModsDirectory;
-      mkdirSync(modDir, { recursive: true });
-      writeFileSync(
-        path.join(modDir, "caught-status.ts"),
-        `export default function(letta) {
-          letta.ui.setStatus("branch", (ctx) => {
-            try {
-              ctx.getContext();
-            } catch {}
-            return "fallback";
-          });
-        }`,
-      );
-
-      const registry = await loadLocalMods(options);
-      expect(
-        evaluateLocalModStatuses(registry, createStatuslineContext()),
-      ).toEqual({ branch: "fallback" });
-      expect(registry.diagnostics).toContainEqual(
-        expect.objectContaining({
-          capability: { id: "ctx.getContext", kind: "api" },
-          phase: "deprecated_api",
-          severity: "warning",
-        }),
-      );
-    } finally {
-      rmSync(root, { force: true, recursive: true });
-    }
-  });
-
   test("transpiles TypeScript and TSX mods to importable mjs cache files", async () => {
     const root = createTempDir();
     try {
@@ -584,9 +458,9 @@ describe("local mod loader", () => {
       writeFileSync(
         modPath,
         `export default function(letta: any) {
-          letta.ui.setStatuslineRenderer((ctx: any) => {
-            const Label = ctx.components.Text;
-            return <Label>{ctx.agent.name}</Label>;
+          letta.ui.openPanel({
+            id: "panel",
+            render: (ctx: any) => <span>{ctx.agent.name}</span>,
           });
         }`,
       );
@@ -600,9 +474,8 @@ describe("local mod loader", () => {
       );
       expect(cacheFiles).toHaveLength(1);
       expect(cacheFiles[0]?.endsWith(".mjs")).toBe(true);
-      const output = registry.ui.statuslineRenderer?.render(
-        createStatuslineContext(),
-      );
+      const panel = Object.values(registry.ui.panels)[0];
+      const output = panel?.render(renderCtx(80));
       expect(output).toMatchObject({ props: { children: "Letta Code" } });
     } finally {
       rmSync(root, { force: true, recursive: true });
@@ -629,7 +502,7 @@ describe("local mod loader", () => {
         path.join(modDir, "index.js"),
         `import { label } from "fake-dep";
 export default function(letta) {
-  letta.ui.setStatus("dep", label);
+  letta.ui.openPanel({ id: "dep", render: () => label });
 }
 `,
       );
@@ -676,7 +549,8 @@ export default function(letta) {
       const registry = await loadLocalMods(options);
 
       expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
-      expect(registry.ui.statusValues.dep).toBe("dependency");
+      const panel = Object.values(registry.ui.panels)[0];
+      expect(panel?.render(renderCtx(80))).toBe("dependency");
       const generatedFiles = readdirSync(modDir).filter((entry) =>
         entry.startsWith(".letta-mod-index-"),
       );
@@ -696,16 +570,15 @@ export default function(letta) {
       writeFileSync(
         path.join(modDir, "working.ts"),
         `export default function(letta) {
-          letta.ui.setStatus("ok", "true");
+          letta.ui.openPanel({ id: "ok", render: () => "true" });
         }`,
       );
 
       const registry = await loadLocalMods(options);
 
       expect(registry.loadedPaths).toEqual([path.join(modDir, "working.ts")]);
-      expect(
-        evaluateLocalModStatuses(registry, createStatuslineContext()),
-      ).toEqual({ ok: "true" });
+      const panel = Object.values(registry.ui.panels)[0];
+      expect(panel?.render(renderCtx(80))).toBe("true");
       const errorDiagnostics = getModErrorDiagnostics(registry.diagnostics);
       expect(errorDiagnostics).toHaveLength(1);
       const [errorDiagnostic] = errorDiagnostics;
@@ -754,7 +627,7 @@ export default function(letta) {
       await expect(
         Promise.resolve(
           registry.commands["review-pr"]?.run({
-            ...createStatuslineContext(),
+            ...createModContext(),
             agent: { id: "agent-1", name: "Amelia" },
             args: "123",
             argv: ["123"],
@@ -766,6 +639,7 @@ export default function(letta) {
               },
               getHistory: async () => [],
               sendMessageStream: async () => (async function* () {})(),
+              updateLlmConfig: async () => {},
             },
             cwd: "/tmp/project",
             model: {
@@ -811,7 +685,7 @@ export default function(letta) {
         Promise.resolve(
           command
             ? runModCommandWithTimeout(command, {
-                ...createStatuslineContext(),
+                ...createModContext(),
                 args: "",
                 argv: [],
                 command: "legacy-command",
@@ -822,6 +696,7 @@ export default function(letta) {
                   },
                   getHistory: async () => [],
                   sendMessageStream: async () => (async function* () {})(),
+                  updateLlmConfig: async () => {},
                 },
                 rawInput: "/legacy-command",
               })
@@ -866,7 +741,7 @@ export default function(letta) {
       await expect(
         Promise.resolve(
           registry.commands["client-check"]?.run({
-            ...createStatuslineContext(),
+            ...createModContext(),
             agent: { id: "agent-1", name: "Amelia" },
             args: "",
             argv: [],
@@ -878,6 +753,7 @@ export default function(letta) {
               },
               getHistory: async () => [],
               sendMessageStream: async () => (async function* () {})(),
+              updateLlmConfig: async () => {},
             },
             cwd: "/tmp/project",
             model: {
@@ -907,9 +783,8 @@ export default function(letta) {
         `export default function(letta) {
           const panel = letta.ui.openPanel({
             id: "btw",
-            content: ["┌ /btw question ┐", "│ …             │", "└───────────────┘"],
+            render: () => "answer",
           });
-          panel.update({ content: "answer" });
           return () => panel.close();
         }`,
       );
@@ -917,10 +792,9 @@ export default function(letta) {
       const registry = await loadLocalMods(options);
 
       expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
-      expect(Object.values(registry.ui.panels)[0]).toMatchObject({
-        content: ["answer"],
-        id: "btw",
-      });
+      const panel = Object.values(registry.ui.panels)[0];
+      expect(panel).toMatchObject({ id: "btw" });
+      expect(panel?.render(renderCtx(80))).toBe("answer");
 
       disposeLocalMods(registry);
       expect(registry.ui.panels).toEqual({});
@@ -938,13 +812,13 @@ export default function(letta) {
       writeFileSync(
         path.join(modDir, "a.ts"),
         `export default function(letta) {
-          letta.ui.openPanel({ id: "status", content: "from a" });
+          letta.ui.openPanel({ id: "status", render: () => "from a" });
         }`,
       );
       writeFileSync(
         path.join(modDir, "b.ts"),
         `export default function(letta) {
-          letta.ui.openPanel({ id: "status", content: "from b" });
+          letta.ui.openPanel({ id: "status", render: () => "from b" });
         }`,
       );
 
@@ -952,8 +826,10 @@ export default function(letta) {
 
       expect(getModErrorDiagnostics(registry.diagnostics)).toEqual([]);
       expect(
-        Object.values(registry.ui.panels).map((panel) => panel.content),
-      ).toEqual([["from a"], ["from b"]]);
+        Object.values(registry.ui.panels).map((panel) =>
+          panel.render(renderCtx(80)),
+        ),
+      ).toEqual(["from a", "from b"]);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -1146,26 +1022,19 @@ export default function(letta) {
       writeFileSync(
         path.join(modDir, "status.ts"),
         `export default function(letta) {
-          letta.ui.setStatus("mode", "fast");
-          letta.ui.setStatuslineRenderer(() => "statusline");
-          return () => letta.ui.clearStatus("mode");
+          const panel = letta.ui.openPanel({ id: "mode", render: () => "fast" });
+          return () => panel.close();
         }`,
       );
 
       const registry = await loadLocalMods(options);
       expect(registry.disposers).toHaveLength(1);
-      expect(
-        evaluateLocalModStatuses(registry, createStatuslineContext()),
-      ).toEqual({ mode: "fast" });
-      expect(registry.ui.statuslineRenderer).not.toBeNull();
+      expect(Object.keys(registry.ui.panels)).toHaveLength(1);
 
       disposeLocalMods(registry);
 
       expect(registry.disposers).toEqual([]);
-      expect(
-        evaluateLocalModStatuses(registry, createStatuslineContext()),
-      ).toEqual({});
-      expect(registry.ui.statuslineRenderer).toBeNull();
+      expect(registry.ui.panels).toEqual({});
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

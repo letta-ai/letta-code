@@ -5,7 +5,11 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { isCloudAgentId, isLocalAgentId } from "./agent/agent-id";
+import {
+  type AgentBackendMode,
+  isAgentIdCompatibleWithBackend,
+  isCloudAgentId,
+} from "./agent/agent-id";
 import {
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
@@ -59,17 +63,6 @@ export interface AgentSettings {
   systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
   systemPromptHash?: string; // hash of the managed prompt content last written by Letta Code
   systemPromptVersion?: string; // Letta Code version that wrote systemPromptHash
-}
-
-export interface ConversationGoal {
-  objective: string;
-  status: "active" | "paused" | "complete" | "blocked" | "budget_limited";
-  createdAt: string;
-  updatedAt: string;
-  activeStartedAt?: string | null;
-  activeTimeSeconds: number;
-  tokensUsed: number;
-  tokenBudget?: number | null;
 }
 
 export interface Settings {
@@ -174,8 +167,6 @@ export interface LocalProjectSettings {
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   listenerEnvName?: string; // Saved environment name for listener connections (project-specific)
-  conversationGoalsByServer?: Record<string, Record<string, ConversationGoal>>;
-  conversationGoalToolsByServer?: Record<string, Record<string, boolean>>;
 }
 
 // Hard-deprecated keys: ignored on load and stripped from disk on persist.
@@ -250,9 +241,12 @@ function isAgentIdCompatibleWithServerKey(
   agentId: string,
   serverKey: string,
 ): boolean {
-  return isLocalServerKey(serverKey)
-    ? isLocalAgentId(agentId)
-    : isCloudAgentId(agentId);
+  // A server key encodes the backend mode via its "local:" prefix, so
+  // serverKey compatibility is just backend compatibility for that mode.
+  return isAgentIdCompatibleWithBackend(
+    agentId,
+    isLocalServerKey(serverKey) ? "local" : "api",
+  );
 }
 
 function isSessionCompatibleWithServerKey(
@@ -285,11 +279,7 @@ function shouldSkipLegacyLocalBackendSessionFallback(): boolean {
  * @param settings - Optional settings object to check for env overrides
  * @returns Normalized server key (e.g., "api.letta.com", "localhost:8283", "local:/path/to/store")
  */
-function getCurrentServerKey(settings?: Settings | null): string {
-  if (isLocalBackendEnvEnabled()) {
-    return getLocalBackendSettingsKey();
-  }
-
+function getApiServerKey(settings?: Settings | null): string {
   const baseUrl =
     process.env[SETTINGS_BASE_URL_ENV] ||
     settings?.env?.[SETTINGS_BASE_URL_ENV] ||
@@ -297,6 +287,27 @@ function getCurrentServerKey(settings?: Settings | null): string {
     settings?.env?.LETTA_BASE_URL ||
     DEFAULT_LETTA_API_URL;
   return normalizeBaseUrl(baseUrl);
+}
+
+function getCurrentServerKey(settings?: Settings | null): string {
+  if (isLocalBackendEnvEnabled()) {
+    return getLocalBackendSettingsKey();
+  }
+  return getApiServerKey(settings);
+}
+
+/**
+ * Resolve the server key for a specific backend mode, independent of the
+ * currently-active backend. "local" always maps to the local backend store;
+ * "api" maps to the configured cloud/self-hosted base URL.
+ */
+function serverKeyForBackendMode(
+  mode: AgentBackendMode,
+  settings?: Settings | null,
+): string {
+  return mode === "local"
+    ? getLocalBackendSettingsKey()
+    : getApiServerKey(settings);
 }
 
 /**
@@ -1452,213 +1463,47 @@ class SettingsManager {
     this.setGlobalLastSession(session);
   }
 
-  areConversationGoalToolsEnabled(
-    conversationId: string,
-    workingDirectory: string = process.cwd(),
-  ): boolean {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    return (
-      localSettings.conversationGoalToolsByServer?.[serverKey]?.[
-        conversationId
-      ] === true
-    );
-  }
-
-  setConversationGoalToolsEnabled(
-    conversationId: string,
-    enabled: boolean,
-    workingDirectory: string = process.cwd(),
-  ): void {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const serverGoalTools = {
-      ...(localSettings.conversationGoalToolsByServer?.[serverKey] ?? {}),
-    };
-    if (enabled) {
-      serverGoalTools[conversationId] = true;
-    } else {
-      delete serverGoalTools[conversationId];
-    }
-    this.updateLocalProjectSettings(
-      {
-        conversationGoalToolsByServer: {
-          ...localSettings.conversationGoalToolsByServer,
-          [serverKey]: serverGoalTools,
-        },
-      },
-      workingDirectory,
-    );
-  }
-
-  getConversationGoal(
-    conversationId: string,
-    workingDirectory: string = process.cwd(),
-  ): ConversationGoal | null {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    return (
-      localSettings.conversationGoalsByServer?.[serverKey]?.[conversationId] ??
-      null
-    );
-  }
-
-  setConversationGoal(
-    conversationId: string,
-    objective: string,
-    workingDirectory: string = process.cwd(),
-    tokenBudget: number | null = null,
-    resetUsage: boolean = true,
-  ): ConversationGoal {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const now = new Date().toISOString();
-    const previous =
-      localSettings.conversationGoalsByServer?.[serverKey]?.[conversationId];
-    const goal: ConversationGoal = {
-      objective,
-      status: "active",
-      createdAt: previous?.createdAt ?? now,
-      updatedAt: now,
-      activeStartedAt: now,
-      activeTimeSeconds: resetUsage ? 0 : (previous?.activeTimeSeconds ?? 0),
-      tokensUsed: resetUsage ? 0 : (previous?.tokensUsed ?? 0),
-      tokenBudget,
-    };
-    this.updateLocalProjectSettings(
-      {
-        conversationGoalsByServer: {
-          ...localSettings.conversationGoalsByServer,
-          [serverKey]: {
-            ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
-            [conversationId]: goal,
-          },
-        },
-      },
-      workingDirectory,
-    );
-    return goal;
-  }
-
-  updateConversationGoalStatus(
-    conversationId: string,
-    status: ConversationGoal["status"],
-    workingDirectory: string = process.cwd(),
-  ): ConversationGoal | null {
-    const existing = this.getConversationGoal(conversationId, workingDirectory);
-    if (!existing) return null;
-
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const now = new Date().toISOString();
-    const accruedSeconds =
-      existing.status === "active" && existing.activeStartedAt
-        ? Math.max(
-            0,
-            Math.floor(
-              (Date.parse(now) - Date.parse(existing.activeStartedAt)) / 1000,
-            ),
-          )
-        : 0;
-    const goal: ConversationGoal = {
-      ...existing,
-      status,
-      activeTimeSeconds: existing.activeTimeSeconds + accruedSeconds,
-      activeStartedAt: status === "active" ? now : null,
-      updatedAt: now,
-    };
-    this.updateLocalProjectSettings(
-      {
-        conversationGoalsByServer: {
-          ...localSettings.conversationGoalsByServer,
-          [serverKey]: {
-            ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
-            [conversationId]: goal,
-          },
-        },
-      },
-      workingDirectory,
-    );
-    return goal;
-  }
-
-  accountConversationGoalUsage(
-    conversationId: string,
-    tokenDelta: number,
-    workingDirectory: string = process.cwd(),
-  ): ConversationGoal | null {
-    const existing = this.getConversationGoal(conversationId, workingDirectory);
-    if (!existing) return null;
-
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const goal: ConversationGoal = {
-      ...existing,
-      tokensUsed: Math.max(0, existing.tokensUsed + Math.max(0, tokenDelta)),
-      updatedAt: new Date().toISOString(),
-    };
-    this.updateLocalProjectSettings(
-      {
-        conversationGoalsByServer: {
-          ...localSettings.conversationGoalsByServer,
-          [serverKey]: {
-            ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
-            [conversationId]: goal,
-          },
-        },
-      },
-      workingDirectory,
-    );
-    return goal;
-  }
-
-  clearConversationGoal(
-    conversationId: string,
-    workingDirectory: string = process.cwd(),
-  ): boolean {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const serverGoals = {
-      ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
-    };
-    const hadGoal = Object.hasOwn(serverGoals, conversationId);
-    delete serverGoals[conversationId];
-    this.updateLocalProjectSettings(
-      {
-        conversationGoalsByServer: {
-          ...localSettings.conversationGoalsByServer,
-          [serverKey]: serverGoals,
-        },
-      },
-      workingDirectory,
-    );
-    return hadGoal;
-  }
-
   // =====================================================================
   // Agent Pin Helpers (global-only, per-backend namespace)
   // =====================================================================
 
   /**
-   * Get pinned agent IDs for the current server from the global agents array.
+   * Get pinned agent IDs for the currently-active server.
    */
   getPinnedAgents(): string[] {
+    return this.getPinnedAgentsForServerKey(
+      getCurrentServerKey(this.getSettings()),
+    );
+  }
+
+  /**
+   * Get pinned agent IDs scoped to a specific backend mode, independent of the
+   * currently-active backend. Used to look up pins across modes (e.g. --name).
+   */
+  getPinnedAgentsForBackendMode(mode: AgentBackendMode): string[] {
+    return this.getPinnedAgentsForServerKey(
+      serverKeyForBackendMode(mode, this.getSettings()),
+    );
+  }
+
+  /**
+   * Get pinned agent IDs for an explicit server key. The server key both
+   * namespaces by server (baseUrl) and encodes the backend mode (the "local:"
+   * prefix), so agent-id/backend compatibility is derived from it directly —
+   * no separate backend-mode argument is needed.
+   */
+  getPinnedAgentsForServerKey(serverKey: string): string[] {
     const settings = this.getSettings();
-    const serverKey = getCurrentServerKey(settings);
     const normalizedBaseUrl =
       serverKey === "api.letta.com" ? undefined : serverKey;
 
     return (
       settings.agents
         ?.filter(
-          (a) => a.pinned && (a.baseUrl ?? undefined) === normalizedBaseUrl,
+          (a) =>
+            a.pinned &&
+            (a.baseUrl ?? undefined) === normalizedBaseUrl &&
+            isAgentIdCompatibleWithServerKey(a.agentId, serverKey),
         )
         .map((a) => a.agentId) ?? []
     );

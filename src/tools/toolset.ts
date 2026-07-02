@@ -7,6 +7,7 @@ import { getSupportedChannelIds } from "@/channels/plugin-registry";
 import { getChannelRegistry } from "@/channels/registry";
 import { getRoutesForChannel, loadRoutes } from "@/channels/routing";
 import type { ChannelTurnSource, SupportedChannelId } from "@/channels/types";
+import { experimentManager } from "@/experiments/manager";
 import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
 import type { ModContext } from "@/mods/types";
@@ -38,6 +39,22 @@ import {
 import type { ToolName } from "./tool-definitions";
 
 // Toolset definitions from manager.ts (single source of truth)
+
+const ARTIFACT_TOOL_NAMES: ToolName[] = [
+  "read_artifact_file",
+  "write_artifact_file",
+];
+
+function appendArtifactToolsIfEnabled(toolNames: ToolName[]): ToolName[] {
+  const artifactToolSet = new Set<ToolName>(ARTIFACT_TOOL_NAMES);
+  const withoutArtifactTools = toolNames.filter(
+    (name) => !artifactToolSet.has(name),
+  );
+  if (!experimentManager.isEnabled("artifacts")) {
+    return withoutArtifactTools;
+  }
+  return [...withoutArtifactTools, ...ARTIFACT_TOOL_NAMES];
+}
 // Keep these as direct references at call-sites (not top-level aliases) to avoid
 // temporal-dead-zone issues under circular import initialization.
 
@@ -153,54 +170,7 @@ function getToolNamesForToolset(
     tools.push("MessageChannel" as ToolName);
   }
 
-  return tools;
-}
-
-export function getGoalToolNamesForToolset(
-  toolsetName: ToolsetName,
-): ToolName[] {
-  switch (toolsetName) {
-    case "codex_snake":
-    case "gemini_snake":
-      return ["get_goal", "create_goal", "update_goal"];
-    case "codex":
-    case "gemini":
-    case "default":
-      return ["GetGoal", "CreateGoal", "UpdateGoal"];
-    case "none":
-      return [];
-  }
-}
-
-function appendUniqueTools(
-  toolNames: ToolName[],
-  additions: ToolName[],
-): ToolName[] {
-  if (additions.length === 0) return toolNames;
-  const result = [...toolNames];
-  const seen = new Set(result);
-  for (const toolName of additions) {
-    if (!seen.has(toolName)) {
-      result.push(toolName);
-      seen.add(toolName);
-    }
-  }
-  return result;
-}
-
-function areGoalToolsEnabledForScope(params: {
-  conversationId?: string | null;
-  workingDirectory?: string;
-}): boolean {
-  if (!params.conversationId) return false;
-  try {
-    return settingsManager.areConversationGoalToolsEnabled(
-      params.conversationId,
-      params.workingDirectory,
-    );
-  } catch {
-    return false;
-  }
+  return appendArtifactToolsIfEnabled(tools);
 }
 
 export async function prepareToolExecutionContextForResolvedTarget(params: {
@@ -258,12 +228,6 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       effectiveModel ?? undefined,
       {
         exclude,
-        include: areGoalToolsEnabledForScope({
-          conversationId,
-          workingDirectory,
-        })
-          ? getGoalToolNamesForToolset(derivedToolset)
-          : undefined,
         clientToolAllowlist,
         externalToolScopeIds,
         workingDirectory,
@@ -296,13 +260,8 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   });
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     filterBuiltInToolNamesByClientAllowlist(
-      appendUniqueTools(
-        getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
-          (toolName) => (exclude ? !exclude.includes(toolName) : true),
-        ),
-        areGoalToolsEnabledForScope({ conversationId, workingDirectory })
-          ? getGoalToolNamesForToolset(toolsetPreference)
-          : [],
+      getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
+        (toolName) => (exclude ? !exclude.includes(toolName) : true),
       ),
       clientToolAllowlist,
     ),
@@ -476,6 +435,7 @@ export async function prepareToolExecutionContextForScope(params: {
   agentId: string;
   conversationId?: string | null;
   overrideModel?: string | null;
+  overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
@@ -491,6 +451,7 @@ export async function prepareToolExecutionContextForScope(params: {
     agentId,
     conversationId,
     overrideModel,
+    overrideProviderType,
     cachedEffectiveModel,
     exclude,
     clientToolAllowlist,
@@ -510,9 +471,12 @@ export async function prepareToolExecutionContextForScope(params: {
     overrideModel && overrideModel.length > 0
       ? (resolveModel(overrideModel) ?? overrideModel)
       : null;
-  let effectiveProviderType = providerTypeFromModelSettings(
-    (agent as { model_settings?: unknown }).model_settings,
-  );
+  let effectiveProviderType =
+    overrideProviderType !== undefined
+      ? overrideProviderType
+      : providerTypeFromModelSettings(
+          (agent as { model_settings?: unknown }).model_settings,
+        );
 
   if (
     !effectiveModel &&

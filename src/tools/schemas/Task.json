@@ -19,7 +19,7 @@
     },
     "run_in_background": {
       "type": "boolean",
-      "description": "Set to true to run this agent in the background. The tool result will include an output_file path - use Read tool or Bash tail to check on output."
+      "description": "Defaults to true. Set to false only when you must block and wait for the agent's final report inline. Background runs return a task ID/output file and deliver a task notification on completion."
     },
     "agent_id": {
       "type": "string",

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type WebSocket from "ws";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
+import { isListenerPongStale } from "@/websocket/listener/constants";
 import { createListenerMessageHandler } from "@/websocket/listener/message-router";
 import { parseServerLifecycleMessage } from "@/websocket/listener/protocol-inbound";
 import type {
@@ -74,6 +75,18 @@ describe("listener lifecycle frames", () => {
     ]);
   });
 
+  test("records lastPongAt when a pong frame arrives", async () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(runtime);
+    expect(runtime.lastPongAt).toBeNull();
+
+    const before = Date.now();
+    await makeHandler(runtime)(Buffer.from('{"type":"pong"}'));
+
+    expect(runtime.lastPongAt).not.toBeNull();
+    expect(runtime.lastPongAt as number).toBeGreaterThanOrEqual(before);
+  });
+
   test("still logs malformed frames as unparseable lifecycle events", async () => {
     const runtime = __listenClientTestUtils.createListenerRuntime();
     const events: Array<{
@@ -95,5 +108,24 @@ describe("listener lifecycle frames", () => {
         event: { type: "_ws_unparseable", raw: "not-json" },
       },
     ]);
+  });
+});
+
+describe("isListenerPongStale", () => {
+  test("returns false before any pong is recorded", () => {
+    expect(isListenerPongStale(null, 1_000_000, 90_000)).toBe(false);
+  });
+
+  test("returns false when a pong arrived within the timeout", () => {
+    const now = 1_000_000;
+    expect(isListenerPongStale(now - 30_000, now, 90_000)).toBe(false);
+    // Exactly at the boundary is not yet stale.
+    expect(isListenerPongStale(now - 90_000, now, 90_000)).toBe(false);
+  });
+
+  test("returns true once the timeout is exceeded", () => {
+    const now = 1_000_000;
+    expect(isListenerPongStale(now - 90_001, now, 90_000)).toBe(true);
+    expect(isListenerPongStale(now - 300_000, now, 90_000)).toBe(true);
   });
 });

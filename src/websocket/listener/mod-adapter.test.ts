@@ -46,18 +46,18 @@ describe("listener mod adapter", () => {
   test("uses provider and tool capabilities", () => {
     expect(LISTENER_MOD_CAPABILITIES).toEqual({
       tools: true,
-      commands: false,
+      commands: true,
       events: {
         lifecycle: false,
-        tools: false,
+        tools: true,
         turns: true,
+        compact: false,
+        llm: false,
       },
       permissions: false,
       providers: true,
       ui: {
         panels: false,
-        statusValues: false,
-        customStatuslineRenderer: false,
       },
     });
   });
@@ -113,7 +113,7 @@ describe("listener mod adapter", () => {
     expect(context.toolset).toBe("default");
   });
 
-  test("loads provider and tool registrations without exposing other listener capabilities", async () => {
+  test("loads provider, tool, and command registrations without exposing events or panels", async () => {
     const root = createTempDir();
     const modsDir = join(root, "mods");
     const cacheDir = join(root, "cache");
@@ -139,8 +139,9 @@ describe("listener mod adapter", () => {
           }],
         });
         letta.commands.register({
-          id: "ignored-command",
-          description: "Should not register on listener",
+          id: "listener-command",
+          description: "Should register on listener",
+          args: "<thing>",
           run() { return { type: "handled" }; },
         });
         letta.tools.register({
@@ -178,7 +179,11 @@ describe("listener mod adapter", () => {
     const snapshot = adapter.getSnapshot().registry;
     expect(snapshot.capabilities).toEqual(LISTENER_MOD_CAPABILITIES);
     expect(snapshot.loadedPaths).toEqual([modPath]);
-    expect(snapshot.commands).toEqual({});
+    expect(snapshot.commands["listener-command"]).toMatchObject({
+      id: "listener-command",
+      description: "Should register on listener",
+      path: modPath,
+    });
     expect(snapshot.tools.listener_tool).toMatchObject({
       name: "listener_tool",
       description: "Should register on listener",
@@ -186,7 +191,6 @@ describe("listener mod adapter", () => {
     });
     expect(snapshot.events).toEqual({});
     expect(snapshot.ui.panels).toEqual({});
-    expect(snapshot.ui.statusValues).toEqual({});
 
     adapter.dispose();
     expect(getRegisteredPiProvider("kilo")).toBeUndefined();
@@ -422,6 +426,126 @@ describe("listener mod adapter", () => {
     // Input should be unchanged since handler threw
     expect(event.input).toEqual(originalInput);
 
+    adapter.dispose();
+  });
+
+  test("turn_end handlers receive stop reason and assistant message", async () => {
+    const root = createTempDir();
+    const modsDir = join(root, "mods");
+    const cacheDir = join(root, "cache");
+    mkdirSync(modsDir, { recursive: true });
+    writeFileSync(
+      join(modsDir, "turn-end-mod.ts"),
+      `export default function activate(letta) {
+        letta.events.on("turn_end", (event) => {
+          globalThis.__lettaTurnEndSeen = {
+            stopReason: event.stopReason,
+            assistantMessage: event.assistantMessage,
+          };
+        });
+      }`,
+    );
+
+    const adapter = createListenerModAdapter({
+      cacheDirectory: cacheDir,
+      globalModsDirectory: modsDir,
+      sessionId: "turn-end-test",
+      workingDirectory: root,
+    });
+    await adapter.reload();
+
+    const context = createListenerModContext({
+      sessionId: "conv-turn-end-test",
+      workingDirectory: root,
+    });
+    const event = {
+      agentId: "agent-turn-end",
+      conversationId: "conv-turn-end-test",
+      stopReason: "end_turn",
+      assistantMessage: "all done",
+    };
+
+    const result = await adapter.events.emit("turn_end", event, context);
+    expect(result.diagnostics).toHaveLength(0);
+    expect(
+      (globalThis as { __lettaTurnEndSeen?: unknown }).__lettaTurnEndSeen,
+    ).toEqual({
+      stopReason: "end_turn",
+      assistantMessage: "all done",
+    });
+
+    delete (globalThis as { __lettaTurnEndSeen?: unknown }).__lettaTurnEndSeen;
+    adapter.dispose();
+  });
+
+  test("tool_end handlers are delivered and can replace the result", async () => {
+    const root = createTempDir();
+    const modsDir = join(root, "mods");
+    const cacheDir = join(root, "cache");
+    mkdirSync(modsDir, { recursive: true });
+    writeFileSync(
+      join(modsDir, "tool-end-mod.ts"),
+      `export default function activate(letta) {
+        letta.events.on("tool_end", (event) => {
+          globalThis.__lettaToolEndSeen = {
+            toolName: event.toolName,
+            args: event.args,
+            status: event.status,
+            output: event.output,
+          };
+          if (event.toolName === "Bash") {
+            return { result: { status: "success", output: "redacted" } };
+          }
+        });
+      }`,
+    );
+
+    const adapter = createListenerModAdapter({
+      cacheDirectory: cacheDir,
+      globalModsDirectory: modsDir,
+      sessionId: "tool-end-test",
+      workingDirectory: root,
+    });
+    await adapter.reload();
+
+    const context = createListenerModContext({
+      sessionId: "conv-tool-end-test",
+      workingDirectory: root,
+    });
+    const event: {
+      agentId: string;
+      conversationId: string;
+      toolCallId: string;
+      toolName: string;
+      args: Record<string, unknown>;
+      status: "success" | "error";
+      output: string;
+      result?: { status: "success" | "error"; output: string };
+    } = {
+      agentId: "agent-tool-end",
+      conversationId: "conv-tool-end-test",
+      toolCallId: "call-1",
+      toolName: "Bash",
+      args: { command: "echo secret" },
+      status: "success",
+      output: "secret",
+    };
+
+    const result = await adapter.events.emit("tool_end", event, context);
+    expect(result.diagnostics).toHaveLength(0);
+    expect(
+      (globalThis as { __lettaToolEndSeen?: unknown }).__lettaToolEndSeen,
+    ).toEqual({
+      toolName: "Bash",
+      args: { command: "echo secret" },
+      status: "success",
+      output: "secret",
+    });
+    // events.tools is enabled for the listener, so the handler runs and its
+    // result override is written back onto the event (first handler wins).
+    expect(event.result).toEqual({ status: "success", output: "redacted" });
+
+    delete (globalThis as { __lettaToolEndSeen?: unknown }).__lettaToolEndSeen;
     adapter.dispose();
   });
 

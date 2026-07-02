@@ -1,13 +1,13 @@
 ---
 name: creating-mods
-description: Creates and edits trusted local Letta Code mods, including tools, slash commands, local-only model providers, lifecycle/turn events, scoped conversation helpers, panels, status values, and capability-gated behavior. Use when asked to make a mod, add an agent-callable tool, add a slash command, add a local provider/model adapter, transform turns, react to app events, or add lightweight mod UI outside the dedicated /statusline flow.
+description: Creates and edits trusted local Letta Code mods, including tools, slash commands, local-only model providers, lifecycle/turn events, scoped conversation helpers, panels, and capability-gated behavior. Use when asked to make a mod, add an agent-callable tool, add a slash command, add a local provider/model adapter, transform turns, react to app events, or add lightweight mod UI outside the dedicated /statusline flow.
 ---
 
 # Creating Mods
 
-Use this skill to create or update trusted Letta Code mod files. Mods are trusted local code that add small composable capabilities through mod APIs, not by importing app internals. Dynamic agent/conversation/workspace/model state is passed as `ctx` to tool, command, event, permission, status, and statusline callbacks; do not read mutable global context for model-callable behavior. Prefer scoped handles (`ctx.conversation`, `ctx.cwd`, `ctx.agent`) and guard optional UI with `letta.capabilities`.
+Use this skill to create or update trusted Letta Code mod files. Mods are trusted local code that add small composable capabilities through mod APIs, not by importing app internals. Dynamic agent/conversation/workspace/model state is passed as `ctx` to tool, command, event, and permission callbacks (panels receive live `agent`/`model` in their render context); do not read mutable global context for model-callable behavior. Prefer scoped handles (`ctx.conversation`, `ctx.cwd`, `ctx.agent`) and guard optional UI with `letta.capabilities`.
 
-Capabilities vary by surface. TUI/headless may load tools, commands, events, UI, and providers; the desktop listener loads provider-only mods for local provider discovery. Always guard optional capabilities.
+Capabilities vary by surface — not every surface loads every capability. The TUI/headless host can load tools, commands, events, UI, and providers; the desktop listener loads tools, commands, providers, and tool/turn events, but not panel UI. Always guard each registration on the capabilities its behavior needs.
 
 ## Choose where the mod file lives
 
@@ -86,12 +86,14 @@ letta.capabilities.commands
 letta.capabilities.events.lifecycle
 letta.capabilities.events.tools
 letta.capabilities.events.turns
+letta.capabilities.events.compact
+letta.capabilities.events.llm
 letta.capabilities.permissions
 letta.capabilities.providers
 letta.capabilities.ui.panels
-letta.capabilities.ui.statusValues
-letta.capabilities.ui.customStatuslineRenderer
 ```
+
+Guard each registration on every capability its behavior depends on — not just the one that registers it. Surfaces load different capability subsets, so a registration that relies on another capability (a command that opens UI, emits an event, or calls a provider) must guard on that capability too. Otherwise it is advertised or activated on a host that cannot fulfill it and silently does nothing. Register where the host can actually do the work.
 
 ## Scoped API model
 
@@ -135,7 +137,8 @@ Before finishing, verify:
 - Command/tool IDs are valid; command overrides of built-ins are intentional, and tool IDs do not collide with built-ins.
 - Tool descriptions explain when the model should call them.
 - JSON schemas are object schemas with useful descriptions.
-- Optional UI/event/statusline APIs are capability-guarded.
+- Optional UI/event APIs are capability-guarded.
+- Each registration is guarded by every capability its behavior depends on, not just the one that registers it, so it isn't advertised or activated on a surface that can't fulfill it.
 - Provider mods are capability-guarded and clearly documented as local-agent only.
 - Timers, intervals, event registrations, and panels are cleaned up in a disposer.
 - Busy commands return `{ type: "handled" }` quickly and avoid main-conversation sends.
@@ -152,7 +155,7 @@ Before finishing, verify:
 | `references/providers.md` | Adding a custom model/API provider for local agents |
 | `references/events.md` | Reacting to lifecycle/tool/turn events or transforming turns/tools |
 | `references/permissions.md` | Enforcing dynamic tool allow/ask/deny policy before approval/execution |
-| `references/ui.md` | Panels, status values, or statusline capability guards are involved |
+| `references/ui.md` | Panels (including order-0 statusline) or `ui.panels` capability guards are involved |
 | `references/plan-mode.md` | Recreating plan mode with commands, tools, events, permissions, and local state |
 | `references/analysis-mode.md` | Phrase-triggered diagnostic mode with turn reminders (simpler than plan-mode) |
 | `references/architecture.md` | Multiple capabilities, local state, cleanup, background model work, or non-trivial composition |

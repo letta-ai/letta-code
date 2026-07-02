@@ -21,6 +21,7 @@ import {
   installNpmManagedModPackage,
   parseGitManagedModPackageInstallSpecifier,
   parseNpmManagedModPackageInstallSpecifier,
+  updateGitManagedModPackage,
   updateNpmManagedModPackage,
 } from "@/mods/package-installer";
 
@@ -830,6 +831,135 @@ describe("local managed mod package installer", () => {
         specifier: "npm:@caren/my-mod",
       }),
     ).rejects.toThrow("No managed mod packages are installed.");
+  });
+
+  test("updates an installed git package and reports old and new versions", async () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+    let cloneCount = 0;
+    __testOverrideNpmManagedModPackageInstaller({
+      gitSpawnImpl: (_cmd, args, _options) => {
+        if (args[0] === "clone") {
+          cloneCount++;
+          writeLocalPackage({
+            capabilities: ["commands"],
+            entries: cloneCount === 1 ? ["mods/index.ts"] : ["mods/next.ts"],
+            name: "git-mod",
+            packageRoot: String(args.at(-1)),
+            version: cloneCount === 1 ? "0.1.0" : "0.2.0",
+          });
+        }
+        const child = createChildProcess();
+        queueMicrotask(() => {
+          if (args[0] === "rev-parse") {
+            child.stdout?.emit(
+              "data",
+              cloneCount === 1 ? "abc123\n" : "def456\n",
+            );
+          }
+          child.emit("exit", 0);
+        });
+        return child;
+      },
+    });
+
+    const first = await installGitManagedModPackage({
+      modsRoot,
+      specifier: "https://github.com/caren/git-mod",
+    });
+    writeFileSync(path.join(first.root, "stale.ts"), "stale\n");
+
+    const result = await updateGitManagedModPackage({
+      modsRoot,
+      specifier: "https://github.com/caren/git-mod",
+    });
+
+    expect(result).toMatchObject({
+      enabled: true,
+      previousVersion: "0.1.0",
+      source: "git:https://github.com/caren/git-mod",
+      version: "0.2.0",
+    });
+    expect(existsSync(path.join(result.root, "mods", "next.ts"))).toBe(true);
+    expect(existsSync(path.join(result.root, "mods", "index.ts"))).toBe(false);
+    expect(existsSync(path.join(result.root, "stale.ts"))).toBe(false);
+    expect(readRegistry(modsRoot).packages).toEqual([
+      {
+        source: "git:https://github.com/caren/git-mod",
+        version: "0.2.0",
+        enabled: true,
+        root: "packages/git/github.com/caren/git-mod",
+        entries: ["mods/next.ts"],
+      },
+    ]);
+  });
+
+  test("update git package preserves disabled state", async () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+    let cloneCount = 0;
+    __testOverrideNpmManagedModPackageInstaller({
+      gitSpawnImpl: (_cmd, args) => {
+        if (args[0] === "clone") {
+          cloneCount++;
+          writeLocalPackage({
+            name: "git-mod",
+            packageRoot: String(args.at(-1)),
+            version: cloneCount === 1 ? "0.1.0" : "0.2.0",
+          });
+        }
+        const child = createChildProcess();
+        queueMicrotask(() => {
+          if (args[0] === "rev-parse") child.stdout?.emit("data", "abc123\n");
+          child.emit("exit", 0);
+        });
+        return child;
+      },
+    });
+
+    await installGitManagedModPackage({
+      modsRoot,
+      specifier: "https://github.com/caren/git-mod",
+    });
+    const registry = readRegistry(modsRoot);
+    registry.packages[0] = { ...registry.packages[0], enabled: false };
+    writeFileSync(
+      path.join(modsRoot, "packages.json"),
+      `${JSON.stringify(registry, null, 2)}\n`,
+    );
+
+    const result = await updateGitManagedModPackage({
+      modsRoot,
+      specifier: "https://github.com/caren/git-mod",
+    });
+
+    expect(result.enabled).toBe(false);
+    expect(readRegistry(modsRoot).packages[0]?.enabled).toBe(false);
+    expect(readRegistry(modsRoot).packages[0]?.version).toBe("0.2.0");
+  });
+
+  test("git update requires an installed package", async () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+
+    await expect(
+      updateGitManagedModPackage({
+        modsRoot,
+        specifier: "https://github.com/caren/git-mod",
+      }),
+    ).rejects.toThrow("No managed mod packages are installed.");
+  });
+
+  test("git update invalid specifier fails", async () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+
+    await expect(
+      updateGitManagedModPackage({
+        modsRoot,
+        specifier: "npm:invalid",
+      }),
+    ).rejects.toThrow("Invalid git mod package specifier");
   });
 
   test("npm install failure does not write registry", async () => {

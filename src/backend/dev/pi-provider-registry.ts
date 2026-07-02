@@ -40,6 +40,7 @@ export interface PiProviderSpec {
   fallbackApiKey?: string;
   headers?: () => Record<string, string> | undefined;
   localModelDiscovery?: "ollama" | "openai-compatible";
+  autoDetectLocalEndpoint?: boolean;
   envConfigured?: () => boolean;
   createCustomModel?: boolean;
   catalogModelHandle?: (model: Model<Api>) => string | undefined;
@@ -55,6 +56,7 @@ interface PiProviderOverride {
   fallbackApiKey?: string;
   headers?: () => Record<string, string> | undefined;
   localModelDiscovery?: "ollama" | "openai-compatible";
+  autoDetectLocalEndpoint?: boolean;
   envConfigured?: () => boolean;
   createCustomModel?: boolean;
   catalogModelHandle?: (model: Model<Api>) => string | undefined;
@@ -143,7 +145,11 @@ const PI_PROVIDER_OVERRIDES: Partial<
   openrouter: {
     localProviderNames: ["openrouter", LOCAL_OPENROUTER_PROVIDER_NAME],
     baseUrlEnv: () => process.env.OPENROUTER_BASE_URL,
-    headers: () => ({ "X-Title": "Letta Code" }),
+    headers: () => ({
+      "HTTP-Referer": "https://letta.com",
+      "X-OpenRouter-Title": "Letta Code",
+      "X-OpenRouter-Categories": "cli-agent,personal-agent",
+    }),
   },
   zai: {
     providerTypes: ["zai", "zai_coding"],
@@ -190,7 +196,7 @@ const PI_PROVIDER_OVERRIDES: Partial<
     localProviderNames: ["amazon-bedrock", LOCAL_BEDROCK_PROVIDER_NAME],
   },
   "openai-codex": {
-    providerTypes: ["openai-codex", "chatgpt_oauth"],
+    providerTypes: ["chatgpt_oauth", "openai-codex"],
     handlePrefixes: ["openai-codex/", "chatgpt-plus-pro/"],
     localProviderNames: ["openai-codex", LOCAL_CHATGPT_PROVIDER_NAME],
   },
@@ -233,6 +239,9 @@ function makePiProviderSpec(provider: KnownProvider): PiProviderSpec {
     ...(override.localModelDiscovery
       ? { localModelDiscovery: override.localModelDiscovery }
       : {}),
+    ...(override.autoDetectLocalEndpoint !== undefined
+      ? { autoDetectLocalEndpoint: override.autoDetectLocalEndpoint }
+      : {}),
     envConfigured:
       override.envConfigured ?? (() => getEnvApiKey(provider) !== undefined),
     ...(override.createCustomModel !== undefined
@@ -255,6 +264,7 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
     baseUrlEnv: () => process.env.OLLAMA_BASE_URL,
     fallbackApiKey: "not-needed",
     localModelDiscovery: "ollama",
+    autoDetectLocalEndpoint: true,
     envConfigured: () =>
       hasEnvValue(process.env.OLLAMA_LOCAL_API_KEY) ||
       hasEnvValue(process.env.OLLAMA_BASE_URL),
@@ -285,6 +295,7 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
     baseUrlEnv: () => process.env.LMSTUDIO_BASE_URL,
     fallbackApiKey: "not-needed",
     localModelDiscovery: "openai-compatible",
+    autoDetectLocalEndpoint: true,
     envConfigured: () =>
       hasEnvValue(process.env.LMSTUDIO_API_KEY) ||
       hasEnvValue(process.env.LMSTUDIO_BASE_URL),
@@ -301,6 +312,7 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
       process.env.LLAMA_CPP_BASE_URL ?? process.env.LLAMACPP_BASE_URL,
     fallbackApiKey: "not-needed",
     localModelDiscovery: "openai-compatible",
+    autoDetectLocalEndpoint: true,
     envConfigured: () =>
       hasEnvValue(process.env.LLAMA_CPP_API_KEY) ||
       hasEnvValue(process.env.LLAMA_CPP_BASE_URL) ||
