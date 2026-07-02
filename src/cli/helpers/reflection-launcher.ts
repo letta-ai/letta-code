@@ -183,6 +183,7 @@ async function launchMetaReflectionSubagent(
       },
       instruction: AUTO_META_REFLECTION_INSTRUCTION,
       systemPrompt: options.systemPrompt,
+      rangeMode: "replay",
     });
     if (!reflectionPayload) {
       releaseReflectionLaunch(agentId);
@@ -195,6 +196,7 @@ async function launchMetaReflectionSubagent(
       instruction: AUTO_META_REFLECTION_INSTRUCTION,
       memoryDir,
       parentMemory,
+      mode: "multi",
     });
 
     const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =

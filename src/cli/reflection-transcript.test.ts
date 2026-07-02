@@ -625,6 +625,46 @@ describe("reflectionTranscript helper", () => {
     }
   });
 
+  test("multi payload replay range mode replays recent content even when unreflected content exists", async () => {
+    const conv = "conv-replay-mode";
+    await appendTranscriptDeltaJsonl(agentId, conv, [
+      { kind: "user", id: "u-old", text: "old", messageId: "u-old" },
+      {
+        kind: "assistant",
+        id: "a-old",
+        text: "old response",
+        phase: "finished",
+        messageId: "a-old",
+      },
+      { kind: "user", id: "u-new", text: "new", messageId: "u-new" },
+      {
+        kind: "assistant",
+        id: "a-new",
+        text: "new response",
+        phase: "finished",
+        messageId: "a-new",
+      },
+    ]);
+
+    const multi = await buildMultiReflectionPayload({
+      agentId,
+      selectionPolicy: { mode: "explicit-conversations", conversationIds: [conv] },
+      rangeMode: "replay",
+      maxReplayTurnsPerConversation: 1,
+    });
+
+    expect(multi).not.toBeNull();
+    if (!multi) return;
+    expect(multi.manifest.transcripts).toHaveLength(1);
+    expect(multi.manifest.transcripts[0]?.mode).toBe("replay");
+    const payloadText = await readFile(
+      multi.manifest.transcripts[0]!.payload_path,
+      "utf-8",
+    );
+    expect(payloadText).toContain("new");
+    expect(payloadText).not.toContain("old");
+  });
+
   test("multi finalizer advances only unreflected slices", async () => {
     const replayConv = "conv-replay";
     const freshConv = "conv-fresh";
@@ -853,8 +893,8 @@ describe("reflectionTranscript helper", () => {
     expect(prompt).toContain("Review the conversation transcript");
     expect(prompt).not.toContain("Your current working directory is:");
     expect(prompt).toContain("The payload path is available as the");
-    expect(prompt).toContain("multi_transcript_reflection_payload");
-    expect(prompt).toContain('mode: "replay"');
+    expect(prompt).not.toContain("multi_transcript_reflection_payload");
+    expect(prompt).not.toContain('mode: "replay"');
     // Prompt references the $TRANSCRIPT_PATH env var (resolved via Bash),
     // not a literal absolute path.
     expect(prompt).toContain("$TRANSCRIPT_PATH");
@@ -869,6 +909,21 @@ describe("reflectionTranscript helper", () => {
     expect(prompt).toContain("Additional user-provided reflection instruction");
     expect(prompt).toContain("Focus on repo gotchas.");
     expect(prompt).toContain("<parent_memory>snapshot</parent_memory>");
+  });
+
+  test("buildReflectionSubagentPrompt adds multi-conversation instructions only when requested", () => {
+    const standardPrompt = buildReflectionSubagentPrompt({
+      memoryDir: "/tmp/memory",
+      parentMemory: "<parent_memory>snapshot</parent_memory>",
+    });
+    const multiPrompt = buildReflectionSubagentPrompt({
+      mode: "multi",
+      memoryDir: "/tmp/memory",
+      parentMemory: "<parent_memory>snapshot</parent_memory>",
+    });
+
+    expect(standardPrompt).not.toContain("multi_transcript_reflection_payload");
+    expect(multiPrompt).toContain("multi_transcript_reflection_payload");
   });
 
   test("reflection payload drops tool call results and truncates args", async () => {

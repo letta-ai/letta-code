@@ -198,38 +198,68 @@ export interface ReflectionAutoPayload {
   candidates: ReflectionAutoCandidates;
 }
 
+export type ReflectionPromptMode = "standard" | "multi";
+
 export interface ReflectionPromptInput {
   instruction?: string;
   memoryDir: string;
   parentMemory?: string;
+  mode?: ReflectionPromptMode;
+}
+
+function buildReflectionPayloadInstructions(): string[] {
+  return [
+    "Review the conversation transcript payload and update memory files. The payload path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit/Read/Write `file_path` is literal and does NOT expand env vars.",
+    "",
+  ];
+}
+
+function buildMultiReflectionInstructions(): string[] {
+  return [
+    'The payload is a `multi_transcript_reflection_payload` manifest. Read each `payload_path` listed in `transcripts` and synthesize across all conversations. Entries with `mode: "replay"` were already reflected before and are included intentionally for re-review/deduplication; do not skip them',
+    "Synthesize across conversations and prioritize durable, cross-conversation signal over one-off task state, especially patterns that recur across multiple conversations:",
+    "- Memory failures: things the agent repeatedly forgets or fails to apply despite existing memory.",
+    "- Repeated corrections and recurring agent failure modes across sessions.",
+    "- Personalization opportunities: lasting user preferences, style, and workflow conventions.",
+    "- Skill generation: ONLY for reusable, durable, multi-step workflows, especially ones seen across conversations.",
+    "- Proactive cleanup and memory hygiene: resolve contradictions at the source, deduplicate, prune stale or too-verbose content, move memory to the right tier, split bulky files, and fix weak cross-references.",
+    "Prefer fewer, higher-confidence updates. Low-signal transcripts can support deduplication or contradiction resolution, but should not create durable memory by themselves.",
+    "",
+  ];
+}
+
+function buildReflectionMemoryFilesystemInstructions(memoryDir: string): string[] {
+  return [
+    `The primary agent's memory filesystem is located at: ${memoryDir}`,
+    "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below. Modification to files in `system/` will edit the parent agent's system prompt.",
+    "Additional memory files (such as skills and external memory) may also be read and modified.",
+    "",
+  ];
+}
+
+function buildReflectionUserInstruction(input: ReflectionPromptInput): string[] {
+  if (!input.instruction?.trim()) {
+    return [];
+  }
+
+  return [
+    "Additional user-provided reflection instruction:",
+    input.instruction.trim(),
+    "",
+    "Use this instruction to focus what you look for, but still only persist durable memory-worthy learnings and do not store transient task state.",
+    "",
+  ];
 }
 
 export function buildReflectionSubagentPrompt(
   input: ReflectionPromptInput,
 ): string {
-  const lines: string[] = [];
-
-  lines.push(
-    "Review the conversation transcript payload and update memory files. The payload path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit/Read/Write `file_path` is literal and does NOT expand env vars.",
-    "",
-    'The payload may be either a JSON message array for one conversation or a `multi_transcript_reflection_payload` manifest. If it is a manifest, read each `payload_path` listed in `transcripts` and synthesize across all conversations. Entries with `mode: "replay"` were already reflected before and are included intentionally for re-review/deduplication; do not ignore them just because they are replay slices.',
-    "When reviewing multiple transcripts, prefer durable patterns and latest evidence across sessions. Resolve contradictions by updating stale memory at the source, deduplicate repeated facts, and avoid storing one-off task state.",
-    "",
-    `The primary agent's memory filesystem is located at: ${input.memoryDir}`,
-    "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below. Modification to files in `system/` will edit the parent agent's system prompt.",
-    "Additional memory files (such as skills and external memory) may also be read and modified.",
-    "",
-  );
-
-  if (input.instruction?.trim()) {
-    lines.push(
-      "Additional user-provided reflection instruction:",
-      input.instruction.trim(),
-      "",
-      "Use this instruction to focus what you look for, but still only persist durable memory-worthy learnings and do not store transient task state.",
-      "",
-    );
-  }
+  const lines: string[] = [
+    ...buildReflectionPayloadInstructions(),
+    ...(input.mode === "multi" ? buildMultiReflectionInstructions() : []),
+    ...buildReflectionMemoryFilesystemInstructions(input.memoryDir),
+    ...buildReflectionUserInstruction(input),
+  ];
 
   if (input.parentMemory) {
     lines.push(input.parentMemory);
@@ -1863,6 +1893,8 @@ type MultiReflectionSelectionPolicy =
       candidatesPath?: string;
     };
 
+export type MultiReflectionRangeMode = "unreflected-first" | "replay";
+
 export interface BuildMultiReflectionPayloadOptions {
   agentId: string;
   instruction?: string;
@@ -1870,6 +1902,7 @@ export interface BuildMultiReflectionPayloadOptions {
   systemPrompt?: string;
   maxReplayTurnsPerConversation?: number;
   maxTotalChars?: number;
+  rangeMode?: MultiReflectionRangeMode;
 }
 
 async function resolveMultiReflectionConversationIds(
@@ -1940,6 +1973,7 @@ export async function buildMultiReflectionPayload(
     systemPrompt,
     maxReplayTurnsPerConversation = 50,
     maxTotalChars = 150_000,
+    rangeMode = "unreflected-first",
   } = options;
   const conversationIds = await resolveMultiReflectionConversationIds(
     agentId,
@@ -1966,16 +2000,21 @@ export async function buildMultiReflectionPayload(
       const lines = await readTranscriptLines(paths);
       const rows = parseTranscriptRows(lines);
       const state = await readState(paths);
-      const unreflectedSelection = selectUnreflectedTranscriptRange(
+      const replaySelection = selectReplayTranscriptRange(
         rows,
-        state.reflected_through_message_id,
+        maxReplayTurnsPerConversation,
       );
+      const unreflectedSelection =
+        rangeMode === "unreflected-first"
+          ? selectUnreflectedTranscriptRange(
+              rows,
+              state.reflected_through_message_id,
+            )
+          : null;
       const mode: ReflectionSliceMode = unreflectedSelection
         ? "unreflected"
         : "replay";
-      const selection =
-        unreflectedSelection ??
-        selectReplayTranscriptRange(rows, maxReplayTurnsPerConversation);
+      const selection = unreflectedSelection ?? replaySelection;
       if (!selection) {
         return null;
       }

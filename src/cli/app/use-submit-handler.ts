@@ -3234,6 +3234,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                           },
                           instruction: reflectArgs.instruction,
                           systemPrompt,
+                          rangeMode: "replay",
                         });
                       if (!autoReflectionPayload) {
                         releaseReflectionReservation();
@@ -3250,6 +3251,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                         instruction: reflectArgs.instruction,
                         memoryDir,
                         parentMemory,
+                        mode: "multi",
                       });
 
                       spawnBackgroundSubagentTask({
@@ -3371,6 +3373,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               instruction: reflectArgs.instruction,
               memoryDir,
               parentMemory,
+              mode: "multi",
             });
 
             const {
