@@ -2296,6 +2296,7 @@ export function App({
     currentDirectory: process.cwd(),
     projectDirectory,
     sessionId: conversationId,
+    conversationSummary,
     agentId,
     agentName,
     lastRunId: lastRunIdRef.current,

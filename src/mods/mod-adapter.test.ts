@@ -57,6 +57,7 @@ function createModContext(agentName = "Amelia"): ModContext {
     permissionMode: "standard",
     reflection: { mode: null, stepCount: 0 },
     sessionId: "conversation-1",
+    conversationSummary: null,
     systemPromptId: null,
     terminalWidth: 80,
     toolset: "default",

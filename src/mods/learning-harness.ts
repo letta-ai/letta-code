@@ -493,6 +493,7 @@ function createAssertionModContext(repoRoot: string): ModContext {
     permissionMode: "standard",
     reflection: { mode: null, stepCount: 0 },
     sessionId: "mod-learning-eval-conversation",
+    conversationSummary: null,
     systemPromptId: null,
     terminalWidth: 80,
     toolset: "default",
