@@ -5,6 +5,7 @@ import type {
   ApprovalDecision,
   ApprovalResult,
 } from "@/agent/approval-execution";
+import type { ChannelTurnProgressBuilder } from "@/channels/progress";
 import type { ChannelTurnSource } from "@/channels/types";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
@@ -141,6 +142,8 @@ export type ConversationRuntime = {
   conversationId: string;
   activeChannelTurnSources: ChannelTurnSource[] | null;
   activeChannelTurnBatchId: string | null;
+  /** Per-turn progress builder; created when a channel turn starts and dropped when it ends. */
+  activeChannelTurnProgress: ChannelTurnProgressBuilder | null;
   messageQueue: Promise<void>;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;

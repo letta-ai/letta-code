@@ -1,23 +1,13 @@
 import {
   getDisplayToolName,
+  isGlobTool,
+  isSearchTool,
   isShellTool,
   isTaskTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isWebSearchToolName } from "@/cli/helpers/web-search-display";
 import type { StreamDelta } from "@/types/protocol_v2";
 import type { ChannelTurnProgressUpdate } from "./types";
-
-// Accumulate fragmented tool arguments across stream deltas.
-// Keyed by tool_call_id; values are the accumulated argument strings.
-const toolCallArgumentsById = new Map<string, string>();
-const toolCallNamesById = new Map<string, string>();
-const toolCallDescriptionsById = new Map<string, string>();
-
-export function clearToolCallArgumentsCache(): void {
-  toolCallArgumentsById.clear();
-  toolCallNamesById.clear();
-  toolCallDescriptionsById.clear();
-}
 
 const MAX_PROGRESS_TEXT_LENGTH = 140;
 const MAX_PROGRESS_DETAILS_LENGTH = 180;
@@ -29,12 +19,6 @@ const SECRET_ASSIGNMENT_RE =
   /\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|PASS|API[_-]?KEY|ACCESS[_-]?KEY)[A-Z0-9_]*)\s*=\s*("[^"]*"|'[^']*'|\S+)/gi;
 const SECRET_JSON_RE =
   /(["']?(?:token|secret|password|api[_-]?key|access[_-]?key)["']?\s*[:=]\s*)("[^"]*"|'[^']*'|\S+)/gi;
-
-function debugChannelProgress(message: string): void {
-  if (process.env.LETTA_SLACK_PROGRESS_DEBUG === "1") {
-    console.debug(`[Channel progress] ${message}`);
-  }
-}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
@@ -51,11 +35,14 @@ function firstNonEmptyString(...values: unknown[]): string | undefined {
   return undefined;
 }
 
-function truncate(value: string, maxLength: number): string {
+export function truncateChannelProgressText(
+  value: string,
+  maxLength: number,
+  marker = "...",
+): string {
   if (value.length <= maxLength) {
     return value;
   }
-  const marker = "...";
   if (maxLength <= marker.length) {
     return marker.slice(0, Math.max(0, maxLength));
   }
@@ -79,21 +66,34 @@ function replaceControlCharacters(value: string): string {
   return result;
 }
 
-export function sanitizeChannelProgressText(
-  value: unknown,
-  maxLength: number = MAX_PROGRESS_TEXT_LENGTH,
-): string {
+/**
+ * Shared sanitization core for channel-facing progress text: strips ANSI
+ * escapes and control characters, redacts secret-looking assignments, and
+ * neutralizes platform mentions. Platform adapters layer their own escaping
+ * (and truncation marker) on top of this instead of maintaining parallel
+ * redaction rules.
+ */
+export function sanitizeChannelProgressCore(value: unknown): string {
   const raw = typeof value === "string" ? value : String(value ?? "");
   const redacted = raw
     .replace(ANSI_ESCAPE_RE, "")
     .replace(SECRET_ASSIGNMENT_RE, "$1=[redacted]")
     .replace(SECRET_JSON_RE, "$1[redacted]");
-  const normalized = replaceControlCharacters(redacted)
+  return replaceControlCharacters(redacted)
     .replace(/[\r\n\t]+/g, " ")
     .replace(/@(?=channel|here|everyone|[A-Za-z0-9._-]+)/gi, "@\u200b")
     .replace(/\s+/g, " ")
     .trim();
-  return truncate(normalized, maxLength);
+}
+
+export function sanitizeChannelProgressText(
+  value: unknown,
+  maxLength: number = MAX_PROGRESS_TEXT_LENGTH,
+): string {
+  return truncateChannelProgressText(
+    sanitizeChannelProgressCore(value),
+    maxLength,
+  );
 }
 
 export function sanitizeChannelProgressIdentifier(
@@ -114,33 +114,21 @@ function summarizeShellCommand(command: string): string {
     return "";
   }
 
-  const firstSemicolonSegments = normalized
+  // Preview the first command segment (or two short ones) and drop pipelines
+  // so multi-step shell invocations stay readable at Slack-row lengths.
+  const segments = normalized
     .split(/\s*;\s*/)
     .map((segment) => segment.trim())
     .filter(Boolean);
-  const firstTwoSegments = firstSemicolonSegments.slice(0, 2).join("; ");
+  const firstTwoSegments = segments.slice(0, 2).join("; ");
   const previewSource =
     firstTwoSegments.length > 0 && firstTwoSegments.length <= 70
       ? firstTwoSegments
-      : (firstSemicolonSegments[0] ?? normalized);
+      : (segments[0] ?? normalized);
   const withoutPipeline = previewSource.split(/\s*\|\s*/)[0] ?? previewSource;
-  const withoutHugePattern = withoutPipeline.replace(
-    /\s+-Pattern\s+.*$/i,
-    " -Pattern ...",
-  );
-  const withoutLineVariable = withoutHugePattern.replace(
-    /^\$lines\s*=\s*/i,
-    "",
-  );
 
-  if (withoutLineVariable.trim()) {
-    return sanitizeChannelProgressText(
-      withoutLineVariable,
-      MAX_SHELL_PROGRESS_DETAILS_LENGTH,
-    );
-  }
   return sanitizeChannelProgressText(
-    normalized,
+    withoutPipeline.trim() || normalized,
     MAX_SHELL_PROGRESS_DETAILS_LENGTH,
   );
 }
@@ -149,17 +137,12 @@ type ToolCallSummary = {
   id?: string;
   name?: string;
   argumentsText?: string;
-  descriptionText?: string;
 };
 
 function formatShellProgressDetailsFromArguments(
-  summary: ToolCallSummary,
   parsedArguments: Record<string, unknown>,
 ): string | undefined {
-  const description = firstNonEmptyString(
-    summary.descriptionText,
-    parsedArguments.description,
-  );
+  const description = firstNonEmptyString(parsedArguments.description);
   if (description) {
     return (
       sanitizeChannelProgressText(description, MAX_PROGRESS_DETAILS_LENGTH) ||
@@ -196,42 +179,11 @@ function formatFragmentedShellProgressDetails(
   return undefined;
 }
 
-function formatSubagentNestedValue(value: unknown): string | undefined {
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value;
-  }
-  const record = asRecord(value);
-  if (!record) {
-    return undefined;
-  }
-  return (
-    firstNonEmptyString(
-      record.prompt,
-      record.task,
-      record.instructions,
-      record.instruction,
-      record.command,
-      record.description,
-      record.message,
-    ) ?? stringifyRecordArgument(record)
-  );
-}
-
 function formatSubagentProgressDetailsFromArguments(
-  summary: ToolCallSummary,
   parsedArguments: Record<string, unknown>,
 ): string | undefined {
   const preview = firstNonEmptyString(
     parsedArguments.prompt,
-    parsedArguments.task,
-    parsedArguments.instructions,
-    parsedArguments.instruction,
-    parsedArguments.request,
-    parsedArguments.command,
-    formatSubagentNestedValue(parsedArguments.input),
-    formatSubagentNestedValue(parsedArguments.payload),
-    formatSubagentNestedValue(parsedArguments.args),
-    summary.descriptionText,
     parsedArguments.description,
     parsedArguments.subject,
   );
@@ -246,7 +198,7 @@ function formatFragmentedSubagentProgressDetails(
   summary: ToolCallSummary,
 ): string | undefined {
   const previewMatch = summary.argumentsText?.match(
-    /"(?:prompt|task|instructions|instruction|request|command|description|subject)"\s*:\s*"([^"]+)"/,
+    /"(?:prompt|description|subject)"\s*:\s*"([^"]+)"/,
   );
   if (!previewMatch?.[1]) {
     return undefined;
@@ -276,49 +228,6 @@ function parseToolArguments(
   }
 }
 
-function stringifyRecordArgument(value: unknown): string | undefined {
-  const record = asRecord(value);
-  return record ? JSON.stringify(record) : undefined;
-}
-
-function formatToolProgressTitle(
-  summary: ToolCallSummary,
-  state: ChannelTurnProgressUpdate["state"],
-  details?: string,
-): string | undefined {
-  if (isSkillToolName(summary.name) && details) {
-    return `Skill: ${details}`;
-  }
-
-  if (isWebSearchToolName(summary.name)) {
-    if (state === "completed") {
-      return "Searched the web";
-    }
-    if (state === "error") {
-      return "Attempted to search the web";
-    }
-    return "Searching the web";
-  }
-
-  if (summary.name && isTaskTool(summary.name)) {
-    return "Subagent";
-  }
-
-  if (summary.name && isShellTool(summary.name)) {
-    return state === "completed" ? "Ran" : "Running";
-  }
-
-  if (summary.name) {
-    const displayName = getDisplayToolName(summary.name);
-    if (displayName !== summary.name) {
-      const sanitized = sanitizeChannelProgressText(displayName);
-      return sanitized || undefined;
-    }
-  }
-
-  return undefined;
-}
-
 function isFetchWebpageToolName(name: string | undefined): boolean {
   return (
     name === "fetch_webpage" ||
@@ -327,8 +236,17 @@ function isFetchWebpageToolName(name: string | undefined): boolean {
   );
 }
 
-function isSkillToolName(name: string | undefined): boolean {
+export function isSkillToolName(name: string | undefined): boolean {
   return name === "Skill" || name === "skill";
+}
+
+function isFilePathToolName(name: string): boolean {
+  const displayName = getDisplayToolName(name);
+  return (
+    displayName === "Read" ||
+    displayName === "Update" ||
+    displayName === "Write"
+  );
 }
 
 function formatSkillProgressDetailsFromArguments(
@@ -364,24 +282,7 @@ function formatFragmentedSkillProgressDetails(
 function formatToolProgressDetails(
   summary: ToolCallSummary,
 ): string | undefined {
-  if (!summary.name) {
-    return undefined;
-  }
-  if (!summary.argumentsText) {
-    if (isTaskTool(summary.name)) {
-      const sanitized = sanitizeChannelProgressText(
-        summary.descriptionText,
-        MAX_SUBAGENT_PROGRESS_DETAILS_LENGTH,
-      );
-      return sanitized || undefined;
-    }
-    if (isShellTool(summary.name)) {
-      const sanitized = sanitizeChannelProgressText(
-        summary.descriptionText,
-        MAX_PROGRESS_DETAILS_LENGTH,
-      );
-      return sanitized || undefined;
-    }
+  if (!summary.name || !summary.argumentsText) {
     return undefined;
   }
 
@@ -411,24 +312,14 @@ function formatToolProgressDetails(
     }
 
     if (isTaskTool(summary.name)) {
-      return formatSubagentProgressDetailsFromArguments(
-        summary,
-        parsedArguments,
-      );
+      return formatSubagentProgressDetailsFromArguments(parsedArguments);
     }
 
     if (isShellTool(summary.name)) {
-      const description = firstNonEmptyString(
-        summary.descriptionText,
-        parsedArguments.description,
-      );
-      debugChannelProgress(
-        `[DETAILS-BASH-PARSED] id=${summary.id ?? "none"} keys=${Object.keys(parsedArguments).join(",")} description=${description ?? "none"}`,
-      );
-      return formatShellProgressDetailsFromArguments(summary, parsedArguments);
+      return formatShellProgressDetailsFromArguments(parsedArguments);
     }
 
-    if (summary.name === "Read" || summary.name === "read") {
+    if (isFilePathToolName(summary.name)) {
       const filePath = firstNonEmptyString(
         parsedArguments.file_path,
         parsedArguments.filePath,
@@ -441,43 +332,10 @@ function formatToolProgressDetails(
       return sanitized || undefined;
     }
 
-    if (summary.name === "Glob" || summary.name === "glob") {
+    if (isGlobTool(summary.name) || isSearchTool(summary.name)) {
       const pattern = firstNonEmptyString(parsedArguments.pattern);
       const sanitized = sanitizeChannelProgressText(
         pattern,
-        MAX_PROGRESS_DETAILS_LENGTH,
-      );
-      return sanitized || undefined;
-    }
-
-    if (summary.name === "Grep" || summary.name === "grep") {
-      const pattern = firstNonEmptyString(parsedArguments.pattern);
-      const sanitized = sanitizeChannelProgressText(
-        pattern,
-        MAX_PROGRESS_DETAILS_LENGTH,
-      );
-      return sanitized || undefined;
-    }
-
-    if (summary.name === "Edit" || summary.name === "edit") {
-      const filePath = firstNonEmptyString(
-        parsedArguments.file_path,
-        parsedArguments.filePath,
-      );
-      const sanitized = sanitizeChannelProgressText(
-        filePath,
-        MAX_PROGRESS_DETAILS_LENGTH,
-      );
-      return sanitized || undefined;
-    }
-
-    if (summary.name === "Write" || summary.name === "write") {
-      const filePath = firstNonEmptyString(
-        parsedArguments.file_path,
-        parsedArguments.filePath,
-      );
-      const sanitized = sanitizeChannelProgressText(
-        filePath,
         MAX_PROGRESS_DETAILS_LENGTH,
       );
       return sanitized || undefined;
@@ -486,13 +344,9 @@ function formatToolProgressDetails(
     return undefined;
   }
 
-  // Fallback: try to extract description from fragmented/incomplete JSON
+  // Fallback: extract known preview fields from fragmented/incomplete JSON.
   if (isShellTool(summary.name)) {
-    const details = formatFragmentedShellProgressDetails(summary);
-    debugChannelProgress(
-      `[DETAILS-BASH-FALLBACK] id=${summary.id ?? "none"} matched=${details ?? "none"} text=${sanitizeChannelProgressText(summary.argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
-    );
-    return details;
+    return formatFragmentedShellProgressDetails(summary);
   }
 
   if (isSkillToolName(summary.name)) {
@@ -503,15 +357,7 @@ function formatToolProgressDetails(
     return formatFragmentedSubagentProgressDetails(summary);
   }
 
-  // Fallback: try to extract file_path from fragmented/incomplete JSON
-  if (
-    summary.name === "Read" ||
-    summary.name === "read" ||
-    summary.name === "Edit" ||
-    summary.name === "edit" ||
-    summary.name === "Write" ||
-    summary.name === "write"
-  ) {
+  if (isFilePathToolName(summary.name)) {
     const filePathMatch = summary.argumentsText.match(
       /"file_path"\s*:\s*"([^"]+)"/,
     );
@@ -525,234 +371,6 @@ function formatToolProgressDetails(
   }
 
   return undefined;
-}
-
-function extractToolCallSummary(value: unknown): ToolCallSummary | null {
-  const record = asRecord(value);
-  if (!record) {
-    return null;
-  }
-  const nestedFunction = asRecord(record.function);
-  const tool = asRecord(record.tool);
-  const nestedToolFunction = asRecord(tool?.function);
-  const id = firstNonEmptyString(
-    record.id,
-    record.tool_call_id,
-    record.toolCallId,
-    record.call_id,
-  );
-  const cacheId = id
-    ? sanitizeChannelProgressIdentifier(id, "tool-call")
-    : undefined;
-  const extractedName = firstNonEmptyString(
-    record.name,
-    record.tool_name,
-    record.toolName,
-    nestedFunction?.name,
-    tool?.name,
-    nestedToolFunction?.name,
-  );
-  if (cacheId && extractedName) {
-    toolCallNamesById.set(cacheId, extractedName);
-  }
-  const name =
-    extractedName ?? (cacheId ? toolCallNamesById.get(cacheId) : undefined);
-  const descriptionText = firstNonEmptyString(
-    record.description,
-    record.display_description,
-    record.displayDescription,
-    record.summary,
-    record.reason,
-    record.purpose,
-    nestedFunction?.description,
-    tool?.description,
-    nestedToolFunction?.description,
-  );
-  if (cacheId && descriptionText) {
-    toolCallDescriptionsById.set(
-      cacheId,
-      sanitizeChannelProgressText(descriptionText, MAX_PROGRESS_DETAILS_LENGTH),
-    );
-  }
-  const resolvedName = name;
-  const resolvedDescriptionText =
-    descriptionText ??
-    (cacheId ? toolCallDescriptionsById.get(cacheId) : undefined);
-  const rawArguments =
-    firstNonEmptyString(
-      record.arguments,
-      record.args,
-      record.input,
-      nestedFunction?.arguments,
-      nestedFunction?.args,
-      tool?.arguments,
-      nestedToolFunction?.arguments,
-      nestedToolFunction?.args,
-    ) ??
-    stringifyRecordArgument(record.arguments) ??
-    stringifyRecordArgument(record.args) ??
-    stringifyRecordArgument(record.input) ??
-    stringifyRecordArgument(nestedFunction?.arguments) ??
-    stringifyRecordArgument(nestedFunction?.args) ??
-    stringifyRecordArgument(tool?.arguments) ??
-    stringifyRecordArgument(tool?.args) ??
-    stringifyRecordArgument(tool?.input) ??
-    stringifyRecordArgument(nestedToolFunction?.arguments) ??
-    stringifyRecordArgument(nestedToolFunction?.args);
-
-  if (resolvedName && isShellTool(resolvedName)) {
-    debugChannelProgress(
-      `[EXTRACT-BASH] id=${id ?? "none"} keys=${Object.keys(record).join(",")} descriptionText=${resolvedDescriptionText ?? "none"} rawType=${typeof rawArguments} raw=${sanitizeChannelProgressText(rawArguments, MAX_PROGRESS_DETAILS_LENGTH)}`,
-    );
-  }
-
-  // Accumulate fragmented arguments across stream deltas for the same tool call.
-  // If the current fragment already parses as valid JSON, use it directly
-  // and don't accumulate further (prevents duplication when complete args
-  // are sent in every delta).
-  let argumentsText: string | undefined;
-  if (cacheId && rawArguments !== undefined) {
-    const existing = toolCallArgumentsById.get(cacheId);
-    const rawArgumentsAreComplete = parseToolArguments(rawArguments) !== null;
-    if (rawArgumentsAreComplete) {
-      // Complete current arguments should replace earlier partial/object args.
-      // Some streams first expose only command content, then later include the
-      // human-friendly description; freezing the first parseable object hides it.
-      toolCallArgumentsById.set(cacheId, rawArguments);
-      argumentsText = rawArguments;
-      if (resolvedName && isShellTool(resolvedName)) {
-        debugChannelProgress(
-          `[ARGS-BASH-REPLACE-COMPLETE] id=${cacheId} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
-        );
-      }
-    } else if (existing) {
-      if (parseToolArguments(existing)) {
-        argumentsText = existing;
-        if (resolvedName && isShellTool(resolvedName)) {
-          debugChannelProgress(
-            `[ARGS-BASH-KEEP-EXISTING] id=${cacheId} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
-          );
-        }
-      } else {
-        const accumulated = existing + rawArguments;
-        toolCallArgumentsById.set(cacheId, accumulated);
-        argumentsText = accumulated;
-        if (resolvedName && isShellTool(resolvedName)) {
-          debugChannelProgress(
-            `[ARGS-BASH-ACCUMULATE] id=${cacheId} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
-          );
-        }
-      }
-    } else {
-      toolCallArgumentsById.set(cacheId, rawArguments);
-      argumentsText = rawArguments;
-      if (resolvedName && isShellTool(resolvedName)) {
-        debugChannelProgress(
-          `[ARGS-BASH-START] id=${cacheId} text=${sanitizeChannelProgressText(argumentsText, MAX_PROGRESS_DETAILS_LENGTH)}`,
-        );
-      }
-    }
-  } else if (!id && rawArguments !== undefined) {
-    argumentsText = rawArguments;
-  }
-
-  if (!id && !resolvedName) {
-    return null;
-  }
-  return {
-    ...(cacheId ? { id: cacheId } : {}),
-    ...(resolvedName
-      ? { name: sanitizeChannelProgressIdentifier(resolvedName, "tool") }
-      : {}),
-    ...(argumentsText ? { argumentsText } : {}),
-    ...(resolvedDescriptionText
-      ? {
-          descriptionText: sanitizeChannelProgressText(
-            resolvedDescriptionText,
-            MAX_PROGRESS_DETAILS_LENGTH,
-          ),
-        }
-      : {}),
-  };
-}
-
-function extractToolCalls(delta: Record<string, unknown>): ToolCallSummary[] {
-  const candidates: unknown[] = [];
-  if (Array.isArray(delta.tool_calls)) {
-    candidates.push(...delta.tool_calls);
-  } else {
-    candidates.push(delta.tool_calls);
-  }
-  if (Array.isArray(delta.toolCalls)) {
-    candidates.push(...delta.toolCalls);
-  } else {
-    candidates.push(delta.toolCalls);
-  }
-  if (Array.isArray(delta.tools)) {
-    candidates.push(...delta.tools);
-  } else {
-    candidates.push(delta.tools);
-  }
-  if (Array.isArray(delta.approvals)) {
-    candidates.push(...delta.approvals);
-  } else {
-    candidates.push(delta.approvals);
-  }
-  candidates.push(delta.tool_call, delta.toolCall, delta.approval);
-
-  const summaries: ToolCallSummary[] = [];
-  const seen = new Set<string>();
-  for (const candidate of candidates) {
-    const summary = extractToolCallSummary(candidate);
-    if (!summary) {
-      continue;
-    }
-    const key = `${summary.id ?? ""}:${summary.name ?? ""}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    summaries.push(summary);
-  }
-  return summaries;
-}
-
-function extractToolReturns(
-  delta: Record<string, unknown>,
-): ToolReturnSummary[] {
-  const candidates: unknown[] = [];
-  if (Array.isArray(delta.tool_returns)) {
-    candidates.push(...delta.tool_returns);
-  }
-  if (Array.isArray(delta.toolReturns)) {
-    candidates.push(...delta.toolReturns);
-  }
-  if (candidates.length === 0) {
-    candidates.push(delta);
-  }
-
-  const summaries: ToolReturnSummary[] = [];
-  const seen = new Set<string>();
-  for (const candidate of candidates) {
-    const record = asRecord(candidate);
-    if (!record) {
-      continue;
-    }
-    const summary = extractToolCallSummary(record);
-    if (!summary) {
-      continue;
-    }
-    const key = `${summary.id ?? ""}:${summary.name ?? ""}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    summaries.push({
-      summary,
-      status: getToolStatus(record),
-    });
-  }
-  return summaries;
 }
 
 function getMessageType(delta: Record<string, unknown>): string | null {
@@ -793,300 +411,415 @@ function toolNameForMessage(summary: ToolCallSummary | undefined): string {
   return summary?.name ? `: ${summary.name}` : "";
 }
 
-export function buildChannelTurnProgressUpdatesFromDelta(
-  delta: StreamDelta,
-): ChannelTurnProgressUpdate[] {
-  const record = asRecord(delta);
-  if (!record) {
-    return [];
+/**
+ * Builds sanitized channel progress updates from stream deltas for a single
+ * turn. Instances accumulate fragmented tool-call arguments across deltas,
+ * so they must be scoped to one conversation turn (create one per turn and
+ * drop it when the turn finishes) rather than shared across conversations.
+ */
+export type ChannelTurnProgressBuilder = {
+  buildUpdates(delta: StreamDelta): ChannelTurnProgressUpdate[];
+};
+
+export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
+  // Fragmented tool arguments and names accumulated across stream deltas,
+  // keyed by tool_call_id. Entries are dropped when the tool return arrives;
+  // the whole builder is dropped with the turn.
+  const argumentsByToolCallId = new Map<string, string>();
+  const namesByToolCallId = new Map<string, string>();
+
+  // Wire shapes (see ToolCall / ToolCallDelta in @letta-ai/letta-client and
+  // the local backend projections): flat `tool_call_id` / `name` /
+  // `arguments` fields, delivered either as `tool_calls` (array or single
+  // delta object) or the deprecated `tool_call`.
+  function extractToolCallSummary(value: unknown): ToolCallSummary | null {
+    const record = asRecord(value);
+    if (!record) {
+      return null;
+    }
+    const id = firstNonEmptyString(record.tool_call_id);
+    const cacheId = id
+      ? sanitizeChannelProgressIdentifier(id, "tool-call")
+      : undefined;
+    const extractedName = firstNonEmptyString(record.name);
+    if (cacheId && extractedName) {
+      namesByToolCallId.set(cacheId, extractedName);
+    }
+    const resolvedName =
+      extractedName ?? (cacheId ? namesByToolCallId.get(cacheId) : undefined);
+    const rawArguments =
+      typeof record.arguments === "string" && record.arguments.length > 0
+        ? record.arguments
+        : asRecord(record.arguments)
+          ? JSON.stringify(record.arguments)
+          : undefined;
+
+    // Accumulate fragmented arguments across stream deltas for the same tool
+    // call. A fragment that already parses as complete JSON replaces earlier
+    // partial state (some streams first expose only command content, then
+    // later re-send full arguments including the description).
+    let argumentsText: string | undefined;
+    if (cacheId && rawArguments !== undefined) {
+      const existing = argumentsByToolCallId.get(cacheId);
+      if (parseToolArguments(rawArguments)) {
+        argumentsByToolCallId.set(cacheId, rawArguments);
+        argumentsText = rawArguments;
+      } else if (existing) {
+        if (parseToolArguments(existing)) {
+          argumentsText = existing;
+        } else {
+          const accumulated = existing + rawArguments;
+          argumentsByToolCallId.set(cacheId, accumulated);
+          argumentsText = accumulated;
+        }
+      } else {
+        argumentsByToolCallId.set(cacheId, rawArguments);
+        argumentsText = rawArguments;
+      }
+    } else if (!id && rawArguments !== undefined) {
+      argumentsText = rawArguments;
+    }
+
+    if (!id && !resolvedName) {
+      return null;
+    }
+    return {
+      ...(cacheId ? { id: cacheId } : {}),
+      ...(resolvedName
+        ? { name: sanitizeChannelProgressIdentifier(resolvedName, "tool") }
+        : {}),
+      ...(argumentsText ? { argumentsText } : {}),
+    };
   }
 
-  const messageType = getMessageType(record);
-  const runId = getRunId(record);
-  const updates: ChannelTurnProgressUpdate[] = [];
+  function extractToolCalls(delta: Record<string, unknown>): ToolCallSummary[] {
+    const candidates: unknown[] = Array.isArray(delta.tool_calls)
+      ? delta.tool_calls
+      : delta.tool_calls
+        ? [delta.tool_calls]
+        : delta.tool_call
+          ? [delta.tool_call]
+          : [];
 
-  switch (messageType) {
-    case "reasoning_message":
-      return [
-        withRunId(
-          {
-            kind: "thinking",
-            state: "updated",
-            message: "Thinking",
-          },
-          runId,
-        ),
-      ];
-
-    case "assistant_message":
-      return [
-        withRunId(
-          {
-            kind: "responding",
-            state: "updated",
-            message: "Writing reply",
-          },
-          runId,
-        ),
-      ];
-
-    case "approval_request_message": {
-      const tools = extractToolCalls(record);
-      if (tools.length === 0) {
-        return [];
+    const summaries: ToolCallSummary[] = [];
+    const seen = new Set<string>();
+    for (const candidate of candidates) {
+      const summary = extractToolCallSummary(candidate);
+      if (!summary) {
+        continue;
       }
-      for (const tool of tools) {
-        const toolDetails = formatToolProgressDetails(tool);
-        const toolTitle = formatToolProgressTitle(tool, "started", toolDetails);
-        updates.push(
+      const key = `${summary.id ?? ""}:${summary.name ?? ""}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      summaries.push(summary);
+    }
+    return summaries;
+  }
+
+  function extractToolReturns(
+    delta: Record<string, unknown>,
+  ): ToolReturnSummary[] {
+    const candidates: unknown[] = Array.isArray(delta.tool_returns)
+      ? delta.tool_returns
+      : [delta];
+
+    const summaries: ToolReturnSummary[] = [];
+    const seen = new Set<string>();
+    for (const candidate of candidates) {
+      const record = asRecord(candidate);
+      if (!record) {
+        continue;
+      }
+      const summary = extractToolCallSummary(record);
+      if (!summary) {
+        continue;
+      }
+      const key = `${summary.id ?? ""}:${summary.name ?? ""}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      summaries.push({
+        summary,
+        status: getToolStatus(record),
+      });
+    }
+    return summaries;
+  }
+
+  function buildToolCallUpdates(
+    record: Record<string, unknown>,
+    runId: string | undefined,
+  ): ChannelTurnProgressUpdate[] {
+    const tools = extractToolCalls(record);
+    const updates: ChannelTurnProgressUpdate[] = [];
+    for (const tool of tools) {
+      const toolDetails = formatToolProgressDetails(tool);
+      updates.push(
+        withRunId(
+          {
+            kind: "tool",
+            state: "started",
+            message: `Preparing tool${toolNameForMessage(tool)}`,
+            ...(tool.id ? { toolCallId: tool.id } : {}),
+            ...(tool.name ? { toolName: tool.name } : {}),
+            ...(toolDetails ? { toolDetails } : {}),
+          },
+          runId,
+        ),
+      );
+    }
+    return updates;
+  }
+
+  function buildUpdates(delta: StreamDelta): ChannelTurnProgressUpdate[] {
+    const record = asRecord(delta);
+    if (!record) {
+      return [];
+    }
+
+    const messageType = getMessageType(record);
+    const runId = getRunId(record);
+
+    switch (messageType) {
+      case "reasoning_message":
+        return [
           withRunId(
             {
-              kind: "tool",
-              state: "started",
-              message: `Preparing tool${toolNameForMessage(tool)}`,
-              ...(tool.id ? { toolCallId: tool.id } : {}),
-              ...(tool.name ? { toolName: tool.name } : {}),
-              ...(toolTitle ? { toolTitle } : {}),
-              ...(toolDetails ? { toolDetails } : {}),
+              kind: "thinking",
+              state: "updated",
+              message: "Thinking",
             },
             runId,
           ),
-        );
-      }
-      return updates;
-    }
+        ];
 
-    case "tool_call_message": {
-      const tools = extractToolCalls(record);
-      if (tools.length === 0) {
+      case "assistant_message":
+        return [
+          withRunId(
+            {
+              kind: "responding",
+              state: "updated",
+              message: "Writing reply",
+            },
+            runId,
+          ),
+        ];
+
+      case "approval_request_message":
+        return buildToolCallUpdates(record, runId);
+
+      case "tool_call_message": {
+        const updates = buildToolCallUpdates(record, runId);
+        if (updates.length === 0) {
+          return [
+            withRunId(
+              {
+                kind: "tool",
+                state: "started",
+                message: "Preparing tool call",
+              },
+              runId,
+            ),
+          ];
+        }
+        return updates;
+      }
+
+      case "tool_return_message": {
+        const toolReturns = extractToolReturns(record);
+        const updates: ChannelTurnProgressUpdate[] = [];
+        for (const { summary, status } of toolReturns) {
+          // Resolve details from the accumulated arguments for this call,
+          // then drop the per-call caches.
+          const accumulatedArgs = summary.id
+            ? argumentsByToolCallId.get(summary.id)
+            : undefined;
+          if (summary.id) {
+            argumentsByToolCallId.delete(summary.id);
+            namesByToolCallId.delete(summary.id);
+          }
+          const toolWithAccumulatedArgs = accumulatedArgs
+            ? { ...summary, argumentsText: accumulatedArgs }
+            : summary;
+          const toolDetails = formatToolProgressDetails(
+            toolWithAccumulatedArgs,
+          );
+          updates.push(
+            withRunId(
+              {
+                kind: "tool",
+                state: status,
+                message: status === "error" ? "Tool failed" : "Tool finished",
+                ...(summary.id ? { toolCallId: summary.id } : {}),
+                ...(summary.name ? { toolName: summary.name } : {}),
+                ...(toolDetails ? { toolDetails } : {}),
+              },
+              runId,
+            ),
+          );
+        }
+        return updates;
+      }
+
+      case "client_tool_start":
         return [
           withRunId(
             {
               kind: "tool",
               state: "started",
-              message: "Preparing tool call",
+              message: "Running tool",
+              ...(typeof record.tool_call_id === "string"
+                ? {
+                    toolCallId: sanitizeChannelProgressIdentifier(
+                      record.tool_call_id,
+                      "tool-call",
+                    ),
+                  }
+                : {}),
+            },
+            runId,
+          ),
+        ];
+
+      case "client_tool_end": {
+        const state = getToolStatus(record);
+        return [
+          withRunId(
+            {
+              kind: "tool",
+              state,
+              message: state === "error" ? "Tool failed" : "Tool finished",
+              ...(typeof record.tool_call_id === "string"
+                ? {
+                    toolCallId: sanitizeChannelProgressIdentifier(
+                      record.tool_call_id,
+                      "tool-call",
+                    ),
+                  }
+                : {}),
             },
             runId,
           ),
         ];
       }
-      for (const tool of tools) {
-        const toolDetails = formatToolProgressDetails(tool);
-        const toolTitle = formatToolProgressTitle(tool, "started", toolDetails);
-        updates.push(
+
+      case "slash_command_start": {
+        const command = getSlashCommand(record);
+        return [
           withRunId(
             {
-              kind: "tool",
+              kind: "command",
               state: "started",
-              message: `Preparing tool${toolNameForMessage(tool)}`,
-              ...(tool.id ? { toolCallId: tool.id } : {}),
-              ...(tool.name ? { toolName: tool.name } : {}),
-              ...(toolTitle ? { toolTitle } : {}),
-              ...(toolDetails ? { toolDetails } : {}),
+              message: `Running ${command}`,
+              command,
             },
             runId,
           ),
-        );
+        ];
       }
-      return updates;
-    }
 
-    case "tool_return_message": {
-      const toolReturns = extractToolReturns(record);
-      if (toolReturns.length === 0) {
-        return [];
-      }
-      for (const { summary, status } of toolReturns) {
-        // Try to get accumulated arguments for this tool call
-        const accumulatedArgs = summary.id
-          ? toolCallArgumentsById.get(summary.id)
-          : undefined;
-        if (accumulatedArgs && summary.id) {
-          toolCallArgumentsById.delete(summary.id);
-        }
-        if (summary.id) {
-          toolCallNamesById.delete(summary.id);
-        }
-        const toolWithAccumulatedArgs = accumulatedArgs
-          ? { ...summary, argumentsText: accumulatedArgs }
-          : summary;
-        const toolDetails = formatToolProgressDetails(toolWithAccumulatedArgs);
-        const toolTitle = formatToolProgressTitle(
-          toolWithAccumulatedArgs,
-          status,
-          toolDetails,
-        );
-        updates.push(
+      case "slash_command_end": {
+        const command = getSlashCommand(record);
+        const success = record.success !== false;
+        return [
           withRunId(
             {
-              kind: "tool",
-              state: status,
-              message: status === "error" ? "Tool failed" : "Tool finished",
-              ...(summary.id ? { toolCallId: summary.id } : {}),
-              ...(summary.name ? { toolName: summary.name } : {}),
-              ...(toolTitle ? { toolTitle } : {}),
-              ...(toolDetails ? { toolDetails } : {}),
+              kind: "command",
+              state: success ? "completed" : "error",
+              message: success ? `${command} finished` : `${command} failed`,
+              command,
             },
             runId,
           ),
-        );
+        ];
       }
-      return updates;
-    }
 
-    case "client_tool_start":
-      return [
-        withRunId(
-          {
-            kind: "tool",
-            state: "started",
-            message: "Running tool",
-            ...(typeof record.tool_call_id === "string"
-              ? {
-                  toolCallId: sanitizeChannelProgressIdentifier(
-                    record.tool_call_id,
-                    "tool-call",
-                  ),
-                }
-              : {}),
-          },
-          runId,
-        ),
-      ];
+      case "command_start": {
+        const command = getCommandId(record);
+        return [
+          withRunId(
+            {
+              kind: "command",
+              state: "started",
+              message: "Running command",
+              command,
+            },
+            runId,
+          ),
+        ];
+      }
 
-    case "client_tool_end": {
-      const state = getToolStatus(record);
-      return [
-        withRunId(
-          {
-            kind: "tool",
-            state,
-            message: state === "error" ? "Tool failed" : "Tool finished",
-            ...(typeof record.tool_call_id === "string"
-              ? {
-                  toolCallId: sanitizeChannelProgressIdentifier(
-                    record.tool_call_id,
-                    "tool-call",
-                  ),
-                }
-              : {}),
-          },
-          runId,
-        ),
-      ];
-    }
+      case "command_end": {
+        const command = getCommandId(record);
+        const success = record.success !== false;
+        return [
+          withRunId(
+            {
+              kind: "command",
+              state: success ? "completed" : "error",
+              message: success ? "Command finished" : "Command failed",
+              command,
+            },
+            runId,
+          ),
+        ];
+      }
 
-    case "slash_command_start": {
-      const command = getSlashCommand(record);
-      return [
-        withRunId(
-          {
-            kind: "command",
-            state: "started",
-            message: `Running ${command}`,
-            command,
-          },
-          runId,
-        ),
-      ];
-    }
+      case "status": {
+        const message = sanitizeChannelProgressText(record.message);
+        if (!message) {
+          return [];
+        }
+        return [
+          withRunId(
+            {
+              kind: "status",
+              state: "updated",
+              message,
+            },
+            runId,
+          ),
+        ];
+      }
 
-    case "slash_command_end": {
-      const command = getSlashCommand(record);
-      const success = record.success !== false;
-      return [
-        withRunId(
-          {
-            kind: "command",
-            state: success ? "completed" : "error",
-            message: success ? `${command} finished` : `${command} failed`,
-            command,
-          },
-          runId,
-        ),
-      ];
-    }
+      case "retry": {
+        const attempt = Number(record.attempt);
+        const maxAttempts = Number(record.max_attempts ?? record.maxAttempts);
+        const suffix =
+          Number.isFinite(attempt) && Number.isFinite(maxAttempts)
+            ? ` (${attempt}/${maxAttempts})`
+            : "";
+        return [
+          withRunId(
+            {
+              kind: "retry",
+              state: "updated",
+              message: `Retrying request${suffix}`,
+            },
+            runId,
+          ),
+        ];
+      }
 
-    case "command_start": {
-      const command = getCommandId(record);
-      return [
-        withRunId(
-          {
-            kind: "command",
-            state: "started",
-            message: "Running command",
-            command,
-          },
-          runId,
-        ),
-      ];
-    }
+      case "loop_error":
+        return [
+          withRunId(
+            {
+              kind: "error",
+              state: "error",
+              message: "Encountered an error",
+            },
+            runId,
+          ),
+        ];
 
-    case "command_end": {
-      const command = getCommandId(record);
-      const success = record.success !== false;
-      return [
-        withRunId(
-          {
-            kind: "command",
-            state: success ? "completed" : "error",
-            message: success ? "Command finished" : "Command failed",
-            command,
-          },
-          runId,
-        ),
-      ];
-    }
-
-    case "status": {
-      const message = sanitizeChannelProgressText(record.message);
-      if (!message) {
+      default:
         return [];
-      }
-      return [
-        withRunId(
-          {
-            kind: "status",
-            state: "updated",
-            message,
-          },
-          runId,
-        ),
-      ];
     }
-
-    case "retry": {
-      const attempt = Number(record.attempt);
-      const maxAttempts = Number(record.max_attempts ?? record.maxAttempts);
-      const suffix =
-        Number.isFinite(attempt) && Number.isFinite(maxAttempts)
-          ? ` (${attempt}/${maxAttempts})`
-          : "";
-      return [
-        withRunId(
-          {
-            kind: "retry",
-            state: "updated",
-            message: `Retrying request${suffix}`,
-          },
-          runId,
-        ),
-      ];
-    }
-
-    case "loop_error":
-      return [
-        withRunId(
-          {
-            kind: "error",
-            state: "error",
-            message: "Encountered an error",
-          },
-          runId,
-        ),
-      ];
-
-    default:
-      return [];
   }
+
+  return { buildUpdates };
 }
