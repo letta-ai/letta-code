@@ -70,7 +70,7 @@ test("channel progress uses web_search query as task details", () => {
   ]);
 });
 
-test("channel progress uses Skill names as task details", () => {
+test("channel progress uses Skill names as task labels and details", () => {
   const updates = buildChannelTurnProgressUpdatesFromDelta({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -95,6 +95,7 @@ test("channel progress uses Skill names as task details", () => {
       runId: "run-1",
       toolCallId: "call-1",
       toolName: "Skill",
+      toolTitle: "Skill: maintaining-machine-maintenance",
       toolDetails: "maintaining-machine-maintenance",
     },
   ]);
@@ -147,6 +148,7 @@ test("channel progress uses cached Skill names for streamed argument fragments",
       runId: "run-1",
       toolCallId: "call-1",
       toolName: "Skill",
+      toolTitle: "Skill: maintaining-machine-maintenance",
       toolDetails: "maintaining-machine-maintenance",
     },
   ]);
@@ -454,6 +456,7 @@ test("channel progress remembers tool names across streamed Skill args", () => {
       runId: "run-1",
       toolCallId: "call-1",
       toolName: "Skill",
+      toolTitle: "Skill: maintaining-machine-maintenance",
       toolDetails: "maintaining-machine-maintenance",
     },
   ]);

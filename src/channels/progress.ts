@@ -284,7 +284,12 @@ function stringifyRecordArgument(value: unknown): string | undefined {
 function formatToolProgressTitle(
   summary: ToolCallSummary,
   state: ChannelTurnProgressUpdate["state"],
+  details?: string,
 ): string | undefined {
+  if (isSkillToolName(summary.name) && details) {
+    return `Skill: ${details}`;
+  }
+
   if (isWebSearchToolName(summary.name)) {
     if (state === "completed") {
       return "Searched the web";
@@ -831,8 +836,8 @@ export function buildChannelTurnProgressUpdatesFromDelta(
         return [];
       }
       for (const tool of tools) {
-        const toolTitle = formatToolProgressTitle(tool, "started");
         const toolDetails = formatToolProgressDetails(tool);
+        const toolTitle = formatToolProgressTitle(tool, "started", toolDetails);
         updates.push(
           withRunId(
             {
@@ -866,8 +871,8 @@ export function buildChannelTurnProgressUpdatesFromDelta(
         ];
       }
       for (const tool of tools) {
-        const toolTitle = formatToolProgressTitle(tool, "started");
         const toolDetails = formatToolProgressDetails(tool);
+        const toolTitle = formatToolProgressTitle(tool, "started", toolDetails);
         updates.push(
           withRunId(
             {
@@ -905,11 +910,12 @@ export function buildChannelTurnProgressUpdatesFromDelta(
         const toolWithAccumulatedArgs = accumulatedArgs
           ? { ...summary, argumentsText: accumulatedArgs }
           : summary;
+        const toolDetails = formatToolProgressDetails(toolWithAccumulatedArgs);
         const toolTitle = formatToolProgressTitle(
           toolWithAccumulatedArgs,
           status,
+          toolDetails,
         );
-        const toolDetails = formatToolProgressDetails(toolWithAccumulatedArgs);
         updates.push(
           withRunId(
             {
