@@ -72,26 +72,4 @@ describe("renderModPanelLines", () => {
       "/tmp/project                     GPT-5.5",
     ]);
   });
-
-  test("records render diagnostics without repeating the same error", async () => {
-    const diagnostics: unknown[] = [];
-    const error = new Error(
-      "Cannot read properties of undefined (reading 'Box')",
-    );
-    const panel = createPanel(() => {
-      throw error;
-    });
-    panel.recordDiagnostic = (diagnostic) => diagnostics.push(diagnostic);
-
-    expect(renderModPanelLines(panel, 40, CONTEXT)).toEqual([]);
-    expect(renderModPanelLines(panel, 40, CONTEXT)).toEqual([]);
-    await Promise.resolve();
-    expect(diagnostics).toEqual([
-      {
-        capability: { id: "cwd", kind: "panel" },
-        error,
-        phase: "panel.render",
-      },
-    ]);
-  });
 });

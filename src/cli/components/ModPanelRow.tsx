@@ -13,7 +13,6 @@ import type {
 import { Text } from "./Text";
 
 const MAX_MOD_PANEL_LINES = 8;
-const reportedPanelRenderErrors = new Map<string, string>();
 
 export type ModPanelPlacement = "above" | "below";
 
@@ -43,37 +42,14 @@ export function renderModPanelLines(
       chalk,
     };
     result = panel.render(renderContext);
-    reportedPanelRenderErrors.delete(`${panel.path}:${panel.id}`);
-  } catch (error) {
+  } catch {
     // A mod's render fn runs inside the input render; never let it crash the UI.
-    recordPanelRenderError(panel, error);
     return [];
   }
   const lines = Array.isArray(result) ? result : String(result).split("\n");
   // An empty render hides the panel entirely (no blank row).
   if (lines.every((line) => line.trim().length === 0)) return [];
   return lines.map(String);
-}
-
-function normalizeRenderError(error: unknown): Error {
-  if (error instanceof Error) return error;
-  return new Error(typeof error === "string" ? error : String(error));
-}
-
-function recordPanelRenderError(panel: ModPanel, error: unknown): void {
-  const normalizedError = normalizeRenderError(error);
-  const key = `${panel.path}:${panel.id}`;
-  const signature = `${normalizedError.name}:${normalizedError.message}`;
-  if (reportedPanelRenderErrors.get(key) === signature) return;
-  reportedPanelRenderErrors.set(key, signature);
-  queueMicrotask(() => {
-    if (reportedPanelRenderErrors.get(key) !== signature) return;
-    panel.recordDiagnostic?.({
-      capability: { id: panel.id, kind: "panel" },
-      error: normalizedError,
-      phase: "panel.render",
-    });
-  });
 }
 
 export function ModPanelRow({
