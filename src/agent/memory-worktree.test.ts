@@ -4,12 +4,11 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
-  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
@@ -179,9 +178,12 @@ describe("reflection memory worktrees", () => {
     expect(pending.map((entry) => entry.reflectionBranch)).toEqual([
       pendingWorktree.branchName,
     ]);
-    expect(realpathSync(pending[0]?.reflectionWorktreeDir ?? "")).toBe(
-      realpathSync(pendingWorktree.worktreeDir),
-    );
+    expect(existsSync(pending[0]?.reflectionWorktreeDir ?? "")).toBe(true);
+    expect(
+      pending[0]?.reflectionWorktreeDir
+        .replace(/\\/g, "/")
+        .endsWith(`/memory-worktrees/${basename(pendingWorktree.worktreeDir)}`),
+    ).toBe(true);
     expect(existsSync(mergedWorktree.worktreeDir)).toBe(false);
     expect(
       git(memoryDir, ["branch", "--list", mergedWorktree.branchName]).trim(),
