@@ -148,10 +148,10 @@ export async function handleConnectionCommand(
           buffersRef,
           refreshDerived,
           setCommandRunning,
-          onCodexConnected: () => {
+          onCodexConnected: (providerName) => {
             markLocalModelsAvailable();
             setModelSelectorOptions({
-              filterProvider: "chatgpt-plus-pro",
+              filterProvider: providerName,
               forceRefresh: true,
             });
             openOverlay(

@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getModelInfo } from "@/agent/model";
@@ -23,13 +24,13 @@ export const HEADLESS_MOD_CAPABILITIES: ModCapabilities = {
     lifecycle: true,
     tools: true,
     turns: true,
+    compact: true,
+    llm: true,
   },
   permissions: true,
   providers: true,
   ui: {
     panels: false,
-    statusValues: false,
-    customStatuslineRenderer: false,
   },
 };
 
@@ -136,7 +137,12 @@ export function createHeadlessModAdapter(options: {
   reflectionSettings?: ReflectionSettings;
   sessionStats?: SessionStats | null;
 }): ModAdapter {
+  const agentModsDirectory = isHeadlessMemfsEnabled(options.agent.id)
+    ? join(getScopedMemoryFilesystemRoot(options.agent.id), "mods")
+    : undefined;
+
   return createModAdapter({
+    ...(agentModsDirectory ? { agentModsDirectory } : {}),
     ...(options.cacheDirectory
       ? { cacheDirectory: options.cacheDirectory }
       : {}),

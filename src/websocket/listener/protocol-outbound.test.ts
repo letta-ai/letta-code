@@ -148,4 +148,40 @@ describe("emitDequeuedUserMessage", () => {
 
     expect(socket.sentPayloads).toHaveLength(0);
   });
+
+  test("suppresses the echo for mod_continue-only turns", () => {
+    const { runtime, socket } = createRuntime();
+    const continueText = "keep going and double-check your work";
+    const incoming = {
+      type: "message",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: continueText }],
+        },
+      ],
+    } as IncomingMessage;
+    const batch = {
+      batchId: "batch-continue",
+      items: [
+        {
+          id: "item-continue",
+          kind: "mod_continue",
+          source: "system",
+          text: continueText,
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          enqueuedAt: Date.now(),
+        },
+      ],
+      mergedCount: 1,
+      queueLenAfter: 0,
+    } satisfies DequeuedBatch;
+
+    emitDequeuedUserMessage(socket as never, runtime, incoming, batch);
+
+    expect(socket.sentPayloads).toHaveLength(0);
+  });
 });

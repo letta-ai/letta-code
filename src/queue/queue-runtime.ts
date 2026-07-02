@@ -67,19 +67,29 @@ export type CronPromptQueueItem = QueueItemBase & {
   cronTaskId: string;
 };
 
+export type ModContinueQueueItem = QueueItemBase & {
+  kind: "mod_continue";
+  /** Follow-up text from a mod's turn_end { continue }, sent as a user message. */
+  text: string;
+};
+
 export type QueueItem =
   | MessageQueueItem
   | TaskNotificationQueueItem
   | CronPromptQueueItem
   | ApprovalResultQueueItem
-  | OverlayActionQueueItem;
+  | OverlayActionQueueItem
+  | ModContinueQueueItem;
 
 // ── Coalescability ───────────────────────────────────────────────
 
 /** Coalescable items can be merged into a single submission batch. */
 export function isCoalescable(kind: QueueItemKind): boolean {
   return (
-    kind === "message" || kind === "task_notification" || kind === "cron_prompt"
+    kind === "message" ||
+    kind === "task_notification" ||
+    kind === "cron_prompt" ||
+    kind === "mod_continue"
   );
 }
 

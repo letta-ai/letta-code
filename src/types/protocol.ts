@@ -366,13 +366,15 @@ export type QueueItemSource =
  * - task_notification: Background task completed notification
  * - approval_result: Tool approval/denial result
  * - overlay_action: AskUserQuestion or other overlay action
+ * - mod_continue: Follow-up turn injected by a mod's turn_end { continue }
  */
 export type QueueItemKind =
   | "message"
   | "task_notification"
   | "cron_prompt"
   | "approval_result"
-  | "overlay_action";
+  | "overlay_action"
+  | "mod_continue";
 
 /**
  * Canonical queue item wire shape used by listener state snapshots

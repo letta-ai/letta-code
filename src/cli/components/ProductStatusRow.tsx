@@ -12,13 +12,11 @@ import {
   type SubagentState,
   subscribe as subscribeToSubagents,
 } from "@/agent/subagent-state";
-import { buildChatUrl } from "@/cli/helpers/app-urls.js";
 import { BlinkingSpinner } from "./BlinkingSpinner.js";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
 const MAX_PRODUCT_STATUS_INDICATORS = 1;
-const GOAL_STATUS_PRIORITY = 100;
 const DREAMING_STATUS_PRIORITY = 50;
 
 interface ProductStatusIndicator {
@@ -42,9 +40,16 @@ function typeLabelForBackgroundAgent(agent: SubagentState): string {
   return rawType === "reflection" ? "dreaming" : rawType;
 }
 
-function chatUrlForBackgroundAgent(agent: SubagentState): string | null {
-  const agentId = agent.agentURL?.match(/\/(?:agents|chat)\/([^/?#]+)/)?.[1];
-  return agentId ? buildChatUrl(agentId) : null;
+function chatUrlForBackgroundAgent(
+  agent: Pick<SubagentState, "agentURL">,
+): string | null {
+  return agent.agentURL?.startsWith("http") ? agent.agentURL : null;
+}
+
+function shouldRenderPlainBackgroundAgentUrl(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return Boolean(env.TMUX);
 }
 
 function visibleProductStatusIndicators(
@@ -80,6 +85,7 @@ function renderDreamingStatus(agent: SubagentState): ReactNode {
   const elapsedS = Math.round((Date.now() - agent.startTime) / 1000);
   const typeLabel = typeLabelForBackgroundAgent(agent);
   const chatUrl = chatUrlForBackgroundAgent(agent);
+  const renderPlainUrl = shouldRenderPlainBackgroundAgentUrl();
 
   return (
     <Text>
@@ -89,8 +95,13 @@ function renderDreamingStatus(agent: SubagentState): ReactNode {
         marginRight={0}
         pulseIntervalMs={400}
       />
-      {chatUrl ? (
-        <Link url={chatUrl} fallback={false}>
+      {chatUrl && renderPlainUrl ? (
+        <>
+          <Text color={colors.bgSubagent.label}>{typeLabel}</Text>
+          <Text dimColor> {chatUrl}</Text>
+        </>
+      ) : chatUrl ? (
+        <Link url={chatUrl}>
           <Text color={colors.bgSubagent.label}>{typeLabel}</Text>
         </Link>
       ) : (
@@ -101,17 +112,7 @@ function renderDreamingStatus(agent: SubagentState): ReactNode {
   );
 }
 
-function renderGoalStatus(goalStatusText: string): ReactNode {
-  return <Text color={colors.status.processingShimmer}>{goalStatusText}</Text>;
-}
-
-export function ProductStatusRow({
-  goalStatusText,
-  terminalWidth,
-}: {
-  goalStatusText?: string | null;
-  terminalWidth: number;
-}) {
+export function ProductStatusRow({ terminalWidth }: { terminalWidth: number }) {
   const snapshot = useSyncExternalStore(
     subscribeToSubagents,
     getSubagentSnapshot,
@@ -142,13 +143,6 @@ export function ProductStatusRow({
       id: "dreaming",
       priority: DREAMING_STATUS_PRIORITY,
       node: renderDreamingStatus(dreamingAgent),
-    });
-  }
-  if (goalStatusText) {
-    indicators.push({
-      id: "goal",
-      priority: GOAL_STATUS_PRIORITY,
-      node: renderGoalStatus(goalStatusText),
     });
   }
 

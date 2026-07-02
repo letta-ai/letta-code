@@ -5,7 +5,6 @@ import type { ModContext } from "@/mods/types";
 
 export interface StatuslineUiContext {
   currentModelProvider: string | null;
-  goalStatusText: string | null;
   hasTemporaryModelOverride: boolean;
   isByokProvider: boolean;
   isLocalBackend: boolean;

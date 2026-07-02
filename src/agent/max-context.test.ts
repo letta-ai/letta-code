@@ -44,6 +44,9 @@ describe("max context command helpers", () => {
   test("resolves model.json default context windows", () => {
     expect(
       resolveModelJsonContextWindow({ modelId: "sonnet" }).contextWindow,
+    ).toBe(1_000_000);
+    expect(
+      resolveModelJsonContextWindow({ modelId: "sonnet-4.6" }).contextWindow,
     ).toBe(200_000);
     expect(
       resolveModelJsonContextWindow({
@@ -67,7 +70,7 @@ describe("max context command helpers", () => {
       __testSetBackend(backend);
       const agent = await backend.createAgent({
         name: "Max Context Agent",
-        model: "anthropic/claude-sonnet-4-6",
+        model: "anthropic/claude-sonnet-5",
         model_settings: {
           provider_type: "anthropic",
           effort: "high",
@@ -88,10 +91,10 @@ describe("max context command helpers", () => {
         applySetMaxContext({
           agentId: agent.id,
           conversationId: "default",
-          args: "250000",
+          args: "1100000",
           currentModelId: "sonnet",
         }),
-      ).rejects.toThrow("model.json default of 200,000 tokens");
+      ).rejects.toThrow("model.json default of 1,000,000 tokens");
 
       const overrideResult = await applySetMaxContext({
         agentId: agent.id,
@@ -115,7 +118,7 @@ describe("max context command helpers", () => {
         args: "",
         currentModelId: "sonnet",
       });
-      expect(resetResult.contextWindow).toBe(200_000);
+      expect(resetResult.contextWindow).toBe(1_000_000);
       expect(resetResult.reset).toBe(true);
 
       await backend.updateAgent(agent.id, {

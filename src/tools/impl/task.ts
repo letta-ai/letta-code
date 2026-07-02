@@ -361,6 +361,7 @@ export function spawnBackgroundSubagentTask(
     true,
     silentCompletion,
     resolvedParentScope,
+    prompt,
   );
 
   const taskId = getNextTaskId();
@@ -678,7 +679,8 @@ export async function task(args: TaskArgs): Promise<string> {
       // Mark the forked conversation as hidden so it doesn't clutter the
       // parent agent's conversation list in the ADE. The subagent still
       // reads/writes this conversation normally — only archive status is
-      // affected.
+      // affected. The forked conversation remains retrievable by id, so a
+      // direct link still opens it.
       const forkedConv = await getBackend().forkConversation(parentConvId, {
         ...(parentConvId === "default" ? { agentId: parentAgentId } : {}),
         hidden: true,
@@ -734,6 +736,7 @@ export async function task(args: TaskArgs): Promise<string> {
     false,
     false,
     resolvedParentScope,
+    prompt,
   );
 
   // Foreground tasks now also write transcripts so users can inspect full output

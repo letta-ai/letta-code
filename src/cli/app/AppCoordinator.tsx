@@ -1,5 +1,6 @@
 // src/cli/app/AppCoordinator.tsx
 
+import { join } from "node:path";
 import type {
   AgentState,
   MessageCreate,
@@ -122,6 +123,7 @@ import {
   useTerminalWidth,
 } from "@/cli/hooks/use-terminal-width";
 import { useSuspend } from "@/cli/hooks/useSuspend/use-suspend.ts";
+import { installLocalBackendModEventHooks } from "@/cli/mods/local-backend-mod-events";
 import type { ModConversationCloseReason } from "@/cli/mods/types";
 import {
   type LocalModAdapter,
@@ -137,7 +139,6 @@ import {
   updateTask,
 } from "@/cron";
 import { experimentManager } from "@/experiments/manager";
-import { goalLoopMode } from "@/goal-loop-mode";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
@@ -214,6 +215,7 @@ import {
   getPreferredAgentModelHandle,
   inferReasoningEffortFromModelPreset,
   mapHandleToLlmConfigPatch,
+  providerTypeFromModelSettings,
 } from "./model-config";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
@@ -619,11 +621,6 @@ export function App({
     [],
   );
 
-  // Track goal loop state for UI updates (singleton state does not trigger re-renders)
-  const [uiGoalLoopActive, setUiGoalLoopActive] = useState(
-    goalLoopMode.getState().isActive,
-  );
-
   // Derive current approval from pending approvals and results
   // This is the approval currently being shown to the user
   const currentApproval = pendingApprovals[approvalResults.length];
@@ -867,6 +864,10 @@ export function App({
   const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(
     null,
   );
+  const currentModelHandleRef = useRef(currentModelHandle);
+  useEffect(() => {
+    currentModelHandleRef.current = currentModelHandle;
+  }, [currentModelHandle]);
   // Derive agentName from agentState (single source of truth)
   const agentName = agentState?.name ?? null;
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
@@ -2330,7 +2331,6 @@ export function App({
         payload: statusLinePayload,
         ui: {
           currentModelProvider: currentModelProvider ?? null,
-          goalStatusText: null,
           hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
           isByokProvider: Boolean(
             currentModelProvider?.startsWith("lc-") ||
@@ -2353,12 +2353,25 @@ export function App({
       statusLinePayload,
     ],
   );
+  const agentModsDirectory =
+    statusLinePayload.memfs.enabled && statusLinePayload.memfs.memory_dir
+      ? join(statusLinePayload.memfs.memory_dir, "mods")
+      : null;
   const modAdapter = useLocalModAdapter(modContext, {
+    agentModsDirectory,
     disabled: modsDisabled,
   });
 
   useEffect(() => {
     modAdapterRef.current = modAdapter;
+  }, [modAdapter]);
+
+  useEffect(() => {
+    return installLocalBackendModEventHooks({
+      backend: getBackend(),
+      adapter: modAdapter,
+      buildContext: () => modAdapter.context,
+    });
   }, [modAdapter]);
 
   useEffect(() => {
@@ -2416,6 +2429,8 @@ export function App({
 
         if (t === "exec_command") {
           command = typeof args.cmd === "string" ? args.cmd : "(no command)";
+          description =
+            typeof args.description === "string" ? args.description : "";
         } else if (t === "write_stdin") {
           const sessionId =
             typeof args.session_id === "string" ||
@@ -3102,9 +3117,14 @@ export function App({
           if (persistedToolsetPreference === "auto") {
             if (agentModelHandle) {
               const { switchToolsetForModel } = await import("@/tools/toolset");
+              const providerType =
+                providerTypeFromModelSettings(agent.model_settings) ??
+                agent.llm_config?.model_endpoint_type ??
+                null;
               const derivedToolset = await switchToolsetForModel(
                 agentModelHandle,
                 agentId,
+                providerType,
               );
               setCurrentToolset(derivedToolset);
             } else {
@@ -3399,7 +3419,10 @@ export function App({
         setCurrentModelId(modelInfo?.id ?? effectiveModelHandle);
         setLlmConfig({
           ...agentState.llm_config,
-          ...mapHandleToLlmConfigPatch(effectiveModelHandle),
+          ...mapHandleToLlmConfigPatch(
+            effectiveModelHandle,
+            providerTypeFromModelSettings(resolvedConversationModelSettings),
+          ),
           ...(typeof reasoningEffort === "string"
             ? { reasoning_effort: reasoningEffort }
             : {}),
@@ -3793,7 +3816,6 @@ export function App({
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiGoalLoopActive,
     shouldAutoGenerateConversationTitleRef,
     syncTrajectoryElapsedBase,
     syncTrajectoryTokenBase,
@@ -4022,6 +4044,8 @@ export function App({
     modelHandle: string;
     effort: string;
     modelId: string;
+    providerType?: string | null;
+    serviceTier?: string | null;
   } | null>(null);
   const reasoningCycleLastConfirmedRef = useRef<LlmConfig | null>(null);
   const reasoningCycleLastConfirmedAgentStateRef = useRef<AgentState | null>(
@@ -4214,8 +4238,6 @@ export function App({
     setThinkingMessage,
     setTokenStreamingEnabled,
     setTrajectoryTokenBase,
-    setUiPermissionMode,
-    setUiGoalLoopActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
     streaming,
@@ -4545,21 +4567,6 @@ export function App({
     }
   }, [commandRunner, profileConfirmPending]);
 
-  // Handle goal loop exit from Input component (Shift+Tab).
-  const handleGoalLoopExit = useCallback(() => {
-    if (!goalLoopMode.getState().isActive) {
-      return;
-    }
-    goalLoopMode.deactivate();
-    setUiGoalLoopActive(false);
-    settingsManager.updateConversationGoalStatus(
-      conversationIdRef.current,
-      "paused",
-    );
-    permissionMode.setMode("standard");
-    setUiPermissionMode("standard");
-  }, [setUiPermissionMode]);
-
   // Toggle expand/collapse for a specific tool call ID
   const handleToggleExpandedToolCall = useCallback((id: string) => {
     setExpandedToolCallId((prev) => (prev === id ? null : id));
@@ -4611,6 +4618,7 @@ export function App({
       commandRunner,
       conversationOverrideModelSettingsRef,
       conversationIdRef,
+      currentModelHandleRef,
       hasConversationModelOverrideRef,
       isAgentBusy,
       llmConfigRef,
@@ -5013,7 +5021,6 @@ export function App({
         handlePersonalitySelect={handlePersonalitySelect}
         handleProfileEscapeCancel={handleProfileEscapeCancel}
         handleQuestionSubmit={handleQuestionSubmit}
-        handleGoalLoopExit={handleGoalLoopExit}
         handleSleeptimeModeSelect={handleSleeptimeModeSelect}
         handleSystemPromptSelect={handleSystemPromptSelect}
         handleToolsetSelect={handleToolsetSelect}
@@ -5092,7 +5099,6 @@ export function App({
         usedContextTokens={usedContextTokens}
         contextWindowSize={effectiveContextWindowSize}
         uiPermissionMode={uiPermissionMode}
-        uiGoalLoopActive={uiGoalLoopActive}
         updateAgentName={updateAgentName}
       />
     </>

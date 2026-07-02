@@ -1413,6 +1413,85 @@ describe("listen-client parseServerMessage", () => {
     expect(parsed?.type).toBe("disconnect_provider");
   });
 
+  test("parses disconnect_provider command with a provider name", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "disconnect_provider",
+          request_id: "disconnect-provider-2",
+          target: "local",
+          provider_id: "codex",
+          provider_name: "chatgpt-work",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("disconnect_provider");
+  });
+
+  test("parses chatgpt_usage_read command", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-1",
+          target: "local",
+          provider_name: "chatgpt-work",
+          force_refresh: true,
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("chatgpt_usage_read");
+  });
+
+  test("parses chatgpt_usage_read command for api target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-2",
+          target: "api",
+          provider_name: "chatgpt-work",
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("chatgpt_usage_read");
+  });
+
+  test("rejects chatgpt_usage_read command for unknown target", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-3",
+          target: "project",
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
+  test("rejects chatgpt_usage_read command with bad force_refresh", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "chatgpt_usage_read",
+          request_id: "chatgpt-usage-4",
+          target: "local",
+          force_refresh: "true",
+        }),
+      ),
+    );
+
+    expect(parsed).toBeNull();
+  });
+
   test("parses update_model command with model_id", () => {
     const parsed = parseServerMessage(
       Buffer.from(
@@ -1629,7 +1708,6 @@ describe("listen-client parseServerMessage", () => {
   test("advertises context-limit and parses the legacy set-max-context alias", () => {
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("context-limit");
     expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("set-max-context");
-    expect(SUPPORTED_REMOTE_COMMANDS).toContain("goal");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("compact");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("reload");
 
@@ -3643,6 +3721,49 @@ describe("listen-client permission mode scope keys", () => {
   });
 });
 
+describe("listen-client conversation working directory", () => {
+  test("falls back to boot dir and prunes a stale (deleted) persisted cwd", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const scopeKey = "agent:agent-123::conversation:default";
+
+    // Simulate a worktree dir that was persisted, then cleaned up.
+    const staleDir = await mkdtemp(join(os.tmpdir(), "ws-stale-cwd-"));
+    listener.workingDirectoryByConversation.set(scopeKey, staleDir);
+    await rm(staleDir, { recursive: true, force: true });
+
+    const resolved = __listenClientTestUtils.getConversationWorkingDirectory(
+      listener,
+      "agent-123",
+      "default",
+    );
+
+    expect(resolved).toBe(listener.bootWorkingDirectory);
+    // The dead entry should be pruned so it isn't served again.
+    expect(listener.workingDirectoryByConversation.has(scopeKey)).toBe(false);
+  });
+
+  test("returns a persisted cwd that still exists", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const scopeKey = "agent:agent-123::conversation:default";
+
+    const liveDir = await mkdtemp(join(os.tmpdir(), "ws-live-cwd-"));
+    try {
+      listener.workingDirectoryByConversation.set(scopeKey, liveDir);
+
+      const resolved = __listenClientTestUtils.getConversationWorkingDirectory(
+        listener,
+        "agent-123",
+        "default",
+      );
+
+      expect(resolved).toBe(liveDir);
+      expect(listener.workingDirectoryByConversation.has(scopeKey)).toBe(true);
+    } finally {
+      await rm(liveDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("listen-client approval resolver wiring", () => {
   test("resolved approvals do not project WAITING_ON_INPUT while the enclosing turn is still processing", () => {
     const runtime = __listenClientTestUtils.createRuntime();
@@ -4645,32 +4766,39 @@ describe("listen-client v2 status builders", () => {
     expect(runtime.recoveredApprovalState).toBeNull();
   });
 
-  test("scopes working directory to requested agent and conversation", () => {
+  test("scopes working directory to requested agent and conversation", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    __listenClientTestUtils.setConversationWorkingDirectory(
-      runtime,
-      "agent-a",
-      "conv-a",
-      "/repo/a",
-    );
-    __listenClientTestUtils.setConversationWorkingDirectory(
-      runtime,
-      "agent-b",
-      "default",
-      "/repo/b",
-    );
+    const repoA = await mkdtemp(join(os.tmpdir(), "ws-scope-cwd-a-"));
+    const repoB = await mkdtemp(join(os.tmpdir(), "ws-scope-cwd-b-"));
+    try {
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        runtime,
+        "agent-a",
+        "conv-a",
+        repoA,
+      );
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        runtime,
+        "agent-b",
+        "default",
+        repoB,
+      );
 
-    const activeStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
-      agent_id: "agent-a",
-      conversation_id: "conv-a",
-    });
-    expect(activeStatus.current_working_directory).toBe("/repo/a");
+      const activeStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
+        agent_id: "agent-a",
+        conversation_id: "conv-a",
+      });
+      expect(activeStatus.current_working_directory).toBe(repoA);
 
-    const defaultStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
-      agent_id: "agent-b",
-      conversation_id: "default",
-    });
-    expect(defaultStatus.current_working_directory).toBe("/repo/b");
+      const defaultStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
+        agent_id: "agent-b",
+        conversation_id: "default",
+      });
+      expect(defaultStatus.current_working_directory).toBe(repoB);
+    } finally {
+      await rm(repoA, { recursive: true, force: true });
+      await rm(repoB, { recursive: true, force: true });
+    }
   });
 
   test("scoped loop status is not suppressed just because another conversation is processing", () => {

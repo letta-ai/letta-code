@@ -99,6 +99,8 @@ export interface ReflectionStartData {
   conversation_id?: string;
   start_message_id?: string;
   end_message_id?: string;
+  version?: string;
+  platform?: string;
 }
 
 export interface ReflectionEndData {
@@ -109,6 +111,8 @@ export interface ReflectionEndData {
   error?: string;
   step_count?: number;
   duration_ms?: number;
+  version?: string;
+  platform?: string;
 }
 
 export function isLettaCodeDesktopRuntime(
@@ -286,13 +290,18 @@ class TelemetryManager {
   }
 
   /**
-   * Check if telemetry is enabled based on LETTA_CODE_TELEM env var
-   * Enabled by default unless explicitly disabled or using self-hosted server
+   * Check if telemetry is enabled based on environment variables.
+   * Enabled by default unless explicitly disabled.
    */
   private isTelemetryEnabled(): boolean {
-    // Check environment variable - must be explicitly set to "0" or "false" to disable
+    // LETTA_CODE_TELEM is Letta Code's specific opt-out. DO_NOT_TRACK is a
+    // broader convention also honored by install-time analytics packages.
     const envValue = process.env.LETTA_CODE_TELEM;
     if (envValue === "0" || envValue === "false") {
+      return false;
+    }
+
+    if (process.env.DO_NOT_TRACK === "1") {
       return false;
     }
 
@@ -707,6 +716,8 @@ class TelemetryManager {
       conversation_id: options?.conversationId,
       start_message_id: options?.startMessageId,
       end_message_id: options?.endMessageId,
+      version: getVersion(),
+      platform: process.platform,
     };
     this.track("reflection_start", data);
   }
@@ -733,6 +744,8 @@ class TelemetryManager {
       error: options?.error,
       step_count: options?.stepCount,
       duration_ms: options?.durationMs,
+      version: getVersion(),
+      platform: process.platform,
     };
     this.track("reflection_end", data);
   }

@@ -55,7 +55,7 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
 /**
  * Subagent configuration
  */
-export type SubagentMode = "stateful" | "stateless";
+export type SubagentLaunchProfile = "default" | "memory-subagent";
 
 export interface SubagentConfig {
   /** Unique identifier for the subagent */
@@ -70,14 +70,12 @@ export interface SubagentConfig {
   recommendedModel: string;
   /** Skills to auto-load */
   skills: string[];
-  /** Stateless agents should not persist private working memory. */
-  mode: SubagentMode;
   /** Whether this subagent should fork the parent conversation before launch. */
   fork: boolean;
   /** Whether this subagent should run in the background by default. */
   background: boolean;
-  /** Permission mode for this subagent (unrestricted, standard, acceptEdits, plan, memory) */
-  permissionMode?: string;
+  /** Filesystem and env launch behavior for this subagent. */
+  launchProfile: SubagentLaunchProfile;
 }
 
 /**
@@ -158,10 +156,14 @@ function parseSkills(skillsStr: string | undefined): string[] {
   return parseCommaSeparatedList(skillsStr);
 }
 
-function parseSubagentMode(modeStr: string | undefined): SubagentMode {
-  return modeStr?.trim().toLowerCase() === "stateless"
-    ? "stateless"
-    : "stateful";
+function parseLaunchProfile(
+  launchProfile: string | undefined,
+): SubagentLaunchProfile {
+  return launchProfile === "memory-subagent" ? "memory-subagent" : "default";
+}
+
+function parseBackgroundDefault(background: string | undefined): boolean {
+  return background?.toLowerCase() !== "false";
 }
 
 /**
@@ -189,9 +191,9 @@ function validateFrontmatter(frontmatter: Record<string, string | string[]>): {
     errors.push("Missing required field: description");
   }
 
-  // Don't validate model or permissionMode here - they're handled at runtime:
+  // Don't validate model or launchProfile here - they're handled at runtime:
   // - model: resolveModel() returns null for invalid values, subagent-manager falls back
-  // - permissionMode: unknown values default to "default" behavior
+  // - launchProfile: unknown values default to normal launch behavior
 
   return { valid: errors.length === 0, errors };
 }
@@ -218,11 +220,13 @@ function parseSubagentContent(content: string): SubagentConfig {
     allowedTools: parseTools(getStringField(frontmatter, "tools")),
     recommendedModel: getStringField(frontmatter, "model") || "inherit",
     skills: parseSkills(getStringField(frontmatter, "skills")),
-    mode: parseSubagentMode(getStringField(frontmatter, "mode")),
     fork: getStringField(frontmatter, "fork")?.toLowerCase() === "true",
-    background:
-      getStringField(frontmatter, "background")?.toLowerCase() === "true",
-    permissionMode: getStringField(frontmatter, "permissionMode"),
+    background: parseBackgroundDefault(
+      getStringField(frontmatter, "background"),
+    ),
+    launchProfile: parseLaunchProfile(
+      getStringField(frontmatter, "launchProfile"),
+    ),
   };
 }
 

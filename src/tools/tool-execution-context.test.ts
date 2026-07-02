@@ -32,7 +32,11 @@ import {
   registerModPermission,
 } from "@/mods/permission-registry";
 import { clearModTools, registerModTool } from "@/mods/tool-registry";
-import type { ModToolStartEvent } from "@/mods/types";
+import type {
+  ModDiagnostic,
+  ModToolEndEvent,
+  ModToolStartEvent,
+} from "@/mods/types";
 import {
   LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
   runWithRuntimeContext,
@@ -59,6 +63,10 @@ import {
   prepareToolExecutionContextForScope,
   resolveConversationChannelToolScope,
 } from "@/tools/toolset";
+import {
+  __testOverrideSecretsBackend,
+  clearSecretsCache,
+} from "@/utils/secrets-store";
 
 function asText(
   toolReturn: Awaited<ReturnType<typeof executeTool>>["toolReturn"],
@@ -134,6 +142,9 @@ describe("tool execution context snapshot", () => {
     __testOverrideLoadChannelAccounts(null);
     __testOverrideSaveChannelAccounts(null);
     delete process.env[LETTA_INHERITED_CHANNEL_CONTEXT_ENV];
+    __testOverrideSecretsBackend(null);
+    clearSecretsCache(null);
+    delete process.env.TAVILY_API_KEY;
     __testSetBackend(null);
   });
 
@@ -246,6 +257,65 @@ describe("tool execution context snapshot", () => {
       "mod permission:execution-gate",
     );
     expect(asText(result.toolReturn)).toContain("mutated path blocked");
+  });
+
+  test("applies a tool_end result override to replace the tool result", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const prepared = await prepareCurrentToolExecutionContext({
+      modEvents: {
+        async emit(name, event) {
+          if (name === "tool_start") {
+            const toolStartEvent = event as ModToolStartEvent;
+            toolStartEvent.args = {
+              ...toolStartEvent.args,
+              file_path: "package.json",
+            };
+          }
+          if (name === "tool_end") {
+            expect((event as ModToolEndEvent).args).toEqual({
+              file_path: "package.json",
+            });
+            (
+              event as ModToolEndEvent & {
+                result?: { status: "success" | "error"; output: string };
+              }
+            ).result = { status: "success", output: "redacted by mod" };
+          }
+          return { diagnostics: [], handlerCount: 0, name, results: [] };
+        },
+      },
+    });
+
+    const result = await executeTool(
+      "Read",
+      { file_path: "README.md" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe("redacted by mod");
+  });
+
+  test("passes the tool result through when no tool_end override", async () => {
+    await loadSpecificTools(["Read"]);
+
+    const prepared = await prepareCurrentToolExecutionContext({
+      modEvents: {
+        async emit(name, _event) {
+          return { diagnostics: [], handlerCount: 0, name, results: [] };
+        },
+      },
+    });
+
+    const result = await executeTool(
+      "Read",
+      { file_path: "README.md" },
+      { toolContextId: prepared.contextId },
+    );
+
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).not.toBe("redacted by mod");
   });
 
   test("reports execution-phase ask decisions as blocked approval requests", async () => {
@@ -622,6 +692,173 @@ describe("tool execution context snapshot", () => {
     expect(result.status).toBe("success");
     expect(asText(result.toolReturn)).toBe(
       "agent-1:/tmp/listener-workspace:xai-build:standard",
+    );
+  });
+
+  test("exposes agent-scoped secrets to mod tools", async () => {
+    process.env.TAVILY_API_KEY = "env-secret-value";
+    const retrieveCalls: string[] = [];
+    let seenSecret = "";
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      retrieveAgent: async (agentId) => {
+        retrieveCalls.push(agentId);
+        return {
+          secrets: [{ key: "TAVILY_API_KEY", value: "agent-secret-value" }],
+        };
+      },
+      updateAgent: async () => ({}),
+    });
+
+    const controller = new AbortController();
+    registerModTool({
+      name: "secret_echo",
+      description: "Echo a secret",
+      parameters: { type: "object", properties: {}, required: [] },
+      owner: {
+        id: "global:/tmp/secret-echo.ts",
+        path: "/tmp/secret-echo.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/secret-echo.ts",
+      approvalPolicy: "auto",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: controller.signal,
+      run: async (ctx) => {
+        seenSecret =
+          (await ctx.secret("tavily_api_key", { envFallback: true })) ?? "";
+        return `secret:${seenSecret}`;
+      },
+    });
+
+    const result = await runWithRuntimeContext(
+      { agentId: "agent-secret-a", conversationId: "default" },
+      () => executeTool("secret_echo", {}),
+    );
+
+    expect(seenSecret).toBe("agent-secret-value");
+    expect(retrieveCalls).toEqual(["agent-secret-a"]);
+    expect(result.status).toBe("success");
+    expect(asText(result.toolReturn)).toBe("secret:TAVILY_API_KEY=<REDACTED>");
+  });
+
+  test("mod tool env fallback secrets are invocation-redacted", async () => {
+    process.env.TAVILY_API_KEY = "env-secret-value";
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      retrieveAgent: async () => ({ secrets: [] }),
+      updateAgent: async () => ({}),
+    });
+    const chunks: Array<{ chunk: string; stream: string }> = [];
+
+    const controller = new AbortController();
+    registerModTool({
+      name: "secret_env_echo",
+      description: "Echo an env fallback secret",
+      parameters: { type: "object", properties: {}, required: [] },
+      owner: {
+        id: "global:/tmp/secret-env-echo.ts",
+        path: "/tmp/secret-env-echo.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/secret-env-echo.ts",
+      approvalPolicy: "auto",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: controller.signal,
+      run: async (ctx) => {
+        const secret = await ctx.secret("TAVILY_API_KEY", {
+          envFallback: true,
+        });
+        ctx.onOutput?.(`stream:${secret}`, "stdout");
+        return {
+          status: "error",
+          content: `content:${secret}`,
+          stdout: [`stdout:${secret}`],
+          stderr: [`stderr:${secret}`],
+        };
+      },
+    });
+
+    const result = await runWithRuntimeContext(
+      { agentId: "agent-secret-env", conversationId: "default" },
+      () =>
+        executeTool(
+          "secret_env_echo",
+          {},
+          {
+            onOutput: (chunk, stream) => chunks.push({ chunk, stream }),
+          },
+        ),
+    );
+
+    expect(result.status).toBe("error");
+    expect(asText(result.toolReturn)).toBe("content:TAVILY_API_KEY=<REDACTED>");
+    expect(result.stdout).toEqual(["stdout:TAVILY_API_KEY=<REDACTED>"]);
+    expect(result.stderr).toEqual(["stderr:TAVILY_API_KEY=<REDACTED>"]);
+    expect(chunks).toEqual([
+      { chunk: "stream:TAVILY_API_KEY=<REDACTED>", stream: "stdout" },
+    ]);
+  });
+
+  test("mod tool thrown errors are redacted after ctx.secret", async () => {
+    process.env.TAVILY_API_KEY = "throw-secret-value";
+    __testOverrideSecretsBackend({
+      capabilities: { serverSecrets: true },
+      retrieveAgent: async () => ({ secrets: [] }),
+      updateAgent: async () => ({}),
+    });
+    const diagnostics: ModDiagnostic[] = [];
+
+    const controller = new AbortController();
+    registerModTool({
+      name: "secret_throw",
+      description: "Throw a secret",
+      parameters: { type: "object", properties: {}, required: [] },
+      owner: {
+        id: "global:/tmp/secret-throw.ts",
+        path: "/tmp/secret-throw.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/secret-throw.ts",
+      approvalPolicy: "auto",
+      requiresApproval: false,
+      parallelSafe: true,
+      activationSignal: controller.signal,
+      recordDiagnostic: (diagnostic) => {
+        diagnostics.push({
+          ...diagnostic,
+          owner: {
+            id: "global:/tmp/secret-throw.ts",
+            path: "/tmp/secret-throw.ts",
+            scope: "global",
+            generation: 1,
+          },
+          timestamp: Date.now(),
+        });
+      },
+      run: async (ctx) => {
+        const secret = await ctx.secret("TAVILY_API_KEY", {
+          envFallback: true,
+        });
+        throw new Error(`failed:${secret}`);
+      },
+    });
+
+    const result = await runWithRuntimeContext(
+      { agentId: "agent-secret-throw", conversationId: "default" },
+      () => executeTool("secret_throw", {}),
+    );
+
+    expect(result.status).toBe("error");
+    expect(asText(result.toolReturn)).toBe("failed:TAVILY_API_KEY=<REDACTED>");
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.error.message).toBe(
+      "failed:TAVILY_API_KEY=<REDACTED>",
     );
   });
 

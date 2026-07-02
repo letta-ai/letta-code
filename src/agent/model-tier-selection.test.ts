@@ -252,6 +252,9 @@ describe("getReasoningTierOptionsForHandle", () => {
       getChatGptFastRegistryHandleForModelHandle("openai-codex/gpt-5.4"),
     ).toBe("chatgpt-plus-pro/gpt-5.4-fast");
     expect(
+      getChatGptFastRegistryHandleForModelHandle("chatgpt-plus-pro/gpt-5.5"),
+    ).toBe("chatgpt-plus-pro/gpt-5.5-fast");
+    expect(
       getChatGptFastRegistryHandleForModelHandle("openai-codex/gpt-5.5-fast"),
     ).toBeNull();
   });
@@ -277,8 +280,28 @@ describe("getReasoningTierOptionsForHandle", () => {
       "sonnet-4.6-no-reasoning",
       "sonnet-4.6-low",
       "sonnet-4.6-medium",
-      "sonnet",
+      "sonnet-4.6",
       "sonnet-4.6-xhigh",
+    ]);
+  });
+
+  test("returns reasoning options for anthropic sonnet 5", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "anthropic/claude-sonnet-5",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "sonnet-5-no-reasoning",
+      "sonnet-5-low",
+      "sonnet-5-medium",
+      "sonnet",
+      "sonnet-5-xhigh",
     ]);
   });
 

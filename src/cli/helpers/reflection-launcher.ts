@@ -19,6 +19,7 @@ export const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
 export const REFLECTION_AGENT_ID_WAIT_MS = 30_000;
 
 const reservedReflectionAgentIds = new Set<string>();
+const pendingReflectionLaunches = new Map<string, ReflectionLaunchOptions>();
 
 export type ReflectionLaunchTriggerSource =
   | "manual"
@@ -106,6 +107,32 @@ export function tryReserveReflectionLaunch(agentId: string): boolean {
 
 export function releaseReflectionLaunch(agentId: string): void {
   reservedReflectionAgentIds.delete(agentId);
+  schedulePendingReflectionLaunch(agentId);
+}
+
+function queuePendingReflectionLaunch(options: ReflectionLaunchOptions): void {
+  pendingReflectionLaunches.set(options.agentId, options);
+  debugLog(
+    "memory",
+    `Queued reflection launch (${options.triggerSource}) until active reflection finishes`,
+  );
+}
+
+function schedulePendingReflectionLaunch(agentId: string): void {
+  const pendingOptions = pendingReflectionLaunches.get(agentId);
+  if (!pendingOptions) return;
+  pendingReflectionLaunches.delete(agentId);
+
+  queueMicrotask(() => {
+    void launchReflectionSubagent(pendingOptions).catch((error) => {
+      debugWarn(
+        "memory",
+        `Failed to launch queued reflection (${pendingOptions.triggerSource}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+  });
 }
 
 async function resolveSystemPrompt(
@@ -161,6 +188,9 @@ export async function launchReflectionSubagent(
       "memory",
       `Skipping reflection launch (${triggerSource}) because one is already active`,
     );
+    if (reservedReflectionAgentIds.has(agentId)) {
+      queuePendingReflectionLaunch(options);
+    }
     return { launched: false, reason: "already_active" };
   }
 

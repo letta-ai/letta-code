@@ -30,6 +30,7 @@ import type {
   ChannelsListCommand,
   ChannelTargetBindCommand,
   ChannelTargetsListCommand,
+  ChatGPTUsageReadCommand,
   CheckoutBranchCommand,
   ConnectProviderCommand,
   ConversationCompactCommand,
@@ -353,10 +354,7 @@ function isSyncCommand(value: unknown): value is SyncCommand {
 
 function isDevicePermissionMode(value: unknown): boolean {
   return (
-    value === "standard" ||
-    value === "acceptEdits" ||
-    value === "memory" ||
-    value === "unrestricted"
+    value === "standard" || value === "acceptEdits" || value === "unrestricted"
   );
 }
 
@@ -881,12 +879,34 @@ export function isDisconnectProviderCommand(
     request_id?: unknown;
     target?: unknown;
     provider_id?: unknown;
+    provider_name?: unknown;
   };
   return (
     c.type === "disconnect_provider" &&
     typeof c.request_id === "string" &&
     c.target === "local" &&
-    typeof c.provider_id === "string"
+    typeof c.provider_id === "string" &&
+    (c.provider_name === undefined || typeof c.provider_name === "string")
+  );
+}
+
+export function isChatGPTUsageReadCommand(
+  value: unknown,
+): value is ChatGPTUsageReadCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    target?: unknown;
+    provider_name?: unknown;
+    force_refresh?: unknown;
+  };
+  return (
+    c.type === "chatgpt_usage_read" &&
+    typeof c.request_id === "string" &&
+    (c.target === "local" || c.target === "api") &&
+    (c.provider_name === undefined || typeof c.provider_name === "string") &&
+    (c.force_refresh === undefined || typeof c.force_refresh === "boolean")
   );
 }
 
@@ -2124,6 +2144,7 @@ export function parseServerMessage(
       isListConnectProvidersCommand(parsed) ||
       isConnectProviderCommand(parsed) ||
       isDisconnectProviderCommand(parsed) ||
+      isChatGPTUsageReadCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
       isUpdateToolsetCommand(parsed) ||
       isCronListCommand(parsed) ||

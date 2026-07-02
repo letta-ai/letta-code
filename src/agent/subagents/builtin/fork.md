@@ -3,7 +3,6 @@ name: fork
 description: Fork of the parent agent with full context and tools. Recommended to run in background (run_in_background: true).
 tools: Bash, TaskOutput, Edit, KillBash, LS, MultiEdit, Read, TodoWrite, Write
 model: inherit
-mode: stateful
 fork: true
 background: true
 ---

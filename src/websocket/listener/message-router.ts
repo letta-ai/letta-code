@@ -25,6 +25,7 @@ import {
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
 } from "./commands/channels";
+import { handleChatGPTUsageCommand } from "./commands/chatgpt-usage";
 import { handleConnectProvidersCommand } from "./commands/connect-providers";
 import { handleCronProtocolCommand } from "./commands/cron";
 import { handleGitBranchCommand } from "./commands/git-branches";
@@ -381,6 +382,11 @@ export function createListenerMessageHandler(
     try {
       const lifecycleMessage = parseServerLifecycleMessage(data);
       if (lifecycleMessage) {
+        // Record relay pongs so the heartbeat watchdog can detect a half-open
+        // socket (no pong within the timeout) and force a reconnect.
+        if (lifecycleMessage.type === "pong") {
+          runtime.lastPongAt = Date.now();
+        }
         safeEmitWsEvent("recv", "lifecycle", lifecycleMessage);
         return;
       }
@@ -800,6 +806,16 @@ export function createListenerMessageHandler(
 
       if (
         handleConnectProvidersCommand(parsed, {
+          socket,
+          safeSocketSend,
+          runDetachedListenerTask,
+        })
+      ) {
+        return;
+      }
+
+      if (
+        handleChatGPTUsageCommand(parsed, {
           socket,
           safeSocketSend,
           runDetachedListenerTask,

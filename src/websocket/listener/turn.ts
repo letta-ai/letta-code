@@ -32,6 +32,7 @@ import { getBackend } from "@/backend";
 import {
   type Buffers,
   createBuffers,
+  findLastAssistantText,
   type Line,
   toLines,
 } from "@/cli/helpers/accumulator";
@@ -47,6 +48,7 @@ import {
 } from "@/cli/helpers/reflection-launcher";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
+import { getTurnStartCancel } from "@/mods/turn-start-cancel";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -223,6 +225,10 @@ function isTurnInputArray(
   );
 }
 
+type ListenerTurnStartEmission =
+  | { cancelled: false; input: Array<MessageCreate | ApprovalCreate> }
+  | { cancelled: true; reason: string };
+
 async function emitListenerTurnStart(options: {
   agentId: string;
   conversationId: string;
@@ -231,7 +237,7 @@ async function emitListenerTurnStart(options: {
   workingDirectory: string;
   permissionMode?: string | null;
   cachedAgent?: AgentState | null;
-}): Promise<Array<MessageCreate | ApprovalCreate>> {
+}): Promise<ListenerTurnStartEmission> {
   try {
     const modAdapter = ensureListenerModAdapter(options.runtime);
     const context = createListenerModContext({
@@ -246,10 +252,55 @@ async function emitListenerTurnStart(options: {
       input: options.input,
     };
     await modAdapter.events.emit("turn_start", event, context);
-    return isTurnInputArray(event.input) ? event.input : options.input;
+    const cancel = getTurnStartCancel(event);
+    if (cancel) return { cancelled: true, reason: cancel.reason };
+    return {
+      cancelled: false,
+      input: isTurnInputArray(event.input) ? event.input : options.input,
+    };
   } catch {
     // Mod turn_start handlers should not block sending the turn.
-    return options.input;
+    return { cancelled: false, input: options.input };
+  }
+}
+
+async function emitListenerTurnEnd(options: {
+  agentId: string;
+  conversationId: string;
+  stopReason: string;
+  assistantMessage?: string;
+  runtime: ListenerRuntime;
+  workingDirectory: string;
+  permissionMode?: string | null;
+  cachedAgent?: AgentState | null;
+}): Promise<string | undefined> {
+  try {
+    const modAdapter = ensureListenerModAdapter(options.runtime);
+    const context = createListenerModContext({
+      sessionId: options.conversationId,
+      workingDirectory: options.workingDirectory,
+      permissionMode: options.permissionMode ?? null,
+      agent: options.cachedAgent ?? null,
+    });
+    const event: {
+      agentId: string;
+      conversationId: string;
+      stopReason: string;
+      assistantMessage?: string;
+      continue?: string;
+    } = {
+      agentId: options.agentId,
+      conversationId: options.conversationId,
+      stopReason: options.stopReason,
+      assistantMessage: options.assistantMessage,
+    };
+    await modAdapter.events.emit("turn_end", event, context);
+    return typeof event.continue === "string" && event.continue.length > 0
+      ? event.continue
+      : undefined;
+  } catch {
+    // Mod turn_end handlers should not block turn completion.
+    return undefined;
   }
 }
 
@@ -593,7 +644,7 @@ export async function handleIncomingMessage(
     const hasUserMessage = messagesToSend.some(
       (m) => "role" in m && m.role === "user",
     );
-    let currentInput = hasUserMessage
+    const turnStartEmission = hasUserMessage
       ? await emitListenerTurnStart({
           agentId,
           conversationId,
@@ -603,7 +654,35 @@ export async function handleIncomingMessage(
           permissionMode: turnPermissionModeState.mode,
           cachedAgent,
         })
-      : messagesToSend;
+      : ({ cancelled: false, input: messagesToSend } as const);
+
+    if (turnStartEmission.cancelled) {
+      runtime.lastStopReason = "cancelled";
+      runtime.isProcessing = false;
+      clearActiveRunState(runtime);
+      setLoopStatus(runtime, "WAITING_ON_INPUT", {
+        agent_id: agentId || null,
+        conversation_id: conversationId,
+      });
+      emitRuntimeStateUpdates(runtime, {
+        agent_id: agentId || null,
+        conversation_id: conversationId,
+      });
+      const formattedError = emitLoopErrorNotice(socket, runtime, {
+        message: turnStartEmission.reason,
+        stopReason: "cancelled",
+        isTerminal: true,
+        agentId,
+        conversationId,
+        cancelRequested: runtime.cancelRequested,
+        abortSignal: turnAbortSignal,
+      });
+      runtime.lastTerminalLoopErrorMessage =
+        formattedError ?? turnStartEmission.reason;
+      return;
+    }
+
+    let currentInput = turnStartEmission.input;
 
     // Rebuild transcript lines from the potentially transformed input so
     // Desktop shows post-transform text, not the original user message.
@@ -808,6 +887,32 @@ export async function handleIncomingMessage(
       }
 
       if (stopReason === "end_turn") {
+        const continueText = await emitListenerTurnEnd({
+          agentId,
+          conversationId,
+          stopReason,
+          assistantMessage: findLastAssistantText(toLines(buffers)),
+          runtime: runtime.listener,
+          workingDirectory: turnWorkingDirectory,
+          permissionMode: turnPermissionModeState.mode,
+          cachedAgent,
+        });
+        if (continueText) {
+          // A mod asked to keep going: enqueue a follow-up turn. The post-turn
+          // re-pump runs it. The phantom user message is suppressed in
+          // emitDequeuedUserMessage so the continue stays seamless.
+          runtime.queueRuntime.enqueue({
+            kind: "mod_continue",
+            source: "system",
+            text: continueText,
+            agentId: agentId ?? undefined,
+            conversationId,
+            actingUserId: msg.actingUserId,
+          } as Omit<
+            import("@/queue/queue-runtime").ModContinueQueueItem,
+            "id" | "enqueuedAt"
+          >);
+        }
         try {
           const transcriptLines = toLines(buffers);
           if (transcriptLines.length > 0) {

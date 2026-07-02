@@ -18,6 +18,7 @@ import type { ModelReasoningEffort } from "@/agent/model";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import { shouldRenderDefaultStatuslineRenderer } from "@/cli/display/statusline/default-renderer-activation";
+import { truncateToWidth } from "@/cli/display/statusline/formatting";
 import {
   DEFAULT_STATUSLINE_RENDERER_ID,
   getBuiltinStatuslineRenderer,
@@ -25,7 +26,6 @@ import {
 import { buildDefaultStatuslineParts } from "@/cli/display/statusline/renderers/Default";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
-import { formatGoalStatusIndicator } from "@/cli/helpers/goal-command";
 import {
   type ExecutionPhase,
   getPhaseVisual,
@@ -34,22 +34,20 @@ import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
 import { useTokenSmoothing } from "@/cli/hooks/use-token-smoothing";
-import { evaluateLocalModStatuses } from "@/cli/mods/local-mod-loader";
+import type { ModContext } from "@/cli/mods/types";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import {
   ELAPSED_DISPLAY_THRESHOLD_MS,
   TOKEN_DISPLAY_THRESHOLD,
 } from "@/constants";
-import { attachDeprecatedGetContextTrap } from "@/mods/deprecated-api";
 import type { PermissionMode } from "@/permissions/mode";
 import { permissionMode } from "@/permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { settingsManager } from "@/settings-manager";
-import { debugLog } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
-import { ModPanelRow } from "./ModPanelRow";
+import { ModPanelRow, renderModPanelLines } from "./ModPanelRow";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { ProductStatusRow } from "./ProductStatusRow";
 import { QueuedMessages } from "./QueuedMessages";
@@ -172,8 +170,6 @@ function getPermissionModeTransientHintInfo(mode: PermissionMode): {
         color: colors.status.success,
         glyph: "⚡︎",
       };
-    case "memory":
-      return { name: "memory mode", color: colors.status.processing };
   }
 }
 
@@ -487,11 +483,10 @@ const StatuslineSlot = memo(function StatuslineSlot({
     escapePressed,
   });
 
-  const baseStatuslineContext = buildStatuslineRenderContext({
+  const statuslineContext = buildStatuslineRenderContext({
     payload: statusLinePayload,
     ui: {
       currentModelProvider: currentModelProvider ?? null,
-      goalStatusText: null,
       hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
       isByokProvider,
       isLocalBackend,
@@ -499,52 +494,42 @@ const StatuslineSlot = memo(function StatuslineSlot({
       rightColumnWidth,
     },
   });
-  const statuslineContext = {
-    ...baseStatuslineContext,
-    statuses: evaluateLocalModStatuses(
-      modAdapter.registry,
-      baseStatuslineContext,
-    ),
-  };
 
   const builtInStatuslineRenderer = getBuiltinStatuslineRenderer(
     DEFAULT_STATUSLINE_RENDERER_ID,
   );
-  const localStatuslineRenderer =
-    modAdapter.registry?.ui.statuslineRenderer ?? null;
-  const modStatuslineLoading =
+
+  // The order-0 "primary" panel overrides the built-in agent · model line.
+  const panels = modAdapter.registry?.ui.panels ?? {};
+  const primaryPanel = Object.values(panels)
+    .filter((panel) => panel.order === 0)
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+  const modPanelsLoading =
     modAdapter.isLoading &&
-    (modAdapter.hasModSources || modAdapter.hadStatuslineRenderer);
-  const customStatuslineActive = Boolean(
-    localStatuslineRenderer || modStatuslineLoading,
-  );
+    (modAdapter.hasModSources || modAdapter.hadModPanels);
+  const customStatuslineActive = Boolean(primaryPanel || modPanelsLoading);
   const idleSlotAvailable = !hideFooterContent && !preemption && !transientHint;
 
-  if (idleSlotAvailable && localStatuslineRenderer) {
-    try {
-      return localStatuslineRenderer.render(
-        attachDeprecatedGetContextTrap(
-          statuslineContext,
-          modAdapter.registry?.ui.statuslineRecordDiagnostic,
-          "ctx.getContext",
-        ),
-      );
-    } catch (error) {
-      modAdapter.registry?.ui.statuslineRecordDiagnostic?.({
-        capability: { id: localStatuslineRenderer.id, kind: "statusline" },
-        error: error instanceof Error ? error : new Error(String(error)),
-        phase: "statusline.render",
-      });
-      debugLog(
-        "mods",
-        "statusline renderer %s failed: %s",
-        localStatuslineRenderer.id,
-        error instanceof Error ? error.message : String(error),
+  if (idleSlotAvailable && primaryPanel) {
+    const rowWidth = Math.max(0, (statuslineContext.terminalWidth ?? 0) - 1);
+    const lines = renderModPanelLines(
+      primaryPanel,
+      rowWidth,
+      statuslineContext,
+    );
+    if (lines.length > 0) {
+      return (
+        <Box flexDirection="column">
+          {lines.map((line, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: panel content is caller-owned text
+            <Text key={index}>{truncateToWidth(line || " ", rowWidth)}</Text>
+          ))}
+        </Box>
       );
     }
   }
 
-  if (idleSlotAvailable && modStatuslineLoading) {
+  if (idleSlotAvailable && modPanelsLoading) {
     return <BlankStatuslineRow rightColumnWidth={rightColumnWidth} />;
   }
 
@@ -928,8 +913,6 @@ export function Input({
   onEscapeCancel,
   onEscapeCommandCancel,
   inputDisabled = false,
-  goalLoopActive = false,
-  onGoalLoopExit,
   conversationId,
   onPasteError,
   restoredInput,
@@ -981,8 +964,6 @@ export function Input({
   onEscapeCancel?: () => void;
   onEscapeCommandCancel?: () => boolean;
   inputDisabled?: boolean;
-  goalLoopActive?: boolean;
-  onGoalLoopExit?: () => void;
   conversationId?: string;
   onPasteError?: (message: string) => void;
   restoredInput?: string | null;
@@ -1432,7 +1413,7 @@ export function Input({
   // Note: bash mode entry/exit is implemented inside PasteAwareTextInput so we can
   // consume the keystroke before it renders (no flicker).
 
-  // Handle Shift+Tab for permission mode cycling (or goal loop exit)
+  // Handle Shift+Tab for permission mode cycling
   useInput((_input, key) => {
     if (!interactionEnabled) return;
 
@@ -1458,12 +1439,6 @@ export function Input({
     }
 
     if (key.shift && key.tab) {
-      // If a goal loop is active, pause it before cycling permission mode.
-      if (goalLoopActive && onGoalLoopExit) {
-        onGoalLoopExit();
-        return;
-      }
-
       // Cycle through permission modes
       const modes: PermissionMode[] = [
         "unrestricted",
@@ -1798,51 +1773,9 @@ export function Input({
       modeName: hintInfo.name,
       modeColor: hintInfo.color,
       modeGlyph: hintInfo.glyph,
-      showExitHint: goalLoopActive,
+      showExitHint: false,
     });
-  }, [currentMode, goalLoopActive, showStatuslineTransientHint]);
-
-  // Goal product status text. Stored in state (rather than recomputed every
-  // render) so we only trigger a re-render when the displayed string actually
-  // changes. The previous implementation used setGoalFooterTick + setInterval
-  // which forced a full Input re-render every second while a goal was active,
-  // matching the flicker pattern documented in review-knowledge.md.
-  const currentGoal = conversationId
-    ? settingsManager.getConversationGoal(conversationId)
-    : null;
-  const goalStatus = currentGoal?.status ?? null;
-  const goalActiveStartedAt = currentGoal?.activeStartedAt ?? null;
-  const goalIsActive = goalStatus === "active";
-
-  const [goalStatusText, setGoalStatusText] = useState<string | null>(() =>
-    currentGoal ? formatGoalStatusIndicator(currentGoal) : null,
-  );
-
-  // Sync on prop-driven changes (status transitions, clear, pause, complete).
-  // goalStatus and goalActiveStartedAt are intentional triggers — they detect
-  // transitions even though the effect body re-reads via getConversationGoal.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: deps are change triggers, not values used in the effect body
-  useEffect(() => {
-    const goal = conversationId
-      ? settingsManager.getConversationGoal(conversationId)
-      : null;
-    const nextText = goal ? formatGoalStatusIndicator(goal) : null;
-    setGoalStatusText((prev) => (prev === nextText ? prev : nextText));
-  }, [conversationId, goalStatus, goalActiveStartedAt]);
-
-  // While the goal is active, re-check the formatted string each second but
-  // only re-render when it actually changes. Combined with the fixed-width
-  // format from formatGoalElapsedSeconds, the string changes at most once per
-  // second and the change is always same-width, so no product row flicker.
-  useEffect(() => {
-    if (!goalIsActive || !conversationId) return;
-    const timer = setInterval(() => {
-      const goal = settingsManager.getConversationGoal(conversationId);
-      const nextText = goal ? formatGoalStatusIndicator(goal) : null;
-      setGoalStatusText((prev) => (prev === nextText ? prev : nextText));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [goalIsActive, conversationId]);
+  }, [currentMode, showStatuslineTransientHint]);
 
   // Create a horizontal line using box-drawing characters.
   const horizontalLine = useMemo(
@@ -1927,6 +1860,69 @@ export function Input({
     previousFooterNotificationRef.current = footerNotification ?? null;
   }, [footerNotification, showStatuslineTransientHint]);
 
+  // Decoupled from input churn (value/cursorPos) so panel content only
+  // re-renders when the panels themselves change, mirroring how BtwPane
+  // stays flash-free. Folding this into lowerPane would rebuild it on every
+  // keystroke.
+  const panelLiveContext = useMemo<ModContext>(
+    () =>
+      buildStatuslineRenderContext({
+        payload: statusLinePayload,
+        ui: {
+          currentModelProvider: currentModelProvider ?? null,
+          hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
+          isByokProvider:
+            currentModelProvider?.startsWith("lc-") ||
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
+          isLocalBackend,
+          isOpenAICodexProvider:
+            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
+          rightColumnWidth: footerRightColumnWidth,
+        },
+      }),
+    [
+      currentModelProvider,
+      footerRightColumnWidth,
+      hasTemporaryModelOverride,
+      isLocalBackend,
+      statusLinePayload,
+    ],
+  );
+
+  const modPanelRow = useMemo(() => {
+    if (suppressDividers) return null;
+    return (
+      <ModPanelRow
+        panels={modAdapter.registry?.ui.panels}
+        terminalWidth={terminalWidth}
+        placement="above"
+        context={panelLiveContext}
+      />
+    );
+  }, [
+    suppressDividers,
+    modAdapter.registry?.ui.panels,
+    terminalWidth,
+    panelLiveContext,
+  ]);
+
+  const modPanelRowBelow = useMemo(() => {
+    if (suppressDividers) return null;
+    return (
+      <ModPanelRow
+        panels={modAdapter.registry?.ui.panels}
+        terminalWidth={terminalWidth}
+        placement="below"
+        context={panelLiveContext}
+      />
+    );
+  }, [
+    suppressDividers,
+    modAdapter.registry?.ui.panels,
+    terminalWidth,
+    panelLiveContext,
+  ]);
+
   const lowerPane = useMemo(() => {
     return (
       <>
@@ -1937,18 +1933,10 @@ export function Input({
 
         {interactionEnabled ? (
           <Box flexDirection="column">
-            {!suppressDividers && (
-              <ModPanelRow
-                panels={modAdapter.registry?.ui.panels}
-                terminalWidth={terminalWidth}
-              />
-            )}
+            {modPanelRow}
 
             {!suppressDividers && (
-              <ProductStatusRow
-                goalStatusText={goalStatusText}
-                terminalWidth={terminalWidth}
-              />
+              <ProductStatusRow terminalWidth={terminalWidth} />
             )}
 
             {/* Top horizontal divider */}
@@ -2034,7 +2022,7 @@ export function Input({
                 modeName={modeInfo?.name ?? null}
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
-                showExitHint={modeInfo?.showExitHint ?? goalLoopActive}
+                showExitHint={modeInfo?.showExitHint ?? false}
                 currentModelProvider={currentModelProvider}
                 isOpenAICodexProvider={
                   currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
@@ -2052,6 +2040,8 @@ export function Input({
                 transientHint={statuslineTransientHint}
               />
             )}
+
+            {!suppressDividers && modPanelRowBelow}
           </Box>
         ) : reserveInputSpace ? (
           <Box height={inputChromeHeight} />
@@ -2060,6 +2050,8 @@ export function Input({
     );
   }, [
     messageQueue,
+    modPanelRow,
+    modPanelRowBelow,
     interactionEnabled,
     isBashMode,
     horizontalLine,
@@ -2086,7 +2078,6 @@ export function Input({
     modeInfo?.color,
     modeInfo?.glyph,
     modeInfo?.showExitHint,
-    goalLoopActive,
     currentModel,
     currentReasoningEffort,
     fileAutocompleteFdPath,
@@ -2099,7 +2090,6 @@ export function Input({
     statusLinePayload,
     modAdapter,
 
-    goalStatusText,
     promptChar,
     promptVisualWidth,
     suppressDividers,

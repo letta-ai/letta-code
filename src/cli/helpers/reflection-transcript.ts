@@ -7,7 +7,6 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { MEMORY_SYSTEM_DIR } from "@/agent/memory-filesystem";
 import { REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT } from "@/agent/subagents/context-budget";
@@ -19,11 +18,10 @@ import {
 import { getDirectoryLimits } from "@/utils/directory-limits";
 import { withFileLock } from "@/utils/file-lock";
 import { parseFrontmatter } from "@/utils/frontmatter";
+import { getTranscriptRoot } from "@/utils/transcript-paths";
 import type { Line } from "./accumulator";
 import { safeJsonParseOr } from "./safe-json-parse";
 
-const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
-const DEFAULT_TRANSCRIPT_DIR = "transcripts";
 const LEGACY_MESSAGE_ID_STATE_SCHEMA_VERSION = "v2_message_id";
 export const REFLECTION_STATE_SCHEMA_VERSION = "v3_assistant_steps" as const;
 
@@ -200,7 +198,7 @@ export function buildReflectionSubagentPrompt(
   const lines: string[] = [];
 
   lines.push(
-    "Review the conversation transcript payload and update memory files. The payload path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit/Read/Write `file_path` is literal and does NOT expand env vars.",
+    'Review the conversation transcript payload and update memory files. The payload path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `wc -c "$TRANSCRIPT_PATH"`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit `file_path` is literal and does NOT expand env vars.',
     "",
     'The payload may be either a JSON message array for one conversation or a `multi_transcript_reflection_payload` manifest. If it is a manifest, read each `payload_path` listed in `transcripts` and synthesize across all conversations. Entries with `mode: "replay"` were already reflected before and are included intentionally for re-review/deduplication; do not ignore them just because they are replay slices.',
     "When reviewing multiple transcripts, prefer durable patterns and latest evidence across sessions. Resolve contradictions by updating stale memory at the source, deduplicate repeated facts, and avoid storing one-off task state.",
@@ -231,7 +229,7 @@ export function buildReflectionSelectorPrompt(options?: {
   instruction?: string;
 }): string {
   const lines = [
-    "You are selecting conversation transcripts for memory reflection. The transcript candidates path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `cat $TRANSCRIPT_PATH`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Read/Edit file_path is literal and does NOT expand env vars.",
+    'You are selecting conversation transcripts for memory reflection. The transcript candidates path is available as the `$TRANSCRIPT_PATH` env var — read it via Bash (e.g. `wc -c "$TRANSCRIPT_PATH"`). Note: `$TRANSCRIPT_PATH` only expands in shell commands; Edit file_path is literal and does NOT expand env vars.',
     "",
     "The payload is `auto_transcript_reflection_candidates` with compact metadata about candidate conversations. Your job is only to choose which conversations should be opened for a full reflection pass. Do not edit memory files. Do not commit anything.",
     "",
@@ -269,7 +267,7 @@ interface ParentMemoryFile {
 }
 
 interface ParentMemorySnapshotOptions {
-  /** Maximum characters for the full rendered parent-memory preview. */
+  /** Maximum characters for the full rendered parent memory preview. */
   maxChars?: number;
 }
 
@@ -607,14 +605,6 @@ export async function buildParentMemorySnapshot(
 function sanitizePathSegment(segment: string): string {
   const sanitized = segment.replace(/[^a-zA-Z0-9._-]/g, "_").trim();
   return sanitized.length > 0 ? sanitized : "unknown";
-}
-
-function getTranscriptRoot(): string {
-  const envRoot = process.env[TRANSCRIPT_ROOT_ENV]?.trim();
-  if (envRoot) {
-    return envRoot;
-  }
-  return join(homedir(), ".letta", DEFAULT_TRANSCRIPT_DIR);
 }
 
 const stateMutexes = new Map<string, Promise<unknown>>();

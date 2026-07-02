@@ -49,7 +49,6 @@ function createStatuslineContext({
     }),
     ui: {
       currentModelProvider: "chatgpt-plus-pro",
-      goalStatusText: null,
       hasTemporaryModelOverride: false,
       isByokProvider: false,
       isLocalBackend: true,

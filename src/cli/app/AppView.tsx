@@ -5,6 +5,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { Box } from "ink";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { pinAgentForCurrentUser } from "@/agent/favorites";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import type { ModelReasoningEffort } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality";
@@ -225,7 +226,6 @@ type AppViewProps = {
   ) => Promise<void>;
   handleProfileEscapeCancel: () => void;
   handleQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
-  handleGoalLoopExit: () => void;
   handleSleeptimeModeSelect: (
     reflectionSettings: ReflectionSettings,
     commandId?: string | null,
@@ -331,7 +331,6 @@ type AppViewProps = {
   usedContextTokens: number;
   contextWindowSize: number | null | undefined;
   uiPermissionMode: PermissionMode;
-  uiGoalLoopActive: boolean;
   updateAgentName: (name: string) => void;
 };
 
@@ -402,7 +401,6 @@ export function AppView(props: AppViewProps) {
     handlePersonalitySelect,
     handleProfileEscapeCancel,
     handleQuestionSubmit,
-    handleGoalLoopExit,
     handleSleeptimeModeSelect,
     handleSystemPromptSelect,
     handleToolsetSelect,
@@ -477,7 +475,6 @@ export function AppView(props: AppViewProps) {
     usedContextTokens,
     contextWindowSize,
     uiPermissionMode,
-    uiGoalLoopActive,
     updateAgentName,
   } = props;
 
@@ -748,8 +745,6 @@ export function AppView(props: AppViewProps) {
                 }
                 onEscapeCommandCancel={onEscapeCommandCancel}
                 inputDisabled={btwState.status === "complete"}
-                goalLoopActive={uiGoalLoopActive}
-                onGoalLoopExit={handleGoalLoopExit}
                 conversationId={conversationId}
                 onPasteError={handlePasteError}
                 restoredInput={restoredInput}
@@ -943,7 +938,7 @@ export function AppView(props: AppViewProps) {
             {activeOverlay === "connect" && (
               <ProviderSelector
                 onCancel={closeOverlay}
-                onStartOAuth={async (provider, target) => {
+                onStartOAuth={async (provider, target, providerName) => {
                   const overlayCommand = completeOverlay("connect");
                   const cmd =
                     overlayCommand ??
@@ -960,10 +955,10 @@ export function AppView(props: AppViewProps) {
                         refreshDerived,
                         setCommandRunning,
                         target,
-                        onCodexConnected: () => {
+                        onCodexConnected: (providerName) => {
                           markLocalModelsAvailable();
                           setModelSelectorOptions({
-                            filterProvider: "chatgpt-plus-pro",
+                            filterProvider: providerName,
                             forceRefresh: true,
                           });
                           openOverlay(
@@ -974,7 +969,12 @@ export function AppView(props: AppViewProps) {
                           );
                         },
                       },
-                      `/connect ${provider.id === "openai-codex-oauth" ? "chatgpt" : provider.id}`,
+                      `/connect ${
+                        provider.id === "openai-codex-oauth" ||
+                        provider.providerType === "chatgpt_oauth"
+                          ? "chatgpt"
+                          : provider.id
+                      }${providerName ? ` --name ${providerName}` : ""}`,
                     );
                   } finally {
                     setActiveConnectCommandId(null);
@@ -1691,11 +1691,14 @@ export function AppView(props: AppViewProps) {
                       updateAgentName(newName);
                     }
 
-                    // Pin the agent
-                    settingsManager.pinAgent(agentId);
+                    const pinStatus = await pinAgentForCurrentUser(agentId);
 
                     if (newName && newName !== agentName) {
                       cmd.agentHint = `Your name is now "${newName}" — acknowledge this and save your new name to memory.`;
+                    }
+                    if (pinStatus === "already-pinned") {
+                      cmd.finish("This agent is already pinned.", false);
+                      return;
                     }
                     cmd.finish(
                       `Pinned "${newName || agentName || agentId.slice(0, 12)}".`,
