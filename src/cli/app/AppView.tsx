@@ -5,6 +5,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { Box } from "ink";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { pinAgentForCurrentUser } from "@/agent/favorites";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import type { ModelReasoningEffort } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality";
@@ -1690,11 +1691,14 @@ export function AppView(props: AppViewProps) {
                       updateAgentName(newName);
                     }
 
-                    // Pin the agent
-                    settingsManager.pinAgent(agentId);
+                    const pinStatus = await pinAgentForCurrentUser(agentId);
 
                     if (newName && newName !== agentName) {
                       cmd.agentHint = `Your name is now "${newName}" — acknowledge this and save your new name to memory.`;
+                    }
+                    if (pinStatus === "already-pinned") {
+                      cmd.finish("This agent is already pinned.", false);
+                      return;
                     }
                     cmd.finish(
                       `Pinned "${newName || agentName || agentId.slice(0, 12)}".`,
