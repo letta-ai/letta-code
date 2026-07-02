@@ -91,7 +91,8 @@ export interface UserInputData {
 export type ReflectionTriggerSource =
   | "manual"
   | "step-count"
-  | "compaction-event";
+  | "compaction-event"
+  | "meta-reflection";
 
 export interface ReflectionStartData {
   trigger_source: ReflectionTriggerSource;
