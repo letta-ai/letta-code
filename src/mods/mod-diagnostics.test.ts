@@ -6,6 +6,7 @@ import {
   getModErrorDiagnostics,
   MOD_DIAGNOSTICS_MAX_COUNT,
   MOD_DIAGNOSTICS_RESET_COUNT,
+  MOD_PANEL_CONTEXT_MIGRATION_HINT,
   type ModDiagnosticCollector,
   recordModDiagnostic,
 } from "@/mods/mod-diagnostics";
@@ -156,6 +157,23 @@ describe("mod diagnostics", () => {
       errorCount: 2,
       warningCount: 1,
     });
+  });
+
+  test("adds panel context migration hints for old statusline fields", () => {
+    const owner = createOwner();
+    const report = createModDiagnosticsReport([
+      {
+        capability: { id: "spotify-statusline", kind: "panel" },
+        error: createError(
+          "Cannot destructure property 'Box' of 'context.components' as it is undefined.",
+        ),
+        owner,
+        phase: "panel.render",
+        timestamp: 100,
+      },
+    ]);
+
+    expect(report.diagnostics[0]?.hint).toBe(MOD_PANEL_CONTEXT_MIGRATION_HINT);
   });
 
   test("adds structured migration hints for removed getContext APIs", () => {

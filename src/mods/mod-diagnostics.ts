@@ -61,6 +61,9 @@ export const MOD_CTX_GET_CONTEXT_MIGRATION_HINT =
 export const MOD_GENERIC_GET_CONTEXT_MIGRATION_HINT =
   "getContext helpers have been removed. If this is callback ctx, use ctx directly; if activation/background code needs runtime state, move it into a callback that receives ctx or use explicit/global state such as process.cwd().";
 
+export const MOD_PANEL_CONTEXT_MIGRATION_HINT =
+  "UI panels now receive ModContext plus panel helpers (ctx.width, ctx.row, ctx.columns, ctx.chalk). Old statusline renderer fields like ctx.components, ctx.statuses, ctx.rawPayload, and ctx.ui are no longer available.";
+
 function getDeprecatedApiDiagnosticHint(
   diagnostic: Pick<ModDiagnostic, "capability">,
 ): string {
@@ -84,6 +87,17 @@ export function getModDiagnosticHint(
     return getDeprecatedApiDiagnosticHint(diagnostic);
   }
   const message = diagnostic.error.message.toLowerCase();
+  if (
+    diagnostic.phase === "panel.render" &&
+    (message.includes("components") ||
+      message.includes("statuses") ||
+      message.includes("rawpayload") ||
+      message.includes("raw payload") ||
+      message.includes("ctx.ui") ||
+      message.includes("context.ui"))
+  ) {
+    return MOD_PANEL_CONTEXT_MIGRATION_HINT;
+  }
   if (
     message.includes("getcontext") &&
     (message.includes("not a function") ||

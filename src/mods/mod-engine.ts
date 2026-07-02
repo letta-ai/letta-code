@@ -975,12 +975,17 @@ function upsertModPanel(
   registry: LocalModRegistry,
   owner: ModOwner,
   id: string,
-  patch: { render?: ModPanelRender; order?: number },
+  patch: {
+    recordDiagnostic?: ModPanel["recordDiagnostic"];
+    render?: ModPanelRender;
+    order?: number;
+  },
 ): void {
   validateModPanelId(id);
   const panelKey = getModPanelKey(owner.id, id);
   const existing = registry.ui.panels[panelKey];
   const render = patch.render ?? existing?.render;
+  const recordDiagnostic = patch.recordDiagnostic ?? existing?.recordDiagnostic;
   if (!render) return;
   registry.ui.panels[panelKey] = {
     render,
@@ -988,6 +993,7 @@ function upsertModPanel(
     owner,
     order: patch.order ?? existing?.order ?? 100,
     path: owner.path,
+    ...(recordDiagnostic ? { recordDiagnostic } : {}),
     updatedAt: Date.now(),
   };
 }
@@ -1397,6 +1403,7 @@ function createLettaModApi(
         }
 
         upsertModPanel(registry, owner, panel.id, {
+          recordDiagnostic: recordCapabilityDiagnostic,
           render: panel.render,
           order: panel.order,
         });

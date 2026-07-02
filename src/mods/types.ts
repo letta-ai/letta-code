@@ -397,6 +397,7 @@ export type ModDiagnosticPhase =
   | "event"
   | "permission.check"
   | "permission.isEnabled"
+  | "panel.render"
   | "report"
   | "stale_handle"
   | "status.evaluate"
@@ -490,6 +491,12 @@ export interface ModPanel {
   owner?: ModOwner;
   order: number;
   path: string;
+  recordDiagnostic?: (
+    diagnostic: Pick<
+      ModDiagnostic,
+      "capability" | "error" | "phase" | "severity"
+    >,
+  ) => void;
   updatedAt: number;
 }
 
