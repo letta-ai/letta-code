@@ -142,6 +142,51 @@ export function ensureMemoryFilesystemDirs(
   }
 }
 
+export interface MemfsCreateBodyLike {
+  tags?: string[] | null;
+}
+
+/**
+ * Stamp the git-memory-enabled tag onto a create-agent body (pure helper).
+ * Returns the body unchanged when the tag is already present.
+ */
+export function stampMemfsTagOnCreateBody<T extends MemfsCreateBodyLike>(
+  body: T,
+  gitMemoryEnabledTag: string,
+): T {
+  const tags = Array.isArray(body.tags) ? body.tags : [];
+  if (tags.includes(gitMemoryEnabledTag)) return body;
+  return { ...body, tags: [...tags, gitMemoryEnabledTag] };
+}
+
+/**
+ * Prepare a raw (protocol-forwarded) create-agent body so the created agent
+ * is memfs-enabled from birth.
+ *
+ * Raw protocol paths (listener `agent_create` / `runtime_start.create_agent`)
+ * forward client-provided bodies directly to the backend. Without this,
+ * agents created on Letta Cloud are born without GIT_MEMORY_ENABLED_TAG and
+ * every downstream tag-based check (isMemfsEnabledOnServer, memfs-sync,
+ * hydrateMemfsSettingFromAgent) treats them as non-memfs — on every machine,
+ * forever. Stamping the tag atomically with creation guarantees lazy sync
+ * paths can finish the setup (clone, tool detach) even if this process dies.
+ *
+ * The local backend stamps the tag itself in LocalBackend.createAgent(), and
+ * non-cloud remote backends don't support memfs sync, so both pass through.
+ */
+export async function prepareRawCreateAgentBodyForMemfs<
+  T extends MemfsCreateBodyLike,
+>(body: T): Promise<T> {
+  const { getBackend } = await import("@/backend");
+  const backend = getBackend();
+  if (backend.capabilities.localMemfs) return body;
+  if (!backend.capabilities.remoteMemfs) return body;
+  if (!(await isLettaCloud())) return body;
+
+  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/memory-git");
+  return stampMemfsTagOnCreateBody(body, GIT_MEMORY_ENABLED_TAG);
+}
+
 export async function hydrateMemfsSettingFromAgent(
   agent: Pick<AgentState, "id" | "tags">,
 ): Promise<boolean> {

@@ -18,17 +18,35 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
   const agent = await getBackend().retrieveAgent(agentId);
 
   const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/memory-git");
+  const { applyMemfsFlags, isLettaCloud } = await import(
+    "@/agent/memory-filesystem"
+  );
+
   if (!agent.tags?.includes(GIT_MEMORY_ENABLED_TAG)) {
-    debugLog(
-      "memfs-sync",
-      `Agent ${agentId} does not have memfs tag, skipping`,
+    // An agent without the memfs tag on Letta Cloud is a bug, not a
+    // configuration: some creation path skipped memfs setup. Repair it here
+    // (tag + prompt + repo clone + legacy tool detach) instead of silently
+    // running the agent without memory. Matches headless auto-enable behavior.
+    if (!(await isLettaCloud())) {
+      debugLog(
+        "memfs-sync",
+        `Agent ${agentId} does not have memfs tag (self-hosted), skipping`,
+      );
+      return;
+    }
+    console.warn(
+      `[memfs-sync] Agent ${agentId} is missing the memfs tag on Letta Cloud — repairing (auto-enabling memfs).`,
     );
+    await applyMemfsFlags(agentId, true, undefined, {
+      pullOnExistingRepo: true,
+      agentTags: agent.tags ?? [],
+    });
+    debugLog("memfs-sync", `Memfs repair complete for agent ${agentId}`);
     return;
   }
 
   debugLog("memfs-sync", `Syncing memfs for agent ${agentId}`);
 
-  const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
   await applyMemfsFlags(agentId, undefined, undefined, {
     pullOnExistingRepo: true,
     agentTags: agent.tags,
