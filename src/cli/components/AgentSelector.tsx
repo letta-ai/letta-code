@@ -54,6 +54,7 @@ interface PinnedAgentData {
   agent: AgentState | null;
   error: string | null;
   backendMode: AgentBackendMode;
+  source: "settings" | "localFavorite";
 }
 
 const ALL_TABS: { id: TabId; label: string }[] = [
@@ -64,14 +65,14 @@ const ALL_TABS: { id: TabId; label: string }[] = [
 ];
 
 const TAB_DESCRIPTIONS: Record<TabId, string> = {
-  pinned: "Save agents for easy access by pinning them with /pin",
+  pinned: "Save agents for easy access with /pin or Desktop favorites",
   local: "Local agents from this device",
   constellation: "Hosted agents from Letta Constellation",
   new: "Create a brand new agent",
 };
 
 const TAB_EMPTY_STATES: Record<TabId, string> = {
-  pinned: "No pinned agents, use /pin to save",
+  pinned: "No pinned or favorite agents, use /pin to save",
   local: "No local agents found",
   constellation: "No agents found",
   new: "",
@@ -80,6 +81,7 @@ const TAB_EMPTY_STATES: Record<TabId, string> = {
 const DISPLAY_PAGE_SIZE = 5;
 const FETCH_PAGE_SIZE = 20;
 const NEW_AGENT_DEFAULT_BACKEND: AgentBackendMode = "api";
+const LOCAL_DESKTOP_FAVORITE_TAG = "favorite:user:local";
 
 export function getPinnedAgentBackendMode(agentId: string): AgentBackendMode {
   return isLocalAgentId(agentId) ? "local" : "api";
@@ -259,6 +261,10 @@ export function AgentSelector({
     setPinnedLoading(true);
     try {
       const pinnedIds = settingsManager.getPinnedAgents();
+      const pinnedIdSet = new Set(pinnedIds);
+      const localFavoriteAgents = listLocalAgentsFromDisk().filter((agent) =>
+        agent.tags.includes(LOCAL_DESKTOP_FAVORITE_TAG),
+      );
 
       let pinnedData: PinnedAgentData[] = [];
 
@@ -274,24 +280,43 @@ export function AgentSelector({
                   agent: null,
                   error: "Not signed in",
                   backendMode,
+                  source: "settings",
                 };
               }
               const agentBackend = getBackendForMode(backendMode);
               const agent = await agentBackend.retrieveAgent(agentId, {
                 include: ["agent.blocks"],
               });
-              return { agentId, agent, error: null, backendMode };
+              return {
+                agentId,
+                agent,
+                error: null,
+                backendMode,
+                source: "settings",
+              };
             } catch {
               return {
                 agentId,
                 agent: null,
                 error: "Agent not found",
                 backendMode,
+                source: "settings",
               };
             }
           }),
         );
       }
+
+      const favoriteData: PinnedAgentData[] = localFavoriteAgents
+        .filter((agent) => !pinnedIdSet.has(agent.id))
+        .map((agent) => ({
+          agentId: agent.id,
+          agent,
+          error: null,
+          backendMode: "local",
+          source: "localFavorite",
+        }));
+      pinnedData = [...pinnedData, ...favoriteData];
 
       const validPinnedData = pinnedData.filter((p) => p.agent !== null);
 
@@ -734,7 +759,7 @@ export function AgentSelector({
     ) {
       // Unpin from current scope (pinned tab only)
       const selected = pinnedPageAgents[pinnedSelectedIndex];
-      if (selected) {
+      if (selected?.source === "settings") {
         settingsManager.unpinAgent(selected.agentId);
         loadPinnedAgents();
       }
@@ -979,8 +1004,14 @@ export function AgentSelector({
                     ? `Page ${localPage + 1}/${localTotalPages || 1}`
                     : `Page ${constellationPage + 1}${constellationHasMore ? "+" : `/${constellationTotalPages || 1}`}${constellationLoadingMore ? " (loading...)" : ""}`;
               const deleteHint = allowDelete ? " · Shift+D delete" : "";
+              const selectedPinnedAgent =
+                activeTab === "pinned"
+                  ? pinnedPageAgents[pinnedSelectedIndex]
+                  : undefined;
               const pinnedHint =
-                allowPinActions && activeTab === "pinned"
+                allowPinActions &&
+                activeTab === "pinned" &&
+                selectedPinnedAgent?.source === "settings"
                   ? " · Shift+P unpin"
                   : "";
               const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch${deleteHint}${pinnedHint} · Esc cancel`;
