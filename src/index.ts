@@ -164,7 +164,7 @@ Letta Code is a general purpose CLI for interacting with Letta agents
 
 USAGE
   # interactive TUI
-  letta                 Resume last conversation for this project
+  letta                 Open the last-used agent's default conversation
   letta --new           Create a new conversation (for concurrent sessions)
   letta --resume        Open agent selector UI to pick agent/conversation
   letta --new-agent     Create a new agent directly (skip profile selector)
