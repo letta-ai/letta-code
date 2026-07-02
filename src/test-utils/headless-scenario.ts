@@ -163,8 +163,9 @@ function localScenarioPrompt(): string {
     "I want to test local backend tool calling abilities (do not ask for clarifications; this is an automated CI runner). " +
     "First, run a shell command to output exactly LOCAL_SHELL_ONE. " +
     "Then, try running two shell commands in parallel to output exactly LOCAL_PARALLEL_TWO and LOCAL_PARALLEL_THREE. " +
-    "Then, use whichever memory tool is available (`memory` or `memory_apply_patch`) to create or update `reference/ci/local-backend.md` with description `Local backend CI scenario` and body text `LOCAL_MEMFS_SCENARIO_OK`. " +
-    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command and memory update above succeeded, your final response must include the uppercase word BANANA. " +
+    "Then, use the Agent tool with subagent_type `memory`, description `Update local memory`, and run_in_background false to create or update `reference/ci/local-backend.md` with description `Local backend CI scenario` and body text `LOCAL_MEMFS_SCENARIO_OK`. " +
+    "Do not edit the MemFS path directly with ApplyPatch, Edit, or Bash; the memory subagent must make and commit the memory change. " +
+    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command succeeded and the memory subagent reported a committed memory update, your final response must include the uppercase word BANANA. " +
     "If any step failed, do not include BANANA."
   );
 }
@@ -307,7 +308,7 @@ async function validateLocalStorage(storageDir: string | undefined) {
   );
   if (!Number.isFinite(commitCount) || commitCount < 2) {
     throw new Error(
-      `Expected local MemFS scenario to create a memory-tool commit, found ${commitCount} commit(s)`,
+      `Expected local MemFS scenario to create a memory subagent commit, found ${commitCount} commit(s)`,
     );
   }
   const status = await git(memoryDir, ["status", "--porcelain"]);
