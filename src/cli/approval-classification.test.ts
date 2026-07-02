@@ -18,6 +18,7 @@ import {
   loadSpecificTools,
   loadTools,
   prepareCurrentToolExecutionContext,
+  prepareToolExecutionContextForSpecificTools,
 } from "@/tools/manager";
 
 describe("classifyApprovals", () => {
@@ -142,6 +143,41 @@ describe("classifyApprovals", () => {
     expect(denied?.missingRequiredArgs).toEqual(["cmd"]);
     expect(denied?.denyReason).toBe(
       "exec_command tool missing required parameter: cmd. Received parameters: yield_time_ms",
+    );
+  });
+
+  test("validates required args against the turn-scoped tool context", async () => {
+    await loadTools();
+    const { contextId } = await prepareToolExecutionContextForSpecificTools([
+      "exec_command",
+    ]);
+    permissionMode.setMode("unrestricted");
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_context_missing_cmd",
+          toolName: "exec_command",
+          toolArgs: JSON.stringify({
+            description: "Check diagnostics for broken test mod",
+          }),
+        },
+      ],
+      {
+        requireArgsForAutoApprove: true,
+        toolContextId: contextId,
+        workingDirectory: "/tmp/project",
+      },
+    );
+
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(result.needsUserInput).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(1);
+
+    const [denied] = result.autoDenied;
+    expect(denied?.missingRequiredArgs).toEqual(["cmd"]);
+    expect(denied?.denyReason).toBe(
+      "exec_command tool missing required parameter: cmd. Received parameters: description",
     );
   });
 
