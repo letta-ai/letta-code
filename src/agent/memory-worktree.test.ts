@@ -179,7 +179,7 @@ describe("reflection memory worktrees", () => {
     expect(pending.map((entry) => entry.reflectionBranch)).toEqual([
       pendingWorktree.branchName,
     ]);
-    expect(pending[0]?.reflectionWorktreeDir).toBe(
+    expect(realpathSync(pending[0]?.reflectionWorktreeDir ?? "")).toBe(
       realpathSync(pendingWorktree.worktreeDir),
     );
     expect(existsSync(mergedWorktree.worktreeDir)).toBe(false);
