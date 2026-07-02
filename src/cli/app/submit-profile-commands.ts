@@ -191,7 +191,7 @@ export async function handleProfileCommand(
     const cmd = commandRunner.start(trimmed, "Unpinning agent...");
     setActiveProfileCommandId(cmd.id);
     try {
-      handleUnpin(profileCtx, msg, argsStr);
+      await handleUnpin(profileCtx, msg, argsStr);
     } finally {
       setActiveProfileCommandId(null);
     }
