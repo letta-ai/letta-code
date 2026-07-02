@@ -1510,6 +1510,7 @@ test("slack adapter posts the lifecycle error back into the same thread as a cod
     batchId: "batch-3",
     outcome: "error",
     error: "Boom: something went wrong\nsecond line",
+    runId: "run-123",
     sources: [
       {
         channel: "slack",
@@ -1532,7 +1533,7 @@ test("slack adapter posts the lifecycle error back into the same thread as a cod
   });
   expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
     channel: "C123",
-    text: "Turn failed:\n```\nBoom: something went wrong\nsecond line\n```",
+    text: "Turn failed:\n```\nBoom: something went wrong\nsecond line\n```\n\nRun ID: run-123",
     thread_ts: "1712790000.000050",
   });
 });
@@ -1636,6 +1637,7 @@ test("slack adapter hides raw generic lifecycle errors", async () => {
     batchId: "batch-raw-error",
     outcome: "error",
     error: "Unexpected stop reason: error",
+    runId: "run-raw-error",
     sources: [
       {
         channel: "slack",
@@ -1653,7 +1655,7 @@ test("slack adapter hides raw generic lifecycle errors", async () => {
   const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
     channel: "C123",
-    text: "Turn failed:\n```\nSomething went wrong while processing that message. Please try again.\n```",
+    text: "Turn failed:\n```\nSomething went wrong while processing that message. Please try again.\n```\n\nRun ID: run-raw-error",
     thread_ts: "1712790000.000050",
   });
 });

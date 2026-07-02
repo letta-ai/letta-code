@@ -120,6 +120,7 @@ export type ChannelTurnLifecycleEvent =
       sources: ChannelTurnSource[];
       outcome: ChannelTurnOutcome;
       error?: string;
+      runId?: string;
     };
 
 // ── Adapter interface ─────────────────────────────────────────────
