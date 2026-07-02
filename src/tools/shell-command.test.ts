@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { shell_command } from "@/tools/impl/shell-command.js";
 import { LIMITS } from "@/tools/impl/truncation.js";
 import { createTempRuntimeScriptCommand } from "./runtime-script.js";
@@ -143,54 +144,75 @@ test("shell_command truncates oversized output with overflow-file notice", async
 });
 
 test("shell_command uses agent identity for memory-dir git commits", async () => {
-  const agentId = `agent-test-${randomUUID()}`;
-  const memoryRoot = join(homedir(), ".letta", "agents", agentId);
-  const memoryDir = join(memoryRoot, "memory");
   const originalAgentId = process.env.AGENT_ID;
   const originalLettaAgentId = process.env.LETTA_AGENT_ID;
   const originalAgentName = process.env.AGENT_NAME;
+  const originalFsSandbox = process.env.LETTA_FS_SANDBOX;
+  const agentId = originalAgentId || `agent-test-${randomUUID()}`;
+  const memoryDir = originalAgentId
+    ? join(
+        homedir(),
+        ".letta",
+        "agents",
+        agentId,
+        "memory-worktrees",
+        `shell-command-test-${randomUUID()}`,
+      )
+    : join(homedir(), ".letta", "agents", agentId, "memory");
+  const cleanupDir = originalAgentId
+    ? memoryDir
+    : join(homedir(), ".letta", "agents", agentId);
   mkdirSync(memoryDir, { recursive: true });
   process.env.AGENT_ID = agentId;
   process.env.LETTA_AGENT_ID = agentId;
-  process.env.AGENT_NAME = "Shell Command Test Agent";
+  delete process.env.AGENT_NAME;
+  process.env.LETTA_FS_SANDBOX = "0";
   try {
-    await shell_command({ command: "git init", workdir: memoryDir });
-    await shell_command({
-      command: "git config user.name setup",
-      workdir: memoryDir,
-    });
-    await shell_command({
-      command: "git config user.email setup@example.com",
-      workdir: memoryDir,
-    });
+    await runWithRuntimeContext(
+      { agentId, agentName: "Shell Command Test Agent" },
+      async () => {
+        await shell_command({ command: "git init", workdir: memoryDir });
+        await shell_command({
+          command: "git config user.name setup",
+          workdir: memoryDir,
+        });
+        await shell_command({
+          command: "git config user.email setup@example.com",
+          workdir: memoryDir,
+        });
 
-    const repoStatus = await shell_command({
-      command: "git rev-parse --is-inside-work-tree",
-      workdir: memoryDir,
-    });
-    expect(repoStatus.output.trim()).toContain("true");
+        const repoStatus = await shell_command({
+          command: "git rev-parse --is-inside-work-tree",
+          workdir: memoryDir,
+        });
+        expect(repoStatus.output.trim()).toContain("true");
 
-    writeFileSync(join(memoryDir, ".gitkeep"), "", "utf8");
-    await shell_command({ command: "git add .gitkeep", workdir: memoryDir });
-    await shell_command({
-      command: 'git commit -m "initial setup commit"',
-      workdir: memoryDir,
-    });
+        writeFileSync(join(memoryDir, ".gitkeep"), "", "utf8");
+        await shell_command({
+          command: "git add .gitkeep",
+          workdir: memoryDir,
+        });
+        await shell_command({
+          command: 'git commit -m "initial setup commit"',
+          workdir: memoryDir,
+        });
 
-    writeFileSync(join(memoryDir, "test.md"), "hello\n", "utf8");
-    await shell_command({ command: "git add test.md", workdir: memoryDir });
-    await shell_command({
-      command: 'git commit -m "test memory commit"',
-      workdir: memoryDir,
-    });
+        writeFileSync(join(memoryDir, "test.md"), "hello\n", "utf8");
+        await shell_command({ command: "git add test.md", workdir: memoryDir });
+        await shell_command({
+          command: 'git commit -m "test memory commit"',
+          workdir: memoryDir,
+        });
 
-    const logResult = await shell_command({
-      command: 'git log -1 --format="%s|%ae|%ce"',
-      workdir: memoryDir,
-    });
+        const logResult = await shell_command({
+          command: 'git log -1 --format="%s|%an|%ae|%cn|%ce"',
+          workdir: memoryDir,
+        });
 
-    expect(logResult.output.trim()).toBe(
-      `test memory commit|${agentId}@letta.com|${agentId}@letta.com`,
+        expect(logResult.output.trim()).toBe(
+          `test memory commit|Shell Command Test Agent|${agentId}@letta.com|Shell Command Test Agent|${agentId}@letta.com`,
+        );
+      },
     );
   } finally {
     if (originalAgentId === undefined) delete process.env.AGENT_ID;
@@ -202,6 +224,9 @@ test("shell_command uses agent identity for memory-dir git commits", async () =>
     if (originalAgentName === undefined) delete process.env.AGENT_NAME;
     else process.env.AGENT_NAME = originalAgentName;
 
-    rmSync(memoryRoot, { recursive: true, force: true });
+    if (originalFsSandbox === undefined) delete process.env.LETTA_FS_SANDBOX;
+    else process.env.LETTA_FS_SANDBOX = originalFsSandbox;
+
+    rmSync(cleanupDir, { recursive: true, force: true });
   }
 });

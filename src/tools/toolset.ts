@@ -538,6 +538,7 @@ export async function prepareToolExecutionContextForScope(params: {
     agent: agent as AgentState,
     runtimeContext: {
       agentId,
+      agentName: (agent as AgentState).name ?? null,
       conversationId: scopedConversationId,
       workingDirectory,
       ...(channelToolScope.channels.length > 0 ? { channelToolScope } : {}),

@@ -52,7 +52,7 @@ There are two ways to change memory:
 
 Memory markdown files must start with YAML frontmatter containing a non-empty `description:` field. The `memory` and `memory_apply_patch` tools add and preserve this automatically; when using raw file edits, preserve existing frontmatter or add it before committing. The MemFS pre-commit hook enforces this requirement, rejects unknown keys, and prevents changes to protected `read_only` files. Skill `SKILL.md` files use their own skill frontmatter format.
 
-`$AGENT_NAME` is not guaranteed to be set in the shell environment. Use a non-empty author name fallback when committing directly.
+`$AGENT_NAME` is normally populated when the runtime knows the current agent name, but direct shell environments can still miss it. Use a non-empty author name fallback when committing directly.
 
 ```bash
 cd "$MEMORY_DIR"

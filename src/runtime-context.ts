@@ -7,6 +7,7 @@ export type RuntimePermissionMode = "standard" | "acceptEdits" | "unrestricted";
 
 export interface RuntimeContextSnapshot {
   agentId?: string | null;
+  agentName?: string | null;
   conversationId?: string | null;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];

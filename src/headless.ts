@@ -1653,7 +1653,12 @@ export async function handleHeadlessCommand(
   }
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
-  setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
+  setAgentContext(
+    agent.id,
+    skillsDirectory,
+    resolvedSkillSources,
+    agent.name ?? null,
+  );
 
   // Validate output format
   const outputFormat = values["output-format"] || "text";

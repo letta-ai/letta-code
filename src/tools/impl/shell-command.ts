@@ -1,4 +1,4 @@
-import { getCurrentAgentId } from "@/agent/context";
+import { getCurrentAgentId, getCurrentAgentName } from "@/agent/context";
 import { isMemoryDirCommand } from "@/permissions/read-only-shell";
 import { resolveShellWorkdir, type ShellResult, shell } from "./shell.js";
 import { buildShellLaunchers } from "./shell-launchers.js";
@@ -131,7 +131,7 @@ function getMemoryGitIdentityEnvOverrides(
     return undefined;
   }
 
-  const agentName = (process.env.AGENT_NAME || "").trim() || agentId;
+  const agentName = getCurrentAgentNameOrEnv() || agentId;
   const agentEmail = `${agentId}@letta.com`;
 
   return {
@@ -153,6 +153,16 @@ function getCurrentAgentIdOrEnv(): string {
   }
 
   return (process.env.LETTA_AGENT_ID || process.env.AGENT_ID || "").trim();
+}
+
+function getCurrentAgentNameOrEnv(): string | null {
+  const scopedName = getCurrentAgentName()?.trim();
+  if (scopedName) {
+    return scopedName;
+  }
+
+  const envName = process.env.AGENT_NAME?.trim();
+  return envName || null;
 }
 
 function containsGitCommitInvocation(command: string): boolean {
