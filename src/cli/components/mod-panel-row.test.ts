@@ -73,7 +73,7 @@ describe("renderModPanelLines", () => {
     ]);
   });
 
-  test("records render diagnostics without repeating the same error", () => {
+  test("records render diagnostics without repeating the same error", async () => {
     const diagnostics: unknown[] = [];
     const error = new Error(
       "Cannot read properties of undefined (reading 'Box')",
@@ -85,6 +85,7 @@ describe("renderModPanelLines", () => {
 
     expect(renderModPanelLines(panel, 40, CONTEXT)).toEqual([]);
     expect(renderModPanelLines(panel, 40, CONTEXT)).toEqual([]);
+    await Promise.resolve();
     expect(diagnostics).toEqual([
       {
         capability: { id: "cwd", kind: "panel" },

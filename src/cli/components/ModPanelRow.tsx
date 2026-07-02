@@ -66,10 +66,13 @@ function recordPanelRenderError(panel: ModPanel, error: unknown): void {
   const signature = `${normalizedError.name}:${normalizedError.message}`;
   if (reportedPanelRenderErrors.get(key) === signature) return;
   reportedPanelRenderErrors.set(key, signature);
-  panel.recordDiagnostic?.({
-    capability: { id: panel.id, kind: "panel" },
-    error: normalizedError,
-    phase: "panel.render",
+  queueMicrotask(() => {
+    if (reportedPanelRenderErrors.get(key) !== signature) return;
+    panel.recordDiagnostic?.({
+      capability: { id: panel.id, kind: "panel" },
+      error: normalizedError,
+      phase: "panel.render",
+    });
   });
 }
 
