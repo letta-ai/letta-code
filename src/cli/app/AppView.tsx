@@ -70,7 +70,6 @@ import {
   type ReflectionSettings,
 } from "@/cli/helpers/memory-reminder";
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
-import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
@@ -80,6 +79,7 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
 import type { WindowTitleData } from "@/cli/helpers/window-title-config";
+import type { ModContext } from "@/cli/mods/types";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
@@ -150,7 +150,6 @@ type AppViewProps = {
   currentModelId: string | null;
   currentModelServiceTier: string | null;
   currentModelProvider: string | null;
-  isLocalBackend: boolean;
   currentPersonalityId: PersonalityId | null;
   currentReasoningEffort: ModelReasoningEffort | null;
   currentSystemPromptId: string | null;
@@ -316,7 +315,7 @@ type AppViewProps = {
   ) => CommandHandle;
   staticItems: StaticItem[];
   staticRenderEpoch: number;
-  statusLinePayload: StatusLinePayload;
+  modContext: ModContext;
   statusLinePrompt: string;
   terminalTitleData: WindowTitleData;
   onTitlePreview: (title: string | null) => void;
@@ -361,7 +360,6 @@ export function AppView(props: AppViewProps) {
     currentModelId,
     currentModelServiceTier,
     currentModelProvider,
-    isLocalBackend,
     currentPersonalityId,
     currentReasoningEffort,
     currentSystemPromptId,
@@ -461,7 +459,7 @@ export function AppView(props: AppViewProps) {
     openOverlay,
     staticItems,
     staticRenderEpoch,
-    statusLinePayload,
+    modContext,
     statusLinePrompt,
     terminalTitleData,
     onTitlePreview,
@@ -733,7 +731,6 @@ export function AppView(props: AppViewProps) {
                 agentName={agentName}
                 currentModel={currentModelDisplay}
                 currentModelProvider={currentModelProvider}
-                isLocalBackend={isLocalBackend}
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 currentReasoningEffort={currentReasoningEffort}
                 fileAutocompleteFdPath={fileAutocompleteFdPath}
@@ -752,7 +749,7 @@ export function AppView(props: AppViewProps) {
                 executionPhase={executionPhase}
                 terminalWidth={chromeColumns}
                 shouldAnimate={shouldAnimate}
-                statusLinePayload={statusLinePayload}
+                modContext={modContext}
                 modAdapter={modAdapter}
                 statusLinePrompt={statusLinePrompt}
                 footerNotification={footerUpdateText}

@@ -16,21 +16,19 @@ import {
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
-import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import { shouldRenderDefaultStatuslineRenderer } from "@/cli/display/statusline/default-renderer-activation";
 import { truncateToWidth } from "@/cli/display/statusline/formatting";
 import {
-  DEFAULT_STATUSLINE_RENDERER_ID,
-  getBuiltinStatuslineRenderer,
-} from "@/cli/display/statusline/registry";
-import { buildDefaultStatuslineParts } from "@/cli/display/statusline/renderers/Default";
+  buildDefaultStatuslineParts,
+  renderDefaultStatusline,
+} from "@/cli/display/statusline/renderers/Default";
+import type { StatuslineUiContext } from "@/cli/display/statusline/types";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   type ExecutionPhase,
   getPhaseVisual,
 } from "@/cli/helpers/phase-visuals";
-import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
 import { useTokenSmoothing } from "@/cli/hooks/use-token-smoothing";
@@ -447,14 +445,12 @@ const StatuslineSlot = memo(function StatuslineSlot({
   modeColor,
   modeGlyph,
   showExitHint,
-  currentModelProvider,
   isOpenAICodexProvider,
   isByokProvider,
-  isLocalBackend = false,
   hasTemporaryModelOverride,
   hideFooter,
   rightColumnWidth,
-  statusLinePayload,
+  modContext,
   modAdapter,
   transientHint,
 }: {
@@ -465,14 +461,12 @@ const StatuslineSlot = memo(function StatuslineSlot({
   modeColor: string | null;
   modeGlyph?: string | null;
   showExitHint: boolean;
-  currentModelProvider?: string | null;
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
-  isLocalBackend?: boolean;
   hasTemporaryModelOverride?: boolean;
   hideFooter: boolean;
   rightColumnWidth: number;
-  statusLinePayload: StatusLinePayload;
+  modContext: ModContext;
   modAdapter: LocalModAdapter;
   transientHint?: StatuslineTransientHint | null;
 }) {
@@ -483,21 +477,12 @@ const StatuslineSlot = memo(function StatuslineSlot({
     escapePressed,
   });
 
-  const statuslineContext = buildStatuslineRenderContext({
-    payload: statusLinePayload,
-    ui: {
-      currentModelProvider: currentModelProvider ?? null,
-      hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
-      isByokProvider,
-      isLocalBackend,
-      isOpenAICodexProvider,
-      rightColumnWidth,
-    },
-  });
-
-  const builtInStatuslineRenderer = getBuiltinStatuslineRenderer(
-    DEFAULT_STATUSLINE_RENDERER_ID,
-  );
+  const statuslineUi: StatuslineUiContext = {
+    hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
+    isByokProvider,
+    isOpenAICodexProvider,
+    rightColumnWidth,
+  };
 
   // The order-0 "primary" panel overrides the built-in agent · model line.
   const panels = modAdapter.registry?.ui.panels ?? {};
@@ -511,12 +496,8 @@ const StatuslineSlot = memo(function StatuslineSlot({
   const idleSlotAvailable = !hideFooterContent && !preemption && !transientHint;
 
   if (idleSlotAvailable && primaryPanel) {
-    const rowWidth = Math.max(0, (statuslineContext.terminalWidth ?? 0) - 1);
-    const lines = renderModPanelLines(
-      primaryPanel,
-      rowWidth,
-      statuslineContext,
-    );
+    const rowWidth = Math.max(0, (modContext.terminalWidth ?? 0) - 1);
+    const lines = renderModPanelLines(primaryPanel, rowWidth, modContext);
     if (lines.length > 0) {
       return (
         <Box flexDirection="column">
@@ -534,7 +515,8 @@ const StatuslineSlot = memo(function StatuslineSlot({
   }
 
   const defaultStatuslineParts = buildDefaultStatuslineParts(
-    statuslineContext,
+    modContext,
+    statuslineUi,
     rightColumnWidth,
   );
   const rightLabel = defaultStatuslineParts.right;
@@ -570,7 +552,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   });
 
   if (shouldRenderDefaultStatusline) {
-    return builtInStatuslineRenderer.render(statuslineContext);
+    return renderDefaultStatusline(modContext, statuslineUi);
   }
 
   return (
@@ -904,7 +886,6 @@ export function Input({
   agentName,
   currentModel,
   currentModelProvider,
-  isLocalBackend = false,
   hasTemporaryModelOverride = false,
   currentReasoningEffort,
   fileAutocompleteFdPath,
@@ -921,7 +902,7 @@ export function Input({
   executionPhase = null,
   terminalWidth,
   shouldAnimate = true,
-  statusLinePayload,
+  modContext,
   modAdapter,
   statusLinePrompt,
   onCycleReasoningEffort,
@@ -955,7 +936,6 @@ export function Input({
   agentName?: string | null;
   currentModel?: string | null;
   currentModelProvider?: string | null;
-  isLocalBackend?: boolean;
   hasTemporaryModelOverride?: boolean;
   currentReasoningEffort?: ModelReasoningEffort | null;
   fileAutocompleteFdPath?: string | null;
@@ -972,7 +952,7 @@ export function Input({
   executionPhase?: ExecutionPhase;
   terminalWidth: number;
   shouldAnimate?: boolean;
-  statusLinePayload: StatusLinePayload;
+  modContext: ModContext;
   modAdapter: LocalModAdapter;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
@@ -1864,31 +1844,6 @@ export function Input({
   // re-renders when the panels themselves change, mirroring how BtwPane
   // stays flash-free. Folding this into lowerPane would rebuild it on every
   // keystroke.
-  const panelLiveContext = useMemo<ModContext>(
-    () =>
-      buildStatuslineRenderContext({
-        payload: statusLinePayload,
-        ui: {
-          currentModelProvider: currentModelProvider ?? null,
-          hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
-          isByokProvider:
-            currentModelProvider?.startsWith("lc-") ||
-            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
-          isLocalBackend,
-          isOpenAICodexProvider:
-            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
-          rightColumnWidth: footerRightColumnWidth,
-        },
-      }),
-    [
-      currentModelProvider,
-      footerRightColumnWidth,
-      hasTemporaryModelOverride,
-      isLocalBackend,
-      statusLinePayload,
-    ],
-  );
-
   const modPanelRow = useMemo(() => {
     if (suppressDividers) return null;
     return (
@@ -1896,14 +1851,14 @@ export function Input({
         panels={modAdapter.registry?.ui.panels}
         terminalWidth={terminalWidth}
         placement="above"
-        context={panelLiveContext}
+        context={modContext}
       />
     );
   }, [
     suppressDividers,
     modAdapter.registry?.ui.panels,
     terminalWidth,
-    panelLiveContext,
+    modContext,
   ]);
 
   const modPanelRowBelow = useMemo(() => {
@@ -1913,14 +1868,14 @@ export function Input({
         panels={modAdapter.registry?.ui.panels}
         terminalWidth={terminalWidth}
         placement="below"
-        context={panelLiveContext}
+        context={modContext}
       />
     );
   }, [
     suppressDividers,
     modAdapter.registry?.ui.panels,
     terminalWidth,
-    panelLiveContext,
+    modContext,
   ]);
 
   const lowerPane = useMemo(() => {
@@ -2023,7 +1978,6 @@ export function Input({
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
                 showExitHint={modeInfo?.showExitHint ?? false}
-                currentModelProvider={currentModelProvider}
                 isOpenAICodexProvider={
                   currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
                 }
@@ -2031,11 +1985,10 @@ export function Input({
                   currentModelProvider?.startsWith("lc-") ||
                   currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
                 }
-                isLocalBackend={isLocalBackend}
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 hideFooter={hideFooter}
                 rightColumnWidth={footerRightColumnWidth}
-                statusLinePayload={statusLinePayload}
+                modContext={modContext}
                 modAdapter={modAdapter}
                 transientHint={statuslineTransientHint}
               />
@@ -2087,14 +2040,13 @@ export function Input({
     footerRightColumnWidth,
     reserveInputSpace,
     inputChromeHeight,
-    statusLinePayload,
+    modContext,
     modAdapter,
 
     promptChar,
     promptVisualWidth,
     suppressDividers,
     queueMode,
-    isLocalBackend,
     inspirationalPlaceholder,
     terminalWidth,
     statuslineTransientHint,

@@ -60,7 +60,6 @@ import {
 import type { BtwState } from "@/cli/components/BtwPane";
 import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
 import { TerminalTitleWriter } from "@/cli/components/TerminalTitleWriter";
-import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import {
   appendStreamingOutput,
   type Buffers,
@@ -71,6 +70,7 @@ import {
 import { isLocalAgentId } from "@/cli/helpers/app-urls";
 import { backfillBuffers } from "@/cli/helpers/backfill";
 import { chunkLog } from "@/cli/helpers/chunk-log";
+import { buildCliModContext } from "@/cli/helpers/cli-mod-context";
 import {
   createContextTracker,
   resetContextHistory,
@@ -98,7 +98,6 @@ import {
 } from "@/cli/helpers/reflection-launcher";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
-import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   collectFinishedTaskToolCalls,
@@ -147,7 +146,6 @@ import {
   isByokHandleForSelector,
   listProviders,
 } from "@/providers/byok-providers";
-import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   type MessageQueueItem,
   QueueRuntime,
@@ -2288,9 +2286,10 @@ export function App({
 
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const reflectionSettings = getReflectionSettings(agentId);
-  const statusLinePayload = buildStatusLinePayload({
+  const modContext = buildCliModContext({
     modelId: llmConfigRef.current?.model ?? null,
     modelDisplayName: currentModelDisplay,
+    modelProvider: currentModelProvider ?? null,
     reasoningEffort: currentReasoningEffort,
     systemPromptId: currentSystemPromptId,
     toolset: currentToolset,
@@ -2306,8 +2305,6 @@ export function App({
     totalOutputTokens: sessionStatsSnapshot.usage.completionTokens,
     contextWindowSize: effectiveContextWindowSize,
     usedContextTokens: contextTrackerRef.current.lastContextTokens,
-    stepCount: sessionStatsSnapshot.usage.stepCount,
-    turnCount: sharedReminderStateRef.current.turnCount,
     reflectionMode: reflectionSettings.trigger,
     reflectionStepCount: reflectionSettings.stepCount,
     memfsEnabled:
@@ -2322,40 +2319,12 @@ export function App({
     backgroundAgents: getActiveBackgroundAgents().map((a) => ({
       type: a.type,
       status: a.status,
-      duration_ms: Date.now() - a.startTime,
+      durationMs: Date.now() - a.startTime,
     })),
   });
-  const modContext = useMemo(
-    () =>
-      buildStatuslineRenderContext({
-        payload: statusLinePayload,
-        ui: {
-          currentModelProvider: currentModelProvider ?? null,
-          hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
-          isByokProvider: Boolean(
-            currentModelProvider?.startsWith("lc-") ||
-              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
-          ),
-          isLocalBackend,
-          isOpenAICodexProvider:
-            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
-          rightColumnWidth: Math.max(
-            28,
-            Math.min(72, Math.floor(chromeColumns * 0.45)),
-          ),
-        },
-      }),
-    [
-      chromeColumns,
-      currentModelProvider,
-      hasTemporaryModelOverride,
-      isLocalBackend,
-      statusLinePayload,
-    ],
-  );
   const agentModsDirectory =
-    statusLinePayload.memfs.enabled && statusLinePayload.memfs.memory_dir
-      ? join(statusLinePayload.memfs.memory_dir, "mods")
+    modContext.memfs.enabled && modContext.memfs.memoryDir
+      ? join(modContext.memfs.memoryDir, "mods")
       : null;
   const modAdapter = useLocalModAdapter(modContext, {
     agentModsDirectory,
@@ -4779,15 +4748,14 @@ export function App({
       conversationSummary,
       conversationId,
       projectDirectory,
-      currentDirectory: statusLinePayload.workspace.current_dir,
+      currentDirectory: modContext.workspace.currentDir,
       runState: terminalTitleRunState,
       modelDisplayName: currentModelDisplay,
       reasoningEffort: currentReasoningEffort,
-      contextUsedPercentage: statusLinePayload.context_window.used_percentage,
-      contextRemainingPercentage:
-        statusLinePayload.context_window.remaining_percentage,
-      totalInputTokens: statusLinePayload.context_window.total_input_tokens,
-      totalOutputTokens: statusLinePayload.context_window.total_output_tokens,
+      contextUsedPercentage: modContext.contextWindow.usedPercentage,
+      contextRemainingPercentage: modContext.contextWindow.remainingPercentage,
+      totalInputTokens: modContext.contextWindow.totalInputTokens,
+      totalOutputTokens: modContext.contextWindow.totalOutputTokens,
       fastMode: currentModelServiceTier === CHATGPT_FAST_SERVICE_TIER,
     }),
     [
@@ -4797,12 +4765,12 @@ export function App({
       currentModelDisplay,
       currentModelServiceTier,
       currentReasoningEffort,
+      modContext.contextWindow.remainingPercentage,
+      modContext.contextWindow.totalInputTokens,
+      modContext.contextWindow.totalOutputTokens,
+      modContext.contextWindow.usedPercentage,
+      modContext.workspace.currentDir,
       projectDirectory,
-      statusLinePayload.context_window.remaining_percentage,
-      statusLinePayload.context_window.total_input_tokens,
-      statusLinePayload.context_window.total_output_tokens,
-      statusLinePayload.context_window.used_percentage,
-      statusLinePayload.workspace.current_dir,
       terminalTitleRunState,
     ],
   );
@@ -4982,7 +4950,6 @@ export function App({
         currentModelId={currentModelId}
         currentModelServiceTier={currentModelServiceTier}
         currentModelProvider={currentModelProvider}
-        isLocalBackend={isLocalBackend}
         currentPersonalityId={currentPersonalityId}
         currentReasoningEffort={currentReasoningEffort}
         currentSystemPromptId={currentSystemPromptId}
@@ -5086,7 +5053,7 @@ export function App({
         openOverlay={openOverlay}
         staticItems={staticItems}
         staticRenderEpoch={staticRenderEpoch}
-        statusLinePayload={statusLinePayload}
+        modContext={modContext}
         statusLinePrompt={CLI_GLYPHS.prompt}
         terminalTitleData={terminalTitleData}
         onTitlePreview={setTerminalTitlePreviewOverride}
