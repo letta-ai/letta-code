@@ -181,6 +181,7 @@ USAGE
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
+  letta models          List available models (JSON by default)
   letta mods ...        List and manage local mods
   letta app-server ...  Run local app-server websocket transport
   letta connect ...     Connect providers from terminal
@@ -206,6 +207,7 @@ SUBCOMMANDS
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
+  letta models [--format json|text] [--provider-type <type>] [--provider-category <base|byok>]
   letta mods list [--agent <id>]
   letta mods package <mod-file> --name <package-name> [--out <dir>]
   letta mods enable <package-spec>
