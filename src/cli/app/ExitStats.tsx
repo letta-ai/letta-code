@@ -17,10 +17,7 @@ export function ExitStats({
   agentId: string;
   conversationId: string;
 }) {
-  const isPinned =
-    agentName &&
-    (settingsManager.getLocalPinnedAgents().includes(agentId) ||
-      settingsManager.getGlobalPinnedAgents().includes(agentId));
+  const isPinned = agentName && settingsManager.isAgentPinned(agentId);
 
   return (
     <Box flexDirection="column" marginTop={1}>

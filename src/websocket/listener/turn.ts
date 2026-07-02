@@ -32,6 +32,7 @@ import { getBackend } from "@/backend";
 import {
   type Buffers,
   createBuffers,
+  findLastAssistantText,
   type Line,
   toLines,
 } from "@/cli/helpers/accumulator";
@@ -47,6 +48,7 @@ import {
 } from "@/cli/helpers/reflection-launcher";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
+import { getTurnStartCancel } from "@/mods/turn-start-cancel";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -61,6 +63,8 @@ import { extractTelemetryInputText } from "@/telemetry/input";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
+import { detectShellContext } from "@/utils/shell-context";
+import { createTelegramRichDraftStreamer } from "./channel-rich-draft-streamer";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
@@ -75,6 +79,10 @@ import {
   normalizeToolReturnWireMessage,
   populateInterruptQueue,
 } from "./interrupts";
+import {
+  createListenerModContext,
+  ensureListenerModAdapter,
+} from "./mod-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -122,6 +130,7 @@ import type {
   ConversationRuntime,
   InboundMessagePayload,
   IncomingMessage,
+  ListenerRuntime,
 } from "./types";
 import { ensureListenerWarmStateForTurn } from "./warmup";
 
@@ -207,6 +216,94 @@ function escapeTaskNotificationSummary(summary: string): string {
     .replace(/>/g, "&gt;");
 }
 
+function isTurnInputArray(
+  value: unknown,
+): value is Array<MessageCreate | ApprovalCreate> {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "object" && item !== null)
+  );
+}
+
+type ListenerTurnStartEmission =
+  | { cancelled: false; input: Array<MessageCreate | ApprovalCreate> }
+  | { cancelled: true; reason: string };
+
+async function emitListenerTurnStart(options: {
+  agentId: string;
+  conversationId: string;
+  input: Array<MessageCreate | ApprovalCreate>;
+  runtime: ListenerRuntime;
+  workingDirectory: string;
+  permissionMode?: string | null;
+  cachedAgent?: AgentState | null;
+}): Promise<ListenerTurnStartEmission> {
+  try {
+    const modAdapter = ensureListenerModAdapter(options.runtime);
+    const context = createListenerModContext({
+      sessionId: options.conversationId,
+      workingDirectory: options.workingDirectory,
+      permissionMode: options.permissionMode ?? null,
+      agent: options.cachedAgent ?? null,
+    });
+    const event = {
+      agentId: options.agentId,
+      conversationId: options.conversationId,
+      input: options.input,
+    };
+    await modAdapter.events.emit("turn_start", event, context);
+    const cancel = getTurnStartCancel(event);
+    if (cancel) return { cancelled: true, reason: cancel.reason };
+    return {
+      cancelled: false,
+      input: isTurnInputArray(event.input) ? event.input : options.input,
+    };
+  } catch {
+    // Mod turn_start handlers should not block sending the turn.
+    return { cancelled: false, input: options.input };
+  }
+}
+
+async function emitListenerTurnEnd(options: {
+  agentId: string;
+  conversationId: string;
+  stopReason: string;
+  assistantMessage?: string;
+  runtime: ListenerRuntime;
+  workingDirectory: string;
+  permissionMode?: string | null;
+  cachedAgent?: AgentState | null;
+}): Promise<string | undefined> {
+  try {
+    const modAdapter = ensureListenerModAdapter(options.runtime);
+    const context = createListenerModContext({
+      sessionId: options.conversationId,
+      workingDirectory: options.workingDirectory,
+      permissionMode: options.permissionMode ?? null,
+      agent: options.cachedAgent ?? null,
+    });
+    const event: {
+      agentId: string;
+      conversationId: string;
+      stopReason: string;
+      assistantMessage?: string;
+      continue?: string;
+    } = {
+      agentId: options.agentId,
+      conversationId: options.conversationId,
+      stopReason: options.stopReason,
+      assistantMessage: options.assistantMessage,
+    };
+    await modAdapter.events.emit("turn_end", event, context);
+    return typeof event.continue === "string" && event.continue.length > 0
+      ? event.continue
+      : undefined;
+  } catch {
+    // Mod turn_end handlers should not block turn completion.
+    return undefined;
+  }
+}
+
 export function buildMaybeLaunchReflectionSubagent(params: {
   runtime: ConversationRuntime;
   socket: ListenerTransport;
@@ -235,10 +332,15 @@ export function buildMaybeLaunchReflectionSubagent(params: {
       feedbackContext: {
         surface: getListenerTelemetrySurface(),
       },
-      onCompletionMessage: async (completionMessage) => {
+      onCompletionMessage: async (completionMessage, result) => {
+        const reflectionAgentIdTag = result.reflectionAgentId
+          ? `<reflection-agent-id>${escapeTaskNotificationSummary(
+              result.reflectionAgentId,
+            )}</reflection-agent-id>`
+          : "";
         const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
           completionMessage,
-        )}</summary></task-notification>`;
+        )}</summary>${reflectionAgentIdTag}</task-notification>`;
         emitCanonicalMessageDelta(
           socket,
           runtime,
@@ -333,6 +435,10 @@ export async function handleIncomingMessage(
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
+  const richDraftStreamer = createTelegramRichDraftStreamer({
+    batchId: dequeuedBatchId,
+    sources: msg.channelTurnSources,
+  });
 
   runtime.isProcessing = true;
   runtime.cancelRequested = false;
@@ -439,7 +545,9 @@ export async function handleIncomingMessage(
           : m,
       ),
     );
-    const inboundUserTranscriptLines =
+    // Build transcript lines after turn_start so transformed input is shown.
+    // This is reassigned below after emitListenerTurnStart.
+    let inboundUserTranscriptLines =
       buildInboundUserTranscriptLines(messagesToSend);
 
     const firstMessage = normalizedMessages[0];
@@ -502,6 +610,7 @@ export async function handleIncomingMessage(
             agentLastRunAt: listenAgentMetadata?.lastRunAt ?? null,
             state: runtime.reminderState,
             workingDirectory: turnWorkingDirectory,
+            shellContext: detectShellContext(),
           }),
         );
 
@@ -530,7 +639,57 @@ export async function handleIncomingMessage(
       }
     }
 
-    let currentInput = messagesToSend;
+    // Only emit turn_start for user messages, not approval-only continuations.
+    // A mod could otherwise rewrite approval payloads and break routing.
+    const hasUserMessage = messagesToSend.some(
+      (m) => "role" in m && m.role === "user",
+    );
+    const turnStartEmission = hasUserMessage
+      ? await emitListenerTurnStart({
+          agentId,
+          conversationId,
+          input: messagesToSend,
+          runtime: runtime.listener,
+          workingDirectory: turnWorkingDirectory,
+          permissionMode: turnPermissionModeState.mode,
+          cachedAgent,
+        })
+      : ({ cancelled: false, input: messagesToSend } as const);
+
+    if (turnStartEmission.cancelled) {
+      runtime.lastStopReason = "cancelled";
+      runtime.isProcessing = false;
+      clearActiveRunState(runtime);
+      setLoopStatus(runtime, "WAITING_ON_INPUT", {
+        agent_id: agentId || null,
+        conversation_id: conversationId,
+      });
+      emitRuntimeStateUpdates(runtime, {
+        agent_id: agentId || null,
+        conversation_id: conversationId,
+      });
+      const formattedError = emitLoopErrorNotice(socket, runtime, {
+        message: turnStartEmission.reason,
+        stopReason: "cancelled",
+        isTerminal: true,
+        agentId,
+        conversationId,
+        cancelRequested: runtime.cancelRequested,
+        abortSignal: turnAbortSignal,
+      });
+      runtime.lastTerminalLoopErrorMessage =
+        formattedError ?? turnStartEmission.reason;
+      return;
+    }
+
+    let currentInput = turnStartEmission.input;
+
+    // Rebuild transcript lines from the potentially transformed input so
+    // Desktop shows post-transform text, not the original user message.
+    if (currentInput !== messagesToSend) {
+      inboundUserTranscriptLines =
+        buildInboundUserTranscriptLines(currentInput);
+    }
     const providerFallback = createProviderFallbackState(cachedAgent);
     let pendingNormalizationInterruptedToolCallIds = [
       ...queuedInterruptedToolCallIds,
@@ -544,6 +703,7 @@ export async function handleIncomingMessage(
       permissionModeState: turnPermissionModeState,
       cachedAgent,
       channelTurnSources: msg.channelTurnSources,
+      modEvents: ensureListenerModAdapter(runtime.listener).events,
     });
     runtime.currentToolset = preparedToolContext.toolset;
     runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
@@ -677,6 +837,10 @@ export async function handleIncomingMessage(
             }
           }
 
+          richDraftStreamer?.handleChunk(
+            chunk as unknown as LettaStreamingResponse,
+          );
+
           if (shouldOutput) {
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
@@ -705,6 +869,12 @@ export async function handleIncomingMessage(
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
+      if (
+        stopReason === "requires_approval" ||
+        (stopReason === "end_turn" && !runtime.cancelRequested)
+      ) {
+        await richDraftStreamer?.flushPending();
+      }
       lastApprovalContinuationAccepted = false;
 
       if (stopReason === "end_turn" && runtime.cancelRequested) {
@@ -717,6 +887,32 @@ export async function handleIncomingMessage(
       }
 
       if (stopReason === "end_turn") {
+        const continueText = await emitListenerTurnEnd({
+          agentId,
+          conversationId,
+          stopReason,
+          assistantMessage: findLastAssistantText(toLines(buffers)),
+          runtime: runtime.listener,
+          workingDirectory: turnWorkingDirectory,
+          permissionMode: turnPermissionModeState.mode,
+          cachedAgent,
+        });
+        if (continueText) {
+          // A mod asked to keep going: enqueue a follow-up turn. The post-turn
+          // re-pump runs it. The phantom user message is suppressed in
+          // emitDequeuedUserMessage so the continue stays seamless.
+          runtime.queueRuntime.enqueue({
+            kind: "mod_continue",
+            source: "system",
+            text: continueText,
+            agentId: agentId ?? undefined,
+            conversationId,
+            actingUserId: msg.actingUserId,
+          } as Omit<
+            import("@/queue/queue-runtime").ModContinueQueueItem,
+            "id" | "enqueuedAt"
+          >);
+        }
         try {
           const transcriptLines = toLines(buffers);
           if (transcriptLines.length > 0) {
@@ -1213,6 +1409,8 @@ export async function handleIncomingMessage(
   } finally {
     // Prune lean defaults only at turn-finalization boundaries (never during
     // mid-turn mode changes), then persist the canonical map.
+    richDraftStreamer?.dispose();
+
     pruneConversationPermissionModeStateIfDefault(
       runtime.listener,
       normalizedAgentId,

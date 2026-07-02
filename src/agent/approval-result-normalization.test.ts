@@ -190,6 +190,89 @@ describe("normalizeApprovalResultsForPersistence", () => {
       ],
     });
   });
+
+  test("preserves canonical image content in approved tool returns", () => {
+    const approvals: ApprovalResult[] = [
+      {
+        type: "approval",
+        tool_call_id: "call-img",
+        approve: true,
+        tool_return: [
+          { type: "text", text: "[Image: chart.png]" },
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/png",
+              data: "aGVsbG8=",
+            },
+          },
+        ],
+      } as unknown as ApprovalResult,
+    ];
+
+    const normalized = normalizeApprovalResultsForPersistence(approvals);
+
+    expect(normalized[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-img",
+      status: "success",
+      tool_return: [
+        { type: "text", text: "[Image: chart.png]" },
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "aGVsbG8=",
+          },
+        },
+      ],
+    });
+  });
+
+  test("preserves image content when prepending an approval comment", () => {
+    const approvals: ApprovalResult[] = [
+      {
+        type: "tool",
+        tool_call_id: "call-img-comment",
+        tool_return: [
+          {
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: "image/png",
+              data: "aGVsbG8=",
+            },
+          },
+        ],
+        status: "success",
+        reason: "Look at this",
+      } as ApprovalResult,
+    ];
+
+    const normalized = normalizeApprovalResultsForPersistence(approvals);
+
+    expect(normalized[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "call-img-comment",
+      status: "success",
+      tool_return: [
+        {
+          type: "text",
+          text: 'The user approved the tool execution with the following comment: "Look at this"',
+        },
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: "aGVsbG8=",
+          },
+        },
+      ],
+    });
+  });
 });
 
 describe("normalizeOutgoingApprovalMessages", () => {

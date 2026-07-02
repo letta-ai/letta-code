@@ -14,7 +14,11 @@ import {
   savePermissionRule,
 } from "@/permissions/loader";
 import { permissionMode } from "@/permissions/mode";
-import { loadTools, prepareCurrentToolExecutionContext } from "@/tools/manager";
+import {
+  loadSpecificTools,
+  loadTools,
+  prepareCurrentToolExecutionContext,
+} from "@/tools/manager";
 
 describe("classifyApprovals", () => {
   const originalMemoryDir = process.env.MEMORY_DIR;
@@ -56,10 +60,6 @@ describe("classifyApprovals", () => {
         (options.requiresApproval === false ? "auto" : "ask"),
       parallelSafe: false,
       activationSignal: new AbortController().signal,
-      getContext: () => {
-        throw new Error("unused");
-      },
-      isAvailable: () => true,
       run: () => "ok",
     });
   }
@@ -81,9 +81,9 @@ describe("classifyApprovals", () => {
     }
   });
 
-  test("reports missing Bash command as validation error before memory-mode denial", async () => {
+  test("reports missing Bash command as validation error before auto-allow", async () => {
     await loadTools();
-    permissionMode.setMode("memory");
+    permissionMode.setMode("unrestricted");
     process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
 
     const result = await classifyApprovals(
@@ -114,6 +114,37 @@ describe("classifyApprovals", () => {
     expect(denied?.permission.reason).toBe(denied?.denyReason);
   });
 
+  test("reports missing exec_command cmd as validation error before auto-allow", async () => {
+    await loadSpecificTools(["exec_command"]);
+    permissionMode.setMode("unrestricted");
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_missing_cmd",
+          toolName: "exec_command",
+          toolArgs: JSON.stringify({
+            yield_time_ms: 1000,
+          }),
+        },
+      ],
+      {
+        requireArgsForAutoApprove: true,
+        workingDirectory: "/tmp/project",
+      },
+    );
+
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(result.needsUserInput).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(1);
+
+    const [denied] = result.autoDenied;
+    expect(denied?.missingRequiredArgs).toEqual(["cmd"]);
+    expect(denied?.denyReason).toBe(
+      "exec_command tool missing required parameter: cmd. Received parameters: yield_time_ms",
+    );
+  });
+
   test("mod permission overlays deny before unrestricted auto-allow", async () => {
     permissionMode.setMode("unrestricted");
     registerModPermission({
@@ -127,10 +158,6 @@ describe("classifyApprovals", () => {
         generation: 1,
       },
       activationSignal: new AbortController().signal,
-      getContext: () => {
-        throw new Error("unused");
-      },
-      isAvailable: () => true,
       check(event) {
         if (
           event.toolName === "Bash" &&
@@ -176,10 +203,6 @@ describe("classifyApprovals", () => {
         generation: 1,
       },
       activationSignal: new AbortController().signal,
-      getContext: () => {
-        throw new Error("unused");
-      },
-      isAvailable: () => true,
       check(event) {
         if (
           event.toolName === "Write" &&
@@ -349,10 +372,6 @@ describe("classifyApprovals", () => {
         generation: 1,
       },
       activationSignal: new AbortController().signal,
-      getContext: () => {
-        throw new Error("unused");
-      },
-      isAvailable: () => true,
       check(event) {
         if (event.toolName === "exit_plan_mode") {
           return { decision: "deny", reason: "still planning" };

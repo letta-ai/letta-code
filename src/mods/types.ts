@@ -4,6 +4,8 @@ import type {
   LettaStreamingResponse,
   Message,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import type { ChalkInstance } from "chalk";
+import type { ModelReasoningEffort } from "@/agent/model";
 
 export interface ModWorkspaceContext {
   cwd: string;
@@ -65,14 +67,14 @@ export interface ModBackgroundAgentContext {
 
 export interface ModUiCapabilities {
   panels: boolean;
-  statusValues: boolean;
-  customStatuslineRenderer: boolean;
 }
 
 export interface ModEventCapabilities {
   lifecycle: boolean;
   tools: boolean;
   turns: boolean;
+  compact: boolean;
+  llm: boolean;
 }
 
 export interface ModCapabilities {
@@ -113,6 +115,20 @@ export interface ModConversationHistoryOptions {
   includeErrors?: boolean;
 }
 
+export interface ModUpdateLlmConfigOptions {
+  /** Model handle, e.g. "anthropic/claude-opus-4-8". Omit to keep the current model. */
+  model?: string;
+  /** Reasoning effort tier. Omit to leave reasoning settings untouched. */
+  reasoningEffort?: ModelReasoningEffort;
+  /** Context window limit. Omit to leave the current limit untouched. */
+  contextWindow?: number;
+  /**
+   * Whether the change applies to this conversation only (default) or to the
+   * agent's default config. Conversation scope avoids mutating the agent default.
+   */
+  scope?: "conversation" | "agent";
+}
+
 export interface ModConversationHandle {
   id: string | null;
   fork: (
@@ -124,9 +140,20 @@ export interface ModConversationHandle {
     options?: ModConversationSendMessageOptions,
     requestOptions?: ModConversationSendMessageRequestOptions,
   ) => Promise<AsyncIterable<LettaStreamingResponse>>;
+  /**
+   * Update the model, reasoning effort, and/or context window for this
+   * conversation (or the agent default with scope: "agent"). Only the fields you
+   * pass change; others are preserved. Works for local and constellation agents.
+   */
+  updateLlmConfig: (options: ModUpdateLlmConfigOptions) => Promise<void>;
 }
 
-export type ModSourceScope = "global" | "project" | "bundled";
+export type ModSourceScope =
+  | "legacy_global"
+  | "global"
+  | "project"
+  | "bundled"
+  | "agent";
 
 export interface ModOwner {
   id: string;
@@ -139,7 +166,13 @@ export type ModEventName =
   | "conversation_open"
   | "conversation_close"
   | "tool_start"
-  | "turn_start";
+  | "tool_end"
+  | "turn_start"
+  | "turn_end"
+  | "compact_start"
+  | "compact_end"
+  | "llm_start"
+  | "llm_end";
 
 export type ModConversationOpenReason =
   | "startup"
@@ -178,8 +211,13 @@ export interface ModTurnStartEvent {
   input: Array<MessageCreate | ApprovalCreate>;
 }
 
+export interface ModTurnStartCancelResult {
+  reason: string;
+}
+
 export interface ModTurnStartResult {
   input?: Array<MessageCreate | ApprovalCreate>;
+  cancel?: ModTurnStartCancelResult;
 }
 
 export interface ModToolStartEvent {
@@ -192,26 +230,116 @@ export interface ModToolStartEvent {
 
 export interface ModToolStartResult {
   args?: Record<string, unknown>;
+  result?: { status: "success" | "error"; output: string };
+}
+
+export interface ModToolEndEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  toolCallId: string | null;
+  toolName: string;
+  args: Record<string, unknown>;
+  status: "success" | "error";
+  output: string;
+}
+
+export interface ModToolEndResult {
+  result?: { status: "success" | "error"; output: string };
+}
+
+export interface ModTurnEndEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  stopReason: string;
+  assistantMessage?: string;
+}
+
+export interface ModTurnEndResult {
+  continue?: string;
+}
+
+export type ModCompactTrigger =
+  | "manual"
+  | "context_window_overflow"
+  | "context_window_limit";
+
+export interface ModCompactStartEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  trigger: ModCompactTrigger;
+}
+
+export interface ModCompactEndEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  trigger: ModCompactTrigger;
+  messagesBefore: number;
+  messagesAfter: number;
+  contextTokensBefore: number;
+  contextTokensAfter: number;
+}
+
+export interface ModLlmUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface ModLlmEndError {
+  message: string;
+  detail: string;
+  errorType: "llm_error" | "local_backend_error";
+  retryable: boolean;
+}
+
+export interface ModLlmStartEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  model: string;
+  messageCount: number;
+  contextWindow: number;
+}
+
+export interface ModLlmEndEvent {
+  agentId: string | null;
+  conversationId: string | null;
+  model: string;
+  stopReason: string;
+  usage: ModLlmUsage | null;
+  durationMs: number;
+  error?: ModLlmEndError;
 }
 
 export interface ModEventMap {
   conversation_open: ModConversationOpenEvent;
   conversation_close: ModConversationCloseEvent;
   tool_start: ModToolStartEvent;
+  tool_end: ModToolEndEvent;
   turn_start: ModTurnStartEvent;
+  turn_end: ModTurnEndEvent;
+  compact_start: ModCompactStartEvent;
+  compact_end: ModCompactEndEvent;
+  llm_start: ModLlmStartEvent;
+  llm_end: ModLlmEndEvent;
 }
 
 export interface ModEventResultMap {
   conversation_open: undefined;
   conversation_close: undefined;
   tool_start: ModToolStartResult | undefined;
+  tool_end: ModToolEndResult | undefined;
   turn_start: ModTurnStartResult | undefined;
+  turn_end: ModTurnEndResult | undefined;
+  compact_start: undefined;
+  compact_end: undefined;
+  llm_start: undefined;
+  llm_end: undefined;
 }
 
-export interface ModEventContext {
+export interface ModInvocationContext extends ModContext {}
+
+export interface ModEventContext extends ModInvocationContext {
   conversation: ModConversationHandle;
-  context: ModContext;
-  getContext: () => ModContext;
   signal: AbortSignal;
 }
 
@@ -238,6 +366,7 @@ export interface ModEventEmissionResult<
 }
 
 export type ModCapabilityKind =
+  | "api"
   | "command"
   | "event"
   | "permission"
@@ -259,11 +388,21 @@ export type ModDiagnosticPhase =
   | "transpile"
   | "import"
   | "activate"
+  | "legacy_extension"
+  | "package_manifest"
   | "command_override"
+  | "command.run"
+  | "deprecated_api"
   | "dispose"
   | "event"
+  | "permission.check"
+  | "permission.isEnabled"
   | "report"
-  | "stale_handle";
+  | "stale_handle"
+  | "status.evaluate"
+  | "statusline.render"
+  | "tool.isEnabled"
+  | "tool.run";
 
 export type ModDiagnosticSeverity = "error" | "warning";
 
@@ -306,23 +445,12 @@ export interface ModContext {
   backgroundAgents: ModBackgroundAgentContext[];
 }
 
-export interface ModCommandContext {
+export interface ModCommandContext extends ModInvocationContext {
   rawInput: string;
   command: string;
   args: string;
   argv: string[];
-  cwd: string;
-  agent: {
-    id: string;
-    name: string | null;
-  };
   conversation: ModConversationHandle & { id: string };
-  model: {
-    id: string | null;
-    displayName: string | null;
-  };
-  permissionMode: string | null;
-  getContext: () => ModContext;
 }
 
 export type ModCommandResult =
@@ -330,21 +458,34 @@ export type ModCommandResult =
   | { type: "output"; output: string; success?: boolean }
   | { type: "handled" };
 
-export type ModPanelContent = string | string[];
-
-export interface ModPanelOptions {
-  content?: ModPanelContent;
-  id: string;
-  order?: number;
+/** Live mod context (`cwd`, workspace, agent, model, cost, etc.) plus panel helpers. */
+export interface ModPanelRenderContext extends ModContext {
+  /** Visible width available to the panel, in columns. */
+  width: number;
+  /** Lay out a left and right segment across `width` (ANSI-aware). */
+  row: (left: string, right: string, width: number) => string;
+  /** Spread parts evenly across `width` (ANSI-aware). */
+  columns: (parts: string[], width: number) => string;
+  /** Chalk instance for coloring panel output. */
+  chalk: ChalkInstance;
 }
 
-export interface ModPanelUpdate {
-  content?: ModPanelContent;
+export type ModPanelRender = (ctx: ModPanelRenderContext) => string | string[];
+
+/**
+ * Panels are placed by a signed `order` around the input:
+ * `> 0` renders above the input (highest at the top), `0` is the primary line
+ * just below the input (overrides the built-in agent · model line), and `< 0`
+ * stacks below the primary line. A panel whose render is empty is hidden.
+ */
+export interface ModPanelOptions {
+  id: string;
+  render: ModPanelRender;
   order?: number;
 }
 
 export interface ModPanel {
-  content: string[];
+  render: ModPanelRender;
   id: string;
   owner?: ModOwner;
   order: number;
@@ -354,7 +495,7 @@ export interface ModPanel {
 
 export interface ModPanelHandle {
   close: () => void;
-  update: (update: ModPanelUpdate) => void;
+  update: (options?: { order?: number }) => void;
 }
 
 export interface ModCommandRegistration {
@@ -380,6 +521,12 @@ export interface ModCommand {
   runWhenBusy: boolean;
   showInTranscript: boolean;
   run: ModCommandRegistration["run"];
+  recordDiagnostic?: (
+    diagnostic: Pick<
+      ModDiagnostic,
+      "capability" | "error" | "phase" | "severity"
+    >,
+  ) => void;
 }
 
 export interface ModToolContentText {
@@ -411,19 +558,18 @@ export type ModToolRunResult =
       success?: boolean;
     };
 
-export interface ModToolRunContext {
+export type ModSecretResolver = (
+  name: string,
+  options?: { envFallback?: boolean },
+) => Promise<string | null>;
+
+export interface ModToolRunContext extends ModInvocationContext {
   args: Record<string, unknown>;
-  cwd: string;
-  workingDirectory: string;
   toolCallId: string | null;
   signal: AbortSignal;
+  secret: ModSecretResolver;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
-  permissionMode: string | null;
-  agent: {
-    id: string | null;
-  };
   conversation: ModConversationHandle;
-  getContext: () => ModContext;
 }
 
 export type ToolApprovalPolicy = "auto" | "ask" | "alwaysAsk";
@@ -436,7 +582,7 @@ export interface ModToolRegistration {
   requiresApproval?: boolean;
   approvalPolicy?: ToolApprovalPolicy;
   parallelSafe?: boolean;
-  isEnabled?: (context: ModContext) => boolean;
+  isEnabled?: (context: ModInvocationContext) => boolean;
   run: (
     context: ModToolRunContext,
   ) => ModToolRunResult | Promise<ModToolRunResult>;
@@ -478,15 +624,14 @@ export type ModPermissionCheckResult =
     }
   | undefined;
 
-export interface ModPermissionCheckContext {
-  getContext: () => ModContext;
+export interface ModPermissionCheckContext extends ModInvocationContext {
   signal: AbortSignal;
 }
 
 export interface ModPermissionRegistration {
   id: string;
   description?: string;
-  isEnabled?: (context: ModContext) => boolean;
+  isEnabled?: (context: ModInvocationContext) => boolean;
   check: (
     event: ModPermissionCheckEvent,
     context: ModPermissionCheckContext,

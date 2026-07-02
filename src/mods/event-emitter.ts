@@ -1,4 +1,5 @@
 import type {
+  ModContext,
   ModEventEmissionResult,
   ModEventMap,
   ModEventName,
@@ -11,6 +12,7 @@ export type ModEvents = {
   emit: <TName extends ModEventName>(
     name: TName,
     event: ModEventMap[TName],
+    context: ModContext,
   ) => Promise<ModEventEmissionResult<TName>>;
 };
 
@@ -24,10 +26,11 @@ export async function emitModEvent<TName extends ModEventName>(
   events: ModEvents | undefined,
   name: TName,
   event: ModEventMap[TName],
+  context: ModContext,
 ): Promise<ModEventEmissionResult<TName>> {
   if (!events) {
     return emptyEventEmissionResult(name);
   }
 
-  return events.emit(name, event);
+  return events.emit(name, event, context);
 }

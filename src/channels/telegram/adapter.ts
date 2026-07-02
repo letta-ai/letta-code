@@ -23,10 +23,12 @@ import type {
   ChannelAdapterStartOptions,
   ChannelControlRequestEvent,
   ChannelReplyContext,
+  ChannelRichMessage,
   ChannelTurnLifecycleEvent,
   ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
+  OutboundChannelRichMessageDraft,
   TelegramChannelAccount,
 } from "@/channels/types";
 import {
@@ -52,6 +54,34 @@ type TelegramInputFileConstructor = typeof import("grammy").InputFile;
 type BufferedMediaGroup = {
   messages: TelegramLikeMessage[];
   timer: ReturnType<typeof setTimeout>;
+};
+
+type TelegramInputRichMessage = {
+  html?: string;
+  markdown?: string;
+  is_rtl?: boolean;
+  skip_entity_detection?: boolean;
+};
+
+type TelegramRichMessagePayload = {
+  chat_id: string | number;
+  message_thread_id?: number;
+  reply_parameters?: { message_id: number };
+  rich_message: TelegramInputRichMessage;
+};
+
+type TelegramRichMessageDraftPayload = Omit<
+  TelegramRichMessagePayload,
+  "reply_parameters"
+> & {
+  draft_id: number;
+};
+
+type TelegramRichMessageRawApi = {
+  sendRichMessage(
+    args: TelegramRichMessagePayload,
+  ): Promise<{ message_id: string | number }>;
+  sendRichMessageDraft(args: TelegramRichMessageDraftPayload): Promise<boolean>;
 };
 type TelegramReactionType =
   | {
@@ -319,6 +349,130 @@ function buildTelegramReplyOptions(
     options.title = msg.title.trim();
   }
   return options;
+}
+
+function toTelegramInputRichMessage(
+  richMessage: ChannelRichMessage,
+): TelegramInputRichMessage {
+  const html = richMessage.html?.trim() ? richMessage.html : undefined;
+  const markdown = richMessage.markdown?.trim()
+    ? richMessage.markdown
+    : undefined;
+
+  if (!html && !markdown) {
+    throw new Error("Telegram rich messages require html or markdown content.");
+  }
+  if (html && markdown) {
+    throw new Error(
+      "Telegram rich messages require exactly one of html or markdown.",
+    );
+  }
+
+  const input: TelegramInputRichMessage = html ? { html } : { markdown };
+  if (richMessage.isRtl !== undefined) {
+    input.is_rtl = richMessage.isRtl;
+  }
+  if (richMessage.skipEntityDetection !== undefined) {
+    input.skip_entity_detection = richMessage.skipEntityDetection;
+  }
+  return input;
+}
+
+function buildTelegramRichMessagePayload(
+  msg: Pick<
+    OutboundChannelMessage,
+    "chatId" | "replyToMessageId" | "threadId" | "richMessage"
+  >,
+): TelegramRichMessagePayload {
+  if (!msg.richMessage) {
+    throw new Error("Telegram rich message payload missing richMessage.");
+  }
+
+  const payload: TelegramRichMessagePayload = {
+    chat_id: msg.chatId,
+    rich_message: toTelegramInputRichMessage(msg.richMessage),
+  };
+  const threadId = resolveTelegramOutboundThreadId(msg);
+  if (threadId) {
+    payload.message_thread_id = Number(threadId);
+  }
+  if (msg.replyToMessageId) {
+    payload.reply_parameters = {
+      message_id: Number(msg.replyToMessageId),
+    };
+  }
+  return payload;
+}
+
+function buildTelegramRichMessageDraftPayload(
+  draft: Pick<
+    OutboundChannelRichMessageDraft,
+    "chatId" | "threadId" | "draftId" | "richMessage"
+  >,
+): TelegramRichMessageDraftPayload {
+  const payload: TelegramRichMessageDraftPayload = {
+    chat_id: draft.chatId,
+    draft_id: draft.draftId,
+    rich_message: toTelegramInputRichMessage(draft.richMessage),
+  };
+  const threadId = resolveTelegramOutboundThreadId(draft);
+  if (threadId) {
+    payload.message_thread_id = Number(threadId);
+  }
+  return payload;
+}
+
+function getTelegramErrorText(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  if (typeof error === "object" && error !== null) {
+    const maybeError = error as { message?: unknown; description?: unknown };
+    if (typeof maybeError.description === "string") {
+      return maybeError.description;
+    }
+    if (typeof maybeError.message === "string") {
+      return maybeError.message;
+    }
+  }
+  return String(error);
+}
+
+function shouldFallbackTelegramRichMessage(error: unknown): boolean {
+  const text = getTelegramErrorText(error).toLowerCase();
+  if (text.includes("message thread") || text.includes("thread not found")) {
+    return false;
+  }
+  const mentionsRichMessage =
+    text.includes("sendrichmessage") ||
+    text.includes("rich message") ||
+    text.includes("rich_message");
+  const mentionsRichFormatting =
+    mentionsRichMessage ||
+    text.includes("markdown") ||
+    text.includes("html") ||
+    text.includes("entity") ||
+    text.includes("entities");
+
+  if (text.includes("unsupported")) {
+    return true;
+  }
+  if (
+    text.includes("not found") &&
+    (text.includes("404") || text.includes("method"))
+  ) {
+    return true;
+  }
+  if (text.includes("can't parse") || text.includes("cannot parse")) {
+    return true;
+  }
+  if (mentionsRichFormatting && text.includes("parse")) {
+    return true;
+  }
+  if (mentionsRichFormatting && text.includes("invalid")) {
+    return true;
+  }
+  return mentionsRichMessage && text.includes("bad request");
 }
 
 function getTelegramReactionToken(
@@ -1154,6 +1308,16 @@ export function createTelegramAdapter(
       return running;
     },
 
+    async sendRichMessageDraft(
+      draft: OutboundChannelRichMessageDraft,
+    ): Promise<void> {
+      const telegramBot = await ensureBot();
+      const raw = telegramBot.api.raw as unknown as TelegramRichMessageRawApi;
+      await raw.sendRichMessageDraft(
+        buildTelegramRichMessageDraftPayload(draft),
+      );
+    },
+
     async sendMessage(
       msg: OutboundChannelMessage,
     ): Promise<{ messageId: string }> {
@@ -1242,6 +1406,25 @@ export function createTelegramAdapter(
 
         clearTypingForChat(msg.chatId);
         return { messageId: String(result.message_id) };
+      }
+
+      if (msg.richMessage) {
+        const raw = telegramBot.api.raw as unknown as TelegramRichMessageRawApi;
+        try {
+          const result = await raw.sendRichMessage(
+            buildTelegramRichMessagePayload(msg),
+          );
+          clearTypingForChat(msg.chatId);
+          return { messageId: String(result.message_id) };
+        } catch (error) {
+          if (!shouldFallbackTelegramRichMessage(error)) {
+            throw error;
+          }
+          console.warn(
+            "[Telegram] sendRichMessage failed; falling back to sendMessage:",
+            getTelegramErrorText(error),
+          );
+        }
       }
 
       const opts: Record<string, unknown> = {};

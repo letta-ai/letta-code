@@ -9,6 +9,7 @@ import { migratePermissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
 import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-change";
+import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
 import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
@@ -18,7 +19,6 @@ import type {
   ConversationRuntime,
   ListenerRuntime,
 } from "@/websocket/listener/types";
-import { registerRuntimeExternalTools } from "../external-tools";
 import type {
   GetOrCreateScopedRuntime,
   RunDetachedListenerTask,
@@ -137,7 +137,7 @@ async function resolveRuntimeStartAgent(
     const agent = await backend.createAgent(parsed.create_agent.body);
     created.agent = true;
     if (parsed.create_agent.pin_global !== false) {
-      settingsManager.pinGlobal(agent.id);
+      settingsManager.pinAgent(agent.id);
     }
     return agent;
   }

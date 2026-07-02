@@ -13,6 +13,10 @@ import {
   type ProviderStorageTarget,
   removeProviderByName,
 } from "@/providers/byok-providers";
+import {
+  connectedRecordsForProvider,
+  uniqueProviderNames,
+} from "@/providers/provider-connections";
 
 export interface ConnectProviderField {
   key: string;
@@ -53,6 +57,7 @@ export interface ConnectProviderEntry {
   fields?: ConnectProviderField[];
   auth_methods?: ConnectProviderAuthMethod[];
   connected: ConnectProviderConnectionState;
+  connected_providers: ConnectProviderConnectionState[];
 }
 
 export interface ListConnectProvidersResult<
@@ -76,6 +81,7 @@ export interface DisconnectProviderInput<
 > {
   target: TTarget;
   providerId: string;
+  providerName?: string;
 }
 
 export interface ResolvedProviderConnectionFields {
@@ -84,38 +90,6 @@ export interface ResolvedProviderConnectionFields {
   region?: string;
   profile?: string;
   options: ProviderConnectionOptions;
-}
-
-function uniqueProviderNames(provider: ByokProvider): string[] {
-  return [
-    ...new Set([provider.providerName, ...(provider.providerNames ?? [])]),
-  ];
-}
-
-function providerIsConnectedToRecord(
-  provider: ByokProvider,
-  record: ProviderResponse | undefined,
-  target: ProviderStorageTarget,
-): record is ProviderResponse {
-  if (!record) return false;
-  if (target !== "local" || !record.auth_type) return true;
-  return provider.isOAuth === true
-    ? record.auth_type === "oauth"
-    : record.auth_type !== "oauth";
-}
-
-function connectedRecordForProvider(
-  provider: ByokProvider,
-  connectedProviders: ReadonlyMap<string, ProviderResponse>,
-  target: ProviderStorageTarget,
-): ProviderResponse | undefined {
-  for (const providerName of uniqueProviderNames(provider)) {
-    const record = connectedProviders.get(providerName);
-    if (providerIsConnectedToRecord(provider, record, target)) {
-      return record;
-    }
-  }
-  return undefined;
 }
 
 function serializeConnectedProvider(
@@ -272,11 +246,12 @@ export function buildConnectProviderEntries(
   target: ProviderStorageTarget,
 ): ConnectProviderEntry[] {
   return providers.map((provider) => {
-    const connected = connectedRecordForProvider(
+    const connectedRecords = connectedRecordsForProvider(
       provider,
       connectedProviders,
       target,
     );
+    const connected = connectedRecords[0];
     const fields = fieldsForProvider(provider);
     return {
       id: provider.id,
@@ -295,6 +270,7 @@ export function buildConnectProviderEntries(
         ? { auth_methods: serializeAuthMethods(provider.authMethods) }
         : {}),
       connected: serializeConnectedProvider(connected),
+      connected_providers: connectedRecords.map(serializeConnectedProvider),
     };
   });
 }
@@ -358,11 +334,14 @@ export async function disconnectProvider<TTarget extends ProviderStorageTarget>(
   const connectedProviders = await getConnectedProviders({
     target: input.target,
   });
-  const connected = connectedRecordForProvider(
+  const connectedRecords = connectedRecordsForProvider(
     provider,
     connectedProviders,
     input.target,
   );
+  const connected = input.providerName
+    ? connectedRecords.find((record) => record.name === input.providerName)
+    : connectedRecords[0];
   if (connected) {
     await removeProviderByName(connected.name, { target: input.target });
   }

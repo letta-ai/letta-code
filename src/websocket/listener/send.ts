@@ -31,6 +31,7 @@ import {
   PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
+import { ensureListenerModAdapter } from "./mod-adapter";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitDequeuedUserMessage,
@@ -333,6 +334,7 @@ export async function resolveStaleApprovals(
       runtime.agentId,
       runtime.conversationId,
     ),
+    modEvents: ensureListenerModAdapter(runtime.listener).events,
   });
   runtime.currentToolset = preparedToolContext.toolset;
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;

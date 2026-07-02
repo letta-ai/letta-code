@@ -30,6 +30,7 @@ import type {
   ChannelsListCommand,
   ChannelTargetBindCommand,
   ChannelTargetsListCommand,
+  ChatGPTUsageReadCommand,
   CheckoutBranchCommand,
   ConnectProviderCommand,
   ConversationCompactCommand,
@@ -63,7 +64,6 @@ import type {
   GrepInFilesCommand,
   InputCommand,
   ListConnectProvidersCommand,
-  ListConversationPinsCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
   ListModelsCommand,
@@ -79,7 +79,6 @@ import type {
   SearchFilesCommand,
   SecretApplyCommand,
   SecretListCommand,
-  SetConversationPinCommand,
   SetExperimentCommand,
   SetReflectionSettingsCommand,
   SkillDisableCommand,
@@ -355,10 +354,7 @@ function isSyncCommand(value: unknown): value is SyncCommand {
 
 function isDevicePermissionMode(value: unknown): boolean {
   return (
-    value === "standard" ||
-    value === "acceptEdits" ||
-    value === "memory" ||
-    value === "unrestricted"
+    value === "standard" || value === "acceptEdits" || value === "unrestricted"
   );
 }
 
@@ -883,12 +879,34 @@ export function isDisconnectProviderCommand(
     request_id?: unknown;
     target?: unknown;
     provider_id?: unknown;
+    provider_name?: unknown;
   };
   return (
     c.type === "disconnect_provider" &&
     typeof c.request_id === "string" &&
     c.target === "local" &&
-    typeof c.provider_id === "string"
+    typeof c.provider_id === "string" &&
+    (c.provider_name === undefined || typeof c.provider_name === "string")
+  );
+}
+
+export function isChatGPTUsageReadCommand(
+  value: unknown,
+): value is ChatGPTUsageReadCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as {
+    type?: unknown;
+    request_id?: unknown;
+    target?: unknown;
+    provider_name?: unknown;
+    force_refresh?: unknown;
+  };
+  return (
+    c.type === "chatgpt_usage_read" &&
+    typeof c.request_id === "string" &&
+    (c.target === "local" || c.target === "api") &&
+    (c.provider_name === undefined || typeof c.provider_name === "string") &&
+    (c.force_refresh === undefined || typeof c.force_refresh === "boolean")
   );
 }
 
@@ -1384,47 +1402,6 @@ export function isConversationCompactCommand(
     typeof c.request_id === "string" &&
     typeof c.conversation_id === "string" &&
     (c.body === undefined || isObjectRecord(c.body))
-  );
-}
-
-export function isListConversationPinsCommand(
-  value: unknown,
-): value is ListConversationPinsCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    runtime?: unknown;
-  };
-  return (
-    c.type === "list_conversation_pins" &&
-    typeof c.request_id === "string" &&
-    isRuntimeScope(c.runtime)
-  );
-}
-
-export function isSetConversationPinCommand(
-  value: unknown,
-): value is SetConversationPinCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    runtime?: unknown;
-    conversation_id?: unknown;
-    action?: unknown;
-    scope?: unknown;
-  };
-  return (
-    c.type === "set_conversation_pin" &&
-    typeof c.request_id === "string" &&
-    isRuntimeScope(c.runtime) &&
-    typeof c.conversation_id === "string" &&
-    (c.action === "pin" || c.action === "unpin" || c.action === "toggle") &&
-    (c.scope === undefined ||
-      c.scope === "global" ||
-      c.scope === "local_project" ||
-      c.scope === "both")
   );
 }
 
@@ -2167,6 +2144,7 @@ export function parseServerMessage(
       isListConnectProvidersCommand(parsed) ||
       isConnectProviderCommand(parsed) ||
       isDisconnectProviderCommand(parsed) ||
+      isChatGPTUsageReadCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
       isUpdateToolsetCommand(parsed) ||
       isCronListCommand(parsed) ||
@@ -2196,8 +2174,6 @@ export function parseServerMessage(
       isGetCwdMapCommand(parsed) ||
       isGetExperimentsCommand(parsed) ||
       isSetExperimentCommand(parsed) ||
-      isListConversationPinsCommand(parsed) ||
-      isSetConversationPinCommand(parsed) ||
       isGetReflectionSettingsCommand(parsed) ||
       isSetReflectionSettingsCommand(parsed) ||
       isChannelsListCommand(parsed) ||

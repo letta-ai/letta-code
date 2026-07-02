@@ -15,6 +15,7 @@ export const FIRST_PARTY_CHANNEL_IDS = [
   "discord",
   "custom",
   "whatsapp",
+  "signal",
 ] as const;
 export type FirstPartyChannelId = (typeof FIRST_PARTY_CHANNEL_IDS)[number];
 /**
@@ -150,6 +151,13 @@ export interface ChannelAdapter {
   sendMessage(msg: OutboundChannelMessage): Promise<{ messageId: string }>;
 
   /**
+   * Optionally stream an ephemeral rich-message draft while a final rich
+   * message is being generated. Drafts are best-effort previews; callers must
+   * still send a final persistent message with sendMessage().
+   */
+  sendRichMessageDraft?(draft: OutboundChannelRichMessageDraft): Promise<void>;
+
+  /**
    * Send a direct reply on the platform (for pairing codes, no-route
    * messages, etc.) without going through the agent.
    */
@@ -233,6 +241,17 @@ export interface InboundChannelMessage {
   threadContext?: ChannelThreadContext;
 }
 
+export interface ChannelRichMessage {
+  /** Rich-message HTML content. Exactly one of html or markdown should be provided. */
+  html?: string;
+  /** Rich-message Markdown content. Exactly one of html or markdown should be provided. */
+  markdown?: string;
+  /** Optional: render the rich message right-to-left. */
+  isRtl?: boolean;
+  /** Optional: disable Telegram's automatic entity detection. */
+  skipEntityDetection?: boolean;
+}
+
 export interface OutboundChannelMessage {
   /** Platform identifier. */
   channel: string;
@@ -248,6 +267,10 @@ export interface OutboundChannelMessage {
   threadId?: string | null;
   /** Optional: parse mode hint for the adapter (e.g. "HTML", "MarkdownV2"). */
   parseMode?: string;
+  /** Optional: rich structured message payload for channels that support it. */
+  richMessage?: ChannelRichMessage;
+  /** Optional: Signal-style text ranges (start:length:STYLE) for platforms that support rich text entities. */
+  textStyle?: string[];
   /** Optional: attach a local file/media path for channels that support uploads. */
   mediaPath?: string;
   /** Optional: override the uploaded filename for media attachments. */
@@ -260,6 +283,21 @@ export interface OutboundChannelMessage {
   removeReaction?: boolean;
   /** Optional: target message id for reactions. */
   targetMessageId?: string;
+}
+
+export interface OutboundChannelRichMessageDraft {
+  /** Platform identifier. */
+  channel: string;
+  /** Channel account that should send the draft. */
+  accountId?: string;
+  /** Target chat/conversation ID. */
+  chatId: string;
+  /** Optional: canonical thread identifier used for threaded channels. */
+  threadId?: string | null;
+  /** Stable non-zero platform draft identifier for animated updates. */
+  draftId: number;
+  /** Rich structured message payload for the draft preview. */
+  richMessage: ChannelRichMessage;
 }
 
 // ── Routing ───────────────────────────────────────────────────────
@@ -279,6 +317,8 @@ export interface ChannelRoute {
   conversationId: string;
   /** Whether this route is active. */
   enabled: boolean;
+  /** Whether this route permits outbound MessageChannel sends. Defaults true. */
+  outboundEnabled?: boolean;
   /** ISO 8601 creation timestamp. */
   createdAt: string;
   /** ISO 8601 update timestamp. */
@@ -291,6 +331,7 @@ export type DmPolicy = "pairing" | "allowlist" | "open";
 export type SlackChannelMode = "socket";
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
+export type SignalGroupMode = "disabled" | "mention" | "open";
 
 export interface ChannelAccountBinding {
   agentId: string | null;
@@ -323,6 +364,13 @@ export interface TelegramChannelConfig {
   groupMode?: TelegramGroupMode;
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
+  /**
+   * Default true. When true, normal Telegram private-chat `send` actions use
+   * Bot API Rich Messages; explicit `send-rich` remains available either way.
+   */
+  richPrivateChatDefault?: boolean;
+  /** When true, stream hidden Telegram rich-message drafts during generation. */
+  richDraftStreaming?: boolean;
 }
 
 export interface SlackChannelConfig {
@@ -335,6 +383,10 @@ export interface SlackChannelConfig {
   allowedUsers: string[];
   /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
   transcribeVoice?: boolean;
+  /** When false, successful turns remove 👀 without adding ✅. Default true. */
+  showCompletedReaction?: boolean;
+  /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
+  listenMode?: boolean;
 }
 
 export interface DiscordChannelConfig {
@@ -419,11 +471,43 @@ export interface WhatsAppChannelConfig {
   mediaMaxBytes?: number;
 }
 
+export interface SignalChannelConfig {
+  channel: "signal";
+  enabled: boolean;
+  dmPolicy: DmPolicy;
+  allowedUsers: string[];
+  /** Base URL for a Signal JSON-RPC/SSE bridge, e.g. http://127.0.0.1:8080. */
+  baseUrl: string;
+  /** Optional signal-cli account selector, usually the linked phone number. */
+  account?: string;
+  /** Optional UUID for self-message filtering when Signal sends UUID identities. */
+  accountUuid?: string;
+  /** Agent ID used for account-bound DM and group auto-routing. */
+  agentId: string | null;
+  /** Default false. When true, only the linked account's own Note to Self/self-chat messages route. */
+  selfChatMode: boolean;
+  /** Default disabled. Controls group-message ingestion. */
+  groupMode: SignalGroupMode;
+  /** Optional allowlist of Signal group ids. */
+  allowedGroups?: string[];
+  /** Optional textual aliases for group mention detection. */
+  mentionPatterns?: string[];
+  /** Optional sender identity -> replyable Signal recipient mapping, e.g. UUID to E.164 phone. */
+  recipientAliases?: Record<string, string>;
+  /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
+  transcribeVoice?: boolean;
+  /** Default true. When true, supported inbound media is downloaded and surfaced to the agent. */
+  downloadMedia?: boolean;
+  /** Maximum inbound media bytes to consider. Undefined uses channel default. */
+  mediaMaxBytes?: number;
+}
+
 export type ChannelConfig =
   | TelegramChannelConfig
   | SlackChannelConfig
   | DiscordChannelConfig
-  | WhatsAppChannelConfig;
+  | WhatsAppChannelConfig
+  | SignalChannelConfig;
 
 export interface TelegramChannelAccount extends ChannelAccountBase {
   channel: "telegram";
@@ -436,6 +520,17 @@ export interface TelegramChannelAccount extends ChannelAccountBase {
   groupMode?: TelegramGroupMode;
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
+  /**
+   * Default true. When true, normal Telegram private-chat MessageChannel sends
+   * are delivered through Bot API Rich Messages. Set false to keep `send`
+   * plain/HTML-formatted unless the agent explicitly uses `send-rich`.
+   */
+  richPrivateChatDefault?: boolean;
+  /**
+   * When true, Telegram channel turns may stream hidden rich-message drafts
+   * while the agent is preparing a final MessageChannel send-rich call.
+   */
+  richDraftStreaming?: boolean;
   /**
    * Optional debounce window (ms) for inbound group/topic messages. When
    * greater than `0`, short back-to-back text messages in the same chat/topic
@@ -456,6 +551,10 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   defaultPermissionMode: SlackDefaultPermissionMode;
   /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
   transcribeVoice?: boolean;
+  /** When false, successful turns remove 👀 without adding ✅. Default true. */
+  showCompletedReaction?: boolean;
+  /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
+  listenMode?: boolean;
   /**
    * Optional debounce window (ms) for inbound messages. When greater than
    * `0`, short back-to-back messages from the same sender in the same
@@ -547,11 +646,40 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   mediaMaxBytes?: number;
 }
 
+export interface SignalChannelAccount extends ChannelAccountBase {
+  channel: "signal";
+  /** Base URL for a Signal JSON-RPC/SSE bridge, e.g. http://127.0.0.1:8080. */
+  baseUrl: string;
+  /** Optional signal-cli account selector, usually the linked phone number. */
+  account?: string;
+  /** Optional UUID for self-message filtering when Signal sends UUID identities. */
+  accountUuid?: string;
+  /** Agent ID used for account-bound DM and group auto-routing. */
+  agentId: string | null;
+  /** Default false. When true, only the linked account's own Note to Self/self-chat messages route. */
+  selfChatMode: boolean;
+  /** Default disabled. Controls group-message ingestion. */
+  groupMode: SignalGroupMode;
+  /** Optional allowlist of Signal group ids. */
+  allowedGroups?: string[];
+  /** Optional textual aliases for group mention detection. */
+  mentionPatterns?: string[];
+  /** Optional sender identity -> replyable Signal recipient mapping, e.g. UUID to E.164 phone. */
+  recipientAliases?: Record<string, string>;
+  /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
+  transcribeVoice?: boolean;
+  /** Default true. When true, supported inbound media is downloaded and surfaced to the agent. */
+  downloadMedia?: boolean;
+  /** Maximum inbound media bytes to consider. Undefined uses channel default. */
+  mediaMaxBytes?: number;
+}
+
 export type ChannelAccount =
   | TelegramChannelAccount
   | SlackChannelAccount
   | DiscordChannelAccount
   | WhatsAppChannelAccount
+  | SignalChannelAccount
   | CustomChannelAccount;
 
 export function isFirstPartyChannelId(
@@ -588,6 +716,12 @@ export function isWhatsAppChannelAccount(
   account: ChannelAccount,
 ): account is WhatsAppChannelAccount {
   return account.channel === "whatsapp" && "selfChatMode" in account;
+}
+
+export function isSignalChannelAccount(
+  account: ChannelAccount,
+): account is SignalChannelAccount {
+  return account.channel === "signal" && "baseUrl" in account;
 }
 
 export function isCustomChannelAccount(

@@ -37,6 +37,7 @@ describe("connect OAuth core", () => {
     const storeOAuthState = mock(() => undefined);
     const clearOAuthState = mock(() => undefined);
     const openBrowser = mock(() => Promise.resolve());
+    const abortController = new AbortController();
     const statuses: string[] = [];
 
     const result = await runChatGPTOAuthConnectFlow(
@@ -45,6 +46,7 @@ describe("connect OAuth core", () => {
           statuses.push(status);
         },
         openBrowser,
+        signal: abortController.signal,
       },
       {
         startOAuth,
@@ -60,6 +62,11 @@ describe("connect OAuth core", () => {
     expect(result.providerName).toBe("chatgpt-plus-pro");
     expect(startOAuth).toHaveBeenCalledTimes(1);
     expect(startCallbackServer).toHaveBeenCalledTimes(1);
+    expect(startCallbackServer).toHaveBeenCalledWith(
+      "state-123",
+      1455,
+      abortController.signal,
+    );
     expect(exchangeTokens).toHaveBeenCalledWith(
       "oauth-code",
       "verifier-123",
@@ -67,6 +74,15 @@ describe("connect OAuth core", () => {
     );
     expect(extractAccountId).toHaveBeenCalledWith("access-token");
     expect(createOrUpdateProvider).toHaveBeenCalledTimes(1);
+    expect(createOrUpdateProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        access_token: "access-token",
+        id_token: "id-token",
+        refresh_token: "refresh-token",
+        account_id: "acct_123",
+      }),
+      "chatgpt-plus-pro",
+    );
     expect(storeOAuthState).toHaveBeenCalledWith(
       "state-123",
       "verifier-123",
@@ -79,6 +95,52 @@ describe("connect OAuth core", () => {
     );
     expect(serverClose).toHaveBeenCalledTimes(1);
     expect(statuses.length).toBeGreaterThan(3);
+  });
+
+  test("uses custom ChatGPT OAuth provider name", async () => {
+    const createOrUpdateProvider = mock(() =>
+      Promise.resolve({ id: "provider-work" }),
+    );
+
+    const result = await runChatGPTOAuthConnectFlow(
+      {
+        providerName: "chatgpt-work",
+        onStatus: () => undefined,
+        openBrowser: () => Promise.resolve(),
+      },
+      {
+        startOAuth: () =>
+          Promise.resolve({
+            authorizationUrl: "https://auth.openai.com/oauth/authorize?abc",
+            state: "state-123",
+            codeVerifier: "verifier-123",
+            redirectUri: "http://localhost:1455/auth/callback",
+          }),
+        startCallbackServer: () =>
+          Promise.resolve({
+            result: { code: "oauth-code", state: "state-123" },
+            server: { close: () => undefined },
+          }),
+        exchangeTokens: () =>
+          Promise.resolve({
+            access_token: "access-token",
+            id_token: "id-token",
+            refresh_token: "refresh-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          }),
+        extractAccountId: () => "acct_123",
+        createOrUpdateProvider,
+        storeOAuthState: () => undefined,
+        clearOAuthState: () => undefined,
+      },
+    );
+
+    expect(result.providerName).toBe("chatgpt-work");
+    expect(createOrUpdateProvider).toHaveBeenCalledWith(
+      expect.any(Object),
+      "chatgpt-work",
+    );
   });
 
   test("clears OAuth state when flow fails", async () => {

@@ -7,7 +7,7 @@ import {
   mock,
   test,
 } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { APIError } from "@letta-ai/letta-client/error";
@@ -22,6 +22,7 @@ import {
 import { permissionMode } from "@/permissions/mode";
 import type {
   MessageQueueItem,
+  ModContinueQueueItem,
   TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
 import { sharedReminderProviders } from "@/reminders/engine";
@@ -273,6 +274,9 @@ mock.module("../agent/approval-recovery", () => ({
 }));
 
 const listenClientModule = await import("@/websocket/listen-client");
+const { createListenerModAdapter } = await import(
+  "@/websocket/listener/mod-adapter"
+);
 const { sendApprovalContinuationWithRetry, sendMessageStreamWithRetry } =
   await import("@/websocket/listener/send");
 const {
@@ -517,6 +521,49 @@ describe("listen-client multi-worker concurrency", () => {
     await turnA;
     expect(runtimeA.isProcessing).toBe(false);
     expect(__listenClientTestUtils.getListenerStatus(listener)).toBe("idle");
+  });
+
+  test("turn_start cancel stops listener turn before sending", async () => {
+    const modsDir = await mkdtemp(join(tmpdir(), "letta-listener-mods-"));
+    const cacheDir = await mkdtemp(join(tmpdir(), "letta-listener-mod-cache-"));
+    try {
+      await writeFile(
+        join(modsDir, "cancel-turn.ts"),
+        `export default function activate(letta) {
+          letta.events.on("turn_start", () => ({
+            cancel: { reason: " Run /plan first. " },
+          }));
+        }`,
+      );
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      listener.modAdapter = createListenerModAdapter({
+        cacheDirectory: cacheDir,
+        globalModsDirectory: modsDir,
+        sessionId: "listener-cancel-test",
+        workingDirectory: modsDir,
+      });
+      await listener.modAdapter.reload();
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-cancel",
+        "conv-cancel",
+      );
+      const socket = new MockSocket();
+
+      await __listenClientTestUtils.handleIncomingMessage(
+        makeIncomingMessage("agent-cancel", "conv-cancel", "hello"),
+        socket as unknown as WebSocket,
+        runtime,
+      );
+
+      expect(sendMessageStreamMock).not.toHaveBeenCalled();
+      expect(runtime.isProcessing).toBe(false);
+      expect(runtime.lastStopReason).toBe("cancelled");
+      expect(JSON.stringify(socket.sentPayloads)).toContain("Run /plan first.");
+    } finally {
+      await rm(modsDir, { recursive: true, force: true });
+      await rm(cacheDir, { recursive: true, force: true });
+    }
   });
 
   test("listener turns skip duplicate shared image normalization", async () => {
@@ -1407,6 +1454,40 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtime.queueRuntime.peek().map((item) => item.id)).toEqual([
       otherMessageItem.id,
     ]);
+  });
+
+  test("consumeQueuedTurn builds a user turn from a mod_continue-only batch", () => {
+    const runtime = __listenClientTestUtils.createRuntime();
+    const continueInput = {
+      kind: "mod_continue",
+      source: "system",
+      text: "double-check your work before finishing",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    } satisfies Omit<ModContinueQueueItem, "id" | "enqueuedAt">;
+    const continueItem = runtime.queueRuntime.enqueue(continueInput);
+
+    if (!continueItem) {
+      throw new Error("Expected queued mod_continue item");
+    }
+
+    const consumed = __listenClientTestUtils.consumeQueuedTurn(runtime);
+
+    expect(consumed).not.toBeNull();
+    expect(
+      consumed?.dequeuedBatch.items.map((item: { id: string }) => item.id),
+    ).toEqual([continueItem.id]);
+    // No template registration needed — the continue is synthesized as a
+    // plain user turn (renders via the backend, suppressed optimistically).
+    expect(consumed?.queuedTurn.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "double-check your work before finishing" },
+        ],
+      },
+    ]);
+    expect(runtime.queueRuntime.length).toBe(0);
   });
 
   test("resolveStaleApprovals injects stale denials and queued turns without replaying tools", async () => {

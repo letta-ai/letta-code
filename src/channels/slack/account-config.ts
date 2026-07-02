@@ -13,6 +13,8 @@ const SLACK_CONFIG_KEYS = new Set([
   "agent_id",
   "default_permission_mode",
   "transcribe_voice",
+  "show_completed_reaction",
+  "listen_mode",
 ]);
 
 function isString(value: unknown): value is string {
@@ -57,7 +59,10 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         (config.default_permission_mode === undefined ||
           isDefaultPermissionMode(config.default_permission_mode)) &&
         (config.transcribe_voice === undefined ||
-          isBoolean(config.transcribe_voice))
+          isBoolean(config.transcribe_voice)) &&
+        (config.show_completed_reaction === undefined ||
+          isBoolean(config.show_completed_reaction)) &&
+        (config.listen_mode === undefined || isBoolean(config.listen_mode))
       );
     },
 
@@ -79,6 +84,12 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         transcribeVoice: isBoolean(config.transcribe_voice)
           ? config.transcribe_voice
           : undefined,
+        showCompletedReaction: isBoolean(config.show_completed_reaction)
+          ? config.show_completed_reaction
+          : undefined,
+        listenMode: isBoolean(config.listen_mode)
+          ? config.listen_mode
+          : undefined,
       };
     },
 
@@ -91,6 +102,8 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         default_permission_mode:
           account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
         transcribe_voice: account.transcribeVoice === true,
+        show_completed_reaction: account.showCompletedReaction !== false,
+        listen_mode: account.listenMode === true,
       };
     },
 
@@ -103,6 +116,8 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         default_permission_mode:
           account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
         transcribe_voice: account.transcribeVoice === true,
+        show_completed_reaction: account.showCompletedReaction !== false,
+        listen_mode: account.listenMode === true,
       };
     },
 

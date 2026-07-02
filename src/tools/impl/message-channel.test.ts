@@ -259,3 +259,118 @@ describe("message_channel (discord)", () => {
     });
   });
 });
+
+describe("message_channel (signal)", () => {
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
+    clearAllRoutes();
+  });
+
+  test("preserves Signal target prefixes in chat_id", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "signal-msg-1" }));
+    const adapter: ChannelAdapter = {
+      id: "signal:personal",
+      channelId: "signal",
+      accountId: "personal",
+      name: "Signal",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("signal", {
+      accountId: "personal",
+      chatId: "group:group-1",
+      chatType: "channel",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-06-16T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "signal",
+      chat_id: "group:group-1",
+      message: "**hello** Signal group",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Message sent to signal");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "signal",
+        accountId: "personal",
+        chatId: "group:group-1",
+        text: "hello Signal group",
+        textStyle: ["0:5:BOLD"],
+        replyToMessageId: undefined,
+        parseMode: undefined,
+      }),
+    );
+  });
+  test("preserves signal-prefixed chat ids for routed replies", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "signal-msg-1" }));
+    const adapter: ChannelAdapter = {
+      id: "signal:personal",
+      channelId: "signal",
+      accountId: "personal",
+      name: "Signal",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("signal", {
+      accountId: "personal",
+      chatId: "signal:accd2cf3-8cb5-49c2-8904-5c4ce428c772",
+      chatType: "direct",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-06-16T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "signal",
+      chat_id: "signal:accd2cf3-8cb5-49c2-8904-5c4ce428c772",
+      accountId: "personal",
+      message: "hello from Signal",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Message sent to signal");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "signal",
+        accountId: "personal",
+        chatId: "signal:accd2cf3-8cb5-49c2-8904-5c4ce428c772",
+        text: "hello from Signal",
+        replyToMessageId: undefined,
+        parseMode: undefined,
+      }),
+    );
+  });
+});

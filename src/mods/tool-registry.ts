@@ -1,10 +1,13 @@
 import type {
+  ModContext,
+  ModDiagnostic,
   ModOwner,
   ModTool,
   ModToolRunContext,
   ModToolRunResult,
   ToolApprovalPolicy,
 } from "@/mods/types";
+import { attachDeprecatedGetContextTrap } from "./deprecated-api";
 import { areModsDisabled } from "./disable";
 
 const MOD_TOOLS_KEY = Symbol.for("@letta/modTools");
@@ -15,8 +18,16 @@ type GlobalWithModTools = typeof globalThis & {
 
 export interface ModToolDefinition extends ModTool {
   activationSignal: AbortSignal;
-  getContext: ModToolRunContext["getContext"];
-  isAvailable: () => boolean;
+  recordDiagnostic?: (
+    diagnostic: Pick<
+      ModDiagnostic,
+      "capability" | "error" | "phase" | "severity"
+    >,
+  ) => void;
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 function getMutableModToolsRegistry(): Map<string, ModToolDefinition> {
@@ -27,15 +38,30 @@ function getMutableModToolsRegistry(): Map<string, ModToolDefinition> {
   return global[MOD_TOOLS_KEY];
 }
 
-export function getAvailableModToolsRegistry(): Map<string, ModToolDefinition> {
+export function getAvailableModToolsRegistry(
+  context?: ModContext | null,
+): Map<string, ModToolDefinition> {
   if (areModsDisabled()) return new Map();
 
   return new Map(
     Array.from(getMutableModToolsRegistry().entries()).filter(([, tool]) => {
       if (tool.activationSignal.aborted) return false;
       try {
-        return tool.isAvailable();
-      } catch {
+        return context
+          ? (tool.isEnabled?.(
+              attachDeprecatedGetContextTrap(
+                { ...context },
+                tool.recordDiagnostic,
+                "ctx.getContext",
+              ),
+            ) ?? true)
+          : true;
+      } catch (error) {
+        tool.recordDiagnostic?.({
+          capability: { id: tool.name, kind: "tool" },
+          error: toError(error),
+          phase: "tool.isEnabled",
+        });
         return false;
       }
     }),

@@ -46,6 +46,7 @@ import {
   emitToolExecutionStartedEvents,
   normalizeToolReturnWireMessage,
 } from "./interrupts";
+import { ensureListenerModAdapter } from "./mod-adapter";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitCanonicalMessageDelta,
@@ -660,6 +661,7 @@ export async function resolveRecoveredApprovalResponse(
       recovered.agentId,
       recovered.conversationId,
     ),
+    modEvents: ensureListenerModAdapter(runtime.listener).events,
   });
   runtime.currentToolset = preparedToolContext.toolset;
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;

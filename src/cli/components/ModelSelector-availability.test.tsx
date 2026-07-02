@@ -6,6 +6,7 @@ type StubModel = { handle: string; label: string };
 const MODELS: StubModel[] = [
   { handle: "letta/auto", label: "Auto" },
   { handle: "letta/auto-fast", label: "Auto Fast" },
+  { handle: "letta/glm", label: "GLM" },
   { handle: "anthropic/claude-sonnet-4-6", label: "Sonnet 4.6" },
 ];
 
@@ -37,19 +38,22 @@ describe("ModelSelector availability gating", () => {
     expect(result.map((m) => m.handle)).not.toContain("letta/auto");
   });
 
-  test("fallback mode hides letta/auto unless explicitly present in allApiHandles", () => {
+  test("fallback mode hides API-gated Letta models unless explicitly present in allApiHandles", () => {
     const hiddenResult = filterModelsByAvailabilityForSelector(MODELS, null, [
       "anthropic/claude-sonnet-4-6",
     ]);
     expect(hiddenResult.map((m) => m.handle)).not.toContain("letta/auto");
+    expect(hiddenResult.map((m) => m.handle)).not.toContain("letta/glm");
     expect(hiddenResult.map((m) => m.handle)).toContain(
       "anthropic/claude-sonnet-4-6",
     );
 
     const shownResult = filterModelsByAvailabilityForSelector(MODELS, null, [
       "letta/auto",
+      "letta/glm",
       "anthropic/claude-sonnet-4-6",
     ]);
     expect(shownResult.map((m) => m.handle)).toContain("letta/auto");
+    expect(shownResult.map((m) => m.handle)).toContain("letta/glm");
   });
 });

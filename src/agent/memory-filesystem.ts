@@ -164,7 +164,23 @@ export async function isMemfsEnabledOnServer(
   agentId: string,
 ): Promise<boolean> {
   const { getBackend } = await import("@/backend");
-  const agent = await getBackend().retrieveAgent(agentId, {
+  const backend = getBackend();
+
+  // For local backend, memfs support is determined by local capabilities and
+  // env settings rather than a per-agent server-side tag. Agents created via
+  // runtime_start / LocalBackend.createAgent() do not get GIT_MEMORY_ENABLED_TAG
+  // automatically, so using the tag-based check would incorrectly return false.
+  if (backend.capabilities.localMemfs) {
+    const { isLocalBackendNoMemfsEnvEnabled } = await import(
+      "@/backend/local/paths"
+    );
+    const enabled = !isLocalBackendNoMemfsEnvEnabled();
+    const { settingsManager } = await import("@/settings-manager");
+    settingsManager.setMemfsEnabled(agentId, enabled);
+    return enabled;
+  }
+
+  const agent = await backend.retrieveAgent(agentId, {
     include: ["agent.tags"],
   });
   const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/memory-git");

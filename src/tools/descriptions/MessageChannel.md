@@ -33,3 +33,21 @@ Rules:
 - Pass exactly one of `chat_id` or `target`.
 - `react` should be its own call.
 - `upload-file` can include both `media` and `message` so the uploaded file has a caption/comment when the channel supports it.
+- Telegram supports `action="send-rich"` for Bot API Rich Messages from Markdown content. Use it for headings, lists, tables, rich block quotes, details blocks, formulas, and longer structured messages; use `upload-file` for local media files.
+
+Telegram rich messages:
+- In Telegram private chats, normal `action="send"` messages are sent through Bot API Rich Messages by default when the Telegram account enables `rich_private_chat_default`; with that setting disabled, use explicit `action="send-rich"` for rich delivery.
+- Use `action="send-rich"` with `channel="telegram"` for structured Markdown rendered by Telegram Bot API Rich Messages.
+- Use this when the output benefits from real headings, tables, block quotes, collapsible details, footnotes, task lists, or formulas.
+- The `message` field is passed as Telegram rich Markdown. Supported examples include:
+  - headings: `# Heading`, `## Heading`
+  - lists: `- item`, `1. item`, `- [ ] task`, `- [x] done`
+  - tables: GitHub-style pipe tables
+  - block quotes: `> quoted text`
+  - collapsible details: `<details><summary>Title</summary>content</details>`
+  - inline math: `$E = mc^2$`
+  - display math: `$$E = mc^2$$` or fenced `math` code blocks
+  - footnotes: `text[^id]` with `[^id]: definition`
+- Prefer dollar-delimited math. `\(...\)` and `\[...\]` do not reliably render as formulas in Telegram rich Markdown.
+- Do not use `send-rich` for local file uploads. Use `upload-file`; rich Markdown media blocks only support HTTP/HTTPS URLs.
+- Rich messages persist only when the final `send-rich` call executes. If Telegram draft streaming is enabled for the account, the channel runtime may show ephemeral previews automatically; do not try to manage draft lifecycle from the tool call.

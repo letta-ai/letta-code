@@ -283,6 +283,49 @@ describe("channel service", () => {
     expect(listEnabledChannelIds()).toEqual(["telegram"]);
   });
 
+  test("listEnabledChannelIds can filter restored accounts by agent scope", () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Local Telegram Bot",
+        enabled: true,
+        token: "telegram-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-local" },
+    );
+    bindChannelAccountLive(
+      "telegram",
+      "telegram-local",
+      "agent-local-123",
+      "conv-local",
+    );
+
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "Cloud Slack App",
+        enabled: true,
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-cloud",
+        dmPolicy: "pairing",
+      },
+      { accountId: "slack-cloud" },
+    );
+
+    expect(listEnabledChannelIds({ restoreAgentScope: "local" })).toEqual([
+      "telegram",
+    ]);
+    expect(listEnabledChannelIds({ restoreAgentScope: "cloud" })).toEqual([
+      "slack",
+    ]);
+    expect(listEnabledChannelIds({ restoreAgentScope: "all" })).toEqual([
+      "telegram",
+      "slack",
+    ]);
+  });
+
   test("updateChannelRouteLive updates the Slack route without changing the app's default agent", () => {
     createChannelAccountLive(
       "slack",
@@ -332,6 +375,58 @@ describe("channel service", () => {
     expect(getChannelAccountSnapshot("slack", "docsbot")).toEqual(
       expect.objectContaining({
         agentId: "agent-old",
+      }),
+    );
+  });
+
+  test("updateChannelRouteLive preserves listen-only outbound state", () => {
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "DocsBot Slack",
+        enabled: true,
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "docsbot" },
+    );
+    addRoute("slack", {
+      accountId: "docsbot",
+      chatId: "C-listen-only",
+      chatType: "channel",
+      threadId: null,
+      agentId: "agent-old",
+      conversationId: "conv-old",
+      enabled: true,
+      outboundEnabled: false,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const updated = updateChannelRouteLive(
+      "slack",
+      "C-listen-only",
+      "agent-new",
+      "conv-new",
+      "docsbot",
+    );
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        channelId: "slack",
+        accountId: "docsbot",
+        chatId: "C-listen-only",
+        agentId: "agent-new",
+        conversationId: "conv-new",
+        outboundEnabled: false,
+      }),
+    );
+    expect(getRoute("slack", "C-listen-only", "docsbot")).toEqual(
+      expect.objectContaining({
+        agentId: "agent-new",
+        conversationId: "conv-new",
+        outboundEnabled: false,
       }),
     );
   });
@@ -684,7 +779,7 @@ describe("channel service", () => {
     );
   });
 
-  test("telegram live account helpers preserve the transcribeVoice opt-in", () => {
+  test("telegram live account helpers preserve Telegram boolean settings", () => {
     const created = createChannelAccountLive(
       "telegram",
       {
@@ -693,6 +788,7 @@ describe("channel service", () => {
         token: "telegram-token",
         dmPolicy: "pairing",
         transcribeVoice: true,
+        richPrivateChatDefault: false,
       },
       { accountId: "voice-bot" },
     );
@@ -701,17 +797,26 @@ describe("channel service", () => {
       expect.objectContaining({
         accountId: "voice-bot",
         transcribeVoice: true,
+        richPrivateChatDefault: false,
+        config: expect.objectContaining({
+          rich_private_chat_default: false,
+        }),
       }),
     );
 
     const updated = updateChannelAccountLive("telegram", "voice-bot", {
       transcribeVoice: false,
+      richPrivateChatDefault: true,
     });
 
     expect(updated).toEqual(
       expect.objectContaining({
         accountId: "voice-bot",
         transcribeVoice: false,
+        richPrivateChatDefault: true,
+        config: expect.objectContaining({
+          rich_private_chat_default: true,
+        }),
       }),
     );
 
@@ -719,6 +824,10 @@ describe("channel service", () => {
       expect.objectContaining({
         accountId: "voice-bot",
         transcribeVoice: false,
+        richPrivateChatDefault: true,
+        config: expect.objectContaining({
+          rich_private_chat_default: true,
+        }),
       }),
     );
   });
@@ -736,6 +845,8 @@ describe("channel service", () => {
           mode: "socket",
           agent_id: null,
           transcribe_voice: true,
+          show_completed_reaction: false,
+          listen_mode: true,
         },
       },
       { accountId: "slack-voice" },
@@ -747,12 +858,18 @@ describe("channel service", () => {
         transcribeVoice: true,
         config: expect.objectContaining({
           transcribe_voice: true,
+          show_completed_reaction: false,
+          listen_mode: true,
         }),
       }),
     );
 
     const updated = updateChannelAccountLive("slack", "slack-voice", {
-      config: { transcribe_voice: false },
+      config: {
+        transcribe_voice: false,
+        show_completed_reaction: true,
+        listen_mode: false,
+      },
     });
 
     expect(updated).toEqual(
@@ -761,6 +878,8 @@ describe("channel service", () => {
         transcribeVoice: false,
         config: expect.objectContaining({
           transcribe_voice: false,
+          show_completed_reaction: true,
+          listen_mode: false,
         }),
       }),
     );
@@ -771,6 +890,8 @@ describe("channel service", () => {
         transcribeVoice: false,
         config: expect.objectContaining({
           transcribe_voice: false,
+          show_completed_reaction: true,
+          listen_mode: false,
         }),
       }),
     );

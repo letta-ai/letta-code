@@ -84,7 +84,6 @@ describe("mod adapter", () => {
       process.env[LETTA_DISABLE_MODS_ENV] = "1";
       const adapter = createModAdapter({
         getClient: async () => ({}) as unknown as Letta,
-        initialContext: createModContext(),
       });
 
       expect(adapter.getSnapshot()).toMatchObject({
@@ -110,7 +109,6 @@ describe("mod adapter", () => {
       const adapter = createModAdapter({
         disabled: true,
         getClient: async () => ({}) as unknown as Letta,
-        initialContext: createModContext(),
       });
 
       expect(process.env[LETTA_DISABLE_MODS_ENV]).toBe("1");
@@ -146,7 +144,6 @@ describe("mod adapter", () => {
         diagnosticsRootDirectory: diagnosticsRoot,
         getClient: async () => ({}) as unknown as Letta,
         globalModsDirectory: modDir,
-        initialContext: createModContext(),
       });
 
       await adapter.reload();
@@ -191,7 +188,6 @@ describe("mod adapter", () => {
         diagnosticsRootDirectory: diagnosticsRoot,
         getClient: async () => ({}) as unknown as Letta,
         globalModsDirectory: modDir,
-        initialContext: createModContext(),
       });
 
       await adapter.reload();
@@ -228,7 +224,6 @@ describe("mod adapter", () => {
         diagnosticsWriteDelayMs: 5,
         getClient: async () => ({}) as unknown as Letta,
         globalModsDirectory: modDir,
-        initialContext: createModContext(),
       });
 
       await adapter.reload();
@@ -237,18 +232,26 @@ describe("mod adapter", () => {
         report: { diagnostics: [], errorCount: 0, warningCount: 0 },
       });
 
-      await adapter.events.emit("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Amelia",
-        conversationId: "conversation-1",
-        reason: "startup",
-      });
-      await adapter.events.emit("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Amelia",
-        conversationId: "conversation-1",
-        reason: "resume",
-      });
+      await adapter.events.emit(
+        "conversation_open",
+        {
+          agentId: "agent-1",
+          agentName: "Amelia",
+          conversationId: "conversation-1",
+          reason: "startup",
+        },
+        createModContext(),
+      );
+      await adapter.events.emit(
+        "conversation_open",
+        {
+          agentId: "agent-1",
+          agentName: "Amelia",
+          conversationId: "conversation-1",
+          reason: "resume",
+        },
+        createModContext(),
+      );
 
       expect(readJsonFile(diagnosticsPath)).toMatchObject({
         report: { diagnostics: [], errorCount: 0, warningCount: 0 },
@@ -295,25 +298,32 @@ describe("mod adapter", () => {
         diagnosticsWriteDelayMs: 20,
         getClient: async () => ({}) as unknown as Letta,
         globalModsDirectory: modDir,
-        initialContext: createModContext(),
       });
 
       await adapter.reload();
       const diagnosticsPath = getModDiagnosticsLatestFilePath(diagnosticsRoot);
 
-      await adapter.events.emit("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Amelia",
-        conversationId: "conversation-1",
-        reason: "startup",
-      });
+      await adapter.events.emit(
+        "conversation_open",
+        {
+          agentId: "agent-1",
+          agentName: "Amelia",
+          conversationId: "conversation-1",
+          reason: "startup",
+        },
+        createModContext(),
+      );
       await sleep(10);
-      await adapter.events.emit("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Amelia",
-        conversationId: "conversation-1",
-        reason: "resume",
-      });
+      await adapter.events.emit(
+        "conversation_open",
+        {
+          agentId: "agent-1",
+          agentName: "Amelia",
+          conversationId: "conversation-1",
+          reason: "resume",
+        },
+        createModContext(),
+      );
 
       await sleep(15);
 
@@ -364,16 +374,19 @@ describe("mod adapter", () => {
         diagnosticsWriteDelayMs: 30_000,
         getClient: async () => ({}) as unknown as Letta,
         globalModsDirectory: modDir,
-        initialContext: createModContext(),
       });
 
       await adapter.reload();
-      await adapter.events.emit("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Amelia",
-        conversationId: "conversation-1",
-        reason: "startup",
-      });
+      await adapter.events.emit(
+        "conversation_open",
+        {
+          agentId: "agent-1",
+          agentName: "Amelia",
+          conversationId: "conversation-1",
+          reason: "startup",
+        },
+        createModContext(),
+      );
 
       const diagnosticsPath = getModDiagnosticsLatestFilePath(diagnosticsRoot);
       expect(readJsonFile(diagnosticsPath)).toMatchObject({
@@ -418,16 +431,19 @@ describe("mod adapter", () => {
         diagnosticsWriteDelayMs: 5,
         getClient: async () => ({}) as unknown as Letta,
         globalModsDirectory: modDir,
-        initialContext: createModContext(),
       });
 
       await adapter.reload();
-      await adapter.events.emit("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Amelia",
-        conversationId: "conversation-1",
-        reason: "startup",
-      });
+      await adapter.events.emit(
+        "conversation_open",
+        {
+          agentId: "agent-1",
+          agentName: "Amelia",
+          conversationId: "conversation-1",
+          reason: "startup",
+        },
+        createModContext(),
+      );
       await sleep(20);
 
       expect(
@@ -467,7 +483,7 @@ describe("mod adapter", () => {
           letta.events.on("conversation_open", async (event, ctx) => {
             const fork = await ctx.conversation.fork({ hidden: true });
             globalThis.__lettaAdapterEvents.push(
-              event.reason + ":" + ctx.context.agent.name + ":" + fork.id,
+              event.reason + ":" + ctx.agent.name + ":" + fork.id,
             );
           });
         }`,
@@ -481,7 +497,6 @@ describe("mod adapter", () => {
         getBackend: () => backend,
         getClient: async () => ({}) as unknown as Letta,
         globalModsDirectory: modDir,
-        initialContext: createModContext(),
       });
 
       expect(adapter.getSnapshot()).toMatchObject({
@@ -490,17 +505,20 @@ describe("mod adapter", () => {
       });
       expect(adapter.getSnapshot()).toBe(adapter.getSnapshot());
 
-      const loadingResult = await adapter.events.emit("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Amelia",
-        conversationId: "conversation-1",
-        reason: "startup",
-      });
+      const loadingResult = await adapter.events.emit(
+        "conversation_open",
+        {
+          agentId: "agent-1",
+          agentName: "Amelia",
+          conversationId: "conversation-1",
+          reason: "startup",
+        },
+        createModContext(),
+      );
       expect(loadingResult.handlerCount).toBe(0);
       expect(testGlobal.__lettaAdapterEvents).toEqual([]);
 
       await adapter.reload();
-      adapter.updateContext(createModContext("Updated Agent"));
 
       expect(adapter.getSnapshot()).toMatchObject({
         hasModSources: true,
@@ -508,12 +526,16 @@ describe("mod adapter", () => {
       });
       expect(adapter.getSnapshot().registry.loadedPaths).toHaveLength(1);
 
-      await adapter.events.emit("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Updated Agent",
-        conversationId: "conversation-1",
-        reason: "startup",
-      });
+      await adapter.events.emit(
+        "conversation_open",
+        {
+          agentId: "agent-1",
+          agentName: "Updated Agent",
+          conversationId: "conversation-1",
+          reason: "startup",
+        },
+        createModContext("Updated Agent"),
+      );
 
       expect(testGlobal.__lettaAdapterEvents).toEqual([
         "startup:Updated Agent:forked-conversation",

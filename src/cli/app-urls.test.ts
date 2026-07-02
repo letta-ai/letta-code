@@ -53,4 +53,11 @@ describe("app URL helpers", () => {
       "\x1b]8;;https://app.letta.com/chat/agent-abc\x1b\\agent-abc\x1b]8;;\x1b\\",
     );
   });
+
+  test("buildAgentTerminalLink supports a custom label with the same chat URL target", () => {
+    const targetUrl = buildChatUrl("agent-abc");
+    expect(buildAgentTerminalLink("agent-abc", undefined, "memories")).toBe(
+      `\x1b]8;;${targetUrl}\x1b\\memories\x1b]8;;\x1b\\`,
+    );
+  });
 });

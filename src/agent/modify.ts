@@ -8,11 +8,13 @@ import type {
   OpenAIModelSettings,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import type { Backend } from "@/backend";
 import { getBackend } from "@/backend";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import { getModelContextWindow } from "./available-models";
+import type { ModelReasoningEffort } from "./model";
 
 type ModelSettings =
   | OpenAIModelSettings
@@ -36,22 +38,39 @@ function buildModelSettings(
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
 ): ModelSettings {
-  // Include our custom ChatGPT OAuth provider (chatgpt-plus-pro)
-  const isOpenAICodex = modelHandle.startsWith("openai-codex/");
+  const explicitProviderType =
+    typeof updateArgs?.provider_type === "string"
+      ? updateArgs.provider_type
+      : undefined;
+  // Include ChatGPT OAuth/Codex providers, including user-defined aliases whose
+  // provider_type is supplied by the server model catalog.
+  const isOpenAICodex =
+    explicitProviderType === "chatgpt_oauth" ||
+    modelHandle.startsWith("openai-codex/");
   const isOpenAI =
+    explicitProviderType === "openai" ||
     modelHandle.startsWith("openai/") ||
     isOpenAICodex ||
     modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
   // Include legacy custom Anthropic OAuth provider (claude-pro-max) and minimax
   const isAnthropic =
+    explicitProviderType === "anthropic" ||
     modelHandle.startsWith("anthropic/") ||
     modelHandle.startsWith("claude-pro-max/") ||
     modelHandle.startsWith("minimax/");
-  const isZai = modelHandle.startsWith("zai/");
-  const isGoogleAI = modelHandle.startsWith("google_ai/");
-  const isGoogleVertex = modelHandle.startsWith("google_vertex/");
-  const isOpenRouter = modelHandle.startsWith("openrouter/");
-  const isBedrock = modelHandle.startsWith("bedrock/");
+  const isZai =
+    explicitProviderType === "zai" || modelHandle.startsWith("zai/");
+  const isGoogleAI =
+    explicitProviderType === "google_ai" ||
+    modelHandle.startsWith("google_ai/");
+  const isGoogleVertex =
+    explicitProviderType === "google_vertex" ||
+    modelHandle.startsWith("google_vertex/");
+  const isOpenRouter =
+    explicitProviderType === "openrouter" ||
+    modelHandle.startsWith("openrouter/");
+  const isBedrock =
+    explicitProviderType === "bedrock" || modelHandle.startsWith("bedrock/");
 
   let settings: ModelSettings;
 
@@ -372,6 +391,142 @@ export async function updateConversationLLMConfig(
   } as Parameters<typeof backend.updateConversation>[1];
 
   return backend.updateConversation(conversationId, payload);
+}
+
+export interface ModelConfigUpdate {
+  /** Model handle, e.g. "anthropic/claude-opus-4-8". Omit to keep the current model. */
+  model?: string;
+  /** Reasoning effort tier. Omit to leave reasoning settings untouched. */
+  reasoningEffort?: ModelReasoningEffort;
+  /** Context window limit. Omit to leave the current limit untouched. */
+  contextWindow?: number;
+}
+
+export type ModelConfigTarget =
+  | { scope: "agent"; agentId: string }
+  | { scope: "conversation"; conversationId: string; agentId?: string | null };
+
+function modelHandleFromLlmConfig(
+  llmConfig:
+    | { model?: string | null; model_endpoint_type?: string | null }
+    | null
+    | undefined,
+): string | null {
+  if (!llmConfig) return null;
+  if (llmConfig.model_endpoint_type && llmConfig.model) {
+    return `${llmConfig.model_endpoint_type}/${llmConfig.model}`;
+  }
+  return llmConfig.model ?? null;
+}
+
+async function resolveAgentModelHandle(
+  backend: Backend,
+  agentId: string,
+): Promise<string | null> {
+  const agent = await backend.retrieveAgent(agentId);
+  if (typeof agent.model === "string" && agent.model.length > 0) {
+    return agent.model;
+  }
+  return modelHandleFromLlmConfig(agent.llm_config);
+}
+
+async function resolveCurrentModelHandle(
+  backend: Backend,
+  target: ModelConfigTarget,
+): Promise<string | null> {
+  if (target.scope === "agent") {
+    return resolveAgentModelHandle(backend, target.agentId);
+  }
+  if (target.conversationId !== "default") {
+    const conversation = await backend.retrieveConversation(
+      target.conversationId,
+    );
+    const conversationModel = (conversation as { model?: unknown }).model;
+    if (typeof conversationModel === "string" && conversationModel.length > 0) {
+      return conversationModel;
+    }
+  }
+  return target.agentId
+    ? resolveAgentModelHandle(backend, target.agentId)
+    : null;
+}
+
+/**
+ * Applies a partial model-config update (model, reasoning effort, and/or context
+ * window) without rebuilding settings the caller did not touch.
+ *
+ * - Only `contextWindow`: sends `context_window_limit` alone, preserving the
+ *   current model and model_settings (including reasoning effort).
+ * - `reasoningEffort` without `model`: resolves the current model handle so
+ *   model_settings can be rebuilt for the right provider.
+ * - `model` (with optional effort/context): rebuilds model_settings and derives
+ *   a context window when one is not supplied, matching updateAgentLLMConfig.
+ *
+ * Routes through the supplied backend's updateAgent/updateConversation, so it
+ * works for both local and constellation agents.
+ */
+export async function updateModelConfig(
+  backend: Backend,
+  target: ModelConfigTarget,
+  update: ModelConfigUpdate,
+): Promise<void> {
+  const touchesModelSettings =
+    update.model !== undefined || update.reasoningEffort !== undefined;
+
+  let modelHandle = update.model;
+  if (touchesModelSettings && !modelHandle) {
+    modelHandle =
+      (await resolveCurrentModelHandle(backend, target)) ?? undefined;
+    if (!modelHandle) {
+      throw new Error(
+        "updateModelConfig: cannot change reasoning effort because the current model could not be resolved",
+      );
+    }
+  }
+
+  const useBackendModelCatalog = backend.capabilities.localModelCatalog;
+  const updateArgs =
+    update.reasoningEffort !== undefined
+      ? { reasoning_effort: update.reasoningEffort }
+      : undefined;
+
+  const modelSettings =
+    touchesModelSettings && modelHandle
+      ? buildModelSettings(
+          modelHandle,
+          updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
+        )
+      : undefined;
+  const hasModelSettings =
+    modelSettings !== undefined && Object.keys(modelSettings).length > 0;
+
+  // Honor an explicit context window regardless of catalog mode; only derive a
+  // default (on model change) when the backend does not own the catalog.
+  const contextWindow =
+    update.contextWindow ??
+    (update.model !== undefined && !useBackendModelCatalog
+      ? await getModelContextWindow(update.model)
+      : undefined);
+
+  const patch = {
+    ...(update.model !== undefined && { model: update.model }),
+    ...(hasModelSettings && { model_settings: modelSettings }),
+    ...(contextWindow !== undefined && { context_window_limit: contextWindow }),
+  };
+
+  if (Object.keys(patch).length === 0) return;
+
+  if (target.scope === "agent") {
+    await backend.updateAgent(
+      target.agentId,
+      patch as Parameters<typeof backend.updateAgent>[1],
+    );
+  } else {
+    await backend.updateConversation(
+      target.conversationId,
+      patch as Parameters<typeof backend.updateConversation>[1],
+    );
+  }
 }
 
 /**

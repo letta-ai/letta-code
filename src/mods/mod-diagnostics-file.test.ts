@@ -103,4 +103,38 @@ describe("mod diagnostics file", () => {
       rmSync(rootDirectory, { force: true, recursive: true });
     }
   });
+
+  test("writes structured migration hints to latest diagnostics", () => {
+    const rootDirectory = createTempDir();
+    try {
+      const diagnostic = createDiagnostic();
+      diagnostic.capability = { id: "letta.getContext", kind: "api" };
+      diagnostic.error = new Error("letta.getContext is not a function");
+      diagnostic.phase = "deprecated_api";
+      diagnostic.severity = "warning";
+
+      const written = writeModDiagnosticsLatestFile([diagnostic], {
+        generatedAt: 300,
+        rootDirectory,
+      });
+
+      expect(written.report.diagnostics[0]).toMatchObject({
+        capability: { id: "letta.getContext", kind: "api" },
+        hint: "letta.getContext has been removed. Activation has no dynamic invocation context. Move dynamic work into a command, tool, event, permission, status, or statusline callback that receives ctx, or use explicit/global state such as process.cwd() for activation-time background work.",
+        message: "letta.getContext is not a function",
+        phase: "deprecated_api",
+        severity: "warning",
+      });
+      expect(written.report).toMatchObject({ errorCount: 0, warningCount: 1 });
+      expect(
+        JSON.parse(
+          readFileSync(getModDiagnosticsLatestFilePath(rootDirectory), "utf-8"),
+        ).report.diagnostics[0].hint,
+      ).toBe(
+        "letta.getContext has been removed. Activation has no dynamic invocation context. Move dynamic work into a command, tool, event, permission, status, or statusline callback that receives ctx, or use explicit/global state such as process.cwd() for activation-time background work.",
+      );
+    } finally {
+      rmSync(rootDirectory, { force: true, recursive: true });
+    }
+  });
 });

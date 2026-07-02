@@ -31,8 +31,6 @@ function registerTestModTool(name: string): void {
   registerModTool({
     activationSignal: new AbortController().signal,
     description: "Test tool",
-    getContext: () => createModContext(),
-    isAvailable: () => true,
     name,
     owner: {
       generation: 0,
@@ -53,9 +51,7 @@ function registerTestModPermission(id: string): void {
   registerModPermission({
     activationSignal: new AbortController().signal,
     check: () => undefined,
-    getContext: () => createModContext(),
     id,
-    isAvailable: () => true,
     owner: {
       generation: 0,
       id: `test:${id}`,
@@ -99,12 +95,10 @@ describe("disabled mod adapter", () => {
       expect(getModToolDefinition("stale_mod_tool")).toBeDefined();
       expect(listRegisteredPiProviders()).toHaveLength(1);
 
-      const adapter = createDisabledModAdapter({
-        initialContext: createModContext(),
-      });
+      const adapter = createDisabledModAdapter();
 
       expect(adapter.getSnapshot()).toMatchObject({
-        hadStatuslineRenderer: false,
+        hadModPanels: false,
         hasModSources: false,
         isLoading: false,
       });
@@ -117,7 +111,6 @@ describe("disabled mod adapter", () => {
       expect(adapter.getSnapshot().registry.permissions).toEqual({});
       expect(adapter.getSnapshot().registry.tools).toEqual({});
       expect(adapter.getSnapshot().registry.ui.panels).toEqual({});
-      expect(adapter.getSnapshot().registry.ui.statuslineRenderer).toBeNull();
       expect(adapter.getBackend()).toBeUndefined();
       expect(getModPermissionDefinition("stale-permission")).toBeUndefined();
       expect(getModToolDefinition("stale_mod_tool")).toBeUndefined();
@@ -131,17 +124,18 @@ describe("disabled mod adapter", () => {
       unsubscribe();
       expect(notifications).toBe(0);
 
-      const result = await adapter.events.emit("conversation_open", {
-        agentId: "agent-1",
-        agentName: "Amelia",
-        conversationId: "conversation-1",
-        reason: "startup",
-      });
+      const result = await adapter.events.emit(
+        "conversation_open",
+        {
+          agentId: "agent-1",
+          agentName: "Amelia",
+          conversationId: "conversation-1",
+          reason: "startup",
+        },
+        createModContext(),
+      );
       expect(result.handlerCount).toBe(0);
       expect(result.results).toEqual([]);
-
-      adapter.updateContext(createModContext("Updated Agent"));
-      expect(adapter.getContext().agent.name).toBe("Updated Agent");
 
       adapter.dispose();
     } finally {

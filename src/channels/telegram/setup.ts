@@ -94,6 +94,13 @@ export async function runTelegramSetup(): Promise<boolean> {
     );
     const transcribeVoice = /^(y|yes)$/i.test(transcriptionInput.trim());
 
+    const richPrivateChatDefaultInput = await rl.question(
+      "Use rich messages by default in private chats? [Y/n]: ",
+    );
+    const richPrivateChatDefault = !/^(n|no)$/i.test(
+      richPrivateChatDefaultInput.trim(),
+    );
+
     const debounceInput = await rl.question(
       "Inbound debounce for group/topic messages in ms [0]: ",
     );
@@ -116,6 +123,7 @@ export async function runTelegramSetup(): Promise<boolean> {
       allowedUsers,
       groupMode,
       transcribeVoice,
+      richPrivateChatDefault,
       inboundDebounceMs,
       binding: {
         agentId: null,

@@ -15,6 +15,8 @@ import type {
   DiscordChannelConfig,
   DiscordChannelMode,
   DmPolicy,
+  SignalChannelConfig,
+  SignalGroupMode,
   SlackChannelConfig,
   TelegramChannelConfig,
   TelegramGroupMode,
@@ -150,6 +152,8 @@ const telegramConfigCodec: ChannelConfigCodec<TelegramChannelConfig> = {
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
       groupMode: parseTelegramGroupMode(parsed.group_mode),
       transcribeVoice: parsed.transcribe_voice === true,
+      richPrivateChatDefault: parsed.rich_private_chat_default !== false,
+      richDraftStreaming: parsed.rich_draft_streaming === true,
     };
   },
 };
@@ -165,6 +169,8 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
       transcribeVoice: parsed.transcribe_voice === true,
+      showCompletedReaction: parsed.show_completed_reaction !== false,
+      listenMode: parsed.listen_mode === true,
     };
   },
 };
@@ -183,6 +189,10 @@ function parseDefaultPermissionMode(
 
 function parseTelegramGroupMode(value: unknown): TelegramGroupMode {
   return value === "mention-only" ? "mention-only" : "open";
+}
+
+function parseSignalGroupMode(value: unknown): SignalGroupMode {
+  return value === "open" || value === "mention" ? value : "disabled";
 }
 
 const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
@@ -267,6 +277,43 @@ const whatsappConfigCodec: ChannelConfigCodec<WhatsAppChannelConfig> = {
   },
 };
 
+const signalConfigCodec: ChannelConfigCodec<SignalChannelConfig> = {
+  parse(parsed) {
+    const rawAllowedGroups = parsed.allowed_groups;
+    const rawMentionPatterns = parsed.mention_patterns;
+    return {
+      channel: "signal",
+      enabled: parsed.enabled !== false,
+      dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
+      allowedUsers: (parsed.allowed_users as string[]) ?? [],
+      baseUrl:
+        typeof parsed.base_url === "string"
+          ? parsed.base_url
+          : "http://127.0.0.1:8080",
+      account: typeof parsed.account === "string" ? parsed.account : undefined,
+      accountUuid:
+        typeof parsed.account_uuid === "string"
+          ? parsed.account_uuid
+          : undefined,
+      agentId: typeof parsed.agent_id === "string" ? parsed.agent_id : null,
+      selfChatMode: parsed.self_chat_mode === true,
+      groupMode: parseSignalGroupMode(parsed.group_mode),
+      allowedGroups: Array.isArray(rawAllowedGroups)
+        ? (rawAllowedGroups as string[])
+        : undefined,
+      mentionPatterns: Array.isArray(rawMentionPatterns)
+        ? (rawMentionPatterns as string[])
+        : undefined,
+      transcribeVoice: parsed.transcribe_voice === true,
+      downloadMedia: parsed.download_media !== false,
+      mediaMaxBytes:
+        typeof parsed.media_max_bytes === "number"
+          ? parsed.media_max_bytes
+          : undefined,
+    };
+  },
+};
+
 const CHANNEL_CONFIG_CODECS: Partial<
   Record<string, ChannelConfigCodec<ChannelConfig>>
 > = {
@@ -274,6 +321,7 @@ const CHANNEL_CONFIG_CODECS: Partial<
   slack: slackConfigCodec as ChannelConfigCodec<ChannelConfig>,
   discord: discordConfigCodec as ChannelConfigCodec<ChannelConfig>,
   whatsapp: whatsappConfigCodec as ChannelConfigCodec<ChannelConfig>,
+  signal: signalConfigCodec as ChannelConfigCodec<ChannelConfig>,
 };
 
 function getChannelConfigCodec(

@@ -13,6 +13,7 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
+import { detectShellContext } from "@/utils/shell-context";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
@@ -70,6 +71,7 @@ import {
 } from "./cli/flag-utils";
 import {
   createBuffers,
+  findLastAssistantText,
   type Line,
   markIncompleteToolsAsCancelled,
   toLines,
@@ -93,6 +95,7 @@ import {
   type DrainStreamHook,
   drainStreamWithResume,
 } from "./cli/helpers/stream";
+import { installLocalBackendModEventHooks } from "./cli/mods/local-backend-mod-events";
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
@@ -108,7 +111,8 @@ import {
 import { computeDiffPreviews } from "./helpers/diff-preview";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import type { ModAdapter } from "./mods/mod-adapter";
-import type { ModConversationOpenReason } from "./mods/types";
+import { getTurnStartCancel } from "./mods/turn-start-cancel";
+import type { ModContext, ModConversationOpenReason } from "./mods/types";
 import { formatPermissionDenial } from "./permissions/format-denial";
 import { applyStartupPermissionMode } from "./permissions/startup";
 import { QueueRuntime } from "./queue/queue-runtime";
@@ -188,8 +192,13 @@ const PROVIDER_FALLBACK_MAP: Record<string, string> = {
   "opus-4.6-medium": "bedrock-opus-4.6",
   "opus-4.6-high": "bedrock-opus-4.6",
   "opus-4.6-xhigh": "bedrock-opus-4.6",
-  // Sonnet 4.6 variants → Bedrock Sonnet 4.6
-  sonnet: "bedrock-sonnet-4.6",
+  // Sonnet 5 variants → Bedrock Sonnet 5; Sonnet 4.6 variants → Bedrock Sonnet 4.6
+  sonnet: "bedrock-sonnet-5",
+  "sonnet-5-no-reasoning": "bedrock-sonnet-5",
+  "sonnet-5-low": "bedrock-sonnet-5",
+  "sonnet-5-medium": "bedrock-sonnet-5",
+  "sonnet-5-xhigh": "bedrock-sonnet-5",
+  "sonnet-4.6": "bedrock-sonnet-4.6",
   "sonnet-1m": "bedrock-sonnet-4.6",
   "sonnet-4.6-no-reasoning": "bedrock-sonnet-4.6",
   "sonnet-4.6-low": "bedrock-sonnet-4.6",
@@ -403,6 +412,7 @@ async function prepareHeadlessToolExecutionContext(params: {
   conversationId: string;
   overrideModel?: string | null;
   cachedAgent?: AgentState | null;
+  modContext?: ModContext;
   modEvents?: ModAdapter["events"];
 }): Promise<{
   preparedToolContext: Awaited<
@@ -417,6 +427,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     workingDirectory: getCurrentWorkingDirectory(),
     exclude: ["AskUserQuestion"],
     cachedAgent: params.cachedAgent,
+    modContext: params.modContext,
     modEvents: params.modEvents,
   });
 
@@ -437,23 +448,152 @@ function isTurnInputArray(
   );
 }
 
+type HeadlessTurnStartEmission =
+  | { cancelled: false; input: Array<MessageCreate | ApprovalCreate> }
+  | { cancelled: true; reason: string };
+
+async function emitHeadlessTurnStartCancellationOutput(options: {
+  agent: AgentState;
+  conversationId: string;
+  outputFormat: string;
+  reason: string;
+  sessionId: string;
+}): Promise<void> {
+  if (options.outputFormat === "stream-json") {
+    const errorMsg: ErrorMessage = {
+      type: "error",
+      message: options.reason,
+      stop_reason: "cancelled",
+      session_id: options.sessionId,
+      uuid: `error-turn-start-cancel-${randomUUID()}`,
+    };
+    await writeWireMessageAsync(errorMsg);
+    const resultMsg: ResultMessage = {
+      type: "result",
+      subtype: "error",
+      session_id: options.sessionId,
+      duration_ms: 0,
+      duration_api_ms: 0,
+      num_turns: 0,
+      result: options.reason,
+      agent_id: options.agent.id,
+      conversation_id: options.conversationId,
+      run_ids: [],
+      usage: null,
+      uuid: `result-turn-start-cancel-${randomUUID()}`,
+      stop_reason: "cancelled",
+    };
+    await writeWireMessageAsync(resultMsg);
+  } else if (options.outputFormat === "json") {
+    await writeFinalHeadlessStdout(
+      `${JSON.stringify(
+        {
+          type: "result",
+          subtype: "error",
+          is_error: true,
+          duration_ms: 0,
+          duration_api_ms: 0,
+          num_turns: 0,
+          result: options.reason,
+          agent_id: options.agent.id,
+          conversation_id: options.conversationId,
+          usage: null,
+          stop_reason: "cancelled",
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  } else {
+    console.error(`Error: ${options.reason}`);
+  }
+}
+
+function writeBidirectionalTurnStartCancellation(options: {
+  agent: AgentState;
+  conversationId: string;
+  reason: string;
+  sessionId: string;
+}): void {
+  const errorMsg: ErrorMessage = {
+    type: "error",
+    message: options.reason,
+    stop_reason: "cancelled",
+    session_id: options.sessionId,
+    uuid: `error-turn-start-cancel-${randomUUID()}`,
+  };
+  writeWireMessage(errorMsg);
+
+  const resultMsg: ResultMessage = {
+    type: "result",
+    subtype: "error",
+    session_id: options.sessionId,
+    duration_ms: 0,
+    duration_api_ms: 0,
+    num_turns: 0,
+    result: options.reason,
+    agent_id: options.agent.id,
+    conversation_id: options.conversationId,
+    run_ids: [],
+    usage: null,
+    uuid: `result-turn-start-cancel-${randomUUID()}`,
+    stop_reason: "cancelled",
+  };
+  writeWireMessage(resultMsg);
+}
+
 async function emitHeadlessTurnStart(options: {
   agent: AgentState;
   conversationId: string;
   input: Array<MessageCreate | ApprovalCreate>;
   adapter: ModAdapter;
-}): Promise<Array<MessageCreate | ApprovalCreate>> {
+  context: ModContext;
+}): Promise<HeadlessTurnStartEmission> {
   try {
     const event = {
       agentId: options.agent.id,
       conversationId: options.conversationId,
       input: options.input,
     };
-    await options.adapter.events.emit("turn_start", event);
-    return isTurnInputArray(event.input) ? event.input : options.input;
+    await options.adapter.events.emit("turn_start", event, options.context);
+    const cancel = getTurnStartCancel(event);
+    if (cancel) return { cancelled: true, reason: cancel.reason };
+    return {
+      cancelled: false,
+      input: isTurnInputArray(event.input) ? event.input : options.input,
+    };
   } catch {
     // Mod turn_start handlers should not block sending the turn.
-    return options.input;
+    return { cancelled: false, input: options.input };
+  }
+}
+
+async function emitHeadlessTurnEnd(options: {
+  agent: AgentState;
+  conversationId: string;
+  stopReason: string;
+  assistantMessage?: string;
+  adapter: ModAdapter;
+  context: ModContext;
+}): Promise<string | undefined> {
+  try {
+    const event: {
+      agentId: string | null;
+      conversationId: string | null;
+      stopReason: string;
+      assistantMessage?: string;
+      continue?: string;
+    } = {
+      agentId: options.agent.id,
+      conversationId: options.conversationId,
+      stopReason: options.stopReason,
+      assistantMessage: options.assistantMessage,
+    };
+    await options.adapter.events.emit("turn_end", event, options.context);
+    return typeof event.continue === "string" ? event.continue : undefined;
+  } catch {
+    // Mod turn_end handlers should not block turn completion.
+    return undefined;
   }
 }
 
@@ -461,11 +601,13 @@ async function sendScopedApprovalMessages(params: {
   agentId: string;
   conversationId: string;
   approvalMessages: Array<MessageCreate | ApprovalCreate>;
+  modContext?: ModContext;
   modEvents?: ModAdapter["events"];
 }): Promise<Awaited<ReturnType<typeof sendMessageStream>>> {
   const approvalToolContext = await prepareHeadlessToolExecutionContext({
     agentId: params.agentId,
     conversationId: params.conversationId,
+    modContext: params.modContext,
     modEvents: params.modEvents,
   });
 
@@ -1540,13 +1682,33 @@ export async function handleHeadlessCommand(
     sessionStats,
     disabled: modsDisabled,
   });
+  const initialHeadlessModContext = createHeadlessModContext({
+    agent,
+    conversationId,
+    permissionMode: headlessPermissionMode,
+    reflectionSettings: effectiveReflectionSettings,
+    sessionStats,
+  });
   await headlessModAdapter.reload();
+  installLocalBackendModEventHooks({
+    backend,
+    adapter: headlessModAdapter,
+    buildContext: (compactConversationId) =>
+      createHeadlessModContext({
+        agent,
+        conversationId: compactConversationId,
+        permissionMode: headlessPermissionMode,
+        reflectionSettings: effectiveReflectionSettings,
+        sessionStats,
+      }),
+  });
   try {
     await emitHeadlessConversationOpen({
       agent,
       conversationId,
       reason: conversationOpenReason,
       adapter: headlessModAdapter,
+      context: initialHeadlessModContext,
     });
   } catch {
     // Mod lifecycle events should not block headless startup.
@@ -1567,6 +1729,7 @@ export async function handleHeadlessCommand(
       agentId: agent.id,
       conversationId,
       cachedAgent: agent as AgentState,
+      modContext: initialHeadlessModContext,
       modEvents: headlessModAdapter.events,
     });
     availableTools = initialToolContext.availableTools;
@@ -1607,22 +1770,21 @@ export async function handleHeadlessCommand(
     try {
       if (!headlessConversationClosed) {
         headlessConversationClosed = true;
-        headlessModAdapter.updateContext(
-          createHeadlessModContext({
-            agent,
-            conversationId,
-            lastRunId: lastKnownRunId,
-            permissionMode: headlessPermissionMode,
-            reflectionSettings: effectiveReflectionSettings,
-            sessionStats,
-          }),
-        );
+        const closeModContext = createHeadlessModContext({
+          agent,
+          conversationId,
+          lastRunId: lastKnownRunId,
+          permissionMode: headlessPermissionMode,
+          reflectionSettings: effectiveReflectionSettings,
+          sessionStats,
+        });
         try {
           await emitHeadlessConversationClose({
             agent,
             conversationId,
             durationMs: sessionStats.getSnapshot().totalWallMs,
             adapter: headlessModAdapter,
+            context: closeModContext,
           });
         } catch {
           // Mod lifecycle events should not block headless shutdown.
@@ -1739,6 +1901,13 @@ export async function handleHeadlessCommand(
         agentId: agent.id,
         conversationId,
         approvalMessages,
+        modContext: createHeadlessModContext({
+          agent,
+          conversationId,
+          permissionMode: headlessPermissionMode,
+          reflectionSettings: effectiveReflectionSettings,
+          sessionStats,
+        }),
         modEvents: headlessModAdapter.events,
       });
       const drainResult = await drainStreamWithResume(
@@ -1825,6 +1994,7 @@ ${SYSTEM_REMINDER_CLOSE}
     systemInfoReminderEnabled,
     workingDirectory: getCurrentWorkingDirectory(),
     skillSources: resolvedSkillSources,
+    shellContext: detectShellContext(),
   });
   for (const part of sharedReminderParts) {
     pushPart(part.text);
@@ -1894,21 +2064,32 @@ ${SYSTEM_REMINDER_CLOSE}
     ];
     queuedRecoveredApprovalResults = null;
   }
-  headlessModAdapter.updateContext(
-    createHeadlessModContext({
-      agent,
-      conversationId,
-      permissionMode: headlessPermissionMode,
-      reflectionSettings: effectiveReflectionSettings,
-      sessionStats,
-    }),
-  );
-  currentInput = await emitHeadlessTurnStart({
+  const turnStartModContext = createHeadlessModContext({
+    agent,
+    conversationId,
+    permissionMode: headlessPermissionMode,
+    reflectionSettings: effectiveReflectionSettings,
+    sessionStats,
+  });
+  const initialTurnStartEmission = await emitHeadlessTurnStart({
     agent,
     conversationId,
     input: currentInput,
     adapter: headlessModAdapter,
+    context: turnStartModContext,
   });
+  if (initialTurnStartEmission.cancelled) {
+    await emitHeadlessTurnStartCancellationOutput({
+      agent,
+      conversationId,
+      outputFormat,
+      reason: initialTurnStartEmission.reason,
+      sessionId,
+    });
+    await exitHeadless(1, "headless_turn_start_cancelled");
+  } else {
+    currentInput = initialTurnStartEmission.input;
+  }
 
   // Track lastRunId outside the while loop so it's available in catch block
   let llmApiErrorRetries = 0;
@@ -1984,6 +2165,13 @@ ${SYSTEM_REMINDER_CLOSE}
           conversationId,
           overrideModel: overrideModelHandle ?? preparedEffectiveModel,
           cachedAgent,
+          modContext: createHeadlessModContext({
+            agent,
+            conversationId,
+            permissionMode: headlessPermissionMode,
+            reflectionSettings: effectiveReflectionSettings,
+            sessionStats,
+          }),
           modEvents: headlessModAdapter.events,
         });
         availableTools = turnToolContext.availableTools;
@@ -2351,6 +2539,49 @@ ${SYSTEM_REMINDER_CLOSE}
         llmApiErrorRetries = 0;
         emptyResponseRetries = 0;
         conversationBusyRetries = 0;
+
+        // Emit turn_end. A mod may return { continue: "..." } to append a
+        // follow-up user message and run another turn. Auto-continues re-enter
+        // the loop and count against --max-turns via checkMaxTurns at the top.
+        const continueMessage = await emitHeadlessTurnEnd({
+          agent,
+          conversationId,
+          stopReason,
+          assistantMessage: findLastAssistantText(toLines(buffers)),
+          adapter: headlessModAdapter,
+          context: turnStartModContext,
+        });
+
+        if (continueMessage) {
+          currentInput = [
+            {
+              role: "user",
+              content: continueMessage,
+              otid: randomUUID(),
+            },
+          ];
+          const continueTurnStartEmission = await emitHeadlessTurnStart({
+            agent,
+            conversationId,
+            input: currentInput,
+            adapter: headlessModAdapter,
+            context: turnStartModContext,
+          });
+          if (continueTurnStartEmission.cancelled) {
+            await emitHeadlessTurnStartCancellationOutput({
+              agent,
+              conversationId,
+              outputFormat,
+              reason: continueTurnStartEmission.reason,
+              sessionId,
+            });
+            await exitHeadless(1, "headless_turn_start_cancelled");
+          } else {
+            currentInput = continueTurnStartEmission.input;
+          }
+          continue;
+        }
+
         break;
       }
 
@@ -3003,6 +3234,11 @@ async function runBidirectionalMode(
             conversationId,
             durationMs: null,
             adapter: headlessModAdapter,
+            context: createHeadlessModContext({
+              agent,
+              conversationId,
+              reflectionSettings,
+            }),
           });
         } catch {
           // Mod lifecycle events should not block headless shutdown.
@@ -3123,6 +3359,11 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId,
         approvalMessages,
+        modContext: createHeadlessModContext({
+          agent,
+          conversationId,
+          reflectionSettings,
+        }),
         modEvents: headlessModAdapter.events,
       });
       const drainResult = await drainStreamWithResume(
@@ -3503,6 +3744,11 @@ async function runBidirectionalMode(
         agentId: agent.id,
         conversationId: targetConversationId,
         approvalMessages: [approvalInput],
+        modContext: createHeadlessModContext({
+          agent,
+          conversationId: targetConversationId,
+          reflectionSettings,
+        }),
         modEvents: headlessModAdapter.events,
       });
 
@@ -3893,13 +4139,11 @@ async function runBidirectionalMode(
           workingDirectory: getCurrentWorkingDirectory(),
           skillSources,
         });
-        headlessModAdapter.updateContext(
-          createHeadlessModContext({
-            agent,
-            conversationId,
-            reflectionSettings,
-          }),
-        );
+        const turnStartModContext = createHeadlessModContext({
+          agent,
+          conversationId,
+          reflectionSettings,
+        });
         const enrichedContent = prependReminderPartsToContent(userContent, [
           ...sharedReminderParts,
         ]);
@@ -3908,12 +4152,23 @@ async function runBidirectionalMode(
         let currentInput: Array<MessageCreate | ApprovalCreate> = [
           { role: "user", content: enrichedContent, otid: userOtid },
         ];
-        currentInput = await emitHeadlessTurnStart({
+        const turnStartEmission = await emitHeadlessTurnStart({
           agent,
           conversationId,
           input: currentInput,
           adapter: headlessModAdapter,
+          context: turnStartModContext,
         });
+        if (turnStartEmission.cancelled) {
+          writeBidirectionalTurnStartCancellation({
+            agent,
+            conversationId,
+            reason: turnStartEmission.reason,
+            sessionId,
+          });
+          continue;
+        }
+        currentInput = turnStartEmission.input;
 
         // Approval handling loop - continue until end_turn or error
         while (true) {
@@ -3952,6 +4207,11 @@ async function runBidirectionalMode(
             const turnToolContext = await prepareHeadlessToolExecutionContext({
               agentId: agent.id,
               conversationId,
+              modContext: createHeadlessModContext({
+                agent,
+                conversationId,
+                reflectionSettings,
+              }),
               modEvents: headlessModAdapter.events,
             });
             availableTools = turnToolContext.availableTools;

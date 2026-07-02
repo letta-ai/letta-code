@@ -17,6 +17,12 @@ import {
   requestDeviceCode,
 } from "@/auth/oauth";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import {
+  type ChannelRestoreAgentScope,
+  parseChannelRestoreAgentScope,
+  RESTORE_CHANNEL_AGENT_SCOPE_ENV,
+  RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV,
+} from "@/channels/restore-scope";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
@@ -173,11 +179,11 @@ async function resolveListenerStartupMode(
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
 
-  // When running under the desktop app (which sets LETTA_DESKTOP_DEBUG_PANEL),
+  // When running under the desktop app (which sets LETTA_DESKTOP_MODE),
   // the local proxy has a full environment server that expects device
   // registration. Treat it as "remote" so the listener registers and connects
   // via WebSocket, even when channels are active.
-  if (process.env.LETTA_DESKTOP_DEBUG_PANEL === "1") {
+  if (process.env.LETTA_DESKTOP_MODE === "1") {
     return { kind: "remote", serverUrl };
   }
 
@@ -198,6 +204,24 @@ async function resolveListenerStartupMode(
   }
 
   return { kind: "unsupported-self-hosted", serverUrl };
+}
+
+function getScopedChannelRestoreAgentScope(): ChannelRestoreAgentScope | null {
+  return parseChannelRestoreAgentScope(
+    process.env[RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV],
+  );
+}
+
+function resolveChannelRestoreAgentScope(
+  scopedRestoreAgentScope: ChannelRestoreAgentScope | null,
+): ChannelRestoreAgentScope {
+  return (
+    scopedRestoreAgentScope ??
+    parseChannelRestoreAgentScope(
+      process.env[RESTORE_CHANNEL_AGENT_SCOPE_ENV],
+    ) ??
+    (isLocalBackendEnvEnabled() ? "local" : "cloud")
+  );
 }
 
 async function refreshListenerAccessToken(
@@ -341,73 +365,88 @@ export const __listenSubcommandTestUtils = {
   },
 };
 
+const LISTEN_OPTIONS = {
+  "env-name": { type: "string" },
+  channels: { type: "string" },
+  "install-channel-runtimes": { type: "boolean" },
+  help: { type: "boolean", short: "h" },
+  debug: { type: "boolean" },
+} as const;
+
+function printListenUsage(): void {
+  console.log(
+    "Usage: letta server [--env-name <name>] [--channels <list>] [--debug]\n",
+  );
+  console.log(
+    "Register this letta-code instance to receive messages from Letta Cloud.\n",
+  );
+  console.log("Options:");
+  console.log(
+    "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)",
+  );
+  console.log(
+    "  --channels <list>  Comma-separated channel names to enable (e.g. telegram)",
+  );
+  console.log(
+    "  --install-channel-runtimes  Install missing runtime deps for the selected channels before startup",
+  );
+  console.log(
+    "  --debug            Plain-text mode: log all WebSocket events instead of interactive UI",
+  );
+  console.log("  -h, --help         Show this help message\n");
+  console.log("Examples:");
+  console.log(
+    "  letta channels configure telegram          # Configure Telegram first",
+  );
+  console.log(
+    "  letta server                              # Uses hostname as default",
+  );
+  console.log('  letta server --env-name "work-laptop"');
+  console.log(
+    "  letta server --channels telegram           # Enable Telegram channel",
+  );
+  console.log("  letta server --channels telegram --install-channel-runtimes");
+  console.log(
+    "  letta server --debug                       # Log all WS events\n",
+  );
+  console.log(
+    "Once connected, this instance will listen for incoming messages from cloud agents.",
+  );
+  console.log(
+    "Messages will be executed locally using your letta-code environment.",
+  );
+  console.log(
+    "Telegram flow: configure the bot, start the listener with --channels telegram,",
+  );
+  console.log(
+    "then message the bot from Telegram and run /channels telegram pair <code> in the target conversation.",
+  );
+}
+
 export async function runListenSubcommand(argv: string[]): Promise<number> {
   // Parse arguments
-  const { values } = parseArgs({
-    args: argv,
-    options: {
-      "env-name": { type: "string" },
-      channels: { type: "string" },
-      "install-channel-runtimes": { type: "boolean" },
-      help: { type: "boolean", short: "h" },
-      debug: { type: "boolean" },
-    },
-    allowPositionals: false,
-  });
+  let values: ReturnType<
+    typeof parseArgs<{ options: typeof LISTEN_OPTIONS }>
+  >["values"];
+  try {
+    ({ values } = parseArgs({
+      args: argv,
+      options: LISTEN_OPTIONS,
+      strict: true,
+      allowPositionals: false,
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
+    printListenUsage();
+    return 1;
+  }
 
   const debugMode = !!values.debug;
 
   // Show help
   if (values.help) {
-    console.log(
-      "Usage: letta server [--env-name <name>] [--channels <list>] [--debug]\n",
-    );
-    console.log(
-      "Register this letta-code instance to receive messages from Letta Cloud.\n",
-    );
-    console.log("Options:");
-    console.log(
-      "  --env-name <name>  Friendly name for this environment (uses hostname if not provided)",
-    );
-    console.log(
-      "  --channels <list>  Comma-separated channel names to enable (e.g. telegram)",
-    );
-    console.log(
-      "  --install-channel-runtimes  Install missing runtime deps for the selected channels before startup",
-    );
-    console.log(
-      "  --debug            Plain-text mode: log all WebSocket events instead of interactive UI",
-    );
-    console.log("  -h, --help         Show this help message\n");
-    console.log("Examples:");
-    console.log(
-      "  letta channels configure telegram          # Configure Telegram first",
-    );
-    console.log(
-      "  letta server                              # Uses hostname as default",
-    );
-    console.log('  letta server --env-name "work-laptop"');
-    console.log(
-      "  letta server --channels telegram           # Enable Telegram channel",
-    );
-    console.log(
-      "  letta server --channels telegram --install-channel-runtimes",
-    );
-    console.log(
-      "  letta server --debug                       # Log all WS events\n",
-    );
-    console.log(
-      "Once connected, this instance will listen for incoming messages from cloud agents.",
-    );
-    console.log(
-      "Messages will be executed locally using your letta-code environment.",
-    );
-    console.log(
-      "Telegram flow: configure the bot, start the listener with --channels telegram,",
-    );
-    console.log(
-      "then message the bot from Telegram and run /channels telegram pair <code> in the target conversation.",
-    );
+    printListenUsage();
     return 0;
   }
 
@@ -415,6 +454,33 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   await applyStartupPermissionMode({});
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
+
+  // Register signal handlers so the listener can clean up child processes
+  // (subagents, bash commands, PTY sessions) before exiting. Without these,
+  // SIGTERM from the desktop app only kills the listener process itself,
+  // orphaning its descendants which accumulate over time.
+  const handleShutdownSignal = async (): Promise<void> => {
+    try {
+      const { stopListenerClient, isListenerActive } = await import(
+        "@/websocket/listen-client"
+      );
+      if (isListenerActive()) {
+        stopListenerClient();
+      }
+      // Stop channel adapters
+      const { getChannelRegistry } = await import("@/channels/registry");
+      const registry = getChannelRegistry();
+      if (registry) {
+        await registry.stopAll();
+      }
+    } catch {
+      // Best-effort cleanup — don't block exit
+    }
+    process.exit(0);
+  };
+
+  process.once("SIGTERM", handleShutdownSignal);
+  process.once("SIGINT", handleShutdownSignal);
 
   const exitWithTelemetry = async (
     code: number,
@@ -439,13 +505,23 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   // Initialize channels if explicitly requested, or restore persisted enabled
   // channels when a desktop wrapper opts into boot-time channel restore.
+  const scopedRestoreAgentScope = getScopedChannelRestoreAgentScope();
+  const restoreEnabledChannels =
+    !values.channels &&
+    (process.env.LETTA_RESTORE_ENABLED_CHANNELS === "1" ||
+      scopedRestoreAgentScope !== null);
+  const restoreAgentScope = restoreEnabledChannels
+    ? resolveChannelRestoreAgentScope(scopedRestoreAgentScope)
+    : null;
   const channelNames = values.channels
     ? values.channels
         .split(",")
         .map((s) => s.trim())
         .filter(Boolean)
-    : process.env.LETTA_RESTORE_ENABLED_CHANNELS === "1"
-      ? (await import("@/channels/service")).listEnabledChannelIds()
+    : restoreEnabledChannels
+      ? (await import("@/channels/service")).listEnabledChannelIds({
+          restoreAgentScope,
+        })
       : [];
 
   if (channelNames.length > 0) {
@@ -472,6 +548,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     try {
       await initializeChannels(channelNames, {
         failOnStartupError: Boolean(values.channels),
+        restoreAgentScope,
         logger: debugMode
           ? (message) => console.log(`[${formatTimestamp()}] ${message}`)
           : undefined,

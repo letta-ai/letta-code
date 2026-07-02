@@ -60,6 +60,7 @@ export {
   updateLocalProvider,
 } from "./local-provider-auth-store";
 export {
+  isHiddenLocalAgentRecord,
   type LocalAgentRecord,
   LocalBackendNotFoundError,
   LocalStore,

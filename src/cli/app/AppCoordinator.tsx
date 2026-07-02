@@ -1,5 +1,6 @@
 // src/cli/app/AppCoordinator.tsx
 
+import { join } from "node:path";
 import type {
   AgentState,
   MessageCreate,
@@ -59,7 +60,6 @@ import {
 import type { BtwState } from "@/cli/components/BtwPane";
 import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
 import { TerminalTitleWriter } from "@/cli/components/TerminalTitleWriter";
-import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import {
   appendStreamingOutput,
   type Buffers,
@@ -70,6 +70,7 @@ import {
 import { isLocalAgentId } from "@/cli/helpers/app-urls";
 import { backfillBuffers } from "@/cli/helpers/backfill";
 import { chunkLog } from "@/cli/helpers/chunk-log";
+import { buildCliModContext } from "@/cli/helpers/cli-mod-context";
 import {
   createContextTracker,
   resetContextHistory,
@@ -97,7 +98,6 @@ import {
 } from "@/cli/helpers/reflection-launcher";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
-import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   collectFinishedTaskToolCalls,
@@ -122,6 +122,7 @@ import {
   useTerminalWidth,
 } from "@/cli/hooks/use-terminal-width";
 import { useSuspend } from "@/cli/hooks/useSuspend/use-suspend.ts";
+import { installLocalBackendModEventHooks } from "@/cli/mods/local-backend-mod-events";
 import type { ModConversationCloseReason } from "@/cli/mods/types";
 import {
   type LocalModAdapter,
@@ -137,7 +138,6 @@ import {
   updateTask,
 } from "@/cron";
 import { experimentManager } from "@/experiments/manager";
-import { goalLoopMode } from "@/goal-loop-mode";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
@@ -146,7 +146,6 @@ import {
   isByokHandleForSelector,
   listProviders,
 } from "@/providers/byok-providers";
-import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   type MessageQueueItem,
   QueueRuntime,
@@ -214,6 +213,7 @@ import {
   getPreferredAgentModelHandle,
   inferReasoningEffortFromModelPreset,
   mapHandleToLlmConfigPatch,
+  providerTypeFromModelSettings,
 } from "./model-config";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
@@ -619,11 +619,6 @@ export function App({
     [],
   );
 
-  // Track goal loop state for UI updates (singleton state does not trigger re-renders)
-  const [uiGoalLoopActive, setUiGoalLoopActive] = useState(
-    goalLoopMode.getState().isActive,
-  );
-
   // Derive current approval from pending approvals and results
   // This is the approval currently being shown to the user
   const currentApproval = pendingApprovals[approvalResults.length];
@@ -780,9 +775,6 @@ export function App({
   const [queuedOverlayAction, setQueuedOverlayAction] =
     useState<QueuedOverlayAction>(null);
 
-  // Pin dialog state
-  const [pinDialogLocal, setPinDialogLocal] = useState(false);
-
   // Derived: check if any selector/overlay is open (blocks queue processing and hides input)
   const anySelectorOpen = activeOverlay !== null;
 
@@ -870,6 +862,10 @@ export function App({
   const [currentModelHandle, setCurrentModelHandle] = useState<string | null>(
     null,
   );
+  const currentModelHandleRef = useRef(currentModelHandle);
+  useEffect(() => {
+    currentModelHandleRef.current = currentModelHandle;
+  }, [currentModelHandle]);
   // Derive agentName from agentState (single source of truth)
   const agentName = agentState?.name ?? null;
   const [agentDescription, setAgentDescription] = useState<string | null>(null);
@@ -1160,14 +1156,18 @@ export function App({
       const modAdapter = modAdapterRef.current;
       if (modAdapter) {
         try {
-          await modAdapter.events.emit("conversation_close", {
-            agentId: agentIdRef.current ?? null,
-            conversationId: conversationIdRef.current ?? null,
-            durationMs,
-            messageCount: telemetry.getMessageCount(),
-            reason,
-            toolCallCount: telemetry.getToolCallCount(),
-          });
+          await modAdapter.events.emit(
+            "conversation_close",
+            {
+              agentId: agentIdRef.current ?? null,
+              conversationId: conversationIdRef.current ?? null,
+              durationMs,
+              messageCount: telemetry.getMessageCount(),
+              reason,
+              toolCallCount: telemetry.getToolCallCount(),
+            },
+            modAdapter.context,
+          );
         } catch {
           // Mod lifecycle events are best-effort on shutdown.
         }
@@ -1627,6 +1627,7 @@ export function App({
           conversationId: conversationIdRef.current,
           overrideModel: desiredModel,
           workingDirectory,
+          modContext: modAdapterRef.current?.context,
           modEvents: modAdapterRef.current?.events,
         });
       }
@@ -1635,6 +1636,7 @@ export function App({
         return prepareToolExecutionContextForResolvedTarget({
           modelIdentifier: desiredModel,
           conversationId: conversationIdRef.current,
+          modContext: modAdapterRef.current?.context,
           modEvents: modAdapterRef.current?.events,
           toolsetPreference: currentToolsetPreference,
           workingDirectory,
@@ -1644,6 +1646,7 @@ export function App({
       return prepareToolExecutionContextForResolvedTarget({
         modelIdentifier: null,
         conversationId: conversationIdRef.current,
+        modContext: modAdapterRef.current?.context,
         modEvents: modAdapterRef.current?.events,
         toolsetPreference: currentToolsetPreference,
         workingDirectory,
@@ -2283,9 +2286,10 @@ export function App({
 
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const reflectionSettings = getReflectionSettings(agentId);
-  const statusLinePayload = buildStatusLinePayload({
+  const modContext = buildCliModContext({
     modelId: llmConfigRef.current?.model ?? null,
     modelDisplayName: currentModelDisplay,
+    modelProvider: currentModelProvider ?? null,
     reasoningEffort: currentReasoningEffort,
     systemPromptId: currentSystemPromptId,
     toolset: currentToolset,
@@ -2301,8 +2305,6 @@ export function App({
     totalOutputTokens: sessionStatsSnapshot.usage.completionTokens,
     contextWindowSize: effectiveContextWindowSize,
     usedContextTokens: contextTrackerRef.current.lastContextTokens,
-    stepCount: sessionStatsSnapshot.usage.stepCount,
-    turnCount: sharedReminderStateRef.current.turnCount,
     reflectionMode: reflectionSettings.trigger,
     reflectionStepCount: reflectionSettings.stepCount,
     memfsEnabled:
@@ -2317,44 +2319,28 @@ export function App({
     backgroundAgents: getActiveBackgroundAgents().map((a) => ({
       type: a.type,
       status: a.status,
-      duration_ms: Date.now() - a.startTime,
+      durationMs: Date.now() - a.startTime,
     })),
   });
-  const modContext = useMemo(
-    () =>
-      buildStatuslineRenderContext({
-        payload: statusLinePayload,
-        ui: {
-          currentModelProvider: currentModelProvider ?? null,
-          goalStatusText: null,
-          hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
-          isByokProvider: Boolean(
-            currentModelProvider?.startsWith("lc-") ||
-              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
-          ),
-          isLocalBackend,
-          isOpenAICodexProvider:
-            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
-          rightColumnWidth: Math.max(
-            28,
-            Math.min(72, Math.floor(chromeColumns * 0.45)),
-          ),
-        },
-      }),
-    [
-      chromeColumns,
-      currentModelProvider,
-      hasTemporaryModelOverride,
-      isLocalBackend,
-      statusLinePayload,
-    ],
-  );
+  const agentModsDirectory =
+    modContext.memfs.enabled && modContext.memfs.memoryDir
+      ? join(modContext.memfs.memoryDir, "mods")
+      : null;
   const modAdapter = useLocalModAdapter(modContext, {
+    agentModsDirectory,
     disabled: modsDisabled,
   });
 
   useEffect(() => {
     modAdapterRef.current = modAdapter;
+  }, [modAdapter]);
+
+  useEffect(() => {
+    return installLocalBackendModEventHooks({
+      backend: getBackend(),
+      adapter: modAdapter,
+      buildContext: () => modAdapter.context,
+    });
   }, [modAdapter]);
 
   useEffect(() => {
@@ -2364,12 +2350,16 @@ export function App({
     if (!modAdapter.hasModSources) return;
 
     sessionModStartAttemptedRef.current = true;
-    void modAdapter.events.emit("conversation_open", {
-      agentId,
-      agentName: agentName ?? null,
-      conversationId: conversationIdRef.current ?? null,
-      reason: "startup",
-    });
+    void modAdapter.events.emit(
+      "conversation_open",
+      {
+        agentId,
+        agentName: agentName ?? null,
+        conversationId: conversationIdRef.current ?? null,
+        reason: "startup",
+      },
+      modAdapter.context,
+    );
   }, [agentId, agentName, modAdapter]);
 
   // Keep buffers in sync with agentId for server-side tool hooks
@@ -2408,6 +2398,8 @@ export function App({
 
         if (t === "exec_command") {
           command = typeof args.cmd === "string" ? args.cmd : "(no command)";
+          description =
+            typeof args.description === "string" ? args.description : "";
         } else if (t === "write_stdin") {
           const sessionId =
             typeof args.session_id === "string" ||
@@ -2591,21 +2583,29 @@ export function App({
     }
 
     const durationMs = Date.now() - sessionStartTimeRef.current;
-    void modAdapter.events.emit("conversation_close", {
-      agentId,
-      conversationId: conversationIdRef.current ?? null,
-      durationMs,
-      messageCount: telemetry.getMessageCount(),
-      reason: "reload",
-      toolCallCount: telemetry.getToolCallCount(),
-    });
+    void modAdapter.events.emit(
+      "conversation_close",
+      {
+        agentId,
+        conversationId: conversationIdRef.current ?? null,
+        durationMs,
+        messageCount: telemetry.getMessageCount(),
+        reason: "reload",
+        toolCallCount: telemetry.getToolCallCount(),
+      },
+      modAdapter.context,
+    );
     await modAdapter.reload();
-    void modAdapter.events.emit("conversation_open", {
-      agentId,
-      agentName: agentName ?? null,
-      conversationId: conversationIdRef.current ?? null,
-      reason: "reload",
-    });
+    void modAdapter.events.emit(
+      "conversation_open",
+      {
+        agentId,
+        agentName: agentName ?? null,
+        conversationId: conversationIdRef.current ?? null,
+        reason: "reload",
+      },
+      modAdapter.context,
+    );
     setTerminalTitleConfigRefreshEpoch((epoch) => epoch + 1);
     refreshDerived();
   }, [agentId, agentName, modAdapter, refreshDerived]);
@@ -2899,10 +2899,9 @@ export function App({
       // Add combined status at the END so user sees it without scrolling
       const statusId = `status-resumed-${Date.now().toString(36)}`;
 
-      // Check if agent is pinned (locally or globally)
+      // Check if agent is pinned
       const isPinned = agentState?.id
-        ? settingsManager.getLocalPinnedAgents().includes(agentState.id) ||
-          settingsManager.getGlobalPinnedAgents().includes(agentState.id)
+        ? settingsManager.isAgentPinned(agentState.id)
         : false;
 
       // Build status message
@@ -3087,9 +3086,14 @@ export function App({
           if (persistedToolsetPreference === "auto") {
             if (agentModelHandle) {
               const { switchToolsetForModel } = await import("@/tools/toolset");
+              const providerType =
+                providerTypeFromModelSettings(agent.model_settings) ??
+                agent.llm_config?.model_endpoint_type ??
+                null;
               const derivedToolset = await switchToolsetForModel(
                 agentModelHandle,
                 agentId,
+                providerType,
               );
               setCurrentToolset(derivedToolset);
             } else {
@@ -3384,7 +3388,10 @@ export function App({
         setCurrentModelId(modelInfo?.id ?? effectiveModelHandle);
         setLlmConfig({
           ...agentState.llm_config,
-          ...mapHandleToLlmConfigPatch(effectiveModelHandle),
+          ...mapHandleToLlmConfigPatch(
+            effectiveModelHandle,
+            providerTypeFromModelSettings(resolvedConversationModelSettings),
+          ),
           ...(typeof reasoningEffort === "string"
             ? { reasoning_effort: reasoningEffort }
             : {}),
@@ -3778,7 +3785,6 @@ export function App({
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiGoalLoopActive,
     shouldAutoGenerateConversationTitleRef,
     syncTrajectoryElapsedBase,
     syncTrajectoryTokenBase,
@@ -4007,6 +4013,8 @@ export function App({
     modelHandle: string;
     effort: string;
     modelId: string;
+    providerType?: string | null;
+    serviceTier?: string | null;
   } | null>(null);
   const reasoningCycleLastConfirmedRef = useRef<LlmConfig | null>(null);
   const reasoningCycleLastConfirmedAgentStateRef = useRef<AgentState | null>(
@@ -4189,7 +4197,6 @@ export function App({
     markLocalModelsAvailable,
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
-    setPinDialogLocal,
     setProfileConfirmPending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
@@ -4200,8 +4207,6 @@ export function App({
     setThinkingMessage,
     setTokenStreamingEnabled,
     setTrajectoryTokenBase,
-    setUiPermissionMode,
-    setUiGoalLoopActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
     streaming,
@@ -4531,21 +4536,6 @@ export function App({
     }
   }, [commandRunner, profileConfirmPending]);
 
-  // Handle goal loop exit from Input component (Shift+Tab).
-  const handleGoalLoopExit = useCallback(() => {
-    if (!goalLoopMode.getState().isActive) {
-      return;
-    }
-    goalLoopMode.deactivate();
-    setUiGoalLoopActive(false);
-    settingsManager.updateConversationGoalStatus(
-      conversationIdRef.current,
-      "paused",
-    );
-    permissionMode.setMode("standard");
-    setUiPermissionMode("standard");
-  }, [setUiPermissionMode]);
-
   // Toggle expand/collapse for a specific tool call ID
   const handleToggleExpandedToolCall = useCallback((id: string) => {
     setExpandedToolCallId((prev) => (prev === id ? null : id));
@@ -4597,6 +4587,7 @@ export function App({
       commandRunner,
       conversationOverrideModelSettingsRef,
       conversationIdRef,
+      currentModelHandleRef,
       hasConversationModelOverrideRef,
       isAgentBusy,
       llmConfigRef,
@@ -4757,15 +4748,14 @@ export function App({
       conversationSummary,
       conversationId,
       projectDirectory,
-      currentDirectory: statusLinePayload.workspace.current_dir,
+      currentDirectory: modContext.workspace.currentDir,
       runState: terminalTitleRunState,
       modelDisplayName: currentModelDisplay,
       reasoningEffort: currentReasoningEffort,
-      contextUsedPercentage: statusLinePayload.context_window.used_percentage,
-      contextRemainingPercentage:
-        statusLinePayload.context_window.remaining_percentage,
-      totalInputTokens: statusLinePayload.context_window.total_input_tokens,
-      totalOutputTokens: statusLinePayload.context_window.total_output_tokens,
+      contextUsedPercentage: modContext.contextWindow.usedPercentage,
+      contextRemainingPercentage: modContext.contextWindow.remainingPercentage,
+      totalInputTokens: modContext.contextWindow.totalInputTokens,
+      totalOutputTokens: modContext.contextWindow.totalOutputTokens,
       fastMode: currentModelServiceTier === CHATGPT_FAST_SERVICE_TIER,
     }),
     [
@@ -4775,12 +4765,12 @@ export function App({
       currentModelDisplay,
       currentModelServiceTier,
       currentReasoningEffort,
+      modContext.contextWindow.remainingPercentage,
+      modContext.contextWindow.totalInputTokens,
+      modContext.contextWindow.totalOutputTokens,
+      modContext.contextWindow.usedPercentage,
+      modContext.workspace.currentDir,
       projectDirectory,
-      statusLinePayload.context_window.remaining_percentage,
-      statusLinePayload.context_window.total_input_tokens,
-      statusLinePayload.context_window.total_output_tokens,
-      statusLinePayload.context_window.used_percentage,
-      statusLinePayload.workspace.current_dir,
       terminalTitleRunState,
     ],
   );
@@ -4816,10 +4806,9 @@ export function App({
       // Add status line showing agent info
       const statusId = `status-agent-${Date.now().toString(36)}`;
 
-      // Check if agent is pinned (locally or globally)
+      // Check if agent is pinned
       const isPinned = agentState?.id
-        ? settingsManager.getLocalPinnedAgents().includes(agentState.id) ||
-          settingsManager.getGlobalPinnedAgents().includes(agentState.id)
+        ? settingsManager.isAgentPinned(agentState.id)
         : false;
 
       // Build status message based on session type
@@ -4961,7 +4950,6 @@ export function App({
         currentModelId={currentModelId}
         currentModelServiceTier={currentModelServiceTier}
         currentModelProvider={currentModelProvider}
-        isLocalBackend={isLocalBackend}
         currentPersonalityId={currentPersonalityId}
         currentReasoningEffort={currentReasoningEffort}
         currentSystemPromptId={currentSystemPromptId}
@@ -5000,7 +4988,6 @@ export function App({
         handlePersonalitySelect={handlePersonalitySelect}
         handleProfileEscapeCancel={handleProfileEscapeCancel}
         handleQuestionSubmit={handleQuestionSubmit}
-        handleGoalLoopExit={handleGoalLoopExit}
         handleSleeptimeModeSelect={handleSleeptimeModeSelect}
         handleSystemPromptSelect={handleSystemPromptSelect}
         handleToolsetSelect={handleToolsetSelect}
@@ -5027,7 +5014,6 @@ export function App({
         pendingApprovals={pendingApprovals}
         pendingConversationSwitchRef={pendingConversationSwitchRef}
         pendingIds={pendingIds}
-        pinDialogLocal={pinDialogLocal}
         precomputedDiffsRef={precomputedDiffsRef}
         profileConfirmPending={profileConfirmPending}
         queueDisplay={queueDisplay}
@@ -5067,7 +5053,7 @@ export function App({
         openOverlay={openOverlay}
         staticItems={staticItems}
         staticRenderEpoch={staticRenderEpoch}
-        statusLinePayload={statusLinePayload}
+        modContext={modContext}
         statusLinePrompt={CLI_GLYPHS.prompt}
         terminalTitleData={terminalTitleData}
         onTitlePreview={setTerminalTitlePreviewOverride}
@@ -5080,7 +5066,6 @@ export function App({
         usedContextTokens={usedContextTokens}
         contextWindowSize={effectiveContextWindowSize}
         uiPermissionMode={uiPermissionMode}
-        uiGoalLoopActive={uiGoalLoopActive}
         updateAgentName={updateAgentName}
       />
     </>

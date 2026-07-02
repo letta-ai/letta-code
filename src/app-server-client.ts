@@ -1,6 +1,8 @@
 import type {
   AbortMessageCommand,
   AbortMessageResponseMessage,
+  ConversationListCommand,
+  ConversationListResponseMessage,
   ExternalToolCallRequestMessage,
   ExternalToolCallResult,
   InputCommand,
@@ -46,13 +48,20 @@ export interface AppServerSocketLike {
   once?(type: string, listener: (event: unknown) => void): void;
 }
 
+export interface AppServerSocketOptions {
+  headers?: Record<string, string>;
+}
+
 export type AppServerSocketConstructor = new (
   url: string,
+  options?: AppServerSocketOptions,
 ) => AppServerSocketLike;
 
 export interface AppServerClientOptions {
   /** Base app-server URL, e.g. ws://127.0.0.1:4500 or http://127.0.0.1:4500. */
   url: string;
+  /** Optional capability token sent as Authorization: Bearer <token>; requires a WebSocket implementation with header support. */
+  authToken?: string;
   /** Optional WebSocket constructor for Node/tests. Browsers use globalThis.WebSocket. */
   WebSocket?: AppServerSocketConstructor;
   /** Default timeout for request_id-correlated control requests. */
@@ -86,6 +95,7 @@ type PendingRequest = {
 
 export type AppServerTurnCompletionSource =
   | "stop_reason"
+  | "loop_status_waiting_on_approval"
   | "loop_status_waiting_fallback";
 
 export interface AppServerTurnResult {
@@ -225,12 +235,31 @@ function parseProtocolMessage(event: unknown): WsProtocolMessage {
   return JSON.parse(messageDataToString(event)) as WsProtocolMessage;
 }
 
+function appServerSocketOptions(
+  authToken: string | undefined,
+): AppServerSocketOptions | undefined {
+  if (authToken === undefined) {
+    return undefined;
+  }
+  const token = authToken.trim();
+  if (!token) {
+    throw new Error("app-server auth token must not be empty");
+  }
+  return { headers: { Authorization: `Bearer ${token}` } };
+}
+
 function sameRuntime(a: RuntimeScope | undefined, b: RuntimeScope): boolean {
   return a?.agent_id === b.agent_id && a?.conversation_id === b.conversation_id;
 }
 
 function isWaitingLoopStatus(message: LoopStatusUpdateMessage): boolean {
   return message.loop_status.status === "WAITING_ON_INPUT";
+}
+
+function isWaitingOnApprovalLoopStatus(
+  message: LoopStatusUpdateMessage,
+): boolean {
+  return message.loop_status.status === "WAITING_ON_APPROVAL";
 }
 
 function streamDeltaRunId(message: StreamDeltaMessage): string | null {
@@ -281,11 +310,14 @@ export class AppServerClient {
 
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    const socketOptions = appServerSocketOptions(options.authToken);
     this.control = new WebSocket(
       resolveAppServerChannelUrl(options.url, "control"),
+      socketOptions,
     );
     this.stream = new WebSocket(
       resolveAppServerChannelUrl(options.url, "stream"),
+      socketOptions,
     );
 
     attachSocketListener(this.control, "message", (event) => {
@@ -464,6 +496,30 @@ export class AppServerClient {
     );
   }
 
+  conversationList(
+    command: Omit<ConversationListCommand, "type" | "request_id"> & {
+      request_id?: string;
+    } = {},
+    options: Omit<
+      AppServerRequestOptions<ConversationListResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<ConversationListResponseMessage> {
+    return this.request(
+      {
+        type: "conversation_list",
+        request_id:
+          command.request_id ?? this.nextRequestId("conversation-list"),
+        ...command,
+      },
+      {
+        ...options,
+        predicate: (message): message is ConversationListResponseMessage =>
+          message.type === "conversation_list_response",
+      },
+    );
+  }
+
   onExternalToolCall(handler: AppServerExternalToolCallHandler): () => void {
     return this.onMessage((message, channel) => {
       if (
@@ -510,6 +566,7 @@ export class AppServerClient {
     const commandWithIds = this.withClientMessageIds(command);
     const runIds = new Set<string>();
     let observedTurnEvidence = false;
+    let observedRequiresApprovalStop = false;
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -569,19 +626,45 @@ export class AppServerClient {
             return;
           }
           if (messageType === "stop_reason") {
-            finish("stop_reason", message, streamDeltaStopReason(message));
+            const stopReason = streamDeltaStopReason(message);
+            if (stopReason === "requires_approval") {
+              observedRequiresApprovalStop = true;
+              return;
+            }
+            finish("stop_reason", message, stopReason);
           }
           return;
         }
 
         if (message.type === "update_loop_status") {
+          const hadTurnEvidenceBeforeLoopStatus =
+            observedTurnEvidence || observedRequiresApprovalStop;
+          if (
+            !hadTurnEvidenceBeforeLoopStatus &&
+            (isWaitingOnApprovalLoopStatus(message) ||
+              (options.allowLoopStatusFallback === true &&
+                isWaitingLoopStatus(message)))
+          ) {
+            return;
+          }
           for (const runId of message.loop_status.active_run_ids) {
             observedTurnEvidence = true;
             runIds.add(runId);
           }
           if (
+            hadTurnEvidenceBeforeLoopStatus &&
+            isWaitingOnApprovalLoopStatus(message)
+          ) {
+            finish(
+              "loop_status_waiting_on_approval",
+              message,
+              "requires_approval",
+            );
+            return;
+          }
+          if (
             options.allowLoopStatusFallback === true &&
-            observedTurnEvidence &&
+            hadTurnEvidenceBeforeLoopStatus &&
             isWaitingLoopStatus(message)
           ) {
             finish("loop_status_waiting_fallback", message, null);

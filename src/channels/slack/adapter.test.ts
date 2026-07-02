@@ -194,6 +194,12 @@ describe("resolveSlackInboundDebounceMs", () => {
     restoreEnv();
   });
 
+  test("config value of 0 is respected when env is unset", () => {
+    clearEnv();
+    expect(resolveSlackInboundDebounceMs({ inboundDebounceMs: 0 })).toBe(0);
+    restoreEnv();
+  });
+
   test("env var overrides config", () => {
     clearEnv();
     process.env.LETTA_SLACK_INBOUND_DEBOUNCE_MS = "2500";
@@ -217,9 +223,27 @@ describe("resolveSlackInboundDebounceMs", () => {
     restoreEnv();
   });
 
-  test("negative config value falls back to 0", () => {
+  test("invalid env var falls back to disabled when config is absent", () => {
+    clearEnv();
+    process.env.LETTA_SLACK_INBOUND_DEBOUNCE_MS = "not-a-number";
+    expect(resolveSlackInboundDebounceMs({})).toBe(0);
+    restoreEnv();
+  });
+
+  test("negative env var falls back to config or disabled", () => {
+    clearEnv();
+    process.env.LETTA_SLACK_INBOUND_DEBOUNCE_MS = "-1";
+    expect(resolveSlackInboundDebounceMs({ inboundDebounceMs: 800 })).toBe(800);
+    expect(resolveSlackInboundDebounceMs({})).toBe(0);
+    restoreEnv();
+  });
+
+  test("invalid or negative config value falls back to disabled", () => {
     clearEnv();
     expect(resolveSlackInboundDebounceMs({ inboundDebounceMs: -500 })).toBe(0);
+    expect(
+      resolveSlackInboundDebounceMs({ inboundDebounceMs: Number.NaN }),
+    ).toBe(0);
     restoreEnv();
   });
 

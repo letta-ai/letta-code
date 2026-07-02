@@ -19,12 +19,15 @@ import {
 import { getActiveChannelIds } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { experimentManager } from "@/experiments/manager";
 import {
   runPostToolUseFailureHooks,
   runPostToolUseHooks,
   runPreToolUseHooks,
 } from "@/hooks";
+import { buildModInvocationContext } from "@/mods/context";
 import { createModConversationHandle } from "@/mods/conversation-handle";
+import { attachDeprecatedGetContextTrap } from "@/mods/deprecated-api";
 import { emitModEvent, type ModEvents } from "@/mods/event-emitter";
 import {
   checkModPermissions,
@@ -40,7 +43,14 @@ import {
   modToolApprovalPolicy,
   runModTool,
 } from "@/mods/tool-registry";
-import type { ModToolRunContext, ToolApprovalPolicy } from "@/mods/types";
+import type {
+  ModContext,
+  ModSecretResolver,
+  ModToolEndEvent,
+  ModToolRunContext,
+  ModToolStartEvent,
+  ToolApprovalPolicy,
+} from "@/mods/types";
 import {
   permissionMode as globalPermissionMode,
   type PermissionMode,
@@ -59,7 +69,9 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
+import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
+import { toolFilter } from "./filter";
 import {
   functionToolForm,
   type JsonSchema,
@@ -306,7 +318,11 @@ export function filterBuiltInToolNamesByClientAllowlist(
   );
 }
 
-const WORKTREE_TOOL_NAMES = new Set<ToolName>(["CreateWorktree"]);
+const WORKTREE_TOOL_NAMES = new Set<ToolName>(["EnterWorktree"]);
+const ARTIFACT_TOOL_NAMES: ToolName[] = [
+  "read_artifact_file",
+  "write_artifact_file",
+];
 
 function shouldIncludeWorktreeTool(): boolean {
   try {
@@ -324,6 +340,19 @@ function filterWorktreeTools(toolNames: ToolName[]): ToolName[] {
   return toolNames.filter((name) => !WORKTREE_TOOL_NAMES.has(name));
 }
 
+function resolveArtifactToolNames(toolNames: ToolName[]): ToolName[] {
+  const artifactToolSet = new Set<ToolName>(ARTIFACT_TOOL_NAMES);
+  const withoutArtifactTools = toolNames.filter(
+    (name) => !artifactToolSet.has(name),
+  );
+
+  if (!experimentManager.isEnabled("artifacts")) {
+    return withoutArtifactTools;
+  }
+
+  return [...withoutArtifactTools, ...ARTIFACT_TOOL_NAMES];
+}
+
 function filterExternalToolsByClientAllowlist(
   externalTools: Map<string, ExternalToolDefinition>,
   clientToolAllowlist?: string[],
@@ -336,6 +365,26 @@ function filterExternalToolsByClientAllowlist(
   return new Map(
     Array.from(externalTools.entries()).filter(([internalName, tool]) =>
       matchesClientToolAllowlistEntry(allowSet, tool.name, internalName),
+    ),
+  );
+}
+
+function filterToolRegistryByClientAllowlist(
+  registry: ToolRegistry,
+  clientToolAllowlist?: string[],
+): ToolRegistry {
+  if (clientToolAllowlist === undefined) {
+    return new Map(registry);
+  }
+
+  const allowSet = new Set(clientToolAllowlist);
+  return new Map(
+    Array.from(registry.entries()).filter(([internalName]) =>
+      matchesClientToolAllowlistEntry(
+        allowSet,
+        getServerToolName(internalName),
+        internalName,
+      ),
     ),
   );
 }
@@ -405,7 +454,7 @@ export const ANTHROPIC_DEFAULT_TOOLS: ToolName[] = [
   "AskUserQuestion",
   "Bash",
   "TaskOutput",
-  "CreateWorktree",
+  "EnterWorktree",
   "Edit",
   "TaskStop",
   // "MultiEdit",
@@ -439,7 +488,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
   "glob_gemini",
   "search_file_content",
   "memory",
-  "CreateWorktree",
+  "EnterWorktree",
   "replace",
   "write_file_gemini",
   "write_todos",
@@ -452,7 +501,7 @@ export const GEMINI_DEFAULT_TOOLS: ToolName[] = [
 export const OPENAI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
-  "CreateWorktree",
+  "EnterWorktree",
   "memory_apply_patch",
   "Task",
   "TaskOutput",
@@ -469,7 +518,7 @@ export const OPENAI_PASCAL_TOOLS: ToolName[] = [
 export const GEMINI_PASCAL_TOOLS: ToolName[] = [
   // Additional Letta Code tools
   "AskUserQuestion",
-  "CreateWorktree",
+  "EnterWorktree",
   "memory",
   "Skill",
   "Task",
@@ -494,7 +543,7 @@ const TOOL_PERMISSIONS: Record<
   Bash: { requiresApproval: true },
   BashOutput: { requiresApproval: false },
   TaskOutput: { requiresApproval: false },
-  CreateWorktree: { requiresApproval: true },
+  EnterWorktree: { requiresApproval: true },
   Edit: { requiresApproval: true },
   Glob: { requiresApproval: false },
   Grep: { requiresApproval: false },
@@ -506,6 +555,7 @@ const TOOL_PERMISSIONS: Record<
   MessageChannel: { requiresApproval: false },
   MultiEdit: { requiresApproval: true },
   Read: { requiresApproval: false },
+  read_artifact_file: { requiresApproval: false },
   view_image: { requiresApproval: false },
   ViewImage: { requiresApproval: false },
   ReadLSP: { requiresApproval: false },
@@ -517,6 +567,7 @@ const TOOL_PERMISSIONS: Record<
   TaskUpdate: { requiresApproval: false },
   TodoWrite: { requiresApproval: false },
   Write: { requiresApproval: true },
+  write_artifact_file: { requiresApproval: false },
   shell_command: { requiresApproval: true },
   exec_command: { requiresApproval: true },
   write_stdin: { requiresApproval: false },
@@ -526,9 +577,6 @@ const TOOL_PERMISSIONS: Record<
   grep_files: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
   update_plan: { requiresApproval: false },
-  get_goal: { requiresApproval: false },
-  create_goal: { requiresApproval: false },
-  update_goal: { requiresApproval: false },
   // Gemini toolset
   glob_gemini: { requiresApproval: false },
   list_directory: { requiresApproval: false },
@@ -547,9 +595,6 @@ const TOOL_PERMISSIONS: Record<
   GrepFiles: { requiresApproval: false },
   ApplyPatch: { requiresApproval: true },
   UpdatePlan: { requiresApproval: false },
-  GetGoal: { requiresApproval: false },
-  CreateGoal: { requiresApproval: false },
-  UpdateGoal: { requiresApproval: false },
   // Gemini-2 toolset (PascalCase)
   RunShellCommand: { requiresApproval: true },
   ReadFileGemini: { requiresApproval: false },
@@ -643,6 +688,7 @@ type ToolExecutionContextSnapshot = {
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
+  modContext?: ModContext;
   modEvents?: ModEvents;
   modPermissions: Map<string, ModPermissionDefinition>;
   modTools: Map<string, ModToolDefinition>;
@@ -1098,6 +1144,7 @@ function capturePreparedToolExecutionContext(
     toolRegistry: ToolRegistry;
     externalTools: Map<string, ExternalToolDefinition>;
     externalExecutor?: ExternalToolExecutor;
+    modContext?: ModContext;
     modEvents?: ModEvents;
     modPermissions: Map<string, ModPermissionDefinition>;
     modTools: Map<string, ModToolDefinition>;
@@ -1107,6 +1154,7 @@ function capturePreparedToolExecutionContext(
     externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
+    modContext?: ModContext;
     modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -1114,14 +1162,20 @@ function capturePreparedToolExecutionContext(
   },
 ): PreparedToolExecutionContext {
   const runtimeContext = buildExecutionRuntimeContextSnapshot(options);
+  const clientToolAllowlist =
+    options?.clientToolAllowlist ?? toolFilter.getEnabledTools() ?? undefined;
   if (options?.channelToolScope !== undefined) {
     runtimeContext.channelToolScope = options.channelToolScope;
   }
   if (options?.channelTurnSources?.length) {
     runtimeContext.channelTurnSources = [...options.channelTurnSources];
   }
+  const toolRegistrySnapshot = filterToolRegistryByClientAllowlist(
+    withDynamicMessageChannelCache(snapshot.toolRegistry),
+    clientToolAllowlist,
+  );
   const executionSnapshot: ToolExecutionContextSnapshot = {
-    toolRegistry: withDynamicMessageChannelCache(snapshot.toolRegistry),
+    toolRegistry: toolRegistrySnapshot,
     externalTools: toModelFacingExternalToolMap(
       filterExternalToolsByClientAllowlist(
         filterExternalToolsByScopeIds(
@@ -1131,15 +1185,16 @@ function capturePreparedToolExecutionContext(
           ),
           options?.externalToolScopeIds,
         ),
-        options?.clientToolAllowlist,
+        clientToolAllowlist,
       ),
     ),
     externalExecutor: snapshot.externalExecutor,
+    modContext: options?.modContext ?? snapshot.modContext,
     modEvents: options?.modEvents ?? snapshot.modEvents,
     modPermissions: snapshot.modPermissions,
     modTools: filterModToolsByClientAllowlist(
       snapshot.modTools,
-      options?.clientToolAllowlist,
+      clientToolAllowlist,
     ),
     workingDirectory:
       runtimeContext.workingDirectory ?? getCurrentWorkingDirectory(),
@@ -1158,7 +1213,11 @@ function capturePreparedToolExecutionContext(
       executionSnapshot.externalTools,
       executionSnapshot.modTools,
     ),
-    loadedToolNames: Array.from(executionSnapshot.toolRegistry.keys()),
+    loadedToolNames: buildClientToolsFromSnapshot(
+      executionSnapshot.toolRegistry,
+      new Map(),
+      executionSnapshot.modTools,
+    ).map((tool) => tool.name),
   };
 }
 
@@ -1170,18 +1229,21 @@ function capturePreparedToolExecutionContext(
 export function captureToolExecutionContext(
   workingDirectory: string = getCurrentWorkingDirectory(),
   permissionModeState?: PermissionModeState,
+  modContext?: ModContext,
 ): CapturedToolExecutionContext {
   return capturePreparedToolExecutionContext(
     {
       toolRegistry: new Map(toolRegistry),
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
-      modPermissions: getAvailableModPermissionsRegistry(),
-      modTools: getAvailableModToolsRegistry(),
+      modContext,
+      modPermissions: getAvailableModPermissionsRegistry(modContext),
+      modTools: getAvailableModToolsRegistry(modContext),
     },
     {
       workingDirectory,
       permissionModeState,
+      modContext,
     },
   );
 }
@@ -1192,6 +1254,7 @@ export async function prepareCurrentToolExecutionContext(options?: {
   runtimeContext?: Partial<RuntimeContextSnapshot>;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
   channelTurnSources?: ChannelTurnSource[];
+  modContext?: ModContext;
   modEvents?: ModEvents;
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
@@ -1205,9 +1268,10 @@ export async function prepareCurrentToolExecutionContext(options?: {
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      modContext: options?.modContext,
       modEvents: options?.modEvents,
-      modPermissions: getAvailableModPermissionsRegistry(),
-      modTools: getAvailableModToolsRegistry(),
+      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
+      modTools: getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1222,6 +1286,7 @@ export async function prepareToolExecutionContextForSpecificTools(
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
+    modContext?: ModContext;
     modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
@@ -1235,9 +1300,10 @@ export async function prepareToolExecutionContextForSpecificTools(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      modContext: options?.modContext,
       modEvents: options?.modEvents,
-      modPermissions: getAvailableModPermissionsRegistry(),
-      modTools: getAvailableModToolsRegistry(),
+      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
+      modTools: getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1254,6 +1320,7 @@ export async function prepareToolExecutionContextForModel(
     permissionModeState?: PermissionModeState;
     channelToolScope?: MessageChannelToolDiscoveryScope | null;
     channelTurnSources?: ChannelTurnSource[];
+    modContext?: ModContext;
     modEvents?: ModEvents;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
@@ -1267,9 +1334,10 @@ export async function prepareToolExecutionContextForModel(
       toolRegistry: toolRegistrySnapshot,
       externalTools: new Map(getExternalToolsRegistry()),
       externalExecutor: getExternalToolExecutor(),
+      modContext: options?.modContext,
       modEvents: options?.modEvents,
-      modPermissions: getAvailableModPermissionsRegistry(),
-      modTools: getAvailableModToolsRegistry(),
+      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
+      modTools: getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1323,6 +1391,14 @@ async function checkModPermissionForContext(options: {
 }): Promise<ModPermissionDecisionResult | undefined> {
   const runtimeContext = options.context?.runtimeContext;
   const permissionModeState = options.context?.permissionModeState;
+  const modContext =
+    options.context?.modContext ??
+    buildModInvocationContext({
+      conversationId: runtimeContext?.conversationId ?? null,
+      permissionMode:
+        permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
+      workingDirectory: options.workingDirectory,
+    });
   return checkModPermissions(
     {
       agentId: runtimeContext?.agentId ?? null,
@@ -1336,7 +1412,9 @@ async function checkModPermissionForContext(options: {
         permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
       phase: options.phase,
     },
-    options.context?.modPermissions ?? getAvailableModPermissionsRegistry(),
+    options.context?.modPermissions ??
+      getAvailableModPermissionsRegistry(modContext),
+    modContext,
   );
 }
 
@@ -1372,6 +1450,13 @@ export async function checkToolPermission(
     permissionModeStateArg ?? context?.permissionModeState;
   const effectiveAgentId =
     agentIdArg ?? context?.runtimeContext.agentId ?? undefined;
+  const modContext =
+    context?.modContext ??
+    buildModInvocationContext({
+      conversationId: context?.runtimeContext.conversationId ?? null,
+      permissionMode: effectivePermissionModeState?.mode ?? null,
+      workingDirectory: effectiveWorkingDirectory,
+    });
 
   const permissions = await loadPermissions(effectiveWorkingDirectory);
   return runWithRuntimeContext(
@@ -1388,10 +1473,12 @@ export async function checkToolPermission(
         effectiveWorkingDirectory,
         effectivePermissionModeState,
         effectiveAgentId,
-        context?.modPermissions ?? getAvailableModPermissionsRegistry(),
-        context?.modTools ?? getAvailableModToolsRegistry(),
+        context?.modPermissions ??
+          getAvailableModPermissionsRegistry(modContext),
+        context?.modTools ?? getAvailableModToolsRegistry(modContext),
         {
           conversationId: context?.runtimeContext.conversationId ?? null,
+          modContext,
           phase: "approval",
           toolCallId: toolCallIdArg ?? null,
         },
@@ -1580,6 +1667,8 @@ async function resolveBaseToolNamesForModel(
   }
 
   baseToolNames = filterWorktreeTools(baseToolNames);
+
+  baseToolNames = resolveArtifactToolNames(baseToolNames);
 
   // Append channel tool if channels are active
   baseToolNames = maybeAppendChannelTools(
@@ -1871,6 +1960,126 @@ function isMultimodalContent(
   );
 }
 
+const MOD_SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
+
+type InvocationSecretRedactions = Map<string, string>;
+
+function normalizeModSecretName(name: string): string {
+  const normalized = name.toUpperCase();
+  if (!MOD_SECRET_NAME_PATTERN.test(normalized)) {
+    throw new Error(
+      `Invalid secret name '${name}'. Use uppercase letters, numbers, and underscores only. Must start with a letter or underscore.`,
+    );
+  }
+  return normalized;
+}
+
+function scrubInvocationSecretRedactions(
+  input: string,
+  redactions: InvocationSecretRedactions,
+): string {
+  let result = input;
+  const entries = Array.from(redactions.entries()).sort(
+    ([, a], [, b]) => b.length - a.length,
+  );
+  for (const [name, value] of entries) {
+    if (value.length > 0) {
+      result = result.replaceAll(value, `${name}=<REDACTED>`);
+    }
+  }
+  return result;
+}
+
+function scrubModToolString(
+  input: string,
+  agentId: string | undefined,
+  redactions: InvocationSecretRedactions,
+): string {
+  return scrubInvocationSecretRedactions(
+    scrubSecretsFromString(input, agentId),
+    redactions,
+  );
+}
+
+function scrubModToolReturnContent(
+  content: ToolReturnContent,
+  agentId: string | undefined,
+  redactions: InvocationSecretRedactions,
+): ToolReturnContent {
+  if (typeof content === "string") {
+    return scrubModToolString(content, agentId, redactions);
+  }
+  return content.map((block) =>
+    block.type === "text"
+      ? { ...block, text: scrubModToolString(block.text, agentId, redactions) }
+      : block,
+  );
+}
+
+function scrubModToolLines(
+  lines: string[] | undefined,
+  agentId: string | undefined,
+  redactions: InvocationSecretRedactions,
+): string[] | undefined {
+  return lines?.map((line) => scrubModToolString(line, agentId, redactions));
+}
+
+function createScrubbedError(error: unknown, message: string): Error {
+  const scrubbedError = new Error(message);
+  if (error instanceof Error) {
+    scrubbedError.name = error.name;
+  }
+  return scrubbedError;
+}
+
+function createModSecretResolver(options: {
+  addRedaction: (name: string, value: string) => void;
+  agentId: string | null | undefined;
+}): ModSecretResolver {
+  let agentSecretsPromise: Promise<Record<string, string>> | null = null;
+
+  const loadAgentSecrets = async (): Promise<Record<string, string>> => {
+    if (!options.agentId) return {};
+    agentSecretsPromise ??= refreshAndListSecrets(options.agentId).then(
+      (entries) =>
+        Object.fromEntries(entries.map(({ key, value }) => [key, value])),
+    );
+    return agentSecretsPromise;
+  };
+
+  return async (name, resolverOptions) => {
+    const key = normalizeModSecretName(name);
+    let agentLookupError: unknown;
+
+    if (options.agentId) {
+      try {
+        const agentSecrets = await loadAgentSecrets();
+        if (Object.hasOwn(agentSecrets, key)) {
+          const value = agentSecrets[key] ?? "";
+          options.addRedaction(key, value);
+          return value;
+        }
+      } catch (error) {
+        agentLookupError = error;
+      }
+    }
+
+    if (resolverOptions?.envFallback === true) {
+      const value = process.env[key];
+      if (value !== undefined) {
+        options.addRedaction(key, value);
+        return value;
+      }
+    }
+
+    if (agentLookupError !== undefined) {
+      throw agentLookupError;
+    }
+
+    return null;
+  };
+}
+
 function flattenToolResponse(result: unknown): ToolReturnContent {
   if (result === null || result === undefined) {
     return "";
@@ -2105,10 +2314,16 @@ async function emitToolStartEvent(options: {
   args: ToolArgs;
   events?: ModEvents;
   executionScope: RuntimeContextSnapshot;
+  modContext: ModContext;
   toolCallId?: string;
   toolName: string;
-}): Promise<{ args: ToolArgs }> {
-  const event = {
+}): Promise<{
+  args: ToolArgs;
+  result?: { status: "success" | "error"; output: string };
+}> {
+  const event: ModToolStartEvent & {
+    result?: { status: "success" | "error"; output: string };
+  } = {
     agentId: options.executionScope.agentId ?? null,
     conversationId: options.executionScope.conversationId ?? null,
     toolCallId: options.toolCallId ?? null,
@@ -2117,13 +2332,48 @@ async function emitToolStartEvent(options: {
   };
 
   try {
-    await emitModEvent(options.events, "tool_start", event);
+    await emitModEvent(options.events, "tool_start", event, options.modContext);
   } catch (error) {
     debugLog("mods", "tool_start event failed", error);
     return { args: options.args };
   }
 
-  return { args: isToolStartArgs(event.args) ? event.args : options.args };
+  return {
+    args: isToolStartArgs(event.args) ? event.args : options.args,
+    result: event.result,
+  };
+}
+
+async function emitToolEndEvent(options: {
+  args: ToolArgs;
+  events?: ModEvents;
+  executionScope: RuntimeContextSnapshot;
+  modContext: ModContext;
+  toolCallId?: string;
+  toolName: string;
+  status: "success" | "error";
+  output: string;
+}): Promise<{ status: "success" | "error"; output: string } | undefined> {
+  const event: ModToolEndEvent & {
+    result?: { status: "success" | "error"; output: string };
+  } = {
+    agentId: options.executionScope.agentId ?? null,
+    conversationId: options.executionScope.conversationId ?? null,
+    toolCallId: options.toolCallId ?? null,
+    toolName: options.toolName,
+    args: cloneToolArgsForModEvent(options.args),
+    status: options.status,
+    output: options.output,
+  };
+
+  try {
+    await emitModEvent(options.events, "tool_end", event, options.modContext);
+  } catch (error) {
+    debugLog("mods", "tool_end event failed", error);
+    return undefined;
+  }
+
+  return event.result;
 }
 
 async function executeModTool(
@@ -2137,6 +2387,7 @@ async function executeModTool(
     onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
     workingDirectory: string;
     scopedAgentId?: string;
+    modContext?: ModContext;
   },
 ): Promise<ToolExecutionResult> {
   const startTime = Date.now();
@@ -2145,6 +2396,12 @@ async function executeModTool(
     tool.activationSignal,
   ]);
   const { signal } = linkedSignal;
+  const redactions: InvocationSecretRedactions = new Map();
+  const addRedaction = (name: string, value: string): void => {
+    if (value.length > 0) {
+      redactions.set(name, value);
+    }
+  };
 
   const run = async (): Promise<ToolExecutionResult> => {
     const preHookResult = await runPreToolUseHooks(
@@ -2164,26 +2421,32 @@ async function executeModTool(
 
     try {
       const backend = getBackend();
+      const modContext = toolExecutionModContext(executionScope, options);
       const context: ModToolRunContext = {
+        ...modContext,
         args: args as Record<string, unknown>,
-        cwd: options.workingDirectory,
-        workingDirectory: options.workingDirectory,
         toolCallId: options.toolCallId ?? null,
         signal,
+        secret: createModSecretResolver({
+          addRedaction,
+          agentId: modContext.agent.id,
+        }),
         ...(options.onOutput
           ? {
               onOutput: (chunk: string, stream: "stdout" | "stderr") => {
                 options.onOutput?.(
                   stripAnsi(
-                    scrubSecretsFromString(chunk, options.scopedAgentId),
+                    scrubModToolString(
+                      chunk,
+                      options.scopedAgentId,
+                      redactions,
+                    ),
                   ),
                   stream,
                 );
               },
             }
           : {}),
-        permissionMode: executionScope.permissionMode ?? null,
-        agent: { id: executionScope.agentId ?? null },
         conversation: createModConversationHandle({
           agentId: executionScope.agentId,
           backend,
@@ -2196,19 +2459,33 @@ async function executeModTool(
           },
           workingDirectory: options.workingDirectory,
         }),
-        getContext: tool.getContext,
       };
-      const result = await runModTool(tool, context);
+      const result = await runModTool(
+        tool,
+        attachDeprecatedGetContextTrap(
+          context,
+          tool.recordDiagnostic,
+          "ctx.getContext",
+        ),
+      );
       const duration = Date.now() - startTime;
       const recordResult = isRecord(result) ? result : undefined;
-      const stdout = isStringArray(recordResult?.stdout)
-        ? recordResult.stdout
-        : undefined;
-      const stderr = isStringArray(recordResult?.stderr)
-        ? recordResult.stderr
-        : undefined;
+      const stdout = scrubModToolLines(
+        isStringArray(recordResult?.stdout) ? recordResult.stdout : undefined,
+        options.scopedAgentId,
+        redactions,
+      );
+      const stderr = scrubModToolLines(
+        isStringArray(recordResult?.stderr) ? recordResult.stderr : undefined,
+        options.scopedAgentId,
+        redactions,
+      );
       const toolStatus = getModToolStatus(result);
-      const flattenedResponse = flattenToolResponse(result);
+      const flattenedResponse = scrubModToolReturnContent(
+        flattenToolResponse(result),
+        options.scopedAgentId,
+        redactions,
+      );
       const responseSize =
         typeof flattenedResponse === "string"
           ? flattenedResponse.length
@@ -2266,11 +2543,21 @@ async function executeModTool(
         : error instanceof Error
           ? error.name
           : "unknown";
-      const errorMessage = isAbort
-        ? INTERRUPTED_BY_USER
-        : error instanceof Error
-          ? error.message
-          : String(error);
+      const errorMessage = scrubModToolString(
+        isAbort
+          ? INTERRUPTED_BY_USER
+          : error instanceof Error
+            ? error.message
+            : String(error),
+        options.scopedAgentId,
+        redactions,
+      );
+
+      tool.recordDiagnostic?.({
+        capability: { id: toolName, kind: "tool" },
+        error: createScrubbedError(error, errorMessage),
+        phase: "tool.run",
+      });
 
       telemetry.trackToolUsage(
         toolName,
@@ -2316,6 +2603,19 @@ async function executeModTool(
   }
 }
 
+function toolExecutionModContext(
+  executionScope: RuntimeContextSnapshot,
+  options: { workingDirectory: string; modContext?: ModContext },
+): ModContext {
+  return buildModInvocationContext({
+    agent: { id: executionScope.agentId ?? null },
+    base: options.modContext,
+    conversationId: executionScope.conversationId ?? null,
+    permissionMode: executionScope.permissionMode ?? null,
+    workingDirectory: options.workingDirectory,
+  });
+}
+
 /**
  * Executes a tool by name with the provided arguments.
  *
@@ -2324,7 +2624,7 @@ async function executeModTool(
  * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
  * @returns Promise with the tool's execution result including status and optional stdout/stderr
  */
-export async function executeTool(
+async function executeToolInner(
   name: string,
   args: ToolArgs,
   options?: {
@@ -2337,6 +2637,7 @@ export async function executeTool(
     /** Called after a file-mutating tool (Edit, Write, MultiEdit) writes to disk.
      *  The listener layer uses this to broadcast the new content via WebSocket. */
     onFileWrite?: (filePath: string, content: string) => void;
+    toolEndArgsRef?: { current: ToolArgs };
   },
 ): Promise<ToolExecutionResult> {
   const context = options?.toolContextId
@@ -2353,7 +2654,6 @@ export async function executeTool(
     context?.externalTools ?? getExternalToolsRegistry();
   const activeExternalExecutor =
     context?.externalExecutor ?? getExternalToolExecutor();
-  const activeModTools = context?.modTools ?? getAvailableModToolsRegistry();
   const modEvents = context?.modEvents;
   const executionScope = context?.runtimeContext
     ? buildExecutionRuntimeContextSnapshot({
@@ -2368,6 +2668,11 @@ export async function executeTool(
   const workingDirectory =
     executionScope.workingDirectory ?? getCurrentWorkingDirectory();
   const scopedAgentId = executionScope.agentId ?? undefined;
+  const modContext =
+    context?.modContext ??
+    toolExecutionModContext(executionScope, { workingDirectory });
+  const activeModTools =
+    context?.modTools ?? getAvailableModToolsRegistry(modContext);
 
   if (activeModTools.has(name)) {
     const modTool = activeModTools.get(name);
@@ -2377,13 +2682,22 @@ export async function executeTool(
         status: "error",
       };
     }
-    const { args: eventArgs } = await emitToolStartEvent({
+    const { args: eventArgs, result } = await emitToolStartEvent({
       args,
       events: modEvents,
       executionScope,
+      modContext,
       toolCallId: options?.toolCallId,
       toolName: name,
     });
+    if (result) {
+      if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
+      return {
+        toolReturn: result.output,
+        status: result.status,
+      };
+    }
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
     const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
       context,
@@ -2403,19 +2717,29 @@ export async function executeTool(
       onOutput: options?.onOutput,
       workingDirectory,
       scopedAgentId,
+      modContext,
     });
   }
 
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
     const externalTool = activeExternalTools.get(name);
-    const { args: eventArgs } = await emitToolStartEvent({
+    const { args: eventArgs, result } = await emitToolStartEvent({
       args,
       events: modEvents,
       executionScope,
+      modContext,
       toolCallId: options?.toolCallId,
       toolName: name,
     });
+    if (result) {
+      if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
+      return {
+        toolReturn: result.output,
+        status: result.status,
+      };
+    }
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
     const permissionDecision = await checkModPermissionForContext({
       args: eventArgs,
       context,
@@ -2464,14 +2788,23 @@ export async function executeTool(
     };
   }
 
-  const { args: eventArgs } = await emitToolStartEvent({
+  const { args: eventArgs, result } = await emitToolStartEvent({
     args,
     events: modEvents,
     executionScope,
+    modContext,
     toolCallId: options?.toolCallId,
     toolName: internalName,
   });
+  if (result) {
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = eventArgs;
+    return {
+      toolReturn: result.output,
+      status: result.status,
+    };
+  }
   args = eventArgs;
+  if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
   const permissionDecision = await checkModPermissionForContext({
     args,
     context,
@@ -2511,6 +2844,7 @@ export async function executeTool(
         ...preHookResult.updatedInput,
       };
     }
+    if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
     try {
       // Inject options for tools that support them without altering schemas
@@ -2767,6 +3101,69 @@ export async function executeTool(
   };
 
   return runWithRuntimeContext(executionScope, run);
+}
+
+/**
+ * Executes a tool and gives mods a chance to observe or replace the result via
+ * the `tool_end` event. A handler returning `{ result: { status, output } }`
+ * overrides what the agent sees (first handler wins). Only fires for string
+ * results — multimodal/image results pass through unchanged. Delivery is
+ * capability-gated (`events.tools`), so only enabled surfaces receive it.
+ *
+ * @param name - Name of the tool to execute
+ * @param args - Arguments object to pass to the tool
+ * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
+ * @returns Promise with the tool's execution result including status and optional stdout/stderr
+ */
+export async function executeTool(
+  ...params: Parameters<typeof executeToolInner>
+): Promise<ToolExecutionResult> {
+  const [name, args, options] = params;
+  const toolEndArgsRef = { current: args };
+  const res = await executeToolInner(name, args, {
+    ...options,
+    toolEndArgsRef,
+  });
+
+  const context = options?.toolContextId
+    ? getExecutionContextById(options.toolContextId)
+    : undefined;
+  const modEvents = context?.modEvents;
+  if (!modEvents || typeof res.toolReturn !== "string") {
+    return res;
+  }
+
+  const executionScope = context?.runtimeContext
+    ? buildExecutionRuntimeContextSnapshot({
+        workingDirectory: context.runtimeContext.workingDirectory ?? undefined,
+        permissionModeState: context.permissionModeState,
+        runtimeContext: context.runtimeContext,
+      })
+    : buildExecutionRuntimeContextSnapshot({
+        workingDirectory: context?.workingDirectory,
+        permissionModeState: context?.permissionModeState,
+      });
+  const modContext =
+    context?.modContext ??
+    toolExecutionModContext(executionScope, {
+      workingDirectory:
+        executionScope.workingDirectory ?? getCurrentWorkingDirectory(),
+    });
+
+  const override = await emitToolEndEvent({
+    args: toolEndArgsRef.current,
+    events: modEvents,
+    executionScope,
+    modContext,
+    toolCallId: options?.toolCallId,
+    toolName: name,
+    status: res.status,
+    output: res.toolReturn,
+  });
+
+  return override
+    ? { ...res, toolReturn: override.output, status: override.status }
+    : res;
 }
 
 /**

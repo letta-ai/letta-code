@@ -75,7 +75,9 @@ ${content}`;
 await Bun.write(outputPath, withShebang);
 
 // Make executable
-await Bun.$`chmod +x letta.js`;
+if (process.platform !== "win32") {
+  await Bun.$`chmod +x letta.js`;
+}
 
 await Bun.build({
   entrypoints: ["./src/app-server-client.ts"],

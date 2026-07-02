@@ -1,3 +1,4 @@
+import type { ShellContext } from "@/utils/shell-context";
 import type { SharedReminderContext } from "./engine";
 import type { SessionContextReason, SharedReminderState } from "./state";
 
@@ -12,6 +13,8 @@ interface BuildListenReminderContextParams {
   workingDirectory?: string;
   /** Reason for injecting session context (controls intro text). */
   sessionContextReason?: SessionContextReason;
+  /** Shell context detected at startup, if available. */
+  shellContext?: ShellContext;
 }
 
 export function buildListenReminderContext(
@@ -32,5 +35,6 @@ export function buildListenReminderContext(
     workingDirectory: params.workingDirectory,
     sessionContextSource: "listen",
     sessionContextReason: params.sessionContextReason,
+    shellContext: params.shellContext,
   };
 }

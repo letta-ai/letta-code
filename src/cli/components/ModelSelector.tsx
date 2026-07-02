@@ -6,12 +6,14 @@ import {
   getAvailableModelHandles,
   getAvailableModelsCacheInfo,
   getCachedModelHandles,
+  getCachedModelProviderTypes,
 } from "@/agent/available-models";
 import {
   CHATGPT_FAST_SERVICE_TIER,
   getChatGptFastRegistryHandleForModelHandle,
   getLocalModelLabel,
   getModelInfo,
+  isLocalModelHandle,
   models,
   normalizeModelHandleForRegistry,
 } from "@/agent/model";
@@ -37,6 +39,9 @@ type ModelCategory =
   | "all"
   | "server-recommended"
   | "server-all";
+
+const CHATGPT_OAUTH_BASE_PROVIDER = "openai-codex";
+const CHATGPT_LABEL_SUFFIX_PATTERN = /\s+\(ChatGPT\)$/;
 
 // Re-export for consumers that import from ModelSelector
 export { buildByokProviderAliases, isByokHandleForSelector };
@@ -116,6 +121,71 @@ export type ModelSelectorSelection = Pick<
   "id" | "handle" | "label" | "description" | "registryHandle" | "updateArgs"
 >;
 
+export function labelForChatGPTByokAlias(
+  label: string,
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+): string {
+  const slashIndex = handle.indexOf("/");
+  if (slashIndex === -1) return label;
+
+  const providerAlias = handle.slice(0, slashIndex);
+  if (byokProviderAliases[providerAlias] !== CHATGPT_OAUTH_BASE_PROVIDER) {
+    return label;
+  }
+
+  return label.replace(CHATGPT_LABEL_SUFFIX_PATTERN, ` (${providerAlias})`);
+}
+
+export function baseHandleForByokAlias(
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+): string {
+  const slashIndex = handle.indexOf("/");
+  if (slashIndex === -1) return handle;
+
+  const provider = handle.slice(0, slashIndex);
+  const model = handle.slice(slashIndex + 1);
+  const baseProvider = byokProviderAliases[provider];
+
+  if (baseProvider) {
+    return `${baseProvider}/${model}`;
+  }
+  return handle;
+}
+
+export function registryHandleForByokAlias(
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+): string {
+  const baseHandle = baseHandleForByokAlias(handle, byokProviderAliases);
+  return normalizeModelHandleForRegistry(baseHandle) ?? baseHandle;
+}
+
+export function toByokSelectorModel(
+  staticModel: UiModel,
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+  updateArgs?: Record<string, unknown>,
+): UiModel {
+  const resolvedUpdateArgs =
+    updateArgs ??
+    (staticModel.updateArgs as Record<string, unknown> | undefined);
+
+  return {
+    ...staticModel,
+    id: handle,
+    handle,
+    registryHandle: registryHandleForByokAlias(handle, byokProviderAliases),
+    label: labelForChatGPTByokAlias(
+      staticModel.label,
+      handle,
+      byokProviderAliases,
+    ),
+    updateArgs: resolvedUpdateArgs,
+  };
+}
+
 export function toSelectorModelForHandle(handle: string): UiModel {
   const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
   const modelInfo = getModelInfo(registryHandle);
@@ -137,7 +207,18 @@ export function toSelectorModelForHandle(handle: string): UiModel {
   };
 }
 
-const API_GATED_MODEL_HANDLES = new Set(["letta/auto", "letta/auto-fast"]);
+const API_GATED_MODEL_HANDLES = new Set([
+  "letta/auto",
+  "letta/auto-fast",
+  "letta/glm",
+]);
+
+export function includeUnknownBackendHandleInRecommended(
+  handle: string,
+): boolean {
+  const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+  return isLocalModelHandle(registryHandle);
+}
 
 export function filterModelsByAvailabilityForSelector<
   T extends { handle: string },
@@ -220,6 +301,9 @@ export function ModelSelector({
   const [allApiHandles, setAllApiHandles] = useState<string[]>(
     cachedHandlesAtMount ? Array.from(cachedHandlesAtMount) : [],
   );
+  const [providerTypesByHandle, setProviderTypesByHandle] = useState<
+    Map<string, string>
+  >(() => getCachedModelProviderTypes() ?? new Map());
   const [isLoading, setIsLoading] = useState(cachedHandlesAtMount === null);
   const [error, setError] = useState<string | null>(null);
   const [isCached, setIsCached] = useState(cachedHandlesAtMount !== null);
@@ -279,6 +363,7 @@ export function ModelSelector({
 
       setAvailableHandles(result.handles);
       setAllApiHandles(Array.from(result.handles));
+      setProviderTypesByHandle(new Map(result.providerTypes));
       setIsCached(!forceRefresh && cacheInfoBefore.isFresh);
       setIsLoading(false);
       setRefreshing(false);
@@ -290,6 +375,7 @@ export function ModelSelector({
       // Fallback: show all models if API fails
       setAvailableHandles(null);
       setAllApiHandles([]);
+      setProviderTypesByHandle(new Map());
     }
   });
 
@@ -369,6 +455,21 @@ export function ModelSelector({
     [],
   );
 
+  const withProviderTypeMetadata = useCallback(
+    (
+      handle: string,
+      updateArgs: Record<string, unknown> | undefined,
+    ): Record<string, unknown> | undefined => {
+      const providerType = providerTypesByHandle.get(handle);
+      if (!providerType) return updateArgs;
+      return {
+        ...(updateArgs ?? {}),
+        provider_type: providerType,
+      };
+    },
+    [providerTypesByHandle],
+  );
+
   const modelsForBackendHandle = useCallback(
     (handle: string, includeUnknown: boolean): UiModel[] => {
       const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
@@ -382,15 +483,28 @@ export function ModelSelector({
           | undefined) ?? {}),
         ...(fastRegistryHandle ? { service_tier: null } : {}),
       };
+      const baseUpdateArgsWithProviderType = withProviderTypeMetadata(
+        handle,
+        Object.keys(baseUpdateArgs).length > 0 ? baseUpdateArgs : undefined,
+      );
+      const fallbackModel = includeUnknown
+        ? toSelectorModelForHandle(handle)
+        : null;
       const baseModel = baseStaticModel
         ? withActualHandle(
             baseStaticModel,
             handle,
             registryHandle,
-            Object.keys(baseUpdateArgs).length > 0 ? baseUpdateArgs : undefined,
+            baseUpdateArgsWithProviderType,
           )
-        : includeUnknown
-          ? toSelectorModelForHandle(handle)
+        : fallbackModel
+          ? {
+              ...fallbackModel,
+              updateArgs: withProviderTypeMetadata(
+                handle,
+                fallbackModel.updateArgs,
+              ),
+            }
           : null;
 
       const result = baseModel ? [baseModel] : [];
@@ -404,6 +518,7 @@ export function ModelSelector({
                 | Record<string, unknown>
                 | undefined) ?? {}),
               service_tier: CHATGPT_FAST_SERVICE_TIER,
+              ...withProviderTypeMetadata(handle, undefined),
             }),
           );
         }
@@ -411,7 +526,7 @@ export function ModelSelector({
 
       return result;
     },
-    [pickPreferredStaticModel, withActualHandle],
+    [pickPreferredStaticModel, withActualHandle, withProviderTypeMetadata],
   );
 
   // Supported models: models.json entries that are available
@@ -442,7 +557,7 @@ export function ModelSelector({
     }
 
     // Deduplicate by handle+context_window: keep one representative entry per unique combo.
-    // Models with multiple reasoning tiers (e.g., gpt-5.3-codex none/low/med/high/max)
+    // Models with multiple reasoning tiers (e.g., gpt-5.5 none/low/med/high/max)
     // share the same handle — the ModelReasoningSelector handles tier selection after pick.
     // Models with different context_window (e.g., 200k vs 1M) show separately.
     const seen = new Set<string>();
@@ -520,19 +635,8 @@ export function ModelSelector({
   // e.g., "lc-anthropic/claude-3-5-haiku" -> "anthropic/claude-3-5-haiku"
   // e.g., "lc-gemini/gemini-2.0-flash" -> "google_ai/gemini-2.0-flash"
   const toBaseHandle = useCallback(
-    (handle: string): string => {
-      const slashIndex = handle.indexOf("/");
-      if (slashIndex === -1) return handle;
-
-      const provider = handle.slice(0, slashIndex);
-      const model = handle.slice(slashIndex + 1);
-      const baseProvider = byokProviderAliases[provider];
-
-      if (baseProvider) {
-        return `${baseProvider}/${model}`;
-      }
-      return handle;
-    },
+    (handle: string): string =>
+      baseHandleForByokAlias(handle, byokProviderAliases),
     [byokProviderAliases],
   );
 
@@ -550,11 +654,17 @@ export function ModelSelector({
       const staticModel = pickPreferredStaticModel(baseHandle);
       if (staticModel) {
         // Use models.json data but with the BYOK handle as the ID
-        matched.push({
-          ...staticModel,
-          id: handle,
-          handle: handle,
-        });
+        matched.push(
+          toByokSelectorModel(
+            staticModel,
+            handle,
+            byokProviderAliases,
+            withProviderTypeMetadata(
+              handle,
+              staticModel.updateArgs as Record<string, unknown> | undefined,
+            ),
+          ),
+        );
       }
     }
 
@@ -573,10 +683,12 @@ export function ModelSelector({
   }, [
     availableHandles,
     allApiHandles,
+    byokProviderAliases,
     pickPreferredStaticModel,
     searchQuery,
     isByokHandle,
     toBaseHandle,
+    withProviderTypeMetadata,
   ]);
 
   // BYOK (all): all BYOK handles from API (including recommended ones)
@@ -597,13 +709,21 @@ export function ModelSelector({
     return filtered;
   }, [availableHandles, allApiHandles, searchQuery, isByokHandle]);
 
-  // Server-recommended models: models.json entries available on the server (for self-hosted)
+  // Server-recommended models: models.json entries available on the server.
+  // Discoverable local endpoint providers (Ollama, LM Studio, llama.cpp) do
+  // not have a static models.json catalog, so include their live-discovered
+  // handles here instead of hiding them until the user switches to "All".
   // Filter out letta/letta-free legacy model
   const serverRecommendedModels = useMemo(() => {
     if (!backendModelCatalog || availableHandles === undefined) return [];
     let available = allApiHandles
       .filter((handle) => handle !== "letta/letta-free")
-      .flatMap((handle) => modelsForBackendHandle(handle, false));
+      .flatMap((handle) =>
+        modelsForBackendHandle(
+          handle,
+          includeUnknownBackendHandleInRecommended(handle),
+        ),
+      );
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       available = available.filter(
@@ -678,19 +798,38 @@ export function ModelSelector({
       if (availableHandles !== null && !availableHandles.has(handle)) continue;
 
       // Try to resolve to a static model with label/description
-      const staticModel = pickPreferredStaticModel(handle);
+      const staticModel = pickPreferredStaticModel(toBaseHandle(handle));
       if (staticModel) {
-        resolved.push({
-          ...staticModel,
-          id: handle,
-          handle,
-        });
+        resolved.push(
+          toByokSelectorModel(
+            staticModel,
+            handle,
+            byokProviderAliases,
+            withProviderTypeMetadata(
+              handle,
+              staticModel.updateArgs as Record<string, unknown> | undefined,
+            ),
+          ),
+        );
       } else {
-        resolved.push(toSelectorModelForHandle(handle));
+        const fallbackModel = toSelectorModelForHandle(handle);
+        resolved.push({
+          ...fallbackModel,
+          updateArgs: withProviderTypeMetadata(
+            handle,
+            fallbackModel.updateArgs,
+          ),
+        });
       }
     }
     return resolved;
-  }, [availableHandles, pickPreferredStaticModel]);
+  }, [
+    availableHandles,
+    byokProviderAliases,
+    pickPreferredStaticModel,
+    toBaseHandle,
+    withProviderTypeMetadata,
+  ]);
 
   // Map category -> list for O(1) lookup
   const categoryListMap = useMemo(
@@ -698,12 +837,23 @@ export function ModelSelector({
       recents: recentModels,
       supported: supportedModels,
       byok: byokModels,
-      "byok-all": byokAllModels.map((handle) => ({
-        id: handle,
-        handle,
-        label: handle,
-        description: "",
-      })),
+      "byok-all": byokAllModels.map((handle) => {
+        const staticModel = pickPreferredStaticModel(toBaseHandle(handle));
+        const staticUpdateArgs = staticModel?.updateArgs as
+          | Record<string, unknown>
+          | undefined;
+
+        return {
+          id: handle,
+          handle,
+          label: handle,
+          description: staticModel?.description ?? "",
+          registryHandle: staticModel
+            ? registryHandleForByokAlias(handle, byokProviderAliases)
+            : undefined,
+          updateArgs: withProviderTypeMetadata(handle, staticUpdateArgs),
+        };
+      }),
       "server-recommended": serverRecommendedModels,
       "server-all": serverAllModelRows,
       all: allLettaModels,
@@ -716,6 +866,10 @@ export function ModelSelector({
       allLettaModels,
       serverRecommendedModels,
       serverAllModelRows,
+      byokProviderAliases,
+      pickPreferredStaticModel,
+      toBaseHandle,
+      withProviderTypeMetadata,
     ],
   );
 

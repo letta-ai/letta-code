@@ -112,6 +112,20 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       return whatsappChannelPlugin;
     },
   },
+  signal: {
+    metadata: {
+      id: "signal",
+      displayName: "Signal",
+      runtimePackages: ["qrcode-terminal@0.12.0"],
+      runtimeModules: ["qrcode-terminal"],
+      source: "first-party",
+      firstParty: true,
+    },
+    load: async () => {
+      const { signalChannelPlugin } = await import("@/channels/signal/plugin");
+      return signalChannelPlugin;
+    },
+  },
 };
 
 const loadedUserPlugins = new Map<string, Promise<ChannelPlugin>>();

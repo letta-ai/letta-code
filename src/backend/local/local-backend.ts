@@ -1,5 +1,6 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import {
+  GIT_MEMORY_ENABLED_TAG,
   type InitializeLocalMemoryRepoFile,
   initializeLocalMemoryRepo,
 } from "@/agent/memory-git";
@@ -23,7 +24,11 @@ import {
   PiStreamAdapter,
   type PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
-import type { ProviderTurnInput } from "@/backend/dev/provider-turn-executor";
+import type {
+  LlmEndInfo,
+  LlmStartInfo,
+  ProviderTurnInput,
+} from "@/backend/dev/provider-turn-executor";
 import {
   contextTokensFromUsage,
   estimateProviderContextTokens,
@@ -78,6 +83,31 @@ export interface LocalBackendOptions {
   complete?: LocalCompleteFunction;
   memoryDir?: string;
   memfsEnabled?: boolean;
+}
+
+/**
+ * Hooks the harness installs (via {@link LocalBackend.setModEventHooks}) so
+ * mods can observe backend-internal lifecycle that only the local backend owns
+ * (compaction and provider calls). The backend stays mod-agnostic: it invokes
+ * these plain callbacks and never touches mod state.
+ */
+export interface LocalBackendModEventHooks {
+  onCompactStart?: (info: {
+    agentId: string;
+    conversationId: string;
+    trigger: string;
+  }) => void | Promise<void>;
+  onCompactEnd?: (info: {
+    agentId: string;
+    conversationId: string;
+    trigger: string;
+    messagesBefore: number;
+    messagesAfter: number;
+    contextTokensBefore: number;
+    contextTokensAfter: number;
+  }) => void | Promise<void>;
+  onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
+  onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
 }
 
 function sanitizeFrontmatterValue(value: string): string {
@@ -235,6 +265,8 @@ function createLocalExecutor(
     summary: string;
     stats?: LocalCompactionStats;
   } | null>,
+  onLlmStart?: (info: LlmStartInfo) => void | Promise<void>,
+  onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>,
 ): HeadlessTurnExecutor {
   if (options.executor) return options.executor;
   if (options.executionMode === "deterministic") {
@@ -246,6 +278,8 @@ function createLocalExecutor(
       localProviderAuthStorageDir: options.storageDir,
       onContextWindowOverflow,
       onContextUsage,
+      onLlmStart,
+      onLlmEnd,
     }),
   );
 }
@@ -266,6 +300,7 @@ export class LocalBackend extends HeadlessBackend {
   private readonly storageDir: string;
   private readonly complete?: LocalCompleteFunction;
   private readonly memfsEnabledOverride?: boolean;
+  private modEventHooks?: LocalBackendModEventHooks;
 
   constructor(options: LocalBackendOptions) {
     const localBackendRef: { current?: LocalBackend } = {};
@@ -293,6 +328,10 @@ export class LocalBackend extends HeadlessBackend {
         (input, usage) =>
           localBackendRef.current?.compactAfterContextUsage(input, usage) ??
           Promise.resolve(null),
+        (info) =>
+          localBackendRef.current?.emitLlmStart(info) ?? Promise.resolve(),
+        (info) =>
+          localBackendRef.current?.emitLlmEnd(info) ?? Promise.resolve(),
       ),
       storeOptions,
       {
@@ -308,6 +347,72 @@ export class LocalBackend extends HeadlessBackend {
     this.memfsEnabledOverride = options.memfsEnabled;
   }
 
+  /**
+   * Late-bound because the backend is a process-global singleton constructed
+   * before the harness mod adapter exists. The harness calls this once the
+   * registry is ready to forward backend-internal events to local mods.
+   */
+  setModEventHooks(hooks: LocalBackendModEventHooks | undefined): void {
+    this.modEventHooks = hooks;
+  }
+
+  private async emitCompactStart(
+    conversationId: string,
+    agentId: string,
+    trigger: string,
+  ): Promise<void> {
+    const hook = this.modEventHooks?.onCompactStart;
+    if (!hook) return;
+    try {
+      await hook({ agentId, conversationId, trigger });
+    } catch {
+      // Mod event hooks must never break compaction.
+    }
+  }
+
+  private async emitCompactEnd(
+    conversationId: string,
+    agentId: string,
+    trigger: string,
+    stats: LocalCompactionStats,
+  ): Promise<void> {
+    const hook = this.modEventHooks?.onCompactEnd;
+    if (!hook) return;
+    try {
+      await hook({
+        agentId,
+        conversationId,
+        trigger,
+        messagesBefore: stats.messages_count_before ?? 0,
+        messagesAfter: stats.messages_count_after ?? 0,
+        contextTokensBefore: stats.context_tokens_before ?? 0,
+        contextTokensAfter: stats.context_tokens_after ?? 0,
+      });
+    } catch {
+      // Mod event hooks must never break compaction.
+    }
+  }
+
+  private async emitLlmStart(info: LlmStartInfo): Promise<void> {
+    const hook = this.modEventHooks?.onLlmStart;
+    if (!hook) return;
+    try {
+      await hook(info);
+    } catch {
+      // Mod event hooks must never break a provider request.
+    }
+  }
+
+  private async emitLlmEnd(info: LlmEndInfo): Promise<void> {
+    const hook = this.modEventHooks?.onLlmEnd;
+    if (!hook) return;
+    try {
+      await hook(info);
+    } catch {
+      // Mod event hooks must never break a provider request.
+    }
+  }
+
   getLocalStorageDir(): string {
     return this.storageDir;
   }
@@ -319,7 +424,22 @@ export class LocalBackend extends HeadlessBackend {
   override async createAgent(
     ...args: Parameters<HeadlessBackend["createAgent"]>
   ) {
-    const [body] = args;
+    let [body, ...restArgs] = args;
+    // When local memfs is enabled, stamp the git-memory-enabled tag on the
+    // agent body so all downstream tag-checking paths (isMemfsEnabledOnServer,
+    // memfs-sync, etc.) see this agent as memfs-enabled from creation.
+    if (this.isLocalMemfsEnabled()) {
+      const bodyRecord = body as Record<string, unknown>;
+      const existingTags = Array.isArray(bodyRecord.tags)
+        ? (bodyRecord.tags as string[])
+        : [];
+      if (!existingTags.includes(GIT_MEMORY_ENABLED_TAG)) {
+        body = {
+          ...bodyRecord,
+          tags: [...existingTags, GIT_MEMORY_ENABLED_TAG],
+        } as typeof body;
+      }
+    }
     const requestedCompactionSettings = compactionSettingsRecord(
       (body as Record<string, unknown>).compaction_settings,
     );
@@ -332,7 +452,7 @@ export class LocalBackend extends HeadlessBackend {
     const compactionSettingsForStorage = localCompactionSettingsForStorage(
       requestedCompactionSettings,
     );
-    let agent = await super.createAgent(...args);
+    let agent = await super.createAgent(body, ...restArgs);
     if (compactionSettingsForStorage !== undefined) {
       agent = this.store.setAgentCompactionSettings(
         agent.id,
@@ -665,6 +785,28 @@ export class LocalBackend extends HeadlessBackend {
   }
 
   private async compactLocalConversation(
+    conversationId: string,
+    agentId: string,
+    trigger: string,
+    body?: ConversationMessageCompactBody,
+  ): Promise<{
+    numMessagesBefore: number;
+    numMessagesAfter: number;
+    summary: string;
+    stats: LocalCompactionStats;
+  }> {
+    await this.emitCompactStart(conversationId, agentId, trigger);
+    const result = await this.compactLocalConversationInner(
+      conversationId,
+      agentId,
+      trigger,
+      body,
+    );
+    await this.emitCompactEnd(conversationId, agentId, trigger, result.stats);
+    return result;
+  }
+
+  private async compactLocalConversationInner(
     conversationId: string,
     agentId: string,
     trigger: string,

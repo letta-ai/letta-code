@@ -528,6 +528,7 @@ describe("channel account list responses", () => {
             config: {
               token: "telegram-token-1",
               transcribe_voice: true,
+              rich_private_chat_default: false,
             },
           },
         },
@@ -553,6 +554,7 @@ describe("channel account list responses", () => {
           config: {
             has_token: true,
             transcribe_voice: true,
+            rich_private_chat_default: false,
             binding: {
               agent_id: null,
               conversation_id: null,
@@ -575,6 +577,7 @@ describe("channel account list responses", () => {
             config: {
               token: "telegram-token-2",
               transcribe_voice: false,
+              rich_private_chat_default: true,
             },
           },
         },
@@ -598,6 +601,7 @@ describe("channel account list responses", () => {
           config: {
             has_token: true,
             transcribe_voice: false,
+            rich_private_chat_default: true,
           },
         },
       });
@@ -757,6 +761,7 @@ describe("channel account list responses", () => {
               token: "telegram-token",
               group_mode: "open",
               transcribe_voice: false,
+              rich_private_chat_default: false,
               inbound_debounce_ms: 100,
             },
           },
@@ -777,6 +782,7 @@ describe("channel account list responses", () => {
             plugin_config: {
               group_mode: "mention-only",
               transcribe_voice: true,
+              rich_private_chat_default: true,
               inbound_debounce_ms: 750,
             },
           },
@@ -812,6 +818,7 @@ describe("channel account list responses", () => {
             has_token: true,
             group_mode: "mention-only",
             transcribe_voice: true,
+            rich_private_chat_default: true,
             inbound_debounce_ms: 750,
           },
         },
@@ -830,6 +837,7 @@ describe("channel account list responses", () => {
             has_token: true,
             group_mode: "mention-only",
             transcribe_voice: true,
+            rich_private_chat_default: true,
             inbound_debounce_ms: 750,
           },
         },

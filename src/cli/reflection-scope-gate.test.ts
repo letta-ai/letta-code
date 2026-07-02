@@ -1,6 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
+import { clearAllSubagents, registerSubagent } from "@/agent/subagent-state";
 import { isReflectionSubagentActive } from "@/cli/helpers/reflection-gate";
+import {
+  releaseReflectionLaunch,
+  tryReserveReflectionLaunch,
+} from "@/cli/helpers/reflection-launcher";
 
 type Row = {
   type: string;
@@ -10,6 +15,12 @@ type Row = {
 };
 
 describe("isReflectionSubagentActive", () => {
+  afterEach(() => {
+    releaseReflectionLaunch("agent-me");
+    releaseReflectionLaunch("agent-other");
+    clearAllSubagents();
+  });
+
   test("returns false when no subagents are present", () => {
     expect(isReflectionSubagentActive([], "agent-me", "conv-me")).toBe(false);
   });
@@ -147,5 +158,39 @@ describe("isReflectionSubagentActive", () => {
       },
     ];
     expect(isReflectionSubagentActive(rows, "agent-me", "conv-me")).toBe(true);
+  });
+});
+
+describe("reflection launch reservation", () => {
+  afterEach(() => {
+    releaseReflectionLaunch("agent-me");
+    releaseReflectionLaunch("agent-other");
+    clearAllSubagents();
+  });
+
+  test("serializes reflection launches per agent", () => {
+    expect(tryReserveReflectionLaunch("agent-me")).toBe(true);
+    expect(tryReserveReflectionLaunch("agent-me")).toBe(false);
+
+    releaseReflectionLaunch("agent-me");
+    expect(tryReserveReflectionLaunch("agent-me")).toBe(true);
+  });
+
+  test("blocks when any reflection is active for the same agent", () => {
+    registerSubagent(
+      "subagent-a",
+      "reflection",
+      "reflecting",
+      undefined,
+      true,
+      true,
+      {
+        agentId: "agent-me",
+        conversationId: "conv-other",
+      },
+    );
+
+    expect(tryReserveReflectionLaunch("agent-me")).toBe(false);
+    expect(tryReserveReflectionLaunch("agent-other")).toBe(true);
   });
 });

@@ -33,6 +33,7 @@ import {
 import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { settingsManager } from "@/settings-manager";
 import { getToolNames } from "@/tools/manager";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
@@ -41,6 +42,8 @@ import { formatToolsetName } from "@/tools/toolset-labels";
 import {
   deriveReasoningEffort,
   mapHandleToLlmConfigPatch,
+  providerTypeFromModelSettings,
+  providerTypeFromUpdateArgs,
 } from "./model-config";
 import { formatReflectionSettings } from "./reflection";
 import type {
@@ -211,6 +214,26 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             null
           );
         };
+        let apiProviderType: string | undefined;
+        let didLoadApiProviderType = false;
+        const getApiProviderType = async () => {
+          if (didLoadApiProviderType) return apiProviderType;
+          const { getModelProviderType } = await import(
+            "@/agent/available-models"
+          );
+          apiProviderType = await getModelProviderType(modelId);
+          didLoadApiProviderType = true;
+          return apiProviderType;
+        };
+        const registryHandleForProviderType = (
+          handle: string,
+          providerType?: string,
+        ) => {
+          if (providerType !== "chatgpt_oauth") return handle;
+          const slashIndex = handle.indexOf("/");
+          if (slashIndex === -1) return handle;
+          return `${OPENAI_CODEX_PROVIDER_NAME}/${handle.slice(slashIndex + 1)}`;
+        };
         selectedModel = inputSelection
           ? {
               id: inputSelection.id,
@@ -223,22 +246,29 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           : (models.find((m) => m.id === modelId) ?? null);
 
         if (!selectedModel && modelId.includes("/")) {
-          const handleMatch = pickPreferredModelForHandle(modelId);
+          const providerType = await getApiProviderType();
+          const registryCandidate = registryHandleForProviderType(
+            modelId,
+            providerType,
+          );
+          const handleMatch = pickPreferredModelForHandle(registryCandidate);
           if (handleMatch) {
             const fastRegistryHandle =
-              getChatGptFastRegistryHandleForModelHandle(modelId);
+              getChatGptFastRegistryHandleForModelHandle(registryCandidate);
             const updateArgs = {
               ...((handleMatch.updateArgs as
                 | Record<string, unknown>
                 | undefined) ?? {}),
               ...(fastRegistryHandle ? { service_tier: null } : {}),
+              ...(providerType ? { provider_type: providerType } : {}),
             };
             selectedModel = {
               ...handleMatch,
               id: modelId,
               handle: modelId,
               registryHandle:
-                normalizeModelHandleForRegistry(modelId) ?? modelId,
+                normalizeModelHandleForRegistry(registryCandidate) ??
+                registryCandidate,
               updateArgs:
                 Object.keys(updateArgs).length > 0 ? updateArgs : undefined,
             } as unknown as (typeof models)[number];
@@ -249,9 +279,11 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           const { getModelContextWindow } = await import(
             "@/agent/available-models"
           );
+          const providerType = await getApiProviderType();
           const apiContextWindow = await getModelContextWindow(modelId);
           const updateArgs: Record<string, unknown> = {
             ...(apiContextWindow ? { context_window: apiContextWindow } : {}),
+            ...(providerType ? { provider_type: providerType } : {}),
             ...(opts?.reasoningEffort
               ? { reasoning_effort: opts.reasoningEffort }
               : {}),
@@ -325,11 +357,13 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             (entry) => entry.id === option.modelId,
           );
           const serviceTier = modelUpdateArgs?.service_tier;
+          const providerType = providerTypeFromUpdateArgs(modelUpdateArgs);
           const optionUpdateArgs = {
             ...((optionModel?.updateArgs as
               | Record<string, unknown>
               | undefined) ?? {}),
             ...(serviceTier !== undefined ? { service_tier: serviceTier } : {}),
+            ...(providerType ? { provider_type: providerType } : {}),
           };
           return {
             ...option,
@@ -506,6 +540,10 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
                 : typeof presetContextWindow === "number"
                   ? presetContextWindow
                   : undefined;
+          const resolvedProviderType =
+            providerTypeFromModelSettings(conversationModelSettings) ??
+            providerTypeFromUpdateArgs(modelUpdateArgsForRequest) ??
+            providerTypeFromUpdateArgs(modelUpdateArgs);
           if (!isDefaultConversation) {
             setConversationOverrideContextWindowLimit(
               typeof resolvedContextWindow === "number"
@@ -518,7 +556,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             ...(updatedAgent?.llm_config ??
               llmConfigRef.current ??
               ({} as LlmConfig)),
-            ...mapHandleToLlmConfigPatch(modelHandle),
+            ...mapHandleToLlmConfigPatch(modelHandle, resolvedProviderType),
             ...(typeof resolvedReasoningEffort === "string"
               ? {
                   reasoning_effort:
@@ -557,6 +595,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             const toolsetName = await switchToolsetForModel(
               modelHandle,
               agentId,
+              resolvedProviderType,
             );
             setCurrentToolsetPreference("auto");
             setCurrentToolset(toolsetName);
@@ -1128,9 +1167,14 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               );
             }
 
+            const providerType =
+              providerTypeFromModelSettings(agentState?.model_settings) ??
+              llmConfig?.model_endpoint_type ??
+              null;
             const derivedToolset = await switchToolsetForModel(
               modelHandle,
               agentId,
+              providerType,
             );
             settingsManager.setToolsetPreference(agentId, "auto");
             setCurrentToolsetPreference("auto");
@@ -1172,6 +1216,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     },
     [
       agentId,
+      agentState?.model_settings,
       commandRunner,
       consumeOverlayCommand,
       currentToolset,

@@ -1,17 +1,25 @@
 # Statusline Examples
 
-Use these as patterns, not mandatory templates. Keep the final mod focused on the user's request.
+Use these as patterns, not mandatory templates. Keep the final mod focused on the user's request. All register at `order: 0` (the primary line) and return text composed with `row`/`columns`/`chalk`.
 
 ## Agent and model
 
 ```tsx
 export default function activate(letta) {
-  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+  if (!letta.capabilities.ui.panels) return;
 
-  letta.ui.setStatuslineRenderer((context) => {
-    const { Text } = context.components;
-    return <Text>{context.agent.name ?? "Letta"} · {context.model.displayName ?? "no model"}</Text>;
+  const panel = letta.ui.openPanel({
+    id: "statusline",
+    order: 0,
+    render: ({ width, agent, model, row, chalk }) =>
+      row(
+        chalk.cyan(agent.name ?? "Letta"),
+        chalk.dim(model.displayName ?? "no model"),
+        width,
+      ),
   });
+
+  return () => panel.close();
 }
 ```
 
@@ -24,29 +32,35 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export default function activate(letta) {
-  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+  if (!letta.capabilities.ui.panels) return;
+
+  let branch = "";
+
+  const panel = letta.ui.openPanel({
+    id: "statusline",
+    order: 0,
+    render: ({ width, agent, row, chalk }) =>
+      row(branch ? chalk.green(`git ${branch}`) : (agent.name ?? "Letta"), "", width),
+  });
 
   const update = async () => {
     try {
-      const context = letta.getContext();
       const { stdout } = await execFileAsync("git", ["branch", "--show-current"], {
-        cwd: context.workspace.currentDir,
+        cwd: process.cwd(),
       });
-      letta.ui.setStatus("branch", stdout.trim());
+      branch = stdout.trim();
     } catch {
-      letta.ui.clearStatus("branch");
+      branch = "";
     }
+    panel.update();
   };
-
-  letta.ui.setStatuslineRenderer((context) => {
-    const { Text } = context.components;
-    const branch = context.statuses.branch;
-    return <Text>{branch ? `git ${branch}` : context.agent.name}</Text>;
-  });
 
   void update();
   const timer = setInterval(update, 30_000);
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    panel.close();
+  };
 }
 ```
 
@@ -54,21 +68,20 @@ export default function activate(letta) {
 
 ```tsx
 export default function activate(letta) {
-  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+  if (!letta.capabilities.ui.panels) return;
 
-  letta.ui.setStatuslineRenderer((context) => {
-    const { Box, Text } = context.components;
-    const model = context.model.displayName ?? "no model";
-
-    return (
-      <Box flexDirection="row">
-        <Box flexGrow={1}>
-          <Text dimColor>Press / for commands</Text>
-        </Box>
-        <Text>{context.agent.name ?? "Letta"} · {model}</Text>
-      </Box>
-    );
+  const panel = letta.ui.openPanel({
+    id: "statusline",
+    order: 0,
+    render: ({ width, agent, model, row, chalk }) =>
+      row(
+        chalk.dim("Press / for commands"),
+        `${agent.name ?? "Letta"} \u00b7 ${model.displayName ?? "no model"}`,
+        width,
+      ),
   });
+
+  return () => panel.close();
 }
 ```
 
@@ -81,31 +94,36 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export default function activate(letta) {
-  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+  if (!letta.capabilities.ui.panels) return;
+
+  let pr = "";
+
+  const panel = letta.ui.openPanel({
+    id: "statusline",
+    order: 0,
+    render: ({ width, model, row }) => row(pr || (model.displayName ?? ""), "", width),
+  });
 
   const update = async () => {
     try {
-      const context = letta.getContext();
       const { stdout } = await execFileAsync(
         "gh",
         ["pr", "view", "--json", "number,title", "--jq", "\"#\\(.number) \\(.title)\""],
-        { cwd: context.workspace.currentDir },
+        { cwd: process.cwd() },
       );
-      const pr = stdout.trim();
-      pr ? letta.ui.setStatus("pr", pr) : letta.ui.clearStatus("pr");
+      pr = stdout.trim();
     } catch {
-      letta.ui.clearStatus("pr");
+      pr = "";
     }
+    panel.update();
   };
-
-  letta.ui.setStatuslineRenderer((context) => {
-    const { Text } = context.components;
-    return <Text>{context.statuses.pr ?? context.model.displayName}</Text>;
-  });
 
   void update();
   const timer = setInterval(update, 60_000);
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    panel.close();
+  };
 }
 ```
 
@@ -118,26 +136,34 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 export default function activate(letta) {
-  if (!letta.capabilities.ui.customStatuslineRenderer) return;
+  if (!letta.capabilities.ui.panels) return;
+
+  let music = "";
+
+  const panel = letta.ui.openPanel({
+    id: "statusline",
+    order: 0,
+    render: ({ width, agent, row, chalk }) =>
+      row(music ? chalk.magenta(music) : (agent.name ?? "Letta"), "", width),
+  });
 
   const update = async () => {
     try {
-      const script = 'tell application "Music" to if it is running then artist of current track & " - " & name of current track';
+      const script =
+        'tell application "Music" to if it is running then artist of current track & " - " & name of current track';
       const { stdout } = await execFileAsync("osascript", ["-e", script]);
-      const music = stdout.trim();
-      music ? letta.ui.setStatus("music", music) : letta.ui.clearStatus("music");
+      music = stdout.trim();
     } catch {
-      letta.ui.clearStatus("music");
+      music = "";
     }
+    panel.update();
   };
-
-  letta.ui.setStatuslineRenderer((context) => {
-    const { Text } = context.components;
-    return <Text>{context.statuses.music ?? context.agent.name}</Text>;
-  });
 
   void update();
   const timer = setInterval(update, 15_000);
-  return () => clearInterval(timer);
+  return () => {
+    clearInterval(timer);
+    panel.close();
+  };
 }
 ```

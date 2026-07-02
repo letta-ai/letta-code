@@ -66,4 +66,79 @@ describe("mod conversation handle", () => {
       "Mod conversation backend is not available",
     );
   });
+
+  test("updateLlmConfig defaults to conversation scope", async () => {
+    const calls: Array<{ kind: string; id: string; body: unknown }> = [];
+    const backend = {
+      capabilities: { localModelCatalog: false },
+      updateConversation: async (id: string, body: unknown) => {
+        calls.push({ kind: "conversation", id, body });
+        return {};
+      },
+      updateAgent: async (id: string, body: unknown) => {
+        calls.push({ kind: "agent", id, body });
+        return {};
+      },
+    } as unknown as Backend;
+
+    const handle = createModConversationHandle({
+      agentId: "agent-1",
+      backend,
+      conversationId: "conversation-1",
+      sendMessageStream,
+    });
+
+    await handle.updateLlmConfig({ contextWindow: 200000 });
+
+    expect(calls).toEqual([
+      {
+        kind: "conversation",
+        id: "conversation-1",
+        body: { context_window_limit: 200000 },
+      },
+    ]);
+  });
+
+  test("updateLlmConfig with agent scope routes to the agent", async () => {
+    const calls: Array<{ kind: string; id: string }> = [];
+    const backend = {
+      capabilities: { localModelCatalog: false },
+      updateConversation: async (id: string) => {
+        calls.push({ kind: "conversation", id });
+        return {};
+      },
+      updateAgent: async (id: string) => {
+        calls.push({ kind: "agent", id });
+        return {};
+      },
+    } as unknown as Backend;
+
+    const handle = createModConversationHandle({
+      agentId: "agent-1",
+      backend,
+      conversationId: "conversation-1",
+      sendMessageStream,
+    });
+
+    await handle.updateLlmConfig({ scope: "agent", contextWindow: 123000 });
+
+    expect(calls).toEqual([{ kind: "agent", id: "agent-1" }]);
+  });
+
+  test("updateLlmConfig agent scope throws when agentId is unavailable", async () => {
+    const backend = {
+      capabilities: { localModelCatalog: false },
+      updateAgent: async () => ({}),
+    } as unknown as Backend;
+
+    const handle = createModConversationHandle({
+      backend,
+      conversationId: "conversation-1",
+      sendMessageStream,
+    });
+
+    await expect(
+      handle.updateLlmConfig({ scope: "agent", contextWindow: 1000 }),
+    ).rejects.toThrow("agentId is not available");
+  });
 });

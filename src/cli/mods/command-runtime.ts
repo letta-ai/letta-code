@@ -1,4 +1,5 @@
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { attachDeprecatedGetContextTrap } from "@/mods/deprecated-api";
 import type { ModCommand, ModCommandContext, ModCommandResult } from "./types";
 
 const MOD_COMMAND_TIMEOUT_MS = 30_000;
@@ -131,7 +132,15 @@ export async function runModCommandWithTimeout(
   try {
     return normalizeModCommandResult(
       await Promise.race([
-        Promise.resolve(command.run(context)),
+        Promise.resolve(
+          command.run(
+            attachDeprecatedGetContextTrap(
+              context,
+              command.recordDiagnostic,
+              "ctx.getContext",
+            ),
+          ),
+        ),
         new Promise<never>((_, reject) => {
           timeout = setTimeout(
             () =>
@@ -145,6 +154,13 @@ export async function runModCommandWithTimeout(
         }),
       ]),
     );
+  } catch (error) {
+    command.recordDiagnostic?.({
+      capability: { id: command.id, kind: "command" },
+      error: error instanceof Error ? error : new Error(String(error)),
+      phase: "command.run",
+    });
+    throw error;
   } finally {
     if (timeout) {
       clearTimeout(timeout);

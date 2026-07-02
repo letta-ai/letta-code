@@ -256,6 +256,33 @@ function tailStartsInsideSourceMessage(
   return firstMessage ? messageMatchesSourceId(firstMessage, sourceId) : false;
 }
 
+function isNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    ((error as { status?: unknown }).status === 404 ||
+      (error as { status?: unknown }).status === 422)
+  );
+}
+
+async function retrieveMessageVariantsForPendingApproval(
+  messageId: string,
+): Promise<Message[]> {
+  try {
+    return await getBackend().retrieveMessage(messageId);
+  } catch (error) {
+    if (isNotFoundError(error)) {
+      debugWarn(
+        "check-approval",
+        `Unable to retrieve in-context message ${messageId} while checking pending approvals: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return [];
+    }
+    throw error;
+  }
+}
+
 /**
  * Prepare message history for backfill, trimming orphaned tool returns.
  * Messages should already be in chronological order (oldest first).
@@ -440,12 +467,13 @@ async function pendingApprovalsFromTailOrRetrieve(
     tailStartsInsideSourceMessage(messages, lastInContextId)
   ) {
     const retrievedMessages =
-      await getBackend().retrieveMessage(lastInContextId);
+      await retrieveMessageVariantsForPendingApproval(lastInContextId);
     return pendingApprovalsFromMessageVariants(retrievedMessages);
   }
   if (tailCheck.messageToCheck || !lastInContextId) return tailCheck;
 
-  const retrievedMessages = await getBackend().retrieveMessage(lastInContextId);
+  const retrievedMessages =
+    await retrieveMessageVariantsForPendingApproval(lastInContextId);
   return pendingApprovalsFromMessageVariants(retrievedMessages);
 }
 
@@ -579,10 +607,7 @@ export async function getResumeDataFromBackend(
   } catch (error) {
     // Re-throw "not found" errors (404/422) so callers can handle appropriately
     // (e.g., /resume command should fail for non-existent conversations)
-    if (
-      error instanceof APIError &&
-      (error.status === 404 || error.status === 422)
-    ) {
+    if (error instanceof APIError && isNotFoundError(error)) {
       throw error;
     }
     console.error("Error getting resume data:", error);

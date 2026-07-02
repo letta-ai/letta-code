@@ -6,6 +6,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 type CacheEntry = {
   handles: Set<string>;
   contextWindows: Map<string, number>; // handle -> max_context_window
+  providerTypes: Map<string, string>; // handle -> provider_type
   fetchedAt: number;
 };
 
@@ -18,6 +19,7 @@ function isFresh(now = Date.now()) {
 
 export type AvailableModelHandlesResult = {
   handles: Set<string>;
+  providerTypes: Map<string, string>;
   source: "cache" | "network";
   fetchedAt: number;
 };
@@ -54,6 +56,18 @@ export function getCachedModelHandles(): Set<string> | null {
   return new Set(cache.handles);
 }
 
+/**
+ * Return cached provider_type metadata by handle if available.
+ * Used to carry backend model-catalog provider identity through selection
+ * without re-listing models during model update mutations.
+ */
+export function getCachedModelProviderTypes(): Map<string, string> | null {
+  if (!cache) {
+    return null;
+  }
+  return new Map(cache.providerTypes);
+}
+
 async function fetchFromNetwork(): Promise<CacheEntry> {
   const modelsList = await getBackend().listModels();
   const handles = new Set(
@@ -61,12 +75,22 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
   );
   // Build context window map from API response
   const contextWindows = new Map<string, number>();
+  const providerTypes = new Map<string, string>();
   for (const model of modelsList) {
     if (model.handle && model.max_context_window) {
       contextWindows.set(model.handle, model.max_context_window);
     }
+    const providerType =
+      typeof model.provider_type === "string"
+        ? model.provider_type
+        : typeof model.model_endpoint_type === "string"
+          ? model.model_endpoint_type
+          : undefined;
+    if (model.handle && providerType) {
+      providerTypes.set(model.handle, providerType);
+    }
   }
-  return { handles, contextWindows, fetchedAt: Date.now() };
+  return { handles, contextWindows, providerTypes, fetchedAt: Date.now() };
 }
 
 export async function getAvailableModelHandles(options?: {
@@ -78,6 +102,7 @@ export async function getAvailableModelHandles(options?: {
   if (!forceRefresh && isFresh(now) && cache) {
     return {
       handles: cache.handles,
+      providerTypes: cache.providerTypes,
       source: "cache",
       fetchedAt: cache.fetchedAt,
     };
@@ -87,6 +112,7 @@ export async function getAvailableModelHandles(options?: {
     const entry = await inflight;
     return {
       handles: entry.handles,
+      providerTypes: entry.providerTypes,
       source: "network",
       fetchedAt: entry.fetchedAt,
     };
@@ -111,6 +137,7 @@ export async function getAvailableModelHandles(options?: {
   const entry = await inflight;
   return {
     handles: entry.handles,
+    providerTypes: entry.providerTypes,
     source: "network",
     fetchedAt: entry.fetchedAt,
   };
@@ -138,4 +165,17 @@ export async function getModelContextWindow(
     await getAvailableModelHandles();
   }
   return cache?.contextWindows.get(handle);
+}
+
+/**
+ * Get provider_type metadata for a model handle from the cached API model list.
+ * Ensures the shared cache is populated before reading.
+ */
+export async function getModelProviderType(
+  handle: string,
+): Promise<string | undefined> {
+  if (!cache) {
+    await getAvailableModelHandles();
+  }
+  return cache?.providerTypes.get(handle);
 }

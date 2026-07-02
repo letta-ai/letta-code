@@ -2,6 +2,20 @@ import { parseArgs } from "node:util";
 import { getLocalBackendStorageDir } from "@/backend/local/paths";
 import { migrateLocalBackendTranscripts } from "@/backend/local/transcript-migration";
 
+const LOCAL_BACKEND_OPTIONS = {
+  help: { type: "boolean", short: "h" },
+  "storage-dir": { type: "string" },
+  "dry-run": { type: "boolean" },
+} as const;
+
+function parseLocalBackendArgs(argv: string[]) {
+  return parseArgs({
+    args: argv,
+    options: LOCAL_BACKEND_OPTIONS,
+    strict: true,
+  });
+}
+
 function printUsage(): void {
   console.log(
     `
@@ -34,15 +48,15 @@ export async function runLocalBackendSubcommand(
     return 1;
   }
 
-  const parsed = parseArgs({
-    args: rest,
-    options: {
-      help: { type: "boolean", short: "h" },
-      "storage-dir": { type: "string" },
-      "dry-run": { type: "boolean" },
-    },
-    strict: true,
-  });
+  let parsed: ReturnType<typeof parseLocalBackendArgs>;
+  try {
+    parsed = parseLocalBackendArgs(rest);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
+    printUsage();
+    return 1;
+  }
   if (parsed.values.help) {
     printUsage();
     return 0;

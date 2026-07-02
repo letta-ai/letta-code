@@ -143,6 +143,15 @@ function isImageMimeType(mimeType?: string): boolean {
   return normalizeTelegramMimeType(mimeType)?.startsWith("image/") ?? false;
 }
 
+function canInlineTelegramImage(mimeType?: string): boolean {
+  const normalized = normalizeTelegramMimeType(mimeType);
+  return (
+    !!normalized &&
+    normalized.startsWith("image/") &&
+    normalized !== "image/svg+xml"
+  );
+}
+
 function isAudioMimeType(mimeType?: string): boolean {
   return normalizeTelegramMimeType(mimeType)?.startsWith("audio/") ?? false;
 }
@@ -616,7 +625,9 @@ async function downloadTelegramAttachment(params: {
     sizeBytes: buffer.byteLength,
     kind,
     localPath,
-    ...(kind === "image" && buffer.byteLength <= MAX_TELEGRAM_INLINE_IMAGE_BYTES
+    ...(kind === "image" &&
+    canInlineTelegramImage(mimeType) &&
+    buffer.byteLength <= MAX_TELEGRAM_INLINE_IMAGE_BYTES
       ? { imageDataBase64: buffer.toString("base64") }
       : {}),
   };

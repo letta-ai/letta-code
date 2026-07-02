@@ -27,6 +27,10 @@ type CachedDynamicMessageChannelTool = {
   schema: Record<string, unknown>;
 };
 
+const TELEGRAM_RICH_RULE_RE =
+  /\n- Telegram supports `action="send-rich"`[^\n]*\n?/;
+const TELEGRAM_RICH_SECTION_RE = /\n\nTelegram rich messages:\n[\s\S]*$/;
+
 const loggedDiscoveryErrors = new Set<string>();
 let cachedDynamicMessageChannelTool: CachedDynamicMessageChannelTool | null =
   null;
@@ -120,7 +124,10 @@ function buildDynamicMessageChannelDescriptionFromDiscovery(
   discovery: ResolvedMessageChannelToolDiscovery,
   scope?: MessageChannelToolDiscoveryScope | null,
 ): string {
-  const description = baseDescription.trim();
+  const description = pruneInactiveChannelGuidance(
+    baseDescription,
+    discovery.activeChannels,
+  ).trim();
   if (discovery.activeChannels.length === 0) {
     return `${description}\n\nNo external channel adapters are currently running.`;
   }
@@ -136,6 +143,19 @@ function buildDynamicMessageChannelDescriptionFromDiscovery(
       : "";
 
   return `${description}${scopedReplyContract}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
+}
+
+function pruneInactiveChannelGuidance(
+  baseDescription: string,
+  activeChannels: SupportedChannelId[],
+): string {
+  let description = baseDescription.trim();
+  if (!activeChannels.includes("telegram")) {
+    description = description
+      .replace(TELEGRAM_RICH_RULE_RE, "\n")
+      .replace(TELEGRAM_RICH_SECTION_RE, "");
+  }
+  return description.trim();
 }
 
 export async function resolveMessageChannelToolDiscovery(

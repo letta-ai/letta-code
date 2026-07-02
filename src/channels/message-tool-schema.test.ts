@@ -52,7 +52,12 @@ describe("buildDynamicMessageChannelSchema", () => {
 
     const properties = schema.properties as Record<string, { enum?: string[] }>;
     expect(properties.channel?.enum).toEqual(["slack", "telegram"]);
-    expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
+    expect(properties.action?.enum).toEqual([
+      "send",
+      "react",
+      "upload-file",
+      "send-rich",
+    ]);
   });
 
   test("keeps Telegram-only tool actions narrowed to Telegram-supported actions", async () => {
@@ -72,7 +77,12 @@ describe("buildDynamicMessageChannelSchema", () => {
 
     const properties = schema.properties as Record<string, { enum?: string[] }>;
     expect(properties.channel?.enum).toEqual(["telegram"]);
-    expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
+    expect(properties.action?.enum).toEqual([
+      "send",
+      "send-rich",
+      "react",
+      "upload-file",
+    ]);
   });
 
   test("builds description from the same discovery result as the schema", async () => {
@@ -102,10 +112,15 @@ describe("buildDynamicMessageChannelSchema", () => {
       "Currently active channels: Slack, Telegram.",
     );
     expect(resolved.description).toContain(
-      "Available actions across the active channels: send, react, upload-file.",
+      "Available actions across the active channels: send, react, upload-file, send-rich.",
     );
     expect(properties.channel?.enum).toEqual(["slack", "telegram"]);
-    expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
+    expect(properties.action?.enum).toEqual([
+      "send",
+      "react",
+      "upload-file",
+      "send-rich",
+    ]);
   });
 
   test("can narrow discovery to the channels bound for the current conversation scope", async () => {

@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getModelInfo } from "@/agent/model";
@@ -23,13 +24,13 @@ export const HEADLESS_MOD_CAPABILITIES: ModCapabilities = {
     lifecycle: true,
     tools: true,
     turns: true,
+    compact: true,
+    llm: true,
   },
   permissions: true,
   providers: true,
   ui: {
     panels: false,
-    statusValues: false,
-    customStatuslineRenderer: false,
   },
 };
 
@@ -136,7 +137,12 @@ export function createHeadlessModAdapter(options: {
   reflectionSettings?: ReflectionSettings;
   sessionStats?: SessionStats | null;
 }): ModAdapter {
+  const agentModsDirectory = isHeadlessMemfsEnabled(options.agent.id)
+    ? join(getScopedMemoryFilesystemRoot(options.agent.id), "mods")
+    : undefined;
+
   return createModAdapter({
+    ...(agentModsDirectory ? { agentModsDirectory } : {}),
     ...(options.cacheDirectory
       ? { cacheDirectory: options.cacheDirectory }
       : {}),
@@ -147,7 +153,6 @@ export function createHeadlessModAdapter(options: {
     ...(options.globalModsDirectory
       ? { globalModsDirectory: options.globalModsDirectory }
       : {}),
-    initialContext: createHeadlessModContext(options),
   });
 }
 
@@ -156,13 +161,18 @@ export async function emitHeadlessConversationOpen(options: {
   conversationId: string;
   reason: ModConversationOpenReason;
   adapter: ModAdapter;
+  context?: ModContext;
 }): Promise<void> {
-  await options.adapter.events.emit("conversation_open", {
-    agentId: options.agent.id,
-    agentName: options.agent.name ?? null,
-    conversationId: options.conversationId,
-    reason: options.reason,
-  });
+  await options.adapter.events.emit(
+    "conversation_open",
+    {
+      agentId: options.agent.id,
+      agentName: options.agent.name ?? null,
+      conversationId: options.conversationId,
+      reason: options.reason,
+    },
+    options.context ?? createHeadlessModContext(options),
+  );
 }
 
 export async function emitHeadlessConversationClose(options: {
@@ -170,13 +180,18 @@ export async function emitHeadlessConversationClose(options: {
   conversationId: string;
   durationMs: number | null;
   adapter: ModAdapter;
+  context?: ModContext;
 }): Promise<void> {
-  await options.adapter.events.emit("conversation_close", {
-    agentId: options.agent.id,
-    conversationId: options.conversationId,
-    durationMs: options.durationMs,
-    messageCount: telemetry.getMessageCount(),
-    reason: "quit",
-    toolCallCount: telemetry.getToolCallCount(),
-  });
+  await options.adapter.events.emit(
+    "conversation_close",
+    {
+      agentId: options.agent.id,
+      conversationId: options.conversationId,
+      durationMs: options.durationMs,
+      messageCount: telemetry.getMessageCount(),
+      reason: "quit",
+      toolCallCount: telemetry.getToolCallCount(),
+    },
+    options.context ?? createHeadlessModContext(options),
+  );
 }

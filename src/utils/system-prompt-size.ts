@@ -4,7 +4,7 @@
  * Used by:
  *   - The `letta memory tokens` CLI command (for subagents + scripts)
  *   - The startup system-prompt warning
- *   - The bundled `context_doctor` skill script (via CLI)
+ *   - The bundled `context-doctor` skill script (via CLI)
  *
  * Heuristic: ~4 bytes per token
  * (codex-rs/core/src/truncate.rs APPROX_BYTES_PER_TOKEN = 4)

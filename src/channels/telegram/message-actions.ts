@@ -1,7 +1,38 @@
+import { getChannelAccount } from "@/channels/accounts";
 import type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
+  ChannelMessageActionRequest,
 } from "@/channels/plugin-types";
+import type { ChannelRoute } from "@/channels/types";
+import { isTelegramChannelAccount } from "@/channels/types";
+
+function richPrivateChatDefaultEnabled(route: ChannelRoute): boolean {
+  const accountId = route.accountId?.trim();
+  if (!accountId) {
+    return true;
+  }
+  const account = getChannelAccount("telegram", accountId);
+  if (!account || !isTelegramChannelAccount(account)) {
+    return true;
+  }
+  return account.richPrivateChatDefault !== false;
+}
+
+function shouldSendTelegramRichMessage(params: {
+  request: ChannelMessageActionRequest;
+  route: ChannelRoute;
+}): boolean {
+  if (params.request.action === "send-rich") {
+    return true;
+  }
+  return (
+    params.request.action === "send" &&
+    params.route.chatType === "direct" &&
+    richPrivateChatDefaultEnabled(params.route) &&
+    !params.request.mediaPath?.trim()
+  );
+}
 
 function resolveTelegramRouteThreadId(
   ctx: ChannelMessageActionContext,
@@ -22,7 +53,7 @@ function resolveTelegramRouteThreadId(
 export const telegramMessageActions: ChannelMessageActionAdapter = {
   describeMessageTool() {
     return {
-      actions: ["send", "react", "upload-file"],
+      actions: ["send", "send-rich", "react", "upload-file"],
     };
   },
 
@@ -31,6 +62,7 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
 
     if (
       request.action !== "send" &&
+      request.action !== "send-rich" &&
       request.action !== "react" &&
       request.action !== "upload-file"
     ) {
@@ -59,6 +91,14 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
         : `Reaction added on telegram (message_id: ${result.messageId})`;
     }
 
+    if (request.action === "send-rich") {
+      if (!request.message?.trim()) {
+        return "Error: Telegram send-rich requires message.";
+      }
+      if (request.mediaPath?.trim()) {
+        return "Error: Telegram send-rich does not support local media uploads; use upload-file instead.";
+      }
+    }
     if (!request.message?.trim() && !request.mediaPath?.trim()) {
       return "Error: Telegram send requires message or media.";
     }
@@ -70,6 +110,7 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
     }
 
     const formatted = formatText(request.message ?? "");
+    const sendRichMessage = shouldSendTelegramRichMessage({ request, route });
     const result = await adapter.sendMessage({
       channel: "telegram",
       accountId: route.accountId,
@@ -81,6 +122,9 @@ export const telegramMessageActions: ChannelMessageActionAdapter = {
       fileName: request.filename,
       title: request.title,
       parseMode: formatted.parseMode,
+      ...(sendRichMessage
+        ? { richMessage: { markdown: request.message ?? "" } }
+        : {}),
     });
 
     return request.mediaPath
