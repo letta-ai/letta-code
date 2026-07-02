@@ -22,7 +22,7 @@ export const AUTO_META_REFLECTION_INTERVAL = 10;
 export const AUTO_META_REFLECTION_RECENT_LIMIT = 10;
 
 const AUTO_META_REFLECTION_INSTRUCTION =
-  "This is an automatic meta-reflection triggered after 10 successful reflection passes. Synthesize across the included recent reflected conversations: look for repeated durable user preferences, recurring agent mistakes, contradictions or stale memory, and cross-session patterns. Avoid storing one-off task state.";
+  "This is an automatic meta-reflection triggered after 10 successful reflection passes; the included conversations were already reflected on individually, so focus on higher-level patterns that only emerge across them.";
 
 /** Max background wait for the reflection subagent's agent ID before emitting `reflection_start` (previously 1s inline, timed out ~100% of the time). */
 export const REFLECTION_AGENT_ID_WAIT_MS = 30_000;
