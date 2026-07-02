@@ -11,6 +11,7 @@ const CONTEXT: ModContext = {
   },
   cwd: "/tmp/project",
   sessionId: "conv-1",
+  conversationSummary: "Investigate panel context",
   lastRunId: "run-1",
   agent: { id: "agent-1", name: "Amelia" },
   model: {
@@ -59,6 +60,7 @@ describe("renderModPanelLines", () => {
     const panel = createPanel((ctx) => {
       expect(ctx.cwd).toBe("/tmp/project");
       expect(ctx.workspace.currentDir).toBe("/tmp/project/src");
+      expect(ctx.conversationSummary).toBe("Investigate panel context");
       expect(ctx.agent.name).toBe("Amelia");
       expect(ctx.model.displayName).toBe("GPT-5.5");
       expect(ctx.width).toBe(40);

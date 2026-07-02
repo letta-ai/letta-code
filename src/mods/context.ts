@@ -76,6 +76,7 @@ export function buildModInvocationContext(
     workspace,
     cwd,
     sessionId: options.conversationId ?? base?.sessionId ?? null,
+    conversationSummary: base?.conversationSummary ?? null,
     lastRunId: base?.lastRunId ?? null,
     agent: {
       id: options.agent?.id ?? base?.agent.id ?? null,

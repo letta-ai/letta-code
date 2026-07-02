@@ -11,6 +11,7 @@ export interface CliModContextBuildInput {
   currentDirectory: string;
   projectDirectory: string;
   sessionId?: string | null;
+  conversationSummary?: string | null;
   agentId?: string | null;
   agentName?: string | null;
   lastRunId?: string | null;
@@ -83,6 +84,7 @@ export function buildCliModContext(input: CliModContextBuildInput): ModContext {
     },
     cwd: input.currentDirectory,
     sessionId: input.sessionId ?? null,
+    conversationSummary: input.conversationSummary ?? null,
     lastRunId: input.lastRunId ?? null,
     agent: {
       id: input.agentId ?? null,

@@ -77,6 +77,7 @@ export function createHeadlessModContext(options: {
     },
     cwd,
     sessionId: options.conversationId,
+    conversationSummary: null,
     lastRunId: options.lastRunId ?? null,
     agent: {
       id: options.agent.id,

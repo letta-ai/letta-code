@@ -430,6 +430,7 @@ export interface ModContext {
   workspace: ModWorkspaceContext;
   cwd: string;
   sessionId: string | null;
+  conversationSummary: string | null;
   lastRunId: string | null;
   agent: ModAgentContext;
   model: ModModelContext;
