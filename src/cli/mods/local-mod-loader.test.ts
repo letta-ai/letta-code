@@ -227,6 +227,73 @@ describe("local mod loader", () => {
     }
   });
 
+  test("discovers managed package entries from the agent mods directory", () => {
+    const root = createTempDir();
+    try {
+      const { globalModsDirectory: globalMods } = createLoadOptions(root);
+      const agentMods = path.join(root, "memory", "mods");
+      const packageRoot = path.join(
+        agentMods,
+        "packages",
+        "npm",
+        "@caren",
+        "agent-mod",
+      );
+      const packageMod = path.join(packageRoot, "mods", "index.ts");
+      const agentModFile = path.join(agentMods, "agent.ts");
+      mkdirSync(globalMods, { recursive: true });
+      mkdirSync(path.dirname(packageMod), { recursive: true });
+      writeFileSync(agentModFile, "export default () => {};\n");
+      writeFileSync(packageMod, "export default () => {};\n");
+      writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          letta: {
+            manifestVersion: 1,
+            mods: ["./mods/index.ts"],
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(agentMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/agent-mod",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/agent-mod",
+              entries: ["./mods/index.ts"],
+            },
+          ],
+        }),
+      );
+
+      expect(
+        resolveLocalModSources({
+          agentModsDirectory: agentMods,
+          globalModsDirectory: globalMods,
+        }),
+      ).toEqual([
+        {
+          files: [],
+          root: globalMods,
+          scope: "global",
+          trusted: true,
+        },
+        {
+          files: [agentModFile, packageMod],
+          managedPackageRoots: [packageRoot],
+          root: agentMods,
+          scope: "agent",
+          trusted: true,
+        },
+      ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("skips disabled managed packages", () => {
     const root = createTempDir();
     try {

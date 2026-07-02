@@ -77,6 +77,8 @@ type FetchSkillFile = (
 ) => ReturnType<typeof fetch>;
 
 interface RunInstallOptions {
+  agentMemoryDirectory?: string;
+  commitAgentMemoryChanges?: boolean;
   globalModsDirectory?: string;
 }
 
@@ -844,7 +846,12 @@ async function installSkill(
   }
 }
 
-async function getAgentMemoryDir(agentId: string): Promise<string> {
+async function getAgentMemoryDir(
+  agentId: string,
+  options: Pick<RunInstallOptions, "agentMemoryDirectory"> = {},
+): Promise<string> {
+  if (options.agentMemoryDirectory) return options.agentMemoryDirectory;
+
   if (isLocalAgentId(agentId)) {
     const { getLocalBackendMemoryFilesystemRoot } = await import(
       "@/backend/local/paths"
@@ -861,12 +868,15 @@ async function getAgentMemoryDir(agentId: string): Promise<string> {
   return getScopedMemoryFilesystemRoot(agentId);
 }
 
-async function commitSkillMemoryChange(params: {
+async function commitAgentMemoryChange(params: {
   agentId: string;
   memoryDir: string;
-  skillName: string;
+  pathspecs: string[];
   reason: string;
+  skip?: boolean;
 }): Promise<{ committed: boolean; sha?: string }> {
+  if (params.skip) return { committed: false };
+
   const { commitMemoryWrite } = await import("@/agent/memory-git");
   const { getBackend } = await import("@/backend");
 
@@ -882,7 +892,7 @@ async function commitSkillMemoryChange(params: {
 
   const result = await commitMemoryWrite({
     memoryDir: params.memoryDir,
-    pathspecs: [`skills/${params.skillName}`],
+    pathspecs: params.pathspecs,
     reason: params.reason,
     author: {
       agentId: params.agentId,
@@ -893,6 +903,35 @@ async function commitSkillMemoryChange(params: {
   });
 
   return { committed: result.committed, sha: result.sha };
+}
+
+async function commitSkillMemoryChange(params: {
+  agentId: string;
+  memoryDir: string;
+  skillName: string;
+  reason: string;
+}): Promise<{ committed: boolean; sha?: string }> {
+  return commitAgentMemoryChange({
+    agentId: params.agentId,
+    memoryDir: params.memoryDir,
+    pathspecs: [`skills/${params.skillName}`],
+    reason: params.reason,
+  });
+}
+
+async function commitAgentModMemoryChange(params: {
+  agentId: string;
+  memoryDir: string;
+  result: InstallLocalManagedModPackageResult;
+  skip?: boolean;
+}): Promise<{ committed: boolean; sha?: string }> {
+  return commitAgentMemoryChange({
+    agentId: params.agentId,
+    memoryDir: params.memoryDir,
+    pathspecs: ["mods/packages.json", `mods/${params.result.rootRelativePath}`],
+    reason: `chore(mods): install ${params.result.source}`,
+    skip: params.skip,
+  });
 }
 
 async function listSkills(agentId: string): Promise<{
@@ -947,13 +986,20 @@ function hasInstallAgentScope(
 
 function printManagedModPackageInstallResult(
   result: InstallLocalManagedModPackageResult,
-  options: { includeDetails?: boolean } = {},
+  options: {
+    agentId?: string;
+    commit?: { committed: boolean; sha?: string };
+    includeDetails?: boolean;
+  } = {},
 ): void {
   console.log(
     "Warning: mods are trusted local code and can execute on startup.",
   );
   if (options.includeDetails) {
     console.log(`Source: ${result.source}`);
+    if (options.agentId) {
+      console.log(`Target: agent ${options.agentId}`);
+    }
     if (result.repository) {
       console.log(`Repository: ${result.repository}`);
     }
@@ -962,7 +1008,32 @@ function printManagedModPackageInstallResult(
     }
   }
   console.log(`Installed ${result.source}@${result.version}`);
+  if (options.commit?.committed) {
+    console.log(
+      `Committed agent memory change ${options.commit.sha?.slice(0, 7) ?? ""}`.trim(),
+    );
+  }
   console.log("Run /reload in active sessions for changes to take effect.");
+}
+
+async function installAgentManagedModPackage(params: {
+  agentId: string;
+  install: (modsRoot: string) => Promise<InstallLocalManagedModPackageResult>;
+  options?: RunInstallOptions;
+}): Promise<{
+  commit: { committed: boolean; sha?: string };
+  result: InstallLocalManagedModPackageResult;
+}> {
+  const memoryDir = await getAgentMemoryDir(params.agentId, params.options);
+  const modsRoot = join(memoryDir, "mods");
+  const result = await params.install(modsRoot);
+  const commit = await commitAgentModMemoryChange({
+    agentId: params.agentId,
+    memoryDir,
+    result,
+    skip: params.options?.commitAgentMemoryChanges === false,
+  });
+  return { commit, result };
 }
 
 async function runInstall(
@@ -993,15 +1064,31 @@ async function runInstall(
   }
 
   if (specifier.startsWith("npm:")) {
-    if (hasInstallAgentScope(parsed.values)) {
-      console.error("Agent-scoped mod package install is not supported yet.");
-      return 1;
-    }
     if (parsed.values.force) {
       console.error("--force is only supported for skill installs.");
       return 1;
     }
     try {
+      if (hasInstallAgentScope(parsed.values)) {
+        const agentId = await initializeAndResolveAgent(
+          parsed.values,
+          `Installing ${specifier}...`,
+        );
+        const { commit, result } = await installAgentManagedModPackage({
+          agentId,
+          install: (modsRoot) =>
+            installNpmManagedModPackage({ modsRoot, specifier }),
+          options,
+        });
+        stopAgentPromptStatus();
+        printManagedModPackageInstallResult(result, {
+          agentId,
+          commit,
+          includeDetails: true,
+        });
+        return 0;
+      }
+
       const result = await installNpmManagedModPackage({
         modsRoot:
           options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory(),
@@ -1010,6 +1097,7 @@ async function runInstall(
       printManagedModPackageInstallResult(result, { includeDetails: true });
       return 0;
     } catch (error) {
+      stopAgentPromptStatus();
       console.error(error instanceof Error ? error.message : String(error));
       return 1;
     }
@@ -1025,15 +1113,31 @@ async function runInstall(
     return 1;
   }
   if (gitPackageSpecifier) {
-    if (hasInstallAgentScope(parsed.values)) {
-      console.error("Agent-scoped mod package install is not supported yet.");
-      return 1;
-    }
     if (parsed.values.force) {
       console.error("--force is only supported for skill installs.");
       return 1;
     }
     try {
+      if (hasInstallAgentScope(parsed.values)) {
+        const agentId = await initializeAndResolveAgent(
+          parsed.values,
+          `Installing ${specifier}...`,
+        );
+        const { commit, result } = await installAgentManagedModPackage({
+          agentId,
+          install: (modsRoot) =>
+            installGitManagedModPackage({ modsRoot, specifier }),
+          options,
+        });
+        stopAgentPromptStatus();
+        printManagedModPackageInstallResult(result, {
+          agentId,
+          commit,
+          includeDetails: true,
+        });
+        return 0;
+      }
+
       const result = await installGitManagedModPackage({
         modsRoot:
           options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory(),
@@ -1042,6 +1146,7 @@ async function runInstall(
       printManagedModPackageInstallResult(result, { includeDetails: true });
       return 0;
     } catch (error) {
+      stopAgentPromptStatus();
       console.error(error instanceof Error ? error.message : String(error));
       return 1;
     }
@@ -1049,11 +1154,30 @@ async function runInstall(
 
   const maybeLocalPath = resolve(specifier);
   if (isLocalLettaModPackageDirectory(maybeLocalPath)) {
-    if (hasInstallAgentScope(parsed.values)) {
-      console.error("Agent-scoped mod package install is not supported yet.");
-      return 1;
-    }
     try {
+      if (hasInstallAgentScope(parsed.values)) {
+        const agentId = await initializeAndResolveAgent(
+          parsed.values,
+          `Installing ${specifier}...`,
+        );
+        const { commit, result } = await installAgentManagedModPackage({
+          agentId,
+          install: async (modsRoot) =>
+            installLocalManagedModPackage({
+              modsRoot,
+              packageDirectory: maybeLocalPath,
+            }),
+          options,
+        });
+        stopAgentPromptStatus();
+        printManagedModPackageInstallResult(result, {
+          agentId,
+          commit,
+          includeDetails: true,
+        });
+        return 0;
+      }
+
       const result = installLocalManagedModPackage({
         modsRoot:
           options.globalModsDirectory ?? resolveDefaultGlobalModsDirectory(),
@@ -1062,6 +1186,7 @@ async function runInstall(
       printManagedModPackageInstallResult(result);
       return 0;
     } catch (error) {
+      stopAgentPromptStatus();
       console.error(error instanceof Error ? error.message : String(error));
       return 1;
     }

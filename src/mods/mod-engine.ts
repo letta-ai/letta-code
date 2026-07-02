@@ -341,8 +341,23 @@ export function resolveLocalModSources(
   });
 
   if (options.agentModsDirectory) {
+    const agentManagedPackages = resolveManagedModPackages(
+      options.agentModsDirectory,
+    );
+    const agentDiagnostics = agentManagedPackages.diagnostics;
     sources.push({
-      files: listModFiles(options.agentModsDirectory),
+      ...(agentDiagnostics.length > 0 ? { diagnostics: agentDiagnostics } : {}),
+      files: [
+        ...listModFiles(options.agentModsDirectory),
+        ...agentManagedPackages.files,
+      ],
+      ...(agentManagedPackages.packages.length > 0
+        ? {
+            managedPackageRoots: agentManagedPackages.packages.map(
+              (pkg) => pkg.root,
+            ),
+          }
+        : {}),
       root: options.agentModsDirectory,
       scope: "agent",
       trusted: true,

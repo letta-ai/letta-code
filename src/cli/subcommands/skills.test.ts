@@ -344,23 +344,121 @@ describe("skills subcommand", () => {
     }
   });
 
-  test("top-level install rejects agent-scoped local mod package install", async () => {
+  test("top-level install installs local mod packages into agent memory", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "letta-install-test-"));
     const consoleCapture = captureConsole();
     try {
       const packageRoot = join(tempRoot, "package");
+      const memoryDir = join(tempRoot, "memory");
       writeLocalModPackage({ packageRoot });
 
-      const exitCode = await runInstallSubcommand([
-        "--agent",
-        "agent-123",
-        packageRoot,
-      ]);
-
-      expect(exitCode).toBe(1);
-      expect(consoleCapture.errors.join("\n")).toContain(
-        "Agent-scoped mod package install is not supported yet.",
+      const exitCode = await runInstallSubcommand(
+        ["--agent", "agent-123", packageRoot],
+        {
+          agentMemoryDirectory: memoryDir,
+          commitAgentMemoryChanges: false,
+        },
       );
+
+      expect(exitCode).toBe(0);
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Target: agent agent-123",
+      );
+      expect(
+        existsSync(
+          join(
+            memoryDir,
+            "mods",
+            "packages",
+            "npm",
+            "@caren",
+            "my-mod",
+            "mods",
+            "index.ts",
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        JSON.parse(
+          readFileSync(join(memoryDir, "mods", "packages.json"), "utf8"),
+        ),
+      ).toEqual({
+        packages: [
+          {
+            source: "npm:@caren/my-mod",
+            version: "0.1.0",
+            enabled: true,
+            root: "packages/npm/@caren/my-mod",
+            entries: ["mods/index.ts"],
+          },
+        ],
+      });
+      expect(consoleCapture.errors).toEqual([]);
+    } finally {
+      consoleCapture.restore();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("top-level install installs npm mod packages into agent memory", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "letta-install-test-"));
+    const consoleCapture = captureConsole();
+    try {
+      const memoryDir = join(tempRoot, "memory");
+      __testOverrideNpmManagedModPackageInstaller({
+        spawnImpl: (_cmd, _args, options) => {
+          if (!options.cwd) throw new Error("expected cwd");
+          writeInstalledNpmModPackage({
+            cwd: options.cwd.toString(),
+            version: "0.2.0",
+          });
+          const child = createChildProcess();
+          queueMicrotask(() => child.emit("exit", 0));
+          return child;
+        },
+      });
+
+      const exitCode = await runInstallSubcommand(
+        ["npm:@caren/my-mod", "--agent", "agent-123"],
+        {
+          agentMemoryDirectory: memoryDir,
+          commitAgentMemoryChanges: false,
+        },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Target: agent agent-123",
+      );
+      expect(
+        existsSync(
+          join(
+            memoryDir,
+            "mods",
+            "packages",
+            "npm",
+            "@caren",
+            "my-mod",
+            "mods",
+            "index.ts",
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        JSON.parse(
+          readFileSync(join(memoryDir, "mods", "packages.json"), "utf8"),
+        ),
+      ).toMatchObject({
+        packages: [
+          {
+            source: "npm:@caren/my-mod",
+            version: "0.2.0",
+            enabled: true,
+            root: "packages/npm/@caren/my-mod",
+          },
+        ],
+      });
+      expect(consoleCapture.errors).toEqual([]);
     } finally {
       consoleCapture.restore();
       await rm(tempRoot, { recursive: true, force: true });
@@ -482,21 +580,56 @@ describe("skills subcommand", () => {
     }
   });
 
-  test("top-level GitHub mod install rejects agent scope", async () => {
+  test("top-level GitHub mod install installs into agent memory", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "letta-install-test-"));
     const consoleCapture = captureConsole();
     try {
-      const exitCode = await runInstallSubcommand([
-        "--agent",
-        "agent-123",
-        "git:github.com/caren/git-mod",
-      ]);
+      const memoryDir = join(tempRoot, "memory");
+      __testOverrideNpmManagedModPackageInstaller({
+        gitSpawnImpl: (_cmd, args) => {
+          if (args[0] === "clone") {
+            writeGitModPackage(String(args.at(-1)));
+          }
+          const child = createChildProcess();
+          queueMicrotask(() => {
+            if (args[0] === "rev-parse") child.stdout?.emit("data", "abc123\n");
+            child.emit("exit", 0);
+          });
+          return child;
+        },
+      });
 
-      expect(exitCode).toBe(1);
-      expect(consoleCapture.errors.join("\n")).toContain(
-        "Agent-scoped mod package install is not supported yet.",
+      const exitCode = await runInstallSubcommand(
+        ["--agent", "agent-123", "git:github.com/caren/git-mod"],
+        {
+          agentMemoryDirectory: memoryDir,
+          commitAgentMemoryChanges: false,
+        },
       );
+
+      expect(exitCode).toBe(0);
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Target: agent agent-123",
+      );
+      expect(
+        existsSync(
+          join(
+            memoryDir,
+            "mods",
+            "packages",
+            "git",
+            "github.com",
+            "caren",
+            "git-mod",
+            "src",
+            "mod.ts",
+          ),
+        ),
+      ).toBe(true);
+      expect(consoleCapture.errors).toEqual([]);
     } finally {
       consoleCapture.restore();
+      await rm(tempRoot, { recursive: true, force: true });
     }
   });
 
@@ -544,24 +677,6 @@ describe("skills subcommand", () => {
       expect(exitCode).toBe(1);
       expect(consoleCapture.errors.join("\n")).toContain(
         "--force is only supported for skill installs.",
-      );
-    } finally {
-      consoleCapture.restore();
-    }
-  });
-
-  test("top-level npm mod install rejects agent scope", async () => {
-    const consoleCapture = captureConsole();
-    try {
-      const exitCode = await runInstallSubcommand([
-        "--agent",
-        "agent-123",
-        "npm:@caren/my-mod",
-      ]);
-
-      expect(exitCode).toBe(1);
-      expect(consoleCapture.errors.join("\n")).toContain(
-        "Agent-scoped mod package install is not supported yet.",
       );
     } finally {
       consoleCapture.restore();

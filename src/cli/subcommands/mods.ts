@@ -28,6 +28,8 @@ interface ModFileSection {
 
 export interface ModsList {
   agent?: ModFileSection;
+  agentPackageDiagnostics: ManagedModPackageDiagnostic[];
+  agentPackages: ManagedModPackageListItem[];
   harness: ModFileSection;
   legacyHarness?: ModFileSection;
   packageDiagnostics: ManagedModPackageDiagnostic[];
@@ -143,9 +145,14 @@ export function listMods(options: ListModsOptions = {}): ModsList {
   const harness = sources.find((source) => source.scope === "global");
   const agent = sources.find((source) => source.scope === "agent");
   const managedPackages = listManagedModPackages(globalModsDirectory);
+  const agentManagedPackages = agentModsDirectory
+    ? listManagedModPackages(agentModsDirectory)
+    : null;
 
   return {
     ...(agent ? { agent: toSection(agent) } : {}),
+    agentPackageDiagnostics: agentManagedPackages?.diagnostics ?? [],
+    agentPackages: agentManagedPackages?.packages ?? [],
     harness: harness ? toSection(harness) : { files: [], root: "" },
     ...(legacyHarness ? { legacyHarness: toSection(legacyHarness) } : {}),
     packageDiagnostics: managedPackages.diagnostics,
@@ -171,9 +178,10 @@ function formatPackageSpecifier(pkg: ManagedModPackageListItem): string {
 }
 
 function formatInstalledPackagesSection(
+  title: string,
   mods: Pick<ModsList, "packageDiagnostics" | "packages">,
 ): string {
-  const lines = ["Installed packages"];
+  const lines = [title];
   if (mods.packages.length === 0 && mods.packageDiagnostics.length === 0) {
     lines.push("  (none)");
     return lines.join("\n");
@@ -199,13 +207,24 @@ export function formatModsList(mods: ModsList): string {
   if (mods.agent) {
     sections.push(formatModFileSection("Agent mods", mods.agent));
   }
+  if (
+    mods.agentPackages.length > 0 ||
+    mods.agentPackageDiagnostics.length > 0
+  ) {
+    sections.push(
+      formatInstalledPackagesSection("Agent packages", {
+        packageDiagnostics: mods.agentPackageDiagnostics,
+        packages: mods.agentPackages,
+      }),
+    );
+  }
   if (mods.legacyHarness) {
     sections.push(
       formatModFileSection("Legacy extensions", mods.legacyHarness),
     );
   }
   sections.push(formatModFileSection("Harness mods", mods.harness));
-  sections.push(formatInstalledPackagesSection(mods));
+  sections.push(formatInstalledPackagesSection("Installed packages", mods));
   return sections.join("\n\n");
 }
 

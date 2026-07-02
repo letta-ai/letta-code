@@ -293,6 +293,38 @@ describe("mods subcommand", () => {
     );
   });
 
+  test("lists agent packages separately from harness packages", () => {
+    const root = createTempDir();
+    const harnessMods = join(root, "mods");
+    const agentMods = join(root, "memory", "mods");
+    mkdirSync(harnessMods, { recursive: true });
+    mkdirSync(agentMods, { recursive: true });
+    writeManagedPackage({
+      capabilities: ["commands"],
+      modsRoot: agentMods,
+      source: "npm:@caren/agent-mod",
+      root: "packages/npm/@caren/agent-mod",
+    });
+
+    const result = listMods({
+      agentModsDirectory: agentMods,
+      globalModsDirectory: harnessMods,
+    });
+
+    expect(result.agentPackages).toMatchObject([
+      {
+        capabilities: ["commands"],
+        enabled: true,
+        source: "npm:@caren/agent-mod",
+        version: "0.1.0",
+      },
+    ]);
+    expect(formatModsList(result)).toContain("Agent packages");
+    expect(formatModsList(result)).toContain(
+      "  enabled  npm:@caren/agent-mod@0.1.0    commands",
+    );
+  });
+
   test("lists package registry diagnostics", () => {
     const root = createTempDir();
     const harnessMods = join(root, "mods");
