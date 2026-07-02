@@ -12,15 +12,6 @@ import { getBackend } from "@/backend";
 import { refreshCustomCommands } from "@/cli/commands/custom";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
-  buildGoalContinuationPrompt,
-  formatGoalSummary,
-  GOAL_USAGE,
-  GOAL_USAGE_HINT,
-  goalStatusLabel,
-  parseGoalArgs,
-  validateGoalObjective,
-} from "@/cli/helpers/goal-command";
-import {
   buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
@@ -32,7 +23,6 @@ import {
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
-import { goalLoopMode } from "@/goal-loop-mode";
 import { runPreCompactHooks } from "@/hooks";
 import type { ModCommand } from "@/mods/types";
 import { settingsManager } from "@/settings-manager";
@@ -48,10 +38,6 @@ import { markSecretsReminderRefreshPending } from "./commands/secrets";
 import { getConversationWorkingDirectory } from "./cwd";
 import { reloadListenerModAdapter } from "./mod-adapter";
 import { getListenerModCommand, runListenerModCommand } from "./mod-commands";
-import {
-  getOrCreateConversationPermissionModeStateRef,
-  persistPermissionModeMapForRuntime,
-} from "./permission-mode";
 import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,
@@ -129,15 +115,6 @@ export async function handleExecuteCommand(
 
       case "remember":
         output = await handleRememberCommand(
-          socket,
-          conversationRuntime,
-          trimmedArgs,
-          opts,
-        );
-        break;
-
-      case "goal":
-        output = await handleGoalCommand(
           socket,
           conversationRuntime,
           trimmedArgs,
@@ -795,235 +772,6 @@ async function handleRememberCommand(
   );
 
   return "Memory request submitted";
-}
-
-/**
- * /goal — Manage conversation goals with auto-continuation.
- *
- * Subcommands:
- *   /goal status              — Show current goal status
- *   /goal clear               — Clear the current goal
- *   /goal disable             — Clear goal + remove goal tools
- *   /goal pause               — Pause the active goal
- *   /goal resume              — Resume a paused goal
- *   /goal complete            — Mark the goal as complete
- *   /goal [--token-budget N] [--replace] <objective>
- *                             — Set a new goal (or replace existing)
- *
- * Mirrors the CLI /goal logic from useSubmitHandler, but uses the
- * listener's per-conversation permission mode state instead of React
- * state setters.
- */
-async function handleGoalCommand(
-  socket: WebSocket,
-  conversationRuntime: ConversationRuntime,
-  args: string | undefined,
-  opts: {
-    onStatusChange?: StartListenerOptions["onStatusChange"];
-    connectionId?: string;
-  },
-): Promise<string> {
-  const agentId = conversationRuntime.agentId;
-  const conversationId = conversationRuntime.conversationId;
-
-  if (!agentId) {
-    throw new Error("No agent ID available for /goal command");
-  }
-
-  const objective = (args ?? "").trim();
-  const lowerGoalArg = objective.toLowerCase();
-
-  // /goal, /goal status, /goal show — display current goal
-  if (!objective || lowerGoalArg === "show" || lowerGoalArg === "status") {
-    const goal = settingsManager.getConversationGoal(conversationId);
-    if (!goal) {
-      return `${GOAL_USAGE}\n${GOAL_USAGE_HINT}\nNo goal is currently set.`;
-    }
-    return `Goal ${goalStatusLabel(goal.status)}\n${formatGoalSummary(goal)}`;
-  }
-
-  // /goal clear or /goal disable
-  if (lowerGoalArg === "clear" || lowerGoalArg === "disable") {
-    const cleared = settingsManager.clearConversationGoal(conversationId);
-    if (lowerGoalArg === "disable") {
-      settingsManager.setConversationGoalToolsEnabled(conversationId, false);
-    }
-    if (goalLoopMode.getState().isActive) {
-      goalLoopMode.deactivate();
-    }
-    const permState = getOrCreateConversationPermissionModeStateRef(
-      conversationRuntime.listener,
-      agentId,
-      conversationId,
-    );
-    if (permState.mode === "unrestricted") {
-      permState.mode = "standard";
-      persistPermissionModeMapForRuntime(conversationRuntime.listener);
-    }
-    if (cleared || lowerGoalArg === "disable") {
-      return lowerGoalArg === "disable"
-        ? "Goal disabled; goal tools removed for this conversation."
-        : "Goal cleared";
-    }
-    return "No goal to clear. This conversation does not currently have a goal.";
-  }
-
-  // /goal pause, /goal resume, /goal complete
-  if (
-    lowerGoalArg === "pause" ||
-    lowerGoalArg === "resume" ||
-    lowerGoalArg === "complete"
-  ) {
-    const status = lowerGoalArg === "resume" ? "active" : lowerGoalArg;
-    const goal = settingsManager.updateConversationGoalStatus(
-      conversationId,
-      status as "active" | "paused" | "complete",
-    );
-    if (!goal) {
-      return `${GOAL_USAGE}\nThe session must have a goal before you can ${lowerGoalArg} it.`;
-    }
-
-    const permState = getOrCreateConversationPermissionModeStateRef(
-      conversationRuntime.listener,
-      agentId,
-      conversationId,
-    );
-
-    if (lowerGoalArg === "pause" || lowerGoalArg === "complete") {
-      if (goalLoopMode.getState().isActive) {
-        goalLoopMode.deactivate();
-      }
-      if (permState.mode === "unrestricted") {
-        permState.mode = "standard";
-        persistPermissionModeMapForRuntime(conversationRuntime.listener);
-      }
-    } else if (lowerGoalArg === "resume") {
-      settingsManager.setConversationGoalToolsEnabled(conversationId, true);
-      goalLoopMode.activateGoal(goal.objective, goal.tokenBudget);
-      permState.mode = "unrestricted";
-      persistPermissionModeMapForRuntime(conversationRuntime.listener);
-
-      // Send continuation prompt through the turn pipeline
-      const goalState = goalLoopMode.getState();
-      const storedGoal = settingsManager.getConversationGoal(conversationId);
-      const liveActiveSeconds =
-        storedGoal?.activeStartedAt && storedGoal.status === "active"
-          ? Math.max(
-              0,
-              Math.floor(
-                (Date.now() - Date.parse(storedGoal.activeStartedAt)) / 1000,
-              ),
-            )
-          : 0;
-      const systemMsg = buildGoalContinuationPrompt({
-        objective: goalState.originalPrompt,
-        status: "active",
-        tokensUsed: storedGoal?.tokensUsed ?? 0,
-        tokenBudget: storedGoal?.tokenBudget ?? goalState.tokenBudget,
-        timeUsedSeconds:
-          (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
-      });
-
-      await handleIncomingMessage(
-        {
-          type: "message",
-          agentId,
-          conversationId,
-          messages: [
-            {
-              type: "message",
-              role: "user",
-              content: [{ type: "text", text: systemMsg }],
-            },
-          ],
-        },
-        socket,
-        conversationRuntime,
-        opts.onStatusChange,
-        opts.connectionId,
-      );
-    }
-
-    return `Goal ${goalStatusLabel(goal.status)}\n${formatGoalSummary(goal)}`;
-  }
-
-  // /goal <objective> — set a new goal
-  const parsedGoal = parseGoalArgs(objective);
-  if (parsedGoal.error) {
-    return `${parsedGoal.error}\n${GOAL_USAGE}\n${GOAL_USAGE_HINT}`;
-  }
-
-  const validationError = validateGoalObjective(parsedGoal.objective);
-  if (validationError) {
-    return `${validationError}\n${GOAL_USAGE}\n${GOAL_USAGE_HINT}`;
-  }
-
-  const previousGoal = settingsManager.getConversationGoal(conversationId);
-  if (previousGoal && !parsedGoal.replace) {
-    return `A goal already exists. Run /goal --replace ${parsedGoal.objective} to replace it, or /goal clear first.`;
-  }
-
-  settingsManager.setConversationGoalToolsEnabled(conversationId, true);
-  const goal = settingsManager.setConversationGoal(
-    conversationId,
-    parsedGoal.objective,
-    conversationRuntime.activeWorkingDirectory ?? process.cwd(),
-    parsedGoal.tokenBudget,
-    true,
-  );
-  goalLoopMode.activateGoal(parsedGoal.objective, parsedGoal.tokenBudget);
-
-  const permState = getOrCreateConversationPermissionModeStateRef(
-    conversationRuntime.listener,
-    agentId,
-    conversationId,
-  );
-  permState.mode = "unrestricted";
-  persistPermissionModeMapForRuntime(conversationRuntime.listener);
-
-  const replaced = previousGoal ? " replaced" : " active";
-  const resultPrefix = `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`;
-
-  // Send initial goal continuation prompt through the turn pipeline
-  const goalState = goalLoopMode.getState();
-  const storedGoal = settingsManager.getConversationGoal(conversationId);
-  const liveActiveSeconds =
-    storedGoal?.activeStartedAt && storedGoal.status === "active"
-      ? Math.max(
-          0,
-          Math.floor(
-            (Date.now() - Date.parse(storedGoal.activeStartedAt)) / 1000,
-          ),
-        )
-      : 0;
-  const systemMsg = buildGoalContinuationPrompt({
-    objective: goalState.originalPrompt,
-    status: "active",
-    tokensUsed: storedGoal?.tokensUsed ?? 0,
-    tokenBudget: storedGoal?.tokenBudget ?? goalState.tokenBudget,
-    timeUsedSeconds: (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
-  });
-
-  await handleIncomingMessage(
-    {
-      type: "message",
-      agentId,
-      conversationId,
-      messages: [
-        {
-          type: "message",
-          role: "user",
-          content: [{ type: "text", text: systemMsg }],
-        },
-      ],
-    },
-    socket,
-    conversationRuntime,
-    opts.onStatusChange,
-    opts.connectionId,
-  );
-
-  return resultPrefix;
 }
 
 /** /context-limit — Set or reset the active scope's max context window. */

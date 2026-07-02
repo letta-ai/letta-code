@@ -116,6 +116,8 @@ export const ApprovalPreview = memo(
         let description = "";
         if (toolName === "exec_command") {
           command = typeof args.cmd === "string" ? args.cmd : "";
+          description =
+            typeof args.description === "string" ? args.description : "";
         } else if (toolName === "write_stdin") {
           const sessionId =
             typeof args.session_id === "string" ||

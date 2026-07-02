@@ -339,6 +339,10 @@ function extractExecCommandDisplay(
   argsText: string | undefined,
 ): string | null {
   const parsed = parseToolArgsText(argsText);
+  const description = parsed?.description;
+  if (typeof description === "string" && description.trim()) {
+    return description.trim();
+  }
   const cmd = parsed?.cmd;
   return typeof cmd === "string" && cmd.trim() ? cmd : null;
 }

@@ -45,6 +45,13 @@ export interface LlmStartInfo {
   contextWindow: number;
 }
 
+export interface LlmEndErrorInfo {
+  message: string;
+  detail: string;
+  errorType: "llm_error" | "local_backend_error";
+  retryable: boolean;
+}
+
 /** Provider-request completion info emitted once a final message is produced. */
 export interface LlmEndInfo {
   agentId: string;
@@ -55,8 +62,9 @@ export interface LlmEndInfo {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
-  };
+  } | null;
   durationMs: number;
+  error?: LlmEndErrorInfo;
 }
 
 export type ProviderStreamEvent =

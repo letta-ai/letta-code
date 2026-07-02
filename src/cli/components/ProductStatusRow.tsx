@@ -17,7 +17,6 @@ import { colors } from "./colors";
 import { Text } from "./Text";
 
 const MAX_PRODUCT_STATUS_INDICATORS = 1;
-const GOAL_STATUS_PRIORITY = 100;
 const DREAMING_STATUS_PRIORITY = 50;
 
 interface ProductStatusIndicator {
@@ -113,17 +112,7 @@ function renderDreamingStatus(agent: SubagentState): ReactNode {
   );
 }
 
-function renderGoalStatus(goalStatusText: string): ReactNode {
-  return <Text color={colors.status.processingShimmer}>{goalStatusText}</Text>;
-}
-
-export function ProductStatusRow({
-  goalStatusText,
-  terminalWidth,
-}: {
-  goalStatusText?: string | null;
-  terminalWidth: number;
-}) {
+export function ProductStatusRow({ terminalWidth }: { terminalWidth: number }) {
   const snapshot = useSyncExternalStore(
     subscribeToSubagents,
     getSubagentSnapshot,
@@ -154,13 +143,6 @@ export function ProductStatusRow({
       id: "dreaming",
       priority: DREAMING_STATUS_PRIORITY,
       node: renderDreamingStatus(dreamingAgent),
-    });
-  }
-  if (goalStatusText) {
-    indicators.push({
-      id: "goal",
-      priority: GOAL_STATUS_PRIORITY,
-      node: renderGoalStatus(goalStatusText),
     });
   }
 

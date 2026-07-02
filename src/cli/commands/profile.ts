@@ -1,6 +1,10 @@
 // src/cli/commands/profile.ts
 // Profile command handlers for managing local agent profiles
 
+import {
+  pinAgentForCurrentUser,
+  unpinAgentForCurrentUser,
+} from "@/agent/favorites";
 import { getBackend } from "@/backend";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
@@ -178,7 +182,7 @@ export async function handleProfileSave(
     await getBackend().updateAgent(ctx.agentId, { name: profileName });
     ctx.updateAgentName(profileName);
 
-    settingsManager.pinAgent(ctx.agentId);
+    await pinAgentForCurrentUser(ctx.agentId);
 
     updateCommandResult(
       ctx.buffersRef,
@@ -317,7 +321,6 @@ export async function handlePin(
   argsStr: string,
 ): Promise<void> {
   const name = argsStr.trim() || undefined;
-  const pinned = settingsManager.getPinnedAgents();
 
   // If user provided a name, rename the agent first
   if (name && name !== ctx.agentName) {
@@ -338,7 +341,9 @@ export async function handlePin(
 
   const displayName = name || ctx.agentName || ctx.agentId.slice(0, 12);
 
-  if (pinned.includes(ctx.agentId)) {
+  const pinStatus = await pinAgentForCurrentUser(ctx.agentId);
+
+  if (pinStatus === "already-pinned") {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -348,7 +353,7 @@ export async function handlePin(
     );
     return;
   }
-  settingsManager.pinAgent(ctx.agentId);
+
   addCommandResult(
     ctx.buffersRef,
     ctx.refreshDerived,
@@ -359,11 +364,11 @@ export async function handlePin(
 }
 
 // /unpin - Unpin the current agent
-export function handleUnpin(
+export async function handleUnpin(
   ctx: ProfileCommandContext,
   msg: string,
   argsStr: string,
-): void {
+): Promise<void> {
   if (argsStr.trim()) {
     addCommandResult(
       ctx.buffersRef,
@@ -375,10 +380,22 @@ export function handleUnpin(
     return;
   }
 
-  const pinned = settingsManager.getPinnedAgents();
   const displayName = ctx.agentName || ctx.agentId.slice(0, 12);
+  let unpinStatus: Awaited<ReturnType<typeof unpinAgentForCurrentUser>>;
+  try {
+    unpinStatus = await unpinAgentForCurrentUser(ctx.agentId);
+  } catch (error) {
+    addCommandResult(
+      ctx.buffersRef,
+      ctx.refreshDerived,
+      msg,
+      `Failed to unpin agent: ${error}`,
+      false,
+    );
+    return;
+  }
 
-  if (!pinned.includes(ctx.agentId)) {
+  if (unpinStatus === "not-pinned") {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -389,7 +406,6 @@ export function handleUnpin(
     return;
   }
 
-  settingsManager.unpinAgent(ctx.agentId);
   addCommandResult(
     ctx.buffersRef,
     ctx.refreshDerived,

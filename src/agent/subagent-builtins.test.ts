@@ -55,6 +55,52 @@ describe("built-in subagents", () => {
     expect(configs.init?.launchProfile).toBe("memory-subagent");
   });
 
+  test("subagents run in the background by default", async () => {
+    const configs = await getAllSubagentConfigs();
+
+    for (const name of [
+      "fork",
+      "general-purpose",
+      "history-analyzer",
+      "init",
+      "memory",
+      "recall",
+      "reflection",
+    ]) {
+      expect(configs[name]?.background).toBe(true);
+    }
+  });
+
+  test("custom subagents can explicitly opt out of the background default", async () => {
+    tempDir = createTempProjectDir();
+    writeCustomSubagent(
+      tempDir,
+      "background-worker.md",
+      `---
+name: background-worker
+description: Custom background worker
+tools: Read
+---
+Custom prompt body`,
+    );
+    writeCustomSubagent(
+      tempDir,
+      "foreground-worker.md",
+      `---
+name: foreground-worker
+description: Custom foreground worker
+tools: Read
+background: false
+---
+Custom prompt body`,
+    );
+
+    const configs = await getAllSubagentConfigs(tempDir);
+
+    expect(configs["background-worker"]?.background).toBe(true);
+    expect(configs["foreground-worker"]?.background).toBe(false);
+  });
+
   test("memory-writing built-ins expose Edit but hide broad file tools", async () => {
     const configs = await getAllSubagentConfigs();
     const hiddenFileTools = ["Read", "Write", "Glob", "Grep"];

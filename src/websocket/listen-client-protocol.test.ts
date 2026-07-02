@@ -1708,7 +1708,6 @@ describe("listen-client parseServerMessage", () => {
   test("advertises context-limit and parses the legacy set-max-context alias", () => {
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("context-limit");
     expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("set-max-context");
-    expect(SUPPORTED_REMOTE_COMMANDS).toContain("goal");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("compact");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("reload");
 

@@ -72,6 +72,7 @@ export function installLocalBackendModEventHooks(options: {
           stopReason: info.stopReason,
           usage: info.usage,
           durationMs: info.durationMs,
+          ...(info.error ? { error: info.error } : {}),
         },
         buildContext(info.conversationId),
       );
