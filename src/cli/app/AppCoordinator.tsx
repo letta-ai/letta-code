@@ -2321,6 +2321,7 @@ export function App({
       type: a.type,
       status: a.status,
       durationMs: Date.now() - a.startTime,
+      agentId: a.agentId ?? null,
     })),
   });
   const agentModsDirectory =
