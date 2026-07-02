@@ -256,6 +256,8 @@ const slackAccountDefaults = {
 const originalFetch = globalThis.fetch;
 const originalProgressThrottleEnv =
   process.env.LETTA_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
+const originalProgressKeepaliveEnv =
+  process.env.LETTA_SLACK_PROGRESS_STREAM_KEEPALIVE_MS;
 const fetchMock = mock(
   async () =>
     new Response("uploaded", {
@@ -276,6 +278,7 @@ beforeEach(() => {
   resolveSlackChannelHistoryMock.mockImplementation(async () => []);
   fetchMock.mockClear();
   process.env.LETTA_SLACK_PROGRESS_UPDATE_THROTTLE_MS = "0";
+  process.env.LETTA_SLACK_PROGRESS_STREAM_KEEPALIVE_MS = "0";
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
 
@@ -313,6 +316,12 @@ afterEach(() => {
   } else {
     process.env.LETTA_SLACK_PROGRESS_UPDATE_THROTTLE_MS =
       originalProgressThrottleEnv;
+  }
+  if (originalProgressKeepaliveEnv === undefined) {
+    delete process.env.LETTA_SLACK_PROGRESS_STREAM_KEEPALIVE_MS;
+  } else {
+    process.env.LETTA_SLACK_PROGRESS_STREAM_KEEPALIVE_MS =
+      originalProgressKeepaliveEnv;
   }
   globalThis.fetch = originalFetch;
 });
@@ -2561,10 +2570,10 @@ test("slack adapter does not create fallback cards after stream append failure",
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  writeClient?.chat.appendStream.mockResolvedValueOnce({
+  writeClient?.chat.appendStream.mockImplementation(async () => ({
     ok: false,
     error: "stream_closed",
-  });
+  }));
 
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
@@ -2576,6 +2585,16 @@ test("slack adapter does not create fallback cards after stream append failure",
     toolCallId: "call-2",
     toolName: "grep",
   });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Running shell",
+    toolCallId: "call-3",
+    toolName: "shell",
+  });
   await adapter.handleTurnLifecycleEvent?.({
     type: "finished",
     batchId: "batch-1",
@@ -2583,13 +2602,30 @@ test("slack adapter does not create fallback cards after stream append failure",
     sources: [source],
   });
 
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  expect(writeClient?.chat.update).not.toHaveBeenCalled();
+
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Done.",
+    threadId: "1712790000.000050",
+  });
+
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
-  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalled();
   expect(writeClient?.chat.stopStream).toHaveBeenCalledTimes(1);
-  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    Array<{ channel: string; ts: string; chunks?: unknown[] }>
+  >;
+  const stopArgs = stopCalls[0]?.[0];
+  expect(stopArgs).toMatchObject({
     channel: "C123",
     ts: "1712800000.000300",
-    chunks: [
+  });
+  expect(stopArgs?.chunks).toEqual(
+    expect.arrayContaining([
       {
         type: "task_update",
         id: "task_call-1",
@@ -2603,13 +2639,74 @@ test("slack adapter does not create fallback cards after stream append failure",
         status: "complete",
       },
       {
+        type: "task_update",
+        id: "task_call-3",
+        title: "Ran",
+        status: "complete",
+      },
+      {
         type: "plan_update",
-        title: "Working",
+        title: "Completed",
+      },
+    ]),
+  );
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.update).not.toHaveBeenCalled();
+});
+
+test("slack adapter keeps active progress streams alive during long tool gaps", async () => {
+  process.env.LETTA_SLACK_PROGRESS_STREAM_KEEPALIVE_MS = "5";
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  await sleep(20);
+
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: [
+      {
+        type: "plan_update",
+        title: "Read",
       },
     ],
   });
-  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
-  expect(writeClient?.chat.update).not.toHaveBeenCalled();
+
+  await adapter.stop();
 });
 
 test("slack adapter does not immediately retry failed progress stream starts", async () => {
