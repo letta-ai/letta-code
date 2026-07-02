@@ -697,6 +697,7 @@ export function parseManagedNpmPackageSource(source: string): string | null {
 export interface ManagedGitPackageSource {
   host: "github.com";
   owner: string;
+  pathParts: string[];
   repo: string;
 }
 
@@ -713,15 +714,19 @@ export function parseManagedGitPackageSource(
   const normalizedRepoPath = normalizeRelativePath(repoPath);
   if (!normalizedRepoPath) return null;
   const parts = normalizedRepoPath.split("/");
-  if (parts.length !== 2) return null;
+  if (parts.length !== 2 && (parts.length < 5 || parts[2] !== "tree")) {
+    return null;
+  }
   const [owner, repo] = parts;
   if (!owner || !repo) return null;
   if (!isValidGitHubPathPart(owner) || !isValidGitHubPathPart(repo)) {
     return null;
   }
+  const pathParts = parts.length > 2 ? parts.slice(2) : [];
   return {
     host: "github.com",
     owner: owner.toLowerCase(),
+    pathParts,
     repo: repo.toLowerCase(),
   };
 }
@@ -733,7 +738,14 @@ export function getManagedModPackageRootRelativePathForSource(
   if (packageName) return `${MOD_PACKAGES_DIRECTORY_NAME}/npm/${packageName}`;
   const gitSource = parseManagedGitPackageSource(source);
   if (gitSource) {
-    return `${MOD_PACKAGES_DIRECTORY_NAME}/git/${gitSource.host}/${gitSource.owner}/${gitSource.repo}`;
+    return [
+      MOD_PACKAGES_DIRECTORY_NAME,
+      "git",
+      gitSource.host,
+      gitSource.owner,
+      gitSource.repo,
+      ...gitSource.pathParts,
+    ].join("/");
   }
   return null;
 }

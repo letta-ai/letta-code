@@ -70,6 +70,7 @@ export interface GitManagedModPackageInstallSpecifier {
   repo: string;
   repository: string;
   source: string;
+  subdir?: string;
 }
 
 interface PackageSourceInfo {
@@ -695,10 +696,40 @@ function splitGitRef(value: string): { ref?: string; source: string } {
   return { source: value };
 }
 
+function assertValidGitRef(ref: string): void {
+  if (!/^[a-z0-9][a-z0-9._/-]*$/i.test(ref)) {
+    throw new Error(`Invalid git ref: ${ref}`);
+  }
+}
+
+function normalizeGitHubTreeSubdir(parts: string[]): string | undefined {
+  if (parts.length === 0) return undefined;
+  if (
+    parts.some(
+      (part) => !part || part === "." || part === ".." || part.includes("\0"),
+    )
+  ) {
+    return undefined;
+  }
+  if (parts[0] !== "packages") return undefined;
+  const normalized = path.posix.normalize(parts.join("/"));
+  if (
+    !normalized ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.split("/").includes("..")
+  ) {
+    return undefined;
+  }
+  return normalized;
+}
+
 function normalizeGitHubInstallSource(params: {
   owner: string;
   ref?: string;
   repo: string;
+  subdir?: string;
 }): GitManagedModPackageInstallSpecifier {
   const owner = params.owner.toLowerCase();
   const repo = stripGitSuffix(params.repo).toLowerCase();
@@ -709,13 +740,17 @@ function normalizeGitHubInstallSource(params: {
     throw new Error(`Invalid GitHub repository: ${params.repo}`);
   }
   const repository = `https://github.com/${owner}/${repo}`;
+  const treeSource = params.subdir
+    ? `${repository}/tree/${params.ref ?? "HEAD"}/${params.subdir}`
+    : repository;
   return {
     cloneUrl: `${repository}.git`,
     owner,
     ...(params.ref ? { ref: params.ref } : {}),
     repo,
     repository,
-    source: `git:${repository}`,
+    source: `git:${treeSource}`,
+    ...(params.subdir ? { subdir: params.subdir } : {}),
   };
 }
 
@@ -734,11 +769,19 @@ function parseGitHubHttpsInstallSource(
   }
   if (url.username || url.password || url.search || url.hash) return null;
   const parts = url.pathname.split("/").filter(Boolean);
-  if (parts.length !== 2) return null;
+  if (parts.length !== 2 && (parts.length < 5 || parts[2] !== "tree")) {
+    return null;
+  }
+  const treeRef = parts[2] === "tree" ? parts[3] : undefined;
+  const treeSubdir =
+    parts[2] === "tree" ? normalizeGitHubTreeSubdir(parts.slice(4)) : undefined;
+  if (parts[2] === "tree" && (!treeRef || !treeSubdir)) return null;
+  if (treeRef) assertValidGitRef(treeRef);
   return normalizeGitHubInstallSource({
     owner: parts[0] ?? "",
-    ...(ref ? { ref } : {}),
+    ...(treeRef || ref ? { ref: ref ?? treeRef } : {}),
     repo: parts[1] ?? "",
+    ...(treeSubdir ? { subdir: treeSubdir } : {}),
   });
 }
 
@@ -988,6 +1031,24 @@ function createGitPackageSourceInfo(params: {
   };
 }
 
+function resolveGitPackageDirectory(params: {
+  parsed: GitManagedModPackageInstallSpecifier;
+  repoDirectory: string;
+}): string {
+  if (!params.parsed.subdir) return params.repoDirectory;
+  const resolvedRepoDirectory = path.resolve(params.repoDirectory);
+  const resolvedPackageDirectory = path.resolve(
+    resolvedRepoDirectory,
+    ...params.parsed.subdir.split("/"),
+  );
+  if (!isPathInsideOrEqual(resolvedPackageDirectory, resolvedRepoDirectory)) {
+    throw new Error(
+      `Invalid GitHub package subdirectory: ${params.parsed.subdir}`,
+    );
+  }
+  return resolvedPackageDirectory;
+}
+
 function getGitExecutable(): string {
   return "git";
 }
@@ -1024,7 +1085,7 @@ async function checkoutGitPackage(params: {
   await runGit(cloneArgs, params.tempRoot);
   if (params.parsed.ref) {
     await runGit(
-      ["checkout", "--", params.parsed.ref],
+      ["checkout", "--detach", params.parsed.ref],
       params.packageDirectory,
     );
   }
@@ -1080,11 +1141,15 @@ export async function installGitManagedModPackage(params: {
   }
   const tempRoot = mkdtempSync(path.join(tmpdir(), "letta-mod-git-"));
   try {
-    const packageDirectory = path.join(tempRoot, "repo");
+    const repoDirectory = path.join(tempRoot, "repo");
     const revision = await checkoutGitPackage({
-      packageDirectory,
+      packageDirectory: repoDirectory,
       parsed,
       tempRoot,
+    });
+    const packageDirectory = resolveGitPackageDirectory({
+      parsed,
+      repoDirectory,
     });
     const packageJson = readPackageJsonIfExists(packageDirectory);
     if (hasRuntimeDependencies(packageJson)) {
@@ -1158,11 +1223,15 @@ export async function updateGitManagedModPackage(params: {
   }).package;
   const tempRoot = mkdtempSync(path.join(tmpdir(), "letta-mod-git-"));
   try {
-    const packageDirectory = path.join(tempRoot, "repo");
+    const repoDirectory = path.join(tempRoot, "repo");
     const revision = await checkoutGitPackage({
-      packageDirectory,
+      packageDirectory: repoDirectory,
       parsed,
       tempRoot,
+    });
+    const packageDirectory = resolveGitPackageDirectory({
+      parsed,
+      repoDirectory,
     });
     const packageJson = readPackageJsonIfExists(packageDirectory);
     if (hasRuntimeDependencies(packageJson)) {

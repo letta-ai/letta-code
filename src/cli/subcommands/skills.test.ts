@@ -633,6 +633,69 @@ describe("skills subcommand", () => {
     }
   });
 
+  test("top-level GitHub tree mod install installs into agent memory", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "letta-install-test-"));
+    const consoleCapture = captureConsole();
+    try {
+      const memoryDir = join(tempRoot, "memory");
+      __testOverrideNpmManagedModPackageInstaller({
+        gitSpawnImpl: (_cmd, args) => {
+          if (args[0] === "clone") {
+            writeGitModPackage(
+              join(String(args.at(-1)), "packages", "control-room"),
+            );
+          }
+          const child = createChildProcess();
+          queueMicrotask(() => {
+            if (args[0] === "rev-parse") child.stdout?.emit("data", "abc123\n");
+            child.emit("exit", 0);
+          });
+          return child;
+        },
+      });
+
+      const exitCode = await runInstallSubcommand(
+        [
+          "--agent",
+          "agent-123",
+          "https://github.com/letta-ai/mods/tree/main/packages/control-room",
+        ],
+        {
+          agentMemoryDirectory: memoryDir,
+          commitAgentMemoryChanges: false,
+        },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(consoleCapture.logs.join("\n")).toContain(
+        "Target: agent agent-123",
+      );
+      expect(
+        existsSync(
+          join(
+            memoryDir,
+            "mods",
+            "packages",
+            "git",
+            "github.com",
+            "letta-ai",
+            "mods",
+            "tree",
+            "main",
+            "packages",
+            "control-room",
+            "src",
+            "mod.ts",
+          ),
+        ),
+      ).toBe(true);
+      expect(consoleCapture.errors).toEqual([]);
+    } finally {
+      consoleCapture.restore();
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test("top-level install installs unscoped npm mod packages", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "letta-install-test-"));
     const consoleCapture = captureConsole();

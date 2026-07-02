@@ -272,6 +272,19 @@ describe("local managed mod package installer", () => {
     ).toBeNull();
     expect(
       parseGitManagedModPackageInstallSpecifier(
+        "https://github.com/Caren/Mods/tree/main/packages/control-room",
+      ),
+    ).toMatchObject({
+      cloneUrl: "https://github.com/caren/mods.git",
+      owner: "caren",
+      ref: "main",
+      repo: "mods",
+      source:
+        "git:https://github.com/caren/mods/tree/main/packages/control-room",
+      subdir: "packages/control-room",
+    });
+    expect(
+      parseGitManagedModPackageInstallSpecifier(
         "https://gitlab.com/caren/my-mod",
       ),
     ).toBeNull();
@@ -1073,6 +1086,70 @@ describe("local managed mod package installer", () => {
     ]);
   });
 
+  test("installs a GitHub tree URL package subdirectory", async () => {
+    const root = createTempDir();
+    const modsRoot = path.join(root, "mods");
+    const gitCalls: Array<{ args: string[]; cwd?: string }> = [];
+    __testOverrideNpmManagedModPackageInstaller({
+      gitSpawnImpl: (_cmd, args, options) => {
+        gitCalls.push({ args, cwd: options.cwd?.toString() });
+        if (args[0] === "clone") {
+          const repoRoot = String(args.at(-1));
+          mkdirSync(path.join(repoRoot, "unrelated"), { recursive: true });
+          writeFileSync(
+            path.join(repoRoot, "unrelated", "file.ts"),
+            "ignored\n",
+          );
+          writeLocalPackage({
+            capabilities: ["commands"],
+            name: "@letta-ai/control-room",
+            packageRoot: path.join(repoRoot, "packages", "control-room"),
+          });
+        }
+        const child = createChildProcess();
+        queueMicrotask(() => {
+          if (args[0] === "rev-parse") {
+            child.stdout?.emit("data", "abc123\n");
+          }
+          child.emit("exit", 0);
+        });
+        return child;
+      },
+    });
+
+    const result = await installGitManagedModPackage({
+      modsRoot,
+      specifier:
+        "https://github.com/letta-ai/mods/tree/main/packages/control-room",
+    });
+
+    expect(gitCalls.map((call) => call.args)).toEqual([
+      ["clone", "https://github.com/letta-ai/mods.git", expect.any(String)],
+      ["checkout", "--detach", "main"],
+      ["rev-parse", "--short", "HEAD"],
+    ]);
+    expect(result).toMatchObject({
+      capabilities: ["commands"],
+      rootRelativePath:
+        "packages/git/github.com/letta-ai/mods/tree/main/packages/control-room",
+      source:
+        "git:https://github.com/letta-ai/mods/tree/main/packages/control-room",
+      version: "0.1.0",
+    });
+    expect(existsSync(path.join(result.root, "mods", "index.ts"))).toBe(true);
+    expect(existsSync(path.join(result.root, "unrelated"))).toBe(false);
+    expect(readRegistry(modsRoot).packages).toEqual([
+      {
+        source:
+          "git:https://github.com/letta-ai/mods/tree/main/packages/control-room",
+        version: "0.1.0",
+        enabled: true,
+        root: "packages/git/github.com/letta-ai/mods/tree/main/packages/control-room",
+        entries: ["mods/index.ts"],
+      },
+    ]);
+  });
+
   test("installs a compatibility GitHub package from src/mod.ts", async () => {
     const root = createTempDir();
     const modsRoot = path.join(root, "mods");
@@ -1209,7 +1286,7 @@ describe("local managed mod package installer", () => {
     expect(existsSync(path.join(modsRoot, "packages"))).toBe(false);
   });
 
-  test("git checkout uses -- separator to prevent option injection", async () => {
+  test("git checkout uses a validated ref to prevent option injection", async () => {
     const root = createTempDir();
     const modsRoot = path.join(root, "mods");
     const gitCalls: Array<{ args: string[]; cwd?: string }> = [];
@@ -1241,7 +1318,7 @@ describe("local managed mod package installer", () => {
 
     expect(gitCalls.map((call) => call.args)).toEqual([
       ["clone", "https://github.com/caren/git-mod.git", expect.any(String)],
-      ["checkout", "--", "v1.2.3"],
+      ["checkout", "--detach", "v1.2.3"],
       ["rev-parse", "--short", "HEAD"],
     ]);
   });
