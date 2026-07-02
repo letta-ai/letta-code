@@ -326,8 +326,9 @@ async function runAgentLimitFallback() {
       );
     }
 
+    const continuationRequest = `GET /v1/agents/${FALLBACK_AGENT_ID}/messages`;
     await sleep(250);
-    if (fakeApi.requests.includes(`GET /v1/agents/${FALLBACK_AGENT_ID}`)) {
+    if (fakeApi.requests.includes(continuationRequest)) {
       throw new Error(
         `CLI continued past acknowledgement before keypress. Requests:\n${fakeApi.requests.join("\n")}`,
       );
@@ -336,8 +337,8 @@ async function runAgentLimitFallback() {
     terminal.write("x");
     await waitForRequest(
       fakeApi.requests,
-      `GET /v1/agents/${FALLBACK_AGENT_ID}`,
-      "selected fallback agent retrieval after acknowledgement",
+      continuationRequest,
+      "selected fallback agent session loading after acknowledgement",
     );
 
     if (exited) {
