@@ -2954,6 +2954,95 @@ test("slack adapter includes final error details in rich progress streams", asyn
   );
 });
 
+test("slack adapter keeps failed tool rows from failing completed progress streams", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Running command",
+    toolCallId: "call-bash",
+    toolName: "bash",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "error",
+    message: "Command exited 1",
+    toolCallId: "call-bash",
+    toolName: "bash",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Done — command status was expected.",
+    threadId: "1712790000.000050",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledTimes(1);
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    [{ chunks?: Array<Record<string, unknown>> }]
+  >;
+  const stopCall = stopCalls[0]?.[0];
+  expect(stopCall?.chunks).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        type: "task_update",
+        id: "task_call-bash",
+        title: "Running",
+        status: "error",
+      }),
+      expect.objectContaining({
+        type: "plan_update",
+        title: "Completed",
+      }),
+    ]),
+  );
+  expect(stopCall?.chunks).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        type: "plan_update",
+        title: "Failed",
+      }),
+    ]),
+  );
+});
+
 test("slack adapter shows a progress card while a no-tool turn is running", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,

@@ -1070,13 +1070,16 @@ function buildSlackPlanUpdateChunk(
       title: "Failed",
     };
   }
-
-  const errorCount = tasks.filter((task) => task.status === "error").length;
-  if (errorCount > 0) {
+  if (entry.status === "cancelled") {
     return {
       type: "plan_update",
-      title:
-        errorCount === 1 ? "Failed" : `${pluralizeTool(errorCount)} failed`,
+      title: "Cancelled",
+    };
+  }
+  if (entry.status === "completed") {
+    return {
+      type: "plan_update",
+      title: "Completed",
     };
   }
 
