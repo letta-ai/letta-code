@@ -440,6 +440,7 @@ const SLACK_STREAM_CHUNK_TEXT_MAX = 256;
 const SLACK_LIFECYCLE_ERROR_TASK_ID = "task_lifecycle_error";
 const SLACK_CHANNEL_RESPONSE_TASK_ID = "task_channel_response";
 const DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS = 1_000;
+const DEFAULT_SLACK_PROGRESS_STREAM_KEEPALIVE_MS = 60_000;
 type SlackProgressCardState =
   | "processing"
   | "completed"
@@ -472,6 +473,7 @@ type SlackProgressCardEntry = {
   lastSentText?: string;
   lastSentAt: number;
   pendingTimer?: ReturnType<typeof setTimeout>;
+  keepaliveTimer?: ReturnType<typeof setTimeout>;
   pendingFlush?: Promise<void>;
   requeuedFailedChunks?: boolean;
   updatedAt: number;
@@ -512,6 +514,18 @@ export function resolveSlackProgressUpdateThrottleMs(): number {
     return DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
   }
   return Math.min(parsed, 30_000);
+}
+
+export function resolveSlackProgressStreamKeepaliveMs(): number {
+  const raw = process.env.LETTA_SLACK_PROGRESS_STREAM_KEEPALIVE_MS;
+  if (!raw) {
+    return DEFAULT_SLACK_PROGRESS_STREAM_KEEPALIVE_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_SLACK_PROGRESS_STREAM_KEEPALIVE_MS;
+  }
+  return Math.min(Math.trunc(parsed), 300_000);
 }
 
 function replaceSlackControlCharacters(value: string): string {
@@ -1555,6 +1569,7 @@ export function createSlackAdapter(
   const assistantStatusReplyKeys = new Set<string>();
   const assistantStatusTextByReplyKey = new Map<string, string>();
   const progressUpdateThrottleMs = resolveSlackProgressUpdateThrottleMs();
+  const progressStreamKeepaliveMs = resolveSlackProgressStreamKeepaliveMs();
 
   // ── Inbound debounce (optional) ───────────────────────────────
   // When `inboundDebounceMs > 0`, short back-to-back messages from the same
@@ -2136,6 +2151,69 @@ export function createSlackAdapter(
     timer.unref?.();
   }
 
+  function clearSlackProgressStreamKeepalive(
+    entry: SlackProgressCardEntry,
+  ): void {
+    if (entry.keepaliveTimer) {
+      clearTimeout(entry.keepaliveTimer);
+      entry.keepaliveTimer = undefined;
+    }
+  }
+
+  function scheduleSlackProgressStreamKeepalive(
+    key: string,
+    entry: SlackProgressCardEntry,
+  ): void {
+    if (
+      progressStreamKeepaliveMs <= 0 ||
+      entry.keepaliveTimer ||
+      entry.status !== "processing" ||
+      entry.mode !== "stream" ||
+      !entry.streamTs
+    ) {
+      return;
+    }
+
+    entry.keepaliveTimer = setTimeout(() => {
+      entry.keepaliveTimer = undefined;
+      void (async () => {
+        if (
+          progressCardByReplyKey.get(key) !== entry ||
+          entry.status !== "processing" ||
+          entry.mode !== "stream" ||
+          !entry.streamTs
+        ) {
+          return;
+        }
+        const didAppend = await appendSlackProgressStream(entry, [
+          buildSlackPlanUpdateChunk(entry),
+        ]);
+        if (!didAppend) {
+          return;
+        }
+        entry.lastSentAt = Date.now();
+        scheduleSlackProgressStreamKeepalive(key, entry);
+      })().catch((error) => {
+        console.warn(
+          "[Slack] Failed to keep progress stream alive:",
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }, progressStreamKeepaliveMs);
+    const timer = entry.keepaliveTimer as ReturnType<typeof setTimeout> & {
+      unref?: () => void;
+    };
+    timer.unref?.();
+  }
+
+  function resetSlackProgressStreamKeepalive(
+    key: string,
+    entry: SlackProgressCardEntry,
+  ): void {
+    clearSlackProgressStreamKeepalive(entry);
+    scheduleSlackProgressStreamKeepalive(key, entry);
+  }
+
   async function flushSlackProgressCard(
     key: string,
     entry: SlackProgressCardEntry,
@@ -2194,13 +2272,7 @@ export function createSlackAdapter(
         const didAppend = await appendSlackProgressStream(entry, chunksToSend);
         didSend = didAppend;
         if (!didAppend) {
-          const didStop = await stopSlackProgressStream(entry);
-          if (didStop) {
-            entry.mode = undefined;
-            entry.streamTs = undefined;
-            entry.pendingStreamChunks = undefined;
-            didSend = true;
-          }
+          debugSlackProgress("[APPEND-FAILED-PRESERVE-STREAM]");
         }
       }
 
@@ -2215,6 +2287,11 @@ export function createSlackAdapter(
       delete entry.latestUpdate;
       entry.lastSentText = text;
       entry.lastSentAt = Date.now();
+      if (didSend && entry.mode === "stream" && entry.status === "processing") {
+        resetSlackProgressStreamKeepalive(key, entry);
+      } else if (entry.mode !== "stream" || entry.status !== "processing") {
+        clearSlackProgressStreamKeepalive(entry);
+      }
     })()
       .catch((error) => {
         console.warn(
@@ -2425,6 +2502,7 @@ export function createSlackAdapter(
           await clearSlackAssistantThreadStatus(source);
           return;
         }
+        clearSlackProgressStreamKeepalive(entry);
         if (entry.pendingTimer) {
           clearTimeout(entry.pendingTimer);
           entry.pendingTimer = undefined;
@@ -2493,6 +2571,7 @@ export function createSlackAdapter(
           await clearSlackAssistantThreadStatus(source);
           return;
         }
+        clearSlackProgressStreamKeepalive(entry);
         if (entry.pendingTimer) {
           clearTimeout(entry.pendingTimer);
           entry.pendingTimer = undefined;
@@ -3003,6 +3082,7 @@ export function createSlackAdapter(
         if (entry.pendingTimer) {
           clearTimeout(entry.pendingTimer);
         }
+        clearSlackProgressStreamKeepalive(entry);
       }
       progressCardByReplyKey.clear();
       activeProgressCardKeyByReplyKey.clear();
