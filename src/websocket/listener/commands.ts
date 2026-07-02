@@ -294,7 +294,7 @@ async function handleModCommand(
   });
 }
 
-async function handleReloadCommand(
+export async function handleReloadCommand(
   conversationRuntime: ConversationRuntime,
 ): Promise<string> {
   const { listener } = conversationRuntime;

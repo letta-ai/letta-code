@@ -7,18 +7,21 @@ import {
   buildChannelCancelUnavailableMessage,
   buildChannelChatLinkMessage,
   buildChannelChatUnavailableMessage,
+  buildChannelDetachedMessage,
   buildChannelHelpMessage,
   buildChannelModelListMessage,
   buildChannelModelListUnavailableMessage,
   buildChannelModelUnavailableMessage,
   buildChannelModelUpdatedMessage,
   buildChannelModelUpdateFailedMessage,
+  buildChannelNewConversationMessage,
   buildChannelNoRouteMessage,
   buildChannelPausedMessage,
   buildChannelResumedMessage,
   buildChannelStatusMessage,
   buildUnsupportedChannelCommandMessage,
   listChannelSlashCommands,
+  parseChannelBangCommand,
   parseChannelSlashCommand,
 } from "@/channels/commands";
 
@@ -34,6 +37,15 @@ describe("channel slash commands", () => {
   test("ignores normal text and slash-like paths", () => {
     expect(parseChannelSlashCommand("hello /help")).toBeNull();
     expect(parseChannelSlashCommand("/tmp/file.txt")).toBeNull();
+  });
+
+  test("parses bang commands for mention-scoped Slack dispatch", () => {
+    expect(parseChannelBangCommand(" !MODEL sonnet ")).toEqual({
+      name: "model",
+      args: "sonnet",
+      raw: "!MODEL sonnet",
+    });
+    expect(parseChannelBangCommand("hello !help")).toBeNull();
   });
 
   test("lists supported commands for channel help", () => {
@@ -54,8 +66,15 @@ describe("channel slash commands", () => {
 
     const text = buildChannelHelpMessage("telegram");
     expect(text).toContain("Telegram is connected to Letta Code.");
+    expect(text).not.toContain("MessageChannel");
     expect(text).toContain(
       "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
+    );
+
+    const slackText = buildChannelHelpMessage("slack");
+    expect(slackText).not.toContain("MessageChannel");
+    expect(slackText).toContain(
+      "In Slack threads, mention the app with bang commands: !help, !detach, !model, !new, !reload.",
     );
   });
 
@@ -158,6 +177,12 @@ describe("channel slash commands", () => {
     expect(buildChannelChatUnavailableMessage("telegram", route)).toContain(
       "chat UI is not available",
     );
+    expect(buildChannelDetachedMessage("slack")).toContain(
+      "detached this thread",
+    );
+    expect(buildChannelNewConversationMessage("slack", route)).toContain(
+      "started a new conversation",
+    );
   });
 
   test("builds model selector-style command messages", () => {
@@ -189,13 +214,16 @@ describe("channel slash commands", () => {
     expect(text).toContain("Slack model selector");
     expect(text).toContain("Recent models:");
     expect(text).toContain(
-      "• Claude Sonnet 4.6 — anthropic/claude-sonnet-4-6 (/model sonnet)",
+      "• Claude Sonnet 4.6 — anthropic/claude-sonnet-4-6 (!model sonnet)",
     );
     expect(text).toContain("Available models:");
-    expect(text).toContain("• GPT-5 — openai/gpt-5 (/model gpt)");
+    expect(text).toContain("• GPT-5 — openai/gpt-5 (!model gpt)");
     expect(text).toContain("…and 1 more.");
     expect(text).not.toContain("missing/model");
-    expect(text).toContain("Use /model <handle-or-id>");
+    expect(text).toContain(
+      "Mention the app with !model <handle-or-id> to switch this thread's routed model.",
+    );
+    expect(text).not.toContain("/model <handle-or-id>");
   });
 
   test("builds model update and unavailable messages", () => {
@@ -249,5 +277,19 @@ describe("channel slash commands", () => {
       "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
     );
     expect(text).toContain("without a leading slash");
+
+    const bangCommand = parseChannelBangCommand("!pause");
+    expect(bangCommand).not.toBeNull();
+    if (!bangCommand) {
+      throw new Error("Expected !pause to parse as a bang command");
+    }
+    const bangText = buildUnsupportedChannelCommandMessage(
+      "slack",
+      bangCommand,
+    );
+    expect(bangText).toContain("Slack received !pause");
+    expect(bangText).toContain(
+      "Supported bang commands here: !help, !detach, !model, !new, !reload.",
+    );
   });
 });

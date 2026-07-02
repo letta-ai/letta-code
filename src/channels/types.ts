@@ -84,6 +84,10 @@ export interface ChannelTurnSource {
   accountId?: string;
   chatId: string;
   chatType?: ChannelChatType;
+  /** Platform user who triggered the turn, when known. Slack streaming needs this in channel threads. */
+  senderId?: string;
+  /** Platform team/workspace for the triggering user, when known. */
+  senderTeamId?: string;
   messageId?: string;
   threadId?: string | null;
   agentId: string;
@@ -91,6 +95,44 @@ export interface ChannelTurnSource {
 }
 
 export type ChannelTurnOutcome = "completed" | "error" | "cancelled";
+
+export type ChannelTurnProgressKind =
+  | "thinking"
+  | "responding"
+  | "tool"
+  | "approval"
+  | "command"
+  | "status"
+  | "retry"
+  | "error";
+
+export type ChannelTurnProgressState =
+  | "started"
+  | "updated"
+  | "completed"
+  | "error"
+  | "waiting";
+
+export interface ChannelTurnProgressUpdate {
+  kind: ChannelTurnProgressKind;
+  state: ChannelTurnProgressState;
+  /** Sanitized, user-facing status text. Never include tool args or output. */
+  message: string;
+  toolCallId?: string;
+  toolName?: string;
+  /** Optional sanitized display title for tool progress rows. */
+  toolTitle?: string;
+  /** Optional sanitized argument summary for expanded tool progress details. */
+  toolDetails?: string;
+  command?: string;
+  runId?: string;
+}
+
+export interface ChannelTurnProgressEvent extends ChannelTurnProgressUpdate {
+  type: "progress";
+  batchId?: string;
+  sources: ChannelTurnSource[];
+}
 
 export type ChannelControlRequestKind =
   | "ask_user_question"
@@ -164,7 +206,7 @@ export interface ChannelAdapter {
   sendDirectReply(
     chatId: string,
     text: string,
-    options?: { replyToMessageId?: string },
+    options?: { replyToMessageId?: string; threadId?: string | null },
   ): Promise<void>;
 
   /**
@@ -183,6 +225,13 @@ export interface ChannelAdapter {
    * without coupling queue/lifecycle state to a specific channel.
    */
   handleTurnLifecycleEvent?(event: ChannelTurnLifecycleEvent): Promise<void>;
+
+  /**
+   * Optional progress hook for channel-originated turns. Payloads are generic
+   * and sanitized before they reach adapters; adapters decide how to render and
+   * throttle their platform-specific UX.
+   */
+  handleTurnProgressEvent?(event: ChannelTurnProgressEvent): Promise<void>;
 
   /**
    * Optional hook for control requests that originate from a channel turn.
@@ -209,6 +258,8 @@ export interface InboundChannelMessage {
   chatId: string;
   /** Platform-specific sender user ID. */
   senderId: string;
+  /** Platform-specific sender team/workspace ID, when available. */
+  senderTeamId?: string;
   /** Sender display name, if available. */
   senderName?: string;
   /** Chat/channel label, if available (for discovery UIs). */
@@ -319,6 +370,8 @@ export interface ChannelRoute {
   enabled: boolean;
   /** Whether this route permits outbound MessageChannel sends. Defaults true. */
   outboundEnabled?: boolean;
+  /** Slack-only: a detached thread stays silent until the app is mentioned again. */
+  detached?: boolean;
   /** ISO 8601 creation timestamp. */
   createdAt: string;
   /** ISO 8601 update timestamp. */
@@ -383,8 +436,6 @@ export interface SlackChannelConfig {
   allowedUsers: string[];
   /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When false, successful turns remove 👀 without adding ✅. Default true. */
-  showCompletedReaction?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
 }
@@ -551,8 +602,6 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   defaultPermissionMode: SlackDefaultPermissionMode;
   /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When false, successful turns remove 👀 without adding ✅. Default true. */
-  showCompletedReaction?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
   /**

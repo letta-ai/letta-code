@@ -21,7 +21,7 @@ const MEMORY_BLOCKS = [
     description: "Parity human",
   },
   {
-    label: "project/gotchas",
+    label: "system/project/gotchas",
     value: "Use Bun.",
     description: "Parity gotchas",
   },

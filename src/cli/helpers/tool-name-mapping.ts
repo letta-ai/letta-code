@@ -14,6 +14,8 @@ import { MEMORY_TOOL_NAMES } from "@/tools/toolset";
  * - Gemini toolset (snake_case and PascalCase)
  */
 export function getDisplayToolName(rawName: string): string {
+  if (MEMORY_TOOL_NAMES.has(rawName)) return "Memory";
+
   // Anthropic toolset
   if (rawName === "write") return "Write";
   if (rawName === "edit" || rawName === "multi_edit") return "Update";
@@ -32,13 +34,20 @@ export function getDisplayToolName(rawName: string): string {
 
   // Codex toolset (snake_case)
   if (rawName === "update_plan") return "Planning";
-  if (rawName === "exec_command" || rawName === "write_stdin") return "Bash";
+  if (
+    rawName === "exec_command" ||
+    rawName === "shell_exec" ||
+    rawName === "write_stdin"
+  ) {
+    return "Bash";
+  }
   if (rawName === "shell_command" || rawName === "shell") return "Bash";
   if (rawName === "read_file") return "Read";
   if (rawName === "list_dir") return "LS";
   if (rawName === "grep_files") return "Search";
   if (rawName === "apply_patch") return "Patch";
-  if (rawName === "memory_apply_patch") return "Memory Patch";
+  if (rawName === "web_search") return "Web Search";
+  if (rawName === "fetch_webpage") return "Fetch Webpage";
 
   // Codex toolset (PascalCase)
   if (rawName === "UpdatePlan") return "Planning";
@@ -47,6 +56,8 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "ListDir") return "LS";
   if (rawName === "GrepFiles") return "Search";
   if (rawName === "ApplyPatch") return "Patch";
+  if (rawName === "WebSearch") return "Web Search";
+  if (rawName === "FetchWebpage") return "Fetch Webpage";
 
   // Gemini toolset (snake_case)
   if (rawName === "run_shell_command") return "Bash";
@@ -225,6 +236,7 @@ export function isShellTool(name: string): boolean {
     n === "shell_command" ||
     n === "shellcommand" ||
     n === "exec_command" ||
+    n === "shell_exec" ||
     n === "write_stdin" ||
     n === "run_shell_command" ||
     n === "runshellcommand"
@@ -252,6 +264,13 @@ export function isSearchTool(name: string): boolean {
     name === "search_file_content" ||
     name === "SearchFileContent"
   );
+}
+
+/**
+ * Checks if a tool is web search.
+ */
+export function isWebSearchTool(name: string): boolean {
+  return name === "web_search" || name === "WebSearch" || name === "webSearch";
 }
 
 /**
