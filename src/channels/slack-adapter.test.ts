@@ -1787,7 +1787,7 @@ test("slack adapter does not add lifecycle reactions for rich progress turns", a
   expect(writeClient?.reactions.remove.mock.calls ?? []).toHaveLength(0);
 });
 
-test("slack adapter streams native task progress and clears thread status", async () => {
+test("slack adapter streams native task progress, keeps an active spinner, and clears thread status", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -1903,6 +1903,12 @@ test("slack adapter streams native task progress and clears thread status", asyn
     id: "task_call-1",
     title: "Ran",
     status: "complete",
+  });
+  expect(appendCall?.chunks?.[2]).toMatchObject({
+    type: "task_update",
+    id: "task_turn_active",
+    title: "Working",
+    status: "in_progress",
   });
   expect(JSON.stringify(appendCall?.chunks)).not.toContain("token=abc");
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
@@ -3455,6 +3461,12 @@ test("slack adapter shows responding while MessageChannel runs with an active pr
     {
       type: "plan_update",
       title: "Responding",
+    },
+    {
+      type: "task_update",
+      id: "task_turn_active",
+      title: "Working",
+      status: "complete",
     },
     {
       type: "task_update",

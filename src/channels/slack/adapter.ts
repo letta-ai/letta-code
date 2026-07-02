@@ -439,6 +439,7 @@ const SLACK_PROGRESS_CARD_STATE_MAX = 2_000;
 const SLACK_STREAM_CHUNK_TEXT_MAX = 256;
 const SLACK_LIFECYCLE_ERROR_TASK_ID = "task_lifecycle_error";
 const SLACK_CHANNEL_RESPONSE_TASK_ID = "task_channel_response";
+const SLACK_TURN_ACTIVE_TASK_ID = "task_turn_active";
 const DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS = 1_000;
 const DEFAULT_SLACK_PROGRESS_STREAM_KEEPALIVE_MS = 60_000;
 const SLACK_PROGRESS_DEBUG_LOG = join(
@@ -1035,7 +1036,9 @@ function pluralizeTool(count: number): string {
 function buildSlackPlanUpdateChunk(
   entry: SlackProgressCardEntry,
 ): SlackStreamChunk {
-  const tasks = Array.from(entry.toolTasksById?.values() ?? []);
+  const tasks = Array.from(entry.toolTasksById?.values() ?? []).filter(
+    (task) => task.id !== SLACK_TURN_ACTIVE_TASK_ID,
+  );
   const approvalCount = tasks.filter(
     (task) => task.kind === "approval" && task.status === "pending",
   ).length;
@@ -1106,6 +1109,59 @@ function buildSlackPlanUpdateChunk(
   };
 }
 
+function reconcileSlackTurnActiveTask(
+  entry: SlackProgressCardEntry,
+): SlackStreamChunk[] {
+  const tasks = Array.from(entry.toolTasksById?.values() ?? []);
+  const visibleTasks = tasks.filter(
+    (task) => task.id !== SLACK_TURN_ACTIVE_TASK_ID,
+  );
+  const hasRunningVisibleTask = visibleTasks.some(
+    (task) => task.status === "in_progress" || task.status === "pending",
+  );
+  const activeTask = entry.toolTasksById?.get(SLACK_TURN_ACTIVE_TASK_ID);
+  const shouldKeepSpinning =
+    entry.status === "processing" &&
+    visibleTasks.length > 0 &&
+    !hasRunningVisibleTask;
+
+  // Slack derives the native plan/header icon from task statuses. If every
+  // concrete tool row is terminal while the turn is still processing, Slack
+  // shows a static checkmark next to "Working". Keep a small turn-level task
+  // in progress so the rich viewer continues to look alive between tools.
+  if (shouldKeepSpinning) {
+    if (activeTask?.status === "in_progress") {
+      return [];
+    }
+    const task: SlackProgressToolTask = {
+      id: SLACK_TURN_ACTIVE_TASK_ID,
+      kind: "status",
+      title: "Working",
+      status: "in_progress",
+    };
+    entry.toolTasksById ??= new Map();
+    entry.toolTasksById.set(task.id, task);
+    return [toSlackTaskUpdateChunk(task)];
+  }
+
+  if (activeTask?.status === "in_progress") {
+    entry.toolTasksById?.delete(SLACK_TURN_ACTIVE_TASK_ID);
+    return [
+      {
+        type: "task_update",
+        id: SLACK_TURN_ACTIVE_TASK_ID,
+        title: "Working",
+        status: "complete",
+      },
+    ];
+  }
+
+  if (activeTask) {
+    entry.toolTasksById?.delete(SLACK_TURN_ACTIVE_TASK_ID);
+  }
+  return [];
+}
+
 function resolveSlackToolActionTaskId(
   update: ChannelTurnProgressEvent,
 ): string | null {
@@ -1172,15 +1228,18 @@ function buildSlackChannelResponseProgressChunks(
   entry.toolTasksById ??= new Map();
   entry.reasoningActive = false;
   entry.toolTasksById.set(task.id, task);
+  const turnActiveChunks = reconcileSlackTurnActiveTask(entry);
 
   const chunks: SlackStreamChunk[] = [
     buildSlackPlanUpdateChunk(entry),
+    ...(status === "complete" || status === "error" ? [] : turnActiveChunks),
     {
       type: "task_update",
       id: task.id,
       title: task.title,
       status: task.status,
     },
+    ...(status === "complete" || status === "error" ? turnActiveChunks : []),
   ];
   debugSlackProgress(
     `[RESPONSE-CHUNKS] id=${task.id} title=${title} status=${status} chunks=${describeSlackStreamChunks(chunks)}`,
@@ -1287,6 +1346,10 @@ function buildSlackStreamProgressChunks(
     !prevTask || (prevTask.details ?? "") !== (details ?? "");
 
   chunks.push(buildSlackPlanUpdateChunk(entry));
+  const turnActiveChunks = reconcileSlackTurnActiveTask(entry);
+  if (status !== "complete" && status !== "error") {
+    chunks.push(...turnActiveChunks);
+  }
   chunks.push({
     type: "task_update" as const,
     id: task.id,
@@ -1296,6 +1359,9 @@ function buildSlackStreamProgressChunks(
       ? { details }
       : {}),
   });
+  if (status === "complete" || status === "error") {
+    chunks.push(...turnActiveChunks);
+  }
 
   debugSlackProgress(
     `[BUILD-CHUNKS] id=${id} title=${title} status=${status} details=${details ?? "none"} detailsChanged=${detailsChanged} chunks=${describeSlackStreamChunks(chunks)}`,
