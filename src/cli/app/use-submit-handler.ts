@@ -31,6 +31,7 @@ import {
   isActiveMemfsEnabled,
   isLocalMemfsActive,
 } from "@/agent/memory-runtime";
+import { buildReflectionMemoryScope } from "@/agent/memory-worktree";
 import { sendMessageStreamWithBackend } from "@/agent/message";
 import {
   detectPersonalityFromPersonaFile,
@@ -65,7 +66,6 @@ import {
 } from "@/cli/helpers/init-command";
 import { buildLogoutSuccessMessage } from "@/cli/helpers/logout-message";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
-import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
@@ -73,16 +73,16 @@ import {
 import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-toggle";
 import {
   AUTO_REFLECTION_DESCRIPTION,
+  finalizeReflectionMemoryWorktreeLaunch,
   launchReflectionSubagent,
+  prepareReflectionMemoryWorktreeLaunch,
   releaseReflectionLaunch,
   tryReserveReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
 import {
   buildMultiReflectionPayload,
-  buildParentMemorySnapshot,
   buildReflectionAutoPayload,
   buildReflectionSelectorPrompt,
-  buildReflectionSubagentPrompt,
   finalizeMultiReflectionPayload,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
@@ -2139,6 +2139,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   conversationId: compactConversationId,
                   memfsEnabled: isActiveMemfsEnabled(agentId),
                   triggerSource: "compaction-event",
+                  skipPendingWorktreeReminderScan: true,
                   description: AUTO_REFLECTION_DESCRIPTION,
                   completionConversationId: () => conversationIdRef.current,
                   recompileByConversation:
@@ -3085,14 +3086,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                         return;
                       }
 
-                      const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-                      const parentMemory =
-                        await buildParentMemorySnapshot(memoryDir);
-                      const reflectionPrompt = buildReflectionSubagentPrompt({
-                        instruction: reflectArgs.instruction,
-                        memoryDir,
-                        parentMemory,
-                      });
+                      const { worktree, reflectionPrompt } =
+                        await prepareReflectionMemoryWorktreeLaunch({
+                          agentId,
+                          instruction: reflectArgs.instruction,
+                        });
 
                       spawnBackgroundSubagentTask({
                         subagentType: "reflection",
@@ -3100,6 +3098,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                         description: "Reflecting on auto-selected transcripts",
                         silentCompletion: true,
                         transcriptPath: autoReflectionPayload.payloadPath,
+                        memoryScope: buildReflectionMemoryScope(worktree),
                         parentScope: {
                           agentId,
                           conversationId: reflectionConversationId,
@@ -3119,30 +3118,27 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                                 error: reflectionError,
                               },
                             );
-                            await finalizeMultiReflectionPayload(
-                              agentId,
-                              autoReflectionPayload.manifest,
-                              reflectionSuccess,
-                            );
-                            const msg = await handleMemorySubagentCompletion(
-                              {
+                            const { completionSuccess, completionMessage } =
+                              await finalizeReflectionMemoryWorktreeLaunch({
+                                worktree,
+                                subagentSuccess: reflectionSuccess,
+                                subagentError: reflectionError,
                                 agentId,
                                 conversationId: conversationIdRef.current,
-                                subagentType: "reflection",
-                                success: reflectionSuccess,
-                                error: reflectionError,
                                 subagentAgentId: reflectionAgentId ?? undefined,
-                              },
-                              {
                                 recompileByConversation:
                                   systemPromptRecompileByConversationRef.current,
                                 recompileQueuedByConversation:
                                   queuedSystemPromptRecompileByConversationRef.current,
                                 logRecompileFailure: (message) =>
                                   debugWarn("memory", message),
-                              },
+                              });
+                            await finalizeMultiReflectionPayload(
+                              agentId,
+                              autoReflectionPayload.manifest,
+                              completionSuccess,
                             );
-                            appendTaskNotificationEvents([msg]);
+                            appendTaskNotificationEvents([completionMessage]);
                           } finally {
                             releaseReflectionReservation();
                           }
@@ -3207,13 +3203,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               return { submitted: true };
             }
 
-            const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-            const parentMemory = await buildParentMemorySnapshot(memoryDir);
-            const reflectionPrompt = buildReflectionSubagentPrompt({
-              instruction: reflectArgs.instruction,
-              memoryDir,
-              parentMemory,
-            });
+            const { worktree, reflectionPrompt } =
+              await prepareReflectionMemoryWorktreeLaunch({
+                agentId,
+                instruction: reflectArgs.instruction,
+              });
 
             const {
               spawnBackgroundSubagentTask,
@@ -3225,6 +3219,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               description: "Reflecting on conversation",
               silentCompletion: true,
               transcriptPath: reflectionPayload.payloadPath,
+              memoryScope: buildReflectionMemoryScope(worktree),
               parentScope: {
                 agentId,
                 conversationId: reflectionConversationId,
@@ -3240,31 +3235,27 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     conversationId: reflectionConversationId,
                     error,
                   });
-                  await finalizeMultiReflectionPayload(
-                    agentId,
-                    reflectionPayload.manifest,
-                    success,
-                  );
-
-                  const msg = await handleMemorySubagentCompletion(
-                    {
+                  const { completionSuccess, completionMessage } =
+                    await finalizeReflectionMemoryWorktreeLaunch({
+                      worktree,
+                      subagentSuccess: success,
+                      subagentError: error,
                       agentId,
                       conversationId: conversationIdRef.current,
-                      subagentType: "reflection",
-                      success,
-                      error,
                       subagentAgentId: reflectionAgentId ?? undefined,
-                    },
-                    {
                       recompileByConversation:
                         systemPromptRecompileByConversationRef.current,
                       recompileQueuedByConversation:
                         queuedSystemPromptRecompileByConversationRef.current,
                       logRecompileFailure: (message) =>
                         debugWarn("memory", message),
-                    },
+                    });
+                  await finalizeMultiReflectionPayload(
+                    agentId,
+                    reflectionPayload.manifest,
+                    completionSuccess,
                   );
-                  appendTaskNotificationEvents([msg]);
+                  appendTaskNotificationEvents([completionMessage]);
                 } finally {
                   releaseReflectionReservation();
                 }

@@ -45,6 +45,7 @@ import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflectio
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
+  queuePendingReflectionWorktreeReminders,
 } from "@/cli/helpers/reflection-launcher";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
@@ -323,6 +324,7 @@ export function buildMaybeLaunchReflectionSubagent(params: {
       conversationId,
       memfsEnabled: settingsManager.isMemfsEnabled(agentId),
       triggerSource,
+      skipPendingWorktreeReminderScan: triggerSource === "compaction-event",
       description: AUTO_REFLECTION_DESCRIPTION,
       systemPrompt: cachedAgent?.system ?? undefined,
       recompileByConversation:
@@ -946,6 +948,11 @@ export async function handleIncomingMessage(
             reflectionSettings,
             reminderState: runtime.reminderState,
             contextTracker: runtime.contextTracker,
+            onCompaction: () =>
+              queuePendingReflectionWorktreeReminders({
+                agentId: agentId || "",
+                conversationId,
+              }),
             launch: buildMaybeLaunchReflectionSubagent({
               runtime,
               socket,

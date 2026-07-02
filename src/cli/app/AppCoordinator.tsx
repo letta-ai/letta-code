@@ -95,6 +95,7 @@ import {
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
+  queuePendingReflectionWorktreeReminders,
 } from "@/cli/helpers/reflection-launcher";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
@@ -3703,12 +3704,19 @@ export function App({
         reflectionSettings: getReflectionSettings(reflectionAgentId),
         reminderState: sharedReminderStateRef.current,
         contextTracker: contextTrackerRef.current,
+        onCompaction: () =>
+          queuePendingReflectionWorktreeReminders({
+            agentId: reflectionAgentId,
+            conversationId: conversationIdRef.current ?? "default",
+          }),
         launch: async (triggerSource) => {
           const result = await launchReflectionSubagent({
             agentId: reflectionAgentId,
             conversationId: conversationIdRef.current ?? "default",
             memfsEnabled: isActiveMemfsEnabled(reflectionAgentId),
             triggerSource,
+            skipPendingWorktreeReminderScan:
+              triggerSource === "compaction-event",
             description: AUTO_REFLECTION_DESCRIPTION,
             completionConversationId: () => conversationIdRef.current,
             recompileByConversation:

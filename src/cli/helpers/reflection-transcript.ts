@@ -186,7 +186,6 @@ export interface ReflectionAutoPayload {
 
 export interface ReflectionPromptInput {
   instruction?: string;
-  memoryDir: string;
   parentMemory?: string;
 }
 
@@ -201,7 +200,9 @@ export function buildReflectionSubagentPrompt(
     'The payload may be either a JSON message array for one conversation or a `multi_transcript_reflection_payload` manifest. If it is a manifest, read each `payload_path` listed in `transcripts` and synthesize across all conversations. Entries with `mode: "replay"` were already reflected before and are included intentionally for re-review/deduplication; do not ignore them just because they are replay slices.',
     "When reviewing multiple transcripts, prefer durable patterns and latest evidence across sessions. Resolve contradictions by updating stale memory at the source, deduplicate repeated facts, and avoid storing one-off task state.",
     "",
-    `The primary agent's memory filesystem is located at: ${input.memoryDir}`,
+    "The primary agent's memory filesystem is available through the `$MEMORY_DIR` environment variable.",
+    "Run git add or git commit commands only from $MEMORY_DIR; the harness handles integration after your commit. If these fail, stop reflecting and report the failure. All other git commands are out of your purview.",
+    'When using Edit, first resolve the absolute file path from `$MEMORY_DIR` with Bash (for example: `printf "%s/system/persona.md\\n" "$MEMORY_DIR"`) and use the printed path. Do not hardcode memory paths from the prompt.',
     "In-context memory (in the parent agent's system prompt) is stored in the `system/` folder and are rendered in <memory> tags below. Modification to files in `system/` will edit the parent agent's system prompt.",
     "Additional memory files (such as skills and external memory) may also be read and modified.",
     "",
@@ -540,7 +541,7 @@ export async function buildParentMemorySnapshot(
 
     for (const file of systemFiles) {
       const normalizedPath = file.relativePath.replace(/\\/g, "/");
-      const absolutePath = `${memoryDir.replace(/\\/g, "/")}/${normalizedPath}`;
+      const absolutePath = `$MEMORY_DIR/${normalizedPath}`;
       const prefix = ["<memory>", `<path>${absolutePath}</path>`];
       const suffix = ["</memory>"];
       const fullEntry = [...prefix, file.content, ...suffix];
@@ -589,7 +590,7 @@ export async function buildParentMemorySnapshot(
     }
 
     if (omittedSystemFiles > 0) {
-      const notice = `[Memory preview omitted ${omittedSystemFiles.toLocaleString()} additional system file(s) because the reflection startup context budget was exhausted. Read files directly from ${memoryDir} if needed.]`;
+      const notice = `[Memory preview omitted ${omittedSystemFiles.toLocaleString()} additional system file(s) because the reflection startup context budget was exhausted. Read files directly from $MEMORY_DIR if needed.]`;
       if (canAppendWithinBudget(lines, [notice], maxChars)) {
         lines.push(notice);
       }

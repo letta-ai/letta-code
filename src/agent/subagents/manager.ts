@@ -98,6 +98,12 @@ export interface SubagentResult {
   durationMs?: number;
 }
 
+export interface SubagentMemoryScope {
+  primaryRoot: string | null;
+  writableRoots: string[];
+  readonlyRoots?: string[];
+}
+
 /**
  * State tracked during subagent execution
  */
@@ -617,14 +623,25 @@ export function resolveSubagentWorkingDirectory(
     subagentType?: string;
     launchProfile?: SubagentLaunchProfile;
     inheritedPrimaryRoot?: string | null;
+    memoryScope?: SubagentMemoryScope;
   } = {},
 ): string {
   if (
     options.subagentType === "reflection" &&
     options.launchProfile === "memory-subagent" &&
-    options.inheritedPrimaryRoot
+    options.memoryScope
   ) {
-    return options.inheritedPrimaryRoot;
+    return env.USER_CWD || fallbackCwd;
+  }
+
+  const primaryRoot =
+    options.memoryScope?.primaryRoot ?? options.inheritedPrimaryRoot;
+  if (
+    options.subagentType === "reflection" &&
+    options.launchProfile === "memory-subagent" &&
+    primaryRoot
+  ) {
+    return primaryRoot;
   }
 
   return env.USER_CWD || fallbackCwd;
@@ -697,6 +714,8 @@ export interface ComposeSubagentChildEnvOptions {
    * profile to point the child at its parent's memfs repo. Null means memfs
    * disabled or unresolvable — child operates without a MEMORY_DIR. */
   inheritedPrimaryRoot: string | null;
+  /** Optional exact memory scope for harness-created worktrees. */
+  memoryScope?: SubagentMemoryScope;
   /** Forwarded API key to avoid per-subagent keychain lookups. */
   inheritedApiKey?: string | null;
   /** Forwarded base URL to avoid per-subagent settings lookups. */
@@ -755,6 +774,7 @@ export function composeSubagentChildEnv(
     parentAgentId,
     launchProfile,
     inheritedPrimaryRoot,
+    memoryScope,
     inheritedApiKey,
     inheritedBaseUrl,
     transcriptPath,
@@ -788,9 +808,10 @@ export function composeSubagentChildEnv(
   // subagents either have their own memfs (if memfs-enabled) or no MEMORY_DIR
   // at all — their tools will surface resolution errors appropriately.
   if (launchProfile === "memory-subagent") {
-    if (inheritedPrimaryRoot) {
-      childEnv.MEMORY_DIR = inheritedPrimaryRoot;
-      childEnv.LETTA_MEMORY_DIR = inheritedPrimaryRoot;
+    const primaryRoot = memoryScope?.primaryRoot ?? inheritedPrimaryRoot;
+    if (primaryRoot) {
+      childEnv.MEMORY_DIR = primaryRoot;
+      childEnv.LETTA_MEMORY_DIR = primaryRoot;
     } else {
       delete childEnv.MEMORY_DIR;
       delete childEnv.LETTA_MEMORY_DIR;
@@ -1052,6 +1073,7 @@ async function executeSubagent(
   maxTurns?: number,
   parentAgentIdOverride?: string,
   transcriptPath?: string,
+  memoryScope?: SubagentMemoryScope,
 ): Promise<SubagentResult> {
   // Check if already aborted before starting
   if (signal?.aborted) {
@@ -1133,6 +1155,7 @@ async function executeSubagent(
         subagentType: type,
         launchProfile: config.launchProfile,
         inheritedPrimaryRoot,
+        memoryScope,
       },
     );
     const childEnv = composeSubagentChildEnv({
@@ -1145,6 +1168,7 @@ async function executeSubagent(
       parentAgentId,
       launchProfile: config.launchProfile,
       inheritedPrimaryRoot,
+      memoryScope,
       inheritedApiKey,
       inheritedBaseUrl,
       transcriptPath,
@@ -1160,6 +1184,7 @@ async function executeSubagent(
       backendMode,
       memoryRoots: inheritedMemoryRoots.roots,
       inheritedPrimaryRoot,
+      memoryScope,
       localBackendStorageDir,
     });
     const spawnLauncher = sandbox
@@ -1470,6 +1495,7 @@ export async function spawnSubagent(
   parentAgentId?: string,
   transcriptPath?: string,
   parentConversationId?: string,
+  memoryScope?: SubagentMemoryScope,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -1579,6 +1605,7 @@ export async function spawnSubagent(
     maxTurns,
     resolvedParentAgentId,
     transcriptPath,
+    memoryScope,
   );
 
   return result;

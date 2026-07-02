@@ -965,6 +965,9 @@ url=$(git config --local --get letta.memoryRepository.url 2>/dev/null)
 [ -z "$url" ] && exit 0
 branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || exit 0
 [ -z "$branch" ] && exit 0
+# Reflection and other harness worktrees commit on temporary branches; only the
+# main MemFS checkout should push to the optional memory repository remote.
+[ "$branch" != "main" ] && exit 0
 log="$(git rev-parse --git-dir)/memory-repository-push.log"
 (
   {
