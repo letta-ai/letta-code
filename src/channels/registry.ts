@@ -32,6 +32,7 @@ import {
   buildChannelNoRouteMessage,
   buildChannelPausedMessage,
   buildChannelReflectionUnavailableMessage,
+  buildChannelReloadUnavailableMessage,
   buildChannelResumedMessage,
   parseChannelSlashCommand,
   tryHandleChannelSlashCommand,
@@ -482,6 +483,17 @@ export type ChannelModelHandler = (params: {
   text?: string;
 }>;
 
+export type ChannelReloadHandler = (params: {
+  channelId: string;
+  runtime: {
+    agent_id: string;
+    conversation_id: string;
+  };
+}) => Promise<{
+  handled: boolean;
+  text?: string;
+}>;
+
 type ChannelStartupOptions = {
   logger?: ChannelStartupLogger;
 };
@@ -586,6 +598,7 @@ export class ChannelRegistry {
   private cancelHandler: ChannelCancelHandler | null = null;
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
+  private reloadHandler: ChannelReloadHandler | null = null;
   private readonly buffer: ChannelInboundDelivery[] = [];
   private readonly pendingControlRequestsById = new Map<
     string,
@@ -738,6 +751,10 @@ export class ChannelRegistry {
 
   setModelHandler(handler: ChannelModelHandler | null): void {
     this.modelHandler = handler;
+  }
+
+  setReloadHandler(handler: ChannelReloadHandler | null): void {
+    this.reloadHandler = handler;
   }
 
   setEventHandler(
@@ -1076,6 +1093,7 @@ export class ChannelRegistry {
     this.cancelHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
+    this.reloadHandler = null;
   }
 
   /**
@@ -1095,6 +1113,7 @@ export class ChannelRegistry {
     this.cancelHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
+    this.reloadHandler = null;
     this.pendingControlRequestsById.clear();
     this.pendingControlRequestIdByScope.clear();
     this.unsubscribeWhatsAppState();
@@ -1352,6 +1371,33 @@ export class ChannelRegistry {
     });
   }
 
+  private async handleReloadSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.loadAndFindRawRouteForMessage(msg);
+    if (!route?.enabled) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    if (!this.reloadHandler) {
+      return {
+        handled: true,
+        text: buildChannelReloadUnavailableMessage(msg.channel),
+      };
+    }
+
+    return this.reloadHandler({
+      channelId: msg.channel,
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+    });
+  }
+
   private getCancelRoute(msg: InboundChannelMessage): ChannelRoute | null {
     let route = this.getRoute(
       msg.channel,
@@ -1472,6 +1518,8 @@ export class ChannelRegistry {
           pause: async () => this.handlePauseResumeSlashCommand("pause", msg),
           reflection: async (_command, commandMsg) =>
             this.handleReflectionSlashCommand(commandMsg),
+          reload: async (_command, commandMsg) =>
+            this.handleReloadSlashCommand(commandMsg),
           resume: async () => this.handlePauseResumeSlashCommand("resume", msg),
         },
       })

@@ -15,6 +15,7 @@ import {
   buildChannelModelUpdateFailedMessage,
   buildChannelNoRouteMessage,
   buildChannelPausedMessage,
+  buildChannelReloadUnavailableMessage,
   buildChannelResumedMessage,
   buildChannelStatusMessage,
   buildUnsupportedChannelCommandMessage,
@@ -46,6 +47,7 @@ describe("channel slash commands", () => {
       "chat",
       "model",
       "reflection",
+      "reload",
     ]) {
       expect(listChannelSlashCommands()).toContainEqual(
         expect.objectContaining({ name }),
@@ -55,7 +57,7 @@ describe("channel slash commands", () => {
     const text = buildChannelHelpMessage("telegram");
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection, /reload.",
     );
   });
 
@@ -233,6 +235,9 @@ describe("channel slash commands", () => {
     expect(buildChannelModelUnavailableMessage("discord")).toContain(
       "listener is not ready yet",
     );
+    expect(buildChannelReloadUnavailableMessage("signal")).toContain(
+      "cannot reload settings and local mods",
+    );
   });
 
   test("builds a useful unsupported-command response", () => {
@@ -246,7 +251,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram received /compact now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection, /reload.",
     );
     expect(text).toContain("without a leading slash");
   });

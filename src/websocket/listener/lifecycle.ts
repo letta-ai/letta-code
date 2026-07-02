@@ -33,6 +33,7 @@ import { isDebugEnabled } from "@/utils/debug";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
+import { handleReloadCommand } from "./commands";
 import { handleChannelRegistryEvent } from "./commands/channels";
 import {
   applyModelUpdateForRuntime,
@@ -608,6 +609,16 @@ export async function wireChannelIngress(
         ),
       };
     }
+  });
+
+  registry.setReloadHandler(async ({ channelId: _channelId, runtime }) => {
+    const scopedRuntime = getOrCreateScopedRuntime(
+      listener,
+      runtime.agent_id,
+      runtime.conversation_id,
+    );
+    const text = await handleReloadCommand(scopedRuntime);
+    return { handled: true, text };
   });
 
   registry.setReflectionHandler(async ({ runtime }) => {
