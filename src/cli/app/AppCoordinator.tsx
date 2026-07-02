@@ -3666,11 +3666,12 @@ export function App({
       return;
     }
     try {
+      const reflectionSettings = getReflectionSettings(reflectionAgentId);
       await maybeLaunchPostTurnReflection({
         agentId: reflectionAgentId,
         conversationId: conversationIdRef.current ?? "default",
         memfsEnabled: isActiveMemfsEnabled(reflectionAgentId),
-        reflectionSettings: getReflectionSettings(reflectionAgentId),
+        reflectionSettings,
         reminderState: sharedReminderStateRef.current,
         contextTracker: contextTrackerRef.current,
         launch: async (triggerSource) => {
@@ -3679,6 +3680,7 @@ export function App({
             conversationId: conversationIdRef.current ?? "default",
             memfsEnabled: isActiveMemfsEnabled(reflectionAgentId),
             triggerSource,
+            reflectionSettings,
             description: AUTO_REFLECTION_DESCRIPTION,
             completionConversationId: () => conversationIdRef.current,
             recompileByConversation:
