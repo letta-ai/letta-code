@@ -196,7 +196,7 @@ const PI_PROVIDER_OVERRIDES: Partial<
     localProviderNames: ["amazon-bedrock", LOCAL_BEDROCK_PROVIDER_NAME],
   },
   "openai-codex": {
-    providerTypes: ["openai-codex", "chatgpt_oauth"],
+    providerTypes: ["chatgpt_oauth", "openai-codex"],
     handlePrefixes: ["openai-codex/", "chatgpt-plus-pro/"],
     localProviderNames: ["openai-codex", LOCAL_CHATGPT_PROVIDER_NAME],
   },
