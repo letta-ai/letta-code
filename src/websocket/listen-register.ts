@@ -3,6 +3,7 @@
  * Owns the HTTP request contract and error handling; callers own UX strings and logging.
  */
 
+import { createHash } from "node:crypto";
 import { getSelfUpdateStatus } from "@/updater/auto-update";
 import { getVersion } from "@/version.ts";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener/listener-constants";
@@ -18,6 +19,35 @@ export interface RegisterOptions {
   apiKey: string;
   deviceId: string;
   connectionName: string;
+  /**
+   * Stable identifier for this listener process, so multiple listeners on
+   * one device (e.g. `letta server` in a terminal plus the in-app /listen
+   * command) get separate Cloud environment rows instead of contesting a
+   * single per-device row and rotating each other's connection lease.
+   * Optional: servers that predate the field ignore it.
+   */
+  listenerInstanceId?: string;
+}
+
+/**
+ * Derive a stable listener instance id from the listener surface and its
+ * connection name. Deterministic (no stored state): the same surface + name
+ * maps to the same instance across restarts, while a rename creates a new
+ * instance (the old row ages out server-side via lastSeenAt).
+ *
+ * Surfaces:
+ * - "server": `letta server` CLI process
+ * - "listen": in-app /listen command
+ */
+export function deriveListenerInstanceId(
+  surface: "server" | "listen",
+  connectionName: string,
+): string {
+  const nameHash = createHash("sha256")
+    .update(connectionName)
+    .digest("hex")
+    .slice(0, 16);
+  return `${surface}-${nameHash}`;
 }
 
 type FetchImpl = typeof fetch;
@@ -90,6 +120,9 @@ export async function registerWithCloud(
     },
     body: JSON.stringify({
       deviceId: opts.deviceId,
+      ...(opts.listenerInstanceId
+        ? { listenerInstanceId: opts.listenerInstanceId }
+        : {}),
       connectionName: opts.connectionName,
       metadata: {
         lettaCodeVersion: getVersion(),

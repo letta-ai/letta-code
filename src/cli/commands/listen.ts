@@ -9,7 +9,10 @@ import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { settingsManager } from "@/settings-manager";
 import { getErrorMessage } from "@/utils/error";
-import { registerWithCloudRetry } from "@/websocket/listen-register";
+import {
+  deriveListenerInstanceId,
+  registerWithCloudRetry,
+} from "@/websocket/listen-register";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -231,6 +234,10 @@ export async function handleListen(
           apiKey,
           deviceId,
           connectionName,
+          listenerInstanceId: deriveListenerInstanceId(
+            "listen",
+            connectionName,
+          ),
         },
         {
           onRetry: (attempt, delayMs, error) => {
@@ -342,7 +349,16 @@ export async function handleListen(
 
           try {
             const reregisterResult = await registerWithCloudRetry(
-              { serverUrl, apiKey, deviceId, connectionName },
+              {
+                serverUrl,
+                apiKey,
+                deviceId,
+                connectionName,
+                listenerInstanceId: deriveListenerInstanceId(
+                  "listen",
+                  connectionName,
+                ),
+              },
               {
                 maxDurationMs: Infinity,
                 onRetry: (attempt, delayMs, error) => {
