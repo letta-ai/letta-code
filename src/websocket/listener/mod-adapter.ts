@@ -16,7 +16,7 @@ export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
     compact: false,
     llm: false,
   },
-  permissions: false,
+  permissions: true,
   providers: true,
   ui: {
     panels: false,
