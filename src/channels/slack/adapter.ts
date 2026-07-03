@@ -721,10 +721,14 @@ export function createSlackAdapter(
     return `${source.chatId}:${replyToMessageId}`;
   }
 
-  function formatSlackLifecycleErrorMessage(errorText: string): string {
+  function formatSlackLifecycleErrorMessage(
+    errorText: string,
+    runId?: string | null,
+  ): string {
     return formatChannelLifecycleErrorMessage(errorText, {
       codeBlock: true,
       maxLength: SLACK_LIFECYCLE_ERROR_TEXT_MAX,
+      runId,
     });
   }
 
@@ -780,6 +784,7 @@ export function createSlackAdapter(
   async function sendLifecycleErrorReply(
     source: ChannelTurnSource,
     errorText: string,
+    runId?: string | null,
   ): Promise<void> {
     const replyToMessageId = source.threadId ?? source.messageId;
     if (!isNonEmptyString(replyToMessageId)) {
@@ -790,7 +795,7 @@ export function createSlackAdapter(
     const slackClient = await ensureWriteClient();
     const response = await slackClient.chat.postMessage({
       channel: source.chatId,
-      text: formatSlackLifecycleErrorMessage(errorText),
+      text: formatSlackLifecycleErrorMessage(errorText, runId),
       thread_ts: replyToMessageId,
     });
     rememberMessageThread(response.ts, replyToMessageId);
@@ -1380,7 +1385,7 @@ export function createSlackAdapter(
       await Promise.all(
         Array.from(uniqueReplySources.values()).map(async (source) => {
           try {
-            await sendLifecycleErrorReply(source, errorText);
+            await sendLifecycleErrorReply(source, errorText, event.runId);
           } catch (error) {
             console.warn(
               `[Slack] Failed to post lifecycle error for ${source.chatId}:`,

@@ -1301,6 +1301,7 @@ describe("listen-client multi-worker concurrency", () => {
         runtime.lastStopReason = "error";
         runtime.lastTerminalLoopErrorMessage =
           "ChatGPT usage limit reached. Resets at 1:00 PM.";
+        runtime.lastTerminalLoopErrorRunId = "run-limit";
       },
     );
 
@@ -1312,6 +1313,7 @@ describe("listen-client multi-worker concurrency", () => {
       sources: channelTurnSources,
       outcome: "error",
       error: "ChatGPT usage limit reached. Resets at 1:00 PM.",
+      runId: "run-limit",
     });
   });
 
