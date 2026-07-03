@@ -15,7 +15,13 @@ import type { ListenerRuntime } from "./types";
  */
 async function syncMemfsForAgent(agentId: string): Promise<void> {
   const { getBackend } = await import("@/backend");
-  const agent = await getBackend().retrieveAgent(agentId);
+  // `include: ["agent.tags"]` is required — without it the API can return
+  // empty tags for a correctly tagged agent, which previously made the
+  // listener skip the memfs clone and run the agent as a blank slate
+  // (the Prod × DeepSeek incident).
+  const agent = await getBackend().retrieveAgent(agentId, {
+    include: ["agent.tags"],
+  });
 
   const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/memory-git");
   const { applyMemfsFlags, isLettaCloud } = await import(
