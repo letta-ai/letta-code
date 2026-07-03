@@ -38,11 +38,7 @@ import {
   isExperimentalLocalBackendEnabled,
 } from "./backend";
 import { getBillingTier } from "./backend/api/metadata";
-import {
-  isLocalBackendNoMemfsEnvEnabled,
-  LOCAL_BACKEND_EXPERIMENTAL_ENV,
-  LOCAL_BACKEND_NO_MEMFS_ENV,
-} from "./backend/local/paths";
+import { LOCAL_BACKEND_EXPERIMENTAL_ENV } from "./backend/local/paths";
 import {
   extractBackendFlag,
   type ParsedCliArgs,
@@ -857,7 +853,6 @@ async function main(): Promise<void> {
   const specifiedToolset = values.toolset ?? undefined;
   const skillsDirectory = values.skills ?? undefined;
   const memfsFlag = values.memfs;
-  const noMemfsFlag = values["no-memfs"];
   const noSkillsFlag = values["no-skills"];
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
@@ -975,21 +970,10 @@ async function main(): Promise<void> {
     hasRefreshToken: Boolean(settings.refreshToken),
   });
 
-  const startupBackend = getBackend();
-  const localNoMemfsRequested = Boolean(
-    startupBackend.capabilities.localMemfs &&
-      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
-  );
-  if (localNoMemfsRequested) {
-    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
-  }
-  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
+  const requestedMemoryPromptMode: "memfs" | undefined = memfsFlag
     ? "memfs"
-    : noMemfsFlag || localNoMemfsRequested
-      ? "standard"
-      : undefined;
-  const shouldAutoEnableMemfsForNewAgent =
-    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
+    : undefined;
+  const shouldAutoEnableMemfsForNewAgent = !memfsFlag;
 
   // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
   // Surface is set here so session_start captures the correct mode.
@@ -2194,8 +2178,6 @@ async function main(): Promise<void> {
               modelOverride: model,
               stripMessages: true,
               stripSkills: false,
-              enableMemfs:
-                noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
             });
           } else {
             // Import from local file
@@ -2205,8 +2187,6 @@ async function main(): Promise<void> {
               modelOverride: model,
               stripMessages: true,
               stripSkills: false,
-              enableMemfs:
-                noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
             });
           }
 
@@ -2280,9 +2260,7 @@ async function main(): Promise<void> {
             shouldAutoEnableMemfsForNewAgent && (await isLettaCloud());
           const effectiveMemoryMode: MemoryPromptMode | undefined = backend
             .capabilities.localMemfs
-            ? localNoMemfsRequested
-              ? "standard"
-              : "local-memfs"
+            ? "local-memfs"
             : (requestedMemoryPromptMode ??
               (willAutoEnableMemfs ? "memfs" : undefined));
 
@@ -2369,7 +2347,7 @@ async function main(): Promise<void> {
           );
           const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
           if (!memfsEnabled) {
-            if (!noMemfsFlag && (await isLettaCloud())) {
+            if (await isLettaCloud()) {
               // Auto-enable memfs for existing agents that don't have it yet.
               // Agents can be created outside Letta Code without the tag.
               startupMemfsFlag = true;
@@ -2386,10 +2364,10 @@ async function main(): Promise<void> {
         // unless the user explicitly requested a memfs mode toggle.
         const agentId = agent.id;
         const agentTags = agent.tags ?? undefined;
-        const shouldBlockOnMemfsStartup = Boolean(memfsFlag || noMemfsFlag);
+        const shouldBlockOnMemfsStartup = Boolean(memfsFlag);
         const memfsSyncPromise = backend.capabilities.remoteMemfs
           ? import("@/agent/memory-filesystem").then(({ applyMemfsFlags }) =>
-              applyMemfsFlags(agentId, startupMemfsFlag, noMemfsFlag, {
+              applyMemfsFlags(agentId, startupMemfsFlag, {
                 pullOnExistingRepo: true,
                 agentTags,
                 skipPromptUpdate: shouldCreateNew,
@@ -2397,21 +2375,13 @@ async function main(): Promise<void> {
             )
           : Promise.resolve().then(() => {
               if (backend.capabilities.localMemfs) {
-                settingsManager.setMemfsEnabled(
-                  agentId,
-                  !localNoMemfsRequested,
-                );
-                return {
-                  action: localNoMemfsRequested ? "disabled" : "enabled",
-                };
+                settingsManager.setMemfsEnabled(agentId, true);
+                return { action: "enabled" };
               }
               if (memfsFlag) {
                 throw new Error(
                   "MemFS is not supported by the active backend.",
                 );
-              }
-              if (noMemfsFlag || localNoMemfsRequested) {
-                settingsManager.setMemfsEnabled(agentId, false);
               }
               return null;
             });

@@ -220,11 +220,6 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: { description: "Enable memory filesystem for this agent" },
   },
-  "no-memfs": {
-    parser: { type: "boolean" },
-    mode: "both",
-    help: { description: "Disable memory filesystem for this agent" },
-  },
   "memfs-startup": {
     parser: { type: "string" },
     mode: "headless",

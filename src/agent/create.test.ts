@@ -35,22 +35,31 @@ describe("created agent MemFS defaults", () => {
     ).toEqual({ enableMemfs: true, memoryPromptMode: "local-memfs" });
   });
 
-  test("keeps explicit MemFS disable on created agents", () => {
+  test("subagents are stateless: no MemFS even on Letta Cloud", () => {
     expect(
       resolveCreatedAgentMemfsConfig({
         capabilities: remoteMemfsBackend,
-        enableMemfs: false,
         isLettaCloud: true,
+        isSubagent: true,
       }),
     ).toEqual({ enableMemfs: false, memoryPromptMode: "standard" });
   });
 
-  test("treats standard memory prompt mode as an opt-out", () => {
+  test("ignores standard memory prompt mode for regular agents (no opt-out)", () => {
     expect(
       resolveCreatedAgentMemfsConfig({
         capabilities: remoteMemfsBackend,
         requestedMemoryPromptMode: "standard",
         isLettaCloud: true,
+      }),
+    ).toEqual({ enableMemfs: true, memoryPromptMode: "memfs" });
+  });
+
+  test("self-hosted servers without memfs support stay standard", () => {
+    expect(
+      resolveCreatedAgentMemfsConfig({
+        capabilities: remoteMemfsBackend,
+        isLettaCloud: false,
       }),
     ).toEqual({ enableMemfs: false, memoryPromptMode: "standard" });
   });

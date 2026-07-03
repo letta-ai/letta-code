@@ -961,9 +961,9 @@ export function buildSubagentArgs(
       subagentTags.push(`parent:${options.parentAgentId}`);
     }
     args.push("--tags", subagentTags.join(","));
-    // Default all newly spawned subagents to non-memfs mode.
-    // This avoids memfs startup overhead unless explicitly enabled elsewhere.
-    args.push("--no-memfs");
+    // Newly spawned subagents are stateless (non-memfs). The headless
+    // entrypoint derives this from LETTA_CODE_AGENT_ROLE=subagent — no CLI
+    // flag needed, and no user-facing opt-out exists.
     if (model) {
       args.push("--model", model);
     }
