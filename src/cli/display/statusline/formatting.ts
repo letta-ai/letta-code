@@ -1,6 +1,9 @@
 import stringWidth from "string-width";
 import stripAnsi from "strip-ansi";
 
+const OSC8 = "\x1b]8;;";
+const ST = "\x1b\\";
+
 export function truncateStatuslineText(
   value: string,
   maxChars: number,
@@ -64,18 +67,25 @@ export function row(left: string, right: string, width: number): string {
 export function columns(parts: string[], width: number): string {
   const items = parts.filter((part) => part.length > 0);
   if (items.length === 0) return "";
-  if (items.length === 1) return truncateToWidth(items[0]!, width);
-  if (items.length === 2) return row(items[0]!, items[1]!, width);
+  const first = items[0] ?? "";
+  const second = items[1] ?? "";
+  if (items.length === 1) return truncateToWidth(first, width);
+  if (items.length === 2) return row(first, second, width);
   const totalContent = items.reduce((sum, part) => sum + visibleWidth(part), 0);
   const gaps = items.length - 1;
   const spare = Math.max(gaps, width - totalContent);
   const base = Math.floor(spare / gaps);
   let extra = spare - base * gaps;
-  let result = items[0]!;
+  let result = first;
   for (let i = 1; i < items.length; i += 1) {
     const pad = base + (extra > 0 ? 1 : 0);
     if (extra > 0) extra -= 1;
     result += " ".repeat(pad) + items[i];
   }
   return truncateToWidth(result, width);
+}
+
+export function link(label: string, url: string): string {
+  if (!url) return label;
+  return `${OSC8}${url}${ST}${label}${OSC8}${ST}`;
 }

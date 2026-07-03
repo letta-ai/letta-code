@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
 import chalk from "chalk";
-import { columns, row } from "@/cli/display/statusline/formatting";
+import { columns, link, row } from "@/cli/display/statusline/formatting";
 import { buildCliModContext } from "@/cli/helpers/cli-mod-context";
 import { runModCommandWithTimeout } from "@/cli/mods/command-runtime";
 import {
@@ -44,6 +44,7 @@ function renderCtx(width: number) {
     width,
     row,
     columns,
+    link,
     chalk,
   };
 }
