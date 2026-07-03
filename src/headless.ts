@@ -44,10 +44,8 @@ import {
   resolveModel,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
-import {
-  buildCreateAgentOptionsForPersonality,
-  resolvePersonalityId,
-} from "./agent/personality";
+import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
+import { resolvePersonalityId } from "./agent/personality-presets";
 import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";

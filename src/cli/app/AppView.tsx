@@ -8,7 +8,7 @@ import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { pinAgentForCurrentUser } from "@/agent/favorites";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
 import type { ModelReasoningEffort } from "@/agent/model";
-import type { PersonalityId } from "@/agent/personality";
+import type { PersonalityId } from "@/agent/personality-presets";
 import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
 import type { CommandHandle } from "@/cli/commands/runner";

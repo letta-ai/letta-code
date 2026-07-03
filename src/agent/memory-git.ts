@@ -32,11 +32,10 @@ import {
 import { apiRequest } from "@/backend/api/request";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getUtf16Bom } from "@/utils/text-files";
+import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 
 const execFile = promisify(execFileCb);
-
-export const GIT_MEMORY_ENABLED_TAG = "git-memory-enabled";
 
 const RETRYABLE_GIT_HTTP_ERROR_RE =
   /(?:\bHTTP\s+(?:520|521|522|523|524)\b|The requested URL returned error:\s*(?:520|521|522|523|524))/i;

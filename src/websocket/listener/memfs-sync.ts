@@ -17,7 +17,7 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
   const { getBackend } = await import("@/backend");
   const agent = await getBackend().retrieveAgent(agentId);
 
-  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/memory-git");
+  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
   if (!agent.tags?.includes(GIT_MEMORY_ENABLED_TAG)) {
     debugLog(
       "memfs-sync",

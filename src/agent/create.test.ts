@@ -1,13 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildCreatedAgentTags,
-  resolveCreatedAgentMemfsConfig,
-} from "@/agent/create";
-import { GIT_MEMORY_ENABLED_TAG } from "@/agent/memory-git";
-import {
+  GIT_MEMORY_ENABLED_TAG,
   LETTA_CODE_ORIGIN_TAG,
   LETTA_CODE_SUBAGENT_TAG,
-} from "@/agent/system-prompt-versioning";
+} from "@/agent/agent-tags";
+import { resolveCreatedAgentMemfsConfig } from "@/agent/create";
 
 const remoteMemfsBackend = { localMemfs: false, remoteMemfs: true } as const;
 const localMemfsBackend = { localMemfs: true, remoteMemfs: false } as const;

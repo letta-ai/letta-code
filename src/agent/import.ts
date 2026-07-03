@@ -8,10 +8,8 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import { MAX_SKILL_NAME_LENGTH } from "@/skills/builtin/creating-skills/scripts/validate-skill";
-import {
-  buildCreatedAgentTags,
-  resolveCreatedAgentMemfsConfig,
-} from "./create";
+import { buildCreatedAgentTags } from "./agent-tags";
+import { resolveCreatedAgentMemfsConfig } from "./create";
 import { getModelUpdateArgs } from "./model";
 import { updateAgentLLMConfig } from "./modify";
 

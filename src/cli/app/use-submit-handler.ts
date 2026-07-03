@@ -32,10 +32,8 @@ import {
   isLocalMemfsActive,
 } from "@/agent/memory-runtime";
 import { sendMessageStreamWithBackend } from "@/agent/message";
-import {
-  detectPersonalityFromPersonaFile,
-  type PersonalityId,
-} from "@/agent/personality";
+import { detectPersonalityFromPersonaFile } from "@/agent/personality";
+import type { PersonalityId } from "@/agent/personality-presets";
 import { recordSessionEnd } from "@/agent/session-history";
 import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
