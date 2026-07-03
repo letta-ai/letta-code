@@ -65,7 +65,8 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
         "--output-format",
         "stream-json",
         "--new-agent",
-        "--no-memfs",
+        "--memfs-startup",
+        "skip",
         "-m",
         "sonnet-4.6-low",
         // NOTE: No --yolo flag - approvals are required

@@ -1,8 +1,7 @@
 /**
- * Default agents (Letta Code & Incognito) creation and management.
+ * Default agent (Letta Code) creation and management.
  *
  * Letta Code: Stateful agent with full memory - learns and grows with the user.
- * Incognito: Stateless agent - fresh experience without accumulated memory.
  */
 
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
@@ -16,7 +15,6 @@ import { MEMORY_PROMPTS } from "./prompt-assets";
 
 // Tags used to identify default agents
 export const MEMO_TAG = "default:memo";
-export const INCOGNITO_TAG = "default:incognito";
 
 // Letta Code's default memory blocks - loaded from Memo-specific prompts.
 const MEMO_PERSONA = parseMdxFrontmatter(
@@ -28,8 +26,6 @@ const MEMO_HUMAN = parseMdxFrontmatter(
 
 // Agent descriptions shown in /agents selector
 const MEMO_DESCRIPTION = "The default Letta Code agent with persistent memory";
-const INCOGNITO_DESCRIPTION =
-  "A stateless coding agent without memory (incognito mode)";
 
 /**
  * Default agent configurations.
@@ -44,13 +40,6 @@ export const DEFAULT_AGENT_CONFIGS: Record<string, CreateAgentOptions> = {
       persona: MEMO_PERSONA,
       human: MEMO_HUMAN,
     },
-  },
-  incognito: {
-    name: "Incognito",
-    description: INCOGNITO_DESCRIPTION,
-    memoryBlocks: [], // No personal memory blocks
-    baseTools: ["web_search", "fetch_webpage"], // No memory tool
-    enableMemfs: false,
   },
 };
 

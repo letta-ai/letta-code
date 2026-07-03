@@ -319,7 +319,7 @@ export function handleMemoryProtocolCommand(
     runDetachedListenerTask("enable_memfs", async () => {
       try {
         const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
-        const result = await applyMemfsFlags(parsed.agent_id, true, false);
+        const result = await applyMemfsFlags(parsed.agent_id, true);
         safeSocketSend(
           socket,
           {

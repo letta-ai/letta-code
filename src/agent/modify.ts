@@ -702,17 +702,17 @@ export async function updateAgentSystemPrompt(
 }
 
 /**
- * Updates an agent's system prompt to swap between full prompt variants when
- * the stored managed prompt hash is known. Custom prompts are already complete and
- * are left unchanged.
+ * Updates an agent's system prompt to the memfs full-prompt variant when
+ * the stored managed prompt hash is known. Custom prompts are already complete
+ * and are left unchanged.
+ *
+ * MemFS cannot be disabled, so there is no path back to the standard variant.
  *
  * @param agentId - The agent ID to update
- * @param enableMemfs - Whether to use the memfs or standard full prompt variant
  * @returns Result with success status and message
  */
 export async function updateAgentSystemPromptMemfs(
   agentId: string,
-  enableMemfs: boolean,
 ): Promise<SystemPromptUpdateResult> {
   try {
     const { settingsManager } = await import("@/settings-manager");
@@ -723,11 +723,9 @@ export async function updateAgentSystemPromptMemfs(
       "@/agent/system-prompt-versioning"
     );
 
-    const newMode = enableMemfs
-      ? getBackend().capabilities.localMemfs
-        ? "local-memfs"
-        : "memfs"
-      : "standard";
+    const newMode = getBackend().capabilities.localMemfs
+      ? "local-memfs"
+      : "memfs";
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
       : undefined;
@@ -787,9 +785,7 @@ export async function updateAgentSystemPromptMemfs(
 
     return {
       success: true,
-      message: enableMemfs
-        ? "System prompt updated for memfs memory mode"
-        : "System prompt updated for standard memory mode",
+      message: "System prompt updated for memfs memory mode",
     };
   } catch (error) {
     return {

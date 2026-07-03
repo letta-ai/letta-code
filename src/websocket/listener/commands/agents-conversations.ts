@@ -145,7 +145,14 @@ export async function handleAgentConversationManagementCommand(
 
   if (parsed.type === "agent_create") {
     try {
-      const agent = await backend.createAgent(parsed.body);
+      const { prepareRawCreateAgentBodyForMemfs, enableMemfsIfCloud } =
+        await import("@/agent/memory-filesystem");
+      const body = await prepareRawCreateAgentBodyForMemfs(parsed.body);
+      const agent = await backend.createAgent(body);
+      // Finish memfs setup (settings, repo clone, legacy tool detach) without
+      // blocking the response. The tag is already stamped at creation, so
+      // lazy sync paths can complete this even if the process dies here.
+      void enableMemfsIfCloud(agent.id);
       safeSocketSend(
         socket,
         {

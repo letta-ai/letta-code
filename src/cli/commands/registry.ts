@@ -150,7 +150,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/memfs": {
-    desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
+    desc: "Manage filesystem-backed memory (/memfs [enable|sync|reset])",
     args: "[enable|disable|sync|reset]",
     order: 27.5, // Advanced feature, near /toolset
     handler: () => {

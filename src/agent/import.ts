@@ -20,7 +20,6 @@ export interface ImportAgentOptions {
   modelOverride?: string;
   stripMessages?: boolean;
   stripSkills?: boolean;
-  enableMemfs?: boolean;
 }
 
 export interface ImportFromRegistryOptions {
@@ -28,7 +27,6 @@ export interface ImportFromRegistryOptions {
   modelOverride?: string;
   stripMessages?: boolean;
   stripSkills?: boolean;
-  enableMemfs?: boolean;
 }
 
 export interface ImportAgentResult {
@@ -112,9 +110,7 @@ function tagsEqual(left: string[], right: string[]): boolean {
   );
 }
 
-async function resolveImportedAgentMemfsEnabled(
-  requestedEnableMemfs: boolean | undefined,
-): Promise<boolean> {
+async function resolveImportedAgentMemfsEnabled(): Promise<boolean> {
   const backend = getBackend();
   const isLettaCloud =
     backend.capabilities.remoteMemfs && !backend.capabilities.localMemfs
@@ -124,9 +120,6 @@ async function resolveImportedAgentMemfsEnabled(
       : false;
   return resolveCreatedAgentMemfsConfig({
     capabilities: backend.capabilities,
-    enableMemfs: requestedEnableMemfs,
-    requestedMemoryPromptMode:
-      requestedEnableMemfs === false ? "standard" : undefined,
     isLettaCloud,
   }).enableMemfs;
 }
@@ -197,7 +190,7 @@ export async function importAgentFromFile(
 
   agent = await ensureImportedAgentCreationTags(
     agent,
-    await resolveImportedAgentMemfsEnabled(options.enableMemfs),
+    await resolveImportedAgentMemfsEnabled(),
   );
 
   // Extract skills from .af file if present (unless stripSkills=true)
@@ -438,7 +431,6 @@ export async function importAgentFromRegistry(
       modelOverride: options.modelOverride,
       stripMessages: options.stripMessages ?? true,
       stripSkills: options.stripSkills ?? false,
-      enableMemfs: options.enableMemfs,
     });
 
     return result;
