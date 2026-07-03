@@ -22,6 +22,13 @@ export type TelemetryBackend =
   | "self_hosted_api"
   | "unknown";
 
+function getTelemetryDeploymentId(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const deploymentId = env.LETTA_CODE_TELEMETRY_DEPLOYMENT_ID?.trim();
+  return deploymentId || undefined;
+}
+
 export interface TelemetryEvent {
   type:
     | "session_start"
@@ -440,6 +447,7 @@ class TelemetryManager {
         agent_id: this.currentAgentId || undefined,
         surface: this.surface,
         backend: resolveTelemetryBackend(),
+        deployment_id: getTelemetryDeploymentId(),
       },
     };
 
