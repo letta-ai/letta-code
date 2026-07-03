@@ -354,11 +354,24 @@ export function renderCliOptionsHelp(): string {
 }
 
 export function preprocessCliArgs(args: string[]): string[] {
-  return args.map((arg) => {
-    if (arg === "--conv") return "--conversation";
-    if (arg === "--no-extensions") return "--no-mods";
-    return arg;
-  });
+  const processed: string[] = [];
+  for (const arg of args) {
+    // Hidden compatibility no-op for older launchers that still prepend the
+    // removed MemFS opt-out flag before spawning a child CLI.
+    if (arg === "--no-memfs" || arg.startsWith("--no-memfs=")) {
+      continue;
+    }
+    if (arg === "--conv") {
+      processed.push("--conversation");
+      continue;
+    }
+    if (arg === "--no-extensions") {
+      processed.push("--no-mods");
+      continue;
+    }
+    processed.push(arg);
+  }
+  return processed;
 }
 
 export function parseCliArgs(args: string[], strict: boolean) {

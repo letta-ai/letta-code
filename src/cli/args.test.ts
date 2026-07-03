@@ -150,6 +150,22 @@ describe("shared CLI arg schema", () => {
     expect(parsed.values["no-mods"]).toBe(true);
   });
 
+  test("drops legacy no-memfs flag as a hidden no-op", () => {
+    const parsed = parseCliArgs(
+      preprocessCliArgs([
+        "node",
+        "script",
+        "--no-memfs",
+        "--no-memfs=true",
+        "-p",
+        "hi",
+      ]),
+      true,
+    );
+    expect(parsed.values).not.toHaveProperty("no-memfs");
+    expect(parsed.positionals.slice(2).join(" ")).toBe("hi");
+  });
+
   test("validates backend mode values", () => {
     expect(parseBackendModeFlag(undefined)).toBeUndefined();
     expect(parseBackendModeFlag("api")).toBe("api");

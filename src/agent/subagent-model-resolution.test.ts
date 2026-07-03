@@ -48,6 +48,27 @@ describe("resolveSubagentLauncher", () => {
     });
   });
 
+  test("explicit launcher drops legacy no-memfs args", () => {
+    const launcher = resolveSubagentLauncher(["-p", "hi"], {
+      env: {
+        LETTA_CODE_BIN: "custom-bun",
+        LETTA_CODE_BIN_ARGS_JSON: JSON.stringify([
+          "run",
+          "src/index.ts",
+          "--no-memfs",
+        ]),
+      } as NodeJS.ProcessEnv,
+      argv: ["bun", "/tmp/dev-entry.ts"],
+      execPath: "/opt/homebrew/bin/bun",
+      platform: "darwin",
+    });
+
+    expect(launcher).toEqual({
+      command: "custom-bun",
+      args: ["run", "src/index.ts", "-p", "hi"],
+    });
+  });
+
   test("explicit launcher takes precedence over .js script autodetection", () => {
     const launcher = resolveSubagentLauncher(["-p", "hi"], {
       env: {

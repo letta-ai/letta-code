@@ -67,6 +67,14 @@ function normalizeInvocationCommand(raw: string | undefined): string | null {
   return normalized || null;
 }
 
+function dropLegacyInvocationArgs(args: string[]): string[] {
+  // Older Desktop/remote launchers may leave this removed flag in
+  // LETTA_CODE_BIN_ARGS_JSON; do not propagate it into child CLIs.
+  return args.filter(
+    (arg) => arg !== "--no-memfs" && !arg.startsWith("--no-memfs="),
+  );
+}
+
 function parseInvocationArgs(raw: string | undefined): string[] {
   if (!raw) return [];
   try {
@@ -75,7 +83,7 @@ function parseInvocationArgs(raw: string | undefined): string[] {
       Array.isArray(parsed) &&
       parsed.every((item) => typeof item === "string")
     ) {
-      return parsed;
+      return dropLegacyInvocationArgs(parsed);
     }
   } catch {
     // Ignore malformed JSON and fall back to empty args.

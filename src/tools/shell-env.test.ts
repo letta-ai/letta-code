@@ -103,6 +103,27 @@ describe("shellEnv letta shim", () => {
     });
   });
 
+  test("resolveLettaInvocation drops legacy no-memfs launcher args", () => {
+    const invocation = resolveLettaInvocation(
+      {
+        LETTA_CODE_BIN: "/tmp/custom-letta",
+        LETTA_CODE_BIN_ARGS_JSON: JSON.stringify([
+          "--no-memfs",
+          "--backend",
+          "api",
+          "--no-memfs=true",
+        ]),
+      },
+      ["node", "/tmp/ignored.ts"],
+      "/usr/local/bin/node",
+    );
+
+    expect(invocation).toEqual({
+      command: "/tmp/custom-letta",
+      args: ["--backend", "api"],
+    });
+  });
+
   test("resolveLettaInvocation infers dev entrypoint launcher", () => {
     const invocation = resolveLettaInvocation(
       {},
