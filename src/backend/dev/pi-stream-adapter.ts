@@ -180,6 +180,10 @@ function toPiTools(clientTools: unknown[]): Tool[] | undefined {
 }
 
 const EMPTY_TOOL_RESULT_PLACEHOLDER = "No result provided";
+const NON_VISION_USER_CONTENT_PLACEHOLDER =
+  "(image omitted: model does not support images)";
+const NON_VISION_TOOL_CONTENT_PLACEHOLDER =
+  "(tool image omitted: model does not support images)";
 
 type LocalUserContent = Extract<LocalMessage, { role: "user" }>["content"];
 type LocalAssistantContent = Extract<
@@ -229,6 +233,98 @@ function normalizeToolResultContent(
   return normalized.length > 0
     ? normalized
     : [{ type: "text", text: EMPTY_TOOL_RESULT_PLACEHOLDER }];
+}
+
+function modelSupportsImages(model: Model<string>): boolean {
+  return Array.isArray(model.input) && model.input.includes("image");
+}
+
+function replaceUnsupportedTextOnlyContentParts(
+  content: readonly unknown[],
+  placeholder: string,
+): { content: unknown[]; changed: boolean } {
+  const result: unknown[] = [];
+  let changed = false;
+  let previousWasPlaceholder = false;
+
+  for (const block of content) {
+    if (
+      isRecord(block) &&
+      block.type === "text" &&
+      typeof block.text === "string"
+    ) {
+      result.push(block);
+      previousWasPlaceholder = block.text === placeholder;
+      continue;
+    }
+
+    changed = true;
+    if (!previousWasPlaceholder) {
+      result.push({ type: "text", text: placeholder });
+    }
+    previousWasPlaceholder = true;
+  }
+
+  return { content: result, changed };
+}
+
+// Enforce model input capabilities before pi-ai builds provider payloads.
+// Adapter/mod image shapes may not be covered by pi-ai's canonical image downgrade.
+function sanitizeMessageForModelInput(
+  message: Message,
+  model: Model<string>,
+): Message {
+  if (modelSupportsImages(model)) return message;
+
+  if (message.role === "user" && Array.isArray(message.content)) {
+    const sanitized = replaceUnsupportedTextOnlyContentParts(
+      message.content,
+      NON_VISION_USER_CONTENT_PLACEHOLDER,
+    );
+    return sanitized.changed
+      ? {
+          ...message,
+          content: sanitized.content as Extract<
+            Message,
+            { role: "user" }
+          >["content"],
+        }
+      : message;
+  }
+
+  if (message.role === "toolResult") {
+    const sanitized = replaceUnsupportedTextOnlyContentParts(
+      message.content,
+      NON_VISION_TOOL_CONTENT_PLACEHOLDER,
+    );
+    return sanitized.changed
+      ? {
+          ...message,
+          content: sanitized.content as Extract<
+            Message,
+            { role: "toolResult" }
+          >["content"],
+        }
+      : message;
+  }
+
+  return message;
+}
+
+function sanitizeContextForModelInput(
+  context: Context,
+  model: Model<string>,
+): Context {
+  if (modelSupportsImages(model)) return context;
+
+  let changed = false;
+  const messages = context.messages.map((message) => {
+    const sanitized = sanitizeMessageForModelInput(message, model);
+    if (sanitized !== message) changed = true;
+    return sanitized;
+  });
+
+  return changed ? { ...context, messages } : context;
 }
 
 function toPiMessage(message: LocalMessage): Message | undefined {
@@ -693,11 +789,14 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       localModel.modelSettings,
       { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
     );
-    const context: Context = {
-      systemPrompt: input.systemPrompt ?? input.agent.system,
-      messages: toPiMessages(input.uiMessages),
-      ...(tools ? { tools } : {}),
-    };
+    const context: Context = sanitizeContextForModelInput(
+      {
+        systemPrompt: input.systemPrompt ?? input.agent.system,
+        messages: toPiMessages(input.uiMessages),
+        ...(tools ? { tools } : {}),
+      },
+      resolved.model as Model<string>,
+    );
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),

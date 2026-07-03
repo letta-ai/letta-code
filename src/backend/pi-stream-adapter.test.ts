@@ -25,6 +25,8 @@ import { emptyLocalUsage } from "@/backend/local/local-message";
 import {
   createOrUpdateLocalProvider,
   LOCAL_CHATGPT_PROVIDER_NAME,
+  LOCAL_OPENROUTER_PROVIDER_NAME,
+  LOCAL_ZAI_PROVIDER_NAME,
   setLocalOAuthProvider,
 } from "@/backend/local/local-provider-auth-store";
 
@@ -84,6 +86,114 @@ async function closeServer(
   });
 }
 
+async function startOpenAICompatibleCaptureServer(
+  responseModel: string,
+): Promise<{
+  baseURL: string;
+  capturedPayloads: unknown[];
+  close: () => Promise<void>;
+}> {
+  const capturedPayloads: unknown[] = [];
+  const server = createServer(async (req, res) => {
+    if (req.method !== "POST" || req.url !== "/v1/chat/completions") {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    capturedPayloads.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+
+    const responseChunks = [
+      {
+        id: "chatcmpl-test",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: responseModel,
+        choices: [
+          {
+            index: 0,
+            delta: { content: "ok" },
+            finish_reason: null,
+          },
+        ],
+      },
+      {
+        id: "chatcmpl-test",
+        object: "chat.completion.chunk",
+        created: 0,
+        model: responseModel,
+        choices: [
+          {
+            index: 0,
+            delta: {},
+            finish_reason: "stop",
+          },
+        ],
+        usage: {
+          prompt_tokens: 1,
+          completion_tokens: 1,
+          total_tokens: 2,
+        },
+      },
+    ];
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "close",
+    });
+    res.end(
+      `${responseChunks
+        .map((chunk) => `data: ${JSON.stringify(chunk)}`)
+        .join("\n\n")}\n\ndata: [DONE]\n\n`,
+    );
+  });
+
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("expected tcp server address");
+  }
+
+  return {
+    baseURL: `http://127.0.0.1:${address.port}/v1`,
+    capturedPayloads,
+    close: () => closeServer(server),
+  };
+}
+
+function payloadContentPartTypes(payload: unknown): string[] {
+  const messages = (payload as { messages?: unknown }).messages;
+  if (!Array.isArray(messages)) return [];
+  return messages.flatMap((message) => {
+    const content = (message as { content?: unknown }).content;
+    if (!Array.isArray(content)) return [];
+    return content.map((part) => String((part as { type?: unknown }).type));
+  });
+}
+
+function expectTextOnlyPayload(payload: unknown): void {
+  const payloadJson = JSON.stringify(payload);
+  expect(payloadJson).toContain(
+    "(image omitted: model does not support images)",
+  );
+  expect(payloadJson).not.toContain("image_url");
+  expect(payloadJson).not.toContain("input_image");
+  expect(payloadJson).not.toContain("raw-pi-image-base64");
+  expect(payloadJson).not.toContain("raw-adapter-image-base64");
+  expect(payloadJson).not.toContain("raw-openai-image-base64");
+  expect(payloadJson).not.toContain("raw-tool-image-base64");
+
+  const contentPartTypes = payloadContentPartTypes(payload);
+  expect(contentPartTypes.length).toBeGreaterThan(0);
+  expect(contentPartTypes.every((type) => type === "text")).toBe(true);
+}
+
 function input(): ProviderTurnInput {
   return {
     conversationId: "local-conv-1",
@@ -118,76 +228,11 @@ function emptyTextBlocks(messages: Context["messages"]) {
 }
 
 describe("PiStreamAdapter", () => {
-  test("downgrades images through Pi-AI payload conversion for text-only local models", async () => {
-    let capturedPayload: unknown;
-    const server = createServer(async (req, res) => {
-      if (req.method !== "POST" || req.url !== "/v1/chat/completions") {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
-
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-      capturedPayload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-
-      const responseChunks = [
-        {
-          id: "chatcmpl-test",
-          object: "chat.completion.chunk",
-          created: 0,
-          model: "deepseek-r1:8b",
-          choices: [
-            {
-              index: 0,
-              delta: { content: "ok" },
-              finish_reason: null,
-            },
-          ],
-        },
-        {
-          id: "chatcmpl-test",
-          object: "chat.completion.chunk",
-          created: 0,
-          model: "deepseek-r1:8b",
-          choices: [
-            {
-              index: 0,
-              delta: {},
-              finish_reason: "stop",
-            },
-          ],
-          usage: {
-            prompt_tokens: 1,
-            completion_tokens: 1,
-            total_tokens: 2,
-          },
-        },
-      ];
-
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "close",
-      });
-      res.end(
-        `${responseChunks
-          .map((chunk) => `data: ${JSON.stringify(chunk)}`)
-          .join("\n\n")}\n\ndata: [DONE]\n\n`,
-      );
-    });
-
-    server.listen(0, "127.0.0.1");
-    await once(server, "listening");
-    const address = server.address();
-    if (!address || typeof address === "string") {
-      throw new Error("expected tcp server address");
-    }
-
+  test("downgrades images before provider payload conversion for text-only local models", async () => {
+    const captureServer =
+      await startOpenAICompatibleCaptureServer("deepseek-r1:8b");
     const previousOllamaBaseUrl = process.env.OLLAMA_BASE_URL;
-    process.env.OLLAMA_BASE_URL = `http://127.0.0.1:${address.port}/v1`;
+    process.env.OLLAMA_BASE_URL = captureServer.baseURL;
     const storageDir = await mkdtemp(
       join(tmpdir(), "pi-stream-text-image-downgrade-"),
     );
@@ -219,11 +264,12 @@ describe("PiStreamAdapter", () => {
       );
 
       expect(events.some((event) => event.type === "local-message")).toBe(true);
-      expect(capturedPayload).toMatchObject({
+      expect(captureServer.capturedPayloads).toHaveLength(1);
+      expect(captureServer.capturedPayloads[0]).toMatchObject({
         model: "deepseek-r1:8b",
         stream: true,
       });
-      const payloadJson = JSON.stringify(capturedPayload);
+      const payloadJson = JSON.stringify(captureServer.capturedPayloads[0]);
       expect(payloadJson).toContain(
         "(image omitted: model does not support images)",
       );
@@ -236,9 +282,137 @@ describe("PiStreamAdapter", () => {
         process.env.OLLAMA_BASE_URL = previousOllamaBaseUrl;
       }
       await rm(storageDir, { recursive: true, force: true });
-      await closeServer(server);
+      await captureServer.close();
     }
   });
+
+  const textOnlyGlmProviderCases = [
+    {
+      name: "OpenRouter",
+      providerType: "openrouter",
+      providerName: LOCAL_OPENROUTER_PROVIDER_NAME,
+      model: "openrouter/z-ai/glm-5.1",
+      responseModel: "z-ai/glm-5.1",
+    },
+    {
+      name: "ZAI",
+      providerType: "zai",
+      providerName: LOCAL_ZAI_PROVIDER_NAME,
+      model: "zai/glm-5.2",
+      responseModel: "glm-5.2",
+    },
+  ];
+
+  for (const providerCase of textOnlyGlmProviderCases) {
+    test(`strips unsupported image and adapter parts from ${providerCase.name} GLM payloads`, async () => {
+      const captureServer = await startOpenAICompatibleCaptureServer(
+        providerCase.responseModel,
+      );
+      const storageDir = await mkdtemp(
+        join(tmpdir(), `pi-stream-${providerCase.name.toLowerCase()}-glm-`),
+      );
+
+      try {
+        await createOrUpdateLocalProvider({
+          providerType: providerCase.providerType,
+          providerName: providerCase.providerName,
+          apiKey: "test-key",
+          baseURL: captureServer.baseURL,
+          storageDir,
+        });
+
+        const baseInput = input();
+        const events = await collectEvents(
+          new PiStreamAdapter({
+            localProviderAuthStorageDir: storageDir,
+          }).stream({
+            ...baseInput,
+            agent: {
+              ...baseInput.agent,
+              model: providerCase.model,
+              model_settings: { provider_type: providerCase.providerType },
+            },
+            uiMessages: [
+              {
+                id: "ui-msg-glm-images",
+                role: "user",
+                content: [
+                  { type: "text", text: "describe these" },
+                  {
+                    type: "image",
+                    mimeType: "image/png",
+                    data: "raw-pi-image-base64",
+                  },
+                  {
+                    type: "image",
+                    source: {
+                      type: "base64",
+                      media_type: "image/jpeg",
+                      data: "raw-adapter-image-base64",
+                    },
+                  },
+                  {
+                    type: "image_url",
+                    image_url: {
+                      url: "data:image/webp;base64,raw-openai-image-base64",
+                    },
+                  },
+                ] as never,
+                timestamp: Date.now(),
+              },
+              {
+                id: "ui-msg-tool-call",
+                role: "assistant",
+                content: [
+                  {
+                    type: "toolCall",
+                    id: "call-image-tool",
+                    name: "Read",
+                    arguments: { path: "screenshot.png" },
+                  },
+                ],
+                api: "openai-completions",
+                provider: providerCase.providerType,
+                model: providerCase.responseModel,
+                usage: emptyLocalUsage(),
+                stopReason: "toolUse",
+                timestamp: Date.now(),
+              },
+              {
+                id: "ui-msg-tool-image",
+                role: "toolResult",
+                toolCallId: "call-image-tool",
+                toolName: "Read",
+                content: [
+                  { type: "text", text: "tool output" },
+                  {
+                    type: "image",
+                    mimeType: "image/png",
+                    data: "raw-tool-image-base64",
+                  },
+                ],
+                isError: false,
+                timestamp: Date.now(),
+              },
+            ],
+          }),
+        );
+
+        expect(events.some((event) => event.type === "local-message")).toBe(
+          true,
+        );
+        expect(captureServer.capturedPayloads).toHaveLength(1);
+        expect(captureServer.capturedPayloads[0]).toMatchObject({
+          model: providerCase.responseModel,
+          stream: true,
+        });
+        expectTextOnlyPayload(captureServer.capturedPayloads[0]);
+      } finally {
+        await rm(storageDir, { recursive: true, force: true });
+        await captureServer.close();
+      }
+    });
+  }
 
   test("routes clean provider overflow errors into compaction and retries", async () => {
     let providerCalls = 0;
