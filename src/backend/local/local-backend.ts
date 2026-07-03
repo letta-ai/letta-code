@@ -1,6 +1,6 @@
 import type { Usage } from "@earendil-works/pi-ai";
+import { GIT_MEMORY_ENABLED_TAG } from "@/agent/agent-tags";
 import {
-  GIT_MEMORY_ENABLED_TAG,
   type InitializeLocalMemoryRepoFile,
   initializeLocalMemoryRepo,
 } from "@/agent/memory-git";

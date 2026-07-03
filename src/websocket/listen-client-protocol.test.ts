@@ -16,7 +16,7 @@ import { models } from "@/agent/model";
 import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
-} from "@/agent/personality";
+} from "@/agent/personality-presets";
 import { clearAllSubagents, registerSubagent } from "@/agent/subagent-state";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";

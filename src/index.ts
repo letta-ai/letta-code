@@ -22,10 +22,8 @@ import {
   resolveModel,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
-import {
-  buildCreateAgentOptionsForPersonality,
-  resolvePersonalityId,
-} from "./agent/personality";
+import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
+import { resolvePersonalityId } from "./agent/personality-presets";
 import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "./auth/oauth";
@@ -1053,7 +1051,7 @@ async function main(): Promise<void> {
   // for internal subagent launches (LETTA_CODE_AGENT_ROLE=subagent).
   if (systemPromptPreset) {
     const { validateSystemPromptPreset } = await import(
-      "@/agent/prompt-assets"
+      "@/agent/system-prompt-resolution"
     );
     const allowSubagentNames = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
     try {

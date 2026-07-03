@@ -6,7 +6,7 @@ import {
 import {
   getPersonalityContent,
   getPersonalityHumanContent,
-} from "@/agent/personality";
+} from "@/agent/personality-presets";
 
 describe("selectDefaultAgentModel", () => {
   test("uses the caller's preferred model when it is available on self-hosted", () => {

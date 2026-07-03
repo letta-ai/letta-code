@@ -23,7 +23,7 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
     include: ["agent.tags"],
   });
 
-  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/memory-git");
+  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
   const { applyMemfsFlags, isLettaCloud } = await import(
     "@/agent/memory-filesystem"
   );

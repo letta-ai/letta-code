@@ -31,7 +31,7 @@ import {
   getModelShortName,
   type ModelReasoningEffort,
 } from "@/agent/model";
-import type { PersonalityId } from "@/agent/personality";
+import type { PersonalityId } from "@/agent/personality-presets";
 import { shouldRecommendDefaultPrompt } from "@/agent/prompt-assets";
 import { reconcileExistingAgentState } from "@/agent/reconcile-existing-agent-state";
 import { recordSessionEnd } from "@/agent/session-history";

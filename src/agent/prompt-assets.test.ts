@@ -3,10 +3,10 @@ import { describe, expect, test } from "bun:test";
 import {
   buildSystemPrompt,
   isKnownPreset,
-  resolveAndBuildSystemPrompt,
   SYSTEM_PROMPTS,
   shouldRecommendDefaultPrompt,
 } from "@/agent/prompt-assets";
+import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 
 describe("isKnownPreset", () => {
   test("returns true for known preset IDs", () => {

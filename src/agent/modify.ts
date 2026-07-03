@@ -633,8 +633,9 @@ export async function updateAgentSystemPrompt(
   systemPromptId: string,
 ): Promise<UpdateSystemPromptResult> {
   try {
-    const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
-      "@/agent/prompt-assets"
+    const { isKnownPreset } = await import("@/agent/prompt-assets");
+    const { resolveAndBuildSystemPrompt } = await import(
+      "@/agent/system-prompt-resolution"
     );
     const { recordManagedSystemPrompt } = await import(
       "@/agent/system-prompt-versioning"

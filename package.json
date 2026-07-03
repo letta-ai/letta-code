@@ -16,6 +16,8 @@
     "vendor",
     "dist/app-server-client.js",
     "dist/app-server-client.js.map",
+    "dist/agent-presets.js",
+    "dist/agent-presets.js.map",
     "dist/types",
     "docs"
   ],
@@ -30,6 +32,10 @@
     },
     "./protocol": {
       "types": "./dist/types/protocol.d.ts"
+    },
+    "./agent-presets": {
+      "types": "./dist/types/agent-presets.d.ts",
+      "import": "./dist/agent-presets.js"
     }
   },
   "repository": {
@@ -105,5 +111,21 @@
     "*.{ts,tsx,js,jsx,json}": [
       "bunx --bun @biomejs/biome@2.2.5 check --write"
     ]
+  },
+  "typesVersions": {
+    "*": {
+      "agent-presets": [
+        "./dist/types/agent-presets.d.ts"
+      ],
+      "app-server-protocol": [
+        "./dist/types/app-server-protocol.d.ts"
+      ],
+      "app-server-client": [
+        "./dist/types/app-server-client.d.ts"
+      ],
+      "protocol": [
+        "./dist/types/protocol.d.ts"
+      ]
+    }
   }
 }

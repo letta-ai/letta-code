@@ -183,14 +183,14 @@ export async function prepareRawCreateAgentBodyForMemfs<
   if (!backend.capabilities.remoteMemfs) return body;
   if (!(await isLettaCloud())) return body;
 
-  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/memory-git");
+  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
   return stampMemfsTagOnCreateBody(body, GIT_MEMORY_ENABLED_TAG);
 }
 
 export async function hydrateMemfsSettingFromAgent(
   agent: Pick<AgentState, "id" | "tags">,
 ): Promise<boolean> {
-  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/memory-git");
+  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
   const enabled = agent.tags?.includes(GIT_MEMORY_ENABLED_TAG) ?? false;
 
   const { settingsManager } = await import("@/settings-manager");
@@ -228,7 +228,7 @@ export async function isMemfsEnabledOnServer(
   const agent = await backend.retrieveAgent(agentId, {
     include: ["agent.tags"],
   });
-  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/memory-git");
+  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
   const enabled = agent.tags?.includes(GIT_MEMORY_ENABLED_TAG) ?? false;
 
   const { settingsManager } = await import("@/settings-manager");
@@ -501,7 +501,7 @@ export async function applyMemfsFlags(
   }
 
   const localMemfsEnabled = settingsManager.isMemfsEnabled(agentId);
-  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/memory-git");
+  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
   const shouldAutoEnableFromTag =
     !memfsFlag &&
     !localMemfsEnabled &&
