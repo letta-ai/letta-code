@@ -111,5 +111,21 @@
     "*.{ts,tsx,js,jsx,json}": [
       "bunx --bun @biomejs/biome@2.2.5 check --write"
     ]
+  },
+  "typesVersions": {
+    "*": {
+      "agent-presets": [
+        "./dist/types/agent-presets.d.ts"
+      ],
+      "app-server-protocol": [
+        "./dist/types/app-server-protocol.d.ts"
+      ],
+      "app-server-client": [
+        "./dist/types/app-server-client.d.ts"
+      ],
+      "protocol": [
+        "./dist/types/protocol.d.ts"
+      ]
+    }
   }
 }
