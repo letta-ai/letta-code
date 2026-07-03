@@ -178,8 +178,9 @@ Test files live **next to their source** (`local-store.test.ts` next to `local-s
 3. **boundaries** — `scripts/check-layer-boundaries.js`; checks import direction per layer
 4. **exported-functions** — `scripts/check-exported-functions.js`; flags `export const fn =`
 5. **test-mock-isolation** — `scripts/check-test-mock-isolation.js`; flags unsafe `mock.module` patterns
-6. **biome** — format + lint across all files
-7. **typescript** — full `tsc --noEmit`
+6. **skill frontmatter** — checks every `SKILL.md` has a non-empty `name:` header
+7. **biome** — format + lint across all files
+8. **typescript** — full `tsc --noEmit`
 
 ### Environment Variables
 
