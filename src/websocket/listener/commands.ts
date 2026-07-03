@@ -637,11 +637,8 @@ async function handleDoctorCommand(
   }
 
   const { context: gitContext } = gatherInitGitContext();
-  const memoryDir = settingsManager.isMemfsEnabled(agentId)
-    ? getScopedMemoryFilesystemRoot(agentId)
-    : undefined;
 
-  const doctorMessage = buildDoctorMessage({ gitContext, memoryDir });
+  const doctorMessage = buildDoctorMessage({ gitContext });
 
   // Feed the doctor prompt as a user message through the normal turn pipeline.
   // This triggers a full agent turn whose deltas stream back to the web UI.

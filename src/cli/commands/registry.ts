@@ -61,6 +61,18 @@ export const commands: Record<string, Command> = {
       return "Running memory doctor...";
     },
   },
+  // TEMP/dev: dispatch only the memory-recap investigator against the current
+  // agent + conversation (no new conversation, no doctor flow) for isolated
+  // testing of the recap prompt. Remove before shipping.
+  "/recap": {
+    desc: "[dev] Dispatch the memory-recap investigator on the current agent",
+    order: 12.11,
+    noArgs: true,
+    handler: () => {
+      // Handled specially in use-submit-handler.ts
+      return "Dispatching memory recap investigator...";
+    },
+  },
   "/remember": {
     desc: "Remember something from the conversation (/remember [instructions])",
     order: 13,

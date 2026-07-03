@@ -453,21 +453,24 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--no-skills");
   });
 
-  test.each([["reflection"], ["memory"], ["history-analyzer"], ["init"]])(
-    "injects --base-tools none for %s subagents",
-    (type) => {
-      const args = buildSubagentArgs(
-        type,
-        { ...baseConfig, name: type },
-        null,
-        "hello",
-      );
+  test.each([
+    ["reflection"],
+    ["memory"],
+    ["memory-recap"],
+    ["history-analyzer"],
+    ["init"],
+  ])("injects --base-tools none for %s subagents", (type) => {
+    const args = buildSubagentArgs(
+      type,
+      { ...baseConfig, name: type },
+      null,
+      "hello",
+    );
 
-      const idx = args.indexOf("--base-tools");
-      expect(idx).toBeGreaterThanOrEqual(0);
-      expect(args[idx + 1]).toBe("none");
-    },
-  );
+    const idx = args.indexOf("--base-tools");
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(args[idx + 1]).toBe("none");
+  });
 
   test("does not inject --base-tools for general-purpose subagents", () => {
     const args = buildSubagentArgs(

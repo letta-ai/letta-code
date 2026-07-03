@@ -51,6 +51,7 @@ describe("built-in subagents", () => {
 
     expect(configs.reflection?.launchProfile).toBe("memory-subagent");
     expect(configs["history-analyzer"]?.launchProfile).toBe("memory-subagent");
+    expect(configs["memory-recap"]?.launchProfile).toBe("memory-subagent");
     expect(configs.memory?.launchProfile).toBe("memory-subagent");
     expect(configs.init?.launchProfile).toBe("memory-subagent");
   });
@@ -64,6 +65,7 @@ describe("built-in subagents", () => {
       "history-analyzer",
       "init",
       "memory",
+      "memory-recap",
       "recall",
       "reflection",
     ]) {

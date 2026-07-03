@@ -62,6 +62,7 @@ import {
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
 import { buildLogoutSuccessMessage } from "@/cli/helpers/logout-message";
+import { launchMemoryRecapInvestigatorSubagent } from "@/cli/helpers/memory-recap-investigator";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
@@ -3270,9 +3271,55 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /doctor command
+        // Special handling for /doctor command - interactive memory doctor in
+        // a fresh conversation (model: auto), with a recap investigator
+        // dispatched in parallel.
+        // TEMP/dev: isolated recap dispatch for testing the memory-recap
+        // subagent on the current (real) agent without the full doctor flow.
+        if (trimmed === "/recap") {
+          const cmd = commandRunner.start(
+            msg,
+            "Dispatching memory recap investigator...",
+          );
+          const recapConversationId = conversationIdRef.current;
+          if (!recapConversationId) {
+            cmd.fail("No active conversation for /recap.");
+            return { submitted: false };
+          }
+          try {
+            const recapResult = await launchMemoryRecapInvestigatorSubagent({
+              agentId,
+              conversationId: recapConversationId,
+            });
+            if (recapResult.launched) {
+              cmd.finish(
+                `Memory recap investigator dispatched (${recapResult.candidateCount} candidate(s)). Its report will arrive as a task notification.`,
+                true,
+              );
+            } else {
+              cmd.finish(
+                `Recap not launched (reason: ${recapResult.reason}${
+                  recapResult.reason === "no_candidates"
+                    ? " — no eligible transcripts for this agent"
+                    : ""
+                }).`,
+                true,
+              );
+            }
+          } catch (recapError) {
+            cmd.fail(
+              `Recap dispatch failed: ${
+                recapError instanceof Error
+                  ? recapError.message
+                  : String(recapError)
+              }`,
+            );
+          }
+          return { submitted: false };
+        }
+
         if (trimmed === "/doctor") {
-          const cmd = commandRunner.start(msg, "Gathering project context...");
+          const cmd = commandRunner.start(msg, "Starting memory doctor...");
 
           const approvalCheck = await checkPendingApprovalsForSlashCommand();
           if (approvalCheck.blocked) {
@@ -3282,20 +3329,124 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             return { submitted: false };
           }
 
+          // New conversations should not inherit pending reasoning-tier debounce.
+          resetPendingReasoningCycle();
           setCommandRunning(true);
+
+          const prevConversationId = conversationIdRef.current;
+
+          // Run SessionEnd hooks for current session before starting new one
+          await runEndHooks("new");
+
           try {
-            cmd.finish(
-              "Running memory doctor... I'll ask a few questions to refine memory structure.",
-              true,
+            const backend = getBackend();
+
+            // Fresh conversation dedicated to the memory doctor session
+            const conversation = await backend.createConversation({
+              agent_id: agentId,
+              summary: "Memory doctor",
+            });
+
+            // Force model `auto` for the doctor conversation so the audit runs
+            // on the best-available routed model regardless of the prior convo.
+            try {
+              const { updateConversationLLMConfig } = await import(
+                "@/agent/modify"
+              );
+              await updateConversationLLMConfig(
+                conversation.id,
+                "letta/auto",
+                undefined,
+                { avoidOverwritingExistingContextWindow: true },
+              );
+            } catch (modelError) {
+              debugWarn(
+                "memory",
+                `Failed to set doctor conversation model to auto: ${
+                  modelError instanceof Error
+                    ? modelError.message
+                    : String(modelError)
+                }`,
+              );
+            }
+
+            setConversationAutoTitleEligibility(false);
+
+            // Update conversationId state and ref together so the next turn
+            // cannot observe a stale conversation handoff.
+            setConversationIdAndRef(conversation.id);
+
+            pendingConversationSwitchRef.current = {
+              origin: "new",
+              conversationId: conversation.id,
+              isDefault: false,
+            };
+
+            // Save the new session to settings
+            settingsManager.persistSession(agentId, conversation.id);
+
+            // Reset context tokens for new conversation
+            resetContextHistory(contextTrackerRef.current);
+
+            // Ensure bootstrap reminders are re-injected for the new conversation.
+            resetBootstrapReminderState(true);
+
+            // Re-run SessionStart hooks for new conversation
+            sessionHooksRanRef.current = false;
+            runSessionStartHooks(
+              true, // isNewSession
+              agentId,
+              agentName ?? undefined,
+              conversation.id,
+            )
+              .then((result) => {
+                if (result.feedback.length > 0) {
+                  sessionStartFeedbackRef.current = result.feedback;
+                }
+              })
+              .catch(() => {});
+            sessionHooksRanRef.current = true;
+            void modAdapter.events.emit(
+              "conversation_open",
+              {
+                agentId,
+                agentName: agentName ?? null,
+                conversationId: conversation.id,
+                previousConversationId: prevConversationId ?? null,
+                reason: "new",
+              },
+              modAdapter.context,
             );
 
-            const { context: gitContext } = gatherInitGitContext();
-            const memoryDir = getActiveMemoryDirectory(agentId);
+            // Dispatch the analysis-only recap investigator in parallel. It is
+            // spawned non-silently, so when it finishes its report is delivered
+            // as a task notification that auto-dispatches a turn — waking the
+            // primary agent to ask the user its checkup questions once findings
+            // are in. No manual delivery needed here.
+            try {
+              await launchMemoryRecapInvestigatorSubagent({
+                agentId,
+                conversationId: conversation.id,
+              });
+            } catch (recapError) {
+              debugWarn(
+                "memory",
+                `Failed to dispatch memory recap investigator: ${
+                  recapError instanceof Error
+                    ? recapError.message
+                    : String(recapError)
+                }`,
+              );
+            }
 
-            const doctorMessage = buildDoctorMessage({
-              gitContext,
-              memoryDir,
-            });
+            const { context: gitContext } = gatherInitGitContext();
+
+            const doctorMessage = buildDoctorMessage({ gitContext });
+
+            cmd.finish(
+              "Memory doctor started in a new conversation (model: auto). I'll audit memory and ask a few questions.",
+              true,
+            );
 
             await processConversationWithQueuedApprovals([
               {

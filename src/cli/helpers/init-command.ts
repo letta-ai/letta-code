@@ -5,8 +5,10 @@
  * (commandRunner, processConversation, setCommandRunning, etc.)
  */
 
+import memoryPrinciplesMd from "@/agent/prompts/memory_principles.md";
 import { getSnapshot as getSubagentSnapshot } from "@/agent/subagent-state";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import doctorPromptMd from "./doctor-prompt.md";
 import { gatherGitContextSnapshot } from "./git-context";
 
 // ── Guard ──────────────────────────────────────────────────
@@ -119,26 +121,32 @@ ${args.gitContext}
 ${SYSTEM_REMINDER_CLOSE}`;
 }
 
+/**
+ * Detailed Memory Maintenance Principles, sans the auditor-voiced intro
+ * (everything from the first numbered "## 1." section onward), so the doctor
+ * prompt can present them in the primary agent's own voice.
+ */
+const MEMORY_PRINCIPLES_BODY = (() => {
+  const idx = memoryPrinciplesMd.indexOf("## 1.");
+  return (
+    idx === -1 ? memoryPrinciplesMd : memoryPrinciplesMd.slice(idx)
+  ).trim();
+})();
+
 /** Message for the primary agent via processConversation when user runs /doctor. */
-export function buildDoctorMessage(args: {
-  gitContext: string;
-  memoryDir?: string;
-}): string {
-  const memfsSection = args.memoryDir
-    ? `\n## Memory filesystem\n\nMemory filesystem is enabled. Memory directory: \`${args.memoryDir}\`\n`
-    : "";
+export function buildDoctorMessage(args: { gitContext: string }): string {
+  const today = new Date();
+  const currentDate = `${today.toLocaleDateString("en-CA")} (${today.toLocaleDateString(
+    "en-US",
+    { weekday: "long" },
+  )})`;
+  const body = doctorPromptMd
+    .replace("{{MEMORY_PRINCIPLES}}", MEMORY_PRINCIPLES_BODY)
+    .replace("{{GIT_CONTEXT}}", args.gitContext)
+    .replace("{{CURRENT_DATE}}", currentDate)
+    .trim();
 
   return `${SYSTEM_REMINDER_OPEN}
-The user has requested a memory structure check via /doctor.
-${memfsSection}
-## 1. Invoke the context-doctor skill
-
-Use the \`Skill\` tool with \`skill: "context-doctor"\` to load guidance for memory structure refinement.
-
-## 2. Follow the skill instructions
-
-Once invoked, follow the instructions from the \`context-doctor\` skill.
-
-${args.gitContext}
+${body}
 ${SYSTEM_REMINDER_CLOSE}`;
 }
