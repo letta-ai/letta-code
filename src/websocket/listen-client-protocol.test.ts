@@ -5295,7 +5295,7 @@ describe("listen-client capability-gated approval flow", () => {
     }
   });
 
-  test("requestApprovalOverWS exposes the control request through device status instead of stream_delta", () => {
+  test("requestApprovalOverWS emits control_request and exposes it through device status", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
       listener,
@@ -5323,8 +5323,21 @@ describe("listen-client capability-gated approval flow", () => {
     const deviceStatus = outbound.find(
       (payload) => payload.type === "update_device_status",
     );
+    const controlRequest = outbound.find(
+      (payload) => payload.type === "control_request",
+    );
+    expect(controlRequest).toBeDefined();
     expect(loopStatus).toBeDefined();
     expect(deviceStatus).toBeDefined();
+    expect(controlRequest.type).toBe("control_request");
+    expect(controlRequest.request_id).toBe(requestId);
+    expect(controlRequest.request).toEqual(
+      makeControlRequest(requestId).request,
+    );
+    expect(controlRequest.runtime).toEqual({
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
     expect(loopStatus.type).toBe("update_loop_status");
     expect(loopStatus.loop_status.status).toBe("WAITING_ON_APPROVAL");
     expect(runtime.lastStopReason).toBe("requires_approval");
