@@ -252,31 +252,51 @@ const SLACK_AGENT_THREAD_MAX = 2_000;
 type SlackLifecycleState = "queued" | "completed" | "error" | "cancelled";
 
 /**
- * Tracks Slack thread IDs the agent has sent messages to, so that inbound
- * replies in those threads are auto-routed without requiring an explicit
- * @mention. Entries expire after `SLACK_AGENT_THREAD_TTL_MS` and the set
- * is capped at `SLACK_AGENT_THREAD_MAX`.
+ * Tracks Slack channel threads the agent has sent messages to, so that
+ * inbound replies in those threads are auto-routed without requiring an
+ * explicit @mention. Slack message timestamps are scoped to a channel in Slack
+ * APIs, so the key intentionally includes both the channel id and thread id.
+ * Entries expire after `SLACK_AGENT_THREAD_TTL_MS` and the set is capped at
+ * `SLACK_AGENT_THREAD_MAX`.
  */
 export type AgentThreadTracker = {
-  remember: (threadId: string) => void;
-  has: (threadId: string) => boolean;
+  remember: (channelId: string, threadId: string) => void;
+  has: (channelId: string, threadId: string) => boolean;
   clear: () => void;
 };
 
-export function createAgentThreadTracker(): AgentThreadTracker {
-  const threadIds = new Map<string, number>();
+type AgentThreadTrackerOptions = {
+  now?: () => number;
+  ttlMs?: number;
+  maxEntries?: number;
+};
 
-  function prune(now: number = Date.now()): void {
+function buildAgentThreadTrackerKey(
+  channelId: string,
+  threadId: string,
+): string {
+  return `${channelId}:${threadId}`;
+}
+
+export function createAgentThreadTracker(
+  options: AgentThreadTrackerOptions = {},
+): AgentThreadTracker {
+  const threadIds = new Map<string, number>();
+  const now = options.now ?? Date.now;
+  const ttlMs = options.ttlMs ?? SLACK_AGENT_THREAD_TTL_MS;
+  const maxEntries = options.maxEntries ?? SLACK_AGENT_THREAD_MAX;
+
+  function prune(currentTime: number = now()): void {
     for (const [key, expiresAt] of threadIds) {
-      if (expiresAt <= now) {
+      if (expiresAt <= currentTime) {
         threadIds.delete(key);
       }
     }
-    if (threadIds.size <= SLACK_AGENT_THREAD_MAX) {
+    if (threadIds.size <= maxEntries) {
       return;
     }
     const sorted = Array.from(threadIds.entries()).sort((a, b) => a[1] - b[1]);
-    const overflow = threadIds.size - SLACK_AGENT_THREAD_MAX;
+    const overflow = threadIds.size - maxEntries;
     for (let i = 0; i < overflow; i += 1) {
       const entry = sorted[i];
       if (entry) {
@@ -286,14 +306,17 @@ export function createAgentThreadTracker(): AgentThreadTracker {
   }
 
   return {
-    remember(threadId: string): void {
-      const now = Date.now();
-      prune(now);
-      threadIds.set(threadId, now + SLACK_AGENT_THREAD_TTL_MS);
+    remember(channelId: string, threadId: string): void {
+      const currentTime = now();
+      prune(currentTime);
+      threadIds.set(
+        buildAgentThreadTrackerKey(channelId, threadId),
+        currentTime + ttlMs,
+      );
     },
-    has(threadId: string): boolean {
+    has(channelId: string, threadId: string): boolean {
       prune();
-      return threadIds.has(threadId);
+      return threadIds.has(buildAgentThreadTrackerKey(channelId, threadId));
     },
     clear(): void {
       threadIds.clear();
@@ -1048,7 +1071,7 @@ export function createSlackAdapter(
       const isAgentThread =
         chatType === "channel" &&
         isNonEmptyString(threadId) &&
-        agentThreadTracker.has(threadId);
+        agentThreadTracker.has(channelId, threadId);
       const effectiveMention = wasMentioned || isAgentThread;
 
       if (chatType === "direct") {
@@ -1115,7 +1138,7 @@ export function createSlackAdapter(
         senderId: rawMessage.user,
         senderName,
         chatLabel: channelId,
-        text: effectiveMention ? normalizeSlackText(text) : text,
+        text: wasMentioned ? normalizeSlackText(text) : text,
         timestamp: slackTimestampToMillis(rawMessage.ts),
         messageId: rawMessage.ts,
         threadId,
@@ -1493,7 +1516,19 @@ export function createSlackAdapter(
       }
 
       if (msg.mediaPath) {
-        return uploadSlackFile(slackClient, msg);
+        const result = await uploadSlackFile(slackClient, msg);
+        const outboundThreadId = msg.threadId ?? msg.replyToMessageId ?? null;
+        // Slack's external upload completion returns a file id, not a message
+        // timestamp, so top-level file uploads cannot become tracked thread
+        // roots. Threaded uploads can still auto-subscribe using the explicit
+        // thread id supplied by the caller.
+        if (
+          resolveSlackChatType(msg.chatId) === "channel" &&
+          isNonEmptyString(outboundThreadId)
+        ) {
+          agentThreadTracker.remember(msg.chatId, outboundThreadId);
+        }
+        return result;
       }
 
       const response = await slackClient.chat.postMessage({
@@ -1516,7 +1551,7 @@ export function createSlackAdapter(
         resolveSlackChatType(msg.chatId) === "channel" &&
         isNonEmptyString(outboundThreadId)
       ) {
-        agentThreadTracker.remember(outboundThreadId);
+        agentThreadTracker.remember(msg.chatId, outboundThreadId);
       }
 
       return { messageId: response.ts ?? "" };
@@ -1543,7 +1578,7 @@ export function createSlackAdapter(
         resolveSlackChatType(chatId) === "channel" &&
         isNonEmptyString(outboundThreadId)
       ) {
-        agentThreadTracker.remember(outboundThreadId);
+        agentThreadTracker.remember(chatId, outboundThreadId);
       }
     },
 
@@ -1567,7 +1602,7 @@ export function createSlackAdapter(
         resolveSlackChatType(event.source.chatId) === "channel" &&
         isNonEmptyString(outboundThreadId)
       ) {
-        agentThreadTracker.remember(outboundThreadId);
+        agentThreadTracker.remember(event.source.chatId, outboundThreadId);
       }
     },
 
