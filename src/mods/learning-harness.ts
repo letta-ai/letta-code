@@ -465,6 +465,7 @@ function createAssertionModContext(repoRoot: string): ModContext {
   return {
     app: { version: "mod-learning-eval" },
     backgroundAgents: [],
+    subagents: { list: () => [] },
     contextWindow: {
       currentUsage: null,
       remainingPercentage: null,

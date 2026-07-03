@@ -12,10 +12,20 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
+import {
+  getSubagentLifecycleSnapshot,
+  subscribeToSubagentLifecycle,
+} from "@/agent/subagent-state";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import {
+  PRODUCT_STATUS_SPINNER_INTERVAL_MS,
+  PRODUCT_STATUS_SPINNER_PULSE_INTERVAL_MS,
+  withDefaultProductStatusPanel,
+} from "@/cli/display/product-status/default";
 import { shouldRenderDefaultStatuslineRenderer } from "@/cli/display/statusline/default-renderer-activation";
 import { truncateToWidth } from "@/cli/display/statusline/formatting";
 import {
@@ -43,11 +53,11 @@ import { permissionMode } from "@/permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { settingsManager } from "@/settings-manager";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
+import { BRAILLE_SPINNER_FRAMES } from "./BlinkingSpinner";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
 import { ModPanelRow, renderModPanelLines } from "./ModPanelRow";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
-import { ProductStatusRow } from "./ProductStatusRow";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
 import {
@@ -451,6 +461,8 @@ const StatuslineSlot = memo(function StatuslineSlot({
   hideFooter,
   rightColumnWidth,
   modContext,
+  subagentLifecycleSnapshot: _subagentLifecycleSnapshot,
+  subagentLifecycleTick: _subagentLifecycleTick,
   modAdapter,
   transientHint,
 }: {
@@ -467,6 +479,8 @@ const StatuslineSlot = memo(function StatuslineSlot({
   hideFooter: boolean;
   rightColumnWidth: number;
   modContext: ModContext;
+  subagentLifecycleSnapshot: ReturnType<typeof getSubagentLifecycleSnapshot>;
+  subagentLifecycleTick: number;
   modAdapter: LocalModAdapter;
   transientHint?: StatuslineTransientHint | null;
 }) {
@@ -1840,42 +1854,149 @@ export function Input({
     previousFooterNotificationRef.current = footerNotification ?? null;
   }, [footerNotification, showStatuslineTransientHint]);
 
+  const subagentLifecycleSnapshot = useSyncExternalStore(
+    subscribeToSubagentLifecycle,
+    getSubagentLifecycleSnapshot,
+  );
+  const hasActiveSubagent = subagentLifecycleSnapshot.some(
+    (agent) => agent.status === "pending" || agent.status === "running",
+  );
+  const [subagentLifecycleTick, setSubagentLifecycleTick] = useState(0);
+
+  useEffect(() => {
+    if (!hasActiveSubagent) return;
+    const timer = setInterval(
+      () => setSubagentLifecycleTick((value) => value + 1),
+      1000,
+    );
+    return () => clearInterval(timer);
+  }, [hasActiveSubagent]);
+
+  const liveBackgroundAgents = useMemo<ModContext["backgroundAgents"]>(() => {
+    void subagentLifecycleTick;
+    const now = Date.now();
+    return subagentLifecycleSnapshot
+      .filter(
+        (agent) =>
+          !agent.visibleInTranscript &&
+          (agent.status === "pending" || agent.status === "running"),
+      )
+      .map((agent) => ({
+        type: agent.type,
+        status: agent.status,
+        durationMs: Math.max(0, now - agent.startedAtMs),
+        agentId: agent.agentId ?? null,
+      }));
+  }, [subagentLifecycleSnapshot, subagentLifecycleTick]);
+
+  const hasActiveProductStatus = liveBackgroundAgents.length > 0;
+  const shouldAnimateProductStatus = hasActiveProductStatus && shouldAnimate;
+  const [productStatusSpinnerFrameIndex, setProductStatusSpinnerFrameIndex] =
+    useState(0);
+  const [productStatusSpinnerPulseOn, setProductStatusSpinnerPulseOn] =
+    useState(true);
+
+  useEffect(() => {
+    setProductStatusSpinnerFrameIndex(0);
+    if (!shouldAnimateProductStatus) return;
+    const timer = setInterval(() => {
+      setProductStatusSpinnerFrameIndex(
+        (value) => (value + 1) % BRAILLE_SPINNER_FRAMES.length,
+      );
+    }, PRODUCT_STATUS_SPINNER_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [shouldAnimateProductStatus]);
+
+  useEffect(() => {
+    setProductStatusSpinnerPulseOn(true);
+    if (!shouldAnimateProductStatus) return;
+    const timer = setInterval(() => {
+      setProductStatusSpinnerPulseOn((value) => !value);
+    }, PRODUCT_STATUS_SPINNER_PULSE_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [shouldAnimateProductStatus]);
+
+  const panelModContext = useMemo<ModContext>(
+    () => ({
+      ...modContext,
+      backgroundAgents: liveBackgroundAgents,
+    }),
+    [liveBackgroundAgents, modContext],
+  );
+
+  const activeBackgroundAgentUrl = useMemo(() => {
+    const agent = subagentLifecycleSnapshot.find(
+      (a) =>
+        !a.visibleInTranscript &&
+        (a.status === "pending" || a.status === "running") &&
+        a.agentUrl,
+    );
+    return agent?.agentUrl ?? null;
+  }, [subagentLifecycleSnapshot]);
+
+  const panelsWithDefaultProductStatus = useMemo(
+    () =>
+      withDefaultProductStatusPanel(modAdapter.registry?.ui.panels, {
+        spinnerDimmed:
+          shouldAnimateProductStatus && !productStatusSpinnerPulseOn,
+        spinnerFrame:
+          BRAILLE_SPINNER_FRAMES[productStatusSpinnerFrameIndex] ??
+          BRAILLE_SPINNER_FRAMES[0],
+        agentUrl: activeBackgroundAgentUrl,
+      }),
+    [
+      modAdapter.registry?.ui.panels,
+      productStatusSpinnerFrameIndex,
+      productStatusSpinnerPulseOn,
+      shouldAnimateProductStatus,
+      activeBackgroundAgentUrl,
+    ],
+  );
+
   // Decoupled from input churn (value/cursorPos) so panel content only
   // re-renders when the panels themselves change, mirroring how BtwPane
   // stays flash-free. Folding this into lowerPane would rebuild it on every
   // keystroke.
   const modPanelRow = useMemo(() => {
+    void subagentLifecycleSnapshot;
+    void subagentLifecycleTick;
     if (suppressDividers) return null;
     return (
       <ModPanelRow
-        panels={modAdapter.registry?.ui.panels}
+        panels={panelsWithDefaultProductStatus}
         terminalWidth={terminalWidth}
         placement="above"
-        context={modContext}
+        context={panelModContext}
       />
     );
   }, [
     suppressDividers,
-    modAdapter.registry?.ui.panels,
+    panelsWithDefaultProductStatus,
     terminalWidth,
-    modContext,
+    panelModContext,
+    subagentLifecycleSnapshot,
+    subagentLifecycleTick,
   ]);
 
   const modPanelRowBelow = useMemo(() => {
+    void subagentLifecycleSnapshot;
+    void subagentLifecycleTick;
     if (suppressDividers) return null;
     return (
       <ModPanelRow
-        panels={modAdapter.registry?.ui.panels}
+        panels={panelsWithDefaultProductStatus}
         terminalWidth={terminalWidth}
         placement="below"
-        context={modContext}
+        context={panelModContext}
       />
     );
   }, [
     suppressDividers,
-    modAdapter.registry?.ui.panels,
+    panelsWithDefaultProductStatus,
     terminalWidth,
-    modContext,
+    panelModContext,
+    subagentLifecycleSnapshot,
+    subagentLifecycleTick,
   ]);
 
   const lowerPane = useMemo(() => {
@@ -1889,10 +2010,6 @@ export function Input({
         {interactionEnabled ? (
           <Box flexDirection="column">
             {modPanelRow}
-
-            {!suppressDividers && (
-              <ProductStatusRow terminalWidth={terminalWidth} />
-            )}
 
             {/* Top horizontal divider */}
             {!suppressDividers && (
@@ -1988,7 +2105,9 @@ export function Input({
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 hideFooter={hideFooter}
                 rightColumnWidth={footerRightColumnWidth}
-                modContext={modContext}
+                modContext={panelModContext}
+                subagentLifecycleSnapshot={subagentLifecycleSnapshot}
+                subagentLifecycleTick={subagentLifecycleTick}
                 modAdapter={modAdapter}
                 transientHint={statuslineTransientHint}
               />
@@ -2040,7 +2159,9 @@ export function Input({
     footerRightColumnWidth,
     reserveInputSpace,
     inputChromeHeight,
-    modContext,
+    panelModContext,
+    subagentLifecycleSnapshot,
+    subagentLifecycleTick,
     modAdapter,
 
     promptChar,
@@ -2048,7 +2169,6 @@ export function Input({
     suppressDividers,
     queueMode,
     inspirationalPlaceholder,
-    terminalWidth,
     statuslineTransientHint,
   ]);
 

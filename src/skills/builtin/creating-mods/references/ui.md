@@ -37,7 +37,8 @@ if (letta.capabilities.ui.panels) {
 
 `order` is a signed coordinate around the input:
 
-- `order > 0` — above the input, higher nearer the top (default `100`).
+- `order > 1` — additive panels above the input, higher nearer the top (default `100`).
+- `order === 1` — replaces the default product-status row (currently dreaming/reflection status). Use this only when intentionally overriding that row; otherwise use `order > 1`.
 - `order === 0` — the primary line just below the input, overriding the built-in `agent · model`. This is the statusline slot; use `customizing-statusline` for that work.
 - `order < 0` — stacks below the primary line, `-1` closest.
 
@@ -50,13 +51,15 @@ render(ctx: {
   width: number;
   agent: { id, name };
   model: { id, displayName, provider, reasoningEffort };
+  subagents: { list(): SubagentLifecycleItem[] };
   row(left, right, width): string;
   columns(parts: string[], width): string;
+  link(label: string, url: string): string;
   chalk: ChalkInstance;
 }): string | string[]
 ```
 
-`row`/`columns` are ANSI-aware, so chalk-colored segments align correctly.
+`row`/`columns` are ANSI-aware, so chalk-colored segments and OSC-8 links align correctly. Use `link(label, url)` when a compact label should hyperlink to a URL without rendering the whole URL.
 
 Close panels when they are transient, and close/replace long-lived panels from the activation disposer if reload should remove them.
 
