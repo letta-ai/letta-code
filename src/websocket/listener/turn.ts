@@ -39,6 +39,7 @@ import {
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import {
   getReflectionSettings,
+  type ReflectionSettings,
   type ReflectionTrigger,
 } from "@/cli/helpers/memory-reminder";
 import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
@@ -309,10 +310,18 @@ export function buildMaybeLaunchReflectionSubagent(params: {
   socket: ListenerTransport;
   agentId: string;
   conversationId: string;
+  reflectionSettings?: ReflectionSettings;
   cachedAgent?: AgentState | null;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
-    const { runtime, socket, agentId, conversationId, cachedAgent } = params;
+    const {
+      runtime,
+      socket,
+      agentId,
+      conversationId,
+      reflectionSettings,
+      cachedAgent,
+    } = params;
 
     if (!agentId) {
       return false;
@@ -323,6 +332,7 @@ export function buildMaybeLaunchReflectionSubagent(params: {
       conversationId,
       memfsEnabled: settingsManager.isMemfsEnabled(agentId),
       triggerSource,
+      reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
       systemPrompt: cachedAgent?.system ?? undefined,
       recompileByConversation:
@@ -951,6 +961,7 @@ export async function handleIncomingMessage(
               socket,
               agentId: agentId || "",
               conversationId,
+              reflectionSettings,
               cachedAgent,
             }),
           });
