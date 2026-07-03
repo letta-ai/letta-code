@@ -15,6 +15,7 @@ import {
   getCurrentAgentId,
   setConversationId,
   setCurrentAgentId,
+  setCurrentAgentName,
 } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
@@ -501,6 +502,7 @@ export async function handleIncomingMessage(
 
     // Set agent context for tools that need it (e.g., Skill tool)
     setCurrentAgentId(agentId);
+    setCurrentAgentName(listenAgentMetadata?.name ?? null);
     setConversationId(conversationId);
 
     if (isDebugEnabled()) {
@@ -612,6 +614,9 @@ export async function handleIncomingMessage(
                 .last_run_completion ?? null,
           };
         }
+        setCurrentAgentName(
+          listenAgentMetadata?.name ?? cachedAgent?.name ?? null,
+        );
         const { parts: reminderParts } = await buildSharedReminderParts(
           buildListenReminderContext({
             agentId: agentId || "",

@@ -9,7 +9,11 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import {
+  getConversationId,
+  getCurrentAgentId,
+  getCurrentAgentName,
+} from "@/agent/context";
 import {
   getScopedMemoryFilesystemRoot,
   resolveScopedMemoryDir,
@@ -350,6 +354,11 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   if (agentId) {
     env.LETTA_AGENT_ID = agentId;
     env.AGENT_ID = agentId;
+
+    const agentName = getCurrentAgentName()?.trim() || env.AGENT_NAME?.trim();
+    if (agentName) {
+      env.AGENT_NAME = agentName;
+    }
 
     try {
       const localBackendNoMemfs = isLocalBackendMemfsDisabledForProcess();

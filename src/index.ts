@@ -2334,7 +2334,12 @@ async function main(): Promise<void> {
         }
 
         // Set agent context for tools that need it (e.g., Skill tool)
-        setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
+        setAgentContext(
+          agent.id,
+          skillsDirectory,
+          resolvedSkillSources,
+          agent.name ?? null,
+        );
 
         let startupMemfsFlag: boolean | undefined = autoEnableMemfsForFreshAgent
           ? true

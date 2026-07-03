@@ -60,6 +60,15 @@ describe("buildSystemPrompt", () => {
     expect(result).not.toContain("git push");
   });
 
+  test("memfs prompt documents direct edit commit safeguards", () => {
+    const result = buildSystemPrompt("letta", "memfs");
+
+    expect(result).toContain("description:");
+    expect(result).toContain("MemFS pre-commit hook");
+    expect(result).toContain('author_name="${AGENT_NAME:-$AGENT_ID}"');
+    expect(result).not.toContain('--author="$AGENT_NAME');
+  });
+
   test("throws on unknown preset", () => {
     expect(() => buildSystemPrompt("unknown-id", "standard")).toThrow(
       'Unknown preset "unknown-id"',

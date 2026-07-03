@@ -276,6 +276,7 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
   const env = runWithRuntimeContext(
     {
       agentId: "agent-runtime-scope",
+      agentName: "Runtime Scope Agent",
       conversationId: "conv-runtime-scope",
       workingDirectory: "/tmp/runtime-scope-cwd",
     },
@@ -284,6 +285,7 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
 
   expect(env.AGENT_ID).toBe("agent-runtime-scope");
   expect(env.LETTA_AGENT_ID).toBe("agent-runtime-scope");
+  expect(env.AGENT_NAME).toBe("Runtime Scope Agent");
   expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
   expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
   expect(env.USER_CWD).toBe("/tmp/runtime-scope-cwd");
