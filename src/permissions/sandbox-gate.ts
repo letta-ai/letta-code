@@ -1,6 +1,6 @@
 import {
   detectSandboxBackend,
-  isFsSandboxEnabled,
+  isShellSandboxEnabled,
   type SandboxAvailability,
   warnSandboxBackendUnavailable,
 } from "@/sandbox/availability";
@@ -31,19 +31,21 @@ export interface ShellSandboxContext {
 /**
  * Resolve the context for confining an agent process's shell commands under the
  * kernel cross-agent sandbox, or null when this process's shells must not be
- * wrapped (flag off, already sandboxed, no backend, cwd inside the agents tree,
- * or no resolvable self roots).
+ * wrapped (not opted in, already sandboxed, no backend, cwd inside the agents
+ * tree, or no resolvable self roots).
  *
- * The kernel sandbox is the sole cross-agent enforcement for spawned shells (the
- * static cross-agent guard no longer analyzes shell commands), so this is what
- * `applyShellSandbox` consults to decide whether — and with what — to wrap.
+ * Opt-in via `LETTA_FS_SANDBOX=1`: by default only memory subagents are
+ * sandboxed (as whole processes) and agent shells run unconfined. When opted
+ * in, the kernel sandbox is the sole cross-agent enforcement for spawned shells
+ * (the static cross-agent guard no longer analyzes shell commands), so this is
+ * what `applyShellSandbox` consults to decide whether — and with what — to wrap.
  */
 export function resolveShellSandboxContext(
   cwd: string,
   env: NodeJS.ProcessEnv,
   availability?: SandboxAvailability,
 ): ShellSandboxContext | null {
-  if (!isFsSandboxEnabled(env)) return null;
+  if (!isShellSandboxEnabled(env)) return null;
   // Already inside a sandbox: subagents with the memory-subagent profile are confined as whole
   // processes at spawn, so their nested shell commands must not be double
   // wrapped. Default-profile subagents do not have this sentinel and should get the
