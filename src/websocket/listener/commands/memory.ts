@@ -16,6 +16,31 @@ import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 const WIKI_LINK_REGEX = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
 
+// Image assets the memory viewer can render inline. Must stay in sync with
+// the server-side memory files API's supported image set.
+const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
+  ".gif": "image/gif",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+};
+
+function getLowercaseExtension(path: string): string {
+  const lastSlash = path.lastIndexOf("/");
+  const lastDot = path.lastIndexOf(".");
+  if (lastDot <= lastSlash) return "";
+  return path.slice(lastDot).toLowerCase();
+}
+
+function getMemoryImageMimeType(path: string): string | null {
+  return IMAGE_MIME_BY_EXTENSION[getLowercaseExtension(path)] ?? null;
+}
+
+function isMarkdownMemoryPath(path: string): boolean {
+  return getLowercaseExtension(path) === ".md";
+}
+
 export type ListMemoryCommandTestOverrides = {
   ensureLocalMemfsCheckout?: (
     agentId: string,
@@ -65,7 +90,7 @@ export async function handleListMemoryCommand(
       await import("@/agent/memory-scanner");
     const { parseFrontmatter } = await import("@/utils/frontmatter");
 
-    const { existsSync } = await import("node:fs");
+    const { existsSync, statSync } = await import("node:fs");
     const { join, posix } = await import("node:path");
 
     const memoryRoot = getMemoryFilesystemRoot(parsed.agent_id);
@@ -105,12 +130,19 @@ export async function handleListMemoryCommand(
     }
 
     const treeNodes = scanMemoryFilesystem(memoryRoot);
-    const fileNodes = getFileNodes(treeNodes).filter((n) =>
-      n.name.endsWith(".md"),
+    const fileNodes = getFileNodes(treeNodes).filter(
+      (n) =>
+        isMarkdownMemoryPath(n.relativePath) ||
+        getMemoryImageMimeType(n.relativePath) !== null,
     );
     const includeReferences = parsed.include_references === true;
 
-    const allPaths = new Set(fileNodes.map((node) => node.relativePath));
+    // Wiki-link references only ever resolve to markdown files.
+    const allPaths = new Set(
+      fileNodes
+        .map((node) => node.relativePath)
+        .filter((path) => isMarkdownMemoryPath(path)),
+    );
 
     const normalizeMemoryReference = (
       rawReference: string,
@@ -219,14 +251,34 @@ export async function handleListMemoryCommand(
     for (let i = 0; i < total; i += CHUNK_SIZE) {
       const chunk = fileNodes.slice(i, i + CHUNK_SIZE);
       const entries = chunk.map((node) => {
+        const isSystem =
+          node.relativePath.startsWith("system/") ||
+          node.relativePath.startsWith("system\\");
+
+        const imageMimeType = getMemoryImageMimeType(node.relativePath);
+        if (imageMimeType) {
+          let size = 0;
+          try {
+            size = statSync(node.fullPath).size;
+          } catch {}
+          return {
+            relative_path: node.relativePath,
+            is_system: isSystem,
+            description: null,
+            content: "",
+            size,
+            ...(includeReferences ? { references: [] } : {}),
+            kind: "image" as const,
+            mime_type: imageMimeType,
+          };
+        }
+
         const raw = readFileContent(node.fullPath);
         const { frontmatter, body } = parseFrontmatter(raw);
         const desc = frontmatter.description;
         return {
           relative_path: node.relativePath,
-          is_system:
-            node.relativePath.startsWith("system/") ||
-            node.relativePath.startsWith("system\\"),
+          is_system: isSystem,
           description: typeof desc === "string" ? desc : null,
           content: body,
           size: body.length,
@@ -235,6 +287,8 @@ export async function handleListMemoryCommand(
                 references: extractMemoryReferences(body, node.relativePath),
               }
             : {}),
+          kind: "markdown" as const,
+          mime_type: "text/markdown",
         };
       });
 
