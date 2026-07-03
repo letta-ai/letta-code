@@ -13,6 +13,7 @@ import {
   isLettaMemfsServer,
   labelFromRelativePath,
   renderMemoryFilesystemTree,
+  stampMemfsTagOnCreateBody,
 } from "@/agent/memory-filesystem";
 import { DIRECTORY_LIMIT_ENV } from "@/utils/directory-limits";
 
@@ -151,6 +152,36 @@ function createMockClient(options: {
 
 // parseBlockFromFileContent tests removed - YAML frontmatter no longer
 // used with git-backed memory (files contain raw block content).
+
+describe("stampMemfsTagOnCreateBody", () => {
+  const TAG = "git-memory-enabled";
+
+  test("adds the memfs tag to a body without tags", () => {
+    const body: { name: string; tags?: string[] } = { name: "prod" };
+    expect(stampMemfsTagOnCreateBody(body, TAG).tags).toEqual([TAG]);
+  });
+
+  test("preserves existing tags while adding the memfs tag", () => {
+    const body = { name: "prod", tags: ["origin:letta-code"] };
+    expect(stampMemfsTagOnCreateBody(body, TAG).tags).toEqual([
+      "origin:letta-code",
+      TAG,
+    ]);
+  });
+
+  test("returns the body unchanged when the tag is already present", () => {
+    const body = { name: "prod", tags: [TAG] };
+    expect(stampMemfsTagOnCreateBody(body, TAG)).toBe(body);
+  });
+
+  test("handles null tags", () => {
+    const body: { name: string; tags: string[] | null } = {
+      name: "prod",
+      tags: null,
+    };
+    expect(stampMemfsTagOnCreateBody(body, TAG).tags).toEqual([TAG]);
+  });
+});
 
 describe("labelFromRelativePath", () => {
   test("converts simple filename to label", () => {

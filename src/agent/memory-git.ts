@@ -2299,7 +2299,12 @@ export async function addGitMemoryTag(
   try {
     const { getBackend } = await import("@/backend");
     const backend = getBackend();
-    const agent = prefetchedAgent ?? (await backend.retrieveAgent(agentId));
+    // Always request tags explicitly: without `include: ["agent.tags"]` the
+    // API can omit tags, and writing back an incomplete list would wipe the
+    // agent's other tags.
+    const agent =
+      prefetchedAgent ??
+      (await backend.retrieveAgent(agentId, { include: ["agent.tags"] }));
     const tags = agent.tags || [];
     if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
       await backend.updateAgent(agentId, {
@@ -2311,29 +2316,6 @@ export async function addGitMemoryTag(
     debugWarn(
       "memfs-git",
       `Failed to add git-memory tag: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-/**
- * Remove the git-memory-enabled tag from an agent.
- */
-export async function removeGitMemoryTag(agentId: string): Promise<void> {
-  try {
-    const { getBackend } = await import("@/backend");
-    const backend = getBackend();
-    const agent = await backend.retrieveAgent(agentId);
-    const tags = agent.tags || [];
-    if (tags.includes(GIT_MEMORY_ENABLED_TAG)) {
-      await backend.updateAgent(agentId, {
-        tags: tags.filter((t) => t !== GIT_MEMORY_ENABLED_TAG),
-      });
-      debugLog("memfs-git", `Removed ${GIT_MEMORY_ENABLED_TAG} tag`);
-    }
-  } catch (err) {
-    debugWarn(
-      "memfs-git",
-      `Failed to remove git-memory tag: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }

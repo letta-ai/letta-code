@@ -142,6 +142,51 @@ export function ensureMemoryFilesystemDirs(
   }
 }
 
+export interface MemfsCreateBodyLike {
+  tags?: string[] | null;
+}
+
+/**
+ * Stamp the git-memory-enabled tag onto a create-agent body (pure helper).
+ * Returns the body unchanged when the tag is already present.
+ */
+export function stampMemfsTagOnCreateBody<T extends MemfsCreateBodyLike>(
+  body: T,
+  gitMemoryEnabledTag: string,
+): T {
+  const tags = Array.isArray(body.tags) ? body.tags : [];
+  if (tags.includes(gitMemoryEnabledTag)) return body;
+  return { ...body, tags: [...tags, gitMemoryEnabledTag] };
+}
+
+/**
+ * Prepare a raw (protocol-forwarded) create-agent body so the created agent
+ * is memfs-enabled from birth.
+ *
+ * Raw protocol paths (listener `agent_create` / `runtime_start.create_agent`)
+ * forward client-provided bodies directly to the backend. Without this,
+ * agents created on Letta Cloud are born without GIT_MEMORY_ENABLED_TAG and
+ * every downstream tag-based check (isMemfsEnabledOnServer, memfs-sync,
+ * hydrateMemfsSettingFromAgent) treats them as non-memfs — on every machine,
+ * forever. Stamping the tag atomically with creation guarantees lazy sync
+ * paths can finish the setup (clone, tool detach) even if this process dies.
+ *
+ * The local backend stamps the tag itself in LocalBackend.createAgent(), and
+ * non-cloud remote backends don't support memfs sync, so both pass through.
+ */
+export async function prepareRawCreateAgentBodyForMemfs<
+  T extends MemfsCreateBodyLike,
+>(body: T): Promise<T> {
+  const { getBackend } = await import("@/backend");
+  const backend = getBackend();
+  if (backend.capabilities.localMemfs) return body;
+  if (!backend.capabilities.remoteMemfs) return body;
+  if (!(await isLettaCloud())) return body;
+
+  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
+  return stampMemfsTagOnCreateBody(body, GIT_MEMORY_ENABLED_TAG);
+}
+
 export async function hydrateMemfsSettingFromAgent(
   agent: Pick<AgentState, "id" | "tags">,
 ): Promise<boolean> {
@@ -171,10 +216,10 @@ export async function isMemfsEnabledOnServer(
   // runtime_start / LocalBackend.createAgent() do not get GIT_MEMORY_ENABLED_TAG
   // automatically, so using the tag-based check would incorrectly return false.
   if (backend.capabilities.localMemfs) {
-    const { isLocalBackendNoMemfsEnvEnabled } = await import(
+    const { isLocalBackendMemfsDisabledForProcess } = await import(
       "@/backend/local/paths"
     );
-    const enabled = !isLocalBackendNoMemfsEnvEnabled();
+    const enabled = !isLocalBackendMemfsDisabledForProcess();
     const { settingsManager } = await import("@/settings-manager");
     settingsManager.setMemfsEnabled(agentId, enabled);
     return enabled;
@@ -388,8 +433,8 @@ export function renderMemoryFilesystemTree(
 // ----- Shared memfs initialization -----
 
 export interface ApplyMemfsFlagsResult {
-  /** Whether memfs was enabled, disabled, or unchanged */
-  action: "enabled" | "disabled" | "unchanged";
+  /** Whether memfs was enabled or unchanged */
+  action: "enabled" | "unchanged";
   /** Path to the memory directory (when enabled) */
   memoryDir?: string;
   /** Summary from git pull (when pullOnExistingRepo is true and repo already existed) */
@@ -404,16 +449,19 @@ export interface ApplyMemfsFlagsOptions {
 }
 
 /**
- * Apply --memfs / --no-memfs CLI flags (or /memfs enable) to an agent.
+ * Apply the --memfs CLI flag (or /memfs enable) to an agent.
  *
  * Shared between interactive (index.ts), headless (headless.ts), and
  * the /memfs enable command (App.tsx) to avoid duplicating the setup logic.
  *
- * Steps when toggling:
+ * MemFS cannot be disabled: agents are memfs-enabled from creation on
+ * memfs-capable backends, and this function only enables or syncs.
+ *
+ * Steps when enabling:
  *   1. Validate MemFS API endpoint support (for explicit enable)
- *   2. Reconcile system prompt to the target memory mode
+ *   2. Reconcile system prompt to the memfs memory mode
  *   3. Persist memfs setting locally
- *   4. Detach old API-based memory tools (when enabling)
+ *   4. Detach old API-based memory tools
  *   5. Add git-memory-enabled tag + clone/pull repo
  *
  * @throws {Error} if MemFS endpoint validation fails or git setup fails
@@ -421,7 +469,6 @@ export interface ApplyMemfsFlagsOptions {
 export async function applyMemfsFlags(
   agentId: string,
   memfsFlag: boolean | undefined,
-  noMemfsFlag: boolean | undefined,
   options?: ApplyMemfsFlagsOptions,
 ): Promise<ApplyMemfsFlagsResult> {
   const { settingsManager } = await import("@/settings-manager");
@@ -429,10 +476,6 @@ export async function applyMemfsFlags(
   const backend = getBackend();
 
   if (backend.capabilities.localMemfs) {
-    if (noMemfsFlag) {
-      settingsManager.setMemfsEnabled(agentId, false);
-      return { action: "disabled" };
-    }
     const memoryDir = getScopedMemoryFilesystemRoot(agentId);
     const { initializeLocalMemoryRepo } = await import("@/agent/memory-git");
     await initializeLocalMemoryRepo({
@@ -448,10 +491,6 @@ export async function applyMemfsFlags(
     if (memfsFlag) {
       throw new Error("MemFS is not supported by the active backend.");
     }
-    if (noMemfsFlag) {
-      settingsManager.setMemfsEnabled(agentId, false);
-      return { action: "disabled" };
-    }
     return { action: "unchanged" };
   }
 
@@ -461,56 +500,37 @@ export async function applyMemfsFlags(
     throw new Error(await getMemfsSyncUnavailableMessage());
   }
 
-  const hasExplicitToggle = Boolean(memfsFlag || noMemfsFlag);
   const localMemfsEnabled = settingsManager.isMemfsEnabled(agentId);
   const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
   const shouldAutoEnableFromTag =
-    !hasExplicitToggle &&
+    !memfsFlag &&
     !localMemfsEnabled &&
     Boolean(options?.agentTags?.includes(GIT_MEMORY_ENABLED_TAG));
-  const targetEnabled = memfsFlag
-    ? true
-    : noMemfsFlag
-      ? false
-      : shouldAutoEnableFromTag
-        ? true
-        : localMemfsEnabled;
+  const enabling = Boolean(memfsFlag || shouldAutoEnableFromTag);
 
   // 2. Reconcile system prompt first, then persist local memfs setting.
-  if (hasExplicitToggle || shouldAutoEnableFromTag) {
+  if (enabling) {
     if (!options?.skipPromptUpdate) {
       const { updateAgentSystemPromptMemfs } = await import("@/agent/modify");
-      const promptUpdate = await updateAgentSystemPromptMemfs(
-        agentId,
-        targetEnabled,
-      );
+      const promptUpdate = await updateAgentSystemPromptMemfs(agentId);
       if (!promptUpdate.success) {
         throw new Error(promptUpdate.message);
       }
       // Force recompile of the system message so the updated template
-      // (with/without memfs addon) is reflected in the compiled prompt.
+      // (with the memfs addon) is reflected in the compiled prompt.
       const { getClient } = await import("@/backend/api/client");
       const client = await getClient();
       await client.agents.recompile(agentId, { update_timestamp: false });
     }
-    settingsManager.setMemfsEnabled(agentId, targetEnabled);
+    settingsManager.setMemfsEnabled(agentId, true);
   }
 
-  const isEnabled =
-    hasExplicitToggle || shouldAutoEnableFromTag
-      ? targetEnabled
-      : settingsManager.isMemfsEnabled(agentId);
+  const isEnabled = enabling || localMemfsEnabled;
 
   // 3. Detach old API-based memory tools when enabling.
-  if (isEnabled && (memfsFlag || shouldAutoEnableFromTag)) {
+  if (enabling) {
     const { detachMemoryTools } = await import("@/tools/toolset");
     await detachMemoryTools(agentId);
-  }
-
-  // Keep server-side state aligned with explicit disable.
-  if (noMemfsFlag) {
-    const { removeGitMemoryTag } = await import("@/agent/memory-git");
-    await removeGitMemoryTag(agentId);
   }
 
   // 4. Add git tag + clone/pull repo.
@@ -538,14 +558,8 @@ export async function applyMemfsFlags(
     }
   }
 
-  const action =
-    memfsFlag || shouldAutoEnableFromTag
-      ? "enabled"
-      : noMemfsFlag
-        ? "disabled"
-        : "unchanged";
   return {
-    action,
+    action: enabling ? "enabled" : "unchanged",
     memoryDir: isEnabled ? getScopedMemoryFilesystemRoot(agentId) : undefined,
     pullSummary,
   };
@@ -610,7 +624,7 @@ export async function enableMemfsIfCloud(
   if (!(await isLettaCloud())) return;
 
   try {
-    await applyMemfsFlags(agentId, true, undefined, {
+    await applyMemfsFlags(agentId, true, {
       skipPromptUpdate: true,
     });
   } catch (error) {

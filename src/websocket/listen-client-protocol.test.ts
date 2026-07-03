@@ -2446,6 +2446,75 @@ describe("listen-client memory command handling", () => {
     }
   });
 
+  test("lists supported image assets alongside markdown memory", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
+    const socket = new MockSocket(WebSocket.OPEN);
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const ensureLocalMemfsCheckoutMock = mock(async () => {
+      await mkdir(join(tempRoot, ".git"), { recursive: true });
+      await mkdir(join(tempRoot, "system"), { recursive: true });
+      await writeFile(
+        join(tempRoot, "system", "persona.md"),
+        "---\ndescription: Persona\n---\nHello from memory\n",
+      );
+      await writeFile(join(tempRoot, "profile.png"), pngBytes);
+      await writeFile(join(tempRoot, "notes.bin"), Buffer.from([0x00, 0x01]));
+    });
+
+    try {
+      await __listenClientTestUtils.handleListMemoryCommand(
+        {
+          type: "list_memory",
+          request_id: "list-memory-images-1",
+          agent_id: "agent-1",
+          include_references: true,
+        },
+        socket as unknown as WebSocket,
+        {
+          getMemoryFilesystemRoot: () => tempRoot,
+          isMemfsEnabledOnServer: async () => true,
+          ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
+        },
+      );
+
+      const messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        type: "list_memory_response",
+        request_id: "list-memory-images-1",
+        success: true,
+        done: true,
+        total: 2,
+      });
+      // Scanner orders directories first, so system/persona.md precedes
+      // the root-level profile.png. Unsupported binaries stay hidden.
+      expect(messages[0].entries).toEqual([
+        expect.objectContaining({
+          relative_path: "system/persona.md",
+          is_system: true,
+          description: "Persona",
+          kind: "markdown",
+          mime_type: "text/markdown",
+          references: [],
+        }),
+        expect.objectContaining({
+          relative_path: "profile.png",
+          is_system: false,
+          description: null,
+          content: "",
+          size: pngBytes.length,
+          kind: "image",
+          mime_type: "image/png",
+          references: [],
+        }),
+      ]);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   test("pulls an existing local memfs checkout before scanning", async () => {
     const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
     const socket = new MockSocket(WebSocket.OPEN);

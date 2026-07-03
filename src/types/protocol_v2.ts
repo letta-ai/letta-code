@@ -1276,6 +1276,8 @@ export interface MemoryFileEntry {
   content: string;
   size: number;
   references?: string[];
+  kind?: "markdown" | "image";
+  mime_type?: string | null;
 }
 
 export interface ListMemoryResponseMessage {

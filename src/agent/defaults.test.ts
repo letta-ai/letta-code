@@ -69,7 +69,9 @@ describe("default agent configs", () => {
     );
   });
 
-  test("incognito explicitly opts out of MemFS", () => {
-    expect(DEFAULT_AGENT_CONFIGS.incognito?.enableMemfs).toBe(false);
+  test("no config can opt out of MemFS", () => {
+    for (const config of Object.values(DEFAULT_AGENT_CONFIGS)) {
+      expect(config).not.toHaveProperty("enableMemfs");
+    }
   });
 });

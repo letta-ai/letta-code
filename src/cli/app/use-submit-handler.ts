@@ -2517,7 +2517,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               "USAGE",
               "  /memfs status    — show status",
               "  /memfs enable    — enable filesystem-backed memory",
-              "  /memfs disable   — disable filesystem-backed memory",
               "  /memfs sync      — sync blocks and files now",
               "  /memfs reset     — move local memfs to /tmp and recreate dirs",
               "  /memfs help      — show this help",
@@ -2555,7 +2554,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               const { applyMemfsFlags } = await import(
                 "@/agent/memory-filesystem"
               );
-              const result = await applyMemfsFlags(agentId, true, false);
+              const result = await applyMemfsFlags(agentId, true);
               updateMemorySyncCommand(
                 cmdId,
                 `Memory filesystem enabled (git-backed).\nPath: ${result.memoryDir}`,
@@ -2692,76 +2691,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               updateMemorySyncCommand(
                 cmdId,
                 `Failed to reset memfs: ${errorText}`,
-                false,
-                msg,
-              );
-            } finally {
-              setCommandRunning(false);
-            }
-
-            return { submitted: true };
-          }
-
-          if (subcommand === "disable") {
-            if (getBackend().capabilities.localMemfs) {
-              cmd.fail(
-                "Disabling MemFS is not supported by the local backend.",
-              );
-              return { submitted: true };
-            }
-
-            updateMemorySyncCommand(
-              cmdId,
-              "Disabling memory filesystem...",
-              true,
-              msg,
-              true,
-            );
-            setCommandRunning(true);
-
-            try {
-              // 1. Re-attach memory tool
-              const { reattachMemoryTool } = await import("@/tools/toolset");
-              const modelId = currentModelId || "anthropic/claude-sonnet-4";
-              await reattachMemoryTool(agentId, modelId);
-
-              // 2. Update system prompt to remove memfs section
-              const { updateAgentSystemPromptMemfs } = await import(
-                "@/agent/modify"
-              );
-              await updateAgentSystemPromptMemfs(agentId, false);
-
-              // 3. Update settings
-              settingsManager.setMemfsEnabled(agentId, false);
-
-              // 4. Remove git-memory-enabled tag from agent
-              const { removeGitMemoryTag } = await import("@/agent/memory-git");
-              await removeGitMemoryTag(agentId);
-
-              // 5. Move local memory dir to /tmp (backup, not delete)
-              let backupInfo = "";
-              const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-              if (existsSync(memoryDir)) {
-                const backupDir = join(
-                  tmpdir(),
-                  `letta-memfs-disable-${agentId}-${Date.now()}`,
-                );
-                renameSync(memoryDir, backupDir);
-                backupInfo = `\nLocal files backed up to ${backupDir}`;
-              }
-
-              updateMemorySyncCommand(
-                cmdId,
-                `Memory filesystem disabled. Memory tool re-attached.${backupInfo}`,
-                true,
-                msg,
-              );
-            } catch (error) {
-              const errorText =
-                error instanceof Error ? error.message : String(error);
-              updateMemorySyncCommand(
-                cmdId,
-                `Failed to disable memfs: ${errorText}`,
                 false,
                 msg,
               );

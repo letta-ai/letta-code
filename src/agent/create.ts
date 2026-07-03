@@ -129,8 +129,13 @@ type MemfsCreateCapabilities = Pick<
 export interface CreatedAgentMemfsConfigOptions {
   capabilities: MemfsCreateCapabilities;
   requestedMemoryPromptMode?: MemoryPromptMode;
-  enableMemfs?: boolean;
   isLettaCloud: boolean;
+  /**
+   * Subagents are ephemeral and deliberately stateless — they never get
+   * memfs. This is the ONLY supported way to create a non-memfs agent on a
+   * memfs-capable backend; there is no user-facing opt-out.
+   */
+  isSubagent?: boolean;
 }
 
 export interface CreatedAgentMemfsConfig {
@@ -141,22 +146,18 @@ export interface CreatedAgentMemfsConfig {
 export function resolveCreatedAgentMemfsConfig(
   options: CreatedAgentMemfsConfigOptions,
 ): CreatedAgentMemfsConfig {
-  const explicitDisable =
-    options.enableMemfs === false ||
-    (options.enableMemfs === undefined &&
-      options.requestedMemoryPromptMode === "standard");
-  const explicitEnable =
-    options.enableMemfs === true ||
+  // MemFS is unavailable only when the backend can't support it:
+  // self-hosted servers have no memfs git endpoint.
+  const supported =
+    options.capabilities.localMemfs ||
+    (options.capabilities.remoteMemfs && options.isLettaCloud) ||
     options.requestedMemoryPromptMode === "memfs" ||
     options.requestedMemoryPromptMode === "local-memfs";
-  const supportedByDefault =
-    options.capabilities.localMemfs ||
-    (options.capabilities.remoteMemfs && options.isLettaCloud);
-  const enableMemfs = explicitDisable
-    ? false
-    : explicitEnable || supportedByDefault;
+  const enableMemfs = options.isSubagent ? false : supported;
   const memoryPromptMode =
-    options.requestedMemoryPromptMode ??
+    (options.requestedMemoryPromptMode !== "standard"
+      ? options.requestedMemoryPromptMode
+      : undefined) ??
     (enableMemfs
       ? options.capabilities.localMemfs
         ? "local-memfs"
@@ -191,8 +192,6 @@ export interface CreateAgentOptions {
   blockValues?: Record<string, string>;
   /** Tags to organize and categorize the agent */
   tags?: string[];
-  /** Whether to enable git-backed MemFS for the created agent (defaults to true when supported). */
-  enableMemfs?: boolean;
 }
 
 export async function createAgent(
@@ -255,8 +254,8 @@ export async function createAgent(
   const memfsConfig = resolveCreatedAgentMemfsConfig({
     capabilities: backend.capabilities,
     requestedMemoryPromptMode: options.memoryPromptMode,
-    enableMemfs: options.enableMemfs,
     isLettaCloud,
+    isSubagent,
   });
 
   // Only attach server-side tools to the agent.

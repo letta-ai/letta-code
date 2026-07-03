@@ -15,7 +15,7 @@ import {
   resolveScopedMemoryDir,
 } from "@/agent/memory-filesystem";
 import { getServerUrl } from "@/backend/api/client";
-import { isLocalBackendNoMemfsEnvEnabled } from "@/backend/local/paths";
+import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
@@ -352,7 +352,7 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     env.AGENT_ID = agentId;
 
     try {
-      const localBackendNoMemfs = isLocalBackendNoMemfsEnvEnabled();
+      const localBackendNoMemfs = isLocalBackendMemfsDisabledForProcess();
       const localBackendEnabled =
         process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1" ||
         process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.toLowerCase() === "true";
