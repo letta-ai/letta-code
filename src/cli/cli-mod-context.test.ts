@@ -30,7 +30,12 @@ describe("buildCliModContext", () => {
       networkPhase: "download",
       terminalWidth: 120,
       backgroundAgents: [
-        { type: "general-purpose", status: "running", durationMs: 1234 },
+        {
+          type: "general-purpose",
+          status: "running",
+          durationMs: 1234,
+          agentId: "agent-bg-1",
+        },
       ],
     });
 
@@ -56,7 +61,12 @@ describe("buildCliModContext", () => {
     expect(context.networkPhase).toBe("download");
     expect(context.terminalWidth).toBe(120);
     expect(context.backgroundAgents).toEqual([
-      { type: "general-purpose", status: "running", durationMs: 1234 },
+      {
+        type: "general-purpose",
+        status: "running",
+        durationMs: 1234,
+        agentId: "agent-bg-1",
+      },
     ]);
   });
 

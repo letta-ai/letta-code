@@ -63,6 +63,7 @@ export interface ModBackgroundAgentContext {
   type: string;
   status: string;
   durationMs: number;
+  agentId: string | null;
 }
 
 export interface ModUiCapabilities {
