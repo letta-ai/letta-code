@@ -164,7 +164,7 @@ export interface ChannelAdapter {
   sendDirectReply(
     chatId: string,
     text: string,
-    options?: { replyToMessageId?: string },
+    options?: { replyToMessageId?: string; threadId?: string | null },
   ): Promise<void>;
 
   /**

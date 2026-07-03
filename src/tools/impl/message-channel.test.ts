@@ -260,6 +260,132 @@ describe("message_channel (discord)", () => {
   });
 });
 
+describe("message_channel (telegram)", () => {
+  afterEach(async () => {
+    const registry = getChannelRegistry();
+    if (registry) {
+      await registry.stopAll();
+    }
+    clearAllRoutes();
+  });
+
+  test("uses the inbound private topic thread for Telegram direct replies", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "telegram-msg-1" }));
+    const adapter: ChannelAdapter = {
+      id: "telegram:telegram-bot",
+      channelId: "telegram",
+      accountId: "telegram-bot",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("telegram", {
+      accountId: "telegram-bot",
+      chatId: "123",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-07-03T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "telegram",
+      chat_id: "123",
+      message: "hello private topic",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+      channelTurnSources: [
+        {
+          channel: "telegram",
+          accountId: "telegram-bot",
+          chatId: "123",
+          chatType: "direct",
+          messageId: "77",
+          threadId: "175380",
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      ],
+    });
+
+    expect(result).toContain("Message sent to telegram");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "telegram",
+        accountId: "telegram-bot",
+        chatId: "123",
+        text: "hello private topic",
+        threadId: "175380",
+      }),
+    );
+  });
+
+  test("ignores stale route-level thread ids for root Telegram direct replies", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "telegram-msg-1" }));
+    const adapter: ChannelAdapter = {
+      id: "telegram:telegram-bot",
+      channelId: "telegram",
+      accountId: "telegram-bot",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("telegram", {
+      accountId: "telegram-bot",
+      chatId: "123",
+      chatType: "direct",
+      threadId: "stale-thread",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-07-03T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "telegram",
+      chat_id: "123",
+      message: "hello root dm",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(result).toContain("Message sent to telegram");
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "telegram",
+        accountId: "telegram-bot",
+        chatId: "123",
+        text: "hello root dm",
+        threadId: null,
+      }),
+    );
+  });
+});
+
 describe("message_channel (signal)", () => {
   afterEach(async () => {
     const registry = getChannelRegistry();

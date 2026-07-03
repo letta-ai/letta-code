@@ -754,7 +754,7 @@ test("telegram adapter forwards parse mode and reply parameters", async () => {
   });
 });
 
-test("telegram adapter omits message_thread_id for private chats", async () => {
+test("telegram adapter omits message_thread_id for root private chats", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
     channel: "telegram",
@@ -768,7 +768,36 @@ test("telegram adapter omits message_thread_id for private chats", async () => {
   await adapter.sendMessage({
     channel: "telegram",
     chatId: "123",
-    text: "<b>hello private</b>",
+    text: "<b>hello private root</b>",
+    parseMode: "HTML",
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot).toBeDefined();
+  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
+    "123",
+    "<b>hello private root</b>",
+    {
+      parse_mode: "HTML",
+    },
+  );
+});
+
+test("telegram adapter sends messages into private bot topics", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "telegram",
+    chatId: "123",
+    text: "<b>hello private topic</b>",
     threadId: "42",
     parseMode: "HTML",
   });
@@ -777,8 +806,9 @@ test("telegram adapter omits message_thread_id for private chats", async () => {
   expect(bot).toBeDefined();
   expect(bot?.api.sendMessage).toHaveBeenCalledWith(
     "123",
-    "<b>hello private</b>",
+    "<b>hello private topic</b>",
     {
+      message_thread_id: 42,
       parse_mode: "HTML",
     },
   );
@@ -1075,6 +1105,55 @@ test("telegram adapter forwards plain text messages through onMessage", async ()
     chatType: "direct",
     attachments: undefined,
     raw: expect.objectContaining({ message_id: 77 }),
+  });
+});
+
+test("telegram adapter preserves private topic metadata on inbound messages", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: 123, type: "private" },
+      message_thread_id: 175380,
+      is_topic_message: true,
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "Hello from private topic",
+      date: 1_736_380_800,
+      message_id: 77,
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith({
+    channel: "telegram",
+    accountId: "telegram-test-account",
+    chatId: "123",
+    senderId: "456",
+    senderName: "alice",
+    text: "Hello from private topic",
+    isMention: false,
+    timestamp: 1_736_380_800_000,
+    messageId: "77",
+    threadId: "175380",
+    chatType: "direct",
+    attachments: undefined,
+    raw: expect.objectContaining({
+      message_id: 77,
+      message_thread_id: 175380,
+      is_topic_message: true,
+    }),
   });
 });
 
@@ -1615,7 +1694,7 @@ test("telegram adapter replies with lifecycle errors", async () => {
   );
 });
 
-test("telegram lifecycle errors omit stale thread ids for private chats", async () => {
+test("telegram lifecycle errors preserve private topic thread ids", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
     channel: "telegram",
@@ -1649,15 +1728,9 @@ test("telegram lifecycle errors omit stale thread ids for private chats", async 
   expect(bot?.api.sendMessage).toHaveBeenCalledWith(
     "123",
     "Turn failed:\nSomething failed.",
-    expect.not.objectContaining({
-      message_thread_id: expect.anything(),
-    }),
-  );
-  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
-    "123",
-    "Turn failed:\nSomething failed.",
     expect.objectContaining({
-      reply_parameters: { message_id: 77 },
+      message_thread_id: 42,
+      reply_parameters: { message_id: 42 },
     }),
   );
 });
@@ -2622,7 +2695,7 @@ test("telegram adapter clears typing after sending control request prompt", asyn
   await adapter.stop();
 });
 
-test("telegram control prompts omit stale thread ids for private chats", async () => {
+test("telegram control prompts preserve private topic thread ids", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
     channel: "telegram",
@@ -2655,15 +2728,9 @@ test("telegram control prompts omit stale thread ids for private chats", async (
   expect(bot?.api.sendMessage).toHaveBeenCalledWith(
     "555",
     expect.stringContaining("Shell"),
-    expect.not.objectContaining({
-      message_thread_id: expect.anything(),
-    }),
-  );
-  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
-    "555",
-    expect.stringContaining("Shell"),
     expect.objectContaining({
-      reply_parameters: { message_id: 42 },
+      message_thread_id: 99,
+      reply_parameters: { message_id: 99 },
     }),
   );
 });

@@ -404,6 +404,68 @@ function buildChannelTurnSource(
   };
 }
 
+function shouldFallbackTelegramDirectTopicToRoot(
+  msg: Pick<InboundChannelMessage, "channel" | "chatType" | "threadId">,
+): boolean {
+  return (
+    msg.channel === "telegram" &&
+    msg.chatType === "direct" &&
+    !!msg.threadId?.trim()
+  );
+}
+
+function getRouteForInboundMessage(
+  msg: Pick<
+    InboundChannelMessage,
+    "channel" | "accountId" | "chatId" | "chatType" | "threadId"
+  >,
+): ChannelRoute | null {
+  const exactRawRoute = getRouteRaw(
+    msg.channel,
+    msg.chatId,
+    msg.accountId,
+    msg.threadId,
+  );
+  const route = getRouteFromStore(
+    msg.channel,
+    msg.chatId,
+    msg.accountId,
+    msg.threadId,
+  );
+  if (route) {
+    return route;
+  }
+
+  if (exactRawRoute) {
+    return null;
+  }
+
+  if (!shouldFallbackTelegramDirectTopicToRoot(msg)) {
+    return null;
+  }
+
+  return getRouteFromStore(msg.channel, msg.chatId, msg.accountId, null);
+}
+
+function getRawRouteForInboundMessage(
+  msg: Pick<
+    InboundChannelMessage,
+    "channel" | "accountId" | "chatId" | "chatType" | "threadId"
+  >,
+): ChannelRoute | null {
+  const route =
+    getRouteRaw(msg.channel, msg.chatId, msg.accountId, msg.threadId) ?? null;
+  if (route) {
+    return route;
+  }
+
+  if (!shouldFallbackTelegramDirectTopicToRoot(msg)) {
+    return null;
+  }
+
+  return getRouteRaw(msg.channel, msg.chatId, msg.accountId, null) ?? null;
+}
+
 function getChannelApprovalScopeKey(params: {
   channel: string;
   accountId?: string;
@@ -1174,9 +1236,7 @@ export class ChannelRegistry {
   private findRawRouteForMessage(
     msg: InboundChannelMessage,
   ): ChannelRoute | null {
-    return (
-      getRouteRaw(msg.channel, msg.chatId, msg.accountId, msg.threadId) ?? null
-    );
+    return getRawRouteForInboundMessage(msg);
   }
 
   private loadAndFindRawRouteForMessage(
@@ -1353,18 +1413,13 @@ export class ChannelRegistry {
   }
 
   private getCancelRoute(msg: InboundChannelMessage): ChannelRoute | null {
-    let route = this.getRoute(
-      msg.channel,
-      msg.chatId,
-      msg.accountId,
-      msg.threadId,
-    );
+    let route = getRouteForInboundMessage(msg);
     if (route) {
       return route;
     }
 
     loadRoutes(msg.channel);
-    route = this.getRoute(msg.channel, msg.chatId, msg.accountId, msg.threadId);
+    route = getRouteForInboundMessage(msg);
     if (route) {
       return route;
     }
@@ -1436,20 +1491,10 @@ export class ChannelRegistry {
     }
 
     const getStatusRoute = (): ChannelRoute | null => {
-      let statusRoute = getRouteFromStore(
-        msg.channel,
-        msg.chatId,
-        accountId,
-        msg.threadId,
-      );
+      let statusRoute = getRouteForInboundMessage(msg);
       if (!statusRoute) {
         loadRoutes(msg.channel);
-        statusRoute = getRouteFromStore(
-          msg.channel,
-          msg.chatId,
-          accountId,
-          msg.threadId,
-        );
+        statusRoute = getRouteForInboundMessage(msg);
       }
       return statusRoute;
     };
@@ -1691,25 +1736,16 @@ export class ChannelRegistry {
     // dm_policy === "open" → skip check
 
     // 2. Route lookup (reload from disk on miss — allows standalone CLI pairing)
-    let route = getRouteFromStore(
-      msg.channel,
-      msg.chatId,
-      accountId,
-      msg.threadId,
-    );
+    let route = getRouteForInboundMessage(msg);
     if (!route) {
       loadRoutes(msg.channel);
-      route = getRouteFromStore(
-        msg.channel,
-        msg.chatId,
-        accountId,
-        msg.threadId,
-      );
+      route = getRouteForInboundMessage(msg);
     }
     if (!route) {
       await adapter.sendDirectReply(
         msg.chatId,
         buildUnboundRouteInstructions(msg.channel, msg.chatId),
+        { threadId: msg.threadId },
       );
       return;
     }

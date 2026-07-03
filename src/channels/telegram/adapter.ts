@@ -317,10 +317,11 @@ function resolveTelegramOutboundThreadId(
     return null;
   }
 
-  // Telegram message_thread_id is only valid for forum topics in groups and
-  // supergroups. Private chat IDs are positive, so never attach a thread id
-  // there even if stale route state provided one.
-  return msg.chatId.trim().startsWith("-") ? threadId : null;
+  // Telegram private bot chats can also have topics when the bot has topics
+  // enabled. The action layer is responsible for not passing stale route-level
+  // thread ids for ordinary DMs; once a real thread id reaches the adapter,
+  // preserve it and let Telegram validate the target.
+  return threadId;
 }
 
 function buildTelegramReplyOptions(
@@ -1453,19 +1454,22 @@ export function createTelegramAdapter(
     async sendDirectReply(
       chatId: string,
       text: string,
-      options?: { replyToMessageId?: string },
+      options?: { replyToMessageId?: string; threadId?: string | null },
     ): Promise<void> {
       const telegramBot = await ensureBot();
+      const threadId = resolveTelegramOutboundThreadId({
+        chatId,
+        threadId: options?.threadId,
+      });
       const reply_parameters = options?.replyToMessageId
         ? {
             message_id: Number(options.replyToMessageId),
           }
         : undefined;
-      await telegramBot.api.sendMessage(
-        chatId,
-        text,
-        reply_parameters ? { reply_parameters } : {},
-      );
+      await telegramBot.api.sendMessage(chatId, text, {
+        ...(threadId ? { message_thread_id: Number(threadId) } : {}),
+        ...(reply_parameters ? { reply_parameters } : {}),
+      });
     },
 
     async handleTurnLifecycleEvent(
