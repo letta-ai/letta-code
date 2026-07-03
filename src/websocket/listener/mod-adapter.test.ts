@@ -54,7 +54,7 @@ describe("listener mod adapter", () => {
         compact: false,
         llm: false,
       },
-      permissions: false,
+      permissions: true,
       providers: true,
       ui: {
         panels: false,
