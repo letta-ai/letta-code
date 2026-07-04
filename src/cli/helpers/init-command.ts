@@ -123,14 +123,18 @@ ${SYSTEM_REMINDER_CLOSE}`;
 export function buildDoctorMessage(args: {
   gitContext: string;
   memoryDir?: string;
+  skillNameFrontmatterRepairReport?: string;
 }): string {
   const memfsSection = args.memoryDir
     ? `\n## Memory filesystem\n\nMemory filesystem is enabled. Memory directory: \`${args.memoryDir}\`\n`
     : "";
+  const skillRepairSection = args.skillNameFrontmatterRepairReport
+    ? `\n## Automatic skill metadata repair\n\n${args.skillNameFrontmatterRepairReport}\n`
+    : "";
 
   return `${SYSTEM_REMINDER_OPEN}
 The user has requested a memory structure check via /doctor.
-${memfsSection}
+${memfsSection}${skillRepairSection}
 ## 1. Invoke the context-doctor skill
 
 Use the \`Skill\` tool with \`skill: "context-doctor"\` to load guidance for memory structure refinement.

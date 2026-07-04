@@ -97,6 +97,7 @@
     "check:filename-casing": "node scripts/check-filename-casing.js",
     "check:test-mock-isolation": "bun run scripts/check-test-mock-isolation.js",
     "check:test-coverage": "node scripts/check-test-coverage.cjs",
+    "check:skill-frontmatter": "node scripts/check-skill-frontmatter.js",
     "check:bundled-skill-scripts": "node scripts/check-bundled-skill-scripts.js",
     "check": "bun run scripts/check.js",
     "dev": "node scripts/dev.cjs",

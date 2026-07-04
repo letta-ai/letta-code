@@ -18,6 +18,10 @@ import {
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import {
+  formatSkillNameFrontmatterRepairReport,
+  repairMissingSkillNameFrontmatter,
+} from "@/cli/helpers/skill-name-frontmatter-repair";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
@@ -650,8 +654,16 @@ async function handleDoctorCommand(
   const memoryDir = settingsManager.isMemfsEnabled(agentId)
     ? getScopedMemoryFilesystemRoot(agentId)
     : undefined;
+  const skillNameFrontmatterRepair =
+    await repairMissingSkillNameFrontmatter(memoryDir);
+  const skillNameFrontmatterRepairReport =
+    formatSkillNameFrontmatterRepairReport(skillNameFrontmatterRepair);
 
-  const doctorMessage = buildDoctorMessage({ gitContext, memoryDir });
+  const doctorMessage = buildDoctorMessage({
+    gitContext,
+    memoryDir,
+    skillNameFrontmatterRepairReport,
+  });
 
   // Feed the doctor prompt as a user message through the normal turn pipeline.
   // This triggers a full agent turn whose deltas stream back to the web UI.

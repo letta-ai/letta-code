@@ -84,6 +84,10 @@ import {
   finalizeMultiReflectionPayload,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
+import {
+  formatSkillNameFrontmatterRepairReport,
+  repairMissingSkillNameFrontmatter,
+} from "@/cli/helpers/skill-name-frontmatter-repair";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
@@ -3291,10 +3295,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             const { context: gitContext } = gatherInitGitContext();
             const memoryDir = getActiveMemoryDirectory(agentId);
+            const skillNameFrontmatterRepair =
+              await repairMissingSkillNameFrontmatter(memoryDir);
+            const skillNameFrontmatterRepairReport =
+              formatSkillNameFrontmatterRepairReport(
+                skillNameFrontmatterRepair,
+              );
 
             const doctorMessage = buildDoctorMessage({
               gitContext,
               memoryDir,
+              skillNameFrontmatterRepairReport,
             });
 
             await processConversationWithQueuedApprovals([
