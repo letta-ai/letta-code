@@ -60,7 +60,7 @@
       "description": "Fable 5 (high reasoning)",
       "isFeatured": true,
       "updateArgs": {
-        "context_window": 1000000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "high",
@@ -73,7 +73,7 @@
       "label": "Fable 5",
       "description": "Fable 5 (low reasoning)",
       "updateArgs": {
-        "context_window": 1000000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "low",
@@ -87,7 +87,7 @@
       "label": "Fable 5",
       "description": "Fable 5 (med reasoning)",
       "updateArgs": {
-        "context_window": 1000000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "medium",
@@ -101,7 +101,7 @@
       "label": "Fable 5",
       "description": "Fable 5 (extra-high reasoning)",
       "updateArgs": {
-        "context_window": 1000000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "xhigh",
@@ -114,7 +114,74 @@
       "label": "Fable 5",
       "description": "Fable 5 (max reasoning)",
       "updateArgs": {
-        "context_window": 1000000,
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "max",
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "fable-1m",
+      "handle": "anthropic/claude-fable-5",
+      "label": "Fable 5 1M",
+      "description": "Claude Fable 5 with 1M token context window (high reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "high",
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "fable-1m-low",
+      "handle": "anthropic/claude-fable-5",
+      "label": "Fable 5 1M",
+      "description": "Fable 5 1M (low reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "low",
+        "max_reasoning_tokens": 4000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "fable-1m-medium",
+      "handle": "anthropic/claude-fable-5",
+      "label": "Fable 5 1M",
+      "description": "Fable 5 1M (med reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "medium",
+        "max_reasoning_tokens": 12000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "fable-1m-xhigh",
+      "handle": "anthropic/claude-fable-5",
+      "label": "Fable 5 1M",
+      "description": "Fable 5 1M (extra-high reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "xhigh",
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "fable-1m-max",
+      "handle": "anthropic/claude-fable-5",
+      "label": "Fable 5 1M",
+      "description": "Fable 5 1M (max reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "max",
