@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type WebSocket from "ws";
+import { actingUserRequestOptions } from "@/agent/acting-user";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
   applySetMaxContext,
@@ -102,7 +103,10 @@ export async function handleExecuteCommand(
 
     switch (command.command_id) {
       case "clear":
-        output = await handleClearCommand(socket, conversationRuntime, opts);
+        output = await handleClearCommand(socket, conversationRuntime, {
+          ...opts,
+          actingUserId: command.runtime.acting_user_id,
+        });
         break;
 
       case "doctor":
@@ -572,6 +576,8 @@ async function handleClearCommand(
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
     connectionId?: string;
+    /** Cloud user id stamped on the relayed frame; echoed on the create call. */
+    actingUserId?: string;
   },
 ): Promise<string> {
   const backend = getBackend();
@@ -594,10 +600,14 @@ async function handleClearCommand(
     });
   }
 
-  // Create a new conversation
-  const conversation = await backend.createConversation({
-    agent_id: agentId,
-  });
+  // Create a new conversation, attributing it to the human who ran
+  // /clear when the frame was relayed by cloud with an acting user.
+  const conversation = await backend.createConversation(
+    {
+      agent_id: agentId,
+    },
+    actingUserRequestOptions(opts.actingUserId),
+  );
 
   // Clear runtime state for the current conversation
   clearConversationRuntimeState(conversationRuntime);
