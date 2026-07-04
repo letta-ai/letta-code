@@ -2006,6 +2006,11 @@ async function main(): Promise<void> {
             try {
               const defaultAgent = await ensureDefaultAgents(getBackend(), {
                 preferredModel: model,
+                // True fresh start (brand-new account, nothing to resume)
+                // gets the Tutor onboarding agent; an explicit --new-agent
+                // gets the standard Letta Code agent.
+                personality:
+                  target.trigger === "fresh-start" ? "tutorial" : "memo",
               });
               if (defaultAgent) {
                 startupCreatedAgentRef.current = defaultAgent;
