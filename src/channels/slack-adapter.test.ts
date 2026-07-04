@@ -159,6 +159,7 @@ const resolveSlackThreadStarterMock = mock(
     userId?: string;
     botId?: string;
     ts?: string;
+    attachments?: ChannelMessageAttachment[];
   } | null> => null,
 );
 const resolveSlackThreadHistoryMock = mock(
@@ -168,6 +169,7 @@ const resolveSlackThreadHistoryMock = mock(
       userId?: string;
       botId?: string;
       ts?: string;
+      attachments?: ChannelMessageAttachment[];
     }>
   > => [],
 );
@@ -178,6 +180,7 @@ const resolveSlackChannelHistoryMock = mock(
       userId?: string;
       botId?: string;
       ts?: string;
+      attachments?: ChannelMessageAttachment[];
     }>
   > => [],
 );
@@ -600,6 +603,16 @@ test("slack adapter hydrates prior Slack thread context, including bot-authored 
     text: "Original question from the thread root",
     userId: "U111",
     ts: "1712790000.000050",
+    attachments: [
+      {
+        id: "FROOT",
+        name: "root-screenshot.png",
+        mimeType: "image/png",
+        kind: "image",
+        localPath: "/tmp/root-screenshot.png",
+        imageDataBase64: "abc",
+      },
+    ],
   });
   resolveSlackThreadHistoryMock.mockResolvedValueOnce([
     {
@@ -638,6 +651,12 @@ test("slack adapter hydrates prior Slack thread context, including bot-authored 
       messageId: "1712790000.000050",
       senderId: "U111",
       text: "Original question from the thread root",
+      attachments: [
+        expect.objectContaining({
+          id: "FROOT",
+          localPath: "/tmp/root-screenshot.png",
+        }),
+      ],
     }),
   );
   expect(prepared?.threadContext?.history).toEqual([
@@ -655,7 +674,21 @@ test("slack adapter hydrates prior Slack thread context, including bot-authored 
   ]);
   expect(prepared?.threadContext?.label).toContain("Slack thread in #random");
   expect(resolveSlackThreadStarterMock).toHaveBeenCalledTimes(1);
+  expect(resolveSlackThreadStarterMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      accountId: "slack-test-account",
+      token: "xoxb-test-token-1234567890",
+      transcribeVoice: false,
+    }),
+  );
   expect(resolveSlackThreadHistoryMock).toHaveBeenCalledTimes(1);
+  expect(resolveSlackThreadHistoryMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      accountId: "slack-test-account",
+      token: "xoxb-test-token-1234567890",
+      transcribeVoice: false,
+    }),
+  );
 });
 
 test("slack adapter rehydrates bot-authored Slack thread context on existing routed turns", async () => {

@@ -85,6 +85,79 @@ test("resolveSlackThreadStarter falls back to forwarded Slack attachment text", 
   });
 });
 
+test("resolveSlackThreadStarter downloads Slack files for thread context", async () => {
+  const fetchMock = mock(async (input: unknown, init?: RequestInit) => {
+    expect(requestUrl(input)).toBe(
+      "https://files.slack.com/files-pri/T123-FROOT/root.png",
+    );
+    expect(init).toMatchObject({
+      headers: { Authorization: "Bearer xoxb-test-token" },
+      redirect: "manual",
+    });
+    return new Response(new Uint8Array([1, 2, 3, 4]), {
+      status: 200,
+      headers: { "content-type": "image/png" },
+    });
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+  const { resolveSlackThreadStarter } = await loadSlackMediaModule();
+  const client = {
+    conversations: {
+      history: mock(async () => ({ messages: [] })),
+      replies: mock(async () => ({
+        messages: [
+          {
+            ts: "1712790000.000050",
+            user: "U111",
+            text: "Root screenshot",
+            files: [
+              {
+                id: "FROOT",
+                name: "root.png",
+                mimetype: "image/png",
+                url_private_download:
+                  "https://files.slack.com/files-pri/T123-FROOT/root.png",
+              },
+            ],
+          },
+        ],
+      })),
+    },
+  };
+
+  const starter = await resolveSlackThreadStarter({
+    channelId: "C123",
+    threadTs: "1712790000.000050",
+    client,
+    accountId: "slack-bot",
+    token: "xoxb-test-token",
+    transcribeVoice: false,
+  });
+
+  expect(starter).toMatchObject({
+    text: "Root screenshot",
+    userId: "U111",
+    botId: undefined,
+    ts: "1712790000.000050",
+  });
+  expect(starter?.attachments).toHaveLength(1);
+  const attachment = starter?.attachments?.[0];
+  if (!attachment) {
+    throw new Error("Expected starter attachment");
+  }
+  expect(attachment).toMatchObject({
+    id: "FROOT",
+    name: "root.png",
+    kind: "image",
+    mimeType: "image/png",
+    sizeBytes: 4,
+    imageDataBase64: "AQIDBA==",
+    localPath: expect.stringContaining("root.png"),
+  });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
 test("resolveSlackChannelHistory retains forwarded Slack attachment text", async () => {
   const { resolveSlackChannelHistory } = await loadSlackMediaModule();
   const client = {
