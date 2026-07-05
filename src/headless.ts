@@ -60,6 +60,7 @@ import {
   getBackend,
 } from "./backend";
 import {
+  type EnvironmentConnection,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
   sendEnvironmentMessage,
@@ -762,6 +763,40 @@ async function waitForEnvironmentAssistantMessage(params: {
 
   if (lastText) return lastText;
   throw new Error("Timed out waiting for environment response");
+}
+
+type EnvironmentResponseMetadata = {
+  selector: string;
+  id: string;
+  connection_id: string;
+  device_id: string;
+  name: string;
+};
+
+function buildEnvironmentResponseMetadata(params: {
+  selector: string;
+  connectionId: string;
+  environment: EnvironmentConnection;
+}): EnvironmentResponseMetadata {
+  return {
+    selector: params.selector,
+    id: params.environment.id,
+    connection_id: params.connectionId,
+    device_id: params.environment.deviceId,
+    name: params.environment.connectionName,
+  };
+}
+
+function formatAgentReplyMetadata(params: {
+  agentId: string;
+  conversationId: string;
+  environment: EnvironmentResponseMetadata;
+}): string {
+  return JSON.stringify({
+    agent_id: params.agentId,
+    conversation_id: params.conversationId,
+    environment: params.environment,
+  });
 }
 
 export async function handleHeadlessCommand(
@@ -2175,6 +2210,11 @@ ${SYSTEM_REMINDER_CLOSE}
       ? await resolveEnvironmentConnectionId(explicitEnvironmentSelector)
       : await resolveAgentSandboxConnectionId(agent.id);
     const { connectionId, environment } = environmentRouting;
+    const responseEnvironment = buildEnvironmentResponseMetadata({
+      selector: explicitEnvironmentSelector ?? "cloud-sandbox",
+      connectionId,
+      environment,
+    });
     await sendEnvironmentMessage(connectionId, {
       agentId: agent.id,
       conversationId,
@@ -2209,12 +2249,7 @@ ${SYSTEM_REMINDER_CLOSE}
             result: resultText,
             agent_id: agent.id,
             conversation_id: conversationId,
-            environment: {
-              selector: explicitEnvironmentSelector ?? "cloud-sandbox",
-              connection_id: connectionId,
-              device_id: environment.deviceId,
-              name: environment.connectionName,
-            },
+            environment: responseEnvironment,
             usage: null,
           },
           null,
@@ -2222,7 +2257,9 @@ ${SYSTEM_REMINDER_CLOSE}
         )}\n`,
       );
     } else if (outputFormat === "stream-json") {
-      const resultEvent: ResultMessage = {
+      const resultEvent: ResultMessage & {
+        environment: EnvironmentResponseMetadata;
+      } = {
         type: "result",
         subtype: "success",
         session_id: sessionId,
@@ -2232,13 +2269,20 @@ ${SYSTEM_REMINDER_CLOSE}
         result: resultText,
         agent_id: agent.id,
         conversation_id: conversationId,
+        environment: responseEnvironment,
         run_ids: [],
         usage: null,
         uuid: `result-${agent.id}-${Date.now()}`,
       };
       writeWireMessage(resultEvent);
     } else {
-      await writeFinalHeadlessStdout(`${resultText}\n`);
+      await writeFinalHeadlessStdout(
+        `${resultText}\n\n${formatAgentReplyMetadata({
+          agentId: agent.id,
+          conversationId,
+          environment: responseEnvironment,
+        })}\n`,
+      );
     }
 
     await exitHeadless(0, "headless_environment_message_complete");

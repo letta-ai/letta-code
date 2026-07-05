@@ -156,6 +156,9 @@ letta -p --from-agent $LETTA_AGENT_ID \
 ## Understanding the Response
 
 - Scripts return only the **final assistant message** (not tool calls or reasoning)
+- Text-mode agent-to-agent responses append a JSON metadata line with
+  `agent_id`, `conversation_id`, and `environment` (`id`, `connection_id`,
+  `device_id`, `name`) so you can continue the same conversation/runtime
 - The target agent may use tools, think, and reason - but you only see their final response
 - To see the full conversation transcript (including tool calls), use the `searching-messages` skill with `letta messages list --agent <id>` targeting the other agent
 
