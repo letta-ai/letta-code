@@ -78,6 +78,8 @@ Route a headless message through a specific environment:
 ```bash
 letta -p --agent <agent-id> --environment "work-laptop" "hello from that machine"
 ```
+Agent-to-agent headless messages (`--from-agent`) default to the target agent's
+cloud sandbox when no environment is specified.
 See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments.
 
 ## Installing external skills

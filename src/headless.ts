@@ -60,6 +60,7 @@ import {
   getBackend,
 } from "./backend";
 import {
+  resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
   sendEnvironmentMessage,
 } from "./backend/api/environments";
@@ -897,7 +898,11 @@ export async function handleHeadlessCommand(
   // --new: Create a new conversation (for concurrent sessions)
   let forceNewConversation = values.new ?? false;
   const fromAgentId = values["from-agent"];
-  const environmentSelector = values.environment || values.env;
+  const explicitEnvironmentSelector = values.environment || values.env;
+  const shouldUseDefaultSandboxEnvironment =
+    !explicitEnvironmentSelector && Boolean(fromAgentId);
+  const usesRemoteEnvironment =
+    Boolean(explicitEnvironmentSelector) || shouldUseDefaultSandboxEnvironment;
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -1781,9 +1786,9 @@ export async function handleHeadlessCommand(
     );
     process.exit(1);
   }
-  if (environmentSelector && isBidirectionalMode) {
+  if (usesRemoteEnvironment && isBidirectionalMode) {
     console.error(
-      "Error: --environment cannot be used with --input-format stream-json",
+      "Error: remote environment routing cannot be used with --input-format stream-json",
     );
     process.exit(1);
   }
@@ -2096,7 +2101,7 @@ ${SYSTEM_REMINDER_CLOSE}
     pushPart(systemReminder);
   }
 
-  if (!environmentSelector) {
+  if (!usesRemoteEnvironment) {
     const lastRunAt = (agent as { last_run_completion?: string })
       .last_run_completion;
     const { parts: sharedReminderParts } = await buildSharedReminderParts({
@@ -2122,7 +2127,7 @@ ${SYSTEM_REMINDER_CLOSE}
   // Pre-load specific skills' full content (used by subagents with skills: field).
   // Environment-routed turns run in the selected remote runtime, which injects
   // its own local context and skills, so avoid prepending this process' context.
-  if (preLoadSkillsRaw && !environmentSelector) {
+  if (preLoadSkillsRaw && !usesRemoteEnvironment) {
     const { readFile: readFileAsync } = await import("node:fs/promises");
     const { skillPathById } = await buildClientSkillsPayload({
       agentId: agent.id,
@@ -2164,10 +2169,12 @@ ${SYSTEM_REMINDER_CLOSE}
     agent.llm_config?.model ?? "unknown",
   );
 
-  if (typeof environmentSelector === "string" && environmentSelector.trim()) {
+  if (usesRemoteEnvironment) {
     const startedAtMs = Date.now();
-    const { connectionId, environment } =
-      await resolveEnvironmentConnectionId(environmentSelector);
+    const environmentRouting = explicitEnvironmentSelector
+      ? await resolveEnvironmentConnectionId(explicitEnvironmentSelector)
+      : await resolveAgentSandboxConnectionId(agent.id);
+    const { connectionId, environment } = environmentRouting;
     await sendEnvironmentMessage(connectionId, {
       agentId: agent.id,
       conversationId,
@@ -2203,7 +2210,7 @@ ${SYSTEM_REMINDER_CLOSE}
             agent_id: agent.id,
             conversation_id: conversationId,
             environment: {
-              selector: environmentSelector,
+              selector: explicitEnvironmentSelector ?? "cloud-sandbox",
               connection_id: connectionId,
               device_id: environment.deviceId,
               name: environment.connectionName,

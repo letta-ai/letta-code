@@ -44,6 +44,12 @@ export interface SendEnvironmentMessageResponse {
   message: string;
 }
 
+export interface CreateAgentSandboxResponse {
+  sandboxId: string;
+  deviceId: string;
+  connectionName: string;
+}
+
 export async function listEnvironments(
   options: { limit?: number; after?: string; onlineOnly?: boolean } = {},
 ): Promise<ListEnvironmentsResponse> {
@@ -69,6 +75,25 @@ export async function sendEnvironmentMessage(
     "POST",
     `/v1/environments/${encodeURIComponent(connectionId)}/messages`,
     body,
+  );
+}
+
+export async function getEnvironmentConnection(
+  deviceId: string,
+): Promise<EnvironmentConnection> {
+  return apiRequest<EnvironmentConnection>(
+    "GET",
+    `/v1/environments/${encodeURIComponent(deviceId)}`,
+  );
+}
+
+export async function createAgentSandbox(
+  agentId: string,
+): Promise<CreateAgentSandboxResponse> {
+  return apiRequest<CreateAgentSandboxResponse>(
+    "POST",
+    `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
+    {},
   );
 }
 
@@ -136,4 +161,40 @@ export async function resolveEnvironmentConnectionId(
   }
 
   return { connectionId: environment.connectionId, environment };
+}
+
+export async function resolveAgentSandboxConnectionId(
+  agentId: string,
+  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
+  const timeoutMs = options.timeoutMs ?? 3 * 60_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 2_000;
+  const sandbox = await createAgentSandbox(agentId);
+  const deviceId = sandbox.deviceId || `sandbox-${agentId}`;
+  const deadline = Date.now() + timeoutMs;
+  let lastEnvironment: EnvironmentConnection | null = null;
+  let lastError: unknown = null;
+
+  while (Date.now() < deadline) {
+    try {
+      const environment = await getEnvironmentConnection(deviceId);
+      lastEnvironment = environment;
+      if (isEnvironmentOnline(environment) && environment.connectionId) {
+        return { connectionId: environment.connectionId, environment };
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  if (lastEnvironment) {
+    throw new Error(
+      `Timed out waiting for cloud sandbox ${sandbox.connectionName} to come online. Last status: ${describeEnvironment(lastEnvironment)}`,
+    );
+  }
+
+  throw new Error(
+    `Timed out waiting for cloud sandbox ${sandbox.connectionName} to register${lastError instanceof Error ? `: ${lastError.message}` : ""}`,
+  );
 }

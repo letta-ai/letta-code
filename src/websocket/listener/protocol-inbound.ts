@@ -63,6 +63,7 @@ import type {
   GetTreeCommand,
   GrepInFilesCommand,
   InputCommand,
+  InputCreateMessagePayload,
   ListConnectProvidersCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
@@ -185,6 +186,54 @@ function isInputCommand(value: unknown): value is InputCommand {
     return isValidApprovalResponseBody(payload);
   }
   return false;
+}
+
+function legacyEnvironmentMessageToInputCommand(
+  value: unknown,
+): InputCommand | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const candidate = value as {
+    type?: unknown;
+    agentId?: unknown;
+    conversationId?: unknown;
+    conversation_id?: unknown;
+    messages?: unknown;
+    clientToolAllowlist?: unknown;
+    externalToolScopeIds?: unknown;
+  };
+  if (
+    candidate.type !== "message" ||
+    typeof candidate.agentId !== "string" ||
+    candidate.agentId.length === 0 ||
+    !Array.isArray(candidate.messages)
+  ) {
+    return null;
+  }
+  const conversationId =
+    typeof candidate.conversationId === "string"
+      ? candidate.conversationId
+      : typeof candidate.conversation_id === "string"
+        ? candidate.conversation_id
+        : "default";
+  return {
+    type: "input",
+    runtime: {
+      agent_id: candidate.agentId,
+      conversation_id: conversationId,
+    },
+    payload: {
+      kind: "create_message",
+      messages: candidate.messages as InputCreateMessagePayload["messages"],
+      client_tool_allowlist: isStringArray(candidate.clientToolAllowlist)
+        ? candidate.clientToolAllowlist
+        : undefined,
+      external_tool_scope_ids: isStringArray(candidate.externalToolScopeIds)
+        ? candidate.externalToolScopeIds
+        : undefined,
+    },
+  };
 }
 
 function getInvalidInputReason(value: unknown): {
@@ -2111,6 +2160,10 @@ export function parseServerMessage(
   try {
     const raw = typeof data === "string" ? data : data.toString();
     const parsed = JSON.parse(raw) as unknown;
+    const legacyInput = legacyEnvironmentMessageToInputCommand(parsed);
+    if (legacyInput) {
+      return legacyInput;
+    }
     if (
       isInputCommand(parsed) ||
       isChangeDeviceStateCommand(parsed) ||

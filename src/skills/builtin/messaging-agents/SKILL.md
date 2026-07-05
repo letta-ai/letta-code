@@ -66,6 +66,10 @@ Results include `agent_id` for each matching message.
 letta -p --from-agent $LETTA_AGENT_ID --agent <id> "message text"
 ```
 
+When no `--environment` is specified, agent-to-agent headless messaging starts
+or reuses the target agent's cloud sandbox and routes the turn there. Use
+`--environment` only when you need a specific local/remote runtime instead.
+
 To route the target agent turn through a specific remote/local environment:
 
 ```bash
