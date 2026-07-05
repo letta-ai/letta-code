@@ -10,6 +10,10 @@ type EnvironmentsSubcommandDeps = {
   listEnvironments?: typeof listEnvironments;
 };
 
+type EnvironmentWithOnlineStatus = EnvironmentConnection & {
+  isOnline: boolean;
+};
+
 function printUsage(): void {
   console.log(
     `
@@ -46,6 +50,25 @@ function isOnline(environment: EnvironmentConnection): boolean {
     typeof environment.lastHeartbeat === "number" &&
     Date.now() - environment.lastHeartbeat < 120_000
   );
+}
+
+function formatEnvironmentForCli(
+  environment: EnvironmentWithOnlineStatus,
+  options: { onlineOnly: boolean },
+) {
+  const formatted = {
+    deviceId: environment.deviceId,
+    connectionName: environment.connectionName,
+    connectionId: environment.connectionId ?? null,
+    lettaCodeVersion: environment.metadata?.lettaCodeVersion ?? null,
+  };
+  if (options.onlineOnly) {
+    return formatted;
+  }
+  return {
+    ...formatted,
+    isOnline: environment.isOnline,
+  };
 }
 
 const ENVIRONMENTS_OPTIONS = {
@@ -106,7 +129,8 @@ export async function runEnvironmentsSubcommand(
       isOnline: isOnline(environment),
     }))
     .filter((environment) => !onlineOnly || environment.isOnline)
-    .slice(0, limit);
+    .slice(0, limit)
+    .map((environment) => formatEnvironmentForCli(environment, { onlineOnly }));
 
   console.log(
     JSON.stringify(
