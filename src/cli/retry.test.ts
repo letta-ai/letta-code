@@ -54,4 +54,17 @@ describe("post-stream retry classification", () => {
       isRetriableError("error" as StopReasonType, "local-run-1"),
     ).resolves.toBe(false);
   });
+
+  test("does not retry llm_api_error when run metadata says auth is non-retryable", async () => {
+    setRunErrorMetadata({
+      error_type: "llm_authentication",
+      detail:
+        "Z.ai Chat Completions API stream failed (401): Authentication Failed",
+      retryable: false,
+    });
+
+    await expect(
+      isRetriableError("llm_api_error" as StopReasonType, "local-run-1"),
+    ).resolves.toBe(false);
+  });
 });
