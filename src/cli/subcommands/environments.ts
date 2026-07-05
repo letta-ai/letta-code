@@ -35,8 +35,9 @@ Notes:
   - Output is JSON only.
   - Uses CLI auth; override with LETTA_API_KEY/LETTA_BASE_URL if needed.
   - Use letta environments current to get this machine's connectionId.
+  - Use --environment cloud to route through the target agent's cloud sandbox.
   - Use --environment <name|device-id|connection-id> with headless messaging
-    to route a message through a specific environment.
+    to route a message through a specific registered environment.
 `.trim(),
   );
 }

@@ -766,7 +766,8 @@ async function waitForEnvironmentAssistantMessage(params: {
 }
 
 type EnvironmentResponseMetadata = {
-  selector: string;
+  source: "explicit" | "cloud-sandbox";
+  input: string;
   id: string;
   connection_id: string;
   device_id: string;
@@ -774,12 +775,14 @@ type EnvironmentResponseMetadata = {
 };
 
 function buildEnvironmentResponseMetadata(params: {
-  selector: string;
+  source: EnvironmentResponseMetadata["source"];
+  input: string;
   connectionId: string;
   environment: EnvironmentConnection;
 }): EnvironmentResponseMetadata {
   return {
-    selector: params.selector,
+    source: params.source,
+    input: params.input,
     id: params.environment.id,
     connection_id: params.connectionId,
     device_id: params.environment.deviceId,
@@ -797,6 +800,14 @@ function formatAgentReplyMetadata(params: {
     conversation_id: params.conversationId,
     environment: params.environment,
   });
+}
+
+function isCloudEnvironmentSelector(
+  selector: string | boolean | undefined,
+): boolean {
+  if (typeof selector !== "string") return false;
+  const normalized = selector.trim().toLowerCase();
+  return normalized === "cloud" || normalized === "cloud-sandbox";
 }
 
 export async function handleHeadlessCommand(
@@ -934,10 +945,9 @@ export async function handleHeadlessCommand(
   let forceNewConversation = values.new ?? false;
   const fromAgentId = values["from-agent"];
   const explicitEnvironmentSelector = values.environment || values.env;
-  const shouldUseDefaultSandboxEnvironment =
-    !explicitEnvironmentSelector && Boolean(fromAgentId);
   const usesRemoteEnvironment =
-    Boolean(explicitEnvironmentSelector) || shouldUseDefaultSandboxEnvironment;
+    typeof explicitEnvironmentSelector === "string" &&
+    explicitEnvironmentSelector.trim().length > 0;
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -2206,12 +2216,15 @@ ${SYSTEM_REMINDER_CLOSE}
 
   if (usesRemoteEnvironment) {
     const startedAtMs = Date.now();
-    const environmentRouting = explicitEnvironmentSelector
-      ? await resolveEnvironmentConnectionId(explicitEnvironmentSelector)
-      : await resolveAgentSandboxConnectionId(agent.id);
+    const environmentSelector = String(explicitEnvironmentSelector);
+    const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
+    const environmentRouting = useCloudSandbox
+      ? await resolveAgentSandboxConnectionId(agent.id)
+      : await resolveEnvironmentConnectionId(environmentSelector);
     const { connectionId, environment } = environmentRouting;
     const responseEnvironment = buildEnvironmentResponseMetadata({
-      selector: explicitEnvironmentSelector ?? "cloud-sandbox",
+      source: useCloudSandbox ? "cloud-sandbox" : "explicit",
+      input: environmentSelector,
       connectionId,
       environment,
     });

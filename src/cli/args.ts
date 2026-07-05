@@ -189,7 +189,7 @@ export const CLI_FLAG_CATALOG = {
     help: {
       argLabel: "<selector>",
       description:
-        "Route headless message through an environment by name, device ID, or connection ID",
+        "Route headless message through 'cloud' sandbox or an environment by name, device ID, or connection ID",
     },
   },
   env: { parser: { type: "string" }, mode: "headless" },

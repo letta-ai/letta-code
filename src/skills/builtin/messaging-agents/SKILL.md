@@ -66,16 +66,16 @@ Results include `agent_id` for each matching message.
 letta -p --from-agent $LETTA_AGENT_ID --agent <id> "message text"
 ```
 
-When no `--environment` is specified, agent-to-agent headless messaging starts
-or reuses the target agent's cloud sandbox and routes the turn there. Use
-`--environment` only when you need a specific local/remote runtime instead.
+When no `--environment` is specified, agent-to-agent headless messaging keeps
+the original same-environment behavior. Use `--environment cloud` to start or
+reuse the target agent's cloud sandbox instead.
 
 To route the target agent turn through a specific remote/local environment:
 
 ```bash
 letta -p --from-agent $LETTA_AGENT_ID \
   --agent <id> \
-  --environment <name-or-device-id-or-connection-id> \
+  --environment <cloud-or-name-or-device-id-or-connection-id> \
   "message text"
 ```
 
@@ -84,7 +84,7 @@ letta -p --from-agent $LETTA_AGENT_ID \
 |-----|----------|-------------|
 | `--agent <id>` | Yes | Target agent ID to message |
 | `--from-agent <id>` | Yes | Sender agent ID (injects agent-to-agent system reminder) |
-| `--environment <selector>` | No | Route through an online environment by connection name, device ID, or connection ID |
+| `--environment <selector>` | No | Route through `cloud` sandbox or an online environment by connection name, device ID, or connection ID |
 | `"message text"` | Yes | Message body (positional after flags) |
 
 **Example:**
@@ -120,13 +120,14 @@ letta environments list --online-only
 letta envs list --online-only
 ```
 
-Use `connectionName`, `deviceId`, or `connectionId` from the JSON output as the
+Use `cloud` to run in the target agent's cloud sandbox, or use
+`connectionName`, `deviceId`, or `connectionId` from the JSON output as the
 `--environment` selector. If a name is ambiguous, prefer `deviceId` or
-`connectionId`. In `environments list`, the current local runtime is marked with
-`"isCurrent": true`.
+`connectionId`. In `environments list`, the current local runtime is marked
+with `"isCurrent": true`.
 
-To run the target agent on the same Letta Code environment as this process,
-first resolve the current environment and then pass its `connectionId`:
+To force the target agent onto the current registered Letta Code environment,
+resolve the current environment and pass its `connectionId`:
 
 ```bash
 CURRENT_ENV=$(letta environments current | jq -r .connectionId)
@@ -136,8 +137,8 @@ letta -p --from-agent $LETTA_AGENT_ID \
   "Run on my same machine/environment."
 ```
 
-Use this same-environment pattern whenever the target agent needs access to the
-same local filesystem, cwd, tools, or repository state.
+Omit `--environment` when you want the original same-environment behavior from
+the current caller process.
 
 **Arguments:**
 | Arg | Required | Description |
@@ -158,7 +159,8 @@ letta -p --from-agent $LETTA_AGENT_ID \
 - Scripts return only the **final assistant message** (not tool calls or reasoning)
 - Text-mode agent-to-agent responses append a JSON metadata line with
   `agent_id`, `conversation_id`, and `environment` (`id`, `connection_id`,
-  `device_id`, `name`) so you can continue the same conversation/runtime
+  `device_id`, `name`) for environment-routed turns so you can continue the same
+  conversation/runtime
 - The target agent may use tools, think, and reason - but you only see their final response
 - To see the full conversation transcript (including tool calls), use the `searching-messages` skill with `letta messages list --agent <id>` targeting the other agent
 
