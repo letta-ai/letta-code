@@ -765,21 +765,28 @@ async function waitForEnvironmentAssistantMessage(params: {
   throw new Error("Timed out waiting for environment response");
 }
 
-type EnvironmentResponseMetadata = {
-  source: "explicit" | "cloud-sandbox";
-  input: string;
-  id: string;
-  connection_id: string;
-  device_id: string;
-  name: string;
-};
+type ReplyEnvironmentMetadata =
+  | {
+      source: "same-environment";
+    }
+  | {
+      source: "explicit" | "cloud-sandbox";
+      input: string;
+      id: string;
+      connection_id: string;
+      device_id: string;
+      name: string;
+    };
 
 function buildEnvironmentResponseMetadata(params: {
-  source: EnvironmentResponseMetadata["source"];
+  source: Extract<
+    ReplyEnvironmentMetadata,
+    { source: "explicit" | "cloud-sandbox" }
+  >["source"];
   input: string;
   connectionId: string;
   environment: EnvironmentConnection;
-}): EnvironmentResponseMetadata {
+}): ReplyEnvironmentMetadata {
   return {
     source: params.source,
     input: params.input,
@@ -793,12 +800,12 @@ function buildEnvironmentResponseMetadata(params: {
 function formatAgentReplyMetadata(params: {
   agentId: string;
   conversationId: string;
-  environment: EnvironmentResponseMetadata;
+  environment?: ReplyEnvironmentMetadata;
 }): string {
   return JSON.stringify({
     agent_id: params.agentId,
     conversation_id: params.conversationId,
-    environment: params.environment,
+    ...(params.environment ? { environment: params.environment } : {}),
   });
 }
 
@@ -2267,7 +2274,7 @@ ${SYSTEM_REMINDER_CLOSE}
         );
       } else if (outputFormat === "stream-json") {
         const resultEvent: ResultMessage & {
-          environment: EnvironmentResponseMetadata;
+          environment: ReplyEnvironmentMetadata;
         } = {
           type: "result",
           subtype: "error",
@@ -2340,7 +2347,7 @@ ${SYSTEM_REMINDER_CLOSE}
       );
     } else if (outputFormat === "stream-json") {
       const resultEvent: ResultMessage & {
-        environment: EnvironmentResponseMetadata;
+        environment: ReplyEnvironmentMetadata;
       } = {
         type: "result",
         subtype: "success",
@@ -3475,6 +3482,9 @@ ${SYSTEM_REMINDER_CLOSE}
       result: resultText,
       agent_id: agent.id,
       conversation_id: conversationId,
+      ...(fromAgentId
+        ? { environment: { source: "same-environment" as const } }
+        : {}),
       usage,
     };
     await writeFinalHeadlessStdout(`${JSON.stringify(output, null, 2)}\n`);
@@ -3495,7 +3505,9 @@ ${SYSTEM_REMINDER_CLOSE}
       allRunIds.size > 0
         ? `result-${Array.from(allRunIds).pop()}`
         : `result-${agent.id}`;
-    const resultEvent: ResultMessage = {
+    const resultEvent: ResultMessage & {
+      environment?: ReplyEnvironmentMetadata;
+    } = {
       type: "result",
       subtype: "success",
       session_id: sessionId,
@@ -3505,6 +3517,9 @@ ${SYSTEM_REMINDER_CLOSE}
       result: resultText,
       agent_id: agent.id,
       conversation_id: conversationId,
+      ...(fromAgentId
+        ? { environment: { source: "same-environment" as const } }
+        : {}),
       run_ids: Array.from(allRunIds),
       usage,
       uuid: resultUuid,
@@ -3516,7 +3531,17 @@ ${SYSTEM_REMINDER_CLOSE}
       console.error("No assistant response found");
       await exitHeadless(1, "headless_missing_result_text");
     }
-    await writeFinalHeadlessStdout(`${resultText}\n`);
+    if (fromAgentId) {
+      await writeFinalHeadlessStdout(
+        `${resultText}\n\n${formatAgentReplyMetadata({
+          agentId: agent.id,
+          conversationId,
+          environment: { source: "same-environment" },
+        })}\n`,
+      );
+    } else {
+      await writeFinalHeadlessStdout(`${resultText}\n`);
+    }
   }
 
   // Report all milestones at the end for latency audit
