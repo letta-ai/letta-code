@@ -58,13 +58,17 @@ function isOnline(environment: EnvironmentConnection): boolean {
 
 function formatEnvironmentForCli(
   environment: EnvironmentWithOnlineStatus,
-  options: { onlineOnly: boolean },
+  options: { onlineOnly: boolean; currentConnectionId?: string | null },
 ) {
   const formatted = {
     deviceId: environment.deviceId,
     connectionName: environment.connectionName,
     connectionId: environment.connectionId ?? null,
     lettaCodeVersion: environment.metadata?.lettaCodeVersion ?? null,
+    ...(environment.connectionId &&
+    environment.connectionId === options.currentConnectionId
+      ? { isCurrent: true }
+      : {}),
   };
   if (options.onlineOnly) {
     return formatted;
@@ -73,6 +77,30 @@ function formatEnvironmentForCli(
     ...formatted,
     isOnline: environment.isOnline,
   };
+}
+
+function findCurrentEnvironment(
+  environments: EnvironmentConnection[],
+  options: { deviceId: string; savedName?: string; currentVersion: string },
+): EnvironmentWithOnlineStatus | null {
+  return (
+    environments
+      .map((environment) => ({
+        ...environment,
+        isOnline: isOnline(environment),
+      }))
+      .filter(
+        (environment) =>
+          environment.deviceId === options.deviceId &&
+          environment.isOnline &&
+          environment.connectionId,
+      )
+      .sort(
+        (a, b) =>
+          scoreCurrentEnvironment(b, options) -
+          scoreCurrentEnvironment(a, options),
+      )[0] ?? null
+  );
 }
 
 function scoreCurrentEnvironment(
@@ -133,29 +161,16 @@ export async function runEnvironmentsSubcommand(
 
   await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
   const list = deps.listEnvironments ?? listEnvironments;
+  const deviceId = settingsManager.getOrCreateDeviceId();
+  const savedName = settingsManager.getListenerEnvName();
+  const currentVersion = getVersion();
   if (action === "current") {
-    const deviceId = settingsManager.getOrCreateDeviceId();
-    const savedName = settingsManager.getListenerEnvName();
-    const currentVersion = getVersion();
     const result = await list({ limit: 100, onlineOnly: true });
-    const candidates = result.connections
-      .map((environment) => ({
-        ...environment,
-        isOnline: isOnline(environment),
-      }))
-      .filter(
-        (environment) =>
-          environment.deviceId === deviceId &&
-          environment.isOnline &&
-          environment.connectionId,
-      )
-      .sort(
-        (a, b) =>
-          scoreCurrentEnvironment(b, { savedName, currentVersion }) -
-          scoreCurrentEnvironment(a, { savedName, currentVersion }),
-      );
-
-    const current = candidates[0];
+    const current = findCurrentEnvironment(result.connections, {
+      deviceId,
+      savedName,
+      currentVersion,
+    });
     if (!current) {
       console.error(
         "No online environment found for this device. Start one with `letta server` and try again.",
@@ -165,7 +180,10 @@ export async function runEnvironmentsSubcommand(
 
     console.log(
       JSON.stringify(
-        formatEnvironmentForCli(current, { onlineOnly: true }),
+        formatEnvironmentForCli(current, {
+          onlineOnly: true,
+          currentConnectionId: current.connectionId,
+        }),
         null,
         2,
       ),
@@ -180,6 +198,12 @@ export async function runEnvironmentsSubcommand(
     after: parsed.values.after,
     onlineOnly,
   });
+  const current = findCurrentEnvironment(result.connections, {
+    deviceId,
+    savedName,
+    currentVersion,
+  });
+  const currentConnectionId = current?.connectionId ?? null;
 
   const connections = result.connections
     .map((environment) => ({
@@ -188,7 +212,9 @@ export async function runEnvironmentsSubcommand(
     }))
     .filter((environment) => !onlineOnly || environment.isOnline)
     .slice(0, limit)
-    .map((environment) => formatEnvironmentForCli(environment, { onlineOnly }));
+    .map((environment) =>
+      formatEnvironmentForCli(environment, { onlineOnly, currentConnectionId }),
+    );
 
   console.log(
     JSON.stringify(

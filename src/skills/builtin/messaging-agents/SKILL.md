@@ -122,7 +122,8 @@ letta envs list --online-only
 
 Use `connectionName`, `deviceId`, or `connectionId` from the JSON output as the
 `--environment` selector. If a name is ambiguous, prefer `deviceId` or
-`connectionId`.
+`connectionId`. In `environments list`, the current local runtime is marked with
+`"isCurrent": true`.
 
 To run the target agent on the same Letta Code environment as this process,
 first resolve the current environment and then pass its `connectionId`:
