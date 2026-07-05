@@ -74,6 +74,10 @@ List discoverable environments from the CLI:
 ```bash
 letta environments list --online-only
 ```
+Get the current environment for routing another agent onto this same machine:
+```bash
+letta environments current
+```
 Route a headless message through a specific environment:
 ```bash
 letta -p --agent <agent-id> --environment "work-laptop" "hello from that machine"

@@ -124,6 +124,20 @@ Use `connectionName`, `deviceId`, or `connectionId` from the JSON output as the
 `--environment` selector. If a name is ambiguous, prefer `deviceId` or
 `connectionId`.
 
+To run the target agent on the same Letta Code environment as this process,
+first resolve the current environment and then pass its `connectionId`:
+
+```bash
+CURRENT_ENV=$(letta environments current | jq -r .connectionId)
+letta -p --from-agent $LETTA_AGENT_ID \
+  --agent agent-abc123 \
+  --environment "$CURRENT_ENV" \
+  "Run on my same machine/environment."
+```
+
+Use this same-environment pattern whenever the target agent needs access to the
+same local filesystem, cwd, tools, or repository state.
+
 **Arguments:**
 | Arg | Required | Description |
 |-----|----------|-------------|

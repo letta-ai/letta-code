@@ -4,6 +4,7 @@ import {
   listEnvironments,
 } from "@/backend/api/environments";
 import { settingsManager } from "@/settings-manager";
+import { getVersion } from "@/version.ts";
 
 type EnvironmentsSubcommandDeps = {
   initializeSettings?: () => Promise<void>;
@@ -19,9 +20,11 @@ function printUsage(): void {
     `
 Usage:
   letta environments list [options]
+  letta environments current
 
 Aliases:
   letta envs list
+  letta envs current
 
 List options:
   --limit <n>       Max results (default: 50)
@@ -31,6 +34,7 @@ List options:
 Notes:
   - Output is JSON only.
   - Uses CLI auth; override with LETTA_API_KEY/LETTA_BASE_URL if needed.
+  - Use letta environments current to get this machine's connectionId.
   - Use --environment <name|device-id|connection-id> with headless messaging
     to route a message through a specific environment.
 `.trim(),
@@ -71,6 +75,20 @@ function formatEnvironmentForCli(
   };
 }
 
+function scoreCurrentEnvironment(
+  environment: EnvironmentWithOnlineStatus,
+  options: { savedName?: string; currentVersion: string },
+): number {
+  let score = 0;
+  if (environment.connectionName === options.savedName) score += 100;
+  if (environment.metadata?.lettaCodeVersion === options.currentVersion) {
+    score += 50;
+  }
+  if (environment.connectionId?.startsWith("local-")) score += 10;
+  score += environment.lastHeartbeat ?? environment.lastSeenAt ?? 0;
+  return score;
+}
+
 const ENVIRONMENTS_OPTIONS = {
   help: { type: "boolean", short: "h" },
   limit: { type: "string" },
@@ -107,7 +125,7 @@ export async function runEnvironmentsSubcommand(
     return 0;
   }
 
-  if (action !== "list") {
+  if (action !== "list" && action !== "current") {
     console.error(`Unknown action: ${action}`);
     printUsage();
     return 1;
@@ -115,6 +133,46 @@ export async function runEnvironmentsSubcommand(
 
   await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
   const list = deps.listEnvironments ?? listEnvironments;
+  if (action === "current") {
+    const deviceId = settingsManager.getOrCreateDeviceId();
+    const savedName = settingsManager.getListenerEnvName();
+    const currentVersion = getVersion();
+    const result = await list({ limit: 100, onlineOnly: true });
+    const candidates = result.connections
+      .map((environment) => ({
+        ...environment,
+        isOnline: isOnline(environment),
+      }))
+      .filter(
+        (environment) =>
+          environment.deviceId === deviceId &&
+          environment.isOnline &&
+          environment.connectionId,
+      )
+      .sort(
+        (a, b) =>
+          scoreCurrentEnvironment(b, { savedName, currentVersion }) -
+          scoreCurrentEnvironment(a, { savedName, currentVersion }),
+      );
+
+    const current = candidates[0];
+    if (!current) {
+      console.error(
+        "No online environment found for this device. Start one with `letta server` and try again.",
+      );
+      return 1;
+    }
+
+    console.log(
+      JSON.stringify(
+        formatEnvironmentForCli(current, { onlineOnly: true }),
+        null,
+        2,
+      ),
+    );
+    return 0;
+  }
+
   const limit = parseLimit(parsed.values.limit, 50);
   const onlineOnly = parsed.values["online-only"] ?? false;
   const result = await list({
