@@ -66,11 +66,21 @@ Results include `agent_id` for each matching message.
 letta -p --from-agent $LETTA_AGENT_ID --agent <id> "message text"
 ```
 
+To route the target agent turn through a specific remote/local environment:
+
+```bash
+letta -p --from-agent $LETTA_AGENT_ID \
+  --agent <id> \
+  --environment <name-or-device-id-or-connection-id> \
+  "message text"
+```
+
 **Arguments:**
 | Arg | Required | Description |
 |-----|----------|-------------|
 | `--agent <id>` | Yes | Target agent ID to message |
 | `--from-agent <id>` | Yes | Sender agent ID (injects agent-to-agent system reminder) |
+| `--environment <selector>` | No | Route through an online environment by connection name, device ID, or connection ID |
 | `"message text"` | Yes | Message body (positional after flags) |
 
 **Example:**
@@ -95,6 +105,20 @@ letta -p --from-agent $LETTA_AGENT_ID \
 ```bash
 letta -p --from-agent $LETTA_AGENT_ID --conversation <id> "message text"
 ```
+
+Add `--environment <selector>` to continue the conversation on a specific environment.
+
+### Discovering Environments
+
+```bash
+letta environments list --online-only
+# alias:
+letta envs list --online-only
+```
+
+Use `connectionName`, `deviceId`, or `connectionId` from the JSON output as the
+`--environment` selector. If a name is ambiguous, prefer `deviceId` or
+`connectionId`.
 
 **Arguments:**
 | Arg | Required | Description |

@@ -70,6 +70,14 @@ Agents on Constellation can run across multiple machines. Any machine can be mad
 letta server
 letta server --env-name "work-laptop"
 ```
+List discoverable environments from the CLI:
+```bash
+letta environments list --online-only
+```
+Route a headless message through a specific environment:
+```bash
+letta -p --agent <agent-id> --environment "work-laptop" "hello from that machine"
+```
 See our guides for using [Railway](https://docs.letta.com/letta-code/remote#railway), [DigitalOcean](https://docs.letta.com/letta-code/remote#digitalocean), and [Fly.io](https://docs.letta.com/letta-code/remote#flyio) as remote environments.
 
 ## Installing external skills
