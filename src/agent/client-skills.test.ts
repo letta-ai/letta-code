@@ -426,6 +426,13 @@ describe("buildClientSkillsPayload", () => {
       expect(result.skillPathById).toEqual({
         "shared-skill": join(memorySkillDir, "SKILL.md"),
       });
+      expect(result.availableSkills).toContainEqual({
+        id: "shared-skill",
+        name: "shared-skill",
+        description: "from memfs",
+        path: join(memorySkillDir, "SKILL.md"),
+        source: "agent",
+      });
     } finally {
       if (originalMemoryDir === undefined) {
         delete process.env.MEMORY_DIR;

@@ -638,6 +638,9 @@ export async function handleIncomingMessage(
       permissionModeState: turnPermissionModeState,
       preparedToolContext: preparedToolContext.preparedToolContext,
       skipImageNormalization: true,
+      onClientSkillsDiscovered: (skills) => {
+        runtime.currentAvailableSkills = skills;
+      },
       ...(providerFallback.overrideModel
         ? { overrideModel: providerFallback.overrideModel }
         : {}),

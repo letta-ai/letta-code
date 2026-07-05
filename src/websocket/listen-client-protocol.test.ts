@@ -739,6 +739,100 @@ describe("listen-client parseServerMessage", () => {
       }
     });
 
+    test("runtime_start preloads agent MemFS skills into device status", async () => {
+      const storageDir = await mkdtemp(
+        join(os.tmpdir(), "ws-runtime-start-skills-"),
+      );
+      const originalMemoryDir = process.env.MEMORY_DIR;
+      const originalLettaMemoryDir = process.env.LETTA_MEMORY_DIR;
+      try {
+        const backend = new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+        });
+        __testSetBackend(backend);
+        const agent = await backend.createAgent({
+          name: "Runtime Skill Agent",
+          model: "anthropic/claude-sonnet-4-6",
+        } as AgentCreateBody);
+        const conversation = await backend.createConversation({
+          agent_id: agent.id,
+          summary: "Skill status conversation",
+        });
+        const memoryDir = join(storageDir, "memory");
+        const skillDir = join(memoryDir, "skills", "agent-development");
+        await mkdir(skillDir, { recursive: true });
+        await writeFile(
+          join(skillDir, "SKILL.md"),
+          [
+            "---",
+            "name: letta-development-guide",
+            "description: Agent-scoped MemFS skill",
+            "---",
+            "",
+            "# Letta Development Guide",
+          ].join("\n"),
+        );
+        process.env.MEMORY_DIR = memoryDir;
+        delete process.env.LETTA_MEMORY_DIR;
+
+        const listener = __listenClientTestUtils.createListenerRuntime();
+        const socket = new MockSocket(WebSocket.OPEN);
+
+        await __listenClientTestUtils.handleRuntimeStartCommand(
+          {
+            type: "runtime_start",
+            request_id: "runtime-start-skills",
+            agent_id: agent.id,
+            conversation_id: conversation.id,
+            recover_approvals: false,
+          },
+          socket as unknown as WebSocket,
+          listener,
+        );
+
+        const messages = socket.sentPayloads.map((payload) =>
+          JSON.parse(payload),
+        );
+        const status = messages.find(
+          (message) =>
+            message.type === "update_device_status" &&
+            message.runtime?.agent_id === agent.id &&
+            message.runtime?.conversation_id === conversation.id,
+        );
+        expect(status).toMatchObject({
+          type: "update_device_status",
+          runtime: {
+            agent_id: agent.id,
+            conversation_id: conversation.id,
+          },
+          device_status: {
+            current_available_skills: expect.arrayContaining([
+              {
+                id: "agent-development",
+                name: "letta-development-guide",
+                description: "Agent-scoped MemFS skill",
+                path: join(skillDir, "SKILL.md"),
+                source: "agent",
+              },
+            ]),
+          },
+        });
+      } finally {
+        if (originalMemoryDir === undefined) {
+          delete process.env.MEMORY_DIR;
+        } else {
+          process.env.MEMORY_DIR = originalMemoryDir;
+        }
+        if (originalLettaMemoryDir === undefined) {
+          delete process.env.LETTA_MEMORY_DIR;
+        } else {
+          process.env.LETTA_MEMORY_DIR = originalLettaMemoryDir;
+        }
+        await rm(storageDir, { recursive: true, force: true });
+      }
+    });
+
     test("starts an agent default conversation", async () => {
       const storageDir = await mkdtemp(
         join(os.tmpdir(), "ws-runtime-start-default-"),

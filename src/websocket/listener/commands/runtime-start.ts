@@ -4,6 +4,7 @@ import type {
   ConversationCreateParams,
 } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type WebSocket from "ws";
+import { buildClientSkillsPayload } from "@/agent/client-skills";
 import { getBackend } from "@/backend";
 import { migratePermissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
@@ -208,6 +209,19 @@ async function applyRuntimeStartState(
   }
 }
 
+async function refreshRuntimeSkillSnapshot(
+  scopedRuntime: ConversationRuntime,
+): Promise<void> {
+  try {
+    const { availableSkills } = await buildClientSkillsPayload({
+      agentId: scopedRuntime.agentId ?? undefined,
+    });
+    scopedRuntime.currentAvailableSkills = availableSkills;
+  } catch {
+    scopedRuntime.currentAvailableSkills = [];
+  }
+}
+
 export async function handleRuntimeStartCommand(
   parsed: RuntimeStartCommand,
   context: RuntimeStartCommandContext,
@@ -233,6 +247,7 @@ export async function handleRuntimeStartCommand(
       runtimeScope.conversation_id,
     );
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    await refreshRuntimeSkillSnapshot(scopedRuntime);
     registerRuntimeExternalTools(
       context.runtime,
       runtimeScope,

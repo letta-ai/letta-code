@@ -20,6 +20,7 @@ import type { SharedReminderState } from "@/reminders/state";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
+  AvailableSkillSummary,
   ControlRequest,
   ExternalToolCallResult,
   LoopStatus,
@@ -163,6 +164,7 @@ export type ConversationRuntime = {
   currentToolset: ToolsetName | null;
   currentToolsetPreference: ToolsetPreference;
   currentLoadedTools: string[];
+  currentAvailableSkills: AvailableSkillSummary[];
   pendingApprovalBatchByToolCallId: Map<string, string>;
   pendingInterruptedResults: Array<ApprovalResult> | null;
   pendingInterruptedContext: {

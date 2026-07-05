@@ -18,6 +18,7 @@ import {
   prepareCurrentToolExecutionContext,
   waitForToolsetReady,
 } from "@/tools/manager";
+import type { AvailableSkillSummary } from "@/types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import {
   assertSupportedBase64ImageMediaTypes,
@@ -204,6 +205,8 @@ export type SendMessageStreamOptions = {
   allowResponseStateReuse?: boolean;
   /** Skip shared image normalization when the caller already did it. */
   skipImageNormalization?: boolean;
+  /** Called with the resolved skill snapshot used for this request. */
+  onClientSkillsDiscovered?: (skills: AvailableSkillSummary[]) => void;
   /**
    * Cloud user id of the human who pressed "send" (multi-user
    * sandbox scenario). When set, `sendMessageStream` echoes this on
@@ -318,11 +321,15 @@ export async function sendMessageStreamWithBackend(
         });
       })();
   const { clientTools, contextId } = preparedToolContext;
-  const { clientSkills, errors: clientSkillDiscoveryErrors } =
-    await buildClientSkillsPayload({
-      agentId: opts.agentId,
-      skillSources: getSkillSources(),
-    });
+  const {
+    clientSkills,
+    availableSkills,
+    errors: clientSkillDiscoveryErrors,
+  } = await buildClientSkillsPayload({
+    agentId: opts.agentId,
+    skillSources: getSkillSources(),
+  });
+  opts.onClientSkillsDiscovered?.(availableSkills);
 
   const resolvedConversationId = conversationId;
   const responseStateScope = buildResponseStateScope(

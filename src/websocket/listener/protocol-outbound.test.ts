@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
-import type { StreamDeltaMessage } from "@/types/protocol_v2";
-import { emitDequeuedUserMessage } from "@/websocket/listener/protocol-outbound";
+import type { DeviceStatus, StreamDeltaMessage } from "@/types/protocol_v2";
+import {
+  buildDeviceStatus,
+  emitDequeuedUserMessage,
+} from "@/websocket/listener/protocol-outbound";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -28,6 +31,14 @@ function createRuntime(): {
     socket: socket as never,
     transport: socket as never,
     streamTransport: null,
+    connectionId: "conn-1",
+    connectionName: "test-listener",
+    bootWorkingDirectory: process.cwd(),
+    workingDirectoryByConversation: new Map(),
+    permissionModeByConversation: new Map(),
+    approvalRuntimeKeyByRequestId: new Map(),
+    worktreeWatcherByConversation: new Map(),
+    pendingExternalToolCalls: new Map(),
     eventSeqCounter: 0,
     conversationRuntimes: new Map(),
   } as unknown as ListenerRuntime;
@@ -35,6 +46,13 @@ function createRuntime(): {
     listener,
     agentId: "agent-1",
     conversationId: "conv-1",
+    pendingApprovalResolvers: new Map(),
+    recoveredApprovalState: null,
+    isProcessing: false,
+    currentToolset: null,
+    currentToolsetPreference: "auto",
+    currentLoadedTools: [],
+    currentAvailableSkills: [],
   } as unknown as ConversationRuntime;
   listener.conversationRuntimes.set("test", runtime);
   return { runtime, socket };
@@ -46,6 +64,32 @@ function parseOnlyStreamDelta(socket: MockSocket): StreamDeltaMessage {
   expect(message.type).toBe("stream_delta");
   return message as StreamDeltaMessage;
 }
+
+describe("buildDeviceStatus", () => {
+  test("includes assigned agent skill paths from the conversation runtime", () => {
+    const { runtime } = createRuntime();
+    runtime.key = "agent:agent-1::conversation:conv-1";
+    runtime.currentAvailableSkills = [
+      {
+        id: "agent-development",
+        name: "letta-development-guide",
+        description: "Agent-scoped MemFS skill",
+        path: "/tmp/.letta/agents/agent-1/memory/skills/agent-development/SKILL.md",
+        source: "agent",
+      },
+    ];
+    runtime.listener.conversationRuntimes.set(runtime.key, runtime);
+
+    const status = buildDeviceStatus(runtime, {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    }) as DeviceStatus;
+
+    expect(status.current_available_skills).toEqual(
+      runtime.currentAvailableSkills,
+    );
+  });
+});
 
 describe("emitDequeuedUserMessage", () => {
   test("emits cron_prompt-only turns as visible scheduled task user messages", () => {

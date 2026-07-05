@@ -183,6 +183,7 @@ export function createConversationRuntime(
     currentToolset: null,
     currentToolsetPreference: "auto",
     currentLoadedTools: [],
+    currentAvailableSkills: [],
     pendingApprovalBatchByToolCallId: new Map(),
     pendingInterruptedResults: null,
     pendingInterruptedContext: null,
