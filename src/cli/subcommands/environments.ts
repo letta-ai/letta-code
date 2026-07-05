@@ -92,20 +92,27 @@ export async function runEnvironmentsSubcommand(
 
   await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
   const list = deps.listEnvironments ?? listEnvironments;
+  const limit = parseLimit(parsed.values.limit, 50);
+  const onlineOnly = parsed.values["online-only"] ?? false;
   const result = await list({
-    limit: parseLimit(parsed.values.limit, 50),
+    limit,
     after: parsed.values.after,
-    onlineOnly: parsed.values["online-only"] ?? false,
+    onlineOnly,
   });
+
+  const connections = result.connections
+    .map((environment) => ({
+      ...environment,
+      isOnline: isOnline(environment),
+    }))
+    .filter((environment) => !onlineOnly || environment.isOnline)
+    .slice(0, limit);
 
   console.log(
     JSON.stringify(
       {
         ...result,
-        connections: result.connections.map((environment) => ({
-          ...environment,
-          isOnline: isOnline(environment),
-        })),
+        connections,
       },
       null,
       2,
