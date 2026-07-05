@@ -4,6 +4,7 @@ export interface EnvironmentMetadata {
   os?: string;
   lettaCodeVersion?: string;
   nodeVersion?: string;
+  environmentMessageProtocol?: string;
   workingDirectory?: string;
   gitBranch?: string;
   supported_commands?: string[];

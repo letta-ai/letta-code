@@ -810,6 +810,17 @@ function isCloudEnvironmentSelector(
   return normalized === "cloud" || normalized === "cloud-sandbox";
 }
 
+function getEnvironmentRoutedMessagingUnsupportedReason(
+  environment: EnvironmentConnection,
+): string | null {
+  if (environment.metadata?.environmentMessageProtocol === "v2-input") {
+    return null;
+  }
+  return `Environment ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
+    environment.metadata?.lettaCodeVersion ?? "unknown"
+  } and does not advertise environment-routed headless messaging support. Update that runtime or omit --environment to use same-environment messaging.`;
+}
+
 export async function handleHeadlessCommand(
   parsedArgs: ParsedCliArgs,
   model?: string,
@@ -2228,6 +2239,64 @@ ${SYSTEM_REMINDER_CLOSE}
       connectionId,
       environment,
     });
+    const unsupportedReason =
+      getEnvironmentRoutedMessagingUnsupportedReason(environment);
+    if (unsupportedReason) {
+      if (outputFormat === "json") {
+        await writeFinalHeadlessStdout(
+          `${JSON.stringify(
+            {
+              type: "result",
+              subtype: "error",
+              is_error: true,
+              duration_ms: Math.round(sessionStats.getSnapshot().totalWallMs),
+              duration_api_ms: Math.round(
+                sessionStats.getSnapshot().totalApiMs,
+              ),
+              num_turns: 0,
+              result: unsupportedReason,
+              agent_id: agent.id,
+              conversation_id: conversationId,
+              environment: responseEnvironment,
+              usage: null,
+              stop_reason: "error",
+            },
+            null,
+            2,
+          )}\n`,
+        );
+      } else if (outputFormat === "stream-json") {
+        const resultEvent: ResultMessage & {
+          environment: EnvironmentResponseMetadata;
+        } = {
+          type: "result",
+          subtype: "error",
+          session_id: sessionId,
+          duration_ms: Math.round(sessionStats.getSnapshot().totalWallMs),
+          duration_api_ms: Math.round(sessionStats.getSnapshot().totalApiMs),
+          num_turns: 0,
+          result: unsupportedReason,
+          agent_id: agent.id,
+          conversation_id: conversationId,
+          environment: responseEnvironment,
+          run_ids: [],
+          usage: null,
+          uuid: `result-${agent.id}-${Date.now()}`,
+          stop_reason: "error",
+        };
+        writeWireMessage(resultEvent);
+      } else {
+        console.error(`Error: ${unsupportedReason}`);
+        await writeFinalHeadlessStdout(
+          `${formatAgentReplyMetadata({
+            agentId: agent.id,
+            conversationId,
+            environment: responseEnvironment,
+          })}\n`,
+        );
+      }
+      await exitHeadless(1, "headless_environment_unsupported");
+    }
     await sendEnvironmentMessage(connectionId, {
       agentId: agent.id,
       conversationId,
