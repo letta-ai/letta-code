@@ -4,7 +4,10 @@ import type {
   AgentState,
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  ApprovalCreate,
+  Message as LettaMessage,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
@@ -56,6 +59,12 @@ import {
   type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";
+import {
+  type EnvironmentConnection,
+  resolveAgentSandboxConnectionId,
+  resolveEnvironmentConnectionId,
+  sendEnvironmentMessage,
+} from "./backend/api/environments";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -646,6 +655,179 @@ async function writeFinalHeadlessStdout(text: string): Promise<void> {
   });
 }
 
+function pageItems<T>(page: unknown): T[] {
+  if (Array.isArray(page)) return page as T[];
+  if (page && typeof page === "object") {
+    const maybePage = page as {
+      getPaginatedItems?: () => T[];
+      items?: T[];
+    };
+    if (typeof maybePage.getPaginatedItems === "function") {
+      return maybePage.getPaginatedItems();
+    }
+    if (Array.isArray(maybePage.items)) {
+      return maybePage.items;
+    }
+  }
+  return [];
+}
+
+function extractMessageText(message: LettaMessage): string {
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (
+          part &&
+          typeof part === "object" &&
+          "type" in part &&
+          part.type === "text" &&
+          "text" in part &&
+          typeof part.text === "string"
+        ) {
+          return part.text;
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
+}
+
+function isAssistantMessage(message: LettaMessage): boolean {
+  return (
+    (message as { message_type?: string }).message_type === "assistant_message"
+  );
+}
+
+function messageTime(message: LettaMessage): number {
+  const date =
+    (message as { date?: string; created_at?: string }).date ??
+    (message as { created_at?: string }).created_at;
+  return date ? new Date(date).getTime() : 0;
+}
+
+async function waitForEnvironmentAssistantMessage(params: {
+  backend: ReturnType<typeof getBackend>;
+  agentId: string;
+  conversationId: string;
+  startedAtMs: number;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}): Promise<string> {
+  const timeoutMs = params.timeoutMs ?? 10 * 60_000;
+  const pollIntervalMs = params.pollIntervalMs ?? 1_000;
+  const deadline = Date.now() + timeoutMs;
+  let lastText = "";
+  let stableCount = 0;
+
+  while (Date.now() < deadline) {
+    const page =
+      params.conversationId === "default"
+        ? await params.backend.listAgentMessages(params.agentId, {
+            conversation_id: "default",
+            limit: 50,
+            order: "desc",
+          })
+        : await params.backend.listConversationMessages(params.conversationId, {
+            limit: 50,
+            order: "desc",
+          });
+
+    const messages = pageItems<LettaMessage>(page);
+    const assistant = messages
+      .filter(
+        (message) =>
+          isAssistantMessage(message) &&
+          messageTime(message) >= params.startedAtMs - 2_000,
+      )
+      .sort((a, b) => messageTime(b) - messageTime(a))[0];
+
+    const text = assistant ? extractMessageText(assistant).trim() : "";
+    if (text.length > 0) {
+      if (text === lastText) {
+        stableCount += 1;
+      } else {
+        lastText = text;
+        stableCount = 1;
+      }
+      if (stableCount >= 2) {
+        return text;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  if (lastText) return lastText;
+  throw new Error("Timed out waiting for environment response");
+}
+
+type ReplyEnvironmentMetadata =
+  | {
+      source: "same-environment";
+    }
+  | {
+      source: "explicit" | "cloud-sandbox";
+      input: string;
+      id: string;
+      connection_id: string;
+      device_id: string;
+      name: string;
+    };
+
+function buildEnvironmentResponseMetadata(params: {
+  source: Extract<
+    ReplyEnvironmentMetadata,
+    { source: "explicit" | "cloud-sandbox" }
+  >["source"];
+  input: string;
+  connectionId: string;
+  environment: EnvironmentConnection;
+}): ReplyEnvironmentMetadata {
+  return {
+    source: params.source,
+    input: params.input,
+    id: params.environment.id,
+    connection_id: params.connectionId,
+    device_id: params.environment.deviceId,
+    name: params.environment.connectionName,
+  };
+}
+
+function formatAgentReplyMetadata(params: {
+  agentId: string;
+  conversationId: string;
+  environment?: ReplyEnvironmentMetadata;
+}): string {
+  return JSON.stringify({
+    agent_id: params.agentId,
+    conversation_id: params.conversationId,
+    ...(params.environment ? { environment: params.environment } : {}),
+  });
+}
+
+function isCloudEnvironmentSelector(
+  selector: string | boolean | undefined,
+): boolean {
+  if (typeof selector !== "string") return false;
+  const normalized = selector.trim().toLowerCase();
+  return normalized === "cloud" || normalized === "cloud-sandbox";
+}
+
+function getEnvironmentRoutedMessagingUnsupportedReason(
+  environment: EnvironmentConnection,
+): string | null {
+  if (environment.metadata?.environmentMessageProtocol === "v2-input") {
+    return null;
+  }
+  return `Environment ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
+    environment.metadata?.lettaCodeVersion ?? "unknown"
+  } and does not advertise environment-routed headless messaging support. Update that runtime or omit --environment to use same-environment messaging.`;
+}
+
 export async function handleHeadlessCommand(
   parsedArgs: ParsedCliArgs,
   model?: string,
@@ -780,6 +962,10 @@ export async function handleHeadlessCommand(
   // --new: Create a new conversation (for concurrent sessions)
   let forceNewConversation = values.new ?? false;
   const fromAgentId = values["from-agent"];
+  const explicitEnvironmentSelector = values.environment || values.env;
+  const usesRemoteEnvironment =
+    typeof explicitEnvironmentSelector === "string" &&
+    explicitEnvironmentSelector.trim().length > 0;
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -1663,6 +1849,12 @@ export async function handleHeadlessCommand(
     );
     process.exit(1);
   }
+  if (usesRemoteEnvironment && isBidirectionalMode) {
+    console.error(
+      "Error: remote environment routing cannot be used with --input-format stream-json",
+    );
+    process.exit(1);
+  }
 
   const sessionStats = new SessionStats();
   const headlessPermissionMode = startupPermissionMode.mode;
@@ -1972,29 +2164,33 @@ ${SYSTEM_REMINDER_CLOSE}
     pushPart(systemReminder);
   }
 
-  const lastRunAt = (agent as { last_run_completion?: string })
-    .last_run_completion;
-  const { parts: sharedReminderParts } = await buildSharedReminderParts({
-    mode: isSubagent ? "subagent" : "headless-one-shot",
-    agent: {
-      id: agent.id,
-      name: agent.name,
-      description: agent.description,
-      lastRunAt: lastRunAt ?? null,
-      conversationId,
-    },
-    state: sharedReminderState,
-    systemInfoReminderEnabled,
-    workingDirectory: getCurrentWorkingDirectory(),
-    skillSources: resolvedSkillSources,
-    shellContext: detectShellContext(),
-  });
-  for (const part of sharedReminderParts) {
-    pushPart(part.text);
+  if (!usesRemoteEnvironment) {
+    const lastRunAt = (agent as { last_run_completion?: string })
+      .last_run_completion;
+    const { parts: sharedReminderParts } = await buildSharedReminderParts({
+      mode: isSubagent ? "subagent" : "headless-one-shot",
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        description: agent.description,
+        lastRunAt: lastRunAt ?? null,
+        conversationId,
+      },
+      state: sharedReminderState,
+      systemInfoReminderEnabled,
+      workingDirectory: getCurrentWorkingDirectory(),
+      skillSources: resolvedSkillSources,
+      shellContext: detectShellContext(),
+    });
+    for (const part of sharedReminderParts) {
+      pushPart(part.text);
+    }
   }
 
-  // Pre-load specific skills' full content (used by subagents with skills: field)
-  if (preLoadSkillsRaw) {
+  // Pre-load specific skills' full content (used by subagents with skills: field).
+  // Environment-routed turns run in the selected remote runtime, which injects
+  // its own local context and skills, so avoid prepending this process' context.
+  if (preLoadSkillsRaw && !usesRemoteEnvironment) {
     const { readFile: readFileAsync } = await import("node:fs/promises");
     const { skillPathById } = await buildClientSkillsPayload({
       agentId: agent.id,
@@ -2035,6 +2231,151 @@ ${SYSTEM_REMINDER_CLOSE}
     "user",
     agent.llm_config?.model ?? "unknown",
   );
+
+  if (usesRemoteEnvironment) {
+    const startedAtMs = Date.now();
+    const environmentSelector = String(explicitEnvironmentSelector);
+    const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
+    const environmentRouting = useCloudSandbox
+      ? await resolveAgentSandboxConnectionId(agent.id)
+      : await resolveEnvironmentConnectionId(environmentSelector);
+    const { connectionId, environment } = environmentRouting;
+    const responseEnvironment = buildEnvironmentResponseMetadata({
+      source: useCloudSandbox ? "cloud-sandbox" : "explicit",
+      input: environmentSelector,
+      connectionId,
+      environment,
+    });
+    const unsupportedReason =
+      getEnvironmentRoutedMessagingUnsupportedReason(environment);
+    if (unsupportedReason) {
+      if (outputFormat === "json") {
+        await writeFinalHeadlessStdout(
+          `${JSON.stringify(
+            {
+              type: "result",
+              subtype: "error",
+              is_error: true,
+              duration_ms: Math.round(sessionStats.getSnapshot().totalWallMs),
+              duration_api_ms: Math.round(
+                sessionStats.getSnapshot().totalApiMs,
+              ),
+              num_turns: 0,
+              result: unsupportedReason,
+              agent_id: agent.id,
+              conversation_id: conversationId,
+              environment: responseEnvironment,
+              usage: null,
+              stop_reason: "error",
+            },
+            null,
+            2,
+          )}\n`,
+        );
+      } else if (outputFormat === "stream-json") {
+        const resultEvent: ResultMessage & {
+          environment: ReplyEnvironmentMetadata;
+        } = {
+          type: "result",
+          subtype: "error",
+          session_id: sessionId,
+          duration_ms: Math.round(sessionStats.getSnapshot().totalWallMs),
+          duration_api_ms: Math.round(sessionStats.getSnapshot().totalApiMs),
+          num_turns: 0,
+          result: unsupportedReason,
+          agent_id: agent.id,
+          conversation_id: conversationId,
+          environment: responseEnvironment,
+          run_ids: [],
+          usage: null,
+          uuid: `result-${agent.id}-${Date.now()}`,
+          stop_reason: "error",
+        };
+        writeWireMessage(resultEvent);
+      } else {
+        console.error(`Error: ${unsupportedReason}`);
+        await writeFinalHeadlessStdout(
+          `${formatAgentReplyMetadata({
+            agentId: agent.id,
+            conversationId,
+            environment: responseEnvironment,
+          })}\n`,
+        );
+      }
+      await exitHeadless(1, "headless_environment_unsupported");
+    }
+    await sendEnvironmentMessage(connectionId, {
+      agentId: agent.id,
+      conversationId,
+      messages: [
+        {
+          role: "user",
+          content: contentParts,
+          client_message_id: randomUUID(),
+          otid: randomUUID(),
+        },
+      ],
+    });
+
+    const resultText = await waitForEnvironmentAssistantMessage({
+      backend,
+      agentId: agent.id,
+      conversationId,
+      startedAtMs,
+    });
+    const stats = sessionStats.getSnapshot();
+
+    if (outputFormat === "json") {
+      await writeFinalHeadlessStdout(
+        `${JSON.stringify(
+          {
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            duration_ms: Math.round(stats.totalWallMs),
+            duration_api_ms: Math.round(stats.totalApiMs),
+            num_turns: 1,
+            result: resultText,
+            agent_id: agent.id,
+            conversation_id: conversationId,
+            environment: responseEnvironment,
+            usage: null,
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    } else if (outputFormat === "stream-json") {
+      const resultEvent: ResultMessage & {
+        environment: ReplyEnvironmentMetadata;
+      } = {
+        type: "result",
+        subtype: "success",
+        session_id: sessionId,
+        duration_ms: Math.round(stats.totalWallMs),
+        duration_api_ms: Math.round(stats.totalApiMs),
+        num_turns: 1,
+        result: resultText,
+        agent_id: agent.id,
+        conversation_id: conversationId,
+        environment: responseEnvironment,
+        run_ids: [],
+        usage: null,
+        uuid: `result-${agent.id}-${Date.now()}`,
+      };
+      writeWireMessage(resultEvent);
+    } else {
+      await writeFinalHeadlessStdout(
+        `${resultText}\n\n${formatAgentReplyMetadata({
+          agentId: agent.id,
+          conversationId,
+          environment: responseEnvironment,
+        })}\n`,
+      );
+    }
+
+    await exitHeadless(0, "headless_environment_message_complete");
+  }
 
   // Start with the user message
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
@@ -3141,6 +3482,9 @@ ${SYSTEM_REMINDER_CLOSE}
       result: resultText,
       agent_id: agent.id,
       conversation_id: conversationId,
+      ...(fromAgentId
+        ? { environment: { source: "same-environment" as const } }
+        : {}),
       usage,
     };
     await writeFinalHeadlessStdout(`${JSON.stringify(output, null, 2)}\n`);
@@ -3161,7 +3505,9 @@ ${SYSTEM_REMINDER_CLOSE}
       allRunIds.size > 0
         ? `result-${Array.from(allRunIds).pop()}`
         : `result-${agent.id}`;
-    const resultEvent: ResultMessage = {
+    const resultEvent: ResultMessage & {
+      environment?: ReplyEnvironmentMetadata;
+    } = {
       type: "result",
       subtype: "success",
       session_id: sessionId,
@@ -3171,6 +3517,9 @@ ${SYSTEM_REMINDER_CLOSE}
       result: resultText,
       agent_id: agent.id,
       conversation_id: conversationId,
+      ...(fromAgentId
+        ? { environment: { source: "same-environment" as const } }
+        : {}),
       run_ids: Array.from(allRunIds),
       usage,
       uuid: resultUuid,

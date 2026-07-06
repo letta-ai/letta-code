@@ -174,6 +174,7 @@ USAGE
   letta --upgrade       Alias for \`letta update\`
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
+  letta environments ... List available remote environments (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta mods ...        List and manage local mods
   letta app-server ...  Run local app-server websocket transport
@@ -197,6 +198,8 @@ SUBCOMMANDS
   letta memory pull --agent <id>
   letta memory tokens [--memory-dir <path>] [--agent <id>] [--format text|json]
   letta agents list [--query <text> | --name <name> | --tags <tags>]
+  letta environments list [--online-only]
+  letta environments current
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
