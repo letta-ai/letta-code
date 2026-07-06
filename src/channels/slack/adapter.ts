@@ -494,8 +494,8 @@ type SlackProgressCardEntry = {
   completionHeaderText?: string;
   reasoningActive?: boolean;
   placeholderTaskId?: string;
-  placeholderToolCallId?: string;
   placeholderTaskSequence?: number;
+  toolTaskIdsByCallId?: Map<string, string>;
   pendingStreamChunks?: SlackStreamChunk[];
   hiddenToolCallIds?: Set<string>;
   completedFinalizerTimer?: ReturnType<typeof setTimeout>;
@@ -1257,6 +1257,15 @@ function reconcileSlackTurnActiveTask(
   entry: SlackProgressCardEntry,
 ): SlackStreamChunk[] {
   entry.toolTasksById ??= new Map();
+  const hasVisibleInProgressTask = Array.from(
+    entry.toolTasksById.values(),
+  ).some(
+    (task) => !isSlackTransientTask(task) && task.status === "in_progress",
+  );
+  if (hasVisibleInProgressTask) {
+    return [];
+  }
+
   const existingId = entry.placeholderTaskId;
   const existing = existingId ? entry.toolTasksById.get(existingId) : undefined;
   if (existing && isSlackTransientTask(existing)) {
@@ -1270,7 +1279,6 @@ function reconcileSlackTurnActiveTask(
       : `${SLACK_TURN_ACTIVE_TASK_ID}_${sequence}`;
   entry.placeholderTaskSequence = sequence + 1;
   entry.placeholderTaskId = id;
-  entry.placeholderToolCallId = undefined;
 
   const task: SlackProgressToolTask = {
     id,
@@ -1287,18 +1295,23 @@ function resolveSlackToolActionTaskId(
   update: ChannelTurnProgressEvent,
 ): string | null {
   if (update.toolCallId) {
-    const placeholderId = entry.placeholderTaskId;
-    if (placeholderId && entry.placeholderToolCallId === update.toolCallId) {
-      return placeholderId;
+    const existingTaskId = entry.toolTaskIdsByCallId?.get(update.toolCallId);
+    if (existingTaskId) {
+      return existingTaskId;
     }
+
+    const placeholderId = entry.placeholderTaskId;
     const placeholder = placeholderId
       ? entry.toolTasksById?.get(placeholderId)
       : undefined;
     if (placeholderId && placeholder && isSlackTransientTask(placeholder)) {
-      entry.placeholderToolCallId = update.toolCallId;
+      entry.toolTaskIdsByCallId ??= new Map();
+      entry.toolTaskIdsByCallId.set(update.toolCallId, placeholderId);
+      entry.placeholderTaskId = undefined;
       return placeholderId;
     }
   }
+
   const raw =
     update.toolCallId ??
     update.command ??
@@ -1309,7 +1322,12 @@ function resolveSlackToolActionTaskId(
   }
   const safe = raw.replace(/[^A-Za-z0-9_-]/g, "_").replace(/_+/g, "_");
   const trimmed = safe.replace(/^_+|_+$/g, "").slice(0, 80);
-  return `task_${trimmed || "tool"}`;
+  const taskId = `task_${trimmed || "tool"}`;
+  if (update.toolCallId) {
+    entry.toolTaskIdsByCallId ??= new Map();
+    entry.toolTaskIdsByCallId.set(update.toolCallId, taskId);
+  }
+  return taskId;
 }
 
 function toSlackStreamTaskStatus(
@@ -1430,6 +1448,9 @@ function buildSlackStreamProgressChunks(
   // both a "completed" and an "error" tool_return for the same call; the
   // completed event arrives first and is the reliable one.
   if (prevTask && prevTask.status === "complete" && status === "error") {
+    return [];
+  }
+  if (prevTask && prevTask.status === "complete" && status === "in_progress") {
     return [];
   }
   if (
@@ -2857,8 +2878,8 @@ export function createSlackAdapter(
         entry.completionHeaderText = undefined;
         entry.reasoningActive = undefined;
         entry.placeholderTaskId = undefined;
-        entry.placeholderToolCallId = undefined;
         entry.placeholderTaskSequence = undefined;
+        entry.toolTaskIdsByCallId = undefined;
         entry.hiddenToolCallIds = undefined;
         entry.completedFinalizerTimer = undefined;
         const replyKey = getLifecycleReplyKey(source);
