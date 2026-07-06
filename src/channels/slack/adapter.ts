@@ -482,6 +482,7 @@ type SlackProgressToolTask = {
   title: string;
   status: SlackStreamTaskStatus;
   details?: string;
+  wasError?: boolean;
 };
 
 type SlackProgressCardEntry = {
@@ -659,18 +660,44 @@ function buildTerminalSlackStreamChunks(
   return chunks;
 }
 
+function isDuplicateSkillTaskDetails(
+  toolName: string | undefined,
+  title: string,
+  details: string | undefined,
+): boolean {
+  return Boolean(
+    toolName &&
+      details &&
+      isSkillToolName(toolName) &&
+      title === `Skill: ${details}`,
+  );
+}
+
+function shouldIncludeSlackTaskDetails(task: SlackProgressToolTask): boolean {
+  return Boolean(
+    task.details &&
+      !isDuplicateSkillTaskDetails(task.toolName, task.title, task.details) &&
+      (!task.toolTitle ||
+        task.wasError ||
+        (task.toolName && isSkillToolName(task.toolName))) &&
+      !(
+        task.toolName &&
+        isShellTool(task.toolName) &&
+        task.title === task.details
+      ),
+  );
+}
+
 function toSlackTaskUpdateChunk(task: SlackProgressToolTask): SlackStreamChunk {
   const {
     kind: _kind,
     toolName: _toolName,
     toolTitle: _toolTitle,
+    wasError: _wasError,
     details,
     ...chunkTask
   } = task;
-  const shouldIncludeDetails =
-    details &&
-    !task.toolTitle &&
-    !(task.toolName && isShellTool(task.toolName) && task.title === details);
+  const shouldIncludeDetails = shouldIncludeSlackTaskDetails(task);
   return {
     type: "task_update",
     ...chunkTask,
@@ -681,7 +708,7 @@ function toSlackTaskUpdateChunk(task: SlackProgressToolTask): SlackStreamChunk {
     ...(shouldIncludeDetails
       ? {
           details: sanitizeSlackProgressText(
-            details,
+            details ?? "",
             SLACK_STREAM_CHUNK_TEXT_MAX,
           ),
         }
@@ -956,12 +983,21 @@ function resolveSlackToolActionDetails(
   if (update.kind === "approval") {
     return undefined;
   }
+  const toolName =
+    update.toolName ??
+    (update.toolCallId
+      ? entry.toolNamesByCallId?.get(update.toolCallId)
+      : undefined);
   const toolTitle =
     update.toolTitle ??
     (update.toolCallId
       ? entry.toolTitlesByCallId?.get(update.toolCallId)
       : undefined);
-  if (toolTitle) {
+  if (
+    toolTitle &&
+    update.state !== "error" &&
+    !(toolName && isSkillToolName(toolName))
+  ) {
     return undefined;
   }
   const rememberedDetails = update.toolCallId
@@ -1230,7 +1266,9 @@ function toSlackStreamTaskStatus(
   update: ChannelTurnProgressEvent,
 ): SlackStreamTaskStatus {
   if (update.state === "error") {
-    return "error";
+    // Tool-level failures are still part of the work history; the whole Slack
+    // progress card should only show an error state when the turn itself fails.
+    return update.kind === "tool" ? "complete" : "error";
   }
   if (update.state === "completed") {
     return "complete";
@@ -1366,6 +1404,7 @@ function buildSlackStreamProgressChunks(
     title,
     status,
     ...(details ? { details } : {}),
+    ...(update.state === "error" ? { wasError: true } : {}),
   };
   entry.toolTasksById ??= new Map();
   const chunks: SlackStreamChunk[] = [];
@@ -1382,7 +1421,10 @@ function buildSlackStreamProgressChunks(
   const shouldIncludeTaskDetails =
     details &&
     (detailsChanged || status !== "in_progress") &&
-    !toolTitle &&
+    !isDuplicateSkillTaskDetails(toolName, title, details) &&
+    (!toolTitle ||
+      update.state === "error" ||
+      (toolName && isSkillToolName(toolName))) &&
     !(toolName && isShellTool(toolName) && title === details);
 
   chunks.push(buildSlackPlanUpdateChunk(entry));

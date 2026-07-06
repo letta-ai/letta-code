@@ -1,4 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import { buildClientSkillsPayload } from "@/agent/client-skills";
 import { createChannelTurnProgressBuilder } from "@/channels/progress";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
@@ -208,6 +209,28 @@ function mapTurnLifecycleOutcome(
     return "error";
   }
   return "completed";
+}
+
+async function buildChannelTurnProgressBuilder(agentId?: string | null) {
+  try {
+    const { clientSkills } = await buildClientSkillsPayload({
+      agentId: agentId ?? undefined,
+    });
+    const skillDescriptionsByName = new Map<string, string>();
+    for (const skill of clientSkills) {
+      if (skill.name && skill.description) {
+        skillDescriptionsByName.set(skill.name, skill.description);
+      }
+    }
+    return createChannelTurnProgressBuilder({ skillDescriptionsByName });
+  } catch (error) {
+    trackBoundaryError({
+      context: "websocket-listener channel progress skill descriptions",
+      errorType: "channel_progress_skill_description_discovery_failed",
+      error,
+    });
+    return createChannelTurnProgressBuilder();
+  }
 }
 
 export async function normalizeMessageContentImages(
@@ -556,7 +579,7 @@ async function drainQueuedMessages(
       runtime.activeChannelTurnBatchId = dequeuedBatch.batchId;
       runtime.activeChannelTurnProgress =
         channelTurnSources.length > 0
-          ? createChannelTurnProgressBuilder()
+          ? await buildChannelTurnProgressBuilder(queuedTurn.agentId)
           : null;
       try {
         await processQueuedTurn(queuedTurn, dequeuedBatch);

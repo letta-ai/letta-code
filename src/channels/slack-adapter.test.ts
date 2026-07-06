@@ -1976,7 +1976,7 @@ test("slack adapter labels subagent task rows and includes prompt previews", asy
   });
 });
 
-test("slack adapter updates Skill task title when the loaded skill arrives", async () => {
+test("slack adapter shows Skill descriptions as task details", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -2020,7 +2020,8 @@ test("slack adapter updates Skill task title when the loaded skill arrives", asy
     message: "Preparing tool: Skill",
     toolCallId: "call-skill",
     toolName: "Skill",
-    toolDetails: "working-on-letta-code-channels",
+    toolDetails: "Guides work in Letta Code channel integrations.",
+    toolTitle: "Skill: working-on-letta-code-channels",
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
@@ -2052,7 +2053,7 @@ test("slack adapter updates Skill task title when the loaded skill arrives", asy
         id: "task_call-skill",
         title: "Skill: working-on-letta-code-channels",
         status: "in_progress",
-        details: "working-on-letta-code-channels",
+        details: "Guides work in Letta Code channel integrations.",
       }),
     ]),
   });
@@ -3296,7 +3297,8 @@ test("slack adapter keeps failed tool titles without failing completed progress 
     message: "File not found",
     toolCallId: "call-read",
     toolName: "Read",
-    toolTitle: "Failed to read config.json",
+    toolDetails: "ENOENT: no such file or directory, open 'config.json'",
+    toolTitle: "Tried to read config.json",
   });
   await adapter.handleTurnLifecycleEvent?.({
     type: "finished",
@@ -3313,6 +3315,19 @@ test("slack adapter keeps failed tool titles without failing completed progress 
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: expect.arrayContaining([
+      expect.objectContaining({
+        type: "task_update",
+        id: "task_call-read",
+        title: "Tried to read config.json",
+        status: "complete",
+        details: "ENOENT: no such file or directory, open 'config.json'",
+      }),
+    ]),
+  });
   expect(writeClient?.chat.stopStream).toHaveBeenCalledTimes(1);
   const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
     [{ chunks?: Array<Record<string, unknown>> }]
@@ -3321,7 +3336,7 @@ test("slack adapter keeps failed tool titles without failing completed progress 
   expect(stopCall?.chunks).toContainEqual({
     type: "task_update",
     id: "task_call-read",
-    title: "Failed to read config.json",
+    title: "Tried to read config.json",
     status: "complete",
   });
   expect(stopCall?.chunks).toContainEqual({
