@@ -23,7 +23,9 @@ import {
   listChannelSlashCommands,
   parseChannelBangCommand,
   parseChannelSlashCommand,
+  tryHandleChannelSlashCommand,
 } from "@/channels/commands";
+import type { ChannelAdapter, InboundChannelMessage } from "@/channels/types";
 
 describe("channel slash commands", () => {
   test("parses channel slash commands with bot suffixes and args", () => {
@@ -46,6 +48,59 @@ describe("channel slash commands", () => {
       raw: "!MODEL sonnet",
     });
     expect(parseChannelBangCommand("hello !help")).toBeNull();
+  });
+
+  test("handles Slack mention slash commands as control commands", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      options?: { replyToMessageId?: string; threadId?: string | null };
+    }> = [];
+    const adapter: ChannelAdapter = {
+      id: "slack",
+      name: "Slack",
+      async start() {},
+      async stop() {},
+      isRunning: () => true,
+      async sendMessage() {
+        return { messageId: "sent-1" };
+      },
+      async sendDirectReply(chatId, text, options) {
+        replies.push({ chatId, text, ...(options ? { options } : {}) });
+      },
+    };
+    const msg: InboundChannelMessage = {
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "/detach",
+      timestamp: Date.now(),
+      messageId: "1783379000.000100",
+      threadId: "1783378000.000100",
+      isMention: true,
+    };
+
+    await expect(
+      tryHandleChannelSlashCommand(adapter, msg, {
+        handlers: {
+          detach: async (command) => ({
+            handled: true,
+            text: `detached via ${command.raw}`,
+          }),
+        },
+      }),
+    ).resolves.toBe(true);
+
+    expect(replies).toEqual([
+      {
+        chatId: "C123",
+        text: "detached via /detach",
+        options: {
+          replyToMessageId: "1783379000.000100",
+          threadId: "1783378000.000100",
+        },
+      },
+    ]);
   });
 
   test("lists supported commands for channel help", () => {
@@ -74,7 +129,10 @@ describe("channel slash commands", () => {
     const slackText = buildChannelHelpMessage("slack");
     expect(slackText).not.toContain("MessageChannel");
     expect(slackText).toContain(
-      "In Slack threads, mention the app with bang commands: !help, !detach, !model, !new, !reload.",
+      "In Slack threads, mention the app with slash commands: @agent /help, @agent /detach, @agent /model, @agent /new, @agent /reload.",
+    );
+    expect(slackText).toContain(
+      "Legacy bang aliases still work after a mention: !help, !detach, !model, !new, !reload.",
     );
   });
 
@@ -214,16 +272,15 @@ describe("channel slash commands", () => {
     expect(text).toContain("Slack model selector");
     expect(text).toContain("Recent models:");
     expect(text).toContain(
-      "• Claude Sonnet 4.6 — anthropic/claude-sonnet-4-6 (!model sonnet)",
+      "• Claude Sonnet 4.6 — anthropic/claude-sonnet-4-6 (@agent /model sonnet)",
     );
     expect(text).toContain("Available models:");
-    expect(text).toContain("• GPT-5 — openai/gpt-5 (!model gpt)");
+    expect(text).toContain("• GPT-5 — openai/gpt-5 (@agent /model gpt)");
     expect(text).toContain("…and 1 more.");
     expect(text).not.toContain("missing/model");
     expect(text).toContain(
-      "Mention the app with !model <handle-or-id> to switch this thread's routed model.",
+      "Mention the app with /model <handle-or-id> to switch this thread's routed model. Legacy !model still works after a mention.",
     );
-    expect(text).not.toContain("/model <handle-or-id>");
   });
 
   test("builds model update and unavailable messages", () => {

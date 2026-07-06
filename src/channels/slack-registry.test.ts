@@ -220,7 +220,7 @@ describe("slack channel registry", () => {
     ).not.toBeNull();
   });
 
-  test("mention bang detach silences the thread until the app is mentioned again", async () => {
+  test("mention slash detach silences the thread until the app is mentioned again", async () => {
     const { ChannelRegistry } = await import("@/channels/registry");
     const registry = new ChannelRegistry();
     const adapter = createAdapter();
@@ -242,7 +242,7 @@ describe("slack channel registry", () => {
     await adapter.onMessage?.(
       createInboundMessage({
         isMention: true,
-        text: "!detach",
+        text: "/detach",
         messageId: "1712800002.000400",
       }),
     );
@@ -306,7 +306,8 @@ describe("slack channel registry", () => {
 
     expect(deliveries).toEqual([]);
     expect(replies).toHaveLength(1);
-    expect(replies[0]).toContain("mention the app with bang commands");
+    expect(replies[0]).toContain("mention the app with slash commands");
+    expect(replies[0]).toContain("Legacy bang aliases still work");
   });
 
   test("unmentioned bang text stays normal routed Slack input", async () => {
@@ -341,7 +342,7 @@ describe("slack channel registry", () => {
     expect(deliveries).toHaveLength(2);
   });
 
-  test("mention bang new replaces the Slack thread route conversation", async () => {
+  test("mention slash new replaces the Slack thread route conversation", async () => {
     createConversation
       .mockResolvedValueOnce({ id: "conv-original" })
       .mockResolvedValueOnce({ id: "conv-replacement" });
@@ -367,7 +368,7 @@ describe("slack channel registry", () => {
     await adapter.onMessage?.(
       createInboundMessage({
         isMention: true,
-        text: "!new",
+        text: "/new",
         messageId: "1712800002.000400",
       }),
     );

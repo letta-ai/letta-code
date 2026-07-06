@@ -122,7 +122,7 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
   },
 ];
 
-const CHANNEL_BANG_COMMAND_NAMES = [
+const SLACK_MENTION_COMMAND_NAMES = [
   "help",
   "detach",
   "model",
@@ -193,13 +193,39 @@ function supportedCommandsText(prefix: "/" | "!" = "/"): string {
     .join(", ");
 }
 
-function supportedBangCommandsText(): string {
-  return CHANNEL_BANG_COMMAND_NAMES.map((name) => `!${name}`).join(", ");
+function supportedSlackMentionSlashCommandsText(): string {
+  return SLACK_MENTION_COMMAND_NAMES.map((name) => `@agent /${name}`).join(
+    ", ",
+  );
 }
 
-function isSupportedChannelBangCommand(commandName: string): boolean {
-  return CHANNEL_BANG_COMMAND_NAMES.includes(
-    commandName as (typeof CHANNEL_BANG_COMMAND_NAMES)[number],
+function supportedBangCommandsText(): string {
+  return SLACK_MENTION_COMMAND_NAMES.map((name) => `!${name}`).join(", ");
+}
+
+function isSupportedSlackMentionCommand(commandName: string): boolean {
+  return SLACK_MENTION_COMMAND_NAMES.includes(
+    commandName as (typeof SLACK_MENTION_COMMAND_NAMES)[number],
+  );
+}
+
+function isSlackMentionSlashCommand(
+  msg: InboundChannelMessage,
+  command: ParsedChannelSlashCommand,
+): boolean {
+  return (
+    msg.channel === "slack" &&
+    msg.isMention === true &&
+    command.raw.startsWith("/")
+  );
+}
+
+function isSlackMentionControlCommand(
+  msg: InboundChannelMessage,
+  command: ParsedChannelSlashCommand,
+): boolean {
+  return (
+    command.raw.startsWith("!") || isSlackMentionSlashCommand(msg, command)
   );
 }
 
@@ -211,7 +237,8 @@ export function buildChannelHelpMessage(channelId: string): string {
       `${displayName} is connected to Letta Code.`,
       "Send a normal message here and the connected agent will reply in this chat.",
       `Supported slash commands here: ${supportedCommandsText()}.`,
-      `In Slack threads, mention the app with bang commands: ${supportedBangCommandsText()}.`,
+      `In Slack threads, mention the app with slash commands: ${supportedSlackMentionSlashCommandsText()}.`,
+      `Legacy bang aliases still work after a mention: ${supportedBangCommandsText()}.`,
       "If this chat is not connected yet, send any non-command message and follow the pairing instructions.",
     ].join("\n\n");
   }
@@ -478,8 +505,8 @@ function getFallbackModelEntries(
   return preferred.length > 0 ? preferred : Array.from(byHandle.values());
 }
 
-function modelCommandPrefix(channelId: string): "/model" | "!model" {
-  return channelId === "slack" ? "!model" : "/model";
+function modelCommandPrefix(channelId: string): "/model" | "@agent /model" {
+  return channelId === "slack" ? "@agent /model" : "/model";
 }
 
 function formatChannelModelEntry(
@@ -573,7 +600,7 @@ export function buildChannelModelListMessage(
   lines.push("");
   if (channelId === "slack") {
     lines.push(
-      "Mention the app with !model <handle-or-id> to switch this thread's routed model.",
+      "Mention the app with /model <handle-or-id> to switch this thread's routed model. Legacy !model still works after a mention.",
     );
   } else {
     lines.push("Use /model <handle-or-id> to switch this chat's routed model.");
@@ -662,8 +689,9 @@ export async function tryHandleChannelSlashCommand(
     return false;
   }
   const isBangCommand = command.raw.startsWith("!");
+  const isSlackMentionControl = isSlackMentionControlCommand(msg, command);
 
-  if (isBangCommand && !isSupportedChannelBangCommand(command.name)) {
+  if (isBangCommand && !isSupportedSlackMentionCommand(command.name)) {
     await adapter.sendDirectReply(
       msg.chatId,
       buildUnsupportedChannelCommandMessage(msg.channel, command),
@@ -711,7 +739,7 @@ export async function tryHandleChannelSlashCommand(
           handler: options.handlers?.chat,
         });
       case "detach":
-        if (!isBangCommand) {
+        if (!isSlackMentionControl) {
           return buildUnsupportedChannelCommandMessage(msg.channel, command);
         }
         return handleScopedCommand({
@@ -726,7 +754,7 @@ export async function tryHandleChannelSlashCommand(
           handler: options.handlers?.model,
         });
       case "new":
-        if (!isBangCommand) {
+        if (!isSlackMentionControl) {
           return buildUnsupportedChannelCommandMessage(msg.channel, command);
         }
         return handleScopedCommand({
@@ -742,7 +770,7 @@ export async function tryHandleChannelSlashCommand(
           handler: options.handlers?.reflection,
         });
       case "reload":
-        if (!isBangCommand) {
+        if (!isSlackMentionControl) {
           return buildUnsupportedChannelCommandMessage(msg.channel, command);
         }
         return handleScopedCommand({
