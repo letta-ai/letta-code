@@ -380,10 +380,17 @@ function handleInitEvent(
     const agentURL = buildAgentReference(event.agent_id, {
       conversationId: event.conversation_id,
     });
-    updateSubagent(subagentId, { agentId: event.agent_id, agentURL });
+    updateSubagent(subagentId, {
+      agentId: event.agent_id,
+      agentURL,
+      conversationId: event.conversation_id ?? null,
+    });
   }
   if (event.conversation_id) {
     state.conversationId = event.conversation_id;
+    if (!event.agent_id) {
+      updateSubagent(subagentId, { conversationId: event.conversation_id });
+    }
   }
 }
 
@@ -1561,7 +1568,10 @@ export async function spawnSubagent(
     const forkAgentURL = buildAgentReference(existingAgentId, {
       conversationId: existingConversationId,
     });
-    updateSubagent(subagentId, { agentURL: forkAgentURL });
+    updateSubagent(subagentId, {
+      agentURL: forkAgentURL,
+      conversationId: existingConversationId,
+    });
   }
 
   // Execute subagent - state updates are handled via the state store

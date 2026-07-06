@@ -1045,6 +1045,7 @@ export function buildSubagentSnapshot(
       prompt: a.prompt,
       status: a.status,
       agent_url: a.agentURL,
+      conversation_id: a.conversationId ?? null,
       model: a.model,
       is_background: a.isBackground,
       silent: a.silent,
