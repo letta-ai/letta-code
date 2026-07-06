@@ -10,10 +10,12 @@ Usage:
 Run a memory reflection pass for an agent and wait for it to finish.
 
 Options:
-  --agent <id>                Agent id (default: $LETTA_AGENT_ID, then the
-                              last-used agent for the current server)
-  --conv <id>                 Conversation transcript to process
-                              (default: "default")
+  --memory <agent-id>         Agent whose memory to refine (default:
+                              $LETTA_AGENT_ID, then the last-used agent)
+  --from <conv-id>            Conversation transcript to reflect on
+                              (default: the agent's primary "default" history)
+  --to <spec>                 Render target (reserved; not yet implemented)
+  --effort <level>            Reflection effort (reserved; not yet implemented)
   --timeout <seconds>         Fail if the reflection pass has not completed
                               in this many seconds (default: 1500)
   -i, --instruction <text>    Additional instruction for the reflection pass
@@ -30,8 +32,10 @@ Notes:
 
 const DREAM_OPTIONS = {
   help: { type: "boolean", short: "h" },
-  agent: { type: "string" },
-  conv: { type: "string" },
+  memory: { type: "string" },
+  from: { type: "string" },
+  to: { type: "string" },
+  effort: { type: "string" },
   timeout: { type: "string" },
   instruction: { type: "string", short: "i" },
   json: { type: "boolean" },
@@ -82,6 +86,14 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
 
   const asJson = Boolean(parsed.values.json);
 
+  // --to and --effort are part of the target/effort interface but are not yet
+  // wired up; accept them so the surface is stable, but say they're inert.
+  if (!asJson && (parsed.values.to || parsed.values.effort)) {
+    console.error(
+      "Note: --to and --effort are accepted but not yet implemented; ignoring.",
+    );
+  }
+
   let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
   if (parsed.values.timeout) {
     timeoutSeconds = Number.parseInt(parsed.values.timeout, 10);
@@ -94,13 +106,13 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
   await settingsManager.initialize();
 
   const agentId =
-    parsed.values.agent ||
+    parsed.values.memory ||
     process.env.LETTA_AGENT_ID ||
     settingsManager.getGlobalLastAgentId() ||
     "";
   if (!agentId) {
     console.error(
-      "Missing agent id. Pass --agent, set LETTA_AGENT_ID, or run a session first.",
+      "Missing agent id. Pass --memory <agent-id>, set LETTA_AGENT_ID, or run a session first.",
     );
     return 1;
   }
@@ -116,7 +128,7 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     return 1;
   }
 
-  const conversationId = parsed.values.conv || "default";
+  const conversationId = parsed.values.from || "default";
 
   const { launchReflectionSubagent } = await import(
     "@/cli/helpers/reflection-launcher"
