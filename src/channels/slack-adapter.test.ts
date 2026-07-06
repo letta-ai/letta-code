@@ -3257,7 +3257,7 @@ test("slack adapter includes final error details in rich progress streams", asyn
   );
 });
 
-test("slack adapter keeps failed tool rows from failing completed progress streams", async () => {
+test("slack adapter keeps failed tool titles without failing completed progress streams", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -3288,9 +3288,10 @@ test("slack adapter keeps failed tool rows from failing completed progress strea
     sources: [source],
     kind: "tool",
     state: "started",
-    message: "Running command",
-    toolCallId: "call-bash",
-    toolName: "bash",
+    message: "Reading config",
+    toolCallId: "call-read",
+    toolName: "Read",
+    toolTitle: "Reading config.json",
   });
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
@@ -3298,9 +3299,10 @@ test("slack adapter keeps failed tool rows from failing completed progress strea
     sources: [source],
     kind: "tool",
     state: "error",
-    message: "Command exited 1",
-    toolCallId: "call-bash",
-    toolName: "bash",
+    message: "File not found",
+    toolCallId: "call-read",
+    toolName: "Read",
+    toolTitle: "Failed to read config.json",
   });
   await adapter.handleTurnLifecycleEvent?.({
     type: "finished",
@@ -3312,7 +3314,7 @@ test("slack adapter keeps failed tool rows from failing completed progress strea
     channel: "slack",
     accountId: "slack-test-account",
     chatId: "C123",
-    text: "Done — command status was expected.",
+    text: "Done — the missing file was optional.",
     threadId: "1712790000.000050",
   });
 
@@ -3326,13 +3328,13 @@ test("slack adapter keeps failed tool rows from failing completed progress strea
     expect.arrayContaining([
       expect.objectContaining({
         type: "task_update",
-        id: "task_call-bash",
-        title: "Running",
-        status: "error",
+        id: "task_call-read",
+        title: "Failed to read config.json",
+        status: "complete",
       }),
       expect.objectContaining({
         type: "plan_update",
-        title: "Done — command status was expected.",
+        title: "Done — the missing file was optional.",
       }),
     ]),
   );

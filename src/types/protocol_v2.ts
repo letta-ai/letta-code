@@ -557,6 +557,8 @@ export interface UmiLifecycleMessageBase {
 export interface ClientToolStartMessage extends UmiLifecycleMessageBase {
   message_type: "client_tool_start";
   tool_call_id: string;
+  tool_name?: string;
+  tool_args?: string;
 }
 
 export interface ClientToolEndMessage extends UmiLifecycleMessageBase {

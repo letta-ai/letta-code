@@ -719,6 +719,46 @@ export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
     };
   }
 
+  function extractClientToolSummary(
+    record: Record<string, unknown>,
+  ): ToolCallSummary | null {
+    const id = firstNonEmptyString(record.tool_call_id, record.toolCallId);
+    const cacheId = id
+      ? sanitizeChannelProgressIdentifier(id, "tool-call")
+      : undefined;
+    const extractedName = firstNonEmptyString(
+      record.tool_name,
+      record.toolName,
+      record.name,
+    );
+    if (cacheId && extractedName) {
+      namesByToolCallId.set(cacheId, extractedName);
+    }
+    const resolvedName =
+      extractedName ?? (cacheId ? namesByToolCallId.get(cacheId) : undefined);
+    const rawArguments = firstNonEmptyString(
+      record.tool_args,
+      record.toolArgs,
+      record.arguments,
+    );
+    if (cacheId && rawArguments) {
+      argumentsByToolCallId.set(cacheId, rawArguments);
+    }
+    const argumentsText =
+      rawArguments ??
+      (cacheId ? argumentsByToolCallId.get(cacheId) : undefined);
+    if (!cacheId && !resolvedName) {
+      return null;
+    }
+    return {
+      ...(cacheId ? { id: cacheId } : {}),
+      ...(resolvedName
+        ? { name: sanitizeChannelProgressIdentifier(resolvedName, "tool") }
+        : {}),
+      ...(argumentsText ? { argumentsText } : {}),
+    };
+  }
+
   function extractToolCalls(delta: Record<string, unknown>): ToolCallSummary[] {
     const candidates: unknown[] = Array.isArray(delta.tool_calls)
       ? delta.tool_calls
@@ -898,42 +938,58 @@ export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
         return updates;
       }
 
-      case "client_tool_start":
+      case "client_tool_start": {
+        const tool = extractClientToolSummary(record);
+        const toolDetails = tool ? formatToolProgressDetails(tool) : undefined;
+        const toolTitle = tool
+          ? formatToolProgressTitle(tool, "started")
+          : undefined;
         return [
           withRunId(
             {
               kind: "tool",
               state: "started",
               message: "Running tool",
-              ...(typeof record.tool_call_id === "string"
-                ? {
-                    toolCallId: sanitizeChannelProgressIdentifier(
-                      record.tool_call_id,
-                      "tool-call",
-                    ),
-                  }
-                : {}),
+              ...(tool?.id ? { toolCallId: tool.id } : {}),
+              ...(tool?.name ? { toolName: tool.name } : {}),
+              ...(toolDetails ? { toolDetails } : {}),
+              ...(toolTitle ? { toolTitle } : {}),
             },
             runId,
           ),
         ];
+      }
 
       case "client_tool_end": {
         const state = getToolStatus(record);
+        const tool = extractClientToolSummary(record);
+        const accumulatedArgs = tool?.id
+          ? argumentsByToolCallId.get(tool.id)
+          : undefined;
+        if (tool?.id) {
+          argumentsByToolCallId.delete(tool.id);
+          namesByToolCallId.delete(tool.id);
+        }
+        const toolWithAccumulatedArgs =
+          tool && accumulatedArgs
+            ? { ...tool, argumentsText: accumulatedArgs }
+            : tool;
+        const toolDetails = toolWithAccumulatedArgs
+          ? formatToolProgressDetails(toolWithAccumulatedArgs)
+          : undefined;
+        const toolTitle = toolWithAccumulatedArgs
+          ? formatToolProgressTitle(toolWithAccumulatedArgs, state)
+          : undefined;
         return [
           withRunId(
             {
               kind: "tool",
               state,
               message: state === "error" ? "Tool failed" : "Tool finished",
-              ...(typeof record.tool_call_id === "string"
-                ? {
-                    toolCallId: sanitizeChannelProgressIdentifier(
-                      record.tool_call_id,
-                      "tool-call",
-                    ),
-                  }
-                : {}),
+              ...(tool?.id ? { toolCallId: tool.id } : {}),
+              ...(tool?.name ? { toolName: tool.name } : {}),
+              ...(toolDetails ? { toolDetails } : {}),
+              ...(toolTitle ? { toolTitle } : {}),
             },
             runId,
           ),
