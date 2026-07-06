@@ -242,7 +242,87 @@ const SLACK_LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const SLACK_LIFECYCLE_STATE_MAX = 2_000;
 const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
 
+// Threads the agent has sent messages to should auto-subscribe: when a user
+// replies in such a thread without mentioning the agent, the reply is still
+// implicitly addressed to the agent. This TTL controls how long we remember
+// agent-participated threads after the last outbound message.
+const SLACK_AGENT_THREAD_TTL_MS = 24 * 60 * 60 * 1000;
+const SLACK_AGENT_THREAD_MAX = 2_000;
+
 type SlackLifecycleState = "queued" | "completed" | "error" | "cancelled";
+
+/**
+ * Tracks Slack channel threads the agent has sent messages to, so that
+ * inbound replies in those threads are auto-routed without requiring an
+ * explicit @mention. Slack message timestamps are scoped to a channel in Slack
+ * APIs, so the key intentionally includes both the channel id and thread id.
+ * Entries expire after `SLACK_AGENT_THREAD_TTL_MS` and the set is capped at
+ * `SLACK_AGENT_THREAD_MAX`.
+ */
+export type AgentThreadTracker = {
+  remember: (channelId: string, threadId: string) => void;
+  has: (channelId: string, threadId: string) => boolean;
+  clear: () => void;
+};
+
+type AgentThreadTrackerOptions = {
+  now?: () => number;
+  ttlMs?: number;
+  maxEntries?: number;
+};
+
+function buildAgentThreadTrackerKey(
+  channelId: string,
+  threadId: string,
+): string {
+  return `${channelId}:${threadId}`;
+}
+
+export function createAgentThreadTracker(
+  options: AgentThreadTrackerOptions = {},
+): AgentThreadTracker {
+  const threadIds = new Map<string, number>();
+  const now = options.now ?? Date.now;
+  const ttlMs = options.ttlMs ?? SLACK_AGENT_THREAD_TTL_MS;
+  const maxEntries = options.maxEntries ?? SLACK_AGENT_THREAD_MAX;
+
+  function prune(currentTime: number = now()): void {
+    for (const [key, expiresAt] of threadIds) {
+      if (expiresAt <= currentTime) {
+        threadIds.delete(key);
+      }
+    }
+    if (threadIds.size <= maxEntries) {
+      return;
+    }
+    const sorted = Array.from(threadIds.entries()).sort((a, b) => a[1] - b[1]);
+    const overflow = threadIds.size - maxEntries;
+    for (let i = 0; i < overflow; i += 1) {
+      const entry = sorted[i];
+      if (entry) {
+        threadIds.delete(entry[0]);
+      }
+    }
+  }
+
+  return {
+    remember(channelId: string, threadId: string): void {
+      const currentTime = now();
+      prune(currentTime);
+      threadIds.set(
+        buildAgentThreadTrackerKey(channelId, threadId),
+        currentTime + ttlMs,
+      );
+    },
+    has(channelId: string, threadId: string): boolean {
+      prune();
+      return threadIds.has(buildAgentThreadTrackerKey(channelId, threadId));
+    },
+    clear(): void {
+      threadIds.clear();
+    },
+  };
+}
 
 function resolveUploadMimeType(filePath: string): string | undefined {
   switch (extname(filePath).toLowerCase()) {
@@ -501,6 +581,9 @@ export function createSlackAdapter(
   const knownThreadIdsByMessageId = new Map<string, string | null>();
   const knownUserDisplayNames = new Map<string, string>();
   const seenIngressMessageKeys = new Map<string, number>();
+  // Tracks threads the agent has sent messages to so that inbound replies in
+  // those threads are auto-routed without requiring an explicit @mention.
+  const agentThreadTracker = createAgentThreadTracker();
   const lifecycleStateByMessageKey = new Map<
     string,
     { state: SlackLifecycleState; updatedAt: number }
@@ -988,6 +1071,14 @@ export function createSlackAdapter(
       rememberMessageThread(rawMessage.ts, threadId);
       const senderName = await resolveUserName(instance, rawMessage.user);
 
+      // Auto-subscribe: if the user is replying in a thread the agent has
+      // participated in, treat it as implicitly addressed (like a mention).
+      const isAgentThread =
+        chatType === "channel" &&
+        isNonEmptyString(threadId) &&
+        agentThreadTracker.has(channelId, threadId);
+      const effectiveMention = wasMentioned || isAgentThread;
+
       if (chatType === "direct") {
         const seenKey = `${channelId}:${rawMessage.ts}`;
         const wasSeen = markIngressMessageSeen(channelId, rawMessage.ts);
@@ -1057,7 +1148,7 @@ export function createSlackAdapter(
         messageId: rawMessage.ts,
         threadId,
         chatType: "channel",
-        isMention: wasMentioned,
+        isMention: effectiveMention,
         attachments,
         raw: message,
       };
@@ -1066,7 +1157,7 @@ export function createSlackAdapter(
         await dispatchInboundThroughDebouncer({
           inbound,
           raw: rawMessage as SlackDebounceRawInput,
-          opts: { source: "message", wasMentioned },
+          opts: { source: "message", wasMentioned: effectiveMention },
         });
       } catch (error) {
         console.error(
@@ -1332,6 +1423,7 @@ export function createSlackAdapter(
       pendingTopLevelDebounceKeys.clear();
       appMentionRetryKeys.clear();
       appMentionDispatchedKeys.clear();
+      agentThreadTracker.clear();
       console.log("[Slack] App stopped");
     },
 
@@ -1429,7 +1521,19 @@ export function createSlackAdapter(
       }
 
       if (msg.mediaPath) {
-        return uploadSlackFile(slackClient, msg);
+        const result = await uploadSlackFile(slackClient, msg);
+        const outboundThreadId = msg.threadId ?? msg.replyToMessageId ?? null;
+        // Slack's external upload completion returns a file id, not a message
+        // timestamp, so top-level file uploads cannot become tracked thread
+        // roots. Threaded uploads can still auto-subscribe using the explicit
+        // thread id supplied by the caller.
+        if (
+          resolveSlackChatType(msg.chatId) === "channel" &&
+          isNonEmptyString(outboundThreadId)
+        ) {
+          agentThreadTracker.remember(msg.chatId, outboundThreadId);
+        }
+        return result;
       }
 
       const response = await slackClient.chat.postMessage({
@@ -1440,10 +1544,20 @@ export function createSlackAdapter(
           : {}),
       });
 
-      rememberMessageThread(
-        response.ts,
-        msg.threadId ?? msg.replyToMessageId ?? response.ts ?? null,
-      );
+      const outboundThreadId =
+        msg.threadId ?? msg.replyToMessageId ?? response.ts ?? null;
+      rememberMessageThread(response.ts, outboundThreadId);
+
+      // Auto-subscribe: track the thread so future user replies in it are
+      // picked up without requiring an explicit @mention. For top-level
+      // channel posts, the sent message's own ts becomes the thread parent
+      // if someone replies to it.
+      if (
+        resolveSlackChatType(msg.chatId) === "channel" &&
+        isNonEmptyString(outboundThreadId)
+      ) {
+        agentThreadTracker.remember(msg.chatId, outboundThreadId);
+      }
 
       return { messageId: response.ts ?? "" };
     },
@@ -1462,10 +1576,15 @@ export function createSlackAdapter(
           ? { thread_ts: options.replyToMessageId }
           : {}),
       });
-      rememberMessageThread(
-        response.ts,
-        options?.replyToMessageId ?? response.ts ?? null,
-      );
+      const outboundThreadId = options?.replyToMessageId ?? response.ts ?? null;
+      rememberMessageThread(response.ts, outboundThreadId);
+
+      if (
+        resolveSlackChatType(chatId) === "channel" &&
+        isNonEmptyString(outboundThreadId)
+      ) {
+        agentThreadTracker.remember(chatId, outboundThreadId);
+      }
     },
 
     async handleControlRequestEvent(
@@ -1480,10 +1599,16 @@ export function createSlackAdapter(
           ? { thread_ts: event.source.threadId ?? event.source.messageId }
           : {}),
       });
-      rememberMessageThread(
-        response.ts,
-        event.source.threadId ?? event.source.messageId ?? response.ts ?? null,
-      );
+      const outboundThreadId =
+        event.source.threadId ?? event.source.messageId ?? response.ts ?? null;
+      rememberMessageThread(response.ts, outboundThreadId);
+
+      if (
+        resolveSlackChatType(event.source.chatId) === "channel" &&
+        isNonEmptyString(outboundThreadId)
+      ) {
+        agentThreadTracker.remember(event.source.chatId, outboundThreadId);
+      }
     },
 
     async prepareInboundMessage(

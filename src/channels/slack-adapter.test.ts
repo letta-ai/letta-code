@@ -581,6 +581,166 @@ test("slack adapter forwards threaded channel replies as channel input", async (
   );
 });
 
+test("slack adapter auto-routes unmentioned replies in agent-participated threads", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "slack",
+    chatId: "C123",
+    text: "agent reply",
+    threadId: "1712790000.000050",
+  });
+
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      user: "U123",
+      text: "<@UOTHER> can you check this?",
+      ts: "1712800000.000100",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "<@UOTHER> can you check this?",
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: true,
+    }),
+  );
+});
+
+test("slack adapter scopes agent-thread auto-routing by channel", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "slack",
+    chatId: "C123",
+    text: "agent reply",
+    threadId: "1712790000.000050",
+  });
+
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C999",
+      user: "U123",
+      text: "same timestamp, different channel",
+      ts: "1712800000.000100",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "slack",
+      chatId: "C999",
+      text: "same timestamp, different channel",
+      threadId: "1712790000.000050",
+      isMention: false,
+    }),
+  );
+});
+
+test("slack adapter auto-routes replies after threaded file uploads", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "letta-slack-upload-"));
+  const mediaPath = join(tempDir, "chart.png");
+  await writeFile(mediaPath, "fake-image-data");
+
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "slack",
+    chatId: "C123",
+    text: "latest chart",
+    mediaPath,
+    fileName: "chart.png",
+    title: "Chart",
+    threadId: "1712790000.000050",
+  });
+
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      user: "U123",
+      text: "thanks for the file",
+      ts: "1712800000.000100",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "slack",
+      chatId: "C123",
+      text: "thanks for the file",
+      threadId: "1712790000.000050",
+      isMention: true,
+    }),
+  );
+});
+
 test("slack adapter hydrates prior Slack thread context, including bot-authored entries, on the first routed turn", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
