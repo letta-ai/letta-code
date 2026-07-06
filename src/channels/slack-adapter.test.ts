@@ -2474,6 +2474,8 @@ test("slack adapter anchors direct message progress to the inbound message", asy
         title: "Read a file",
       },
     ],
+    markdown_text:
+      "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
   });
   expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
@@ -3260,10 +3262,9 @@ test("slack adapter includes final error details in rich progress streams", asyn
         title: "Failed",
       }),
     ]),
+    markdown_text:
+      "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
   });
-  expect(JSON.stringify(writeClient?.chat.stopStream.mock.calls)).not.toContain(
-    "app.letta.com",
-  );
 });
 
 test("slack adapter keeps failed tool titles without failing completed progress streams", async () => {
@@ -3449,6 +3450,8 @@ test("slack adapter shows and finalizes a placeholder row for no-tool turns", as
         title: "Completed",
       },
     ],
+    markdown_text:
+      "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
   });
   const statusCalls =
     (writeClient?.assistant.threads.setStatus.mock.calls as Array<
