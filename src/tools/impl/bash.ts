@@ -22,6 +22,8 @@ import { spawnWithLauncher } from "./shell-runner.js";
 import { applyShellSandbox } from "./shell-sandbox.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
+import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
+import { formatTaskNotification } from "@/utils/task-notifications.js";
 
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
@@ -177,6 +179,7 @@ interface BashArgs {
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  parentScope?: { agentId: string; conversationId: string };
 }
 
 interface BashResult {
@@ -289,17 +292,47 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       // Also write to output file (prefixed with [stderr])
       appendToOutputFile(outputFile, `[stderr] ${text}`);
     });
+
+    const emitTaskNotification = (
+      status: "completed" | "failed",
+      result: string,
+    ) => {
+      const durationMs = Math.max(
+        0,
+        Date.now() - bgProcess.startTime.getTime(),
+      );
+      const notificationXml = formatTaskNotification({
+        taskId: bashId,
+        status,
+        summary: `Bash task "${command.slice(0, 30)}${command.length > 30 ? "..." : ""}" ${status}`,
+        result,
+        outputFile,
+        usage: { durationMs },
+      });
+      addToMessageQueue({
+        kind: "task_notification",
+        text: notificationXml,
+        agentId: args.parentScope?.agentId,
+        conversationId: args.parentScope?.conversationId,
+      });
+    };
+
     childProcess.on("exit", (code: number | null) => {
       bgProcess.status = code === 0 ? "completed" : "failed";
       bgProcess.exitCode = code;
       appendToOutputFile(outputFile, `\n[exit code: ${code}]\n`);
       scheduleBackgroundProcessCleanup(bashId);
+      emitTaskNotification(
+        bgProcess.status,
+        `Exit code: ${code}\nFull output available in transcript file.`,
+      );
     });
     childProcess.on("error", (err: Error) => {
       bgProcess.status = "failed";
       appendBackgroundProcessOutput(bgProcess, "stderr", err.message);
       appendToOutputFile(outputFile, `\n[error] ${err.message}\n`);
       scheduleBackgroundProcessCleanup(bashId);
+      emitTaskNotification("failed", `Error: ${err.message}`);
     });
     if (timeout && timeout > 0) {
       const timeoutHandle = setTimeout(() => {
@@ -313,6 +346,10 @@ export async function bash(args: BashArgs): Promise<BashResult> {
           );
           appendToOutputFile(outputFile, `\n[timeout after ${timeout}ms]\n`);
           scheduleBackgroundProcessCleanup(bashId);
+          emitTaskNotification(
+            "failed",
+            `Command timed out after ${timeout}ms`,
+          );
         }
       }, timeout);
       unrefTimer(timeoutHandle);
