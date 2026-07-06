@@ -2063,6 +2063,98 @@ test("slack adapter updates Skill task title when the loaded skill arrives", asy
   });
 });
 
+test("slack adapter uses rich progress tool titles without duplicating details", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Preparing tool: Edit",
+    toolCallId: "call-edit",
+    toolName: "Edit",
+    toolDetails: "/repo/src/map.rs",
+    toolTitle: "Updating map.rs",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "completed",
+    message: "Tool finished",
+    toolCallId: "call-edit",
+    toolName: "Edit",
+    toolDetails: "/repo/src/map.rs",
+    toolTitle: "Updated map.rs +2 -25",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
+    channel: "C123",
+    thread_ts: "1712790000.000050",
+    task_display_mode: "plan",
+    recipient_user_id: "U123",
+    recipient_team_id: "T123",
+    chunks: [
+      {
+        type: "plan_update",
+        title: "Updating map.rs",
+      },
+      {
+        type: "task_update",
+        id: "task_call-edit",
+        title: "Updating map.rs",
+        status: "in_progress",
+      },
+    ],
+  });
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: expect.arrayContaining([
+      expect.objectContaining({
+        type: "task_update",
+        id: "task_call-edit",
+        title: "Updated map.rs +2 -25",
+        status: "complete",
+      }),
+    ]),
+  });
+  const appendCalls = writeClient?.chat.appendStream.mock
+    .calls as unknown as Array<[{ chunks?: Array<Record<string, unknown>> }]>;
+  const appendChunks = appendCalls.flatMap(([call]) => call.chunks ?? []);
+  expect(appendChunks).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ details: "/repo/src/map.rs" }),
+    ]),
+  );
+});
+
 test("slack adapter keeps rendered task details stable", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -2121,12 +2213,12 @@ test("slack adapter keeps rendered task details stable", async () => {
     chunks: [
       {
         type: "plan_update",
-        title: "Running",
+        title: "find locales -type f",
       },
       {
         type: "task_update",
         id: "task_call-1",
-        title: "Running",
+        title: "find locales -type f",
         status: "in_progress",
         details: "find locales -type f",
       },

@@ -1,5 +1,8 @@
+import { basename } from "node:path";
 import {
-  getDisplayToolName,
+  isFileEditTool,
+  isFileReadTool,
+  isFileWriteTool,
   isGlobTool,
   isSearchTool,
   isShellTool,
@@ -247,12 +250,230 @@ export function isSkillToolName(name: string | undefined): boolean {
 }
 
 function isFilePathToolName(name: string): boolean {
-  const displayName = getDisplayToolName(name);
-  return (
-    displayName === "Read" ||
-    displayName === "Update" ||
-    displayName === "Write"
+  return isFileReadTool(name) || isFileWriteTool(name) || isFileEditTool(name);
+}
+
+function getFileToolKind(name: string): "read" | "write" | "update" | null {
+  if (isFileReadTool(name)) {
+    return "read";
+  }
+  if (isFileWriteTool(name)) {
+    return "write";
+  }
+  if (isFileEditTool(name)) {
+    return "update";
+  }
+  return null;
+}
+
+function countProgressLines(value: string | undefined): number {
+  return value ? value.split("\n").length : 0;
+}
+
+type LineChangeSummary = {
+  additions?: number;
+  deletions?: number;
+};
+
+function formatLineChangeSummary(summary: LineChangeSummary | null): string {
+  if (!summary) {
+    return "";
+  }
+  const parts: string[] = [];
+  if (summary.additions !== undefined) {
+    parts.push(`+${summary.additions}`);
+  }
+  if (summary.deletions !== undefined) {
+    parts.push(`-${summary.deletions}`);
+  }
+  return parts.length > 0 ? ` ${parts.join(" ")}` : "";
+}
+
+function extractFilePathFromArguments(
+  parsedArguments: Record<string, unknown>,
+): string | undefined {
+  return firstNonEmptyString(
+    parsedArguments.file_path,
+    parsedArguments.filePath,
+    parsedArguments.path,
   );
+}
+
+function formatProgressFileName(
+  filePath: string | undefined,
+): string | undefined {
+  if (!filePath) {
+    return undefined;
+  }
+  const fileName = basename(filePath) || filePath;
+  return (
+    sanitizeChannelProgressText(fileName, MAX_PROGRESS_DETAILS_LENGTH) ||
+    undefined
+  );
+}
+
+function getEditLineChangeSummary(
+  parsedArguments: Record<string, unknown>,
+): LineChangeSummary | null {
+  const oldString = firstNonEmptyString(parsedArguments.old_string);
+  const newString = firstNonEmptyString(parsedArguments.new_string);
+  if (oldString === undefined || newString === undefined) {
+    return null;
+  }
+  return {
+    additions: countProgressLines(newString),
+    deletions: countProgressLines(oldString),
+  };
+}
+
+function getMultiEditLineChangeSummary(
+  parsedArguments: Record<string, unknown>,
+): LineChangeSummary | null {
+  if (!Array.isArray(parsedArguments.edits)) {
+    return null;
+  }
+  let additions = 0;
+  let deletions = 0;
+  let counted = false;
+  for (const edit of parsedArguments.edits) {
+    const record = asRecord(edit);
+    if (!record) {
+      continue;
+    }
+    const oldString = firstNonEmptyString(record.old_string);
+    const newString = firstNonEmptyString(record.new_string);
+    if (oldString === undefined || newString === undefined) {
+      continue;
+    }
+    additions += countProgressLines(newString);
+    deletions += countProgressLines(oldString);
+    counted = true;
+  }
+  return counted ? { additions, deletions } : null;
+}
+
+function getWriteLineChangeSummary(
+  parsedArguments: Record<string, unknown>,
+): LineChangeSummary | null {
+  const content = firstNonEmptyString(parsedArguments.content);
+  if (content === undefined) {
+    return null;
+  }
+  return {
+    additions: countProgressLines(content),
+  };
+}
+
+function getFileLineChangeSummary(
+  name: string,
+  parsedArguments: Record<string, unknown>,
+): LineChangeSummary | null {
+  if (isFileWriteTool(name)) {
+    return getWriteLineChangeSummary(parsedArguments);
+  }
+  if (name === "MultiEdit" || name === "multi_edit") {
+    return getMultiEditLineChangeSummary(parsedArguments);
+  }
+  if (isFileEditTool(name)) {
+    return getEditLineChangeSummary(parsedArguments);
+  }
+  return null;
+}
+
+function getFileToolVerb(
+  kind: "read" | "write" | "update",
+  status: "started" | "completed" | "error",
+): string {
+  if (status === "error") {
+    if (kind === "read") {
+      return "Failed to read";
+    }
+    if (kind === "write") {
+      return "Failed to write";
+    }
+    return "Failed to update";
+  }
+  if (status === "started") {
+    if (kind === "read") {
+      return "Reading";
+    }
+    if (kind === "write") {
+      return "Writing";
+    }
+    return "Updating";
+  }
+  if (kind === "read") {
+    return "Read";
+  }
+  if (kind === "write") {
+    return "Wrote";
+  }
+  return "Updated";
+}
+
+function formatFileToolProgressTitle(
+  name: string,
+  parsedArguments: Record<string, unknown>,
+  status: "started" | "completed" | "error",
+): string | undefined {
+  const kind = getFileToolKind(name);
+  if (!kind) {
+    return undefined;
+  }
+  const fileName = formatProgressFileName(
+    extractFilePathFromArguments(parsedArguments),
+  );
+  if (!fileName) {
+    return undefined;
+  }
+  const stats =
+    status === "completed"
+      ? formatLineChangeSummary(getFileLineChangeSummary(name, parsedArguments))
+      : "";
+  return `${getFileToolVerb(kind, status)} ${fileName}${stats}`;
+}
+
+function formatFragmentedFileToolProgressTitle(
+  summary: ToolCallSummary,
+  status: "started" | "completed" | "error",
+): string | undefined {
+  if (!summary.name || !summary.argumentsText) {
+    return undefined;
+  }
+  const kind = getFileToolKind(summary.name);
+  if (!kind) {
+    return undefined;
+  }
+  const filePathMatch = summary.argumentsText.match(
+    /"(?:file_path|filePath|path)"\s*:\s*"([^"]+)"/,
+  );
+  const fileName = formatProgressFileName(filePathMatch?.[1]);
+  if (!fileName) {
+    return undefined;
+  }
+  return `${getFileToolVerb(kind, status)} ${fileName}`;
+}
+
+function formatToolProgressTitle(
+  summary: ToolCallSummary,
+  status: "started" | "completed" | "error",
+): string | undefined {
+  if (!summary.name || !summary.argumentsText) {
+    return undefined;
+  }
+
+  const parsedArguments = parseToolArguments(summary.argumentsText);
+  if (parsedArguments) {
+    if (isFilePathToolName(summary.name)) {
+      return formatFileToolProgressTitle(summary.name, parsedArguments, status);
+    }
+    return undefined;
+  }
+
+  if (isFilePathToolName(summary.name)) {
+    return formatFragmentedFileToolProgressTitle(summary, status);
+  }
+  return undefined;
 }
 
 function formatSkillProgressDetailsFromArguments(
@@ -563,6 +784,7 @@ export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
     const updates: ChannelTurnProgressUpdate[] = [];
     for (const tool of tools) {
       const toolDetails = formatToolProgressDetails(tool);
+      const toolTitle = formatToolProgressTitle(tool, "started");
       updates.push(
         withRunId(
           {
@@ -572,6 +794,7 @@ export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
             ...(tool.id ? { toolCallId: tool.id } : {}),
             ...(tool.name ? { toolName: tool.name } : {}),
             ...(toolDetails ? { toolDetails } : {}),
+            ...(toolTitle ? { toolTitle } : {}),
           },
           runId,
         ),
@@ -653,6 +876,10 @@ export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
           const toolDetails = formatToolProgressDetails(
             toolWithAccumulatedArgs,
           );
+          const toolTitle = formatToolProgressTitle(
+            toolWithAccumulatedArgs,
+            status,
+          );
           updates.push(
             withRunId(
               {
@@ -662,6 +889,7 @@ export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
                 ...(summary.id ? { toolCallId: summary.id } : {}),
                 ...(summary.name ? { toolName: summary.name } : {}),
                 ...(toolDetails ? { toolDetails } : {}),
+                ...(toolTitle ? { toolTitle } : {}),
               },
               runId,
             ),

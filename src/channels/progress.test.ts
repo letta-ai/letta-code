@@ -347,6 +347,93 @@ test("channel progress previews fetch_webpage URLs", () => {
   ]);
 });
 
+test("channel progress builds file action titles with line counts", () => {
+  const builder = createChannelTurnProgressBuilder();
+  builder.buildUpdates({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        tool_call_id: "call-1",
+        name: "Edit",
+        arguments: JSON.stringify({
+          file_path: "/repo/src/map.rs",
+          old_string: "a\nb\nc",
+          new_string: "x\ny",
+        }),
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(
+    builder.buildUpdates({
+      message_type: "tool_return_message",
+      run_id: "run-1",
+      tool_returns: [
+        {
+          tool_call_id: "call-1",
+          status: "success",
+          tool_return: "ok",
+        },
+      ],
+    } as unknown as StreamDelta),
+  ).toEqual([
+    {
+      kind: "tool",
+      state: "completed",
+      message: "Tool finished",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Edit",
+      toolDetails: "/repo/src/map.rs",
+      toolTitle: "Updated map.rs +2 -3",
+    },
+  ]);
+});
+
+test("channel progress builds failed file titles", () => {
+  const builder = createChannelTurnProgressBuilder();
+  builder.buildUpdates({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        tool_call_id: "call-1",
+        name: "Write",
+        arguments: JSON.stringify({
+          file_path: "/repo/src/lib.rs",
+          content: "new content",
+        }),
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(
+    builder.buildUpdates({
+      message_type: "tool_return_message",
+      run_id: "run-1",
+      tool_returns: [
+        {
+          tool_call_id: "call-1",
+          status: "error",
+          tool_return: "failed",
+        },
+      ],
+    } as unknown as StreamDelta),
+  ).toEqual([
+    {
+      kind: "tool",
+      state: "error",
+      message: "Tool failed",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Write",
+      toolDetails: "/repo/src/lib.rs",
+      toolTitle: "Failed to write lib.rs",
+    },
+  ]);
+});
+
 test("channel progress uses Bash descriptions as task details", () => {
   const builder = createChannelTurnProgressBuilder();
   const updates = builder.buildUpdates({
