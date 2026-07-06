@@ -35,7 +35,8 @@ describe("dream subcommand", () => {
       const output = captured.logs.join("\n");
       expect(output).toContain("Usage:");
       expect(output).toContain("letta dream");
-      expect(output).toContain("--agent");
+      expect(output).toContain("--memory");
+      expect(output).toContain("--from");
       expect(output).toContain("--instruction");
     } finally {
       captured.restore();
