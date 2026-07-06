@@ -20,7 +20,7 @@ import {
   normalizeStreamErrorTypeToStopReason,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
-  shouldRetryRunMetadataError,
+  shouldRetryPostStreamRunError,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import { createBuffers } from "@/cli/helpers/accumulator";
@@ -123,10 +123,6 @@ export async function isRetriablePostStopError(
   lastRunId: string | null | undefined,
   fallbackDetail?: string | null,
 ): Promise<boolean> {
-  if (stopReason === "llm_api_error") {
-    return true;
-  }
-
   const nonRetriableReasons: StopReasonType[] = [
     "cancelled",
     "requires_approval",
@@ -142,7 +138,10 @@ export async function isRetriablePostStopError(
   }
 
   if (!lastRunId) {
-    return shouldRetryRunMetadataError(undefined, fallbackDetail);
+    return shouldRetryPostStreamRunError({
+      stopReason,
+      detail: fallbackDetail,
+    });
   }
 
   try {
@@ -161,17 +160,19 @@ export async function isRetriablePostStopError(
       | undefined;
 
     const errorType = metaError?.error_type ?? metaError?.error?.error_type;
-    const detail = metaError?.detail ?? metaError?.error?.detail ?? "";
+    const detail = metaError?.detail ?? metaError?.error?.detail;
     const retryable = metaError?.retryable ?? metaError?.error?.retryable;
-    if (retryable === false) {
-      return false;
-    }
-    if (retryable === true) {
-      return true;
-    }
-    return shouldRetryRunMetadataError(errorType, detail);
+    return shouldRetryPostStreamRunError({
+      stopReason,
+      errorType,
+      detail,
+      retryable,
+    });
   } catch {
-    return shouldRetryRunMetadataError(undefined, fallbackDetail);
+    return shouldRetryPostStreamRunError({
+      stopReason,
+      detail: fallbackDetail,
+    });
   }
 }
 

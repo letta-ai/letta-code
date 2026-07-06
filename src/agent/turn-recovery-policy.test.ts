@@ -17,6 +17,7 @@ import {
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
   shouldAttemptApprovalRecovery,
+  shouldRetryPostStreamRunError,
   shouldRetryPreStreamTransientError,
   shouldRetryRunMetadataError,
 } from "@/agent/turn-recovery-policy";
@@ -238,6 +239,11 @@ describe("provider detail retry helpers", () => {
     expect(
       isNonRetryableProviderErrorDetail("OpenAI API error: invalid API key"),
     ).toBe(true);
+    expect(
+      isNonRetryableProviderErrorDetail(
+        "Z.ai Chat Completions API stream failed (401): Authentication Failed",
+      ),
+    ).toBe(true);
     expect(isNonRetryableProviderErrorDetail("Error code: 401")).toBe(true);
   });
 
@@ -266,6 +272,24 @@ describe("provider detail retry helpers", () => {
         "You've reached your hosted model usage limit.",
       ),
     ).toBe(false);
+  });
+
+  test("post-stream llm_api_error honors explicit non-retryable metadata", () => {
+    expect(
+      shouldRetryPostStreamRunError({
+        stopReason: "llm_api_error",
+        errorType: "llm_authentication",
+        detail:
+          "Z.ai Chat Completions API stream failed (401): Authentication Failed",
+        retryable: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRetryPostStreamRunError({
+        stopReason: "llm_api_error",
+        detail: "unclassified provider transport failure",
+      }),
+    ).toBe(true);
   });
 
   test("OpenRouter streaming incomplete chunked reads are retryable", () => {
