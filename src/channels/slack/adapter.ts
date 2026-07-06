@@ -626,16 +626,18 @@ function buildTerminalSlackStreamChunks(
   // the full final state — appendStream may not render in real-time,
   // so the block might only populate at stopStream.
   for (const task of entry.toolTasksById?.values() ?? []) {
-    const terminalTask =
-      task.status === "complete" || task.status === "error"
-        ? task
-        : {
-            ...task,
-            title: formatSlackTaskTitleForStatus(task, terminalTaskStatus),
-            status: terminalTaskStatus,
-          };
+    const shouldPreserveTerminalTask =
+      task.status === "complete" ||
+      (task.status === "error" && terminalTaskStatus !== "complete");
+    const terminalTask = shouldPreserveTerminalTask
+      ? task
+      : {
+          ...task,
+          title: formatSlackTaskTitleForStatus(task, terminalTaskStatus),
+          status: terminalTaskStatus,
+        };
     rawPending.push(toSlackTaskUpdateChunk(terminalTask));
-    if (task.status !== "complete" && task.status !== "error") {
+    if (!shouldPreserveTerminalTask) {
       entry.toolTasksById?.set(task.id, terminalTask);
     }
   }

@@ -494,6 +494,65 @@ test("channel progress uses exec_command descriptions as task details", () => {
   ]);
 });
 
+test("channel progress labels client-side tool execution events", () => {
+  const builder = createChannelTurnProgressBuilder();
+  const updates = builder.buildUpdates({
+    message_type: "client_tool_start",
+    run_id: "run-1",
+    tool_call_id: "call-1",
+    tool_name: "Read",
+    tool_args: JSON.stringify({
+      file_path: "/repo/README.md",
+    }),
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Running tool",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Read",
+      toolDetails: "/repo/README.md",
+      toolTitle: "Reading README.md",
+    },
+  ]);
+});
+
+test("channel progress completes client-side tool rows from cached metadata", () => {
+  const builder = createChannelTurnProgressBuilder();
+  builder.buildUpdates({
+    message_type: "client_tool_start",
+    run_id: "run-1",
+    tool_call_id: "call-1",
+    tool_name: "Read",
+    tool_args: JSON.stringify({
+      file_path: "/repo/README.md",
+    }),
+  } as unknown as StreamDelta);
+
+  expect(
+    builder.buildUpdates({
+      message_type: "client_tool_end",
+      run_id: "run-1",
+      tool_call_id: "call-1",
+      status: "success",
+    } as unknown as StreamDelta),
+  ).toEqual([
+    {
+      kind: "tool",
+      state: "completed",
+      message: "Tool finished",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Read",
+      toolDetails: "/repo/README.md",
+      toolTitle: "Read README.md",
+    },
+  ]);
+});
+
 test("channel progress waits for streamed exec_command descriptions", () => {
   const builder = createChannelTurnProgressBuilder();
   expect(
