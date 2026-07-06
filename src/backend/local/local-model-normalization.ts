@@ -97,6 +97,24 @@ export function supportedConversationModelSettingsFromBody(
   return Object.keys(next).length > 0 ? next : modelSettings;
 }
 
+export function conversationContextWindowLimitFromBody(
+  bodyRecord: Record<string, unknown>,
+): number | undefined {
+  if (typeof bodyRecord.context_window_limit === "number") {
+    return bodyRecord.context_window_limit;
+  }
+  // Conversation create requests often carry the limit only inside
+  // model_settings (the desktop draft flow sends it that way). Lift it to the
+  // top-level field so the stored record keeps the agent's configured window
+  // instead of falling back to the 128k default.
+  const modelSettings = isRecord(bodyRecord.model_settings)
+    ? bodyRecord.model_settings
+    : undefined;
+  return typeof modelSettings?.context_window_limit === "number"
+    ? modelSettings.context_window_limit
+    : undefined;
+}
+
 export function normalizeStoredLocalModelRecord<
   T extends { model?: string | null; model_settings?: unknown },
 >(record: T): T {

@@ -252,6 +252,90 @@ describe("local backend pi transcript", () => {
     }
   });
 
+  test("new conversations inherit context_window_limit nested in model_settings", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-conversation-context-window-"),
+    );
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+      const agent = await backend.createAgent({
+        name: "Local",
+        model: "anthropic/claude-sonnet-4-6",
+        model_settings: {
+          provider_type: "anthropic",
+          context_window_limit: 1000000,
+        },
+      } as never);
+
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+        model: "anthropic/claude-sonnet-4-6",
+        model_settings: {
+          provider_type: "anthropic",
+          context_window_limit: 1000000,
+          max_tokens: 131072,
+        },
+      } as never);
+
+      expect(
+        (conversation as unknown as { context_window_limit?: number })
+          .context_window_limit,
+      ).toBe(1000000);
+
+      const retrieved = (await backend.retrieveConversation(
+        conversation.id,
+      )) as unknown as { context_window_limit?: number };
+      expect(retrieved.context_window_limit).toBe(1000000);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("top-level context_window_limit wins over the model_settings value", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-conversation-context-window-top-"),
+    );
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+      const agent = await backend.createAgent({ name: "Local" } as never);
+
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+        context_window_limit: 200000,
+        model_settings: { context_window_limit: 1000000 },
+      } as never);
+
+      expect(
+        (conversation as unknown as { context_window_limit?: number })
+          .context_window_limit,
+      ).toBe(200000);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("conversations without any context window limit leave the field unset", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-conversation-context-window-none-"),
+    );
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+      const agent = await backend.createAgent({ name: "Local" } as never);
+
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+        model_settings: { provider_type: "anthropic" },
+      } as never);
+
+      expect(
+        (conversation as unknown as { context_window_limit?: number })
+          .context_window_limit,
+      ).toBeUndefined();
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("refreshes conversation metadata changed by another local backend process", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-external-conversation-update-"),
