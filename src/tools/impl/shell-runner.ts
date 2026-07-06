@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
+import { existsSync, statSync } from "node:fs";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 
 export class ShellExecutionError extends Error {
   code?: string;
   executable?: string;
+  cwd?: string;
 }
 
 export type ShellSpawnOptions = {
@@ -15,6 +17,33 @@ export type ShellSpawnOptions = {
 };
 
 const ABORT_KILL_TIMEOUT_MS = 2000;
+
+function isUsableDirectory(dirPath: string): boolean {
+  try {
+    return existsSync(dirPath) && statSync(dirPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function buildSpawnError(
+  err: NodeJS.ErrnoException,
+  executable: string,
+  cwd: string,
+): ShellExecutionError {
+  let message = `Failed to execute command: ${err?.message || "unknown error"}`;
+  if (err?.code === "ENOENT") {
+    message = isUsableDirectory(cwd)
+      ? `Executable not found: ${executable}`
+      : `Working directory not found: ${cwd}`;
+  }
+
+  const execError = new ShellExecutionError(message);
+  execError.code = err?.code;
+  execError.executable = executable;
+  execError.cwd = cwd;
+  return execError;
+}
 
 /**
  * Spawn a command with a specific launcher.
@@ -28,6 +57,17 @@ export function spawnWithLauncher(
     const [executable, ...args] = launcher;
     if (!executable) {
       reject(new ShellExecutionError("Executable is required"));
+      return;
+    }
+
+    if (!isUsableDirectory(options.cwd)) {
+      reject(
+        buildSpawnError(
+          { code: "ENOENT" } as NodeJS.ErrnoException,
+          executable,
+          options.cwd,
+        ),
+      );
       return;
     }
 
@@ -112,14 +152,7 @@ export function spawnWithLauncher(
         options.signal.removeEventListener("abort", abortHandler);
       }
 
-      const execError = new ShellExecutionError(
-        err?.code === "ENOENT"
-          ? `Executable not found: ${executable}`
-          : `Failed to execute command: ${err?.message || "unknown error"}`,
-      );
-      execError.code = err?.code;
-      execError.executable = executable;
-      reject(execError);
+      reject(buildSpawnError(err, executable, options.cwd));
     });
 
     childProcess.on("close", (code) => {

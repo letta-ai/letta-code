@@ -1,4 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import type { SkillSource } from "./agent/skills";
 import type { MessageChannelToolDiscoveryScope } from "./channels/message-tool";
 import type { ChannelTurnSource } from "./channels/types";
@@ -76,10 +78,62 @@ export function updateRuntimeContext(
   );
 }
 
+function isUsableDirectory(dirPath: string | null | undefined): boolean {
+  if (typeof dirPath !== "string" || dirPath.length === 0) {
+    return false;
+  }
+
+  try {
+    return existsSync(dirPath) && statSync(dirPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function getProcessWorkingDirectory(): string | null {
+  try {
+    return process.cwd();
+  } catch {
+    return null;
+  }
+}
+
+function getFallbackWorkingDirectory(): string {
+  const fallback = [
+    process.env.USER_CWD,
+    getProcessWorkingDirectory(),
+    homedir(),
+    process.platform === "win32" ? undefined : "/",
+  ].find(isUsableDirectory);
+
+  if (fallback) {
+    return fallback;
+  }
+
+  // Extremely defensive fallback for pathological environments where every
+  // candidate disappeared. The caller will still surface a clear cwd error.
+  return process.platform === "win32" ? "C:\\" : "/";
+}
+
 export function getCurrentWorkingDirectory(): string {
-  const workingDirectory = runtimeContextStorage.getStore()?.workingDirectory;
-  if (typeof workingDirectory === "string" && workingDirectory.length > 0) {
+  const runtimeContext = runtimeContextStorage.getStore();
+  const workingDirectory = runtimeContext?.workingDirectory;
+  if (
+    typeof workingDirectory === "string" &&
+    isUsableDirectory(workingDirectory)
+  ) {
     return workingDirectory;
   }
-  return process.env.USER_CWD || process.cwd();
+
+  const fallback = getFallbackWorkingDirectory();
+  if (
+    runtimeContext &&
+    typeof workingDirectory === "string" &&
+    workingDirectory.length > 0 &&
+    workingDirectory !== fallback
+  ) {
+    runtimeContext.workingDirectory = fallback;
+  }
+
+  return fallback;
 }

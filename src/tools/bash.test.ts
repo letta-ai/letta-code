@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { bash } from "@/tools/impl/bash";
+import { bash, spawnCommand } from "@/tools/impl/bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
 
 async function runBashInTemp(
@@ -49,6 +49,53 @@ describe("Bash tool", () => {
     });
 
     expect(result.content[0]?.text).toContain("error message");
+  });
+
+  test("recovers when runtime working directory was deleted mid-turn", async () => {
+    const fallbackDir = await mkdtemp(
+      path.join(tmpdir(), "letta-bash-fallback-"),
+    );
+    const deletedDir = await mkdtemp(
+      path.join(tmpdir(), "letta-bash-deleted-"),
+    );
+    await rm(deletedDir, { recursive: true, force: true });
+
+    const originalUserCwd = process.env.USER_CWD;
+    process.env.USER_CWD = fallbackDir;
+
+    try {
+      const result = await runWithRuntimeContext(
+        { workingDirectory: deletedDir },
+        () =>
+          bash({
+            command: 'node -e "console.log(process.cwd())"',
+            description: "Test missing cwd recovery",
+          }),
+      );
+
+      expect(result.status).toBe("success");
+      expect(result.content[0]?.text).toContain(fallbackDir);
+      expect(result.content[0]?.text).not.toContain("Executable not found");
+    } finally {
+      if (originalUserCwd === undefined) delete process.env.USER_CWD;
+      else process.env.USER_CWD = originalUserCwd;
+      await rm(fallbackDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reports missing explicit cwd instead of missing shell", async () => {
+    const missingDir = path.join(
+      tmpdir(),
+      `letta-bash-missing-${Date.now()}-${Math.random()}`,
+    );
+
+    await expect(
+      spawnCommand("node -e \"console.log('unused')\"", {
+        cwd: missingDir,
+        env: process.env,
+        timeout: 1000,
+      }),
+    ).rejects.toThrow(`Working directory not found: ${missingDir}`);
   });
 
   test("returns error for failed command", async () => {
