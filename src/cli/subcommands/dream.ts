@@ -14,6 +14,8 @@ Options:
                               last-used agent for the current server)
   --conv <id>                 Conversation transcript to process
                               (default: "default")
+  --timeout <seconds>         Fail if the reflection pass has not completed
+                              in this many seconds (default: 1500)
   -i, --instruction <text>    Additional instruction for the reflection pass
   --json                      Emit machine-readable JSON output
   -h, --help                  Show this help
@@ -30,9 +32,12 @@ const DREAM_OPTIONS = {
   help: { type: "boolean", short: "h" },
   agent: { type: "string" },
   conv: { type: "string" },
+  timeout: { type: "string" },
   instruction: { type: "string", short: "i" },
   json: { type: "boolean" },
 } as const;
+
+const DEFAULT_TIMEOUT_SECONDS = 1500;
 
 function parseDreamArgs(argv: string[]) {
   return parseArgs({
@@ -76,6 +81,15 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
   }
 
   const asJson = Boolean(parsed.values.json);
+
+  let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
+  if (parsed.values.timeout) {
+    timeoutSeconds = Number.parseInt(parsed.values.timeout, 10);
+    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
+      console.error(`Error: Invalid --timeout "${parsed.values.timeout}"`);
+      return 1;
+    }
+  }
 
   await settingsManager.initialize();
 
@@ -164,7 +178,26 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     console.log(`Processing transcript: ${result.payloadPath}`);
   }
 
-  const outcome = await completion;
+  // The completion promise resolves via onCompletionMessage. If the launcher's
+  // onComplete path throws before reaching that callback (e.g. finalize or
+  // recompile fails), the subagent task swallows the error and the callback
+  // never fires — so cap the wait: an unattended invocation must always exit.
+  let timedOut = false;
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<DreamCompletion>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      timedOut = true;
+      resolve({
+        success: false,
+        error: "timeout",
+        message: `Reflection pass did not complete within ${timeoutSeconds}s.`,
+      });
+    }, timeoutSeconds * 1000);
+  });
+  const outcome = await Promise.race([completion, timeout]);
+  if (timeoutHandle !== undefined) {
+    clearTimeout(timeoutHandle);
+  }
 
   if (asJson) {
     emitJson({
@@ -172,6 +205,7 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
       success: outcome.success,
       message: outcome.message,
       ...(outcome.error ? { error: outcome.error } : {}),
+      ...(timedOut ? { timedOut: true } : {}),
       agentId,
       conversationId,
       transcriptPath: result.payloadPath,
