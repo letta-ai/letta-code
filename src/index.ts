@@ -174,6 +174,7 @@ USAGE
   letta --upgrade       Alias for \`letta update\`
   letta memory ...      Memory filesystem subcommands
   letta agents ...      Agents subcommands (JSON-only)
+  letta environments ... List available remote environments (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta mods ...        List and manage local mods
   letta app-server ...  Run local app-server websocket transport
@@ -197,6 +198,8 @@ SUBCOMMANDS
   letta memory pull --agent <id>
   letta memory tokens [--memory-dir <path>] [--agent <id>] [--format text|json]
   letta agents list [--query <text> | --name <name> | --tags <tags>]
+  letta environments list [--online-only]
+  letta environments current
   letta messages search --query <text> [--all-agents]
   letta messages list [--agent <id>]
   letta messages transcript --conversation <id> [--out <path>]
@@ -2006,6 +2009,11 @@ async function main(): Promise<void> {
             try {
               const defaultAgent = await ensureDefaultAgents(getBackend(), {
                 preferredModel: model,
+                // True fresh start (brand-new account, nothing to resume)
+                // gets the Tutor onboarding agent; an explicit --new-agent
+                // gets the standard Letta Code agent.
+                personality:
+                  target.trigger === "fresh-start" ? "tutorial" : "memo",
               });
               if (defaultAgent) {
                 startupCreatedAgentRef.current = defaultAgent;
@@ -2334,7 +2342,12 @@ async function main(): Promise<void> {
         }
 
         // Set agent context for tools that need it (e.g., Skill tool)
-        setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
+        setAgentContext(
+          agent.id,
+          skillsDirectory,
+          resolvedSkillSources,
+          agent.name ?? null,
+        );
 
         let startupMemfsFlag: boolean | undefined = autoEnableMemfsForFreshAgent
           ? true

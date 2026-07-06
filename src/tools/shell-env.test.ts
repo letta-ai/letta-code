@@ -276,6 +276,7 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
   const env = runWithRuntimeContext(
     {
       agentId: "agent-runtime-scope",
+      agentName: "Runtime Scope Agent",
       conversationId: "conv-runtime-scope",
       workingDirectory: "/tmp/runtime-scope-cwd",
     },
@@ -284,6 +285,7 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
 
   expect(env.AGENT_ID).toBe("agent-runtime-scope");
   expect(env.LETTA_AGENT_ID).toBe("agent-runtime-scope");
+  expect(env.AGENT_NAME).toBe("Runtime Scope Agent");
   expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
   expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
   expect(env.USER_CWD).toBe("/tmp/runtime-scope-cwd");
@@ -393,6 +395,49 @@ test("getShellEnv preserves inherited parent MEMORY_DIR for subagents", () => {
           const env = getShellEnv();
           expect(env.MEMORY_DIR).toBe(parentMemoryDir);
           expect(env.LETTA_MEMORY_DIR).toBe(parentMemoryDir);
+        } finally {
+          (
+            settingsManager as unknown as {
+              isMemfsEnabled: (id: string) => boolean;
+            }
+          ).isMemfsEnabled = originalIsMemfsEnabled;
+        }
+      },
+    );
+  });
+});
+
+test("getShellEnv preserves inherited parent memory worktree dir for subagents", () => {
+  const parentAgentId = `agent-parent-${Date.now()}`;
+  const childAgentId = `agent-child-${Date.now()}`;
+  const parentMemoryDir = getMemoryFilesystemRoot(parentAgentId);
+  const worktreeMemoryDir = path.join(
+    path.dirname(parentMemoryDir),
+    "memory-worktrees",
+    "reflection-test",
+  );
+
+  withTemporaryAgentEnv(childAgentId, () => {
+    withTemporaryEnv(
+      {
+        LETTA_CODE_AGENT_ROLE: "subagent",
+        LETTA_PARENT_AGENT_ID: parentAgentId,
+        MEMORY_DIR: worktreeMemoryDir,
+        LETTA_MEMORY_DIR: worktreeMemoryDir,
+      },
+      () => {
+        const originalIsMemfsEnabled =
+          settingsManager.isMemfsEnabled.bind(settingsManager);
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = () => false;
+
+        try {
+          const env = getShellEnv();
+          expect(env.MEMORY_DIR).toBe(worktreeMemoryDir);
+          expect(env.LETTA_MEMORY_DIR).toBe(worktreeMemoryDir);
         } finally {
           (
             settingsManager as unknown as {

@@ -1,4 +1,5 @@
 import { getModelInfo } from "@/agent/model";
+import { getSubagentLifecycleContext } from "@/agent/subagent-state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { getVersion } from "@/version";
 import type { ModContext, ModModelContext } from "./types";
@@ -112,5 +113,6 @@ export function buildModInvocationContext(
       memoryDir: null,
     },
     backgroundAgents: base?.backgroundAgents ?? [],
+    subagents: base?.subagents ?? getSubagentLifecycleContext(),
   };
 }

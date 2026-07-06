@@ -1830,6 +1830,16 @@ export interface ConversationCreateCommand {
   request_id: string;
   /** Body forwarded to the Letta conversations create API. */
   body: ConversationCreateParams;
+  /**
+   * Set by cloud-api when relaying the command: the authenticated WS
+   * subscriber's cloud user id. The listener echoes it back as the
+   * `X-Letta-Acting-User-Id` HTTP header on the outbound
+   * conversations.create call so cloud attributes the new conversation
+   * to the human who actually created it — not the user whose API key
+   * spawned the sandbox / desktop runtime. Absent for self-hosted or
+   * direct (non-relayed) flows.
+   */
+  acting_user_id?: string;
 }
 
 export interface ConversationUpdateCommand {
@@ -1863,6 +1873,12 @@ export interface ConversationForkCommand {
   request_id: string;
   conversation_id: string;
   body?: ConversationForkBody;
+  /**
+   * Set by cloud-api when relaying the command — see
+   * `ConversationCreateCommand.acting_user_id`. The fork produces a new
+   * conversation, so it is attributed the same way.
+   */
+  acting_user_id?: string;
 }
 
 export interface ConversationMessagesListCommand {

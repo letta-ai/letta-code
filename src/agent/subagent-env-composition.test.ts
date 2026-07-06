@@ -110,6 +110,26 @@ describe("composeSubagentChildEnv", () => {
     expect(env.LETTA_MEMORY_DIR).toBe(PARENT_MEMORY_DIR);
   });
 
+  test("memory subagent memoryScope overrides inherited primary root", () => {
+    const worktreeDir = `/Users/someone/.letta/agents/${PARENT_ID}/memory-worktrees/reflection-123`;
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: {
+        HOME: "/home/user",
+        MEMORY_DIR: "/stale/memory/dir",
+      },
+      parentAgentId: PARENT_ID,
+      launchProfile: "memory-subagent",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+      memoryScope: {
+        primaryRoot: worktreeDir,
+        writableRoots: [worktreeDir],
+      },
+    });
+
+    expect(env.MEMORY_DIR).toBe(worktreeDir);
+    expect(env.LETTA_MEMORY_DIR).toBe(worktreeDir);
+  });
+
   test("transcriptPath is forwarded as TRANSCRIPT_PATH env var when set", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { HOME: "/home/user" },

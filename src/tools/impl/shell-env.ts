@@ -9,7 +9,11 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import {
+  getConversationId,
+  getCurrentAgentId,
+  getCurrentAgentName,
+} from "@/agent/context";
 import {
   getScopedMemoryFilesystemRoot,
   resolveScopedMemoryDir,
@@ -351,6 +355,11 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     env.LETTA_AGENT_ID = agentId;
     env.AGENT_ID = agentId;
 
+    const agentName = getCurrentAgentName()?.trim() || env.AGENT_NAME?.trim();
+    if (agentName) {
+      env.AGENT_NAME = agentName;
+    }
+
     try {
       const localBackendNoMemfs = isLocalBackendMemfsDisabledForProcess();
       const localBackendEnabled =
@@ -373,13 +382,24 @@ export function getShellEnv(): NodeJS.ProcessEnv {
         const inheritedParentMemoryDir = parentAgentId
           ? getScopedMemoryFilesystemRoot(parentAgentId)
           : null;
+        const inheritedParentAgentDir = inheritedParentMemoryDir
+          ? path.dirname(inheritedParentMemoryDir)
+          : null;
+        const inheritedMemoryPath = inheritedMemoryDir
+          ? path.resolve(inheritedMemoryDir)
+          : null;
+        const inheritedMemoryIsParentScoped =
+          inheritedMemoryPath && inheritedParentMemoryDir
+            ? inheritedMemoryPath === path.resolve(inheritedParentMemoryDir) ||
+              Boolean(
+                inheritedParentAgentDir &&
+                  inheritedMemoryPath.startsWith(
+                    `${path.resolve(inheritedParentAgentDir)}${path.sep}memory-worktrees${path.sep}`,
+                  ),
+              )
+            : false;
 
-        if (
-          inheritedMemoryDir &&
-          inheritedParentMemoryDir &&
-          path.resolve(inheritedMemoryDir) ===
-            path.resolve(inheritedParentMemoryDir)
-        ) {
+        if (inheritedMemoryDir && inheritedMemoryIsParentScoped) {
           env.MEMORY_DIR = inheritedMemoryDir;
           env.LETTA_MEMORY_DIR = inheritedLettaMemoryDir || inheritedMemoryDir;
         } else {

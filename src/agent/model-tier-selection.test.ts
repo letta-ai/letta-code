@@ -25,7 +25,20 @@ describe("getModelInfo", () => {
     expect(info?.handle).toBe("anthropic/claude-fable-5");
     expect(info?.label).toBe("Fable 5");
     expect(info?.updateArgs).toMatchObject({
-      context_window: 1000000,
+      context_window: 200000,
+      max_output_tokens: 128000,
+      enable_reasoner: true,
+      reasoning_effort: "high",
+      parallel_tool_calls: true,
+    });
+  });
+
+  test("resolves Fable 5 1M registry metadata", () => {
+    const info = getModelInfo("fable-1m");
+    expect(info?.handle).toBe("anthropic/claude-fable-5");
+    expect(info?.label).toBe("Fable 5 1M");
+    expect(info?.updateArgs).toMatchObject({
+      context_window: 950000,
       max_output_tokens: 128000,
       enable_reasoner: true,
       reasoning_effort: "high",

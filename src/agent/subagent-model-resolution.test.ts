@@ -220,6 +220,29 @@ describe("resolveSubagentWorkingDirectory", () => {
     expect(cwd).toBe("/Users/test/.letta/agents/agent-parent/memory");
   });
 
+  test("reflection subagents with memoryScope run from USER_CWD while MEMORY_DIR points at the worktree", () => {
+    const cwd = resolveSubagentWorkingDirectory(
+      {
+        USER_CWD: "/tmp/project-root",
+      } as NodeJS.ProcessEnv,
+      "/tmp/fallback-root",
+      {
+        subagentType: "reflection",
+        launchProfile: "memory-subagent",
+        inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
+        memoryScope: {
+          primaryRoot:
+            "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123",
+          writableRoots: [
+            "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123",
+          ],
+        },
+      },
+    );
+
+    expect(cwd).toBe("/tmp/project-root");
+  });
+
   test("non-reflection subagents still prefer USER_CWD", () => {
     const cwd = resolveSubagentWorkingDirectory(
       {

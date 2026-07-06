@@ -128,6 +128,7 @@ export async function registerWithCloud(
         lettaCodeVersion: getVersion(),
         os: process.platform,
         nodeVersion: process.version,
+        environmentMessageProtocol: "v2-input",
         supported_commands: SUPPORTED_REMOTE_COMMANDS,
         self_update: getSelfUpdateStatus(),
       },

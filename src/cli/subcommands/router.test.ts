@@ -81,11 +81,30 @@ describe("subcommand router", () => {
     }
   });
 
+  test("routes environments help", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["envs", "help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain("letta environments list");
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test("identifies backend-aware subcommands for early backend selection", () => {
     expect(subcommandNeedsEarlyBackendMode("app-server")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("connect")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("dream")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("server")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("environments")).toBe(true);
+    expect(subcommandNeedsEarlyBackendMode("envs")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("memory")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("mods")).toBe(true);
     expect(subcommandNeedsEarlyBackendMode("version")).toBe(false);

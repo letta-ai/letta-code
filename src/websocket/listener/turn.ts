@@ -15,6 +15,7 @@ import {
   getCurrentAgentId,
   setConversationId,
   setCurrentAgentId,
+  setCurrentAgentName,
 } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
@@ -46,6 +47,7 @@ import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflectio
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
+  queuePendingReflectionWorktreeReminders,
 } from "@/cli/helpers/reflection-launcher";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
@@ -332,6 +334,7 @@ export function buildMaybeLaunchReflectionSubagent(params: {
       conversationId,
       memfsEnabled: settingsManager.isMemfsEnabled(agentId),
       triggerSource,
+      skipPendingWorktreeReminderScan: triggerSource === "compaction-event",
       reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
       systemPrompt: cachedAgent?.system ?? undefined,
@@ -501,6 +504,7 @@ export async function handleIncomingMessage(
 
     // Set agent context for tools that need it (e.g., Skill tool)
     setCurrentAgentId(agentId);
+    setCurrentAgentName(listenAgentMetadata?.name ?? null);
     setConversationId(conversationId);
 
     if (isDebugEnabled()) {
@@ -612,6 +616,9 @@ export async function handleIncomingMessage(
                 .last_run_completion ?? null,
           };
         }
+        setCurrentAgentName(
+          listenAgentMetadata?.name ?? cachedAgent?.name ?? null,
+        );
         const { parts: reminderParts } = await buildSharedReminderParts(
           buildListenReminderContext({
             agentId: agentId || "",
@@ -957,6 +964,11 @@ export async function handleIncomingMessage(
             reflectionSettings,
             reminderState: runtime.reminderState,
             contextTracker: runtime.contextTracker,
+            onCompaction: () =>
+              queuePendingReflectionWorktreeReminders({
+                agentId: agentId || "",
+                conversationId,
+              }),
             launch: buildMaybeLaunchReflectionSubagent({
               runtime,
               socket,

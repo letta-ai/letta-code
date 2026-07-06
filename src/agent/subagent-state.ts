@@ -39,6 +39,25 @@ export interface SubagentState {
   parentConversationId?: string; // Parent runtime scope conversation id
 }
 
+export type SubagentLifecycleStatus = SubagentState["status"];
+
+export interface SubagentLifecycleItem {
+  id: string;
+  type: string;
+  description: string;
+  status: SubagentLifecycleStatus;
+  agentId: string | null;
+  agentUrl: string | null;
+  startedAtMs: number;
+  elapsedMs: number;
+  isBackground: boolean;
+  visibleInTranscript: boolean;
+}
+
+export interface SubagentLifecycleContext {
+  list(): SubagentLifecycleItem[];
+}
+
 interface SubagentStore {
   agents: Map<string, SubagentState>;
   expanded: boolean;
@@ -62,6 +81,7 @@ let cachedSnapshot: { agents: SubagentState[]; expanded: boolean } = {
   agents: [],
   expanded: false,
 };
+let cachedLifecycleItems: SubagentLifecycleItem[] = [];
 
 const DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS = 30_000;
 let completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
@@ -72,10 +92,15 @@ const completedSubagentCleanupTimers = new Map<string, TimerHandle>();
 // ============================================================================
 
 function updateSnapshot(): void {
+  const agents = Array.from(store.agents.values());
+  const now = Date.now();
   cachedSnapshot = {
-    agents: Array.from(store.agents.values()),
+    agents,
     expanded: store.expanded,
   };
+  cachedLifecycleItems = agents.map((agent) =>
+    toSubagentLifecycleItem(agent, now),
+  );
 }
 
 function notifyListeners(): void {
@@ -344,6 +369,48 @@ export function getActiveBackgroundAgents(): SubagentState[] {
     (a) =>
       a.silent === true && (a.status === "pending" || a.status === "running"),
   );
+}
+
+function toSubagentLifecycleItem(
+  agent: SubagentState,
+  now: number,
+): SubagentLifecycleItem {
+  return {
+    id: agent.id,
+    type: agent.type,
+    description: agent.description,
+    status: agent.status,
+    agentId: agent.agentId ?? null,
+    agentUrl: agent.agentURL,
+    startedAtMs: agent.startTime,
+    elapsedMs:
+      agent.status === "pending" || agent.status === "running"
+        ? Math.max(0, now - agent.startTime)
+        : agent.durationMs,
+    isBackground: agent.isBackground === true,
+    visibleInTranscript: agent.silent !== true,
+  };
+}
+
+export function getSubagentLifecycleItems(): SubagentLifecycleItem[] {
+  const now = Date.now();
+  return Array.from(store.agents.values()).map((agent) =>
+    toSubagentLifecycleItem(agent, now),
+  );
+}
+
+export function getSubagentLifecycleSnapshot(): SubagentLifecycleItem[] {
+  return cachedLifecycleItems;
+}
+
+export function getSubagentLifecycleContext(): SubagentLifecycleContext {
+  return {
+    list: getSubagentLifecycleItems,
+  };
+}
+
+export function subscribeToSubagentLifecycle(listener: () => void): () => void {
+  return subscribe(listener);
 }
 
 /**

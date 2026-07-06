@@ -43,6 +43,7 @@ export {
   refreshInputOtidsForNewRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
+  shouldRetryPostStreamRunError,
   shouldRetryPreStreamTransientError,
   shouldRetryRunMetadataError,
 } from "./turn-recovery-policy";

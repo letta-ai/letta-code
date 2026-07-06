@@ -116,7 +116,7 @@ afterEach(async () => {
 describe("startup resolution from settings files", () => {
   test("no local/global settings files => create", async () => {
     const target = await resolveFromSettings();
-    expect(target).toEqual({ action: "create" });
+    expect(target).toEqual({ action: "create", trigger: "fresh-start" });
   });
 
   test("fresh dir + valid global session => resume global agent", async () => {
@@ -155,7 +155,7 @@ describe("startup resolution from settings files", () => {
     });
 
     const target = await resolveFromSettings();
-    expect(target).toEqual({ action: "create" });
+    expect(target).toEqual({ action: "create", trigger: "fresh-start" });
   });
 
   test("local session + valid local agent => resume local agent", async () => {
@@ -365,7 +365,7 @@ describe("startup resolution from settings files", () => {
       forceNew: true,
     });
 
-    expect(target).toEqual({ action: "create" });
+    expect(target).toEqual({ action: "create", trigger: "force-new" });
   });
 
   test("sessionsByServer takes precedence over legacy lastAgent (global)", async () => {
