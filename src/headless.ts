@@ -3531,17 +3531,7 @@ ${SYSTEM_REMINDER_CLOSE}
       console.error("No assistant response found");
       await exitHeadless(1, "headless_missing_result_text");
     }
-    if (fromAgentId) {
-      await writeFinalHeadlessStdout(
-        `${resultText}\n\n${formatAgentReplyMetadata({
-          agentId: agent.id,
-          conversationId,
-          environment: { source: "same-environment" },
-        })}\n`,
-      );
-    } else {
-      await writeFinalHeadlessStdout(`${resultText}\n`);
-    }
+    await writeFinalHeadlessStdout(`${resultText}\n`);
   }
 
   // Report all milestones at the end for latency audit
