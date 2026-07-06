@@ -2,12 +2,25 @@
  * Channel routing table.
  *
  * Maps platform chat IDs to Letta agent+conversation pairs.
- * Persisted in ~/.letta/channels/<channel>/routing.yaml.
+ * Persisted in ~/.letta/channels/<channel>/routing.json. The file holds JSON
+ * content (it was originally misnamed `routing.yaml`; legacy files are migrated
+ * on load — see #3076).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
-import { getChannelDir, getChannelRoutingPath } from "./config";
+import {
+  getChannelDir,
+  getChannelRoutingPath,
+  getLegacyChannelRoutingPath,
+} from "./config";
 import type { ChannelRoute } from "./types";
 
 // ── In-memory store ───────────────────────────────────────────────
@@ -79,6 +92,31 @@ export function loadRoutes(channelId: string): void {
   }
 
   const path = getChannelRoutingPath(channelId);
+  const legacyPath = getLegacyChannelRoutingPath(channelId);
+
+  // One-time migration from the legacy `routing.yaml` filename to `routing.json`.
+  // The file has always held JSON content; the extension was a misnomer from the
+  // original channels MVP. Validate the content parses BEFORE moving it, so a
+  // corrupted legacy file is left untouched rather than renamed and lost. See #3076.
+  if (!existsSync(path) && existsSync(legacyPath)) {
+    try {
+      const legacyText = readFileSync(legacyPath, "utf-8");
+      JSON.parse(legacyText); // validate before migrating
+      try {
+        // Preferred path: atomic rename.
+        renameSync(legacyPath, path);
+      } catch {
+        // Fallback for cross-device / permission cases: copy then delete.
+        mkdirSync(getChannelDir(channelId), { recursive: true });
+        writeFileSync(path, legacyText, "utf-8");
+        unlinkSync(legacyPath);
+      }
+    } catch {
+      // Legacy file is missing or unparseable — leave it in place rather than
+      // risk data loss. The read below will treat it as corrupted and start fresh.
+    }
+  }
+
   if (!existsSync(path)) return;
 
   try {
