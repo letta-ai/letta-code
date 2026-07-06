@@ -320,6 +320,31 @@ function toBidirectionalQueuedInput(
   };
 }
 
+/**
+ * Decide what an incoming `control_request: interrupt` should do, given the
+ * current turn state. Extracted as a pure function so the policy is unit-
+ * testable and shared between the fast-path (`rl.on("line", ...)`) and the
+ * main-loop interrupt handlers.
+ *
+ * - `abort-active`: a turn is running — abort its AbortController now.
+ * - `latch`: no controller exists yet, but a user message has just been
+ *   dispatched and its controller is about to be created (the narrow
+ *   pre-controller race). Latch so the imminent turn aborts immediately.
+ * - `noop`: the session is idle (no active or starting turn). Respond success
+ *   but do NOT latch — latching here would poison the next user turn, which
+ *   would create a controller and immediately abort itself.
+ */
+export type InterruptAction = "abort-active" | "latch" | "noop";
+
+export function decideInterruptAction(state: {
+  hasActiveController: boolean;
+  turnStarting: boolean;
+}): InterruptAction {
+  if (state.hasActiveController) return "abort-active";
+  if (state.turnStarting) return "latch";
+  return "noop";
+}
+
 export const __headlessTestUtils = {
   trackTelemetryUserInputFromContent,
   shouldTrackTelemetryForQueuedMessage,
@@ -3624,6 +3649,11 @@ async function runBidirectionalMode(
   // creating the controller runs). When that happens, set this flag so the
   // turn aborts immediately after creation.
   let pendingInterrupt = false;
+  // True only in the narrow window between a user message being handed to the
+  // main loop and its AbortController being created. Gates `pendingInterrupt`
+  // so an *idle* interrupt (no turn running or starting) is a no-op success
+  // instead of poisoning the next user turn. See decideInterruptAction.
+  let turnStarting = false;
   const reminderContextTracker = createContextTracker();
   const sharedReminderState = createSharedReminderState();
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
@@ -3893,28 +3923,37 @@ async function runBidirectionalMode(
     // abort an in-flight drain without waiting for the main loop to dequeue.
     // Without this, a runaway thinking turn never sees the interrupt because
     // `getNextLine()` isn't called until the current drain returns.
-    let interruptRequestId: string | null = null;
+    let parsedLine: {
+      type?: string;
+      request?: { subtype?: string };
+      request_id?: string | number;
+    } | null = null;
     try {
-      const parsed = JSON.parse(line);
-      if (
-        parsed?.type === "control_request" &&
-        parsed?.request?.subtype === "interrupt"
-      ) {
-        interruptRequestId = String(parsed.request_id ?? "");
-      }
+      parsedLine = JSON.parse(line);
     } catch {
-      // Not JSON / not a control_request — ignore here, the main loop will
-      // surface the parse error.
+      // Not JSON — the main loop will surface the parse error.
     }
+    const interruptRequestId =
+      parsedLine?.type === "control_request" &&
+      parsedLine?.request?.subtype === "interrupt"
+        ? String(parsedLine.request_id ?? "")
+        : null;
     if (interruptRequestId !== null) {
-      if (currentAbortController !== null) {
+      const action = decideInterruptAction({
+        hasActiveController: currentAbortController !== null,
+        turnStarting,
+      });
+      if (action === "abort-active") {
         // Abort the in-flight turn. Do NOT null the controller here — the
         // turn's epilogue (line ~4275) reads currentAbortController?.signal.aborted
         // to classify the result as "interrupted" vs "error". The `finally`
         // block at the bottom of the user-message branch is what owns nulling.
         (currentAbortController as AbortController).abort();
-      } else {
-        // No active turn yet — latch the interrupt for the next one.
+      } else if (action === "latch") {
+        // Narrow pre-controller race: a user message was just dispatched but
+        // its AbortController isn't created yet. Latch so the imminent turn
+        // aborts. An idle interrupt ("noop") must NOT latch — that would
+        // poison the next user turn.
         pendingInterrupt = true;
       }
       const interruptResponse: ControlResponse = {
@@ -3930,6 +3969,10 @@ async function runBidirectionalMode(
       return;
     }
     if (lineResolver) {
+      // Handing a user message to a waiting main loop opens the pre-controller
+      // race window: mark turnStarting so an interrupt arriving in the same
+      // stdin burst (before the controller exists) latches via "latch" above.
+      if (parsedLine?.type === "user") turnStarting = true;
       const resolve = lineResolver;
       lineResolver = null;
       resolve(line);
@@ -4228,7 +4271,13 @@ async function runBidirectionalMode(
         // to classify the result as "interrupted" vs "error", and the
         // user-message branch's `finally` is what owns nulling. Mirrors the
         // fast path in rl.on("line", ...).
-        if (currentAbortController !== null) {
+        if (
+          currentAbortController !== null &&
+          decideInterruptAction({
+            hasActiveController: true,
+            turnStarting,
+          }) === "abort-active"
+        ) {
           (currentAbortController as AbortController).abort();
         }
         const interruptResponse: ControlResponse = {
@@ -4487,6 +4536,10 @@ async function runBidirectionalMode(
 
       const userContent = mergeBidirectionalQueuedInput(queuedInputs);
       if (userContent === null) {
+        // No turn will start — clear the pre-controller window so a latched
+        // interrupt doesn't carry over to a later, unrelated turn.
+        turnStarting = false;
+        pendingInterrupt = false;
         continue;
       }
 
@@ -4499,6 +4552,8 @@ async function runBidirectionalMode(
         pendingInterrupt = false;
         currentAbortController.abort();
       }
+      // Controller now exists — close the pre-controller race window.
+      turnStarting = false;
 
       turnInProgress = true;
       try {
