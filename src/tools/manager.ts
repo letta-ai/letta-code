@@ -2209,9 +2209,20 @@ type ToolHookContext = {
   debugLabel: string;
   scopedAgentId?: string;
   toolCallId?: string;
-  toolName: string;
+  toolName: string | readonly string[];
   workingDirectory: string;
 };
+
+// Hook matchers are written against the model-facing tool name (e.g. "Agent"),
+// but built-in tools execute under their internal name (e.g. "Task"). Pass
+// both to the hook runners so either spelling matches; the model-facing name
+// comes first so hook payloads report it as tool_name.
+function hookToolNames(internalName: string): string | string[] {
+  const serverName = getServerToolName(internalName);
+  return serverName === internalName
+    ? internalName
+    : [serverName, internalName];
+}
 
 async function collectPostToolHookFeedback(
   context: ToolHookContext,
@@ -2823,7 +2834,7 @@ async function executeToolInner(
   const run = async (): Promise<ToolExecutionResult> => {
     // Run PreToolUse hooks - can block tool execution
     const preHookResult = await runPreToolUseHooks(
-      internalName,
+      hookToolNames(internalName),
       args as Record<string, unknown>,
       options?.toolCallId,
       workingDirectory,
@@ -3016,7 +3027,7 @@ async function executeToolInner(
           debugLabel: "tool result path",
           scopedAgentId,
           toolCallId: options?.toolCallId,
-          toolName: internalName,
+          toolName: hookToolNames(internalName),
           workingDirectory,
         },
         {
@@ -3076,7 +3087,7 @@ async function executeToolInner(
           debugLabel: "tool exception path",
           scopedAgentId,
           toolCallId: options?.toolCallId,
-          toolName: internalName,
+          toolName: hookToolNames(internalName),
           workingDirectory,
         },
         {

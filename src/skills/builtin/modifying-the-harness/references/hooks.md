@@ -74,6 +74,7 @@ Common matchers:
 Bash          # shell commands
 Edit|Write    # edits and writes
 Read|Grep     # reads/searches
+Agent         # subagent dispatches (legacy internal alias: Task)
 *             # all tools
 ```
 
