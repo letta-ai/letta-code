@@ -258,6 +258,8 @@ const originalProgressThrottleEnv =
   process.env.LETTA_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
 const originalProgressKeepaliveEnv =
   process.env.LETTA_SLACK_PROGRESS_STREAM_KEEPALIVE_MS;
+const originalCompletionFinalizeEnv =
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS;
 const fetchMock = mock(
   async () =>
     new Response("uploaded", {
@@ -279,6 +281,7 @@ beforeEach(() => {
   fetchMock.mockClear();
   process.env.LETTA_SLACK_PROGRESS_UPDATE_THROTTLE_MS = "0";
   process.env.LETTA_SLACK_PROGRESS_STREAM_KEEPALIVE_MS = "0";
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "60000";
   globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
 
@@ -322,6 +325,12 @@ afterEach(() => {
   } else {
     process.env.LETTA_SLACK_PROGRESS_STREAM_KEEPALIVE_MS =
       originalProgressKeepaliveEnv;
+  }
+  if (originalCompletionFinalizeEnv === undefined) {
+    delete process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS;
+  } else {
+    process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS =
+      originalCompletionFinalizeEnv;
   }
   globalThis.fetch = originalFetch;
 });
@@ -1838,7 +1847,7 @@ test("slack adapter streams native task progress and clears thread status", asyn
     thread_ts: "1712790000.000050",
     status: "",
   });
-  expect(writeClient?.chat.appendStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
@@ -1867,17 +1876,17 @@ test("slack adapter streams native task progress and clears thread status", asyn
     chunks: [
       {
         type: "plan_update",
-        title: "Running",
+        title: "Working",
       },
       {
         type: "task_update",
-        id: "task_call-1",
-        title: "Running",
+        id: "task_turn_active",
+        title: "Still working",
         status: "in_progress",
       },
     ],
   });
-  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(2);
   const appendCalls = writeClient?.chat.appendStream.mock
     .calls as unknown as Array<
     [
@@ -1889,7 +1898,7 @@ test("slack adapter streams native task progress and clears thread status", asyn
       },
     ]
   >;
-  const appendCall = appendCalls[0]?.[0];
+  const appendCall = appendCalls[appendCalls.length - 1]?.[0];
   expect(appendCall).toMatchObject({
     channel: "C123",
     ts: "1712800000.000300",
@@ -1900,11 +1909,17 @@ test("slack adapter streams native task progress and clears thread status", asyn
   });
   expect(appendCall?.chunks?.[1]).toMatchObject({
     type: "task_update",
-    id: "task_call-1",
+    id: "task_turn_active",
     title: "Ran",
     status: "complete",
   });
-  expect(appendCall?.chunks).toHaveLength(2);
+  expect(appendCall?.chunks?.[2]).toMatchObject({
+    type: "task_update",
+    id: "task_turn_active_1",
+    title: "Still working",
+    status: "in_progress",
+  });
+  expect(appendCall?.chunks).toHaveLength(3);
   expect(JSON.stringify(appendCall?.chunks)).not.toContain("token=abc");
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
@@ -2325,7 +2340,7 @@ test("slack adapter keeps reasoning updates out of concrete task rows", async ()
       ],
       expect.arrayContaining([
         expect.objectContaining({
-          id: "task_call-bash",
+          id: "task_turn_active",
           title: "Running",
           status: "in_progress",
         }),
@@ -2421,12 +2436,12 @@ test("slack adapter anchors direct message progress to the inbound message", asy
     chunks: [
       {
         type: "plan_update",
-        title: "Read",
+        title: "Working",
       },
       {
         type: "task_update",
-        id: "task_call-1",
-        title: "Read",
+        id: "task_turn_active",
+        title: "Still working",
         status: "in_progress",
       },
     ],
@@ -2441,7 +2456,7 @@ test("slack adapter anchors direct message progress to the inbound message", asy
     chunks: [
       {
         type: "task_update",
-        id: "task_call-1",
+        id: "task_turn_active",
         title: "Read",
         status: "complete",
       },
@@ -2451,7 +2466,7 @@ test("slack adapter anchors direct message progress to the inbound message", asy
       },
     ],
   });
-  expect(writeClient?.chat.appendStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
     channel_id: "D123",
     thread_ts: "1712800000.000100",
@@ -2816,7 +2831,7 @@ test("slack adapter does not create fallback cards after stream append failure",
   });
   expect(stopArgs?.chunks).toContainEqual({
     type: "task_update",
-    id: "task_call-1",
+    id: "task_turn_active",
     title: "Read",
     status: "complete",
   });
@@ -2895,7 +2910,7 @@ test("slack adapter keeps active progress streams alive during long tool gaps", 
   await adapter.stop();
 });
 
-test("slack adapter does not immediately retry failed progress stream starts", async () => {
+test("slack adapter starts first progress streams without fallback cards", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -2920,17 +2935,6 @@ test("slack adapter does not immediately retry failed progress stream starts", a
   };
 
   await adapter.start();
-  await adapter.handleTurnLifecycleEvent?.({
-    type: "processing",
-    batchId: "batch-1",
-    sources: [source],
-  });
-  const writeClient = FakeSlackWriteClient.instances[0];
-  writeClient?.chat.startStream.mockResolvedValue({
-    ok: false,
-    error: "not_allowed",
-  });
-
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
     batchId: "batch-1",
@@ -2942,6 +2946,7 @@ test("slack adapter does not immediately retry failed progress stream starts", a
     toolName: "read_file",
   });
 
+  const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
   expect(writeClient?.chat.appendStream).not.toHaveBeenCalled();
   expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
@@ -3353,7 +3358,8 @@ test("slack adapter keeps failed tool titles without failing completed progress 
   );
 });
 
-test("slack adapter shows a progress card while a no-tool turn is running", async () => {
+test("slack adapter shows and finalizes a placeholder row for no-tool turns", async () => {
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "0";
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -3387,28 +3393,53 @@ test("slack adapter shows a progress card while a no-tool turn is running", asyn
     batchId: "batch-1",
     sources: [source],
   });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
+    channel: "C123",
+    thread_ts: "1712790000.000050",
+    task_display_mode: "plan",
+    recipient_user_id: "U123",
+    recipient_team_id: "T123",
+    chunks: [
+      {
+        type: "plan_update",
+        title: "Working",
+      },
+      {
+        type: "task_update",
+        id: "task_turn_active",
+        title: "Still working",
+        status: "in_progress",
+      },
+    ],
+  });
+
   await adapter.handleTurnLifecycleEvent?.({
     type: "finished",
     batchId: "batch-1",
     outcome: "completed",
     sources: [source],
   });
+  await sleep(10);
 
-  const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
   expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
   expect(writeClient?.chat.update).not.toHaveBeenCalled();
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+    channel: "C123",
+    ts: "1712800000.000300",
+    chunks: [
+      {
+        type: "plan_update",
+        title: "Completed",
+      },
+    ],
+  });
   const statusCalls =
     (writeClient?.assistant.threads.setStatus.mock.calls as Array<
       Array<{ status: string }>
     >) ?? [];
   expect(statusCalls.length).toBeGreaterThanOrEqual(3);
-  const firstStatus = statusCalls[0]?.[0]?.status;
-  const secondStatus = statusCalls[1]?.[0]?.status;
-  expect(["is cogitating...", "is thinking...", "is processing..."]).toContain(
-    firstStatus ?? "",
-  );
-  expect(secondStatus).toBe(firstStatus);
   expect(statusCalls[statusCalls.length - 1]?.[0]?.status).toBe("");
 });
 
