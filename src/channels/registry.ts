@@ -1762,21 +1762,18 @@ export class ChannelRegistry {
       if (!slackResult) {
         return;
       }
-      const preparedMessage = adapter.prepareInboundMessage
-        ? await adapter.prepareInboundMessage(msg, {
-            isFirstRouteTurn: slackResult.isFirstRouteTurn,
-          })
-        : msg;
-      const turnSource = buildChannelTurnSource(
-        slackResult.route,
-        preparedMessage,
-      );
+      const turnSource = buildChannelTurnSource(slackResult.route, msg);
       if (slackResult.route.outboundEnabled !== false) {
         await this.dispatchTurnLifecycleEvent({
           type: "queued",
           source: turnSource,
         });
       }
+      const preparedMessage = adapter.prepareInboundMessage
+        ? await adapter.prepareInboundMessage(msg, {
+            isFirstRouteTurn: slackResult.isFirstRouteTurn,
+          })
+        : msg;
       this.deliverOrBuffer({
         route: slackResult.route,
         content: formatChannelNotification(preparedMessage),
