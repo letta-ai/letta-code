@@ -147,3 +147,28 @@ test("returns null when there are no memory roots to scope to", () => {
     }),
   ).toBeNull();
 });
+
+test("memoryScope confines a reflection subagent to an exact worktree plus git metadata", () => {
+  const result = wrapSubagentLauncher({
+    ...baseInput(),
+    memoryScope: {
+      primaryRoot: "/home/u/.letta/agents/parent/memory-worktrees/reflection-1",
+      writableRoots: [
+        "/home/u/.letta/agents/parent/memory-worktrees/reflection-1",
+        "/home/u/.letta/agents/parent/memory/.git",
+      ],
+      readonlyRoots: ["/home/u/.letta/agents/parent"],
+    },
+  });
+
+  expect(result).not.toBeNull();
+  expect(defineValues(result?.args ?? [], "-DWRITABLE_")).toEqual([
+    `0=${canonicalizeRoot("/home/u/.letta/agents/parent/memory-worktrees/reflection-1")}`,
+    `1=${canonicalizeRoot("/home/u/.letta/agents/parent/memory/.git")}`,
+  ]);
+  expect(
+    defineValues(result?.args ?? [], "-DREADONLY_").map((value) =>
+      value.replace(/^\d+=/, ""),
+    ),
+  ).toContain(canonicalizeRoot("/home/u/.letta/agents/parent"));
+});

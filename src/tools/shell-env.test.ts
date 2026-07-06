@@ -407,6 +407,49 @@ test("getShellEnv preserves inherited parent MEMORY_DIR for subagents", () => {
   });
 });
 
+test("getShellEnv preserves inherited parent memory worktree dir for subagents", () => {
+  const parentAgentId = `agent-parent-${Date.now()}`;
+  const childAgentId = `agent-child-${Date.now()}`;
+  const parentMemoryDir = getMemoryFilesystemRoot(parentAgentId);
+  const worktreeMemoryDir = path.join(
+    path.dirname(parentMemoryDir),
+    "memory-worktrees",
+    "reflection-test",
+  );
+
+  withTemporaryAgentEnv(childAgentId, () => {
+    withTemporaryEnv(
+      {
+        LETTA_CODE_AGENT_ROLE: "subagent",
+        LETTA_PARENT_AGENT_ID: parentAgentId,
+        MEMORY_DIR: worktreeMemoryDir,
+        LETTA_MEMORY_DIR: worktreeMemoryDir,
+      },
+      () => {
+        const originalIsMemfsEnabled =
+          settingsManager.isMemfsEnabled.bind(settingsManager);
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = () => false;
+
+        try {
+          const env = getShellEnv();
+          expect(env.MEMORY_DIR).toBe(worktreeMemoryDir);
+          expect(env.LETTA_MEMORY_DIR).toBe(worktreeMemoryDir);
+        } finally {
+          (
+            settingsManager as unknown as {
+              isMemfsEnabled: (id: string) => boolean;
+            }
+          ).isMemfsEnabled = originalIsMemfsEnabled;
+        }
+      },
+    );
+  });
+});
+
 test("getShellEnv injects MEMORY_DIR aliases when memfs is enabled", () => {
   withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
     const original = settingsManager.isMemfsEnabled.bind(settingsManager);
