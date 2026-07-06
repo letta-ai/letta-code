@@ -193,10 +193,20 @@ function supportedCommandsText(prefix: "/" | "!" = "/"): string {
     .join(", ");
 }
 
+const SLACK_MENTION_SLASH_COMMAND_EXAMPLES = [
+  "@agent /help",
+  "@agent /status",
+  "@agent /model <handle-or-id>",
+  "@agent /cancel",
+  "@agent /chat",
+  "@agent /reflection",
+  "@agent /detach",
+  "@agent /new",
+  "@agent /reload",
+] as const;
+
 function supportedSlackMentionSlashCommandsText(): string {
-  return SLACK_MENTION_COMMAND_NAMES.map((name) => `@agent /${name}`).join(
-    ", ",
-  );
+  return SLACK_MENTION_SLASH_COMMAND_EXAMPLES.join(", ");
 }
 
 function supportedBangCommandsText(): string {
@@ -235,12 +245,19 @@ export function buildChannelHelpMessage(channelId: string): string {
   if (channelId === "slack") {
     return [
       `${displayName} is connected to Letta Code.`,
-      "Send a normal message here and the connected agent will reply in this chat.",
-      `Supported slash commands here: ${supportedCommandsText()}.`,
-      `In Slack threads, mention the app with slash commands: ${supportedSlackMentionSlashCommandsText()}.`,
+      "Talk by mentioning the app in a channel thread. Once a thread is routed, normal replies continue the same agent conversation until detached.",
+      "Control commands start immediately after the mention:",
+      "@agent /model <handle-or-id> - show or switch this thread's model",
+      "@agent /status - show route and listener status",
+      "@agent /cancel - cancel the current turn",
+      "@agent /chat - show the web chat link",
+      "@agent /reflection - start a memory reflection pass",
+      "@agent /detach - stop replying in this thread until mentioned again",
+      "@agent /new - start a fresh conversation for this thread",
+      "@agent /reload - reload channel/listener settings",
       `Legacy bang aliases still work after a mention: ${supportedBangCommandsText()}.`,
-      "If this chat is not connected yet, send any non-command message and follow the pairing instructions.",
-    ].join("\n\n");
+      "If this chat is not connected yet, send a normal message and follow the pairing instructions.",
+    ].join("\n");
   }
 
   return [
@@ -258,10 +275,19 @@ export function buildUnsupportedChannelCommandMessage(
   const displayName = channelDisplayName(channelId);
   const isBang = command.raw.startsWith("!");
   const commandKind = isBang ? "bang" : "slash";
+  const supportedCommands = isBang
+    ? supportedBangCommandsText()
+    : channelId === "slack"
+      ? supportedSlackMentionSlashCommandsText()
+      : supportedCommandsText();
+  const supportedLabel =
+    channelId === "slack" && !isBang
+      ? "Slack mention commands"
+      : `${commandKind} commands`;
 
   return [
     `${displayName} received ${command.raw}, but that ${commandKind} command is not supported in channels yet.`,
-    `Supported ${commandKind} commands here: ${isBang ? supportedBangCommandsText() : supportedCommandsText()}.`,
+    `Supported ${supportedLabel}: ${supportedCommands}.`,
     `Send normal messages without a leading ${isBang ? "bang" : "slash"} command to talk to the connected agent.`,
   ].join("\n\n");
 }
@@ -600,7 +626,7 @@ export function buildChannelModelListMessage(
   lines.push("");
   if (channelId === "slack") {
     lines.push(
-      "Mention the app with /model <handle-or-id> to switch this thread's routed model. Legacy !model still works after a mention.",
+      "Mention the app with @agent /model <handle-or-id> to switch this thread's routed model. Legacy !model still works after a mention.",
     );
   } else {
     lines.push("Use /model <handle-or-id> to switch this chat's routed model.");

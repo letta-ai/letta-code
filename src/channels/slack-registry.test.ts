@@ -306,7 +306,10 @@ describe("slack channel registry", () => {
 
     expect(deliveries).toEqual([]);
     expect(replies).toHaveLength(1);
-    expect(replies[0]).toContain("mention the app with slash commands");
+    expect(replies[0]).toContain(
+      "Control commands start immediately after the mention",
+    );
+    expect(replies[0]).toContain("@agent /model <handle-or-id>");
     expect(replies[0]).toContain("Legacy bang aliases still work");
   });
 

@@ -129,8 +129,16 @@ describe("channel slash commands", () => {
     const slackText = buildChannelHelpMessage("slack");
     expect(slackText).not.toContain("MessageChannel");
     expect(slackText).toContain(
-      "In Slack threads, mention the app with slash commands: @agent /help, @agent /detach, @agent /model, @agent /new, @agent /reload.",
+      "Talk by mentioning the app in a channel thread.",
     );
+    expect(slackText).toContain(
+      "Control commands start immediately after the mention:",
+    );
+    expect(slackText).toContain(
+      "@agent /model <handle-or-id> - show or switch this thread's model",
+    );
+    expect(slackText).toContain("@agent /detach");
+    expect(slackText).toContain("@agent /reload");
     expect(slackText).toContain(
       "Legacy bang aliases still work after a mention: !help, !detach, !model, !new, !reload.",
     );
@@ -279,7 +287,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("…and 1 more.");
     expect(text).not.toContain("missing/model");
     expect(text).toContain(
-      "Mention the app with /model <handle-or-id> to switch this thread's routed model. Legacy !model still works after a mention.",
+      "Mention the app with @agent /model <handle-or-id> to switch this thread's routed model. Legacy !model still works after a mention.",
     );
   });
 
@@ -331,9 +339,16 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram received /compact now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
+      "Supported slash commands: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
     );
     expect(text).toContain("without a leading slash");
+
+    const slackSlashText = buildUnsupportedChannelCommandMessage(
+      "slack",
+      command,
+    );
+    expect(slackSlashText).toContain("Supported Slack mention commands:");
+    expect(slackSlashText).toContain("@agent /model <handle-or-id>");
 
     const bangCommand = parseChannelBangCommand("!pause");
     expect(bangCommand).not.toBeNull();
@@ -346,7 +361,7 @@ describe("channel slash commands", () => {
     );
     expect(bangText).toContain("Slack received !pause");
     expect(bangText).toContain(
-      "Supported bang commands here: !help, !detach, !model, !new, !reload.",
+      "Supported bang commands: !help, !detach, !model, !new, !reload.",
     );
   });
 });
