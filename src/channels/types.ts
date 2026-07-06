@@ -123,6 +123,8 @@ export interface ChannelTurnProgressUpdate {
   toolName?: string;
   /** Optional sanitized argument summary for expanded tool progress details. */
   toolDetails?: string;
+  /** Optional sanitized row title for native/rich progress surfaces. */
+  toolTitle?: string;
   command?: string;
   runId?: string;
 }

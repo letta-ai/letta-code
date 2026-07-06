@@ -472,6 +472,8 @@ type SlackProgressToolTask = {
   kind: ChannelTurnProgressEvent["kind"];
   /** Raw tool name, when known. Titles are re-derived from this per status. */
   toolName?: string;
+  /** Preformatted channel-facing row title from the progress builder. */
+  toolTitle?: string;
   title: string;
   status: SlackStreamTaskStatus;
   details?: string;
@@ -486,6 +488,7 @@ type SlackProgressCardEntry = {
   latestUpdate?: ChannelTurnProgressEvent;
   toolNamesByCallId?: Map<string, string>;
   toolDetailsByCallId?: Map<string, string>;
+  toolTitlesByCallId?: Map<string, string>;
   toolTasksById?: Map<string, SlackProgressToolTask>;
   sentTaskDetailsById?: Map<string, string>;
   completionHeaderText?: string;
@@ -647,7 +650,13 @@ function buildTerminalSlackStreamChunks(
 }
 
 function toSlackTaskUpdateChunk(task: SlackProgressToolTask): SlackStreamChunk {
-  const { kind: _kind, toolName: _toolName, details, ...chunkTask } = task;
+  const {
+    kind: _kind,
+    toolName: _toolName,
+    toolTitle: _toolTitle,
+    details,
+    ...chunkTask
+  } = task;
   return {
     type: "task_update",
     ...chunkTask,
@@ -807,6 +816,9 @@ function formatSlackToolTaskTitle(
     return "Subagent";
   }
   if (isShellTool(toolName)) {
+    if (details) {
+      return details;
+    }
     return status === "complete" ? "Ran" : "Running";
   }
   if (isWebSearchToolName(toolName)) {
@@ -828,6 +840,9 @@ function formatSlackTaskTitleForStatus(
   if (task.kind === "responding") {
     return formatSlackChannelResponseTitle(status);
   }
+  if (task.toolTitle) {
+    return task.toolTitle;
+  }
   if (task.toolName) {
     return formatSlackToolTaskTitle(task.toolName, status, task.details);
   }
@@ -846,6 +861,7 @@ function rememberSlackToolName(
     entry.hiddenToolCallIds.add(update.toolCallId);
     entry.toolNamesByCallId?.delete(update.toolCallId);
     entry.toolDetailsByCallId?.delete(update.toolCallId);
+    entry.toolTitlesByCallId?.delete(update.toolCallId);
     return;
   }
   if (update.toolName) {
@@ -855,6 +871,10 @@ function rememberSlackToolName(
   if (update.toolDetails) {
     entry.toolDetailsByCallId ??= new Map();
     entry.toolDetailsByCallId.set(update.toolCallId, update.toolDetails);
+  }
+  if (update.toolTitle) {
+    entry.toolTitlesByCallId ??= new Map();
+    entry.toolTitlesByCallId.set(update.toolCallId, update.toolTitle);
   }
 }
 
@@ -877,6 +897,17 @@ function resolveSlackToolActionName(
     return null;
   }
   const approvalPrefix = update.kind === "approval" ? "Approval needed: " : "";
+  const toolTitle =
+    update.toolTitle ??
+    (update.toolCallId
+      ? entry.toolTitlesByCallId?.get(update.toolCallId)
+      : undefined);
+  if (toolTitle) {
+    return sanitizeSlackProgressText(
+      `${approvalPrefix}${toolTitle}`,
+      SLACK_STREAM_CHUNK_TEXT_MAX,
+    );
+  }
   const toolName =
     update.toolName ??
     (update.toolCallId
@@ -915,6 +946,14 @@ function resolveSlackToolActionDetails(
   update: ChannelTurnProgressEvent,
 ): string | undefined {
   if (update.kind === "approval") {
+    return undefined;
+  }
+  const toolTitle =
+    update.toolTitle ??
+    (update.toolCallId
+      ? entry.toolTitlesByCallId?.get(update.toolCallId)
+      : undefined);
+  if (toolTitle) {
     return undefined;
   }
   const rememberedDetails = update.toolCallId
@@ -1217,10 +1256,16 @@ function buildSlackStreamProgressChunks(
     (update.toolCallId
       ? entry.toolNamesByCallId?.get(update.toolCallId)
       : undefined);
+  const toolTitle =
+    update.toolTitle ??
+    (update.toolCallId
+      ? entry.toolTitlesByCallId?.get(update.toolCallId)
+      : undefined);
   const task: SlackProgressToolTask = {
     id,
     kind: update.kind,
     ...(toolName ? { toolName } : {}),
+    ...(toolTitle ? { toolTitle } : {}),
     title,
     status,
     ...(details ? { details } : {}),
