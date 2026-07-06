@@ -186,19 +186,72 @@ function dateToCron(d: Date): string {
 const CRON_SUBFIELD_RE = /^(\*|\d+)(-\d+)?(\/\d+)?$/;
 
 /**
- * Validate a 5-field cron expression. Checks field count and each field
- * supports wildcards, exact values, steps, ranges, range-steps, and
- * comma-separated combinations of the above.
+ * Per-field value ranges for standard 5-field cron.
+ * Day-of-week allows 0-7 (both 0 and 7 denote Sunday), per POSIX.
+ */
+const CRON_FIELD_RANGES: ReadonlyArray<[number, number]> = [
+  [0, 59], // minute
+  [0, 23], // hour
+  [1, 31], // day of month
+  [1, 12], // month
+  [0, 7], // day of week (0 and 7 = Sunday)
+];
+
+/**
+ * Validate a single numeric token against a field's value range.
+ * A token is one of: a single value N, a range N-M, a star step (star/S),
+ * or a ranged step N-M/S. Every literal number must fall within [min, max].
+ */
+function cronSubFieldInRange(
+  subField: string,
+  min: number,
+  max: number,
+): boolean {
+  // Bare wildcard — always in range.
+  if (subField === "*") return true;
+
+  // `*/S` — only the step needs to be a positive integer (no base value to bound).
+  if (subField.startsWith("*/")) {
+    const step = Number.parseInt(subField.slice(2), 10);
+    return Number.isFinite(step) && step > 0;
+  }
+
+  // Strip an optional `/S` step suffix, then validate the base (`N` or `N-M`).
+  const slashIdx = subField.indexOf("/");
+  if (slashIdx !== -1) {
+    const step = Number.parseInt(subField.slice(slashIdx + 1), 10);
+    if (!Number.isFinite(step) || step <= 0) return false;
+  }
+  const base = subField.split("/")[0] ?? "";
+  const parts = base.split("-");
+  if (parts.length < 1 || parts.length > 2) return false;
+
+  const nums = parts.map((p) => Number.parseInt(p ?? "", 10));
+  if (nums.some((n) => !Number.isFinite(n))) return false;
+  // Every literal number must lie within the field's range.
+  return nums.every((n) => n >= min && n <= max);
+}
+
+/**
+ * Validate a 5-field cron expression. Checks field count, shape of each
+ * sub-field (wildcards, exact values, steps, ranges, range-steps, comma lists),
+ * AND that every literal number falls within its field's value range — so that
+ * expressions like `99 99 * * *` or `0 0 32 13 *` are rejected instead of being
+ * accepted and then never firing.
  */
 export function isValidCron(expr: string): boolean {
   const fields = expr.trim().split(/\s+/);
   if (fields.length !== 5) return false;
-  return fields.every((f) => {
+  return fields.every((f, fieldIndex) => {
+    const [min, max] = CRON_FIELD_RANGES[fieldIndex] ?? [0, 0];
     // Split on commas and validate each sub-field individually
     const subFields = f.split(",");
     // Reject empty sub-fields (trailing/leading/double commas)
     if (subFields.some((s) => s === "")) return false;
-    return subFields.every((s) => CRON_SUBFIELD_RE.test(s));
+    return subFields.every((s) => {
+      if (!CRON_SUBFIELD_RE.test(s)) return false;
+      return cronSubFieldInRange(s, min, max);
+    });
   });
 }
 

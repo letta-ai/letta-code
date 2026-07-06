@@ -185,6 +185,36 @@ describe("isValidCron", () => {
     expect(isValidCron(",5 * * * *")).toBe(false); // leading comma
     expect(isValidCron(", * * * *")).toBe(false); // lone comma
   });
+
+  test("rejects out-of-range values that would never fire", () => {
+    // minute > 59
+    expect(isValidCron("60 * * * *")).toBe(false);
+    expect(isValidCron("99 99 99 99 *")).toBe(false);
+    // hour > 23
+    expect(isValidCron("0 24 * * *")).toBe(false);
+    // impossible day-of-month
+    expect(isValidCron("0 0 32 * *")).toBe(false);
+    expect(isValidCron("0 0 0 * *")).toBe(false); // DOM is 1-based
+    // impossible month
+    expect(isValidCron("0 0 1 13 *")).toBe(false);
+    expect(isValidCron("0 0 1 0 *")).toBe(false); // month is 1-based
+    // day-of-week > 7
+    expect(isValidCron("0 0 * * 8")).toBe(false);
+    // out-of-range inside ranges / steps
+    expect(isValidCron("0-60 * * * *")).toBe(false); // minute range endpoint > 59
+    expect(isValidCron("0 0 1-32 * *")).toBe(false); // DOM range endpoint > 31
+    expect(isValidCron("0-59/0 * * * *")).toBe(false); // step must be > 0
+    // out-of-range inside a comma list rejects the whole field
+    expect(isValidCron("0,60 * * * *")).toBe(false);
+  });
+
+  test("accepts valid boundary values for each field", () => {
+    expect(isValidCron("0 0 1 1 *")).toBe(true); // min boundaries
+    expect(isValidCron("59 23 31 12 *")).toBe(true); // max boundaries
+    expect(isValidCron("0 0 * * 0")).toBe(true); // dow 0 (Sunday)
+    expect(isValidCron("0 0 * * 7")).toBe(true); // dow 7 (also Sunday)
+    expect(isValidCron("0-59 0-23 1-31 1-12 0-7")).toBe(true); // full ranges
+  });
 });
 
 // ── cronMatchesTime ─────────────────────────────────────────────────
