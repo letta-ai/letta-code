@@ -136,11 +136,58 @@ function summarizeShellCommand(command: string): string {
   );
 }
 
+type SkillDescriptionLookup =
+  | ReadonlyMap<string, string>
+  | Readonly<Record<string, string | undefined>>;
+
+export type ChannelTurnProgressBuilderOptions = {
+  skillDescriptionsByName?: SkillDescriptionLookup;
+};
+
 type ToolCallSummary = {
   id?: string;
   name?: string;
   argumentsText?: string;
 };
+
+function getSkillNameFromArguments(
+  parsedArguments: Record<string, unknown>,
+): string | undefined {
+  return firstNonEmptyString(parsedArguments.skill, parsedArguments.skillName);
+}
+
+function getFragmentedSkillName(summary: ToolCallSummary): string | undefined {
+  const skillMatch = summary.argumentsText?.match(
+    /"(?:skill|skillName)"\s*:\s*"([^"]+)"/,
+  );
+  return skillMatch?.[1];
+}
+
+function resolveSkillDescription(
+  skillName: string | undefined,
+  options: ChannelTurnProgressBuilderOptions | undefined,
+): string | undefined {
+  const lookup = options?.skillDescriptionsByName;
+  if (!skillName || !lookup) {
+    return undefined;
+  }
+  if ("get" in lookup && typeof lookup.get === "function") {
+    return firstNonEmptyString(lookup.get(skillName));
+  }
+  return firstNonEmptyString(
+    (lookup as Readonly<Record<string, string | undefined>>)[skillName],
+  );
+}
+
+function formatSkillProgressTitleFromName(
+  skillName: string | undefined,
+): string | undefined {
+  const sanitized = sanitizeChannelProgressText(
+    skillName,
+    MAX_PROGRESS_DETAILS_LENGTH,
+  );
+  return sanitized ? `Skill: ${sanitized}` : undefined;
+}
 
 function formatShellProgressDetailsFromArguments(
   parsedArguments: Record<string, unknown>,
@@ -216,6 +263,7 @@ function formatFragmentedSubagentProgressDetails(
 type ToolReturnSummary = {
   summary: ToolCallSummary;
   status: "completed" | "error";
+  errorDetails?: string;
 };
 
 function parseToolArguments(
@@ -386,12 +434,12 @@ function getFileToolVerb(
 ): string {
   if (status === "error") {
     if (kind === "read") {
-      return "Failed to read";
+      return "Tried to read";
     }
     if (kind === "write") {
-      return "Failed to write";
+      return "Tried to write";
     }
-    return "Failed to update";
+    return "Tried to update";
   }
   if (status === "started") {
     if (kind === "read") {
@@ -464,12 +512,20 @@ function formatToolProgressTitle(
 
   const parsedArguments = parseToolArguments(summary.argumentsText);
   if (parsedArguments) {
+    if (isSkillToolName(summary.name)) {
+      return formatSkillProgressTitleFromName(
+        getSkillNameFromArguments(parsedArguments),
+      );
+    }
     if (isFilePathToolName(summary.name)) {
       return formatFileToolProgressTitle(summary.name, parsedArguments, status);
     }
     return undefined;
   }
 
+  if (isSkillToolName(summary.name)) {
+    return formatSkillProgressTitleFromName(getFragmentedSkillName(summary));
+  }
   if (isFilePathToolName(summary.name)) {
     return formatFragmentedFileToolProgressTitle(summary, status);
   }
@@ -478,13 +534,12 @@ function formatToolProgressTitle(
 
 function formatSkillProgressDetailsFromArguments(
   parsedArguments: Record<string, unknown>,
+  options: ChannelTurnProgressBuilderOptions | undefined,
 ): string | undefined {
-  const skillName = firstNonEmptyString(
-    parsedArguments.skill,
-    parsedArguments.skillName,
-  );
+  const skillName = getSkillNameFromArguments(parsedArguments);
+  const detail = resolveSkillDescription(skillName, options) ?? skillName;
   const sanitized = sanitizeChannelProgressText(
-    skillName,
+    detail,
     MAX_PROGRESS_DETAILS_LENGTH,
   );
   return sanitized || undefined;
@@ -492,15 +547,12 @@ function formatSkillProgressDetailsFromArguments(
 
 function formatFragmentedSkillProgressDetails(
   summary: ToolCallSummary,
+  options: ChannelTurnProgressBuilderOptions | undefined,
 ): string | undefined {
-  const skillMatch = summary.argumentsText?.match(
-    /"(?:skill|skillName)"\s*:\s*"([^"]+)"/,
-  );
-  if (!skillMatch?.[1]) {
-    return undefined;
-  }
+  const skillName = getFragmentedSkillName(summary);
+  const detail = resolveSkillDescription(skillName, options) ?? skillName;
   const sanitized = sanitizeChannelProgressText(
-    skillMatch[1],
+    detail,
     MAX_PROGRESS_DETAILS_LENGTH,
   );
   return sanitized || undefined;
@@ -508,6 +560,7 @@ function formatFragmentedSkillProgressDetails(
 
 function formatToolProgressDetails(
   summary: ToolCallSummary,
+  options?: ChannelTurnProgressBuilderOptions,
 ): string | undefined {
   if (!summary.name || !summary.argumentsText) {
     return undefined;
@@ -535,7 +588,7 @@ function formatToolProgressDetails(
     }
 
     if (isSkillToolName(summary.name)) {
-      return formatSkillProgressDetailsFromArguments(parsedArguments);
+      return formatSkillProgressDetailsFromArguments(parsedArguments, options);
     }
 
     if (isTaskTool(summary.name)) {
@@ -577,7 +630,7 @@ function formatToolProgressDetails(
   }
 
   if (isSkillToolName(summary.name)) {
-    return formatFragmentedSkillProgressDetails(summary);
+    return formatFragmentedSkillProgressDetails(summary, options);
   }
 
   if (isTaskTool(summary.name)) {
@@ -634,6 +687,42 @@ function getToolStatus(delta: Record<string, unknown>): "completed" | "error" {
   return status === "error" || status === "failed" ? "error" : "completed";
 }
 
+function stringifyProgressValue(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function formatToolErrorDetails(
+  record: Record<string, unknown>,
+): string | undefined {
+  const toolReturn = record.tool_return ?? record.toolReturn;
+  const toolReturnRecord = asRecord(toolReturn);
+  const preview = firstNonEmptyString(
+    record.stderr,
+    record.error,
+    record.message,
+    toolReturnRecord?.stderr,
+    toolReturnRecord?.error,
+    toolReturnRecord?.message,
+    toolReturnRecord?.output,
+    stringifyProgressValue(toolReturn),
+  );
+  const sanitized = sanitizeChannelProgressText(
+    preview,
+    MAX_PROGRESS_DETAILS_LENGTH,
+  );
+  return sanitized || undefined;
+}
+
 function toolNameForMessage(summary: ToolCallSummary | undefined): string {
   return summary?.name ? `: ${summary.name}` : "";
 }
@@ -648,7 +737,9 @@ export type ChannelTurnProgressBuilder = {
   buildUpdates(delta: StreamDelta): ChannelTurnProgressUpdate[];
 };
 
-export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
+export function createChannelTurnProgressBuilder(
+  options: ChannelTurnProgressBuilderOptions = {},
+): ChannelTurnProgressBuilder {
   // Fragmented tool arguments and names accumulated across stream deltas,
   // keyed by tool_call_id. Entries are dropped when the tool return arrives;
   // the whole builder is dropped with the turn.
@@ -808,9 +899,13 @@ export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
         continue;
       }
       seen.add(key);
+      const status = getToolStatus(record);
       summaries.push({
         summary,
-        status: getToolStatus(record),
+        status,
+        ...(status === "error"
+          ? { errorDetails: formatToolErrorDetails(record) }
+          : {}),
       });
     }
     return summaries;
@@ -823,7 +918,7 @@ export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
     const tools = extractToolCalls(record);
     const updates: ChannelTurnProgressUpdate[] = [];
     for (const tool of tools) {
-      const toolDetails = formatToolProgressDetails(tool);
+      const toolDetails = formatToolProgressDetails(tool, options);
       const toolTitle = formatToolProgressTitle(tool, "started");
       updates.push(
         withRunId(
@@ -900,7 +995,7 @@ export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
       case "tool_return_message": {
         const toolReturns = extractToolReturns(record);
         const updates: ChannelTurnProgressUpdate[] = [];
-        for (const { summary, status } of toolReturns) {
+        for (const { summary, status, errorDetails } of toolReturns) {
           // Resolve details from the accumulated arguments for this call,
           // then drop the per-call caches.
           const accumulatedArgs = summary.id
@@ -913,9 +1008,11 @@ export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
           const toolWithAccumulatedArgs = accumulatedArgs
             ? { ...summary, argumentsText: accumulatedArgs }
             : summary;
-          const toolDetails = formatToolProgressDetails(
-            toolWithAccumulatedArgs,
-          );
+          const toolDetails =
+            status === "error"
+              ? errorDetails ||
+                formatToolProgressDetails(toolWithAccumulatedArgs, options)
+              : formatToolProgressDetails(toolWithAccumulatedArgs, options);
           const toolTitle = formatToolProgressTitle(
             toolWithAccumulatedArgs,
             status,
@@ -940,7 +1037,9 @@ export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
 
       case "client_tool_start": {
         const tool = extractClientToolSummary(record);
-        const toolDetails = tool ? formatToolProgressDetails(tool) : undefined;
+        const toolDetails = tool
+          ? formatToolProgressDetails(tool, options)
+          : undefined;
         const toolTitle = tool
           ? formatToolProgressTitle(tool, "started")
           : undefined;
@@ -975,7 +1074,10 @@ export function createChannelTurnProgressBuilder(): ChannelTurnProgressBuilder {
             ? { ...tool, argumentsText: accumulatedArgs }
             : tool;
         const toolDetails = toolWithAccumulatedArgs
-          ? formatToolProgressDetails(toolWithAccumulatedArgs)
+          ? state === "error"
+            ? formatToolErrorDetails(record) ||
+              formatToolProgressDetails(toolWithAccumulatedArgs, options)
+            : formatToolProgressDetails(toolWithAccumulatedArgs, options)
           : undefined;
         const toolTitle = toolWithAccumulatedArgs
           ? formatToolProgressTitle(toolWithAccumulatedArgs, state)

@@ -86,6 +86,41 @@ test("channel progress uses Skill names as task details", () => {
       toolCallId: "call-1",
       toolName: "Skill",
       toolDetails: "maintaining-machine-maintenance",
+      toolTitle: "Skill: maintaining-machine-maintenance",
+    },
+  ]);
+});
+
+test("channel progress uses Skill descriptions as task details when available", () => {
+  const builder = createChannelTurnProgressBuilder({
+    skillDescriptionsByName: {
+      "scheduling-tasks": "Schedules reminders and recurring tasks via cron.",
+    },
+  });
+  const updates = builder.buildUpdates({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        tool_call_id: "call-1",
+        name: "Skill",
+        arguments: JSON.stringify({
+          skill: "scheduling-tasks",
+        }),
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: Skill",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Skill",
+      toolDetails: "Schedules reminders and recurring tasks via cron.",
+      toolTitle: "Skill: scheduling-tasks",
     },
   ]);
 });
@@ -135,6 +170,7 @@ test("channel progress uses cached Skill names for streamed argument fragments",
       toolCallId: "call-1",
       toolName: "Skill",
       toolDetails: "maintaining-machine-maintenance",
+      toolTitle: "Skill: maintaining-machine-maintenance",
     },
   ]);
 });
@@ -164,6 +200,7 @@ test("channel progress recognizes namespaced Skill tool names", () => {
       toolCallId: "call-1",
       toolName: "functions.Skill",
       toolDetails: "working-on-letta-code-channels",
+      toolTitle: "Skill: working-on-letta-code-channels",
     },
   ]);
 });
@@ -213,6 +250,7 @@ test("channel progress does not duplicate singular Skill alias fragments", () =>
       toolCallId: "call-1",
       toolName: "Skill",
       toolDetails: "turning-slack-asks-into-prs",
+      toolTitle: "Skill: turning-slack-asks-into-prs",
     },
   ]);
 });
@@ -428,8 +466,8 @@ test("channel progress builds failed file titles", () => {
       runId: "run-1",
       toolCallId: "call-1",
       toolName: "Write",
-      toolDetails: "/repo/src/lib.rs",
-      toolTitle: "Failed to write lib.rs",
+      toolDetails: "failed",
+      toolTitle: "Tried to write lib.rs",
     },
   ]);
 });
@@ -653,6 +691,7 @@ test("channel progress remembers tool names across streamed Skill args", () => {
       toolCallId: "call-1",
       toolName: "Skill",
       toolDetails: "maintaining-machine-maintenance",
+      toolTitle: "Skill: maintaining-machine-maintenance",
     },
   ]);
 });
@@ -864,6 +903,7 @@ test("channel progress maps canonical parallel tool return arrays", () => {
       message: "Tool failed",
       runId: "run-1",
       toolCallId: "call-2",
+      toolDetails: "failed",
     },
   ]);
 });
