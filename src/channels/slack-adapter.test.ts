@@ -2220,11 +2220,26 @@ test("slack adapter keeps rendered task details stable", async () => {
         id: "task_call-1",
         title: "find locales -type f",
         status: "in_progress",
-        details: "find locales -type f",
       },
     ],
   });
-  expect(writeClient?.chat.appendStream).not.toHaveBeenCalled();
+  const appendCalls = writeClient?.chat.appendStream.mock
+    .calls as unknown as Array<[{ chunks?: Array<Record<string, unknown>> }]>;
+  const appendChunks = appendCalls.flatMap(([call]) => call.chunks ?? []);
+  expect(appendChunks).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: "task_call-1",
+        title: "Inspect changed translation files",
+        status: "in_progress",
+      }),
+    ]),
+  );
+  expect(appendChunks).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ details: "Inspect changed translation files" }),
+    ]),
+  );
 });
 
 test("slack adapter keeps reasoning updates out of concrete task rows", async () => {
