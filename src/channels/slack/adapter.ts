@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
+import { isLocalAgentId } from "@/agent/agent-id";
 import { listChannelSlashCommands } from "@/channels/commands";
 import {
   createInboundDebouncer,
@@ -542,6 +543,37 @@ export function resolveSlackCompletionFinalizeGraceMs(): number {
     return DEFAULT_SLACK_COMPLETION_FINALIZE_GRACE_MS;
   }
   return Math.min(Math.trunc(parsed), 30_000);
+}
+
+/**
+ * Build a Letta Chat URL for an agent/conversation.
+ * Local-backend agents do not exist at app.letta.com, so return undefined.
+ */
+function buildSlackChatUrl(
+  agentId: string,
+  conversationId: string,
+): string | undefined {
+  if (isLocalAgentId(agentId)) {
+    return undefined;
+  }
+  const base = `https://app.letta.com/chat/${agentId}`;
+  if (conversationId && conversationId !== "default") {
+    return `${base}?conversation=${conversationId}`;
+  }
+  return base;
+}
+
+/**
+ * Build small footnote text with a link to the Letta Chat conversation.
+ * Returns an empty string for local-backend agents.
+ */
+function buildSlackChatFootnote(source: ChannelTurnSource): string {
+  const chatUrl = buildSlackChatUrl(source.agentId, source.conversationId);
+  if (!chatUrl) {
+    return "";
+  }
+  // Slack mrkdwn link format: <URL|text>
+  return `_<${chatUrl}|Open in Letta Chat>_`;
 }
 
 function sanitizeSlackProgressText(text: string, maxLength: number): string {
@@ -2420,6 +2452,11 @@ export function createSlackAdapter(
       };
       if (chunks.length > 0) {
         args.chunks = chunks;
+      }
+      // Add small footnote with link to Letta Chat for non-local agents.
+      const footnote = buildSlackChatFootnote(entry.source);
+      if (footnote) {
+        args.markdown_text = footnote;
       }
       const response = await stopStream.call(slackClient.chat, args);
       if (response.ok === false) {
