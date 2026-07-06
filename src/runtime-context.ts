@@ -1,9 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import type { SkillSource } from "./agent/skills";
 import type { MessageChannelToolDiscoveryScope } from "./channels/message-tool";
 import type { ChannelTurnSource } from "./channels/types";
+import { isUsableDirectory } from "./helpers/usable-directory";
 
 export type RuntimePermissionMode = "standard" | "acceptEdits" | "unrestricted";
 
@@ -14,6 +14,12 @@ export interface RuntimeContextSnapshot {
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
   workingDirectory?: string | null;
+  /**
+   * Set when the runtime-scoped working directory was found deleted and
+   * repaired to a fallback mid-turn. Holds the original (now missing) path
+   * until a shell tool consumes it to surface a note to the model.
+   */
+  workingDirectoryRecoveredFrom?: string | null;
   toolContextId?: string | null;
   permissionMode?: RuntimePermissionMode;
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
@@ -78,18 +84,6 @@ export function updateRuntimeContext(
   );
 }
 
-function isUsableDirectory(dirPath: string | null | undefined): boolean {
-  if (typeof dirPath !== "string" || dirPath.length === 0) {
-    return false;
-  }
-
-  try {
-    return existsSync(dirPath) && statSync(dirPath).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 function getProcessWorkingDirectory(): string | null {
   try {
     return process.cwd();
@@ -132,8 +126,26 @@ export function getCurrentWorkingDirectory(): string {
     workingDirectory.length > 0 &&
     workingDirectory !== fallback
   ) {
-    runtimeContext.workingDirectory = fallback;
+    updateRuntimeContext({
+      workingDirectory: fallback,
+      workingDirectoryRecoveredFrom: workingDirectory,
+    });
   }
 
   return fallback;
+}
+
+/**
+ * Returns (and clears) the original path of a working directory that was
+ * repaired mid-turn because it no longer existed, or null when no recovery
+ * happened. Shell tools use this to tell the model its cwd changed.
+ */
+export function consumeWorkingDirectoryRecovery(): string | null {
+  const runtimeContext = runtimeContextStorage.getStore();
+  const recoveredFrom = runtimeContext?.workingDirectoryRecoveredFrom;
+  if (!runtimeContext || !recoveredFrom) {
+    return null;
+  }
+  runtimeContext.workingDirectoryRecoveredFrom = null;
+  return recoveredFrom;
 }

@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { isUsableDirectory } from "@/helpers/usable-directory";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 
 export class ShellExecutionError extends Error {
   code?: string;
   executable?: string;
   cwd?: string;
+  /** Distinguishes which lookup failed when `code` is ENOENT. */
+  reason?: "executable_missing" | "cwd_missing";
 }
 
 export type ShellSpawnOptions = {
@@ -18,30 +20,28 @@ export type ShellSpawnOptions = {
 
 const ABORT_KILL_TIMEOUT_MS = 2000;
 
-function isUsableDirectory(dirPath: string): boolean {
-  try {
-    return existsSync(dirPath) && statSync(dirPath).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
 function buildSpawnError(
   err: NodeJS.ErrnoException,
   executable: string,
   cwd: string,
 ): ShellExecutionError {
   let message = `Failed to execute command: ${err?.message || "unknown error"}`;
+  let reason: ShellExecutionError["reason"];
   if (err?.code === "ENOENT") {
-    message = isUsableDirectory(cwd)
-      ? `Executable not found: ${executable}`
-      : `Working directory not found: ${cwd}`;
+    if (isUsableDirectory(cwd)) {
+      message = `Executable not found: ${executable}`;
+      reason = "executable_missing";
+    } else {
+      message = `Working directory not found: ${cwd}`;
+      reason = "cwd_missing";
+    }
   }
 
   const execError = new ShellExecutionError(message);
   execError.code = err?.code;
   execError.executable = executable;
   execError.cwd = cwd;
+  execError.reason = reason;
   return execError;
 }
 

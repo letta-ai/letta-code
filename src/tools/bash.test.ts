@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
@@ -52,8 +52,10 @@ describe("Bash tool", () => {
   });
 
   test("recovers when runtime working directory was deleted mid-turn", async () => {
-    const fallbackDir = await mkdtemp(
-      path.join(tmpdir(), "letta-bash-fallback-"),
+    // Resolve symlinks/8.3 short names (macOS /var -> /private/var, Windows
+    // RUNNER~1 -> runneradmin) so the assertion matches the child's cwd.
+    const fallbackDir = await realpath(
+      await mkdtemp(path.join(tmpdir(), "letta-bash-fallback-")),
     );
     const deletedDir = await mkdtemp(
       path.join(tmpdir(), "letta-bash-deleted-"),
@@ -76,6 +78,11 @@ describe("Bash tool", () => {
       expect(result.status).toBe("success");
       expect(result.content[0]?.text).toContain(fallbackDir);
       expect(result.content[0]?.text).not.toContain("Executable not found");
+      // The model must be told its cwd changed instead of silently running
+      // from a different directory.
+      expect(result.content[0]?.text).toContain(
+        `Note: working directory ${deletedDir} no longer exists`,
+      );
     } finally {
       if (originalUserCwd === undefined) delete process.env.USER_CWD;
       else process.env.USER_CWD = originalUserCwd;
