@@ -52,30 +52,6 @@ function parseDreamArgs(argv: string[]) {
   });
 }
 
-/**
- * Resolve the --memory value to an agent id. Accepts a bare agent id or an
- * `agent:<id>` form. Only agent-backed memory is supported in this version.
- */
-function resolveMemoryAgentId(memory: string | undefined): string {
-  if (!memory) {
-    return (
-      process.env.LETTA_AGENT_ID || settingsManager.getGlobalLastAgentId() || ""
-    );
-  }
-  return memory.startsWith("agent:") ? memory.slice("agent:".length) : memory;
-}
-
-/**
- * Resolve the --from value to a conversation id. A bare conversation id is
- * treated as `self` (the memory agent's own transcript for that conversation);
- * `self` or an omitted value means the agent's primary "default" history.
- */
-function resolveFromConversationId(from: string | undefined): string {
-  if (!from || from === "self") return "default";
-  if (from.startsWith("self,conv=")) return from.slice("self,conv=".length);
-  return from;
-}
-
 interface DreamCompletion {
   success: boolean;
   error?: string;
@@ -129,7 +105,11 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
 
   await settingsManager.initialize();
 
-  const agentId = resolveMemoryAgentId(parsed.values.memory);
+  const agentId =
+    parsed.values.memory ||
+    process.env.LETTA_AGENT_ID ||
+    settingsManager.getGlobalLastAgentId() ||
+    "";
   if (!agentId) {
     console.error(
       "Missing agent id. Pass --memory <agent-id>, set LETTA_AGENT_ID, or run a session first.",
@@ -148,7 +128,7 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     return 1;
   }
 
-  const conversationId = resolveFromConversationId(parsed.values.from);
+  const conversationId = parsed.values.from || "default";
 
   const { launchReflectionSubagent } = await import(
     "@/cli/helpers/reflection-launcher"
