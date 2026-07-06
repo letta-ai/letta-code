@@ -237,7 +237,13 @@ function isFetchWebpageToolName(name: string | undefined): boolean {
 }
 
 export function isSkillToolName(name: string | undefined): boolean {
-  return name === "Skill" || name === "skill";
+  if (!name) {
+    return false;
+  }
+  const normalized = name.includes(".")
+    ? name.slice(name.lastIndexOf(".") + 1)
+    : name;
+  return normalized === "Skill" || normalized === "skill";
 }
 
 function isFilePathToolName(name: string): boolean {

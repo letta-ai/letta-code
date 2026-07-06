@@ -139,6 +139,84 @@ test("channel progress uses cached Skill names for streamed argument fragments",
   ]);
 });
 
+test("channel progress recognizes namespaced Skill tool names", () => {
+  const builder = createChannelTurnProgressBuilder();
+  const updates = builder.buildUpdates({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        tool_call_id: "call-1",
+        name: "functions.Skill",
+        arguments: JSON.stringify({
+          skill: "working-on-letta-code-channels",
+        }),
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: functions.Skill",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "functions.Skill",
+      toolDetails: "working-on-letta-code-channels",
+    },
+  ]);
+});
+
+test("channel progress does not duplicate singular Skill alias fragments", () => {
+  const builder = createChannelTurnProgressBuilder();
+  const firstFragment = {
+    tool_call_id: "call-1",
+    name: "Skill",
+    arguments: '{"skill":"turning-',
+  };
+  expect(
+    builder.buildUpdates({
+      message_type: "tool_call_message",
+      run_id: "run-1",
+      tool_call: firstFragment,
+      tool_calls: firstFragment,
+    } as unknown as StreamDelta),
+  ).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: Skill",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Skill",
+    },
+  ]);
+
+  const secondFragment = {
+    tool_call_id: "call-1",
+    arguments: 'slack-asks-into-prs"}',
+  };
+  expect(
+    builder.buildUpdates({
+      message_type: "tool_call_message",
+      run_id: "run-1",
+      tool_call: secondFragment,
+      tool_calls: secondFragment,
+    } as unknown as StreamDelta),
+  ).toEqual([
+    {
+      kind: "tool",
+      state: "started",
+      message: "Preparing tool: Skill",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Skill",
+      toolDetails: "turning-slack-asks-into-prs",
+    },
+  ]);
+});
+
 test("channel progress previews subagent prompts", () => {
   const builder = createChannelTurnProgressBuilder();
   const updates = builder.buildUpdates({

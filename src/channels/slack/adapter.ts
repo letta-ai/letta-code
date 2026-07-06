@@ -488,6 +488,7 @@ type SlackProgressCardEntry = {
   toolDetailsByCallId?: Map<string, string>;
   toolTasksById?: Map<string, SlackProgressToolTask>;
   sentTaskDetailsById?: Map<string, string>;
+  completionHeaderText?: string;
   reasoningActive?: boolean;
   pendingStreamChunks?: SlackStreamChunk[];
   hiddenToolCallIds?: Set<string>;
@@ -934,6 +935,16 @@ function pluralizeTool(count: number): string {
   return `${count} tool${count === 1 ? "" : "s"}`;
 }
 
+function formatSlackCompletionPlanTitle(entry: SlackProgressCardEntry): string {
+  const title = entry.completionHeaderText
+    ? sanitizeSlackProgressText(
+        entry.completionHeaderText,
+        SLACK_PROGRESS_CARD_TEXT_MAX,
+      )
+    : "";
+  return title || "Completed";
+}
+
 function buildSlackPlanUpdateChunk(
   entry: SlackProgressCardEntry,
 ): SlackStreamChunk {
@@ -997,7 +1008,7 @@ function buildSlackPlanUpdateChunk(
   if (entry.status === "completed") {
     return {
       type: "plan_update",
-      title: "Completed",
+      title: formatSlackCompletionPlanTitle(entry),
     };
   }
 
@@ -2488,6 +2499,7 @@ export function createSlackAdapter(
     outcome: ChannelTurnOutcome,
     batchId?: string,
     errorText?: string | null,
+    completionHeaderText?: string | null,
   ): Promise<void> {
     const progress = resolveSlackLifecycleProgressText(outcome);
     const finalErrorChunk =
@@ -2515,6 +2527,10 @@ export function createSlackAdapter(
         entry.source = source;
         entry.status = progress.status;
         entry.latestText = progress.text;
+        entry.completionHeaderText =
+          progress.status === "completed"
+            ? (completionHeaderText ?? undefined)
+            : undefined;
         delete entry.latestUpdate;
         entry.updatedAt = Date.now();
         if (entry.mode === "stream") {
@@ -2547,6 +2563,7 @@ export function createSlackAdapter(
         entry.toolNamesByCallId = undefined;
         entry.toolDetailsByCallId = undefined;
         entry.sentTaskDetailsById = undefined;
+        entry.completionHeaderText = undefined;
         entry.reasoningActive = undefined;
         entry.hiddenToolCallIds = undefined;
         const replyKey = getLifecycleReplyKey(source);
@@ -2609,7 +2626,13 @@ export function createSlackAdapter(
     }
 
     try {
-      await finishSlackProgressCards([entry.source], "completed");
+      await finishSlackProgressCards(
+        [entry.source],
+        "completed",
+        undefined,
+        undefined,
+        msg.text,
+      );
     } catch (error) {
       console.warn(
         "[Slack] Failed to finish progress card after outbound message:",
