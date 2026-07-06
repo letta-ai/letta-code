@@ -172,6 +172,18 @@ describe("shared CLI arg schema", () => {
     );
   });
 
+  test("accepts deprecated --no-memfs as a hidden no-op (version-skew compat)", () => {
+    // Older parents spawn subagents with --no-memfs; after auto-update the
+    // child binary is newer than the running parent (LET-9436). The flag must
+    // parse without error, do nothing, and stay out of help output.
+    const parsed = parseCliArgs(
+      preprocessCliArgs(["node", "script", "-p", "hello", "--no-memfs"]),
+      true,
+    );
+    expect(parsed.values["no-memfs"]).toBe(true);
+    expect(renderCliOptionsHelp()).not.toContain("--no-memfs");
+  });
+
   test("rejects removed system-append flag in strict mode", () => {
     expect(() =>
       parseCliArgs(

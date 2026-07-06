@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.27.17",
+  "version": "0.27.25",
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
   "packageManager": "bun@1.3.0",
@@ -16,6 +16,8 @@
     "vendor",
     "dist/app-server-client.js",
     "dist/app-server-client.js.map",
+    "dist/agent-presets.js",
+    "dist/agent-presets.js.map",
     "dist/types",
     "docs"
   ],
@@ -30,6 +32,10 @@
     },
     "./protocol": {
       "types": "./dist/types/protocol.d.ts"
+    },
+    "./agent-presets": {
+      "types": "./dist/types/agent-presets.d.ts",
+      "import": "./dist/agent-presets.js"
     }
   },
   "repository": {
@@ -47,6 +53,7 @@
     "@earendil-works/pi-ai": "^0.79.6",
     "@letta-ai/letta-client": "^1.10.2",
     "@pierre/diffs": "1.2.2",
+    "@scarf/scarf": "^1.4.0",
     "glob": "^13.0.0",
     "ink-link": "^5.0.0",
     "node-pty": "^1.1.0",
@@ -90,6 +97,7 @@
     "check:filename-casing": "node scripts/check-filename-casing.js",
     "check:test-mock-isolation": "bun run scripts/check-test-mock-isolation.js",
     "check:test-coverage": "node scripts/check-test-coverage.cjs",
+    "check:skill-frontmatter": "node scripts/check-skill-frontmatter.js",
     "check:bundled-skill-scripts": "node scripts/check-bundled-skill-scripts.js",
     "check": "bun run scripts/check.js",
     "dev": "node scripts/dev.cjs",
@@ -97,11 +105,28 @@
     "test:update-chain:manual": "bun run src/test-utils/update-chain-smoke.ts --mode manual",
     "test:update-chain:startup": "bun run src/test-utils/update-chain-smoke.ts --mode startup",
     "prepublishOnly": "bun run build",
-    "postinstall": "node scripts/postinstall-patches.js || echo letta: vendor patches skipped && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty/package.json'),'../prebuilds/darwin-arm64/spawn-helper'),0o755)}catch(e){}\" || true"
+    "postinstall": "node scripts/postinstall-patches.js || echo letta: vendor patches skipped && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty/package.json'),'../prebuilds/darwin-arm64/spawn-helper'),0o755)}catch(e){}\" || true",
+    "mod-learning:memory-citations": "bun scripts/mod-learning/learn-mod.ts --env docs/examples/mods/learning/memory-citations.env.json"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json}": [
       "bunx --bun @biomejs/biome@2.2.5 check --write"
     ]
+  },
+  "typesVersions": {
+    "*": {
+      "agent-presets": [
+        "./dist/types/agent-presets.d.ts"
+      ],
+      "app-server-protocol": [
+        "./dist/types/app-server-protocol.d.ts"
+      ],
+      "app-server-client": [
+        "./dist/types/app-server-client.d.ts"
+      ],
+      "protocol": [
+        "./dist/types/protocol.d.ts"
+      ]
+    }
   }
 }

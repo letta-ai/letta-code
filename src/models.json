@@ -24,7 +24,8 @@
         "context_window": 140000,
         "max_output_tokens": 28000,
         "parallel_tool_calls": true
-      }
+      },
+      "isFeatured": true
     },
     {
       "id": "auto-chat",
@@ -49,7 +50,8 @@
         "context_window": 200000,
         "max_output_tokens": 28000,
         "parallel_tool_calls": true
-      }
+      },
+      "isFeatured": true
     },
     {
       "id": "fable",
@@ -58,7 +60,7 @@
       "description": "Fable 5 (high reasoning)",
       "isFeatured": true,
       "updateArgs": {
-        "context_window": 1000000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "high",
@@ -71,7 +73,7 @@
       "label": "Fable 5",
       "description": "Fable 5 (low reasoning)",
       "updateArgs": {
-        "context_window": 1000000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "low",
@@ -85,7 +87,7 @@
       "label": "Fable 5",
       "description": "Fable 5 (med reasoning)",
       "updateArgs": {
-        "context_window": 1000000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "medium",
@@ -99,7 +101,7 @@
       "label": "Fable 5",
       "description": "Fable 5 (extra-high reasoning)",
       "updateArgs": {
-        "context_window": 1000000,
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "xhigh",
@@ -112,7 +114,74 @@
       "label": "Fable 5",
       "description": "Fable 5 (max reasoning)",
       "updateArgs": {
-        "context_window": 1000000,
+        "context_window": 200000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "max",
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "fable-1m",
+      "handle": "anthropic/claude-fable-5",
+      "label": "Fable 5 1M",
+      "description": "Claude Fable 5 with 1M token context window (high reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "high",
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "fable-1m-low",
+      "handle": "anthropic/claude-fable-5",
+      "label": "Fable 5 1M",
+      "description": "Fable 5 1M (low reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "low",
+        "max_reasoning_tokens": 4000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "fable-1m-medium",
+      "handle": "anthropic/claude-fable-5",
+      "label": "Fable 5 1M",
+      "description": "Fable 5 1M (med reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "medium",
+        "max_reasoning_tokens": 12000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "fable-1m-xhigh",
+      "handle": "anthropic/claude-fable-5",
+      "label": "Fable 5 1M",
+      "description": "Fable 5 1M (extra-high reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
+        "max_output_tokens": 128000,
+        "enable_reasoner": true,
+        "reasoning_effort": "xhigh",
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "fable-1m-max",
+      "handle": "anthropic/claude-fable-5",
+      "label": "Fable 5 1M",
+      "description": "Fable 5 1M (max reasoning)",
+      "updateArgs": {
+        "context_window": 950000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "max",
@@ -211,8 +280,7 @@
         "reasoning_effort": "high",
         "enable_reasoner": true,
         "parallel_tool_calls": true
-      },
-      "isFeatured": true
+      }
     },
     {
       "id": "opus-4.8-1m-no-reasoning",
@@ -337,10 +405,77 @@
     },
     {
       "id": "sonnet",
+      "handle": "anthropic/claude-sonnet-5",
+      "label": "Sonnet 5",
+      "description": "Sonnet 5 (high reasoning)",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "high",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-5-no-reasoning",
+      "handle": "anthropic/claude-sonnet-5",
+      "label": "Sonnet 5",
+      "description": "Sonnet 5 with no reasoning (faster)",
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "none",
+        "enable_reasoner": false,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-5-low",
+      "handle": "anthropic/claude-sonnet-5",
+      "label": "Sonnet 5",
+      "description": "Sonnet 5 (low reasoning)",
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "low",
+        "enable_reasoner": true,
+        "max_reasoning_tokens": 4000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-5-medium",
+      "handle": "anthropic/claude-sonnet-5",
+      "label": "Sonnet 5",
+      "description": "Sonnet 5 (med reasoning)",
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "medium",
+        "enable_reasoner": true,
+        "max_reasoning_tokens": 12000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-5-xhigh",
+      "handle": "anthropic/claude-sonnet-5",
+      "label": "Sonnet 5",
+      "description": "Sonnet 5 (max reasoning)",
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 128000,
+        "reasoning_effort": "xhigh",
+        "enable_reasoner": true,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "sonnet-4.6",
       "handle": "anthropic/claude-sonnet-4-6",
       "label": "Sonnet 4.6",
       "description": "Sonnet 4.6 (high reasoning)",
-      "isFeatured": true,
       "updateArgs": {
         "context_window": 200000,
         "max_output_tokens": 128000,
@@ -408,7 +543,6 @@
       "handle": "anthropic/claude-sonnet-4-6",
       "label": "Sonnet 4.6 1M",
       "description": "Claude Sonnet 4.6 with 1M token context window (high reasoning)",
-      "isFeatured": true,
       "updateArgs": {
         "context_window": 9500000,
         "max_output_tokens": 128000,
@@ -706,6 +840,19 @@
       "label": "Bedrock Sonnet 4.6",
       "shortLabel": "Sonnet 4.6 BR",
       "description": "Sonnet 4.6 via AWS Bedrock",
+      "updateArgs": {
+        "context_window": 180000,
+        "max_output_tokens": 64000,
+        "max_reasoning_tokens": 31999,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "bedrock-sonnet-5",
+      "handle": "bedrock/us.anthropic.claude-sonnet-5",
+      "label": "Bedrock Sonnet 5",
+      "shortLabel": "Sonnet 5 BR",
+      "description": "Sonnet 5 via AWS Bedrock",
       "updateArgs": {
         "context_window": 180000,
         "max_output_tokens": 64000,
@@ -1277,7 +1424,6 @@
       "handle": "openai/gpt-5.4",
       "label": "GPT-5.4",
       "description": "OpenAI's most capable model (high reasoning)",
-      "isFeatured": true,
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "medium",
@@ -1368,7 +1514,7 @@
       "id": "gpt-5.4-pro-medium",
       "handle": "openai/gpt-5.4-pro",
       "label": "GPT-5.4 Pro",
-      "description": "GPT-5.4 Pro \u2014 max performance variant (med reasoning)",
+      "description": "GPT-5.4 Pro — max performance variant (med reasoning)",
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "medium",
@@ -1381,7 +1527,7 @@
       "id": "gpt-5.4-pro-high",
       "handle": "openai/gpt-5.4-pro",
       "label": "GPT-5.4 Pro",
-      "description": "GPT-5.4 Pro \u2014 max performance variant (high reasoning)",
+      "description": "GPT-5.4 Pro — max performance variant (high reasoning)",
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "medium",
@@ -1394,7 +1540,7 @@
       "id": "gpt-5.4-pro-xhigh",
       "handle": "openai/gpt-5.4-pro",
       "label": "GPT-5.4 Pro",
-      "description": "GPT-5.4 Pro \u2014 max performance variant (max reasoning)",
+      "description": "GPT-5.4 Pro — max performance variant (max reasoning)",
       "updateArgs": {
         "reasoning_effort": "xhigh",
         "verbosity": "medium",
@@ -1434,7 +1580,6 @@
       "handle": "openai/gpt-5.4-mini",
       "label": "GPT-5.4 Mini",
       "description": "Fast, efficient GPT-5.4 variant (med reasoning)",
-      "isFeatured": true,
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "low",
@@ -1647,7 +1792,8 @@
         "context_window": 1048576,
         "max_output_tokens": 384000,
         "parallel_tool_calls": true
-      }
+      },
+      "isFeatured": true
     },
     {
       "id": "glm-5.2",
@@ -1691,7 +1837,6 @@
       "handle": "minimax/MiniMax-M2.7",
       "label": "MiniMax 2.7",
       "description": "MiniMax's M2.7 coding model",
-      "isFeatured": true,
       "free": true,
       "updateArgs": {
         "context_window": 160000,

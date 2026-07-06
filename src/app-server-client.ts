@@ -1,6 +1,8 @@
 import type {
   AbortMessageCommand,
   AbortMessageResponseMessage,
+  ConversationListCommand,
+  ConversationListResponseMessage,
   ExternalToolCallRequestMessage,
   ExternalToolCallResult,
   InputCommand,
@@ -490,6 +492,30 @@ export class AppServerClient {
         ...options,
         predicate: (message): message is AbortMessageResponseMessage =>
           message.type === "abort_message_response",
+      },
+    );
+  }
+
+  conversationList(
+    command: Omit<ConversationListCommand, "type" | "request_id"> & {
+      request_id?: string;
+    } = {},
+    options: Omit<
+      AppServerRequestOptions<ConversationListResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<ConversationListResponseMessage> {
+    return this.request(
+      {
+        type: "conversation_list",
+        request_id:
+          command.request_id ?? this.nextRequestId("conversation-list"),
+        ...command,
+      },
+      {
+        ...options,
+        predicate: (message): message is ConversationListResponseMessage =>
+          message.type === "conversation_list_response",
       },
     );
   }

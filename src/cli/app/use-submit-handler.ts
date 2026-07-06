@@ -33,15 +33,17 @@ import {
 } from "@/agent/memory-runtime";
 import { buildReflectionMemoryScope } from "@/agent/memory-worktree";
 import { sendMessageStreamWithBackend } from "@/agent/message";
-import {
-  detectPersonalityFromPersonaFile,
-  type PersonalityId,
-} from "@/agent/personality";
+import { detectPersonalityFromPersonaFile } from "@/agent/personality";
+import type { PersonalityId } from "@/agent/personality-presets";
 import { recordSessionEnd } from "@/agent/session-history";
 import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { CustomCommand } from "@/cli/commands/custom";
+import {
+  handleModsCommand,
+  parseModsGenerateEnvCommand,
+} from "@/cli/commands/mods";
 import type { CommandHandle } from "@/cli/commands/runner";
 import { validateAgentName } from "@/cli/components/PinDialog";
 import { type Buffers, type Line, toLines } from "@/cli/helpers/accumulator";
@@ -55,15 +57,6 @@ import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import { resetContextHistory } from "@/cli/helpers/context-tracker";
 import type { ConversationSwitchContext } from "@/cli/helpers/conversation-switch-alert";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
-import {
-  buildGoalReminder,
-  formatGoalSummary,
-  GOAL_USAGE,
-  GOAL_USAGE_HINT,
-  goalStatusLabel,
-  parseGoalArgs,
-  validateGoalObjective,
-} from "@/cli/helpers/goal-command";
 import {
   buildDoctorMessage,
   buildInitMessage,
@@ -91,6 +84,10 @@ import {
   finalizeMultiReflectionPayload,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
+import {
+  formatSkillNameFrontmatterRepairReport,
+  repairMissingSkillNameFrontmatter,
+} from "@/cli/helpers/skill-name-frontmatter-repair";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
@@ -114,15 +111,12 @@ import {
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
-import { goalLoopMode } from "@/goal-loop-mode";
 import {
   runPreCompactHooks,
   runSessionStartHooks,
   runUserPromptSubmitHooks,
 } from "@/hooks";
 import { createModConversationHandle } from "@/mods/conversation-handle";
-import type { PermissionMode } from "@/permissions/mode";
-import { permissionMode } from "@/permissions/mode";
 import type { QueueRuntime } from "@/queue/queue-runtime";
 import {
   buildSharedReminderParts,
@@ -144,7 +138,6 @@ import { switchCurrentRuntimeWorkingDirectory } from "@/websocket/listener/cwd-c
 
 import { shouldSlashCommandBypassQueue } from "./command-routing";
 import { buildTextParts } from "./content-parts";
-import { buildGoalPrompt } from "./goal-loop";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
 import { saveLastSessionBeforeExit } from "./session";
 import { handleConnectionCommand } from "./submit-connection-commands";
@@ -312,8 +305,6 @@ type SubmitHandlerContext = {
   setThinkingMessage: Dispatch<SetStateAction<string>>;
   setTokenStreamingEnabled: Dispatch<SetStateAction<boolean>>;
   setTrajectoryTokenBase: Dispatch<SetStateAction<number>>;
-  setUiPermissionMode: (mode: PermissionMode) => void;
-  setUiGoalLoopActive: Dispatch<SetStateAction<boolean>>;
   sharedReminderStateRef: MutableRefObject<SharedReminderState>;
   shouldAutoGenerateConversationTitleRef: MutableRefObject<boolean>;
 
@@ -460,6 +451,11 @@ function parseReflectCommandArgs(input: string): ReflectCommandArgs {
   return { instruction, kind: "single" };
 }
 
+function aliasBareExitCommand(input: string): string {
+  if (input === "exit" || input === "quit") return "/exit";
+  return input;
+}
+
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
   const {
     abortControllerRef,
@@ -551,8 +547,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setThinkingMessage,
     setTokenStreamingEnabled,
     setTrajectoryTokenBase,
-    setUiPermissionMode,
-    setUiGoalLoopActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
 
@@ -581,6 +575,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       const { notifications: taskNotifications, cleanedText } =
         extractTaskNotificationsForDisplay(msg);
       const userTextForInput = cleanedText.trim();
+      const routedUserText = aliasBareExitCommand(userTextForInput);
       const isSystemOnly =
         taskNotifications.length > 0 && userTextForInput.length === 0;
 
@@ -608,21 +603,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       }
 
       if (!msg && !hasOverrideContent) return { submitted: false };
-
-      // Auto-dismiss completed/budget-limited goals on the next user turn
-      const existingGoal = conversationIdRef.current
-        ? settingsManager.getConversationGoal(conversationIdRef.current)
-        : null;
-      if (
-        existingGoal &&
-        (existingGoal.status === "complete" ||
-          existingGoal.status === "budget_limited")
-      ) {
-        settingsManager.clearConversationGoal(
-          conversationIdRef.current,
-          process.cwd(),
-        );
-      }
 
       // If the user just cycled reasoning tiers, flush the final choice before
       // sending the next message so the upcoming run uses the selected tier.
@@ -711,9 +691,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
         setDequeueEpoch((e: number) => e + 1);
       }
 
-      const isSlashCommand = userTextForInput.startsWith("/");
+      const isSlashCommand = routedUserText.startsWith("/");
       const parsedModCommand = isSlashCommand
-        ? parseModSlashCommand(userTextForInput.trim())
+        ? parseModSlashCommand(routedUserText.trim())
         : null;
       const parsedSlashCommandName = parsedModCommand?.command ?? null;
       const matchedCustomCommand = parsedSlashCommandName
@@ -726,15 +706,15 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // while the agent is busy. Overlay writes are still deferred via queuedOverlayAction.
       const shouldBypassQueue =
         isSlashCommand &&
-        shouldSlashCommandBypassQueue(userTextForInput, {
+        shouldSlashCommandBypassQueue(routedUserText, {
           hasCustomCommand: Boolean(matchedCustomCommand),
           ...(matchedModCommand ? { modCommand: matchedModCommand } : {}),
         });
 
       if (isAgentBusy() && isSlashCommand && !shouldBypassQueue) {
-        const attemptedCommand = userTextForInput.split(/\s+/)[0] || "/";
+        const attemptedCommand = routedUserText.split(/\s+/)[0] || "/";
         const disabledMessage = `'${attemptedCommand}' is disabled while the agent is running.`;
-        const cmd = commandRunner.start(userTextForInput, disabledMessage);
+        const cmd = commandRunner.start(routedUserText, disabledMessage);
         cmd.fail(disabledMessage);
         return { submitted: true }; // Clears input
       }
@@ -753,10 +733,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // Note: userCancelledRef.current was already reset above before the queue check
       // to ensure the dequeue effect isn't blocked by a stale cancellation flag.
 
-      let aliasedMsg = msg;
-      if (msg === "exit" || msg === "quit") {
-        aliasedMsg = "/exit";
-      }
+      const aliasedMsg = routedUserText;
 
       // Handle commands (messages starting with "/")
       if (aliasedMsg.startsWith("/")) {
@@ -922,6 +899,71 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             }
           }
 
+          return { submitted: true };
+        }
+
+        const modsGenerateEnvCommand = parseModsGenerateEnvCommand(trimmed);
+        if (modsGenerateEnvCommand) {
+          const args = modsGenerateEnvCommand.args;
+          const cmd = commandRunner.start(
+            trimmed,
+            args
+              ? `Starting mod env generation for: ${args}`
+              : "Starting mod env generation...",
+          );
+
+          const approvalCheck = await checkPendingApprovalsForSlashCommand();
+          if (approvalCheck.blocked) {
+            cmd.fail(
+              "Pending approval(s). Resolve approvals before running /mods generate-env.",
+            );
+            return { submitted: false };
+          }
+
+          setCommandRunning(true);
+          try {
+            const { loadRenderedSkillContent, wrapSkillContent } = await import(
+              "@/tools/impl/skill"
+            );
+            const skillContent = await loadRenderedSkillContent(
+              "generating-mod-envs",
+              {
+                agentId,
+                args,
+                allowDisabledModelInvocation: true,
+              },
+            );
+            const request = args
+              ? `The user ran \`/mods generate-env ${args}\`. Use the loaded skill to help them generate, review, validate, or improve a mod learning env JSON.`
+              : "The user ran `/mods generate-env` without arguments. Use the loaded skill's bare behavior for mod learning env generation.";
+
+            cmd.finish("Running mod env generation...", true);
+            await processConversationWithQueuedApprovals([
+              {
+                type: "message",
+                role: "user",
+                content: buildTextParts(
+                  `${wrapSkillContent("generating-mod-envs", skillContent)}\n\n${SYSTEM_REMINDER_OPEN}\n${request}\n${SYSTEM_REMINDER_CLOSE}`,
+                ),
+                otid: randomUUID(),
+              },
+            ]);
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to run /mods generate-env: ${errorDetails}`);
+          } finally {
+            setCommandRunning(false);
+          }
+
+          return { submitted: true };
+        }
+
+        const modsCommand = handleModsCommand(trimmed, {
+          commandRunner,
+          currentModelId,
+          cwd: getCurrentWorkingDirectory(),
+        });
+        if (modsCommand.handled) {
           return { submitted: true };
         }
 
@@ -1696,17 +1738,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
-          // Pause any active goal for the current conversation before switching
           const prevConversationId = conversationIdRef.current;
-          const prevGoal = prevConversationId
-            ? settingsManager.getConversationGoal(prevConversationId)
-            : null;
-          if (prevGoal?.status === "active") {
-            settingsManager.updateConversationGoalStatus(
-              prevConversationId,
-              "paused",
-            );
-          }
 
           // Run SessionEnd hooks for current session before starting new one
           await runEndHooks("new");
@@ -1797,17 +1829,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
-          // Pause any active goal for the current conversation before forking
           const forkPrevConversationId = conversationIdRef.current;
-          const forkPrevGoal = forkPrevConversationId
-            ? settingsManager.getConversationGoal(forkPrevConversationId)
-            : null;
-          if (forkPrevGoal?.status === "active") {
-            settingsManager.updateConversationGoalStatus(
-              forkPrevConversationId,
-              "paused",
-            );
-          }
 
           await runEndHooks("fork");
 
@@ -1908,17 +1930,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           resetPendingReasoningCycle();
           setCommandRunning(true);
 
-          // Pause any active goal for the current conversation before clearing
           const clearPrevConversationId = conversationIdRef.current;
-          const clearPrevGoal = clearPrevConversationId
-            ? settingsManager.getConversationGoal(clearPrevConversationId)
-            : null;
-          if (clearPrevGoal?.status === "active") {
-            settingsManager.updateConversationGoalStatus(
-              clearPrevConversationId,
-              "paused",
-            );
-          }
 
           // Run SessionEnd hooks for current session before clearing
           await runEndHooks("new");
@@ -2001,174 +2013,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           } finally {
             setCommandRunning(false);
           }
-          return { submitted: true };
-        }
-
-        if (trimmed === "/goal" || trimmed.startsWith("/goal ")) {
-          const objective = trimmed.slice("/goal".length).trim();
-          const cmd = commandRunner.start(trimmed, "Managing goal...");
-          const currentConversationId = conversationIdRef.current;
-
-          if (!currentConversationId) {
-            cmd.fail("No active conversation.");
-            return { submitted: true };
-          }
-
-          const lowerGoalArg = objective.toLowerCase();
-          if (
-            !objective ||
-            lowerGoalArg === "show" ||
-            lowerGoalArg === "status"
-          ) {
-            const goal = settingsManager.getConversationGoal(
-              currentConversationId,
-            );
-            if (!goal) {
-              cmd.finish(
-                `${GOAL_USAGE}\n${GOAL_USAGE_HINT}\nNo goal is currently set.`,
-                true,
-              );
-              return { submitted: true };
-            }
-            cmd.finish(
-              `Goal ${goalStatusLabel(goal.status)}\n${formatGoalSummary(goal)}`,
-              true,
-            );
-            return { submitted: true };
-          }
-
-          if (lowerGoalArg === "clear" || lowerGoalArg === "disable") {
-            const cleared = settingsManager.clearConversationGoal(
-              currentConversationId,
-            );
-            settingsManager.setConversationGoalToolsEnabled(
-              currentConversationId,
-              false,
-            );
-            if (goalLoopMode.getState().isActive) {
-              goalLoopMode.deactivate();
-              setUiGoalLoopActive(false);
-              permissionMode.setMode("standard");
-              setUiPermissionMode("standard");
-            }
-            cmd.finish(
-              cleared || lowerGoalArg === "disable"
-                ? lowerGoalArg === "disable"
-                  ? "Goal disabled; goal tools removed for this conversation."
-                  : "Goal cleared"
-                : "No goal to clear. This conversation does not currently have a goal.",
-              true,
-            );
-            return { submitted: true };
-          }
-
-          if (
-            lowerGoalArg === "pause" ||
-            lowerGoalArg === "resume" ||
-            lowerGoalArg === "complete"
-          ) {
-            const status = lowerGoalArg === "resume" ? "active" : lowerGoalArg;
-            const goal = settingsManager.updateConversationGoalStatus(
-              currentConversationId,
-              status as "active" | "paused" | "complete",
-            );
-            if (!goal) {
-              cmd.fail(
-                `${GOAL_USAGE}\nThe session must have a goal before you can ${lowerGoalArg} it.`,
-              );
-              return { submitted: true };
-            }
-            if (lowerGoalArg === "pause" || lowerGoalArg === "complete") {
-              if (goalLoopMode.getState().isActive) {
-                goalLoopMode.deactivate();
-                setUiGoalLoopActive(false);
-                permissionMode.setMode("standard");
-                setUiPermissionMode("standard");
-              }
-            } else if (lowerGoalArg === "resume") {
-              settingsManager.setConversationGoalToolsEnabled(
-                currentConversationId,
-                true,
-              );
-              goalLoopMode.activateGoal(goal.objective, goal.tokenBudget);
-              setUiGoalLoopActive(true);
-              permissionMode.setMode("unrestricted");
-              setUiPermissionMode("unrestricted");
-              const goalState = goalLoopMode.getState();
-              const systemMsg = buildGoalPrompt(
-                goalState,
-                currentConversationId,
-              );
-              processConversationWithQueuedApprovals([
-                {
-                  type: "message",
-                  role: "user",
-                  content: buildTextParts(systemMsg),
-                  otid: randomUUID(),
-                },
-              ]);
-            }
-            cmd.finish(
-              `Goal ${goalStatusLabel(goal.status)}\n${formatGoalSummary(goal)}`,
-              true,
-            );
-            return { submitted: true };
-          }
-
-          const parsedGoal = parseGoalArgs(objective);
-          if (parsedGoal.error) {
-            cmd.fail(`${parsedGoal.error}\n${GOAL_USAGE}\n${GOAL_USAGE_HINT}`);
-            return { submitted: true };
-          }
-
-          const validationError = validateGoalObjective(parsedGoal.objective);
-          if (validationError) {
-            cmd.fail(`${validationError}\n${GOAL_USAGE}\n${GOAL_USAGE_HINT}`);
-            return { submitted: true };
-          }
-
-          const previousGoal = settingsManager.getConversationGoal(
-            currentConversationId,
-          );
-          if (previousGoal && !parsedGoal.replace) {
-            cmd.fail(
-              `A goal already exists. Run /goal --replace ${parsedGoal.objective} to replace it, or /goal clear first.`,
-            );
-            return { submitted: true };
-          }
-          settingsManager.setConversationGoalToolsEnabled(
-            currentConversationId,
-            true,
-          );
-          const goal = settingsManager.setConversationGoal(
-            currentConversationId,
-            parsedGoal.objective,
-            process.cwd(),
-            parsedGoal.tokenBudget,
-            true,
-          );
-          goalLoopMode.activateGoal(
-            parsedGoal.objective,
-            parsedGoal.tokenBudget,
-          );
-          setUiGoalLoopActive(true);
-          permissionMode.setMode("unrestricted");
-          setUiPermissionMode("unrestricted");
-          const replaced = previousGoal ? " replaced" : " active";
-          cmd.finish(
-            `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`,
-            true,
-          );
-          const goalState = goalLoopMode.getState();
-          const systemMsg = buildGoalPrompt(goalState, currentConversationId);
-          processConversationWithQueuedApprovals([
-            {
-              type: "message",
-              role: "user",
-              content: buildTextParts(systemMsg),
-              otid: randomUUID(),
-            },
-          ]);
           return { submitted: true };
         }
 
@@ -2678,7 +2522,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               "USAGE",
               "  /memfs status    — show status",
               "  /memfs enable    — enable filesystem-backed memory",
-              "  /memfs disable   — disable filesystem-backed memory",
               "  /memfs sync      — sync blocks and files now",
               "  /memfs reset     — move local memfs to /tmp and recreate dirs",
               "  /memfs help      — show this help",
@@ -2716,7 +2559,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               const { applyMemfsFlags } = await import(
                 "@/agent/memory-filesystem"
               );
-              const result = await applyMemfsFlags(agentId, true, false);
+              const result = await applyMemfsFlags(agentId, true);
               updateMemorySyncCommand(
                 cmdId,
                 `Memory filesystem enabled (git-backed).\nPath: ${result.memoryDir}`,
@@ -2853,76 +2696,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               updateMemorySyncCommand(
                 cmdId,
                 `Failed to reset memfs: ${errorText}`,
-                false,
-                msg,
-              );
-            } finally {
-              setCommandRunning(false);
-            }
-
-            return { submitted: true };
-          }
-
-          if (subcommand === "disable") {
-            if (getBackend().capabilities.localMemfs) {
-              cmd.fail(
-                "Disabling MemFS is not supported by the local backend.",
-              );
-              return { submitted: true };
-            }
-
-            updateMemorySyncCommand(
-              cmdId,
-              "Disabling memory filesystem...",
-              true,
-              msg,
-              true,
-            );
-            setCommandRunning(true);
-
-            try {
-              // 1. Re-attach memory tool
-              const { reattachMemoryTool } = await import("@/tools/toolset");
-              const modelId = currentModelId || "anthropic/claude-sonnet-4";
-              await reattachMemoryTool(agentId, modelId);
-
-              // 2. Update system prompt to remove memfs section
-              const { updateAgentSystemPromptMemfs } = await import(
-                "@/agent/modify"
-              );
-              await updateAgentSystemPromptMemfs(agentId, false);
-
-              // 3. Update settings
-              settingsManager.setMemfsEnabled(agentId, false);
-
-              // 4. Remove git-memory-enabled tag from agent
-              const { removeGitMemoryTag } = await import("@/agent/memory-git");
-              await removeGitMemoryTag(agentId);
-
-              // 5. Move local memory dir to /tmp (backup, not delete)
-              let backupInfo = "";
-              const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-              if (existsSync(memoryDir)) {
-                const backupDir = join(
-                  tmpdir(),
-                  `letta-memfs-disable-${agentId}-${Date.now()}`,
-                );
-                renameSync(memoryDir, backupDir);
-                backupInfo = `\nLocal files backed up to ${backupDir}`;
-              }
-
-              updateMemorySyncCommand(
-                cmdId,
-                `Memory filesystem disabled. Memory tool re-attached.${backupInfo}`,
-                true,
-                msg,
-              );
-            } catch (error) {
-              const errorText =
-                error instanceof Error ? error.message : String(error);
-              updateMemorySyncCommand(
-                cmdId,
-                `Failed to disable memfs: ${errorText}`,
                 false,
                 msg,
               );
@@ -3513,10 +3286,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             const { context: gitContext } = gatherInitGitContext();
             const memoryDir = getActiveMemoryDirectory(agentId);
+            const skillNameFrontmatterRepair =
+              await repairMissingSkillNameFrontmatter(memoryDir);
+            const skillNameFrontmatterRepairReport =
+              formatSkillNameFrontmatterRepairReport(
+                skillNameFrontmatterRepair,
+              );
 
             const doctorMessage = buildDoctorMessage({
               gitContext,
               memoryDir,
+              skillNameFrontmatterRepairReport,
             });
 
             await processConversationWithQueuedApprovals([
@@ -3753,17 +3533,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       openTrajectorySegment();
       refreshDerived();
 
-      // If a goal loop is active and the user sends an interstitial message,
-      // keep the loop context attached to the turn.
-      let goalLoopReminder = "";
-      if (goalLoopMode.getState().isActive) {
-        goalLoopMode.incrementIteration();
-        const goalState = goalLoopMode.getState();
-        goalLoopReminder = `${buildGoalPrompt(goalState, conversationIdRef.current)}
-
-`;
-      }
-
       // Inject SessionStart hook feedback (stdout on exit 2) into first message only
       let sessionStartHookFeedback = "";
       if (sessionStartFeedbackRef.current.length > 0) {
@@ -3855,16 +3624,9 @@ ${SYSTEM_REMINDER_CLOSE}
 
       pushReminder(sessionStartHookFeedback);
       pushReminder(conversationSwitchAlert);
-      pushReminder(goalLoopReminder);
       pushReminder(bashCommandPrefix);
       pushReminder(userPromptSubmitHookFeedback);
       pushReminder(memoryGitReminder);
-      const currentGoal = settingsManager.getConversationGoal(
-        conversationIdRef.current,
-      );
-      if (currentGoal) {
-        pushReminder(buildGoalReminder(currentGoal));
-      }
       const messageContent = prependReminderPartsToContent(
         contentParts as MessageCreate["content"],
         reminderParts,

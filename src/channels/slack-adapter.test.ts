@@ -159,6 +159,7 @@ const resolveSlackThreadStarterMock = mock(
     userId?: string;
     botId?: string;
     ts?: string;
+    attachments?: ChannelMessageAttachment[];
   } | null> => null,
 );
 const resolveSlackThreadHistoryMock = mock(
@@ -168,6 +169,7 @@ const resolveSlackThreadHistoryMock = mock(
       userId?: string;
       botId?: string;
       ts?: string;
+      attachments?: ChannelMessageAttachment[];
     }>
   > => [],
 );
@@ -178,6 +180,7 @@ const resolveSlackChannelHistoryMock = mock(
       userId?: string;
       botId?: string;
       ts?: string;
+      attachments?: ChannelMessageAttachment[];
     }>
   > => [],
 );
@@ -578,6 +581,166 @@ test("slack adapter forwards threaded channel replies as channel input", async (
   );
 });
 
+test("slack adapter auto-routes unmentioned replies in agent-participated threads", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "slack",
+    chatId: "C123",
+    text: "agent reply",
+    threadId: "1712790000.000050",
+  });
+
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      user: "U123",
+      text: "<@UOTHER> can you check this?",
+      ts: "1712800000.000100",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "<@UOTHER> can you check this?",
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: true,
+    }),
+  );
+});
+
+test("slack adapter scopes agent-thread auto-routing by channel", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "slack",
+    chatId: "C123",
+    text: "agent reply",
+    threadId: "1712790000.000050",
+  });
+
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C999",
+      user: "U123",
+      text: "same timestamp, different channel",
+      ts: "1712800000.000100",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "slack",
+      chatId: "C999",
+      text: "same timestamp, different channel",
+      threadId: "1712790000.000050",
+      isMention: false,
+    }),
+  );
+});
+
+test("slack adapter auto-routes replies after threaded file uploads", async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), "letta-slack-upload-"));
+  const mediaPath = join(tempDir, "chart.png");
+  await writeFile(mediaPath, "fake-image-data");
+
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "slack",
+    chatId: "C123",
+    text: "latest chart",
+    mediaPath,
+    fileName: "chart.png",
+    title: "Chart",
+    threadId: "1712790000.000050",
+  });
+
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      user: "U123",
+      text: "thanks for the file",
+      ts: "1712800000.000100",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "slack",
+      chatId: "C123",
+      text: "thanks for the file",
+      threadId: "1712790000.000050",
+      isMention: true,
+    }),
+  );
+});
+
 test("slack adapter hydrates prior Slack thread context, including bot-authored entries, on the first routed turn", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -600,6 +763,16 @@ test("slack adapter hydrates prior Slack thread context, including bot-authored 
     text: "Original question from the thread root",
     userId: "U111",
     ts: "1712790000.000050",
+    attachments: [
+      {
+        id: "FROOT",
+        name: "root-screenshot.png",
+        mimeType: "image/png",
+        kind: "image",
+        localPath: "/tmp/root-screenshot.png",
+        imageDataBase64: "abc",
+      },
+    ],
   });
   resolveSlackThreadHistoryMock.mockResolvedValueOnce([
     {
@@ -638,6 +811,12 @@ test("slack adapter hydrates prior Slack thread context, including bot-authored 
       messageId: "1712790000.000050",
       senderId: "U111",
       text: "Original question from the thread root",
+      attachments: [
+        expect.objectContaining({
+          id: "FROOT",
+          localPath: "/tmp/root-screenshot.png",
+        }),
+      ],
     }),
   );
   expect(prepared?.threadContext?.history).toEqual([
@@ -655,7 +834,21 @@ test("slack adapter hydrates prior Slack thread context, including bot-authored 
   ]);
   expect(prepared?.threadContext?.label).toContain("Slack thread in #random");
   expect(resolveSlackThreadStarterMock).toHaveBeenCalledTimes(1);
+  expect(resolveSlackThreadStarterMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      accountId: "slack-test-account",
+      token: "xoxb-test-token-1234567890",
+      transcribeVoice: false,
+    }),
+  );
   expect(resolveSlackThreadHistoryMock).toHaveBeenCalledTimes(1);
+  expect(resolveSlackThreadHistoryMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      accountId: "slack-test-account",
+      token: "xoxb-test-token-1234567890",
+      transcribeVoice: false,
+    }),
+  );
 });
 
 test("slack adapter rehydrates bot-authored Slack thread context on existing routed turns", async () => {
@@ -1510,6 +1703,7 @@ test("slack adapter posts the lifecycle error back into the same thread as a cod
     batchId: "batch-3",
     outcome: "error",
     error: "Boom: something went wrong\nsecond line",
+    runId: "run-123",
     sources: [
       {
         channel: "slack",
@@ -1532,7 +1726,7 @@ test("slack adapter posts the lifecycle error back into the same thread as a cod
   });
   expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
     channel: "C123",
-    text: "Turn failed:\n```\nBoom: something went wrong\nsecond line\n```",
+    text: "Turn failed:\n```\nBoom: something went wrong\nsecond line\n```\n\nRun ID: run-123",
     thread_ts: "1712790000.000050",
   });
 });
@@ -1636,6 +1830,7 @@ test("slack adapter hides raw generic lifecycle errors", async () => {
     batchId: "batch-raw-error",
     outcome: "error",
     error: "Unexpected stop reason: error",
+    runId: "run-raw-error",
     sources: [
       {
         channel: "slack",
@@ -1653,7 +1848,7 @@ test("slack adapter hides raw generic lifecycle errors", async () => {
   const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
     channel: "C123",
-    text: "Turn failed:\n```\nSomething went wrong while processing that message. Please try again.\n```",
+    text: "Turn failed:\n```\nSomething went wrong while processing that message. Please try again.\n```\n\nRun ID: run-raw-error",
     thread_ts: "1712790000.000050",
   });
 });

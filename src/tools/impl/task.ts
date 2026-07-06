@@ -686,7 +686,8 @@ export async function task(args: TaskArgs): Promise<string> {
       // Mark the forked conversation as hidden so it doesn't clutter the
       // parent agent's conversation list in the ADE. The subagent still
       // reads/writes this conversation normally — only archive status is
-      // affected.
+      // affected. The forked conversation remains retrievable by id, so a
+      // direct link still opens it.
       const forkedConv = await getBackend().forkConversation(parentConvId, {
         ...(parentConvId === "default" ? { agentId: parentAgentId } : {}),
         hidden: true,

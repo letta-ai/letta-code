@@ -982,9 +982,9 @@ export function buildSubagentArgs(
       subagentTags.push(`parent:${options.parentAgentId}`);
     }
     args.push("--tags", subagentTags.join(","));
-    // Default all newly spawned subagents to non-memfs mode.
-    // This avoids memfs startup overhead unless explicitly enabled elsewhere.
-    args.push("--no-memfs");
+    // Newly spawned subagents are stateless (non-memfs). The headless
+    // entrypoint derives this from LETTA_CODE_AGENT_ROLE=subagent — no CLI
+    // flag needed, and no user-facing opt-out exists.
     if (model) {
       args.push("--model", model);
     }
@@ -1575,6 +1575,19 @@ export async function spawnSubagent(
     } catch {
       // If we can't get parent agent info, proceed without the reminder
     }
+  }
+
+  // Fork subagents (e.g. recall) deploy the parent agent into a forked
+  // conversation. They don't emit an init event carrying agent_id/
+  // conversation_id (which is the usual source of agentURL), so without this
+  // the card would have no link and any fallback would route to the parent's
+  // main conversation. Set the link eagerly to the forked conversation so it
+  // opens the subagent's own thread instead.
+  if (forkedContext && existingAgentId && existingConversationId) {
+    const forkAgentURL = buildAgentReference(existingAgentId, {
+      conversationId: existingConversationId,
+    });
+    updateSubagent(subagentId, { agentURL: forkAgentURL });
   }
 
   // Execute subagent - state updates are handled via the state store

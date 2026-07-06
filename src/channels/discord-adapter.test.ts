@@ -241,6 +241,32 @@ async function startAdapterWithDeliveries(
   return { client, deliveries };
 }
 
+async function startAdapterWithMentionConfig(
+  overrides: Pick<
+    DiscordChannelAccount,
+    "allowedChannels" | "autoThreadOnMention" | "threadPolicyByChannel"
+  >,
+): Promise<{
+  client: FakeDiscordClient;
+  deliveries: InboundChannelMessage[];
+}> {
+  const adapter = createDiscordAdapter({
+    ...discordAccountDefaults,
+    ...overrides,
+  });
+  const deliveries: InboundChannelMessage[] = [];
+  adapter.onMessage = async (message) => {
+    deliveries.push(message);
+  };
+
+  await adapter.start();
+  const client = FakeDiscordClient.instances.at(-1);
+  if (!client) {
+    throw new Error("Discord client was not created");
+  }
+  return { client, deliveries };
+}
+
 beforeEach(() => {
   FakeDiscordClient.instances.length = 0;
   __testOverrideLoadDiscordModule(async () => createFakeDiscordRuntime());
@@ -337,6 +363,110 @@ describe("Discord adapter open-channel ingress", () => {
       chatType: "channel",
       isMention: false,
       isOpenChannel: true,
+    });
+  });
+});
+
+// ── Discord adapter auto-thread-on-mention gating ───────────────────────
+
+describe("Discord adapter auto-thread-on-mention gating", () => {
+  test("does not create a thread when autoThreadOnMention is disabled (default)", async () => {
+    const { client, deliveries } = await startAdapterWithMentionConfig({
+      allowedChannels: { "channel-mention": "mention-only" },
+      // autoThreadOnMention omitted → defaults to false
+    });
+
+    const message = createGuildMessage({
+      id: "msg-mention-nothread",
+      channelId: "channel-mention",
+      content: "<@bot-user> hello there",
+      mentioned: true,
+    });
+
+    await client.emitMessageCreate(message);
+
+    // No thread should be spawned; the mention routes to the channel itself.
+    expect(message.startThread).not.toHaveBeenCalled();
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({
+      chatId: "channel-mention",
+      threadId: null,
+      parentChannelId: "channel-mention",
+      isMention: true,
+      isOpenChannel: false,
+    });
+  });
+
+  test("creates a thread when autoThreadOnMention is enabled", async () => {
+    const { client, deliveries } = await startAdapterWithMentionConfig({
+      allowedChannels: { "channel-mention": "mention-only" },
+      autoThreadOnMention: true,
+    });
+
+    const message = createGuildMessage({
+      id: "msg-mention-thread",
+      channelId: "channel-mention",
+      content: "<@bot-user> hello there",
+      mentioned: true,
+    });
+
+    await client.emitMessageCreate(message);
+
+    expect(message.startThread).toHaveBeenCalledTimes(1);
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({
+      chatId: "created-thread",
+      threadId: "created-thread",
+      parentChannelId: "channel-mention",
+      isMention: true,
+    });
+  });
+
+  test("per-channel false override suppresses thread creation even when account-level is true", async () => {
+    const { client, deliveries } = await startAdapterWithMentionConfig({
+      allowedChannels: { "channel-mention": "mention-only" },
+      autoThreadOnMention: true,
+      threadPolicyByChannel: { "channel-mention": false },
+    });
+
+    const message = createGuildMessage({
+      id: "msg-mention-override-false",
+      channelId: "channel-mention",
+      content: "<@bot-user> hello there",
+      mentioned: true,
+    });
+
+    await client.emitMessageCreate(message);
+
+    expect(message.startThread).not.toHaveBeenCalled();
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({
+      chatId: "channel-mention",
+      threadId: null,
+    });
+  });
+
+  test("per-channel true override creates a thread even when account-level is false", async () => {
+    const { client, deliveries } = await startAdapterWithMentionConfig({
+      allowedChannels: { "channel-mention": "mention-only" },
+      autoThreadOnMention: false,
+      threadPolicyByChannel: { "channel-mention": true },
+    });
+
+    const message = createGuildMessage({
+      id: "msg-mention-override-true",
+      channelId: "channel-mention",
+      content: "<@bot-user> hello there",
+      mentioned: true,
+    });
+
+    await client.emitMessageCreate(message);
+
+    expect(message.startThread).toHaveBeenCalledTimes(1);
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({
+      chatId: "created-thread",
+      threadId: "created-thread",
     });
   });
 });

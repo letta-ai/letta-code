@@ -2,6 +2,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import type WebSocket from "ws";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { createListenerMessageHandler } from "@/websocket/listener/message-router";
+import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
 import type {
   IncomingMessage,
   ListenerRuntime,
@@ -54,6 +55,44 @@ function makeHandler(
 describe("listener protocol ergonomics", () => {
   afterEach(() => {
     __listenClientTestUtils.setActiveRuntime(null);
+  });
+
+  test("parses legacy environment messages as runtime-scoped input", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          messages: [
+            {
+              type: "message",
+              role: "user",
+              content: "hello from cloud-api environment router",
+              client_message_id: "cm-1",
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(parsed).toEqual({
+      type: "input",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      payload: {
+        kind: "create_message",
+        messages: [
+          {
+            type: "message",
+            role: "user",
+            content: "hello from cloud-api environment router",
+            client_message_id: "cm-1",
+          },
+        ],
+        client_tool_allowlist: undefined,
+        external_tool_scope_ids: undefined,
+      },
+    });
   });
 
   test("sync sends an ack response when request_id is provided", async () => {

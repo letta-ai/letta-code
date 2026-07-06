@@ -1,51 +1,66 @@
 import chalk from "chalk";
 import { Box } from "ink";
+import { DEFAULT_PRODUCT_STATUS_ORDER } from "@/cli/display/product-status/order";
 import {
   columns,
+  link,
   row,
   truncateToWidth,
 } from "@/cli/display/statusline/formatting";
-import type { ModPanel, ModPanelRenderContext } from "@/cli/mods/types";
-import type { ModAgentContext, ModModelContext } from "@/mods/types";
+import type {
+  ModContext,
+  ModPanel,
+  ModPanelRenderContext,
+} from "@/cli/mods/types";
 import { Text } from "./Text";
 
 const MAX_MOD_PANEL_LINES = 8;
 
-/** Live values supplied to panel renders (agent/model), filled in per frame. */
-export interface ModPanelLiveContext {
-  agent: ModAgentContext;
-  model: ModModelContext;
-}
-
 export type ModPanelPlacement = "above" | "below";
 
-function placedPanels(
+function newestPanel(panels: ModPanel[]): ModPanel | null {
+  return [...panels].sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null;
+}
+
+export function getPlacedModPanels(
   panels: Record<string, ModPanel>,
   placement: ModPanelPlacement,
 ): ModPanel[] {
-  return Object.values(panels)
-    .filter((panel) =>
-      placement === "above" ? panel.order > 0 : panel.order < 0,
-    )
+  const panelList = Object.values(panels);
+  if (placement === "below") {
+    return panelList
+      .filter((panel) => panel.order < 0)
+      .sort((a, b) => b.order - a.order || b.updatedAt - a.updatedAt);
+  }
+
+  const additivePanels = panelList
+    .filter((panel) => panel.order > DEFAULT_PRODUCT_STATUS_ORDER)
     .sort((a, b) => b.order - a.order || b.updatedAt - a.updatedAt);
+  const productStatusPanel = newestPanel(
+    panelList.filter((panel) => panel.order === DEFAULT_PRODUCT_STATUS_ORDER),
+  );
+
+  return productStatusPanel
+    ? [...additivePanels, productStatusPanel]
+    : additivePanels;
 }
 
 export function renderModPanelLines(
   panel: ModPanel,
   width: number,
-  live: ModPanelLiveContext,
+  context: ModContext,
 ): string[] {
   let result: string | string[];
   try {
-    const context: ModPanelRenderContext = {
+    const renderContext: ModPanelRenderContext = {
+      ...context,
       width,
-      agent: live.agent,
-      model: live.model,
       row,
       columns,
+      link,
       chalk,
     };
-    result = panel.render(context);
+    result = panel.render(renderContext);
   } catch {
     // A mod's render fn runs inside the input render; never let it crash the UI.
     return [];
@@ -65,12 +80,12 @@ export function ModPanelRow({
   panels?: Record<string, ModPanel>;
   terminalWidth: number;
   placement: ModPanelPlacement;
-  context: ModPanelLiveContext;
+  context: ModContext;
 }) {
   const rowWidth = Math.max(0, terminalWidth - 1);
   if (rowWidth === 0) return null;
 
-  const lines = placedPanels(panels ?? {}, placement)
+  const lines = getPlacedModPanels(panels ?? {}, placement)
     .flatMap((panel) => renderModPanelLines(panel, rowWidth, context))
     .slice(0, MAX_MOD_PANEL_LINES);
   if (lines.length === 0) return null;

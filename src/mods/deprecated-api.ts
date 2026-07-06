@@ -8,7 +8,7 @@ export type DeprecatedApiDiagnosticRecorder = (
 ) => void;
 
 const STATUSLINE_MIGRATION =
-  "The statusline mod APIs (setStatus / clearStatus / setStatuslineRenderer) have been removed. Use letta.ui.openPanel({ id, order, render }) instead: order 0 is the primary line (replaces the built-in agent · model line), negative orders stack below it, positive orders render above the input. render(ctx) returns a string; use ctx.row / ctx.columns for layout and ctx.chalk for color.";
+  "The statusline mod APIs (setStatus / clearStatus / setStatuslineRenderer) have been removed. Use letta.ui.openPanel({ id, order, render }) instead: order 0 is the primary line (replaces the built-in agent · model line), order 1 replaces the default product-status row, orders > 1 render additive panels above the input, and negative orders stack below the primary line. render(ctx) returns a string; use ctx.row / ctx.columns for layout and ctx.chalk for color.";
 
 function createDeprecatedApiError(apiId: string): Error {
   if (apiId === "letta.getContext") {

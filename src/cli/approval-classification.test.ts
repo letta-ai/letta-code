@@ -14,7 +14,12 @@ import {
   savePermissionRule,
 } from "@/permissions/loader";
 import { permissionMode } from "@/permissions/mode";
-import { loadTools, prepareCurrentToolExecutionContext } from "@/tools/manager";
+import {
+  loadSpecificTools,
+  loadTools,
+  prepareCurrentToolExecutionContext,
+  prepareToolExecutionContextForSpecificTools,
+} from "@/tools/manager";
 
 describe("classifyApprovals", () => {
   const originalMemoryDir = process.env.MEMORY_DIR;
@@ -108,6 +113,72 @@ describe("classifyApprovals", () => {
       "Bash tool missing required parameter: command. Received parameters: description",
     );
     expect(denied?.permission.reason).toBe(denied?.denyReason);
+  });
+
+  test("reports missing exec_command cmd as validation error before auto-allow", async () => {
+    await loadSpecificTools(["exec_command"]);
+    permissionMode.setMode("unrestricted");
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_missing_cmd",
+          toolName: "exec_command",
+          toolArgs: JSON.stringify({
+            yield_time_ms: 1000,
+          }),
+        },
+      ],
+      {
+        requireArgsForAutoApprove: true,
+        workingDirectory: "/tmp/project",
+      },
+    );
+
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(result.needsUserInput).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(1);
+
+    const [denied] = result.autoDenied;
+    expect(denied?.missingRequiredArgs).toEqual(["cmd"]);
+    expect(denied?.denyReason).toBe(
+      "exec_command tool missing required parameter: cmd. Received parameters: yield_time_ms",
+    );
+  });
+
+  test("validates required args against the turn-scoped tool context", async () => {
+    await loadTools();
+    const { contextId } = await prepareToolExecutionContextForSpecificTools([
+      "exec_command",
+    ]);
+    permissionMode.setMode("unrestricted");
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_context_missing_cmd",
+          toolName: "exec_command",
+          toolArgs: JSON.stringify({
+            description: "Check diagnostics for broken test mod",
+          }),
+        },
+      ],
+      {
+        requireArgsForAutoApprove: true,
+        toolContextId: contextId,
+        workingDirectory: "/tmp/project",
+      },
+    );
+
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(result.needsUserInput).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(1);
+
+    const [denied] = result.autoDenied;
+    expect(denied?.missingRequiredArgs).toEqual(["cmd"]);
+    expect(denied?.denyReason).toBe(
+      "exec_command tool missing required parameter: cmd. Received parameters: description",
+    );
   });
 
   test("mod permission overlays deny before unrestricted auto-allow", async () => {

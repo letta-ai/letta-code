@@ -4,7 +4,10 @@ import type {
   AgentState,
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  ApprovalCreate,
+  Message as LettaMessage,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
@@ -44,10 +47,8 @@ import {
   resolveModel,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
-import {
-  buildCreateAgentOptionsForPersonality,
-  resolvePersonalityId,
-} from "./agent/personality";
+import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
+import { resolvePersonalityId } from "./agent/personality-presets";
 import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
@@ -59,9 +60,11 @@ import {
   getBackend,
 } from "./backend";
 import {
-  isLocalBackendNoMemfsEnvEnabled,
-  LOCAL_BACKEND_NO_MEMFS_ENV,
-} from "./backend/local/paths";
+  type EnvironmentConnection,
+  resolveAgentSandboxConnectionId,
+  resolveEnvironmentConnectionId,
+  sendEnvironmentMessage,
+} from "./backend/api/environments";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -111,6 +114,7 @@ import {
 import { computeDiffPreviews } from "./helpers/diff-preview";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import type { ModAdapter } from "./mods/mod-adapter";
+import { getTurnStartCancel } from "./mods/turn-start-cancel";
 import type { ModContext, ModConversationOpenReason } from "./mods/types";
 import { formatPermissionDenial } from "./permissions/format-denial";
 import { applyStartupPermissionMode } from "./permissions/startup";
@@ -191,8 +195,13 @@ const PROVIDER_FALLBACK_MAP: Record<string, string> = {
   "opus-4.6-medium": "bedrock-opus-4.6",
   "opus-4.6-high": "bedrock-opus-4.6",
   "opus-4.6-xhigh": "bedrock-opus-4.6",
-  // Sonnet 4.6 variants → Bedrock Sonnet 4.6
-  sonnet: "bedrock-sonnet-4.6",
+  // Sonnet 5 variants → Bedrock Sonnet 5; Sonnet 4.6 variants → Bedrock Sonnet 4.6
+  sonnet: "bedrock-sonnet-5",
+  "sonnet-5-no-reasoning": "bedrock-sonnet-5",
+  "sonnet-5-low": "bedrock-sonnet-5",
+  "sonnet-5-medium": "bedrock-sonnet-5",
+  "sonnet-5-xhigh": "bedrock-sonnet-5",
+  "sonnet-4.6": "bedrock-sonnet-4.6",
   "sonnet-1m": "bedrock-sonnet-4.6",
   "sonnet-4.6-no-reasoning": "bedrock-sonnet-4.6",
   "sonnet-4.6-low": "bedrock-sonnet-4.6",
@@ -442,13 +451,107 @@ function isTurnInputArray(
   );
 }
 
+type HeadlessTurnStartEmission =
+  | { cancelled: false; input: Array<MessageCreate | ApprovalCreate> }
+  | { cancelled: true; reason: string };
+
+async function emitHeadlessTurnStartCancellationOutput(options: {
+  agent: AgentState;
+  conversationId: string;
+  outputFormat: string;
+  reason: string;
+  sessionId: string;
+}): Promise<void> {
+  if (options.outputFormat === "stream-json") {
+    const errorMsg: ErrorMessage = {
+      type: "error",
+      message: options.reason,
+      stop_reason: "cancelled",
+      session_id: options.sessionId,
+      uuid: `error-turn-start-cancel-${randomUUID()}`,
+    };
+    await writeWireMessageAsync(errorMsg);
+    const resultMsg: ResultMessage = {
+      type: "result",
+      subtype: "error",
+      session_id: options.sessionId,
+      duration_ms: 0,
+      duration_api_ms: 0,
+      num_turns: 0,
+      result: options.reason,
+      agent_id: options.agent.id,
+      conversation_id: options.conversationId,
+      run_ids: [],
+      usage: null,
+      uuid: `result-turn-start-cancel-${randomUUID()}`,
+      stop_reason: "cancelled",
+    };
+    await writeWireMessageAsync(resultMsg);
+  } else if (options.outputFormat === "json") {
+    await writeFinalHeadlessStdout(
+      `${JSON.stringify(
+        {
+          type: "result",
+          subtype: "error",
+          is_error: true,
+          duration_ms: 0,
+          duration_api_ms: 0,
+          num_turns: 0,
+          result: options.reason,
+          agent_id: options.agent.id,
+          conversation_id: options.conversationId,
+          usage: null,
+          stop_reason: "cancelled",
+        },
+        null,
+        2,
+      )}\n`,
+    );
+  } else {
+    console.error(`Error: ${options.reason}`);
+  }
+}
+
+function writeBidirectionalTurnStartCancellation(options: {
+  agent: AgentState;
+  conversationId: string;
+  reason: string;
+  sessionId: string;
+}): void {
+  const errorMsg: ErrorMessage = {
+    type: "error",
+    message: options.reason,
+    stop_reason: "cancelled",
+    session_id: options.sessionId,
+    uuid: `error-turn-start-cancel-${randomUUID()}`,
+  };
+  writeWireMessage(errorMsg);
+
+  const resultMsg: ResultMessage = {
+    type: "result",
+    subtype: "error",
+    session_id: options.sessionId,
+    duration_ms: 0,
+    duration_api_ms: 0,
+    num_turns: 0,
+    result: options.reason,
+    agent_id: options.agent.id,
+    conversation_id: options.conversationId,
+    run_ids: [],
+    usage: null,
+    uuid: `result-turn-start-cancel-${randomUUID()}`,
+    stop_reason: "cancelled",
+  };
+  writeWireMessage(resultMsg);
+}
+
 async function emitHeadlessTurnStart(options: {
   agent: AgentState;
   conversationId: string;
   input: Array<MessageCreate | ApprovalCreate>;
   adapter: ModAdapter;
   context: ModContext;
-}): Promise<Array<MessageCreate | ApprovalCreate>> {
+}): Promise<HeadlessTurnStartEmission> {
   try {
     const event = {
       agentId: options.agent.id,
@@ -456,10 +559,15 @@ async function emitHeadlessTurnStart(options: {
       input: options.input,
     };
     await options.adapter.events.emit("turn_start", event, options.context);
-    return isTurnInputArray(event.input) ? event.input : options.input;
+    const cancel = getTurnStartCancel(event);
+    if (cancel) return { cancelled: true, reason: cancel.reason };
+    return {
+      cancelled: false,
+      input: isTurnInputArray(event.input) ? event.input : options.input,
+    };
   } catch {
     // Mod turn_start handlers should not block sending the turn.
-    return options.input;
+    return { cancelled: false, input: options.input };
   }
 }
 
@@ -545,6 +653,179 @@ async function writeFinalHeadlessStdout(text: string): Promise<void> {
     }
     process.stdout.write(text, () => resolve());
   });
+}
+
+function pageItems<T>(page: unknown): T[] {
+  if (Array.isArray(page)) return page as T[];
+  if (page && typeof page === "object") {
+    const maybePage = page as {
+      getPaginatedItems?: () => T[];
+      items?: T[];
+    };
+    if (typeof maybePage.getPaginatedItems === "function") {
+      return maybePage.getPaginatedItems();
+    }
+    if (Array.isArray(maybePage.items)) {
+      return maybePage.items;
+    }
+  }
+  return [];
+}
+
+function extractMessageText(message: LettaMessage): string {
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (
+          part &&
+          typeof part === "object" &&
+          "type" in part &&
+          part.type === "text" &&
+          "text" in part &&
+          typeof part.text === "string"
+        ) {
+          return part.text;
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
+}
+
+function isAssistantMessage(message: LettaMessage): boolean {
+  return (
+    (message as { message_type?: string }).message_type === "assistant_message"
+  );
+}
+
+function messageTime(message: LettaMessage): number {
+  const date =
+    (message as { date?: string; created_at?: string }).date ??
+    (message as { created_at?: string }).created_at;
+  return date ? new Date(date).getTime() : 0;
+}
+
+async function waitForEnvironmentAssistantMessage(params: {
+  backend: ReturnType<typeof getBackend>;
+  agentId: string;
+  conversationId: string;
+  startedAtMs: number;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}): Promise<string> {
+  const timeoutMs = params.timeoutMs ?? 10 * 60_000;
+  const pollIntervalMs = params.pollIntervalMs ?? 1_000;
+  const deadline = Date.now() + timeoutMs;
+  let lastText = "";
+  let stableCount = 0;
+
+  while (Date.now() < deadline) {
+    const page =
+      params.conversationId === "default"
+        ? await params.backend.listAgentMessages(params.agentId, {
+            conversation_id: "default",
+            limit: 50,
+            order: "desc",
+          })
+        : await params.backend.listConversationMessages(params.conversationId, {
+            limit: 50,
+            order: "desc",
+          });
+
+    const messages = pageItems<LettaMessage>(page);
+    const assistant = messages
+      .filter(
+        (message) =>
+          isAssistantMessage(message) &&
+          messageTime(message) >= params.startedAtMs - 2_000,
+      )
+      .sort((a, b) => messageTime(b) - messageTime(a))[0];
+
+    const text = assistant ? extractMessageText(assistant).trim() : "";
+    if (text.length > 0) {
+      if (text === lastText) {
+        stableCount += 1;
+      } else {
+        lastText = text;
+        stableCount = 1;
+      }
+      if (stableCount >= 2) {
+        return text;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  if (lastText) return lastText;
+  throw new Error("Timed out waiting for environment response");
+}
+
+type ReplyEnvironmentMetadata =
+  | {
+      source: "same-environment";
+    }
+  | {
+      source: "explicit" | "cloud-sandbox";
+      input: string;
+      id: string;
+      connection_id: string;
+      device_id: string;
+      name: string;
+    };
+
+function buildEnvironmentResponseMetadata(params: {
+  source: Extract<
+    ReplyEnvironmentMetadata,
+    { source: "explicit" | "cloud-sandbox" }
+  >["source"];
+  input: string;
+  connectionId: string;
+  environment: EnvironmentConnection;
+}): ReplyEnvironmentMetadata {
+  return {
+    source: params.source,
+    input: params.input,
+    id: params.environment.id,
+    connection_id: params.connectionId,
+    device_id: params.environment.deviceId,
+    name: params.environment.connectionName,
+  };
+}
+
+function formatAgentReplyMetadata(params: {
+  agentId: string;
+  conversationId: string;
+  environment?: ReplyEnvironmentMetadata;
+}): string {
+  return JSON.stringify({
+    agent_id: params.agentId,
+    conversation_id: params.conversationId,
+    ...(params.environment ? { environment: params.environment } : {}),
+  });
+}
+
+function isCloudEnvironmentSelector(
+  selector: string | boolean | undefined,
+): boolean {
+  if (typeof selector !== "string") return false;
+  const normalized = selector.trim().toLowerCase();
+  return normalized === "cloud" || normalized === "cloud-sandbox";
+}
+
+function getEnvironmentRoutedMessagingUnsupportedReason(
+  environment: EnvironmentConnection,
+): string | null {
+  if (environment.metadata?.environmentMessageProtocol === "v2-input") {
+    return null;
+  }
+  return `Environment ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
+    environment.metadata?.lettaCodeVersion ?? "unknown"
+  } and does not advertise environment-routed headless messaging support. Update that runtime or omit --environment to use same-environment messaging.`;
 }
 
 export async function handleHeadlessCommand(
@@ -681,6 +962,10 @@ export async function handleHeadlessCommand(
   // --new: Create a new conversation (for concurrent sessions)
   let forceNewConversation = values.new ?? false;
   const fromAgentId = values["from-agent"];
+  const explicitEnvironmentSelector = values.environment || values.env;
+  const usesRemoteEnvironment =
+    typeof explicitEnvironmentSelector === "string" &&
+    explicitEnvironmentSelector.trim().length > 0;
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -703,13 +988,19 @@ export async function handleHeadlessCommand(
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
   const memfsFlag = values.memfs;
-  const noMemfsFlag = values["no-memfs"];
-  const localNoMemfsRequested = Boolean(
-    backend.capabilities.localMemfs &&
-      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
-  );
-  if (localNoMemfsRequested) {
-    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
+  // Newly created subagents are ephemeral and deliberately stateless: they
+  // never get memfs (no repo clone per spawn). This role-based carve-out is
+  // the only supported non-memfs path — there is no user-facing opt-out.
+  // Fork/recall subagents deploy an EXISTING (memfs-tagged) agent instead of
+  // creating one (`--agent`/`--conv`, not `--new-agent`), so they keep their
+  // memory: the tag-driven sync below handles them like any other agent.
+  const isSubagentRole = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  const isStatelessSubagent = isSubagentRole && Boolean(values["new-agent"]);
+  if (isStatelessSubagent && backend.capabilities.localMemfs) {
+    const { disableLocalBackendMemfsForProcess } = await import(
+      "@/backend/local/paths"
+    );
+    disableLocalBackendMemfsForProcess();
   }
   // Startup policy for the git-backed memory pull on session init.
   // "blocking" (default): await the pull before proceeding.
@@ -720,11 +1011,9 @@ export async function handleHeadlessCommand(
     memfsStartupRaw === "background" || memfsStartupRaw === "skip"
       ? memfsStartupRaw
       : "blocking";
-  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
+  const requestedMemoryPromptMode: "memfs" | undefined = memfsFlag
     ? "memfs"
-    : noMemfsFlag || localNoMemfsRequested
-      ? "standard"
-      : undefined;
+    : undefined;
   if (memfsFlag && !backend.capabilities.remoteMemfs) {
     trackHeadlessBoundaryError(
       "headless_memfs_unsupported_backend",
@@ -734,8 +1023,7 @@ export async function handleHeadlessCommand(
     console.error("Error: --memfs is not supported by this backend yet");
     process.exit(1);
   }
-  const shouldAutoEnableMemfsForNewAgent =
-    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
+  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !isStatelessSubagent;
   const fromAfFile = resolveImportFlagAlias({
     importFlagValue: values.import,
     fromAfFlagValue: values["from-af"],
@@ -1042,7 +1330,6 @@ export async function handleHeadlessCommand(
         modelOverride: model,
         stripMessages: true,
         stripSkills: false,
-        enableMemfs: noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
       });
     } else {
       // Import from local file
@@ -1052,7 +1339,6 @@ export async function handleHeadlessCommand(
         modelOverride: model,
         stripMessages: true,
         stripSkills: false,
-        enableMemfs: noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
       });
     }
 
@@ -1114,7 +1400,7 @@ export async function handleHeadlessCommand(
       (await isLettaCloud());
     const effectiveMemoryMode: MemoryPromptMode | undefined = backend
       .capabilities.localMemfs
-      ? localNoMemfsRequested
+      ? isStatelessSubagent
         ? "standard"
         : "local-memfs"
       : (requestedMemoryPromptMode ??
@@ -1279,7 +1565,7 @@ export async function handleHeadlessCommand(
       "@/agent/memory-filesystem"
     );
     const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
-    if (!memfsEnabled && !noMemfsFlag && (await isLettaCloud())) {
+    if (!memfsEnabled && !isStatelessSubagent && (await isLettaCloud())) {
       // Auto-enable memfs for existing agents that don't have it yet.
       // Matches interactive mode behavior where memfs defaults to enabled.
       startupMemfsFlag = true;
@@ -1304,15 +1590,13 @@ export async function handleHeadlessCommand(
   //   "skip"                 – skip the pull this session.
   if (!backend.capabilities.remoteMemfs) {
     if (backend.capabilities.localMemfs) {
-      settingsManager.setMemfsEnabled(agent.id, !localNoMemfsRequested);
-    } else if (noMemfsFlag || localNoMemfsRequested) {
-      settingsManager.setMemfsEnabled(agent.id, false);
+      settingsManager.setMemfsEnabled(agent.id, !isStatelessSubagent);
     }
   } else if (memfsStartupPolicy === "skip") {
-    // Run enable/disable logic but skip the git pull.
+    // Run enable logic but skip the git pull.
     try {
       const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
-      await applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
+      await applyMemfsFlags(agent.id, startupMemfsFlag, {
         pullOnExistingRepo: false,
         agentTags: agent.tags,
         skipPromptUpdate: forceNew,
@@ -1331,7 +1615,7 @@ export async function handleHeadlessCommand(
   } else if (memfsStartupPolicy === "background") {
     // Fire pull async; don't block session initialisation.
     const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
-    memfsBgPromise = applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
+    memfsBgPromise = applyMemfsFlags(agent.id, startupMemfsFlag, {
       pullOnExistingRepo: true,
       agentTags: agent.tags,
       skipPromptUpdate: forceNew,
@@ -1350,16 +1634,11 @@ export async function handleHeadlessCommand(
     // "blocking" — original behaviour.
     try {
       const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
-      const memfsResult = await applyMemfsFlags(
-        agent.id,
-        startupMemfsFlag,
-        noMemfsFlag,
-        {
-          pullOnExistingRepo: true,
-          agentTags: agent.tags,
-          skipPromptUpdate: forceNew,
-        },
-      );
+      const memfsResult = await applyMemfsFlags(agent.id, startupMemfsFlag, {
+        pullOnExistingRepo: true,
+        agentTags: agent.tags,
+        skipPromptUpdate: forceNew,
+      });
       if (memfsResult.pullSummary?.includes("CONFLICT")) {
         trackHeadlessBoundaryError(
           "headless_memfs_conflict",
@@ -1548,7 +1827,12 @@ export async function handleHeadlessCommand(
   }
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
-  setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
+  setAgentContext(
+    agent.id,
+    skillsDirectory,
+    resolvedSkillSources,
+    agent.name ?? null,
+  );
 
   // Validate output format
   const outputFormat = values["output-format"] || "text";
@@ -1562,6 +1846,12 @@ export async function handleHeadlessCommand(
   if (inputFormat && inputFormat !== "stream-json") {
     console.error(
       `Error: Invalid input format "${inputFormat}". Valid formats: stream-json`,
+    );
+    process.exit(1);
+  }
+  if (usesRemoteEnvironment && isBidirectionalMode) {
+    console.error(
+      "Error: remote environment routing cannot be used with --input-format stream-json",
     );
     process.exit(1);
   }
@@ -1874,29 +2164,33 @@ ${SYSTEM_REMINDER_CLOSE}
     pushPart(systemReminder);
   }
 
-  const lastRunAt = (agent as { last_run_completion?: string })
-    .last_run_completion;
-  const { parts: sharedReminderParts } = await buildSharedReminderParts({
-    mode: isSubagent ? "subagent" : "headless-one-shot",
-    agent: {
-      id: agent.id,
-      name: agent.name,
-      description: agent.description,
-      lastRunAt: lastRunAt ?? null,
-      conversationId,
-    },
-    state: sharedReminderState,
-    systemInfoReminderEnabled,
-    workingDirectory: getCurrentWorkingDirectory(),
-    skillSources: resolvedSkillSources,
-    shellContext: detectShellContext(),
-  });
-  for (const part of sharedReminderParts) {
-    pushPart(part.text);
+  if (!usesRemoteEnvironment) {
+    const lastRunAt = (agent as { last_run_completion?: string })
+      .last_run_completion;
+    const { parts: sharedReminderParts } = await buildSharedReminderParts({
+      mode: isSubagent ? "subagent" : "headless-one-shot",
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        description: agent.description,
+        lastRunAt: lastRunAt ?? null,
+        conversationId,
+      },
+      state: sharedReminderState,
+      systemInfoReminderEnabled,
+      workingDirectory: getCurrentWorkingDirectory(),
+      skillSources: resolvedSkillSources,
+      shellContext: detectShellContext(),
+    });
+    for (const part of sharedReminderParts) {
+      pushPart(part.text);
+    }
   }
 
-  // Pre-load specific skills' full content (used by subagents with skills: field)
-  if (preLoadSkillsRaw) {
+  // Pre-load specific skills' full content (used by subagents with skills: field).
+  // Environment-routed turns run in the selected remote runtime, which injects
+  // its own local context and skills, so avoid prepending this process' context.
+  if (preLoadSkillsRaw && !usesRemoteEnvironment) {
     const { readFile: readFileAsync } = await import("node:fs/promises");
     const { skillPathById } = await buildClientSkillsPayload({
       agentId: agent.id,
@@ -1938,6 +2232,151 @@ ${SYSTEM_REMINDER_CLOSE}
     agent.llm_config?.model ?? "unknown",
   );
 
+  if (usesRemoteEnvironment) {
+    const startedAtMs = Date.now();
+    const environmentSelector = String(explicitEnvironmentSelector);
+    const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
+    const environmentRouting = useCloudSandbox
+      ? await resolveAgentSandboxConnectionId(agent.id)
+      : await resolveEnvironmentConnectionId(environmentSelector);
+    const { connectionId, environment } = environmentRouting;
+    const responseEnvironment = buildEnvironmentResponseMetadata({
+      source: useCloudSandbox ? "cloud-sandbox" : "explicit",
+      input: environmentSelector,
+      connectionId,
+      environment,
+    });
+    const unsupportedReason =
+      getEnvironmentRoutedMessagingUnsupportedReason(environment);
+    if (unsupportedReason) {
+      if (outputFormat === "json") {
+        await writeFinalHeadlessStdout(
+          `${JSON.stringify(
+            {
+              type: "result",
+              subtype: "error",
+              is_error: true,
+              duration_ms: Math.round(sessionStats.getSnapshot().totalWallMs),
+              duration_api_ms: Math.round(
+                sessionStats.getSnapshot().totalApiMs,
+              ),
+              num_turns: 0,
+              result: unsupportedReason,
+              agent_id: agent.id,
+              conversation_id: conversationId,
+              environment: responseEnvironment,
+              usage: null,
+              stop_reason: "error",
+            },
+            null,
+            2,
+          )}\n`,
+        );
+      } else if (outputFormat === "stream-json") {
+        const resultEvent: ResultMessage & {
+          environment: ReplyEnvironmentMetadata;
+        } = {
+          type: "result",
+          subtype: "error",
+          session_id: sessionId,
+          duration_ms: Math.round(sessionStats.getSnapshot().totalWallMs),
+          duration_api_ms: Math.round(sessionStats.getSnapshot().totalApiMs),
+          num_turns: 0,
+          result: unsupportedReason,
+          agent_id: agent.id,
+          conversation_id: conversationId,
+          environment: responseEnvironment,
+          run_ids: [],
+          usage: null,
+          uuid: `result-${agent.id}-${Date.now()}`,
+          stop_reason: "error",
+        };
+        writeWireMessage(resultEvent);
+      } else {
+        console.error(`Error: ${unsupportedReason}`);
+        await writeFinalHeadlessStdout(
+          `${formatAgentReplyMetadata({
+            agentId: agent.id,
+            conversationId,
+            environment: responseEnvironment,
+          })}\n`,
+        );
+      }
+      await exitHeadless(1, "headless_environment_unsupported");
+    }
+    await sendEnvironmentMessage(connectionId, {
+      agentId: agent.id,
+      conversationId,
+      messages: [
+        {
+          role: "user",
+          content: contentParts,
+          client_message_id: randomUUID(),
+          otid: randomUUID(),
+        },
+      ],
+    });
+
+    const resultText = await waitForEnvironmentAssistantMessage({
+      backend,
+      agentId: agent.id,
+      conversationId,
+      startedAtMs,
+    });
+    const stats = sessionStats.getSnapshot();
+
+    if (outputFormat === "json") {
+      await writeFinalHeadlessStdout(
+        `${JSON.stringify(
+          {
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            duration_ms: Math.round(stats.totalWallMs),
+            duration_api_ms: Math.round(stats.totalApiMs),
+            num_turns: 1,
+            result: resultText,
+            agent_id: agent.id,
+            conversation_id: conversationId,
+            environment: responseEnvironment,
+            usage: null,
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    } else if (outputFormat === "stream-json") {
+      const resultEvent: ResultMessage & {
+        environment: ReplyEnvironmentMetadata;
+      } = {
+        type: "result",
+        subtype: "success",
+        session_id: sessionId,
+        duration_ms: Math.round(stats.totalWallMs),
+        duration_api_ms: Math.round(stats.totalApiMs),
+        num_turns: 1,
+        result: resultText,
+        agent_id: agent.id,
+        conversation_id: conversationId,
+        environment: responseEnvironment,
+        run_ids: [],
+        usage: null,
+        uuid: `result-${agent.id}-${Date.now()}`,
+      };
+      writeWireMessage(resultEvent);
+    } else {
+      await writeFinalHeadlessStdout(
+        `${resultText}\n\n${formatAgentReplyMetadata({
+          agentId: agent.id,
+          conversationId,
+          environment: responseEnvironment,
+        })}\n`,
+      );
+    }
+
+    await exitHeadless(0, "headless_environment_message_complete");
+  }
+
   // Start with the user message
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
     {
@@ -1966,13 +2405,25 @@ ${SYSTEM_REMINDER_CLOSE}
     reflectionSettings: effectiveReflectionSettings,
     sessionStats,
   });
-  currentInput = await emitHeadlessTurnStart({
+  const initialTurnStartEmission = await emitHeadlessTurnStart({
     agent,
     conversationId,
     input: currentInput,
     adapter: headlessModAdapter,
     context: turnStartModContext,
   });
+  if (initialTurnStartEmission.cancelled) {
+    await emitHeadlessTurnStartCancellationOutput({
+      agent,
+      conversationId,
+      outputFormat,
+      reason: initialTurnStartEmission.reason,
+      sessionId,
+    });
+    await exitHeadless(1, "headless_turn_start_cancelled");
+  } else {
+    currentInput = initialTurnStartEmission.input;
+  }
 
   // Track lastRunId outside the while loop so it's available in catch block
   let llmApiErrorRetries = 0;
@@ -2443,13 +2894,25 @@ ${SYSTEM_REMINDER_CLOSE}
               otid: randomUUID(),
             },
           ];
-          currentInput = await emitHeadlessTurnStart({
+          const continueTurnStartEmission = await emitHeadlessTurnStart({
             agent,
             conversationId,
             input: currentInput,
             adapter: headlessModAdapter,
             context: turnStartModContext,
           });
+          if (continueTurnStartEmission.cancelled) {
+            await emitHeadlessTurnStartCancellationOutput({
+              agent,
+              conversationId,
+              outputFormat,
+              reason: continueTurnStartEmission.reason,
+              sessionId,
+            });
+            await exitHeadless(1, "headless_turn_start_cancelled");
+          } else {
+            currentInput = continueTurnStartEmission.input;
+          }
           continue;
         }
 
@@ -3019,6 +3482,9 @@ ${SYSTEM_REMINDER_CLOSE}
       result: resultText,
       agent_id: agent.id,
       conversation_id: conversationId,
+      ...(fromAgentId
+        ? { environment: { source: "same-environment" as const } }
+        : {}),
       usage,
     };
     await writeFinalHeadlessStdout(`${JSON.stringify(output, null, 2)}\n`);
@@ -3039,7 +3505,9 @@ ${SYSTEM_REMINDER_CLOSE}
       allRunIds.size > 0
         ? `result-${Array.from(allRunIds).pop()}`
         : `result-${agent.id}`;
-    const resultEvent: ResultMessage = {
+    const resultEvent: ResultMessage & {
+      environment?: ReplyEnvironmentMetadata;
+    } = {
       type: "result",
       subtype: "success",
       session_id: sessionId,
@@ -3049,6 +3517,9 @@ ${SYSTEM_REMINDER_CLOSE}
       result: resultText,
       agent_id: agent.id,
       conversation_id: conversationId,
+      ...(fromAgentId
+        ? { environment: { source: "same-environment" as const } }
+        : {}),
       run_ids: Array.from(allRunIds),
       usage,
       uuid: resultUuid,
@@ -3158,6 +3629,7 @@ async function runBidirectionalMode(
       conversationId,
       memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
       triggerSource,
+      reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
       systemPrompt: agent.system ?? undefined,
       recompileByConversation: systemPromptRecompileByConversation,
@@ -4023,13 +4495,23 @@ async function runBidirectionalMode(
         let currentInput: Array<MessageCreate | ApprovalCreate> = [
           { role: "user", content: enrichedContent, otid: userOtid },
         ];
-        currentInput = await emitHeadlessTurnStart({
+        const turnStartEmission = await emitHeadlessTurnStart({
           agent,
           conversationId,
           input: currentInput,
           adapter: headlessModAdapter,
           context: turnStartModContext,
         });
+        if (turnStartEmission.cancelled) {
+          writeBidirectionalTurnStartCancellation({
+            agent,
+            conversationId,
+            reason: turnStartEmission.reason,
+            sessionId,
+          });
+          continue;
+        }
+        currentInput = turnStartEmission.input;
 
         // Approval handling loop - continue until end_turn or error
         while (true) {

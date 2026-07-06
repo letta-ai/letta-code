@@ -6,6 +6,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ChalkInstance } from "chalk";
 import type { ModelReasoningEffort } from "@/agent/model";
+import type { SubagentLifecycleContext } from "@/agent/subagent-state";
 
 export interface ModWorkspaceContext {
   cwd: string;
@@ -63,6 +64,7 @@ export interface ModBackgroundAgentContext {
   type: string;
   status: string;
   durationMs: number;
+  agentId: string | null;
 }
 
 export interface ModUiCapabilities {
@@ -211,8 +213,13 @@ export interface ModTurnStartEvent {
   input: Array<MessageCreate | ApprovalCreate>;
 }
 
+export interface ModTurnStartCancelResult {
+  reason: string;
+}
+
 export interface ModTurnStartResult {
   input?: Array<MessageCreate | ApprovalCreate>;
+  cancel?: ModTurnStartCancelResult;
 }
 
 export interface ModToolStartEvent {
@@ -233,6 +240,7 @@ export interface ModToolEndEvent {
   conversationId: string | null;
   toolCallId: string | null;
   toolName: string;
+  args: Record<string, unknown>;
   status: "success" | "error";
   output: string;
 }
@@ -279,6 +287,13 @@ export interface ModLlmUsage {
   totalTokens: number;
 }
 
+export interface ModLlmEndError {
+  message: string;
+  detail: string;
+  errorType: "llm_error" | "local_backend_error";
+  retryable: boolean;
+}
+
 export interface ModLlmStartEvent {
   agentId: string | null;
   conversationId: string | null;
@@ -292,8 +307,9 @@ export interface ModLlmEndEvent {
   conversationId: string | null;
   model: string;
   stopReason: string;
-  usage: ModLlmUsage;
+  usage: ModLlmUsage | null;
   durationMs: number;
+  error?: ModLlmEndError;
 }
 
 export interface ModEventMap {
@@ -416,6 +432,7 @@ export interface ModContext {
   workspace: ModWorkspaceContext;
   cwd: string;
   sessionId: string | null;
+  conversationSummary: string | null;
   lastRunId: string | null;
   agent: ModAgentContext;
   model: ModModelContext;
@@ -429,6 +446,7 @@ export interface ModContext {
   reflection: ModReflectionContext;
   memfs: ModMemfsContext;
   backgroundAgents: ModBackgroundAgentContext[];
+  subagents: SubagentLifecycleContext;
 }
 
 export interface ModCommandContext extends ModInvocationContext {
@@ -444,17 +462,16 @@ export type ModCommandResult =
   | { type: "output"; output: string; success?: boolean }
   | { type: "handled" };
 
-export interface ModPanelRenderContext {
+/** Live mod context (`cwd`, workspace, agent, model, cost, etc.) plus panel helpers. */
+export interface ModPanelRenderContext extends ModContext {
   /** Visible width available to the panel, in columns. */
   width: number;
-  /** Live agent context (name, id) at render time. */
-  agent: ModAgentContext;
-  /** Live model context (display name, provider, ...) at render time. */
-  model: ModModelContext;
   /** Lay out a left and right segment across `width` (ANSI-aware). */
   row: (left: string, right: string, width: number) => string;
   /** Spread parts evenly across `width` (ANSI-aware). */
   columns: (parts: string[], width: number) => string;
+  /** Build a terminal hyperlink string. */
+  link: (label: string, url: string) => string;
   /** Chalk instance for coloring panel output. */
   chalk: ChalkInstance;
 }
@@ -463,9 +480,10 @@ export type ModPanelRender = (ctx: ModPanelRenderContext) => string | string[];
 
 /**
  * Panels are placed by a signed `order` around the input:
- * `> 0` renders above the input (highest at the top), `0` is the primary line
- * just below the input (overrides the built-in agent · model line), and `< 0`
- * stacks below the primary line. A panel whose render is empty is hidden.
+ * `> 1` renders above the input (highest at the top), `1` replaces the default
+ * product-status row, `0` is the primary line just below the input (overrides
+ * the built-in agent · model line), and `< 0` stacks below the primary line.
+ * A panel whose render is empty is hidden.
  */
 export interface ModPanelOptions {
   id: string;

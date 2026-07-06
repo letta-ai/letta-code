@@ -61,7 +61,7 @@ test("HelpDialog renders its footer without raw Ink text", async () => {
 test("HelpDialog keeps spacing between commands and descriptions", async () => {
   const output = await renderHelpDialog();
 
-  expect(output).toContain("/goal Manage goal");
+  expect(output).toContain("/remember Remember something");
 });
 
 test("HelpDialog scrolls commands with down arrow", async () => {

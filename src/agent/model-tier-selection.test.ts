@@ -25,7 +25,20 @@ describe("getModelInfo", () => {
     expect(info?.handle).toBe("anthropic/claude-fable-5");
     expect(info?.label).toBe("Fable 5");
     expect(info?.updateArgs).toMatchObject({
-      context_window: 1000000,
+      context_window: 200000,
+      max_output_tokens: 128000,
+      enable_reasoner: true,
+      reasoning_effort: "high",
+      parallel_tool_calls: true,
+    });
+  });
+
+  test("resolves Fable 5 1M registry metadata", () => {
+    const info = getModelInfo("fable-1m");
+    expect(info?.handle).toBe("anthropic/claude-fable-5");
+    expect(info?.label).toBe("Fable 5 1M");
+    expect(info?.updateArgs).toMatchObject({
+      context_window: 950000,
       max_output_tokens: 128000,
       enable_reasoner: true,
       reasoning_effort: "high",
@@ -280,8 +293,28 @@ describe("getReasoningTierOptionsForHandle", () => {
       "sonnet-4.6-no-reasoning",
       "sonnet-4.6-low",
       "sonnet-4.6-medium",
-      "sonnet",
+      "sonnet-4.6",
       "sonnet-4.6-xhigh",
+    ]);
+  });
+
+  test("returns reasoning options for anthropic sonnet 5", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "anthropic/claude-sonnet-5",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "sonnet-5-no-reasoning",
+      "sonnet-5-low",
+      "sonnet-5-medium",
+      "sonnet",
+      "sonnet-5-xhigh",
     ]);
   });
 

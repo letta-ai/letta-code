@@ -9,13 +9,17 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import {
+  getConversationId,
+  getCurrentAgentId,
+  getCurrentAgentName,
+} from "@/agent/context";
 import {
   getScopedMemoryFilesystemRoot,
   resolveScopedMemoryDir,
 } from "@/agent/memory-filesystem";
 import { getServerUrl } from "@/backend/api/client";
-import { isLocalBackendNoMemfsEnvEnabled } from "@/backend/local/paths";
+import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
@@ -351,8 +355,13 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     env.LETTA_AGENT_ID = agentId;
     env.AGENT_ID = agentId;
 
+    const agentName = getCurrentAgentName()?.trim() || env.AGENT_NAME?.trim();
+    if (agentName) {
+      env.AGENT_NAME = agentName;
+    }
+
     try {
-      const localBackendNoMemfs = isLocalBackendNoMemfsEnvEnabled();
+      const localBackendNoMemfs = isLocalBackendMemfsDisabledForProcess();
       const localBackendEnabled =
         process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1" ||
         process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.toLowerCase() === "true";

@@ -1,3 +1,4 @@
+import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { loadRemoteSettings, saveRemoteSettings } from "./remote-settings";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
@@ -16,16 +17,37 @@ export function getWorkingDirectoryScopeKey(
   return `conversation:${normalizedConversationId}`;
 }
 
+/** True when the path exists and is a directory. */
+function isUsableDirectory(dirPath: string): boolean {
+  try {
+    return existsSync(dirPath) && statSync(dirPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export function getConversationWorkingDirectory(
   runtime: ListenerRuntime,
   agentId?: string | null,
   conversationId?: string | null,
 ): string {
   const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
-  return (
-    runtime.workingDirectoryByConversation.get(scopeKey) ??
-    runtime.bootWorkingDirectory
-  );
+  const stored = runtime.workingDirectoryByConversation.get(scopeKey);
+  if (stored === undefined) {
+    return runtime.bootWorkingDirectory;
+  }
+
+  // A persisted cwd can become stale if its directory was deleted (e.g. a
+  // worktree that was cleaned up). Serving it would throw ENOENT on realpath
+  // /process.chdir. Fall back to the boot dir and prune the dead entry so we
+  // don't repeatedly serve it.
+  if (!isUsableDirectory(stored)) {
+    runtime.workingDirectoryByConversation.delete(scopeKey);
+    persistCwdMap(runtime.workingDirectoryByConversation);
+    return runtime.bootWorkingDirectory;
+  }
+
+  return stored;
 }
 
 /**

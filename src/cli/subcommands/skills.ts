@@ -13,6 +13,7 @@ import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { parseArgs, TextDecoder, TextEncoder } from "node:util";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { isLocalAgentId } from "@/agent/agent-id";
+import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
   type InstallLocalManagedModPackageResult,
   installGitManagedModPackage,
@@ -38,6 +39,16 @@ interface DirectSkillFileSourceLocation {
   url: string;
 }
 
+interface SkillMemorySyncResult {
+  status: MemoryPostTurnSyncResult["status"];
+  summary: string;
+}
+
+type SkillMemorySyncFn = (
+  agentId: string,
+  options: { memoryDir?: string },
+) => Promise<MemoryPostTurnSyncResult>;
+
 interface InstallResult {
   agentId: string;
   name: string;
@@ -45,6 +56,7 @@ interface InstallResult {
   source: string;
   committed?: boolean;
   commitSha?: string;
+  memorySync?: SkillMemorySyncResult;
 }
 
 interface SkillListItem {
@@ -60,6 +72,7 @@ interface DeleteResult {
   deleted: true;
   committed?: boolean;
   commitSha?: string;
+  memorySync?: SkillMemorySyncResult;
 }
 
 interface ClawHubSourceLocation {
@@ -792,6 +805,37 @@ export async function deleteSkillDirectory(params: {
   return { name, path: normalize(targetPath) };
 }
 
+async function loadSkillMemorySyncFn(): Promise<SkillMemorySyncFn> {
+  const { syncPendingMemoryCommitsAfterTurn } = await import(
+    "@/agent/memory-git"
+  );
+  return syncPendingMemoryCommitsAfterTurn;
+}
+
+export async function syncCommittedRemoteSkillMemoryChange(params: {
+  agentId: string;
+  memoryDir: string;
+  committed: boolean;
+  syncFn?: SkillMemorySyncFn;
+}): Promise<SkillMemorySyncResult | undefined> {
+  if (!params.committed || isLocalAgentId(params.agentId)) {
+    return undefined;
+  }
+
+  try {
+    const syncFn = params.syncFn ?? (await loadSkillMemorySyncFn());
+    const result = await syncFn(params.agentId, {
+      memoryDir: params.memoryDir,
+    });
+    return { status: result.status, summary: result.summary };
+  } catch (error) {
+    return {
+      status: "push_failed",
+      summary: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
 async function installSkill(
   specifier: string,
   agentId: string,
@@ -838,6 +882,7 @@ async function installSkill(
       ...result,
       committed: commit.committed,
       commitSha: commit.sha,
+      memorySync: commit.memorySync,
     };
   } finally {
     if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
@@ -866,7 +911,11 @@ async function commitSkillMemoryChange(params: {
   memoryDir: string;
   skillName: string;
   reason: string;
-}): Promise<{ committed: boolean; sha?: string }> {
+}): Promise<{
+  committed: boolean;
+  sha?: string;
+  memorySync?: SkillMemorySyncResult;
+}> {
   const { commitMemoryWrite } = await import("@/agent/memory-git");
   const { getBackend } = await import("@/backend");
 
@@ -891,8 +940,13 @@ async function commitSkillMemoryChange(params: {
     },
     syncMode: isLocalAgentId(params.agentId) ? "local" : "remote",
   });
+  const memorySync = await syncCommittedRemoteSkillMemoryChange({
+    agentId: params.agentId,
+    memoryDir: params.memoryDir,
+    committed: result.committed,
+  });
 
-  return { committed: result.committed, sha: result.sha };
+  return { committed: result.committed, sha: result.sha, memorySync };
 }
 
 async function listSkills(agentId: string): Promise<{
@@ -922,6 +976,7 @@ async function deleteSkill(
     ...result,
     committed: commit.committed,
     commitSha: commit.sha,
+    memorySync: commit.memorySync,
   };
 }
 

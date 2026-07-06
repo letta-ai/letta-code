@@ -34,6 +34,7 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 export type DmPolicy = "pairing" | "allowlist" | "open";
 
 export type ExperimentId =
+  | "artifacts"
   | "conversation_titles"
   | "desktop_conversation_bootstrap"
   | "diffs"
@@ -458,6 +459,21 @@ export interface DeviceStatus {
   reflection_settings: ReflectionSettingsSnapshot | null;
   /** Remote slash command IDs this letta-code version can handle via `execute_command`. */
   supported_commands: string[];
+  /**
+   * Slash commands contributed by locally loaded mods. Advertised separately
+   * from `supported_commands` (which gates the client's built-in allowlist) so
+   * clients can auto-surface mod commands by their own policy. Invoked through
+   * the same `execute_command` path. Omitted when no mod commands are loaded.
+   */
+  mod_commands?: ModCommandInfo[];
+}
+
+/** A mod-contributed slash command advertised to clients for rendering. */
+export interface ModCommandInfo {
+  id: string;
+  description: string;
+  /** Optional argument hint shown in the palette (e.g. "<query>"). */
+  args?: string;
 }
 
 export type LoopStatus =
@@ -1260,6 +1276,8 @@ export interface MemoryFileEntry {
   content: string;
   size: number;
   references?: string[];
+  kind?: "markdown" | "image";
+  mime_type?: string | null;
 }
 
 export interface ListMemoryResponseMessage {
@@ -1812,6 +1830,16 @@ export interface ConversationCreateCommand {
   request_id: string;
   /** Body forwarded to the Letta conversations create API. */
   body: ConversationCreateParams;
+  /**
+   * Set by cloud-api when relaying the command: the authenticated WS
+   * subscriber's cloud user id. The listener echoes it back as the
+   * `X-Letta-Acting-User-Id` HTTP header on the outbound
+   * conversations.create call so cloud attributes the new conversation
+   * to the human who actually created it — not the user whose API key
+   * spawned the sandbox / desktop runtime. Absent for self-hosted or
+   * direct (non-relayed) flows.
+   */
+  acting_user_id?: string;
 }
 
 export interface ConversationUpdateCommand {
@@ -1845,6 +1873,12 @@ export interface ConversationForkCommand {
   request_id: string;
   conversation_id: string;
   body?: ConversationForkBody;
+  /**
+   * Set by cloud-api when relaying the command — see
+   * `ConversationCreateCommand.acting_user_id`. The fork produces a new
+   * conversation, so it is attributed the same way.
+   */
+  acting_user_id?: string;
 }
 
 export interface ConversationMessagesListCommand {
@@ -2779,6 +2813,7 @@ export type WsProtocolCommand =
 export type WsProtocolCommandType = WsProtocolCommand["type"];
 
 export type WsProtocolMessage =
+  | ControlRequest
   | DeviceStatusUpdateMessage
   | LoopStatusUpdateMessage
   | QueueUpdateMessage

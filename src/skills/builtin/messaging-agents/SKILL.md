@@ -66,11 +66,24 @@ Results include `agent_id` for each matching message.
 letta -p --from-agent $LETTA_AGENT_ID --agent <id> "message text"
 ```
 
+When no `--environment` is specified, the target agent will run in the same
+environment as the caller agent.
+
+To route the target agent turn through a specific remote/local environment:
+
+```bash
+letta -p --from-agent $LETTA_AGENT_ID \
+  --agent <id> \
+  --environment <name-or-device-id-or-connection-id> \
+  "message text"
+```
+
 **Arguments:**
 | Arg | Required | Description |
 |-----|----------|-------------|
 | `--agent <id>` | Yes | Target agent ID to message |
 | `--from-agent <id>` | Yes | Sender agent ID (injects agent-to-agent system reminder) |
+| `--environment <selector>` | No | Route through an online environment by connection name, device ID, or connection ID |
 | `"message text"` | Yes | Message body (positional after flags) |
 
 **Example:**
@@ -96,6 +109,35 @@ letta -p --from-agent $LETTA_AGENT_ID \
 letta -p --from-agent $LETTA_AGENT_ID --conversation <id> "message text"
 ```
 
+Add `--environment <selector>` to continue the conversation on a specific environment.
+
+### Discovering Environments
+
+```bash
+letta environments list --online-only
+# alias:
+letta envs list --online-only
+```
+
+Use `connectionName`, `deviceId`, or `connectionId` from the JSON output as the
+`--environment` selector. If a name is ambiguous, prefer `deviceId` or
+`connectionId`. In `environments list`, the current local runtime is marked with
+`"isCurrent": true`.
+
+To force the target agent onto the current registered Letta Code environment,
+resolve the current environment and pass its `connectionId`:
+
+```bash
+CURRENT_ENV=$(letta environments current | jq -r .connectionId)
+letta -p --from-agent $LETTA_AGENT_ID \
+  --agent agent-abc123 \
+  --environment "$CURRENT_ENV" \
+  "Run on my same machine/environment."
+```
+
+Omit `--environment` when you want the target agent to run in the same
+environment as the caller agent.
+
 **Arguments:**
 | Arg | Required | Description |
 |-----|----------|-------------|
@@ -112,7 +154,8 @@ letta -p --from-agent $LETTA_AGENT_ID \
 
 ## Understanding the Response
 
-- Scripts return only the **final assistant message** (not tool calls or reasoning)
+- Text-mode scripts return only the **final assistant message** (not tool calls, reasoning, or metadata)
+- JSON and stream-json responses include `agent_id`, `conversation_id`, and `environment.source` so you can continue the same conversation/runtime. Environment-routed turns also include `environment.id`, `connection_id`, `device_id`, and `name`.
 - The target agent may use tools, think, and reason - but you only see their final response
 - To see the full conversation transcript (including tool calls), use the `searching-messages` skill with `letta messages list --agent <id>` targeting the other agent
 

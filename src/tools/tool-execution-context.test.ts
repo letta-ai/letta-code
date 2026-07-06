@@ -265,7 +265,17 @@ describe("tool execution context snapshot", () => {
     const prepared = await prepareCurrentToolExecutionContext({
       modEvents: {
         async emit(name, event) {
+          if (name === "tool_start") {
+            const toolStartEvent = event as ModToolStartEvent;
+            toolStartEvent.args = {
+              ...toolStartEvent.args,
+              file_path: "package.json",
+            };
+          }
           if (name === "tool_end") {
+            expect((event as ModToolEndEvent).args).toEqual({
+              file_path: "package.json",
+            });
             (
               event as ModToolEndEvent & {
                 result?: { status: "success" | "error"; output: string };

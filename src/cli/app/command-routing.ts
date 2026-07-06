@@ -9,7 +9,6 @@ const INTERACTIVE_SLASH_COMMANDS = new Set([
   "/personality",
   "/subagents",
   "/memory",
-  "/goal",
   "/sleeptime",
   "/mcp",
   "/help",
@@ -35,10 +34,10 @@ const NON_STATE_COMMANDS = new Set([
   "/hooks",
   "/search",
   "/memory",
-  "/goal",
   "/feedback",
   "/export",
   "/download",
+  "/mods", // starts background local mod-learning runs; does not need the foreground lock
   "/reasoning-tab",
   "/secret",
   "/palace", // read-only memory viewer

@@ -16,7 +16,7 @@ import { models } from "@/agent/model";
 import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
-} from "@/agent/personality";
+} from "@/agent/personality-presets";
 import { clearAllSubagents, registerSubagent } from "@/agent/subagent-state";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
@@ -1708,7 +1708,6 @@ describe("listen-client parseServerMessage", () => {
   test("advertises context-limit and parses the legacy set-max-context alias", () => {
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("context-limit");
     expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("set-max-context");
-    expect(SUPPORTED_REMOTE_COMMANDS).toContain("goal");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("compact");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("reload");
 
@@ -2442,6 +2441,75 @@ describe("listen-client memory command handling", () => {
         }),
       ]);
       expect(messages[0].entries[0]?.content).toContain("Hello from memory");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("lists supported image assets alongside markdown memory", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
+    const socket = new MockSocket(WebSocket.OPEN);
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const ensureLocalMemfsCheckoutMock = mock(async () => {
+      await mkdir(join(tempRoot, ".git"), { recursive: true });
+      await mkdir(join(tempRoot, "system"), { recursive: true });
+      await writeFile(
+        join(tempRoot, "system", "persona.md"),
+        "---\ndescription: Persona\n---\nHello from memory\n",
+      );
+      await writeFile(join(tempRoot, "profile.png"), pngBytes);
+      await writeFile(join(tempRoot, "notes.bin"), Buffer.from([0x00, 0x01]));
+    });
+
+    try {
+      await __listenClientTestUtils.handleListMemoryCommand(
+        {
+          type: "list_memory",
+          request_id: "list-memory-images-1",
+          agent_id: "agent-1",
+          include_references: true,
+        },
+        socket as unknown as WebSocket,
+        {
+          getMemoryFilesystemRoot: () => tempRoot,
+          isMemfsEnabledOnServer: async () => true,
+          ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
+        },
+      );
+
+      const messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        type: "list_memory_response",
+        request_id: "list-memory-images-1",
+        success: true,
+        done: true,
+        total: 2,
+      });
+      // Scanner orders directories first, so system/persona.md precedes
+      // the root-level profile.png. Unsupported binaries stay hidden.
+      expect(messages[0].entries).toEqual([
+        expect.objectContaining({
+          relative_path: "system/persona.md",
+          is_system: true,
+          description: "Persona",
+          kind: "markdown",
+          mime_type: "text/markdown",
+          references: [],
+        }),
+        expect.objectContaining({
+          relative_path: "profile.png",
+          is_system: false,
+          description: null,
+          content: "",
+          size: pngBytes.length,
+          kind: "image",
+          mime_type: "image/png",
+          references: [],
+        }),
+      ]);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -3722,6 +3790,49 @@ describe("listen-client permission mode scope keys", () => {
   });
 });
 
+describe("listen-client conversation working directory", () => {
+  test("falls back to boot dir and prunes a stale (deleted) persisted cwd", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const scopeKey = "agent:agent-123::conversation:default";
+
+    // Simulate a worktree dir that was persisted, then cleaned up.
+    const staleDir = await mkdtemp(join(os.tmpdir(), "ws-stale-cwd-"));
+    listener.workingDirectoryByConversation.set(scopeKey, staleDir);
+    await rm(staleDir, { recursive: true, force: true });
+
+    const resolved = __listenClientTestUtils.getConversationWorkingDirectory(
+      listener,
+      "agent-123",
+      "default",
+    );
+
+    expect(resolved).toBe(listener.bootWorkingDirectory);
+    // The dead entry should be pruned so it isn't served again.
+    expect(listener.workingDirectoryByConversation.has(scopeKey)).toBe(false);
+  });
+
+  test("returns a persisted cwd that still exists", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const scopeKey = "agent:agent-123::conversation:default";
+
+    const liveDir = await mkdtemp(join(os.tmpdir(), "ws-live-cwd-"));
+    try {
+      listener.workingDirectoryByConversation.set(scopeKey, liveDir);
+
+      const resolved = __listenClientTestUtils.getConversationWorkingDirectory(
+        listener,
+        "agent-123",
+        "default",
+      );
+
+      expect(resolved).toBe(liveDir);
+      expect(listener.workingDirectoryByConversation.has(scopeKey)).toBe(true);
+    } finally {
+      await rm(liveDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("listen-client approval resolver wiring", () => {
   test("resolved approvals do not project WAITING_ON_INPUT while the enclosing turn is still processing", () => {
     const runtime = __listenClientTestUtils.createRuntime();
@@ -4724,32 +4835,39 @@ describe("listen-client v2 status builders", () => {
     expect(runtime.recoveredApprovalState).toBeNull();
   });
 
-  test("scopes working directory to requested agent and conversation", () => {
+  test("scopes working directory to requested agent and conversation", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    __listenClientTestUtils.setConversationWorkingDirectory(
-      runtime,
-      "agent-a",
-      "conv-a",
-      "/repo/a",
-    );
-    __listenClientTestUtils.setConversationWorkingDirectory(
-      runtime,
-      "agent-b",
-      "default",
-      "/repo/b",
-    );
+    const repoA = await mkdtemp(join(os.tmpdir(), "ws-scope-cwd-a-"));
+    const repoB = await mkdtemp(join(os.tmpdir(), "ws-scope-cwd-b-"));
+    try {
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        runtime,
+        "agent-a",
+        "conv-a",
+        repoA,
+      );
+      __listenClientTestUtils.setConversationWorkingDirectory(
+        runtime,
+        "agent-b",
+        "default",
+        repoB,
+      );
 
-    const activeStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
-      agent_id: "agent-a",
-      conversation_id: "conv-a",
-    });
-    expect(activeStatus.current_working_directory).toBe("/repo/a");
+      const activeStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
+        agent_id: "agent-a",
+        conversation_id: "conv-a",
+      });
+      expect(activeStatus.current_working_directory).toBe(repoA);
 
-    const defaultStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
-      agent_id: "agent-b",
-      conversation_id: "default",
-    });
-    expect(defaultStatus.current_working_directory).toBe("/repo/b");
+      const defaultStatus = __listenClientTestUtils.buildDeviceStatus(runtime, {
+        agent_id: "agent-b",
+        conversation_id: "default",
+      });
+      expect(defaultStatus.current_working_directory).toBe(repoB);
+    } finally {
+      await rm(repoA, { recursive: true, force: true });
+      await rm(repoB, { recursive: true, force: true });
+    }
   });
 
   test("scoped loop status is not suppressed just because another conversation is processing", () => {
@@ -5177,7 +5295,7 @@ describe("listen-client capability-gated approval flow", () => {
     }
   });
 
-  test("requestApprovalOverWS exposes the control request through device status instead of stream_delta", () => {
+  test("requestApprovalOverWS emits control_request and exposes it through device status", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
       listener,
@@ -5205,8 +5323,21 @@ describe("listen-client capability-gated approval flow", () => {
     const deviceStatus = outbound.find(
       (payload) => payload.type === "update_device_status",
     );
+    const controlRequest = outbound.find(
+      (payload) => payload.type === "control_request",
+    );
+    expect(controlRequest).toBeDefined();
     expect(loopStatus).toBeDefined();
     expect(deviceStatus).toBeDefined();
+    expect(controlRequest.type).toBe("control_request");
+    expect(controlRequest.request_id).toBe(requestId);
+    expect(controlRequest.request).toEqual(
+      makeControlRequest(requestId).request,
+    );
+    expect(controlRequest.runtime).toEqual({
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
     expect(loopStatus.type).toBe("update_loop_status");
     expect(loopStatus.loop_status.status).toBe("WAITING_ON_APPROVAL");
     expect(runtime.lastStopReason).toBe("requires_approval");

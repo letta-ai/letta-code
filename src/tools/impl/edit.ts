@@ -1,5 +1,5 @@
-import * as path from "node:path";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { expandFilePath } from "@/utils/file-path";
 import { readUtf8TextStrict, writeUtf8Text } from "@/utils/text-files";
 import { validateRequiredParams } from "./validation.js";
 
@@ -141,9 +141,7 @@ export async function edit(args: EditArgs): Promise<EditResult> {
     );
   }
   const userCwd = getCurrentWorkingDirectory();
-  const resolvedPath = path.isAbsolute(file_path)
-    ? file_path
-    : path.resolve(userCwd, file_path);
+  const resolvedPath = expandFilePath(file_path, userCwd);
   if (old_string === new_string)
     throw new Error(
       "No changes to make: old_string and new_string are exactly the same.",

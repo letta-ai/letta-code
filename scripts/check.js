@@ -19,6 +19,7 @@ const checks = [
   { name: "filename casing", script: ["check:filename-casing"] },
   { name: "test mock isolation", script: ["check:test-mock-isolation"] },
   { name: "test coverage", script: ["check:test-coverage"] },
+  { name: "skill frontmatter", script: ["check:skill-frontmatter"] },
   { name: "bundled skill scripts", script: ["check:bundled-skill-scripts"] },
   { name: "biome", script: ["lint"] },
   { name: "typescript", script: ["typecheck"] },

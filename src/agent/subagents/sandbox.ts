@@ -21,8 +21,10 @@ import type { SubagentLaunchProfile } from ".";
  * process kernel-enforces the write scope — covering its in-process Write/Edit
  * tools, its Bash commands, and anything those spawn.
  *
- * Enabled by default; set `LETTA_FS_SANDBOX=0` to opt out. No-ops when the host
- * has no sandbox backend.
+ * Enabled by default (unlike the cross-agent shell sandbox, which is opt-in:
+ * memory subagents run non-interactively, so there is no approve/deny flow to
+ * fall back on); set `LETTA_FS_SANDBOX=0` to opt out. No-ops when the host has
+ * no sandbox backend.
  *
  * Both backends scope writes to the harness state dir (`~/.letta`): a memory
  * subagent may persist memory + harness metadata (settings, logs, conversations,

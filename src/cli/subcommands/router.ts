@@ -4,6 +4,7 @@ import { runBackendSubcommand } from "./backend";
 import { runChannelsSubcommand } from "./channels";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
+import { runEnvironmentsSubcommand } from "./environments";
 import { runListenSubcommand } from "./listen.tsx";
 import { runLocalBackendSubcommand } from "./local-backend";
 import { runMemorySubcommand } from "./memory";
@@ -32,6 +33,8 @@ export function subcommandNeedsEarlyBackendMode(
     case "app-server":
     case "agents":
     case "connect":
+    case "environments":
+    case "envs":
     case "install":
     case "memfs":
     case "memory":
@@ -68,6 +71,9 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runAppServerSubcommand(rest);
     case "messages":
       return runMessagesSubcommand(rest);
+    case "environments":
+    case "envs":
+      return runEnvironmentsSubcommand(rest);
     case "mods":
       return runModsSubcommand(rest);
     case "server":

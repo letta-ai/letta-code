@@ -3,6 +3,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getModelInfo } from "@/agent/model";
 import type { SessionStats } from "@/agent/stats";
+import { getSubagentLifecycleContext } from "@/agent/subagent-state";
 import type { Backend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -77,6 +78,7 @@ export function createHeadlessModContext(options: {
     },
     cwd,
     sessionId: options.conversationId,
+    conversationSummary: null,
     lastRunId: options.lastRunId ?? null,
     agent: {
       id: options.agent.id,
@@ -123,6 +125,7 @@ export function createHeadlessModContext(options: {
         : null,
     },
     backgroundAgents: [],
+    subagents: getSubagentLifecycleContext(),
   };
 }
 

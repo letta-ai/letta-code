@@ -307,10 +307,14 @@ export function buildDiscordReplyOptions(
   };
 }
 
-function formatDiscordLifecycleErrorMessage(errorText: string): string {
+function formatDiscordLifecycleErrorMessage(
+  errorText: string,
+  runId?: string | null,
+): string {
   return formatChannelLifecycleErrorMessage(errorText, {
     codeBlock: true,
     maxLength: DISCORD_LIFECYCLE_ERROR_TEXT_MAX,
+    runId,
   });
 }
 
@@ -520,6 +524,7 @@ export function createDiscordAdapter(
   async function sendLifecycleErrorReply(
     source: ChannelTurnSource,
     errorText: string,
+    runId?: string | null,
   ): Promise<void> {
     if (!client) return;
     const key = getLifecycleReplyKey(source);
@@ -535,7 +540,7 @@ export function createDiscordAdapter(
     const reply = buildDiscordReplyOptions(source.messageId, targetChannelId);
     await channel.send({
       allowedMentions: { parse: [] },
-      content: formatDiscordLifecycleErrorMessage(errorText),
+      content: formatDiscordLifecycleErrorMessage(errorText, runId),
       ...(reply ?? {}),
     });
   }
@@ -870,12 +875,21 @@ export function createDiscordAdapter(
           ? message.channelId
           : null;
 
-        // If mentioned outside a thread, create one
+        // If mentioned outside a thread, create one — but only when the
+        // account/channel is configured to auto-thread on mention. When
+        // auto-threading is disabled, the mention routes to the channel
+        // itself (effectiveChatId stays as message.channelId and
+        // effectiveThreadId stays null) instead of spawning a new thread.
         if (!isThread && wasMentioned) {
-          const createdThread = await createThreadForMention(message, content);
-          if (!createdThread) return;
-          effectiveChatId = createdThread.id;
-          effectiveThreadId = createdThread.id;
+          if (shouldAutoThreadOnDiscordMention(config, message.channelId)) {
+            const createdThread = await createThreadForMention(
+              message,
+              content,
+            );
+            if (!createdThread) return;
+            effectiveChatId = createdThread.id;
+            effectiveThreadId = createdThread.id;
+          }
         }
 
         const attachments = await collectAttachments(
@@ -1086,7 +1100,7 @@ export function createDiscordAdapter(
       await Promise.all(
         Array.from(uniqueReplySources.values()).map(async (source) => {
           try {
-            await sendLifecycleErrorReply(source, errorText);
+            await sendLifecycleErrorReply(source, errorText, event.runId);
           } catch (error) {
             console.warn(
               `[Discord] Failed to post lifecycle error for ${source.chatId}:`,

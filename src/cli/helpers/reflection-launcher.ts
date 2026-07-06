@@ -12,7 +12,12 @@ import {
 } from "@/agent/memory-worktree";
 import { getSubagents } from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
-import type { ReflectionTrigger } from "@/cli/helpers/memory-reminder";
+import {
+  getReflectionSettings,
+  type ReflectionSettings,
+  type ReflectionTrigger,
+  shouldFireStepCountTrigger,
+} from "@/cli/helpers/memory-reminder";
 import {
   handleMemorySubagentCompletion,
   type MemorySubagentSuccessMessageOverride,
@@ -22,6 +27,7 @@ import {
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   finalizeAutoReflectionPayload,
+  getReflectionTranscriptState,
 } from "@/cli/helpers/reflection-transcript";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { telemetry } from "@/telemetry";
@@ -76,6 +82,7 @@ export interface ReflectionLaunchOptions {
   conversationId: string;
   memfsEnabled: boolean;
   triggerSource: ReflectionLaunchTriggerSource;
+  reflectionSettings?: ReflectionSettings;
   description: string;
   instruction?: string;
   systemPrompt?: string;
@@ -135,13 +142,53 @@ function queuePendingReflectionLaunch(options: ReflectionLaunchOptions): void {
   );
 }
 
+export async function shouldRunQueuedReflectionLaunch(
+  options: ReflectionLaunchOptions,
+  deps: {
+    getTranscriptState?: typeof getReflectionTranscriptState;
+    getSettings?: typeof getReflectionSettings;
+  } = {},
+): Promise<boolean> {
+  if (options.triggerSource !== "step-count") {
+    return true;
+  }
+
+  const settings =
+    options.reflectionSettings ??
+    (deps.getSettings ?? getReflectionSettings)(options.agentId);
+  const readTranscriptState =
+    deps.getTranscriptState ?? getReflectionTranscriptState;
+  const transcriptState = await readTranscriptState(
+    options.agentId,
+    options.conversationId,
+  );
+  const shouldLaunch = shouldFireStepCountTrigger(
+    transcriptState.steps_since_last_successful_reflection,
+    settings,
+  );
+
+  if (!shouldLaunch) {
+    debugLog(
+      "memory",
+      `Skipping queued reflection launch (${options.triggerSource}) because the trigger threshold is no longer met`,
+    );
+  }
+
+  return shouldLaunch;
+}
+
 function schedulePendingReflectionLaunch(agentId: string): void {
   const pendingOptions = pendingReflectionLaunches.get(agentId);
   if (!pendingOptions) return;
   pendingReflectionLaunches.delete(agentId);
 
   queueMicrotask(() => {
-    void launchReflectionSubagent(pendingOptions).catch((error) => {
+    void (async () => {
+      if (!(await shouldRunQueuedReflectionLaunch(pendingOptions))) {
+        return;
+      }
+      await launchReflectionSubagent(pendingOptions);
+    })().catch((error) => {
       debugWarn(
         "memory",
         `Failed to launch queued reflection (${pendingOptions.triggerSource}): ${

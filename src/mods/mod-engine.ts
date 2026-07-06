@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   statSync,
   symlinkSync,
   unlinkSync,
@@ -62,6 +64,7 @@ import {
   unregisterModTool,
   unregisterModToolsForOwner,
 } from "@/mods/tool-registry";
+import { normalizeTurnStartCancelReason } from "@/mods/turn-start-cancel";
 import type {
   ModCapabilities,
   ModCommand,
@@ -90,6 +93,7 @@ import type {
   ModToolRegistration,
   ModToolStartEvent,
   ModTurnEndEvent,
+  ModTurnStartCancelResult,
   ModTurnStartEvent,
 } from "@/mods/types";
 
@@ -471,20 +475,49 @@ function getRuntimePackageDirectory(packageName: string): string {
   );
 }
 
+function normalizeRuntimeDependencyPath(value: string): string {
+  const normalized = path.normalize(value).replace(/^\\\\\?\\/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
 function ensureRuntimeDependencySymlink(
   cacheDirectory: string,
   packageName: string,
 ): void {
   const nodeModulesDirectory = path.join(cacheDirectory, "node_modules");
   const linkPath = path.join(nodeModulesDirectory, packageName);
-  if (existsSync(linkPath)) return;
+  const packageDirectory = path.resolve(
+    getRuntimePackageDirectory(packageName),
+  );
 
   mkdirSync(nodeModulesDirectory, { recursive: true });
-  symlinkSync(
-    getRuntimePackageDirectory(packageName),
-    linkPath,
-    process.platform === "win32" ? "junction" : "dir",
-  );
+  try {
+    const stats = lstatSync(linkPath);
+    if (!stats.isSymbolicLink()) return;
+
+    const existingTarget = readlinkSync(linkPath);
+    const resolvedTarget = path.resolve(nodeModulesDirectory, existingTarget);
+    if (
+      normalizeRuntimeDependencyPath(resolvedTarget) ===
+      normalizeRuntimeDependencyPath(packageDirectory)
+    ) {
+      return;
+    }
+
+    unlinkSync(linkPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  try {
+    symlinkSync(
+      packageDirectory,
+      linkPath,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
 }
 
 function ensureModCache(cacheDirectory: string): void {
@@ -684,6 +717,22 @@ function isTurnStartResultWithInput(
     typeof result === "object" &&
     result !== null &&
     isTurnStartInput((result as { input?: unknown }).input)
+  );
+}
+
+function isTurnStartResultWithCancel(
+  name: ModEventName,
+  result: unknown,
+): result is { cancel: ModTurnStartCancelResult } {
+  if (name !== "turn_start" || typeof result !== "object" || !result) {
+    return false;
+  }
+  const cancel = (result as { cancel?: unknown }).cancel;
+  return (
+    typeof cancel === "object" &&
+    cancel !== null &&
+    normalizeTurnStartCancelReason((cancel as { reason?: unknown }).reason) !==
+      null
   );
 }
 
@@ -1046,7 +1095,7 @@ function createLettaModApi(
     recordCapabilityDiagnostic({
       capability: { id: apiId, kind: "statusline" },
       error: new Error(
-        `${apiId} is no longer available. Use letta.ui.openPanel({ id, order, render }) instead — order 0 is the primary line (replaces agent · model), negative orders stack below it.`,
+        `${apiId} is no longer available. Use letta.ui.openPanel({ id, order, render }) instead — order 0 is the primary line (replaces agent · model), order 1 replaces the default product-status row, orders > 1 render additive panels above input, and negative orders stack below it.`,
       ),
       phase: "deprecated_api",
       severity: "warning",
@@ -1571,6 +1620,7 @@ export async function emitLocalModEvent<TName extends ModEventName>(
   const registrations = [...(registry.events[name] ?? [])];
   const diagnostics: ModDiagnostic[] = [];
   const results: Array<NonNullable<ModEventResultMap[TName]>> = [];
+  let turnStartCancel: ModTurnStartCancelResult | undefined;
 
   for (const registration of registrations) {
     const signal = registration.owner
@@ -1630,6 +1680,10 @@ export async function emitLocalModEvent<TName extends ModEventName>(
       const result = await registration.handler(event, eventContext);
       if (isTurnStartResultWithInput(name, result)) {
         (event as ModTurnStartEvent).input = result.input;
+      }
+      if (!turnStartCancel && isTurnStartResultWithCancel(name, result)) {
+        const reason = normalizeTurnStartCancelReason(result.cancel.reason);
+        if (reason) turnStartCancel = { reason };
       }
       if (isToolStartResultWithArgs(name, result)) {
         (event as ModToolStartEvent).args = result.args;
@@ -1696,6 +1750,17 @@ export async function emitLocalModEvent<TName extends ModEventName>(
         onDiagnostic,
       );
       diagnostics.push(diagnostic);
+    }
+  }
+
+  if (name === "turn_start") {
+    const turnStartEventWithCancel = event as ModTurnStartEvent & {
+      cancel?: ModTurnStartCancelResult;
+    };
+    if (turnStartCancel) {
+      turnStartEventWithCancel.cancel = { ...turnStartCancel };
+    } else {
+      delete turnStartEventWithCancel.cancel;
     }
   }
 

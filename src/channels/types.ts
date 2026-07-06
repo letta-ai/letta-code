@@ -64,6 +64,7 @@ export interface ChannelThreadContextEntry {
   senderId?: string;
   senderName?: string;
   text: string;
+  attachments?: ChannelMessageAttachment[];
 }
 
 export interface ChannelThreadContext {
@@ -120,6 +121,7 @@ export type ChannelTurnLifecycleEvent =
       sources: ChannelTurnSource[];
       outcome: ChannelTurnOutcome;
       error?: string;
+      runId?: string;
     };
 
 // ── Adapter interface ─────────────────────────────────────────────

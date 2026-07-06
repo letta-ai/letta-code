@@ -4,8 +4,9 @@ import * as path from "node:path";
 import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { configureBackendMode } from "@/backend";
 import {
+  disableLocalBackendMemfsForProcess,
   getLocalBackendMemoryFilesystemRoot,
-  LOCAL_BACKEND_NO_MEMFS_ENV,
+  resetLocalBackendMemfsForProcess,
 } from "@/backend/local/paths";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -275,6 +276,7 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
   const env = runWithRuntimeContext(
     {
       agentId: "agent-runtime-scope",
+      agentName: "Runtime Scope Agent",
       conversationId: "conv-runtime-scope",
       workingDirectory: "/tmp/runtime-scope-cwd",
     },
@@ -283,6 +285,7 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
 
   expect(env.AGENT_ID).toBe("agent-runtime-scope");
   expect(env.LETTA_AGENT_ID).toBe("agent-runtime-scope");
+  expect(env.AGENT_NAME).toBe("Runtime Scope Agent");
   expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
   expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
   expect(env.USER_CWD).toBe("/tmp/runtime-scope-cwd");
@@ -501,33 +504,33 @@ test("getShellEnv injects local backend MemFS path for --backend local", () => {
   }
 });
 
-test("getShellEnv does not inject local backend MemFS path when local --no-memfs is active", () => {
+test("getShellEnv does not inject local backend MemFS path for stateless subagent processes", () => {
   const agentId = `agent-local-no-memfs-shell-env-${Date.now()}`;
   configureBackendMode("local");
+  disableLocalBackendMemfsForProcess();
   try {
-    withTemporaryEnv({ [LOCAL_BACKEND_NO_MEMFS_ENV]: "1" }, () => {
-      withTemporaryAgentEnv(agentId, () => {
-        const original = settingsManager.isMemfsEnabled.bind(settingsManager);
+    withTemporaryAgentEnv(agentId, () => {
+      const original = settingsManager.isMemfsEnabled.bind(settingsManager);
+      (
+        settingsManager as unknown as {
+          isMemfsEnabled: (id: string) => boolean;
+        }
+      ).isMemfsEnabled = () => true;
+
+      try {
+        const env = getShellEnv();
+        expect(env.LETTA_MEMORY_DIR).toBeUndefined();
+        expect(env.MEMORY_DIR).toBeUndefined();
+      } finally {
         (
           settingsManager as unknown as {
             isMemfsEnabled: (id: string) => boolean;
           }
-        ).isMemfsEnabled = () => true;
-
-        try {
-          const env = getShellEnv();
-          expect(env.LETTA_MEMORY_DIR).toBeUndefined();
-          expect(env.MEMORY_DIR).toBeUndefined();
-        } finally {
-          (
-            settingsManager as unknown as {
-              isMemfsEnabled: (id: string) => boolean;
-            }
-          ).isMemfsEnabled = original;
-        }
-      });
+        ).isMemfsEnabled = original;
+      }
     });
   } finally {
+    resetLocalBackendMemfsForProcess();
     configureBackendMode("api");
   }
 });

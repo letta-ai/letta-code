@@ -13,6 +13,13 @@ const ENABLED_TOGGLE_VALUES = new Set(["1", "true", "yes"]);
 
 const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
   {
+    id: "artifacts",
+    label: "artifacts",
+    description:
+      "Expose Letta Code Desktop artifact creation tools and artifact UI surfaces.",
+    envVar: "LETTA_ARTIFACTS",
+  },
+  {
     id: "conversation_titles",
     label: "conversation titles",
     description: "Generate AI conversation titles automatically when possible.",

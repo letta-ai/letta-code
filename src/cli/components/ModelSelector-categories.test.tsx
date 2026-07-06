@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   getModelCategories,
+  includeUnknownBackendHandleInRecommended,
   toSelectorModelForHandle,
   usesBackendModelCatalog,
 } from "@/cli/components/ModelSelector";
@@ -81,6 +82,33 @@ describe("getModelCategories", () => {
     expect(usesBackendModelCatalog(false, true)).toBe(true);
     expect(usesBackendModelCatalog(true, false)).toBe(true);
     expect(usesBackendModelCatalog(false, false)).toBe(false);
+  });
+
+  test("keeps discovered local endpoint models in recommended backend catalogs", () => {
+    expect(
+      includeUnknownBackendHandleInRecommended("llama.cpp/local-model"),
+    ).toBe(true);
+    expect(
+      includeUnknownBackendHandleInRecommended("llama-cpp/local-model"),
+    ).toBe(true);
+    expect(
+      includeUnknownBackendHandleInRecommended("lmstudio/local-model"),
+    ).toBe(true);
+    expect(
+      includeUnknownBackendHandleInRecommended("ollama/qwen2.5-coder:7b"),
+    ).toBe(true);
+    expect(
+      includeUnknownBackendHandleInRecommended("ollama-cloud/gpt-oss:120b"),
+    ).toBe(true);
+  });
+
+  test("does not promote unknown hosted backend handles to recommended", () => {
+    expect(
+      includeUnknownBackendHandleInRecommended("openai/not-in-registry"),
+    ).toBe(false);
+    expect(
+      includeUnknownBackendHandleInRecommended("custom-provider/model"),
+    ).toBe(false);
   });
 });
 

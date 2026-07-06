@@ -15,6 +15,7 @@ import {
   getCurrentAgentId,
   setConversationId,
   setCurrentAgentId,
+  setCurrentAgentName,
 } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
@@ -39,6 +40,7 @@ import {
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import {
   getReflectionSettings,
+  type ReflectionSettings,
   type ReflectionTrigger,
 } from "@/cli/helpers/memory-reminder";
 import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
@@ -49,6 +51,7 @@ import {
 } from "@/cli/helpers/reflection-launcher";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
+import { getTurnStartCancel } from "@/mods/turn-start-cancel";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
@@ -225,6 +228,10 @@ function isTurnInputArray(
   );
 }
 
+type ListenerTurnStartEmission =
+  | { cancelled: false; input: Array<MessageCreate | ApprovalCreate> }
+  | { cancelled: true; reason: string };
+
 async function emitListenerTurnStart(options: {
   agentId: string;
   conversationId: string;
@@ -233,7 +240,7 @@ async function emitListenerTurnStart(options: {
   workingDirectory: string;
   permissionMode?: string | null;
   cachedAgent?: AgentState | null;
-}): Promise<Array<MessageCreate | ApprovalCreate>> {
+}): Promise<ListenerTurnStartEmission> {
   try {
     const modAdapter = ensureListenerModAdapter(options.runtime);
     const context = createListenerModContext({
@@ -248,10 +255,15 @@ async function emitListenerTurnStart(options: {
       input: options.input,
     };
     await modAdapter.events.emit("turn_start", event, context);
-    return isTurnInputArray(event.input) ? event.input : options.input;
+    const cancel = getTurnStartCancel(event);
+    if (cancel) return { cancelled: true, reason: cancel.reason };
+    return {
+      cancelled: false,
+      input: isTurnInputArray(event.input) ? event.input : options.input,
+    };
   } catch {
     // Mod turn_start handlers should not block sending the turn.
-    return options.input;
+    return { cancelled: false, input: options.input };
   }
 }
 
@@ -300,10 +312,18 @@ export function buildMaybeLaunchReflectionSubagent(params: {
   socket: ListenerTransport;
   agentId: string;
   conversationId: string;
+  reflectionSettings?: ReflectionSettings;
   cachedAgent?: AgentState | null;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
-    const { runtime, socket, agentId, conversationId, cachedAgent } = params;
+    const {
+      runtime,
+      socket,
+      agentId,
+      conversationId,
+      reflectionSettings,
+      cachedAgent,
+    } = params;
 
     if (!agentId) {
       return false;
@@ -315,6 +335,7 @@ export function buildMaybeLaunchReflectionSubagent(params: {
       memfsEnabled: settingsManager.isMemfsEnabled(agentId),
       triggerSource,
       skipPendingWorktreeReminderScan: triggerSource === "compaction-event",
+      reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
       systemPrompt: cachedAgent?.system ?? undefined,
       recompileByConversation:
@@ -436,6 +457,7 @@ export async function handleIncomingMessage(
   runtime.cancelRequested = false;
   runtime.lastStopReason = null;
   runtime.lastTerminalLoopErrorMessage = null;
+  runtime.lastTerminalLoopErrorRunId = null;
   const turnAbortController = new AbortController();
   runtime.activeAbortController = turnAbortController;
   const turnAbortSignal = turnAbortController.signal;
@@ -482,6 +504,7 @@ export async function handleIncomingMessage(
 
     // Set agent context for tools that need it (e.g., Skill tool)
     setCurrentAgentId(agentId);
+    setCurrentAgentName(listenAgentMetadata?.name ?? null);
     setConversationId(conversationId);
 
     if (isDebugEnabled()) {
@@ -593,6 +616,9 @@ export async function handleIncomingMessage(
                 .last_run_completion ?? null,
           };
         }
+        setCurrentAgentName(
+          listenAgentMetadata?.name ?? cachedAgent?.name ?? null,
+        );
         const { parts: reminderParts } = await buildSharedReminderParts(
           buildListenReminderContext({
             agentId: agentId || "",
@@ -636,7 +662,7 @@ export async function handleIncomingMessage(
     const hasUserMessage = messagesToSend.some(
       (m) => "role" in m && m.role === "user",
     );
-    let currentInput = hasUserMessage
+    const turnStartEmission = hasUserMessage
       ? await emitListenerTurnStart({
           agentId,
           conversationId,
@@ -646,7 +672,35 @@ export async function handleIncomingMessage(
           permissionMode: turnPermissionModeState.mode,
           cachedAgent,
         })
-      : messagesToSend;
+      : ({ cancelled: false, input: messagesToSend } as const);
+
+    if (turnStartEmission.cancelled) {
+      runtime.lastStopReason = "cancelled";
+      runtime.isProcessing = false;
+      clearActiveRunState(runtime);
+      setLoopStatus(runtime, "WAITING_ON_INPUT", {
+        agent_id: agentId || null,
+        conversation_id: conversationId,
+      });
+      emitRuntimeStateUpdates(runtime, {
+        agent_id: agentId || null,
+        conversation_id: conversationId,
+      });
+      const formattedError = emitLoopErrorNotice(socket, runtime, {
+        message: turnStartEmission.reason,
+        stopReason: "cancelled",
+        isTerminal: true,
+        agentId,
+        conversationId,
+        cancelRequested: runtime.cancelRequested,
+        abortSignal: turnAbortSignal,
+      });
+      runtime.lastTerminalLoopErrorMessage =
+        formattedError ?? turnStartEmission.reason;
+      return;
+    }
+
+    let currentInput = turnStartEmission.input;
 
     // Rebuild transcript lines from the potentially transformed input so
     // Desktop shows post-transform text, not the original user message.
@@ -920,6 +974,7 @@ export async function handleIncomingMessage(
               socket,
               agentId: agentId || "",
               conversationId,
+              reflectionSettings,
               cachedAgent,
             }),
           });
@@ -1251,11 +1306,13 @@ export async function handleIncomingMessage(
         const errorMessage =
           errorDetail || `Unexpected stop reason: ${stopReason}`;
 
+        const terminalRunId =
+          runId || runtime.activeRunId || runErrorInfo?.run_id;
         const formattedError = emitLoopErrorNotice(socket, runtime, {
           message: errorMessage,
           stopReason: effectiveStopReason,
           isTerminal: true,
-          runId: runId,
+          runId: terminalRunId,
           agentId,
           conversationId,
           runErrorInfo: runErrorInfo ?? undefined,
@@ -1263,6 +1320,7 @@ export async function handleIncomingMessage(
           abortSignal: turnAbortSignal,
         });
         runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
+        runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
         break;
       }
 
@@ -1361,10 +1419,12 @@ export async function handleIncomingMessage(
     });
 
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const terminalRunId = runtime.activeRunId;
     const formattedError = emitLoopErrorNotice(socket, runtime, {
       message: errorMessage,
       stopReason: "error",
       isTerminal: true,
+      runId: terminalRunId,
       agentId: agentId || undefined,
       conversationId,
       error,
@@ -1372,6 +1432,7 @@ export async function handleIncomingMessage(
       abortSignal: turnAbortSignal,
     });
     runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
+    runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
     if (isDebugEnabled()) {
       console.error("[Listen] Error handling message:", error);
     }

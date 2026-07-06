@@ -36,8 +36,13 @@ export const PROVIDER_FALLBACK_MAP: Record<string, string> = {
   "opus-4.6-medium": "bedrock-opus-4.6",
   "opus-4.6-high": "bedrock-opus-4.6",
   "opus-4.6-xhigh": "bedrock-opus-4.6",
-  // Sonnet 4.6 variants -> Bedrock Sonnet 4.6
-  sonnet: "bedrock-sonnet-4.6",
+  // Sonnet 5 variants -> Bedrock Sonnet 5; Sonnet 4.6 variants -> Bedrock Sonnet 4.6
+  sonnet: "bedrock-sonnet-5",
+  "sonnet-5-no-reasoning": "bedrock-sonnet-5",
+  "sonnet-5-low": "bedrock-sonnet-5",
+  "sonnet-5-medium": "bedrock-sonnet-5",
+  "sonnet-5-xhigh": "bedrock-sonnet-5",
+  "sonnet-4.6": "bedrock-sonnet-4.6",
   "sonnet-1m": "bedrock-sonnet-4.6",
   "sonnet-4.6-no-reasoning": "bedrock-sonnet-4.6",
   "sonnet-4.6-low": "bedrock-sonnet-4.6",
