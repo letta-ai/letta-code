@@ -17,6 +17,7 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { detectShellContext } from "@/utils/shell-context";
+import { createSigintAbortController } from "@/utils/sigint-abort";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
@@ -2455,8 +2456,34 @@ ${SYSTEM_REMINDER_CLOSE}
     }
   };
 
+  // Wire SIGINT to turn cancellation. One-shot mode has no interactive input
+  // loop, so without this a SIGINT never aborts the in-flight turn: other
+  // SIGINT listeners (e.g. telemetry's bounded drain) keep the process alive
+  // while the turn continues consuming provider tool calls and executing
+  // their side effects.
+  const sigintAbort = createSigintAbortController();
+  const exitInterrupted = async (): Promise<never> => {
+    if (outputFormat === "stream-json") {
+      const errorMsg: ErrorMessage = {
+        type: "error",
+        message: "Interrupted by SIGINT",
+        stop_reason: "cancelled",
+        session_id: sessionId,
+        uuid: `error-interrupted-${randomUUID()}`,
+      };
+      await writeWireMessageAsync(errorMsg);
+    } else {
+      console.error("Interrupted by SIGINT");
+    }
+    return exitHeadless(130, "headless_sigint_interrupted");
+  };
+
   try {
     while (true) {
+      if (sigintAbort.signal.aborted) {
+        await exitInterrupted();
+      }
+
       const hasApprovalContinuation = currentInput.some(
         (item) => item.type === "approval",
       );
@@ -2823,7 +2850,7 @@ ${SYSTEM_REMINDER_CLOSE}
           stream,
           buffers,
           () => {},
-          undefined,
+          sigintAbort.signal,
           undefined,
           streamJsonHook,
           reminderContextTracker,
@@ -2839,7 +2866,7 @@ ${SYSTEM_REMINDER_CLOSE}
           stream,
           buffers,
           () => {}, // No UI refresh needed in headless mode
-          undefined,
+          sigintAbort.signal,
           undefined,
           undefined,
           reminderContextTracker,
@@ -2853,6 +2880,12 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
+
+      // A SIGINT during the stream cancels the drain; exit before dispatching
+      // any tool calls the provider produced after the interrupt.
+      if (stopReason === "cancelled" || sigintAbort.signal.aborted) {
+        await exitInterrupted();
+      }
 
       // Check max turns after each turn (server may have taken multiple steps),
       // but defer the limit when we're still resolving pending approvals.
@@ -2983,9 +3016,16 @@ ${SYSTEM_REMINDER_CLOSE}
           decisions,
           undefined,
           {
+            abortSignal: sigintAbort.signal,
             toolContextId: turnToolContextId ?? undefined,
           },
         );
+
+        // A SIGINT during tool execution interrupts the batch; exit instead
+        // of sending the results back to the provider for another round.
+        if (sigintAbort.signal.aborted) {
+          await exitInterrupted();
+        }
 
         // Send all results in one batch
         const approvalInputWithOtid = {
