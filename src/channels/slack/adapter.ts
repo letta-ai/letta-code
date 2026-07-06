@@ -657,6 +657,10 @@ function toSlackTaskUpdateChunk(task: SlackProgressToolTask): SlackStreamChunk {
     details,
     ...chunkTask
   } = task;
+  const shouldIncludeDetails =
+    details &&
+    !task.toolTitle &&
+    !(task.toolName && isShellTool(task.toolName) && task.title === details);
   return {
     type: "task_update",
     ...chunkTask,
@@ -664,7 +668,7 @@ function toSlackTaskUpdateChunk(task: SlackProgressToolTask): SlackStreamChunk {
       chunkTask.title,
       SLACK_STREAM_CHUNK_TEXT_MAX,
     ),
-    ...(details
+    ...(shouldIncludeDetails
       ? {
           details: sanitizeSlackProgressText(
             details,
@@ -1282,6 +1286,11 @@ function buildSlackStreamProgressChunks(
   // details when only the status changes causes them to duplicate.
   const detailsChanged =
     !prevTask || (prevTask.details ?? "") !== (details ?? "");
+  const shouldIncludeTaskDetails =
+    details &&
+    (detailsChanged || status !== "in_progress") &&
+    !toolTitle &&
+    !(toolName && isShellTool(toolName) && title === details);
 
   chunks.push(buildSlackPlanUpdateChunk(entry));
   const turnActiveChunks = reconcileSlackTurnActiveTask(entry);
@@ -1293,9 +1302,7 @@ function buildSlackStreamProgressChunks(
     id: task.id,
     title: task.title,
     status: task.status,
-    ...(details && (detailsChanged || status !== "in_progress")
-      ? { details }
-      : {}),
+    ...(shouldIncludeTaskDetails ? { details } : {}),
   });
   if (status === "complete" || status === "error") {
     chunks.push(...turnActiveChunks);
