@@ -1858,6 +1858,15 @@ test("slack adapter streams native task progress and clears thread status", asyn
     message: "Tool finished",
     toolCallId: "call-1",
   });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "completed",
+    message: "Tool finished again",
+    toolCallId: "call-1",
+  });
   await adapter.handleTurnLifecycleEvent?.({
     type: "finished",
     batchId: "batch-1",
