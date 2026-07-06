@@ -2613,6 +2613,7 @@ export function createSlackAdapter(
         entry.toolTasksById = undefined;
         entry.pendingStreamChunks = undefined;
         entry.toolNamesByCallId = undefined;
+        entry.toolTitlesByCallId = undefined;
         entry.toolDetailsByCallId = undefined;
         entry.sentTaskDetailsById = undefined;
         entry.completionHeaderText = undefined;
