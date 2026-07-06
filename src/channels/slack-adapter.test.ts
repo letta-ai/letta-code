@@ -3439,6 +3439,12 @@ test("slack adapter shows and finalizes a placeholder row for no-tool turns", as
     ts: "1712800000.000300",
     chunks: [
       {
+        type: "task_update",
+        id: "task_turn_active",
+        title: "Completed",
+        status: "complete",
+      },
+      {
         type: "plan_update",
         title: "Completed",
       },
@@ -3488,6 +3494,15 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
     toolName: "web_search",
     toolDetails: "letta blog",
   });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "completed",
+    message: "Tool finished",
+    toolCallId: "call-web",
+  });
   await adapter.sendMessage({
     channel: "slack",
     accountId: "slack-test-account",
@@ -3517,9 +3532,17 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
     status: "complete",
   });
   expect(stopArgs?.chunks).toContainEqual({
+    type: "task_update",
+    id: "task_turn_active",
+    title: "Completed",
+    status: "complete",
+  });
+  expect(stopArgs?.chunks).toContainEqual({
     type: "plan_update",
     title: "Searched the web",
   });
+  expect(JSON.stringify(stopArgs?.chunks)).not.toContain("Still working");
+  expect(JSON.stringify(stopArgs?.chunks)).not.toContain("in_progress");
 
   await adapter.handleTurnProgressEvent?.({
     type: "progress",

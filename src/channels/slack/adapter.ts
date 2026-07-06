@@ -643,6 +643,23 @@ function buildTerminalSlackStreamChunks(
   // so the block might only populate at stopStream.
   for (const task of entry.toolTasksById?.values() ?? []) {
     if (isSlackTransientTask(task)) {
+      if (isSlackTurnActiveTaskId(task.id)) {
+        // Slack keeps prior task rows visible at stopStream time. Close the
+        // transient liveness row explicitly so a finished stream does not show
+        // a warning/error just because "Still working" was still in progress.
+        rawPending.push(
+          toSlackTaskUpdateChunk({
+            ...task,
+            title:
+              entry.status === "completed"
+                ? "Completed"
+                : entry.status === "cancelled"
+                  ? "Stopped"
+                  : "Failed",
+            status: terminalTaskStatus,
+          }),
+        );
+      }
       continue;
     }
     const shouldPreserveTerminalTask =
