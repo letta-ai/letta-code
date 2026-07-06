@@ -452,13 +452,6 @@ const SLACK_CHANNEL_RESPONSE_TASK_ID = "task_channel_response";
 const SLACK_TURN_ACTIVE_TASK_ID = "task_turn_active";
 const DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS = 1_000;
 const DEFAULT_SLACK_PROGRESS_STREAM_KEEPALIVE_MS = 60_000;
-const SLACK_PROGRESS_DEBUG_LOG = join(
-  homedir(),
-  ".letta",
-  "logs",
-  "slack-debug.log",
-);
-
 // Threads the agent has sent messages to should auto-subscribe: when a user
 // replies in such a thread without mentioning the agent, the reply is still
 // implicitly addressed to the agent. This TTL controls how long we remember
