@@ -1787,7 +1787,7 @@ test("slack adapter does not add lifecycle reactions for rich progress turns", a
   expect(writeClient?.reactions.remove.mock.calls ?? []).toHaveLength(0);
 });
 
-test("slack adapter streams native task progress, keeps an active spinner, and clears thread status", async () => {
+test("slack adapter streams native task progress and clears thread status", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -1904,12 +1904,7 @@ test("slack adapter streams native task progress, keeps an active spinner, and c
     title: "Ran",
     status: "complete",
   });
-  expect(appendCall?.chunks?.[2]).toMatchObject({
-    type: "task_update",
-    id: "task_turn_active",
-    title: "Working",
-    status: "in_progress",
-  });
+  expect(appendCall?.chunks).toHaveLength(2);
   expect(JSON.stringify(appendCall?.chunks)).not.toContain("token=abc");
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
@@ -2451,7 +2446,7 @@ test("slack adapter anchors direct message progress to the inbound message", asy
       },
       {
         type: "plan_update",
-        title: "Done in the DM.",
+        title: "Read a file",
       },
     ],
   });
@@ -2818,32 +2813,28 @@ test("slack adapter does not create fallback cards after stream append failure",
     channel: "C123",
     ts: "1712800000.000300",
   });
-  expect(stopArgs?.chunks).toEqual(
-    expect.arrayContaining([
-      {
-        type: "task_update",
-        id: "task_call-1",
-        title: "Read",
-        status: "complete",
-      },
-      {
-        type: "task_update",
-        id: "task_call-2",
-        title: "Search",
-        status: "complete",
-      },
-      {
-        type: "task_update",
-        id: "task_call-3",
-        title: "Ran",
-        status: "complete",
-      },
-      {
-        type: "plan_update",
-        title: "Done.",
-      },
-    ]),
-  );
+  expect(stopArgs?.chunks).toContainEqual({
+    type: "task_update",
+    id: "task_call-1",
+    title: "Read",
+    status: "complete",
+  });
+  expect(stopArgs?.chunks).toContainEqual({
+    type: "task_update",
+    id: "task_call-2",
+    title: "Search",
+    status: "complete",
+  });
+  expect(stopArgs?.chunks).toContainEqual({
+    type: "task_update",
+    id: "task_call-3",
+    title: "Ran",
+    status: "complete",
+  });
+  expect(stopArgs?.chunks).toContainEqual({
+    type: "plan_update",
+    title: "Read a file, searched files, ran a command",
+  });
   expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
   expect(writeClient?.chat.update).not.toHaveBeenCalled();
 });
@@ -3162,20 +3153,23 @@ test("slack adapter treats already-closed stream stop errors as benign", async (
     threadId: "1712790000.000050",
   });
 
-  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    Array<{ channel: string; ts: string; chunks?: unknown[] }>
+  >;
+  const stopArgs = stopCalls[0]?.[0];
+  expect(stopArgs).toMatchObject({
     channel: "C123",
     ts: "1712800000.000300",
-    chunks: expect.arrayContaining([
-      expect.objectContaining({
-        id: "task_call-1",
-        title: "Read",
-        status: "complete",
-      }),
-      expect.objectContaining({
-        type: "plan_update",
-        title: "Done.",
-      }),
-    ]),
+  });
+  expect(stopArgs?.chunks).toContainEqual({
+    type: "task_update",
+    id: "task_call-1",
+    title: "Read",
+    status: "complete",
+  });
+  expect(stopArgs?.chunks).toContainEqual({
+    type: "plan_update",
+    title: "Read a file",
   });
   expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
     channel: "C123",
@@ -3324,20 +3318,16 @@ test("slack adapter keeps failed tool titles without failing completed progress 
     [{ chunks?: Array<Record<string, unknown>> }]
   >;
   const stopCall = stopCalls[0]?.[0];
-  expect(stopCall?.chunks).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        type: "task_update",
-        id: "task_call-read",
-        title: "Failed to read config.json",
-        status: "complete",
-      }),
-      expect.objectContaining({
-        type: "plan_update",
-        title: "Done — the missing file was optional.",
-      }),
-    ]),
-  );
+  expect(stopCall?.chunks).toContainEqual({
+    type: "task_update",
+    id: "task_call-read",
+    title: "Failed to read config.json",
+    status: "complete",
+  });
+  expect(stopCall?.chunks).toContainEqual({
+    type: "plan_update",
+    title: "Read a file",
+  });
   expect(stopCall?.chunks).not.toEqual(
     expect.arrayContaining([
       expect.objectContaining({
@@ -3457,20 +3447,23 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
     text: "Done — found it.",
     thread_ts: "1712790000.000050",
   });
-  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    Array<{ channel: string; ts: string; chunks?: unknown[] }>
+  >;
+  const stopArgs = stopCalls[0]?.[0];
+  expect(stopArgs).toMatchObject({
     channel: "C123",
     ts: "1712800000.000300",
-    chunks: expect.arrayContaining([
-      expect.objectContaining({
-        id: "task_call-web",
-        title: "Searched the web",
-        status: "complete",
-      }),
-      expect.objectContaining({
-        type: "plan_update",
-        title: "Done — found it.",
-      }),
-    ]),
+  });
+  expect(stopArgs?.chunks).toContainEqual({
+    type: "task_update",
+    id: "task_call-web",
+    title: "Searched the web",
+    status: "complete",
+  });
+  expect(stopArgs?.chunks).toContainEqual({
+    type: "plan_update",
+    title: "Searched the web",
   });
 
   await adapter.handleTurnProgressEvent?.({
@@ -3487,7 +3480,7 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(2);
 });
 
-test("slack adapter shows responding while MessageChannel runs with an active progress card", async () => {
+test("slack adapter suppresses MessageChannel responding rows with an active progress card", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -3545,40 +3538,7 @@ test("slack adapter shows responding while MessageChannel runs with an active pr
 
   const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
-  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(2);
-  const appendCalls = writeClient?.chat.appendStream.mock
-    .calls as unknown as Array<
-    [
-      {
-        channel: string;
-        ts: string;
-        chunks?: Array<Record<string, unknown>>;
-      },
-    ]
-  >;
-  const respondingAppend = appendCalls[1]?.[0];
-  expect(respondingAppend).toMatchObject({
-    channel: "C123",
-    ts: "1712800000.000300",
-  });
-  expect(respondingAppend?.chunks).toEqual([
-    {
-      type: "plan_update",
-      title: "Responding",
-    },
-    {
-      type: "task_update",
-      id: "task_turn_active",
-      title: "Working",
-      status: "complete",
-    },
-    {
-      type: "task_update",
-      id: "task_channel_response",
-      title: "Responding",
-      status: "in_progress",
-    },
-  ]);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
 
   await adapter.sendMessage({
     channel: "slack",
@@ -3588,21 +3548,28 @@ test("slack adapter shows responding while MessageChannel runs with an active pr
     threadId: "1712790000.000050",
   });
 
-  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    Array<{ channel: string; ts: string; chunks?: unknown[] }>
+  >;
+  const stopArgs = stopCalls[0]?.[0];
+  expect(stopArgs).toMatchObject({
     channel: "C123",
     ts: "1712800000.000300",
-    chunks: expect.arrayContaining([
-      expect.objectContaining({
-        id: "task_channel_response",
-        title: "Responded",
-        status: "complete",
-      }),
-      expect.objectContaining({
-        type: "plan_update",
-        title: "Done — found it.",
-      }),
-    ]),
   });
+  expect(stopArgs?.chunks).toContainEqual({
+    type: "task_update",
+    id: "task_call-web",
+    title: "Searched the web",
+    status: "complete",
+  });
+  expect(stopArgs?.chunks).toContainEqual({
+    type: "plan_update",
+    title: "Searched the web",
+  });
+  expect(JSON.stringify(stopArgs?.chunks)).not.toContain("Responded");
+  expect(JSON.stringify(stopArgs?.chunks)).not.toContain(
+    "task_channel_response",
+  );
 });
 
 test("slack adapter suppresses internal channel delivery tools from progress cards", async () => {

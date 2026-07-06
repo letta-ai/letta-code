@@ -1341,12 +1341,21 @@ describe("pending channel control requests", () => {
     const registry = new ChannelRegistry();
     const delivered: unknown[] = [];
     const lifecycleEvents: unknown[] = [];
+    const order: string[] = [];
     const adapter = createAdapter([]);
     adapter.handleTurnLifecycleEvent = async (event) => {
+      order.push("lifecycle");
       lifecycleEvents.push(event);
     };
+    adapter.prepareInboundMessage = async (message) => {
+      order.push("prepare");
+      return message;
+    };
     registry.registerAdapter(adapter);
-    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setMessageHandler((delivery) => {
+      order.push("deliver");
+      delivered.push(delivery);
+    });
     registry.setReady();
     addRoute("slack", {
       accountId: "acct-slack",
@@ -1375,6 +1384,7 @@ describe("pending channel control requests", () => {
       },
     ]);
     expect(delivered).toHaveLength(1);
+    expect(order).toEqual(["lifecycle", "prepare", "deliver"]);
   });
 
   test("unrouted Slack thread replies do not dispatch assistant status", async () => {

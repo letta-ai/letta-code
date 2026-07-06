@@ -30,6 +30,11 @@ import type {
 import { getRandomSlackAssistantStatusVerb } from "@/cli/helpers/thinking-messages";
 import {
   getDisplayToolName,
+  isFileEditTool,
+  isFileReadTool,
+  isFileWriteTool,
+  isGlobTool,
+  isSearchTool,
   isShellTool,
   isTaskTool,
 } from "@/cli/helpers/tool-name-mapping";
@@ -626,6 +631,9 @@ function buildTerminalSlackStreamChunks(
   // the full final state — appendStream may not render in real-time,
   // so the block might only populate at stopStream.
   for (const task of entry.toolTasksById?.values() ?? []) {
+    if (isSlackTransientTaskId(task.id)) {
+      continue;
+    }
     const shouldPreserveTerminalTask =
       task.status === "complete" ||
       (task.status === "error" && terminalTaskStatus !== "complete");
@@ -753,6 +761,13 @@ function isSlackHiddenToolName(toolName: string): boolean {
   return isSlackMessageChannelToolName(toolName);
 }
 
+function isSlackTransientTaskId(taskId: string): boolean {
+  return (
+    taskId === SLACK_CHANNEL_RESPONSE_TASK_ID ||
+    taskId === SLACK_TURN_ACTIVE_TASK_ID
+  );
+}
+
 function isSlackMessageChannelToolUpdate(
   entry: SlackProgressCardEntry | undefined,
   update: ChannelTurnProgressEvent,
@@ -765,37 +780,14 @@ function isSlackMessageChannelToolUpdate(
   );
 }
 
-function hasVisibleSlackProgressTask(
-  entry: SlackProgressCardEntry | undefined,
-): boolean {
-  if (!entry) {
-    return false;
-  }
-  for (const task of entry.toolTasksById?.values() ?? []) {
-    if (task.id !== SLACK_CHANNEL_RESPONSE_TASK_ID) {
-      return true;
-    }
-  }
-  return Boolean(
-    entry.pendingStreamChunks?.some(
-      (chunk) =>
-        chunk.type === "task_update" &&
-        chunk.id !== SLACK_CHANNEL_RESPONSE_TASK_ID,
-    ),
-  );
-}
-
 function shouldShowSlackChannelResponseProgress(
-  entry: SlackProgressCardEntry | undefined,
-  update: ChannelTurnProgressEvent,
-): entry is SlackProgressCardEntry {
-  if (!entry || !isSlackMessageChannelToolUpdate(entry, update)) {
-    return false;
-  }
-  if (entry.toolTasksById?.has(SLACK_CHANNEL_RESPONSE_TASK_ID)) {
-    return true;
-  }
-  return hasVisibleSlackProgressTask(entry);
+  _entry: SlackProgressCardEntry | undefined,
+  _update: ChannelTurnProgressEvent,
+): _entry is SlackProgressCardEntry {
+  // The final Slack message is already visible as a normal reply. Rendering
+  // MessageChannel as a task row makes "Responded" appear mid-card when the
+  // agent sends a status update and then keeps working.
+  return false;
 }
 
 function formatSlackToolNameForDisplay(toolName: string): string {
@@ -826,6 +818,16 @@ function formatSlackToolTaskTitle(
       return details;
     }
     return status === "complete" ? "Ran" : "Running";
+  }
+  if (toolName === "TaskOutput") {
+    return status === "complete"
+      ? "Checked task output"
+      : "Checking task output";
+  }
+  if (toolName === "BashOutput") {
+    return status === "complete"
+      ? "Checked shell output"
+      : "Checking shell output";
   }
   if (isWebSearchToolName(toolName)) {
     if (status === "complete") {
@@ -980,21 +982,153 @@ function pluralizeTool(count: number): string {
   return `${count} tool${count === 1 ? "" : "s"}`;
 }
 
+type SlackCompletionActivity =
+  | "command"
+  | "shell_output"
+  | "task_output"
+  | "read_file"
+  | "wrote_file"
+  | "updated_file"
+  | "searched_files"
+  | "searched_web"
+  | "used_skill"
+  | "used_subagent"
+  | "used_tool";
+
+function getSlackCompletionActivity(
+  task: SlackProgressToolTask,
+): SlackCompletionActivity | null {
+  if (
+    isSlackTransientTaskId(task.id) ||
+    task.id === SLACK_LIFECYCLE_ERROR_TASK_ID
+  ) {
+    return null;
+  }
+  const toolName = task.toolName;
+  if (!toolName) {
+    return "used_tool";
+  }
+  if (isShellTool(toolName)) {
+    return "command";
+  }
+  if (toolName === "BashOutput") {
+    return "shell_output";
+  }
+  if (toolName === "TaskOutput") {
+    return "task_output";
+  }
+  if (isFileReadTool(toolName)) {
+    return "read_file";
+  }
+  if (isFileWriteTool(toolName)) {
+    return "wrote_file";
+  }
+  if (isFileEditTool(toolName)) {
+    return "updated_file";
+  }
+  if (isSearchTool(toolName) || isGlobTool(toolName)) {
+    return "searched_files";
+  }
+  if (isWebSearchToolName(toolName)) {
+    return "searched_web";
+  }
+  if (isSkillToolName(toolName)) {
+    return "used_skill";
+  }
+  if (isTaskTool(toolName)) {
+    return "used_subagent";
+  }
+  return "used_tool";
+}
+
+function pluralizeActivity(
+  count: number,
+  singular: string,
+  plural: string,
+): string {
+  return count === 1 ? singular : plural.replace("{count}", String(count));
+}
+
+function formatSlackCompletionActivity(
+  activity: SlackCompletionActivity,
+  count: number,
+): string {
+  switch (activity) {
+    case "command":
+      return pluralizeActivity(count, "ran a command", "ran {count} commands");
+    case "shell_output":
+      return pluralizeActivity(
+        count,
+        "checked shell output",
+        "checked shell output {count} times",
+      );
+    case "task_output":
+      return pluralizeActivity(
+        count,
+        "checked task output",
+        "checked task output {count} times",
+      );
+    case "read_file":
+      return pluralizeActivity(count, "read a file", "read {count} files");
+    case "wrote_file":
+      return pluralizeActivity(count, "wrote a file", "wrote {count} files");
+    case "updated_file":
+      return pluralizeActivity(
+        count,
+        "updated a file",
+        "updated {count} files",
+      );
+    case "searched_files":
+      return pluralizeActivity(
+        count,
+        "searched files",
+        "searched files {count} times",
+      );
+    case "searched_web":
+      return pluralizeActivity(
+        count,
+        "searched the web",
+        "searched the web {count} times",
+      );
+    case "used_skill":
+      return pluralizeActivity(count, "used a skill", "used {count} skills");
+    case "used_subagent":
+      return pluralizeActivity(
+        count,
+        "used a subagent",
+        "used {count} subagents",
+      );
+    case "used_tool":
+      return pluralizeActivity(count, "used a tool", "used {count} tools");
+  }
+}
+
 function formatSlackCompletionPlanTitle(entry: SlackProgressCardEntry): string {
-  const title = entry.completionHeaderText
-    ? sanitizeSlackProgressText(
-        entry.completionHeaderText,
-        SLACK_PROGRESS_CARD_TEXT_MAX,
-      )
-    : "";
-  return title || "Completed";
+  const activityCounts = new Map<SlackCompletionActivity, number>();
+  for (const task of entry.toolTasksById?.values() ?? []) {
+    const activity = getSlackCompletionActivity(task);
+    if (!activity) {
+      continue;
+    }
+    activityCounts.set(activity, (activityCounts.get(activity) ?? 0) + 1);
+  }
+  const summary = Array.from(activityCounts.entries())
+    .map(([activity, count]) => formatSlackCompletionActivity(activity, count))
+    .join(", ");
+  const title = summary
+    ? `${summary.charAt(0).toUpperCase()}${summary.slice(1)}`
+    : "Completed";
+  return (
+    sanitizeSlackProgressText(title, SLACK_PROGRESS_CARD_TEXT_MAX) ||
+    "Completed"
+  );
 }
 
 function buildSlackPlanUpdateChunk(
   entry: SlackProgressCardEntry,
 ): SlackStreamChunk {
   const tasks = Array.from(entry.toolTasksById?.values() ?? []).filter(
-    (task) => task.id !== SLACK_TURN_ACTIVE_TASK_ID,
+    (task) => !isSlackTransientTaskId(task.id),
   );
   const approvalCount = tasks.filter(
     (task) => task.kind === "approval" && task.status === "pending",
@@ -1069,53 +1203,10 @@ function buildSlackPlanUpdateChunk(
 function reconcileSlackTurnActiveTask(
   entry: SlackProgressCardEntry,
 ): SlackStreamChunk[] {
-  const tasks = Array.from(entry.toolTasksById?.values() ?? []);
-  const visibleTasks = tasks.filter(
-    (task) => task.id !== SLACK_TURN_ACTIVE_TASK_ID,
-  );
-  const hasRunningVisibleTask = visibleTasks.some(
-    (task) => task.status === "in_progress" || task.status === "pending",
-  );
-  const activeTask = entry.toolTasksById?.get(SLACK_TURN_ACTIVE_TASK_ID);
-  const shouldKeepSpinning =
-    entry.status === "processing" &&
-    visibleTasks.length > 0 &&
-    !hasRunningVisibleTask;
-
-  // Slack derives the native plan/header icon from task statuses. If every
-  // concrete tool row is terminal while the turn is still processing, Slack
-  // shows a static checkmark next to "Working". Keep a small turn-level task
-  // in progress so the rich viewer continues to look alive between tools.
-  if (shouldKeepSpinning) {
-    if (activeTask?.status === "in_progress") {
-      return [];
-    }
-    const task: SlackProgressToolTask = {
-      id: SLACK_TURN_ACTIVE_TASK_ID,
-      kind: "status",
-      title: "Working",
-      status: "in_progress",
-    };
-    entry.toolTasksById ??= new Map();
-    entry.toolTasksById.set(task.id, task);
-    return [toSlackTaskUpdateChunk(task)];
-  }
-
-  if (activeTask?.status === "in_progress") {
-    entry.toolTasksById?.delete(SLACK_TURN_ACTIVE_TASK_ID);
-    return [
-      {
-        type: "task_update",
-        id: SLACK_TURN_ACTIVE_TASK_ID,
-        title: "Working",
-        status: "complete",
-      },
-    ];
-  }
-
-  if (activeTask) {
-    entry.toolTasksById?.delete(SLACK_TURN_ACTIVE_TASK_ID);
-  }
+  // Do not render a generic "Working" task row. Slack keeps historical task
+  // rows in the rich card, so a placeholder quickly becomes a confusing checked
+  // item in the middle of real tool history.
+  entry.toolTasksById?.delete(SLACK_TURN_ACTIVE_TASK_ID);
   return [];
 }
 
