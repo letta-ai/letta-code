@@ -797,19 +797,36 @@ export function handleMemoryProtocolCommand(
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
         });
 
-        // ── Push immediately (non-turn writes don't get post-turn sync) ─
+        // ── Push before notifying (non-turn writes don't get post-turn ──
+        // sync). Server-of-record reads (e.g. the agent profile picture
+        // endpoint) are served from the remote memfs, so emitting
+        // memory_updated / the response before the push lands lets the UI
+        // refetch stale bytes and drop its optimistic state (LET-9481).
+        // On push failure, warn and continue — the local commit succeeded
+        // and a later sync will retry.
         if (commitResult.committed && !memorySyncMode) {
           const { syncPendingMemoryCommitsAfterTurn } = await import(
             "@/agent/memory-git"
           );
-          syncPendingMemoryCommitsAfterTurn(parsed.agent_id, {
-            memoryDir: memoryRoot,
-          }).catch((err) => {
+          try {
+            const syncResult = await syncPendingMemoryCommitsAfterTurn(
+              parsed.agent_id,
+              { memoryDir: memoryRoot },
+            );
+            if (
+              syncResult.status === "push_failed" ||
+              syncResult.status === "conflict"
+            ) {
+              console.warn(
+                `[write_memory_file] push failed for ${parsed.agent_id}: ${syncResult.summary}`,
+              );
+            }
+          } catch (err) {
             console.warn(
-              `[write_memory_file] background push failed for ${parsed.agent_id}:`,
+              `[write_memory_file] push failed for ${parsed.agent_id}:`,
               err instanceof Error ? err.message : err,
             );
-          });
+          }
         }
 
         // ── Notify UI so the memory view auto-refreshes ────────────────
@@ -988,19 +1005,34 @@ export function handleMemoryProtocolCommand(
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
         });
 
-        // ── Push immediately (non-turn writes don't get post-turn sync) ─
+        // ── Push before notifying (non-turn deletes don't get post-turn ─
+        // sync). Same ordering requirement as write_memory_file: remote
+        // reads must not race the push (LET-9481). On push failure, warn
+        // and continue — the local commit succeeded and a later sync will
+        // retry.
         if (commitResult.committed && !memorySyncMode) {
           const { syncPendingMemoryCommitsAfterTurn } = await import(
             "@/agent/memory-git"
           );
-          syncPendingMemoryCommitsAfterTurn(parsed.agent_id, {
-            memoryDir: memoryRoot,
-          }).catch((err) => {
+          try {
+            const syncResult = await syncPendingMemoryCommitsAfterTurn(
+              parsed.agent_id,
+              { memoryDir: memoryRoot },
+            );
+            if (
+              syncResult.status === "push_failed" ||
+              syncResult.status === "conflict"
+            ) {
+              console.warn(
+                `[delete_memory_file] push failed for ${parsed.agent_id}: ${syncResult.summary}`,
+              );
+            }
+          } catch (err) {
             console.warn(
-              `[delete_memory_file] background push failed for ${parsed.agent_id}:`,
+              `[delete_memory_file] push failed for ${parsed.agent_id}:`,
               err instanceof Error ? err.message : err,
             );
-          });
+          }
         }
 
         if (commitResult.committed) {
