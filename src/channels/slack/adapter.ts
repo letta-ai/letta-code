@@ -452,6 +452,7 @@ const SLACK_CHANNEL_RESPONSE_TASK_ID = "task_channel_response";
 const SLACK_TURN_ACTIVE_TASK_ID = "task_turn_active";
 const DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS = 1_000;
 const DEFAULT_SLACK_PROGRESS_STREAM_KEEPALIVE_MS = 60_000;
+const DEFAULT_SLACK_COMPLETION_FINALIZE_GRACE_MS = 500;
 // Threads the agent has sent messages to should auto-subscribe: when a user
 // replies in such a thread without mentioning the agent, the reply is still
 // implicitly addressed to the agent. This TTL controls how long we remember
@@ -492,8 +493,12 @@ type SlackProgressCardEntry = {
   sentTaskDetailsById?: Map<string, string>;
   completionHeaderText?: string;
   reasoningActive?: boolean;
+  placeholderTaskId?: string;
+  placeholderToolCallId?: string;
+  placeholderTaskSequence?: number;
   pendingStreamChunks?: SlackStreamChunk[];
   hiddenToolCallIds?: Set<string>;
+  completedFinalizerTimer?: ReturnType<typeof setTimeout>;
   lastSentText?: string;
   lastSentAt: number;
   pendingTimer?: ReturnType<typeof setTimeout>;
@@ -525,6 +530,18 @@ export function resolveSlackProgressStreamKeepaliveMs(): number {
     return DEFAULT_SLACK_PROGRESS_STREAM_KEEPALIVE_MS;
   }
   return Math.min(Math.trunc(parsed), 300_000);
+}
+
+export function resolveSlackCompletionFinalizeGraceMs(): number {
+  const raw = process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS;
+  if (!raw) {
+    return DEFAULT_SLACK_COMPLETION_FINALIZE_GRACE_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_SLACK_COMPLETION_FINALIZE_GRACE_MS;
+  }
+  return Math.min(Math.trunc(parsed), 30_000);
 }
 
 function sanitizeSlackProgressText(text: string, maxLength: number): string {
@@ -625,7 +642,7 @@ function buildTerminalSlackStreamChunks(
   // the full final state — appendStream may not render in real-time,
   // so the block might only populate at stopStream.
   for (const task of entry.toolTasksById?.values() ?? []) {
-    if (isSlackTransientTaskId(task.id)) {
+    if (isSlackTransientTask(task)) {
       continue;
     }
     const shouldPreserveTerminalTask =
@@ -647,7 +664,10 @@ function buildTerminalSlackStreamChunks(
     rawPending.push(finalErrorChunk);
   }
   const chunks = compactSlackStreamChunks(rawPending, entry);
-  if (chunks.some((chunk) => chunk.type === "task_update")) {
+  if (
+    entry.status !== "processing" ||
+    chunks.some((chunk) => chunk.type === "task_update")
+  ) {
     chunks.push(buildSlackPlanUpdateChunk(entry));
   }
   return chunks;
@@ -781,11 +801,18 @@ function isSlackHiddenToolName(toolName: string): boolean {
   return isSlackMessageChannelToolName(toolName);
 }
 
-function isSlackTransientTaskId(taskId: string): boolean {
+function isSlackTurnActiveTaskId(taskId: string): boolean {
   return (
-    taskId === SLACK_CHANNEL_RESPONSE_TASK_ID ||
-    taskId === SLACK_TURN_ACTIVE_TASK_ID
+    taskId === SLACK_TURN_ACTIVE_TASK_ID ||
+    taskId.startsWith(`${SLACK_TURN_ACTIVE_TASK_ID}_`)
   );
+}
+
+function isSlackTransientTask(task: SlackProgressToolTask): boolean {
+  if (task.id === SLACK_CHANNEL_RESPONSE_TASK_ID) {
+    return true;
+  }
+  return isSlackTurnActiveTaskId(task.id) && !task.toolName && !task.toolTitle;
 }
 
 function isSlackMessageChannelToolUpdate(
@@ -1027,10 +1054,7 @@ type SlackCompletionActivity =
 function getSlackCompletionActivity(
   task: SlackProgressToolTask,
 ): SlackCompletionActivity | null {
-  if (
-    isSlackTransientTaskId(task.id) ||
-    task.id === SLACK_LIFECYCLE_ERROR_TASK_ID
-  ) {
+  if (isSlackTransientTask(task) || task.id === SLACK_LIFECYCLE_ERROR_TASK_ID) {
     return null;
   }
   const toolName = task.toolName;
@@ -1157,7 +1181,7 @@ function buildSlackPlanUpdateChunk(
   entry: SlackProgressCardEntry,
 ): SlackStreamChunk {
   const tasks = Array.from(entry.toolTasksById?.values() ?? []).filter(
-    (task) => !isSlackTransientTaskId(task.id),
+    (task) => !isSlackTransientTask(task),
   );
   const approvalCount = tasks.filter(
     (task) => task.kind === "approval" && task.status === "pending",
@@ -1232,16 +1256,49 @@ function buildSlackPlanUpdateChunk(
 function reconcileSlackTurnActiveTask(
   entry: SlackProgressCardEntry,
 ): SlackStreamChunk[] {
-  // Do not render a generic "Working" task row. Slack keeps historical task
-  // rows in the rich card, so a placeholder quickly becomes a confusing checked
-  // item in the middle of real tool history.
-  entry.toolTasksById?.delete(SLACK_TURN_ACTIVE_TASK_ID);
-  return [];
+  entry.toolTasksById ??= new Map();
+  const existingId = entry.placeholderTaskId;
+  const existing = existingId ? entry.toolTasksById.get(existingId) : undefined;
+  if (existing && isSlackTransientTask(existing)) {
+    return [];
+  }
+
+  const sequence = entry.placeholderTaskSequence ?? 0;
+  const id =
+    sequence === 0
+      ? SLACK_TURN_ACTIVE_TASK_ID
+      : `${SLACK_TURN_ACTIVE_TASK_ID}_${sequence}`;
+  entry.placeholderTaskSequence = sequence + 1;
+  entry.placeholderTaskId = id;
+  entry.placeholderToolCallId = undefined;
+
+  const task: SlackProgressToolTask = {
+    id,
+    kind: "thinking",
+    title: "Still working",
+    status: "in_progress",
+  };
+  entry.toolTasksById.set(task.id, task);
+  return [toSlackTaskUpdateChunk(task)];
 }
 
 function resolveSlackToolActionTaskId(
+  entry: SlackProgressCardEntry,
   update: ChannelTurnProgressEvent,
 ): string | null {
+  if (update.toolCallId) {
+    const placeholderId = entry.placeholderTaskId;
+    if (placeholderId && entry.placeholderToolCallId === update.toolCallId) {
+      return placeholderId;
+    }
+    const placeholder = placeholderId
+      ? entry.toolTasksById?.get(placeholderId)
+      : undefined;
+    if (placeholderId && placeholder && isSlackTransientTask(placeholder)) {
+      entry.placeholderToolCallId = update.toolCallId;
+      return placeholderId;
+    }
+  }
   const raw =
     update.toolCallId ??
     update.command ??
@@ -1330,11 +1387,15 @@ function buildSlackStreamProgressChunks(
       return [];
     }
     entry.reasoningActive = reasoningActive;
-    // Do not create a stream for reasoning-only turns. If a stream already
-    // exists because visible tools ran earlier in the turn, update the native
-    // plan/header title without adding synthetic task rows. Synthetic rows
-    // become stale next to concrete tool rows because Slack keeps every task id.
-    return entry.mode === "stream" ? [buildSlackPlanUpdateChunk(entry)] : [];
+    // Do not create a stream for reasoning-only turns before the Slack card is
+    // visible. If a stream already exists, keep a concrete bottom row so the
+    // card does not look done while the run is still thinking between tools.
+    return entry.mode === "stream"
+      ? [
+          buildSlackPlanUpdateChunk(entry),
+          ...reconcileSlackTurnActiveTask(entry),
+        ]
+      : [];
   }
 
   if (isSlackMessageChannelToolUpdate(entry, update)) {
@@ -1343,7 +1404,7 @@ function buildSlackStreamProgressChunks(
 
   // Slack replaces task rows that reuse an id, so visible tool calls need
   // stable per-call task ids to preserve parallel tool history in the card.
-  const id = resolveSlackToolActionTaskId(update);
+  const id = resolveSlackToolActionTaskId(entry, update);
   if (!id) {
     return [];
   }
@@ -1421,10 +1482,6 @@ function buildSlackStreamProgressChunks(
     !(toolName && isShellTool(toolName) && title === details);
 
   chunks.push(buildSlackPlanUpdateChunk(entry));
-  const turnActiveChunks = reconcileSlackTurnActiveTask(entry);
-  if (status !== "complete" && status !== "error") {
-    chunks.push(...turnActiveChunks);
-  }
   chunks.push({
     type: "task_update" as const,
     id: task.id,
@@ -1433,7 +1490,7 @@ function buildSlackStreamProgressChunks(
     ...(shouldIncludeTaskDetails ? { details } : {}),
   });
   if (status === "complete" || status === "error") {
-    chunks.push(...turnActiveChunks);
+    chunks.push(...reconcileSlackTurnActiveTask(entry));
   }
 
   return chunks;
@@ -1798,6 +1855,7 @@ export function createSlackAdapter(
   const assistantStatusTextByReplyKey = new Map<string, string>();
   const progressUpdateThrottleMs = resolveSlackProgressUpdateThrottleMs();
   const progressStreamKeepaliveMs = resolveSlackProgressStreamKeepaliveMs();
+  const completionFinalizeGraceMs = resolveSlackCompletionFinalizeGraceMs();
 
   // ── Inbound debounce (optional) ───────────────────────────────
   // When `inboundDebounceMs > 0`, short back-to-back messages from the same
@@ -2377,6 +2435,45 @@ export function createSlackAdapter(
     }
   }
 
+  function clearSlackCompletionFinalizer(entry: SlackProgressCardEntry): void {
+    if (entry.completedFinalizerTimer) {
+      clearTimeout(entry.completedFinalizerTimer);
+      entry.completedFinalizerTimer = undefined;
+    }
+  }
+
+  function scheduleSlackCompletionFinalizer(
+    key: string,
+    entry: SlackProgressCardEntry,
+    batchId?: string,
+  ): void {
+    clearSlackCompletionFinalizer(entry);
+    if (completionFinalizeGraceMs <= 0) {
+      void finishSlackProgressCards([entry.source], "completed", batchId);
+      return;
+    }
+    entry.completedFinalizerTimer = setTimeout(() => {
+      entry.completedFinalizerTimer = undefined;
+      void (async () => {
+        if (progressCardByReplyKey.get(key) !== entry) {
+          return;
+        }
+        await finishSlackProgressCards([entry.source], "completed", batchId);
+      })().catch((error) => {
+        console.warn(
+          "[Slack] Failed to finalize completed progress stream:",
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }, completionFinalizeGraceMs);
+    const timer = entry.completedFinalizerTimer as ReturnType<
+      typeof setTimeout
+    > & {
+      unref?: () => void;
+    };
+    timer.unref?.();
+  }
+
   function scheduleSlackProgressStreamKeepalive(
     key: string,
     entry: SlackProgressCardEntry,
@@ -2534,6 +2631,7 @@ export function createSlackAdapter(
       if (
         !entry.pendingTimer &&
         !entry.pendingFlush &&
+        !entry.completedFinalizerTimer &&
         entry.updatedAt + SLACK_PROGRESS_CARD_STATE_TTL_MS <= now
       ) {
         progressCardByReplyKey.delete(key);
@@ -2559,7 +2657,11 @@ export function createSlackAdapter(
       if (removed >= overflowCount) {
         break;
       }
-      if (entry.pendingTimer || entry.pendingFlush) {
+      if (
+        entry.pendingTimer ||
+        entry.pendingFlush ||
+        entry.completedFinalizerTimer
+      ) {
         continue;
       }
       progressCardByReplyKey.delete(key);
@@ -2613,10 +2715,17 @@ export function createSlackAdapter(
     entry.status = status;
     entry.latestText = progressText;
     entry.latestUpdate = options.update;
+    clearSlackCompletionFinalizer(entry);
     rememberSlackToolName(entry, options.update);
-    const streamChunks = options.update
+    let streamChunks = options.update
       ? buildSlackStreamProgressChunks(entry, options.update)
       : [];
+    if (!options.update && status === "processing") {
+      const turnActiveChunks = reconcileSlackTurnActiveTask(entry);
+      if (turnActiveChunks.length > 0) {
+        streamChunks = [buildSlackPlanUpdateChunk(entry), ...turnActiveChunks];
+      }
+    }
     // For thinking/responding events, track header state without creating
     // stream chunks — we only want a streaming block when actual tools are
     // called. Still save the entry so an existing stream can update its plan
@@ -2700,6 +2809,7 @@ export function createSlackAdapter(
           return;
         }
         clearSlackProgressStreamKeepalive(entry);
+        clearSlackCompletionFinalizer(entry);
         if (entry.pendingTimer) {
           clearTimeout(entry.pendingTimer);
           entry.pendingTimer = undefined;
@@ -2746,7 +2856,11 @@ export function createSlackAdapter(
         entry.sentTaskDetailsById = undefined;
         entry.completionHeaderText = undefined;
         entry.reasoningActive = undefined;
+        entry.placeholderTaskId = undefined;
+        entry.placeholderToolCallId = undefined;
+        entry.placeholderTaskSequence = undefined;
         entry.hiddenToolCallIds = undefined;
+        entry.completedFinalizerTimer = undefined;
         const replyKey = getLifecycleReplyKey(source);
         if (replyKey && activeProgressCardKeyByReplyKey.get(replyKey) === key) {
           activeProgressCardKeyByReplyKey.delete(replyKey);
@@ -2781,6 +2895,9 @@ export function createSlackAdapter(
         entry.source = source;
         entry.updatedAt = Date.now();
         await flushSlackProgressCard(key, entry);
+        if (entry.mode === "stream") {
+          scheduleSlackCompletionFinalizer(key, entry, batchId);
+        }
         await clearSlackAssistantThreadStatus(source);
       }),
     );
@@ -3331,14 +3448,15 @@ export function createSlackAdapter(
       }
 
       if (event.type === "processing") {
-        // Only show assistant thread status; do not create a task stream card
-        // until we see an actual non-MessageChannel tool call.
         await Promise.all(
-          getUniqueSlackProgressSources(event.sources).map((source) => {
+          getUniqueSlackProgressSources(event.sources).map(async (source) => {
             const status = getSlackAssistantThreadStatusForTurn(source);
-            return status
-              ? setSlackAssistantThreadStatus(source, status)
-              : Promise.resolve();
+            if (status) {
+              await setSlackAssistantThreadStatus(source, status);
+            }
+            await upsertSlackProgressCard(source, "processing", "Working", {
+              force: true,
+            });
           }),
         );
         return;
