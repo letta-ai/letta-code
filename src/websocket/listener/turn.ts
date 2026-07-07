@@ -67,7 +67,7 @@ import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
-import { createTelegramRichDraftStreamer } from "./channel-rich-draft-streamer";
+import { createChannelRichDraftStreamer } from "./channel-rich-draft-streamer";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
@@ -448,7 +448,7 @@ export async function handleIncomingMessage(
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
-  const richDraftStreamer = createTelegramRichDraftStreamer({
+  const richDraftStreamer = createChannelRichDraftStreamer({
     batchId: dequeuedBatchId,
     sources: msg.channelTurnSources,
   });
