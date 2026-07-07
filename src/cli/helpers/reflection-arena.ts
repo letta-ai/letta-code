@@ -463,15 +463,19 @@ async function uploadChoiceRecordToHf(params: {
   const choice = run.choice;
   if (!choice) return undefined;
 
+  const autoMemoryCandidate =
+    run.candidates.find(
+      (candidate) => candidate.model === REFLECTION_ARENA_MODEL_A_DEFAULT,
+    ) ?? null;
   const winner =
     choice.chosen === "tie"
-      ? null
+      ? autoMemoryCandidate
       : (run.candidates.find(
           (candidate) => candidate.label === choice.chosen,
         ) ?? null);
   const loser =
     choice.chosen === "tie"
-      ? null
+      ? (run.candidates.find((candidate) => candidate !== winner) ?? null)
       : choice.discarded
           .map((label) =>
             run.candidates.find((candidate) => candidate.label === label),
