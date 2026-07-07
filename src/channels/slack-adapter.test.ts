@@ -1955,7 +1955,6 @@ test("slack adapter streams native task progress and clears thread status", asyn
     thread_ts: "1712790000.000050",
     status: "",
   });
-  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
@@ -1993,12 +1992,12 @@ test("slack adapter streams native task progress and clears thread status", asyn
     chunks: [
       {
         type: "plan_update",
-        title: "Working",
+        title: "Running",
       },
       {
         type: "task_update",
-        id: "task_turn_active",
-        title: "Ran",
+        id: "task_call-1",
+        title: "Running",
         status: "in_progress",
       },
     ],
@@ -2026,11 +2025,17 @@ test("slack adapter streams native task progress and clears thread status", asyn
   });
   expect(appendCall?.chunks?.[1]).toMatchObject({
     type: "task_update",
-    id: "task_turn_active",
+    id: "task_call-1",
     title: "Ran",
     status: "complete",
   });
-  expect(appendCall?.chunks).toHaveLength(2);
+  expect(appendCall?.chunks?.[2]).toMatchObject({
+    type: "task_update",
+    id: "task_turn_active",
+    title: "Still working",
+    status: "in_progress",
+  });
+  expect(appendCall?.chunks).toHaveLength(3);
   expect(JSON.stringify(appendCall?.chunks)).not.toContain("token=abc");
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
@@ -2525,7 +2530,15 @@ test("slack adapter anchors direct message progress to the inbound message", asy
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
+  const statusCalls =
+    (writeClient?.assistant.threads.setStatus.mock.calls as Array<
+      Array<{ status: string }>
+    >) ?? [];
+  expect(statusCalls).toHaveLength(2);
+  expect(["is cogitating...", "is thinking...", "is processing..."]).toContain(
+    statusCalls[0]?.[0]?.status ?? "",
+  );
+  expect(statusCalls[1]?.[0]?.status).toBe("");
   expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
     channel: "D123",
     thread_ts: "1712800000.000100",
@@ -2533,11 +2546,11 @@ test("slack adapter anchors direct message progress to the inbound message", asy
     chunks: [
       {
         type: "plan_update",
-        title: "Working",
+        title: "Read",
       },
       {
         type: "task_update",
-        id: "task_turn_active",
+        id: "task_call-1",
         title: "Read",
         status: "in_progress",
       },
@@ -2553,7 +2566,7 @@ test("slack adapter anchors direct message progress to the inbound message", asy
     chunks: [
       {
         type: "task_update",
-        id: "task_turn_active",
+        id: "task_call-1",
         title: "Read",
         status: "complete",
       },
@@ -2925,7 +2938,7 @@ test("slack adapter does not create fallback cards after stream append failure",
   });
   expect(stopArgs?.chunks).toContainEqual({
     type: "task_update",
-    id: "task_turn_active",
+    id: "task_call-1",
     title: "Read",
     status: "complete",
   });
