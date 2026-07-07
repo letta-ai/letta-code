@@ -1,6 +1,12 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
+import { dirname, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { isRecord } from "@/utils/type-guards";
 import { getChannelDir, getChannelsRoot } from "./config";
 import { CUSTOM_CHANNEL_CONFIG_SCHEMA } from "./custom/plugin";
@@ -28,103 +34,176 @@ type ChannelManifest = {
 
 const CHANNEL_ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
+const TELEGRAM_CHANNEL_PLUGIN_METADATA = {
+  id: "telegram",
+  displayName: "Telegram",
+  runtimePackages: ["grammy@1.42.0"],
+  runtimeModules: ["grammy"],
+  source: "first-party",
+  firstParty: true,
+} satisfies ChannelPluginMetadata;
+
+const SLACK_CHANNEL_PLUGIN_METADATA = {
+  id: "slack",
+  displayName: "Slack",
+  runtimePackages: ["@slack/bolt@4.7.0", "@slack/web-api@7.15.0"],
+  runtimeModules: ["@slack/bolt", "@slack/web-api"],
+  source: "first-party",
+  firstParty: true,
+} satisfies ChannelPluginMetadata;
+
+const DISCORD_CHANNEL_PLUGIN_METADATA = {
+  id: "discord",
+  displayName: "Discord",
+  runtimePackages: ["discord.js@14.18.0"],
+  runtimeModules: ["discord.js"],
+  source: "first-party",
+  firstParty: true,
+} satisfies ChannelPluginMetadata;
+
+const CUSTOM_CHANNEL_PLUGIN_METADATA = {
+  id: "custom",
+  displayName: "Custom",
+  runtimePackages: [],
+  runtimeModules: [],
+  source: "first-party",
+  firstParty: true,
+  configSchema: CUSTOM_CHANNEL_CONFIG_SCHEMA,
+} satisfies ChannelPluginMetadata;
+
+const WHATSAPP_CHANNEL_PLUGIN_METADATA = {
+  id: "whatsapp",
+  displayName: "WhatsApp",
+  runtimePackages: ["@whiskeysockets/baileys@6.7.21", "qrcode-terminal@0.12.0"],
+  runtimeModules: ["@whiskeysockets/baileys", "qrcode-terminal"],
+  source: "first-party",
+  firstParty: true,
+} satisfies ChannelPluginMetadata;
+
+const SIGNAL_CHANNEL_PLUGIN_METADATA = {
+  id: "signal",
+  displayName: "Signal",
+  runtimePackages: ["qrcode-terminal@0.12.0"],
+  runtimeModules: ["qrcode-terminal"],
+  source: "first-party",
+  firstParty: true,
+} satisfies ChannelPluginMetadata;
+
+let channelPluginReloadGeneration = 0;
+
+const SOURCE_CHANNELS_DIR = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT_DIR = resolve(SOURCE_CHANNELS_DIR, "../..");
+
+function copyDirectoryForReload(sourceDir: string, cacheKey: string): string {
+  const targetDir = resolve(
+    PROJECT_ROOT_DIR,
+    ".letta",
+    "channel-reload",
+    `${process.pid}-${channelPluginReloadGeneration}`,
+    cacheKey,
+  );
+  if (!existsSync(targetDir)) {
+    mkdirSync(dirname(targetDir), { recursive: true });
+    cpSync(sourceDir, targetDir, { recursive: true });
+  }
+  return targetDir;
+}
+
+function getReloadedFirstPartyPluginSpecifier(
+  channelId: FirstPartyChannelId,
+): string | null {
+  if (channelPluginReloadGeneration === 0) {
+    return null;
+  }
+  const sourceDir = resolve(SOURCE_CHANNELS_DIR, channelId);
+  if (!existsSync(sourceDir)) {
+    return null;
+  }
+  const reloadedDir = copyDirectoryForReload(
+    sourceDir,
+    `first-party-${channelId}`,
+  );
+  return pathToFileURL(resolve(reloadedDir, "plugin.ts")).href;
+}
+
+async function loadFirstPartyPlugin(
+  channelId: FirstPartyChannelId,
+  exportName: string,
+  loadDefault: () => Promise<unknown>,
+): Promise<ChannelPlugin> {
+  const reloadedSpecifier = getReloadedFirstPartyPluginSpecifier(channelId);
+  const loaded = reloadedSpecifier
+    ? await import(reloadedSpecifier)
+    : await loadDefault();
+  if (!isRecord(loaded)) {
+    throw new Error(`First-party channel ${channelId} did not load a module.`);
+  }
+  const plugin = loaded[exportName];
+  if (!isRecord(plugin)) {
+    throw new Error(
+      `First-party channel ${channelId} did not export ${exportName}.`,
+    );
+  }
+  return plugin as unknown as ChannelPlugin;
+}
+
 const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
   FirstPartyChannelId,
   ChannelPluginRegistration
 > = {
   telegram: {
-    metadata: {
-      id: "telegram",
-      displayName: "Telegram",
-      runtimePackages: ["grammy@1.42.0"],
-      runtimeModules: ["grammy"],
-      source: "first-party",
-      firstParty: true,
-    },
-    load: async () => {
-      const { telegramChannelPlugin } = await import(
-        "@/channels/telegram/plugin"
-      );
-      return telegramChannelPlugin;
-    },
+    metadata: TELEGRAM_CHANNEL_PLUGIN_METADATA,
+    load: () =>
+      loadFirstPartyPlugin(
+        "telegram",
+        "telegramChannelPlugin",
+        () => import("@/channels/telegram/plugin"),
+      ),
   },
   slack: {
-    metadata: {
-      id: "slack",
-      displayName: "Slack",
-      runtimePackages: ["@slack/bolt@4.7.0", "@slack/web-api@7.15.0"],
-      runtimeModules: ["@slack/bolt", "@slack/web-api"],
-      source: "first-party",
-      firstParty: true,
-    },
-    load: async () => {
-      const { slackChannelPlugin } = await import("@/channels/slack/plugin");
-      return slackChannelPlugin;
-    },
+    metadata: SLACK_CHANNEL_PLUGIN_METADATA,
+    load: () =>
+      loadFirstPartyPlugin(
+        "slack",
+        "slackChannelPlugin",
+        () => import("@/channels/slack/plugin"),
+      ),
   },
   discord: {
-    metadata: {
-      id: "discord",
-      displayName: "Discord",
-      runtimePackages: ["discord.js@14.18.0"],
-      runtimeModules: ["discord.js"],
-      source: "first-party",
-      firstParty: true,
-    },
-    load: async () => {
-      const { discordChannelPlugin } = await import(
-        "@/channels/discord/plugin"
-      );
-      return discordChannelPlugin;
-    },
+    metadata: DISCORD_CHANNEL_PLUGIN_METADATA,
+    load: () =>
+      loadFirstPartyPlugin(
+        "discord",
+        "discordChannelPlugin",
+        () => import("@/channels/discord/plugin"),
+      ),
   },
   custom: {
-    metadata: {
-      id: "custom",
-      displayName: "Custom",
-      runtimePackages: [],
-      runtimeModules: [],
-      source: "first-party",
-      firstParty: true,
-      configSchema: CUSTOM_CHANNEL_CONFIG_SCHEMA,
-    },
-    load: async () => {
-      const { customChannelPlugin } = await import("@/channels/custom/plugin");
-      return customChannelPlugin;
-    },
+    metadata: CUSTOM_CHANNEL_PLUGIN_METADATA,
+    load: () =>
+      loadFirstPartyPlugin(
+        "custom",
+        "customChannelPlugin",
+        () => import("@/channels/custom/plugin"),
+      ),
   },
   whatsapp: {
-    metadata: {
-      id: "whatsapp",
-      displayName: "WhatsApp",
-      runtimePackages: [
-        "@whiskeysockets/baileys@6.7.21",
-        "qrcode-terminal@0.12.0",
-      ],
-      runtimeModules: ["@whiskeysockets/baileys", "qrcode-terminal"],
-      source: "first-party",
-      firstParty: true,
-    },
-    load: async () => {
-      const { whatsappChannelPlugin } = await import(
-        "@/channels/whatsapp/plugin"
-      );
-      return whatsappChannelPlugin;
-    },
+    metadata: WHATSAPP_CHANNEL_PLUGIN_METADATA,
+    load: () =>
+      loadFirstPartyPlugin(
+        "whatsapp",
+        "whatsappChannelPlugin",
+        () => import("@/channels/whatsapp/plugin"),
+      ),
   },
   signal: {
-    metadata: {
-      id: "signal",
-      displayName: "Signal",
-      runtimePackages: ["qrcode-terminal@0.12.0"],
-      runtimeModules: ["qrcode-terminal"],
-      source: "first-party",
-      firstParty: true,
-    },
-    load: async () => {
-      const { signalChannelPlugin } = await import("@/channels/signal/plugin");
-      return signalChannelPlugin;
-    },
+    metadata: SIGNAL_CHANNEL_PLUGIN_METADATA,
+    load: () =>
+      loadFirstPartyPlugin(
+        "signal",
+        "signalChannelPlugin",
+        () => import("@/channels/signal/plugin"),
+      ),
   },
 };
 
@@ -207,7 +286,15 @@ function createUserChannelRegistration(
         );
       }
 
-      const loadPromise = import(pathToFileURL(entryPath).href).then(
+      const runtimeChannelDir =
+        channelPluginReloadGeneration > 0
+          ? copyDirectoryForReload(channelDir, `user-${manifest.id}`)
+          : channelDir;
+      const entryUrl = pathToFileURL(
+        resolve(runtimeChannelDir, manifest.entry),
+      );
+
+      const loadPromise = import(entryUrl.href).then(
         (loaded): ChannelPlugin => {
           const exported =
             (isRecord(loaded) ? loaded.channelPlugin : undefined) ??
@@ -332,6 +419,12 @@ export async function loadChannelPlugin(
   return registration.load();
 }
 
+export function reloadChannelPlugins(): void {
+  loadedUserPlugins.clear();
+  channelPluginReloadGeneration += 1;
+}
+
 export function __testClearUserChannelPluginCache(): void {
   loadedUserPlugins.clear();
+  channelPluginReloadGeneration = 0;
 }

@@ -10,7 +10,6 @@ import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
-import { refreshCustomCommands } from "@/cli/commands/custom";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildDoctorMessage,
@@ -39,20 +38,15 @@ import type {
   StreamDelta,
 } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
-import { markSecretsReminderRefreshPending } from "./commands/secrets";
 import { getConversationWorkingDirectory } from "./cwd";
-import { reloadListenerModAdapter } from "./mod-adapter";
 import { getListenerModCommand, runListenerModCommand } from "./mod-commands";
 import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,
   emitDeviceStatusUpdate,
 } from "./protocol-outbound";
+import { reloadListenerRuntimeSurfaces } from "./reload-runtime";
 import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
-import {
-  ensureSecretsHydratedForAgent,
-  invalidateSecretsCacheForAgent,
-} from "./secrets-sync";
 import {
   buildMaybeLaunchReflectionSubagent,
   handleIncomingMessage,
@@ -305,30 +299,9 @@ async function handleModCommand(
 async function handleReloadCommand(
   conversationRuntime: ConversationRuntime,
 ): Promise<string> {
-  const { listener } = conversationRuntime;
-  settingsManager.clearCaches();
-  await settingsManager.loadProjectSettings();
-  await settingsManager.loadLocalProjectSettings();
-
-  try {
-    refreshCustomCommands();
-  } catch (error) {
-    debugLog(
-      "commands",
-      "refreshCustomCommands failed during /reload:",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-
-  await reloadListenerModAdapter(listener);
-
-  if (conversationRuntime.agentId) {
-    invalidateSecretsCacheForAgent(listener, conversationRuntime.agentId);
-    markSecretsReminderRefreshPending(listener, conversationRuntime.agentId);
-    await ensureSecretsHydratedForAgent(listener, conversationRuntime.agentId);
-  }
-
-  return "Reloaded settings, local mods, and agent secrets";
+  return reloadListenerRuntimeSurfaces(conversationRuntime.listener, {
+    agentId: conversationRuntime.agentId,
+  });
 }
 
 async function handleUpgradeLettaCodeCommand(opts: {

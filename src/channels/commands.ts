@@ -47,6 +47,10 @@ export type ChannelSlashCommandHandlers = {
     command: ParsedChannelSlashCommand,
     msg: InboundChannelMessage,
   ) => Promise<ChannelSlashCommandHandlerResult>;
+  reload?: (
+    command: ParsedChannelSlashCommand,
+    msg: InboundChannelMessage,
+  ) => Promise<ChannelSlashCommandHandlerResult>;
   resume?: (
     command: ParsedChannelSlashCommand,
     msg: InboundChannelMessage,
@@ -100,6 +104,11 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     name: "model",
     kind: "agent-scoped",
     summary: "Show or switch the model for this chat's routed conversation.",
+  },
+  {
+    name: "reload",
+    kind: "direct",
+    summary: "Reload settings, local mods, and running channel adapters.",
   },
   {
     name: "reflection",
@@ -500,6 +509,13 @@ export function buildChannelReflectionUnavailableMessage(
   return `${displayName} cannot start reflection for this chat because the listener is not ready yet. Try again in a moment.`;
 }
 
+export function buildChannelReloadUnavailableMessage(
+  channelId: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} cannot reload channel adapters because the listener is not ready yet. Try again in a moment.`;
+}
+
 async function handleScopedCommand(params: {
   msg: InboundChannelMessage;
   command: ParsedChannelSlashCommand;
@@ -571,6 +587,13 @@ export async function tryHandleChannelSlashCommand(
           msg,
           command,
           handler: options.handlers?.model,
+        });
+      case "reload":
+        return handleScopedCommand({
+          msg,
+          command,
+          handler: options.handlers?.reload,
+          defaultText: buildChannelReloadUnavailableMessage(msg.channel),
         });
       case "reflect":
       case "reflection":

@@ -82,6 +82,7 @@ import {
 } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
 import { recoverApprovalStateForSync } from "./recovery";
+import { reloadListenerRuntimeSurfaces } from "./reload-runtime";
 import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
@@ -515,6 +516,14 @@ export async function wireChannelIngress(
       processQueuedTurn,
     }),
   );
+
+  registry.setReloadHandler(async ({ runtime }) => ({
+    handled: true,
+    text: await reloadListenerRuntimeSurfaces(listener, {
+      agentId: runtime?.agent_id,
+      logger: opts.onLog,
+    }),
+  }));
 
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
     if (!modelIdentifier) {

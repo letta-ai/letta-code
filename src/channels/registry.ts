@@ -32,6 +32,7 @@ import {
   buildChannelNoRouteMessage,
   buildChannelPausedMessage,
   buildChannelReflectionUnavailableMessage,
+  buildChannelReloadUnavailableMessage,
   buildChannelResumedMessage,
   parseChannelSlashCommand,
   tryHandleChannelSlashCommand,
@@ -59,6 +60,7 @@ import {
   getSupportedChannelIds,
   isFirstPartyChannelPlugin,
   loadChannelPlugin,
+  reloadChannelPlugins,
 } from "./plugin-registry";
 import type { ChannelRestoreAgentScope } from "./restore-scope";
 import { shouldRestoreChannelAccountForAgentScope } from "./restore-scope";
@@ -482,6 +484,16 @@ export type ChannelModelHandler = (params: {
   text?: string;
 }>;
 
+export type ChannelReloadHandler = (params: {
+  runtime: {
+    agent_id: string;
+    conversation_id: string;
+  } | null;
+}) => Promise<{
+  handled: boolean;
+  text?: string;
+}>;
+
 type ChannelStartupOptions = {
   logger?: ChannelStartupLogger;
 };
@@ -490,6 +502,12 @@ export interface ChannelStartupFailure {
   channelId: string;
   accountId?: string;
   error: string;
+}
+
+export interface ChannelReloadSummary {
+  restarted: number;
+  stopped: number;
+  failures: ChannelStartupFailure[];
 }
 
 export class ChannelInitializationError extends Error {
@@ -586,6 +604,9 @@ export class ChannelRegistry {
   private cancelHandler: ChannelCancelHandler | null = null;
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
+  private reloadHandler: ChannelReloadHandler | null = null;
+  private startupChannelNames: string[] = [];
+  private startupRestoreAgentScope: ChannelRestoreAgentScope | null = null;
   private readonly buffer: ChannelInboundDelivery[] = [];
   private readonly pendingControlRequestsById = new Map<
     string,
@@ -738,6 +759,18 @@ export class ChannelRegistry {
 
   setModelHandler(handler: ChannelModelHandler | null): void {
     this.modelHandler = handler;
+  }
+
+  setReloadHandler(handler: ChannelReloadHandler | null): void {
+    this.reloadHandler = handler;
+  }
+
+  setStartupChannels(
+    channelNames: string[],
+    restoreAgentScope?: ChannelRestoreAgentScope | null,
+  ): void {
+    this.startupChannelNames = [...new Set(channelNames)];
+    this.startupRestoreAgentScope = restoreAgentScope ?? null;
   }
 
   setEventHandler(
@@ -1015,6 +1048,109 @@ export class ChannelRegistry {
     return true;
   }
 
+  async reloadActiveChannels(
+    options?: ChannelStartupOptions,
+  ): Promise<ChannelReloadSummary> {
+    reloadChannelPlugins();
+
+    const channelNames =
+      this.startupChannelNames.length > 0
+        ? this.startupChannelNames
+        : Array.from(
+            new Set(
+              Array.from(this.adapters.values()).map(
+                (adapter) => adapter.channelId ?? adapter.id,
+              ),
+            ),
+          );
+    const summary: ChannelReloadSummary = {
+      restarted: 0,
+      stopped: 0,
+      failures: [],
+    };
+
+    for (const channelId of channelNames) {
+      try {
+        await hydrateChannelAccountSecrets(channelId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        summary.failures.push({ channelId, error: message });
+        logChannelStartup(
+          options?.logger,
+          `failed to hydrate accounts for ${channelId}: ${message}`,
+        );
+        continue;
+      }
+
+      const accounts = listChannelAccounts(channelId).filter(
+        (account) =>
+          account.enabled &&
+          shouldRestoreChannelAccountForAgentScope(
+            account,
+            this.startupRestoreAgentScope,
+          ),
+      );
+      const desiredKeys = new Set(
+        accounts.map((account) =>
+          this.getAdapterKey(channelId, account.accountId),
+        ),
+      );
+      const existingAdapters = Array.from(this.adapters.values()).filter(
+        (adapter) => (adapter.channelId ?? adapter.id) === channelId,
+      );
+
+      for (const adapter of existingAdapters) {
+        const key = this.getAdapterKey(
+          adapter.channelId ?? adapter.id,
+          adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+        );
+        if (desiredKeys.has(key)) {
+          continue;
+        }
+        try {
+          if (adapter.isRunning()) {
+            await adapter.stop();
+          }
+          this.adapters.delete(key);
+          summary.stopped += 1;
+        } catch (error) {
+          summary.failures.push({
+            channelId,
+            accountId: adapter.accountId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      for (const account of accounts) {
+        try {
+          const started = await this.startChannelAccount(
+            channelId,
+            account.accountId,
+            options,
+          );
+          if (started) {
+            summary.restarted += 1;
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          summary.failures.push({
+            channelId,
+            accountId: account.accountId,
+            error: message,
+          });
+          logChannelStartup(
+            options?.logger,
+            `failed to reload ${channelId}/${account.accountId}: ${formatChannelStartupError(error)}`,
+          );
+        }
+      }
+    }
+
+    return summary;
+  }
+
   async stopChannel(channelId: string): Promise<boolean> {
     const adapters = Array.from(this.adapters.values()).filter(
       (adapter) => adapter.channelId === channelId,
@@ -1076,6 +1212,7 @@ export class ChannelRegistry {
     this.cancelHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
+    this.reloadHandler = null;
   }
 
   /**
@@ -1095,6 +1232,7 @@ export class ChannelRegistry {
     this.cancelHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
+    this.reloadHandler = null;
     this.pendingControlRequestsById.clear();
     this.pendingControlRequestIdByScope.clear();
     this.unsubscribeWhatsAppState();
@@ -1323,6 +1461,27 @@ export class ChannelRegistry {
     });
   }
 
+  private async handleReloadSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.loadAndFindRawRouteForMessage(msg);
+    if (!this.reloadHandler) {
+      return {
+        handled: true,
+        text: buildChannelReloadUnavailableMessage(msg.channel),
+      };
+    }
+
+    return this.reloadHandler({
+      runtime: route
+        ? {
+            agent_id: route.agentId,
+            conversation_id: route.conversationId,
+          }
+        : null,
+    });
+  }
+
   private async handleModelSlashCommand(
     command: { args: string },
     msg: InboundChannelMessage,
@@ -1472,6 +1631,8 @@ export class ChannelRegistry {
           pause: async () => this.handlePauseResumeSlashCommand("pause", msg),
           reflection: async (_command, commandMsg) =>
             this.handleReflectionSlashCommand(commandMsg),
+          reload: async (_command, commandMsg) =>
+            this.handleReloadSlashCommand(commandMsg),
           resume: async () => this.handlePauseResumeSlashCommand("resume", msg),
         },
       })
@@ -2331,6 +2492,7 @@ export async function initializeChannels(
   },
 ): Promise<ChannelRegistry> {
   const registry = ensureChannelRegistry();
+  registry.setStartupChannels(channelNames, options?.restoreAgentScope);
   const failures: ChannelStartupFailure[] = [];
 
   logChannelStartup(

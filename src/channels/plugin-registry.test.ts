@@ -14,6 +14,7 @@ import {
   getSupportedChannelIds,
   isSupportedChannelId,
   loadChannelPlugin,
+  reloadChannelPlugins,
 } from "@/channels/plugin-registry";
 
 let channelsRoot: string;
@@ -103,6 +104,48 @@ test("discovers user channel plugins from channel.json manifests", async () => {
     source: "user",
     firstParty: false,
   });
+});
+
+test("reloadChannelPlugins can reload first-party channel plugins", async () => {
+  reloadChannelPlugins();
+
+  const plugin = await loadChannelPlugin("slack");
+
+  expect(plugin.metadata.id).toBe("slack");
+  expect(typeof plugin.createAdapter).toBe("function");
+});
+
+test("reloadChannelPlugins reloads changed user plugin modules", async () => {
+  writeDemoChannel();
+  expect((await loadChannelPlugin("demo")).metadata.displayName).toBe(
+    "Demo Chat",
+  );
+
+  writeFileSync(
+    join(channelsRoot, "demo", "plugin.mjs"),
+    `export const channelPlugin = {
+      metadata: { id: "demo", displayName: "Reloaded Demo Chat" },
+      createAdapter(account) {
+        return {
+          id: "demo:" + account.accountId,
+          channelId: "demo",
+          accountId: account.accountId,
+          name: "Reloaded Demo Chat",
+          start: async () => {},
+          stop: async () => {},
+          isRunning: () => true,
+          sendMessage: async () => ({ messageId: "demo-2" }),
+          sendDirectReply: async () => {}
+        };
+      }
+    };\n`,
+  );
+
+  reloadChannelPlugins();
+
+  expect((await loadChannelPlugin("demo")).metadata.displayName).toBe(
+    "Reloaded Demo Chat",
+  );
 });
 
 test("user plugins can extend the MessageChannel action schema", async () => {

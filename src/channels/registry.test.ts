@@ -251,6 +251,83 @@ describe("ChannelRegistry", () => {
     expect(replies[0]?.text).toContain("Telegram is connected to Letta Code");
   });
 
+  test("/reload invokes the channel reload handler without agent delivery", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const reloadCalls: unknown[] = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReloadHandler(async (params) => {
+      reloadCalls.push(params);
+      return { handled: true, text: "Reloaded channel adapters" };
+    });
+    registry.setReady();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+        });
+      },
+      onMessage: undefined,
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1700000000.000001",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-07-06T00:00:00.000Z",
+    });
+
+    const adapter = registry.getAdapter("slack", "acct-slack");
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      senderId: "U123",
+      senderName: "Alice",
+      text: "/reload",
+      timestamp: Date.now(),
+      messageId: "1700000001.000002",
+      threadId: "1700000000.000001",
+      chatType: "channel",
+      isMention: true,
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(reloadCalls).toEqual([
+      {
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+      },
+    ]);
+    expect(replies).toEqual([
+      {
+        chatId: "C123",
+        text: "Reloaded channel adapters",
+        replyToMessageId: "1700000001.000002",
+      },
+    ]);
+  });
+
   test("unsupported slash commands get direct channel guidance instead of agent delivery", async () => {
     const replies: Array<{
       chatId: string;

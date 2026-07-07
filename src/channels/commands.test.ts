@@ -45,6 +45,7 @@ describe("channel slash commands", () => {
       "cancel",
       "chat",
       "model",
+      "reload",
       "reflection",
     ]) {
       expect(listChannelSlashCommands()).toContainEqual(
@@ -55,7 +56,7 @@ describe("channel slash commands", () => {
     const text = buildChannelHelpMessage("telegram");
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reload, /reflection.",
     );
   });
 
@@ -246,7 +247,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram received /compact now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reload, /reflection.",
     );
     expect(text).toContain("without a leading slash");
   });
