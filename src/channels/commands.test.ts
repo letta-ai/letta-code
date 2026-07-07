@@ -7,6 +7,7 @@ import {
   buildChannelCancelUnavailableMessage,
   buildChannelChatLinkMessage,
   buildChannelChatUnavailableMessage,
+  buildChannelCurrentModelMessage,
   buildChannelDetachedMessage,
   buildChannelHelpMessage,
   buildChannelModelListMessage,
@@ -135,7 +136,11 @@ describe("channel slash commands", () => {
       "Control commands start immediately after the mention:",
     );
     expect(slackText).toContain(
-      "@agent /model <handle-or-id> - show or switch this thread's model",
+      "@agent /model - show this thread's current model",
+    );
+    expect(slackText).toContain("@agent /model list - show available models");
+    expect(slackText).toContain(
+      "@agent /model <handle-or-id> - switch this thread's model",
     );
     expect(slackText).toContain("@agent /detach");
     expect(slackText).toContain("@agent /reload");
@@ -251,6 +256,25 @@ describe("channel slash commands", () => {
     );
   });
 
+  test("builds current model status command messages", () => {
+    expect(
+      buildChannelCurrentModelMessage("slack", {
+        modelLabel: "GPT-5.5",
+        modelHandle: "chatgpt-cameron/gpt-5.5",
+        scope: "conversation",
+      }),
+    ).toBe(
+      "Slack current conversation model: GPT-5.5 (chatgpt-cameron/gpt-5.5).\nUse @agent /model list to see available models, or @agent /model <handle-or-id> to switch.",
+    );
+    expect(
+      buildChannelCurrentModelMessage("telegram", {
+        modelLabel: "Claude Sonnet 4.6",
+        modelHandle: "anthropic/claude-sonnet-4-6",
+        scope: "agent",
+      }),
+    ).toContain("Telegram current agent model");
+  });
+
   test("builds model selector-style command messages", () => {
     const text = buildChannelModelListMessage("slack", {
       entries: [
@@ -287,7 +311,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("…and 1 more.");
     expect(text).not.toContain("missing/model");
     expect(text).toContain(
-      "Mention the app with @agent /model <handle-or-id> to switch this thread's routed model. Legacy !model still works after a mention.",
+      "Mention the app with @agent /model <handle-or-id> to switch this thread's routed model. Use @agent /model to show the current model. Legacy !model still works after a mention.",
     );
   });
 

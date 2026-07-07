@@ -112,7 +112,8 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
   {
     name: "model",
     kind: "agent-scoped",
-    summary: "Show or switch the model for this chat's routed conversation.",
+    summary:
+      "Show, list, or switch the model for this chat's routed conversation.",
   },
   {
     name: "reflection",
@@ -196,6 +197,8 @@ function supportedCommandsText(prefix: "/" | "!" = "/"): string {
 const SLACK_MENTION_SLASH_COMMAND_EXAMPLES = [
   "@agent /help",
   "@agent /status",
+  "@agent /model",
+  "@agent /model list",
   "@agent /model <handle-or-id>",
   "@agent /cancel",
   "@agent /chat",
@@ -247,7 +250,9 @@ export function buildChannelHelpMessage(channelId: string): string {
       `${displayName} is connected to Letta Code.`,
       "Talk by mentioning the app in a channel thread. Once a thread is routed, normal replies continue the same agent conversation until detached.",
       "Control commands start immediately after the mention:",
-      "@agent /model <handle-or-id> - show or switch this thread's model",
+      "@agent /model - show this thread's current model",
+      "@agent /model list - show available models",
+      "@agent /model <handle-or-id> - switch this thread's model",
       "@agent /status - show route and listener status",
       "@agent /cancel - cancel the current turn",
       "@agent /chat - show the web chat link",
@@ -535,6 +540,27 @@ function modelCommandPrefix(channelId: string): "/model" | "@agent /model" {
   return channelId === "slack" ? "@agent /model" : "/model";
 }
 
+export function buildChannelCurrentModelMessage(
+  channelId: string,
+  params: {
+    modelLabel: string;
+    modelHandle: string | null;
+    scope?: "agent" | "conversation";
+  },
+): string {
+  const displayName = channelDisplayName(channelId);
+  const scope = params.scope === "agent" ? "agent" : "conversation";
+  const handleText =
+    params.modelHandle && params.modelHandle !== params.modelLabel
+      ? ` (${params.modelHandle})`
+      : "";
+  const switchCommand = modelCommandPrefix(channelId);
+  return [
+    `${displayName} current ${scope} model: ${params.modelLabel}${handleText}.`,
+    `Use ${switchCommand} list to see available models, or ${switchCommand} <handle-or-id> to switch.`,
+  ].join("\n");
+}
+
 function formatChannelModelEntry(
   channelId: string,
   entry: ChannelModelListEntry,
@@ -626,10 +652,12 @@ export function buildChannelModelListMessage(
   lines.push("");
   if (channelId === "slack") {
     lines.push(
-      "Mention the app with @agent /model <handle-or-id> to switch this thread's routed model. Legacy !model still works after a mention.",
+      "Mention the app with @agent /model <handle-or-id> to switch this thread's routed model. Use @agent /model to show the current model. Legacy !model still works after a mention.",
     );
   } else {
-    lines.push("Use /model <handle-or-id> to switch this chat's routed model.");
+    lines.push(
+      "Use /model <handle-or-id> to switch this chat's routed model, or /model to show the current model.",
+    );
   }
   return lines.join("\n");
 }
@@ -640,6 +668,14 @@ export function buildChannelModelListUnavailableMessage(
 ): string {
   const displayName = channelDisplayName(channelId);
   return `${displayName} could not load the model list: ${error}`;
+}
+
+export function buildChannelCurrentModelUnavailableMessage(
+  channelId: string,
+  error: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} could not load the current model: ${error}`;
 }
 
 export function buildChannelModelUpdatedMessage(

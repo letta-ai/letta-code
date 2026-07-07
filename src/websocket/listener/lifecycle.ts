@@ -6,6 +6,8 @@ import {
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "@/agent/subagent-state";
 import {
+  buildChannelCurrentModelMessage,
+  buildChannelCurrentModelUnavailableMessage,
   buildChannelModelListMessage,
   buildChannelModelListUnavailableMessage,
   buildChannelModelUpdatedMessage,
@@ -38,6 +40,7 @@ import { handleChannelRegistryEvent } from "./commands/channels";
 import {
   applyModelUpdateForRuntime,
   buildListModelsResponse,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import {
@@ -520,6 +523,29 @@ export async function wireChannelIngress(
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
     if (!modelIdentifier) {
       try {
+        const status = await getCurrentModelStatusForRuntime({
+          agentId: runtime.agent_id,
+          conversationId: runtime.conversation_id,
+        });
+        return {
+          handled: true,
+          text: buildChannelCurrentModelMessage(channelId, status),
+        };
+      } catch (error) {
+        return {
+          handled: true,
+          text: buildChannelCurrentModelUnavailableMessage(
+            channelId,
+            error instanceof Error
+              ? error.message
+              : "Failed to load current model",
+          ),
+        };
+      }
+    }
+
+    if (modelIdentifier.toLowerCase() === "list") {
+      try {
         const response = await buildListModelsResponse(
           `channel-model-list-${crypto.randomUUID()}`,
         );
@@ -561,7 +587,7 @@ export async function wireChannelIngress(
         text: buildChannelModelUpdateFailedMessage(
           channelId,
           modelIdentifier,
-          `Model not found. Use ${channelId === "slack" ? "!model" : "/model"} to see available models.`,
+          `Model not found. Use ${channelId === "slack" ? "@agent /model list" : "/model list"} to see available models.`,
         ),
       };
     }
