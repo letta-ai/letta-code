@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import type { Backend } from "@/backend";
+import { __testSetBackend } from "@/backend";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 
 /**
  * Cache semantics for the listener's model-availability cache (LET-9479).
@@ -11,8 +14,8 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
  *  2. There was no force path: user-initiated refreshes were always eligible
  *     to be answered from a stale-but-within-TTL snapshot.
  *
- * Note: `mock.module` is process-global under Bun, so this file only mocks
- * modules that no other behavior in this suite depends on.
+ * Note: avoid `mock.module` here. Bun mocks are process-global and can leak
+ * into sibling tests that import the real backend module.
  */
 
 type FakeModel = {
@@ -23,18 +26,11 @@ type FakeModel = {
 
 let listModelsImpl: () => Promise<FakeModel[]> = async () => [];
 
-mock.module("@/backend", () => ({
-  getBackend: () => ({
-    capabilities: { byokProviderRefresh: false },
-    listModels: () => listModelsImpl(),
-  }),
-}));
-
-mock.module("@/backend/api/providers", () => ({
-  refreshByokProviders: async () => {
-    throw new Error("refreshByokProviders must not run without capability");
-  },
-}));
+class AvailableModelsTestBackend extends FakeHeadlessBackend {
+  override async listModels(): ReturnType<Backend["listModels"]> {
+    return listModelsImpl() as ReturnType<Backend["listModels"]>;
+  }
+}
 
 const {
   clearAvailableModelsCache,
@@ -54,6 +50,12 @@ describe("available-models cache semantics", () => {
   beforeEach(() => {
     clearAvailableModelsCache();
     listModelsImpl = async () => [];
+    __testSetBackend(new AvailableModelsTestBackend());
+  });
+
+  afterEach(() => {
+    clearAvailableModelsCache();
+    __testSetBackend(null);
   });
 
   test("a fetch that started before a cache clear cannot commit stale results", async () => {
