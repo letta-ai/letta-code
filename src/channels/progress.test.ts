@@ -466,8 +466,84 @@ test("channel progress builds failed file titles", () => {
       runId: "run-1",
       toolCallId: "call-1",
       toolName: "Write",
-      toolDetails: "failed",
+      toolDetails: "/repo/src/lib.rs",
+      errorDetails: "failed",
       toolTitle: "Tried to write lib.rs",
+    },
+  ]);
+});
+
+test("channel progress keeps shell error output out of toolDetails (LET-9509)", () => {
+  const builder = createChannelTurnProgressBuilder();
+  builder.buildUpdates({
+    message_type: "tool_call_message",
+    run_id: "run-1",
+    tool_calls: [
+      {
+        tool_call_id: "call-1",
+        name: "Bash",
+        arguments: JSON.stringify({
+          command: "gh run view 28890486751",
+          description: "Check CI run status",
+        }),
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  const updates = builder.buildUpdates({
+    message_type: "tool_return_message",
+    run_id: "run-1",
+    tool_returns: [
+      {
+        tool_call_id: "call-1",
+        status: "error",
+        tool_return:
+          "Exit code: 1\nrun 28890486751 is still in progress; logs will be available when it is complete",
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "error",
+      message: "Tool failed",
+      runId: "run-1",
+      toolCallId: "call-1",
+      toolName: "Bash",
+      // Argument-derived: safe to use as a row title on rich surfaces.
+      toolDetails: "Check CI run status",
+      // Output preview: detail text only, never a title.
+      errorDetails:
+        "Exit code: 1 run 28890486751 is still in progress; logs will be available when it is complete",
+    },
+  ]);
+});
+
+test("channel progress emits only errorDetails when failed shell args never arrived", () => {
+  const builder = createChannelTurnProgressBuilder();
+  const updates = builder.buildUpdates({
+    message_type: "tool_return_message",
+    run_id: "run-1",
+    tool_returns: [
+      {
+        tool_call_id: "call-9",
+        name: "Bash",
+        status: "error",
+        tool_return: "Exit code: 1\nboom",
+      },
+    ],
+  } as unknown as StreamDelta);
+
+  expect(updates).toEqual([
+    {
+      kind: "tool",
+      state: "error",
+      message: "Tool failed",
+      runId: "run-1",
+      toolCallId: "call-9",
+      toolName: "Bash",
+      errorDetails: "Exit code: 1 boom",
     },
   ]);
 });
@@ -903,7 +979,7 @@ test("channel progress maps canonical parallel tool return arrays", () => {
       message: "Tool failed",
       runId: "run-1",
       toolCallId: "call-2",
-      toolDetails: "failed",
+      errorDetails: "failed",
     },
   ]);
 });

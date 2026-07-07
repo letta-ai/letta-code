@@ -1009,11 +1009,13 @@ export function createChannelTurnProgressBuilder(
           const toolWithAccumulatedArgs = accumulatedArgs
             ? { ...summary, argumentsText: accumulatedArgs }
             : summary;
-          const toolDetails =
-            status === "error"
-              ? errorDetails ||
-                formatToolProgressDetails(toolWithAccumulatedArgs, options)
-              : formatToolProgressDetails(toolWithAccumulatedArgs, options);
+          // toolDetails stays argument-derived even on errors: surfaces use it
+          // for row titles (e.g. shell rows), so tool output must never leak
+          // into it. Error-output previews travel in errorDetails (LET-9509).
+          const toolDetails = formatToolProgressDetails(
+            toolWithAccumulatedArgs,
+            options,
+          );
           const toolTitle = formatToolProgressTitle(
             toolWithAccumulatedArgs,
             status,
@@ -1027,6 +1029,7 @@ export function createChannelTurnProgressBuilder(
                 ...(summary.id ? { toolCallId: summary.id } : {}),
                 ...(summary.name ? { toolName: summary.name } : {}),
                 ...(toolDetails ? { toolDetails } : {}),
+                ...(status === "error" && errorDetails ? { errorDetails } : {}),
                 ...(toolTitle ? { toolTitle } : {}),
               },
               runId,
@@ -1074,12 +1077,13 @@ export function createChannelTurnProgressBuilder(
           tool && accumulatedArgs
             ? { ...tool, argumentsText: accumulatedArgs }
             : tool;
+        // toolDetails stays argument-derived even on errors (see the
+        // tool_return_message handler); error previews go to errorDetails.
         const toolDetails = toolWithAccumulatedArgs
-          ? state === "error"
-            ? formatToolErrorDetails(record) ||
-              formatToolProgressDetails(toolWithAccumulatedArgs, options)
-            : formatToolProgressDetails(toolWithAccumulatedArgs, options)
+          ? formatToolProgressDetails(toolWithAccumulatedArgs, options)
           : undefined;
+        const errorDetails =
+          state === "error" ? formatToolErrorDetails(record) : undefined;
         const toolTitle = toolWithAccumulatedArgs
           ? formatToolProgressTitle(toolWithAccumulatedArgs, state)
           : undefined;
@@ -1092,6 +1096,7 @@ export function createChannelTurnProgressBuilder(
               ...(tool?.id ? { toolCallId: tool.id } : {}),
               ...(tool?.name ? { toolName: tool.name } : {}),
               ...(toolDetails ? { toolDetails } : {}),
+              ...(errorDetails ? { errorDetails } : {}),
               ...(toolTitle ? { toolTitle } : {}),
             },
             runId,
