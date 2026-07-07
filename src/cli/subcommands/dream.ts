@@ -1,4 +1,12 @@
 import { parseArgs } from "node:util";
+import {
+  buildTargetInstruction,
+  type DreamTarget,
+  readExistingTarget,
+  readTargetFromMemory,
+  resolveDreamTarget,
+  writeTarget,
+} from "@/cli/subcommands/dream-targets";
 import { settingsManager } from "@/settings-manager";
 
 function printUsage(): void {
@@ -14,7 +22,8 @@ Options:
                               $LETTA_AGENT_ID, then the last-used agent)
   --from <conv-id>            Conversation transcript to reflect on
                               (default: the agent's primary "default" history)
-  --to <spec>                 Render target (reserved; not yet implemented)
+  --to <path>                 Maintain a doc (e.g. ./AGENTS.md) from memory;
+                              the agent edits it in place, using judgment
   --effort <level>            Reflection effort (reserved; not yet implemented)
   --timeout <seconds>         Fail if the reflection pass has not completed
                               in this many seconds (default: 1500)
@@ -86,11 +95,21 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
 
   const asJson = Boolean(parsed.values.json);
 
-  // --to and --effort are part of the target/effort interface but are not yet
-  // wired up; accept them so the surface is stable, but say they're inert.
-  if (!asJson && (parsed.values.to || parsed.values.effort)) {
+  let target: DreamTarget | undefined;
+  if (parsed.values.to) {
+    try {
+      target = resolveDreamTarget(parsed.values.to);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      return 1;
+    }
+  }
+
+  // --effort is part of the interface but not yet wired up.
+  if (!asJson && parsed.values.effort) {
     console.error(
-      "Note: --to and --effort are accepted but not yet implemented; ignoring.",
+      "Note: --effort is accepted but not yet implemented; ignoring.",
     );
   }
 
@@ -130,6 +149,18 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
 
   const conversationId = parsed.values.from || "default";
 
+  // Approach A: fold the target-doc maintenance directive into the reflection
+  // instruction so the single reflection pass also maintains the doc as an
+  // external memory file. We read it back out of the memfs afterwards.
+  let instruction = parsed.values.instruction;
+  if (target) {
+    const existing = await readExistingTarget(target);
+    const targetInstruction = buildTargetInstruction(target, existing);
+    instruction = instruction
+      ? `${instruction}\n\n${targetInstruction}`
+      : targetInstruction;
+  }
+
   const { launchReflectionSubagent } = await import(
     "@/cli/helpers/reflection-launcher"
   );
@@ -145,7 +176,7 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     memfsEnabled: true,
     triggerSource: "manual",
     description: "Reflect on recent conversations",
-    instruction: parsed.values.instruction,
+    instruction,
     recompileByConversation: new Map(),
     recompileQueuedByConversation: new Set(),
     onCompletionMessage: (message, completionResult) => {
@@ -211,22 +242,47 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     clearTimeout(timeoutHandle);
   }
 
+  // On success, copy the doc the reflection agent committed into memory out to
+  // the target path. If the agent chose not to write it, leave the target
+  // untouched.
+  let targetWritten = false;
+  let targetError: string | undefined;
+  if (target && outcome.success) {
+    try {
+      const rendered = readTargetFromMemory(agentId, target);
+      if (rendered !== null) {
+        await writeTarget(target, rendered);
+        targetWritten = true;
+      }
+    } catch (error) {
+      targetError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
   if (asJson) {
     emitJson({
       launched: true,
-      success: outcome.success,
+      success: outcome.success && !targetError,
       message: outcome.message,
       ...(outcome.error ? { error: outcome.error } : {}),
       ...(timedOut ? { timedOut: true } : {}),
       agentId,
       conversationId,
       transcriptPath: result.payloadPath,
+      ...(target ? { targetPath: target.path, targetWritten } : {}),
+      ...(targetError ? { targetError } : {}),
     });
   } else if (outcome.success) {
     console.log(outcome.message);
+    if (targetWritten) {
+      console.log(`Wrote ${target?.path}`);
+    }
+    if (targetError) {
+      console.error(`Failed to write --to target: ${targetError}`);
+    }
   } else {
     console.error(outcome.message);
   }
 
-  return outcome.success ? 0 : 1;
+  return outcome.success && !targetError ? 0 : 1;
 }
