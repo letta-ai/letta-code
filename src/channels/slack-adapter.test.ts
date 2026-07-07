@@ -1151,7 +1151,6 @@ test("slack adapter hydrates prior Slack thread context, including bot-authored 
         mimeType: "image/png",
         kind: "image",
         localPath: "/tmp/root-screenshot.png",
-        imageDataBase64: "abc",
       },
     ],
   });
@@ -1505,7 +1504,6 @@ test("slack adapter allows file_share subtype messages through", async () => {
       mimeType: "image/png",
       kind: "image",
       localPath: "/tmp/screenshot.png",
-      imageDataBase64: "abc",
     },
   ]);
 
