@@ -75,9 +75,9 @@ describe("personality helpers", () => {
     for (const option of PERSONALITY_OPTIONS) {
       const values = getPersonalityBlockValues(option.id);
       if (option.id === "blank") {
-        // The blank starter is truly empty — the user provides the content.
+        // The blank starter has an empty persona and a minimal human placeholder.
         expect(values.persona).toBe("");
-        expect(values.human).toBe("");
+        expect(values.human).toBe("Name: ?\n");
         continue;
       }
       expect(values.persona.trim().length).toBeGreaterThan(0);
@@ -242,20 +242,20 @@ describe("personality helpers", () => {
     expect(getPersonalityContent("blank")).toBe("");
   });
 
-  test("blank personality has an empty human block", () => {
-    expect(getPersonalityHumanContent("blank")).toBe("");
+  test("blank personality has a minimal human placeholder", () => {
+    expect(getPersonalityHumanContent("blank")).toBe("Name: ?\n");
   });
 
-  test("blank personality keeps frontmatter descriptions while block values are empty", () => {
+  test("blank personality keeps purpose descriptions while using minimal block values", () => {
     const definitions = getPersonalityBlockDefinitions("blank");
 
     expect(definitions.persona.value).toBe("");
     expect(definitions.persona.description).toBe(
       "Who I am, what I value, and how I approach working with people. This evolves as I learn and grow.",
     );
-    expect(definitions.human.value).toBe("");
+    expect(definitions.human.value).toBe("Name: ?\n");
     expect(definitions.human.description).toBe(
-      "What I've learned about the person I'm working with. Understanding them helps me be genuinely helpful rather than generically helpful.",
+      "Core memories about the person I am working with: who they are, what they care about, how they work, and what should matter in future conversations.",
     );
   });
 });

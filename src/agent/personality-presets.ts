@@ -281,8 +281,7 @@ export function getPersonalityHumanContent(
   }
 
   if (personalityId === "blank") {
-    // Blank starter: the human block starts empty too.
-    return "";
+    return getPromptBody("human_blank.mdx");
   }
 
   return getDefaultHumanContent();
@@ -319,11 +318,13 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
   const humanTemplatePromptAssetName =
     personalityId === "memo" || personalityId === "tutorial"
       ? "human_memo.mdx"
-      : personalityId === "kawaii"
-        ? "human_kawaii.mdx"
-        : personalityId === "linus"
-          ? "human_linus.mdx"
-          : "human.mdx";
+      : personalityId === "blank"
+        ? "human_blank.mdx"
+        : personalityId === "kawaii"
+          ? "human_kawaii.mdx"
+          : personalityId === "linus"
+            ? "human_linus.mdx"
+            : "human.mdx";
 
   return {
     persona: {
