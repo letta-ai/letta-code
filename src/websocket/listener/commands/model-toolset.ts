@@ -73,6 +73,12 @@ type ModelScopeSnapshot = {
   } | null;
 };
 
+export type CurrentModelStatus = {
+  modelHandle: string | null;
+  modelLabel: string;
+  scope: "agent" | "conversation";
+};
+
 function inferProviderTypeFromRegistryHandle(
   modelHandle: string,
 ): string | undefined {
@@ -174,6 +180,21 @@ async function getCurrentModelScopeSnapshot(params: {
       agent.llm_config as ModelScopeSnapshot["llmConfig"],
       conversationContextWindow ?? agentContextWindow,
     ),
+  };
+}
+
+export async function getCurrentModelStatusForRuntime(params: {
+  agentId: string;
+  conversationId: string;
+}): Promise<CurrentModelStatus> {
+  const snapshot = await getCurrentModelScopeSnapshot(params);
+  const modelInfo = snapshot.modelHandle
+    ? getModelInfo(snapshot.modelHandle)
+    : null;
+  return {
+    modelHandle: snapshot.modelHandle,
+    modelLabel: modelInfo?.label ?? snapshot.modelHandle ?? "unknown",
+    scope: params.conversationId === "default" ? "agent" : "conversation",
   };
 }
 

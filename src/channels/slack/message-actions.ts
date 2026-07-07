@@ -15,16 +15,20 @@ async function sendSlackMessage(
     return "Error: Slack send requires message or media.";
   }
 
+  const isDirect =
+    route.chatType === "direct" || request.chatId.startsWith("D");
   const formatted = formatText(text);
   const result = await adapter.sendMessage({
     channel: "slack",
     accountId: route.accountId,
     chatId: request.chatId,
     text: formatted.text,
-    replyToMessageId: request.replyToMessageId,
-    threadId: request.replyToMessageId
-      ? null
-      : (request.threadId ?? route.threadId ?? null),
+    replyToMessageId: isDirect ? undefined : request.replyToMessageId,
+    threadId: isDirect
+      ? (request.threadId ?? route.threadId ?? null)
+      : request.replyToMessageId
+        ? null
+        : (request.threadId ?? route.threadId ?? null),
     mediaPath: request.mediaPath,
     fileName: request.filename,
     title: request.title,

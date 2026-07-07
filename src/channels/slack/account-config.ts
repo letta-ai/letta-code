@@ -84,9 +84,6 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         transcribeVoice: isBoolean(config.transcribe_voice)
           ? config.transcribe_voice
           : undefined,
-        showCompletedReaction: isBoolean(config.show_completed_reaction)
-          ? config.show_completed_reaction
-          : undefined,
         listenMode: isBoolean(config.listen_mode)
           ? config.listen_mode
           : undefined,
@@ -102,7 +99,6 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         default_permission_mode:
           account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
         transcribe_voice: account.transcribeVoice === true,
-        show_completed_reaction: account.showCompletedReaction !== false,
         listen_mode: account.listenMode === true,
       };
     },
@@ -116,7 +112,6 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         default_permission_mode:
           account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
         transcribe_voice: account.transcribeVoice === true,
-        show_completed_reaction: account.showCompletedReaction !== false,
         listen_mode: account.listenMode === true,
       };
     },
