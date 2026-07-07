@@ -1,30 +1,34 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname } from "node:path";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
+import {
+  getScopedMemoryFilesystemRoot,
+  MEMORY_SYSTEM_DIR,
+} from "@/agent/memory-filesystem";
+import { commitMemoryWrite } from "@/agent/memory-git";
+import { parseFrontmatter } from "@/utils/frontmatter";
 
 /**
- * A `--to` render target. In this pass, memory is refined in a single
- * reflection pass (Approach A): the reflection agent maintains the target doc
- * as an external memory file at `$MEMORY_DIR/<fileName>`, and we copy the
+ * A `--to` render target. Memory is refined in a single reflection pass
+ * (Approach A): the reflection agent maintains the target doc as a file in the
+ * agent's in-context memory at `$MEMORY_DIR/system/<fileName>`, and we copy the
  * committed result out to `path` afterwards.
  *
- * Note: because the doc lives in the memfs, it is also compiled into the
- * agent's system prompt. That is acceptable for a dedicated dreaming agent
- * with a small doc; revisit (carve-out, or a separate projection pass) if
- * maintenance gets tedious or docs grow large/numerous.
+ * On the first run the doc is seeded into the memfs from `path` (if `path`
+ * exists and the memfs has no copy yet); thereafter the memfs copy is the
+ * source of truth. This is cycle-free (updates are gated by the reflection
+ * cursor) but does NOT merge out-of-band edits made to `path` between runs.
+ * The dream owns the generated doc; reconciling human edits or unmerged-PR
+ * drift is the caller's responsibility (e.g. the automation side), not here.
  *
- * The memfs is the source of truth for the doc: the agent builds on its own
- * committed copy and we overwrite `path` with the result. This is cycle-free
- * (updates are gated by the reflection cursor — no new experience, no change)
- * but does NOT merge out-of-band edits made to `path` between runs. The dream
- * owns the generated doc; reconciling human edits or unmerged-PR drift is the
- * caller's responsibility (e.g. handled on the automation side), not here.
+ * Note: because the doc lives in `system/`, it is compiled into the agent's
+ * system prompt. That is acceptable for a dedicated dreaming agent with a small
+ * doc; revisit if docs grow large/numerous.
  */
 export interface DreamTarget {
   /** Absolute or relative filesystem path to write the rendered doc to. */
   path: string;
-  /** The file name the agent maintains inside `$MEMORY_DIR`. */
+  /** The file name maintained inside `$MEMORY_DIR/system/`. */
   fileName: string;
   kind: "agents-md" | "generic";
 }
@@ -38,6 +42,38 @@ export function resolveDreamTarget(spec: string): DreamTarget {
   const kind =
     lower === "agents.md" || lower === "agent.md" ? "agents-md" : "generic";
   return { path: spec, fileName, kind };
+}
+
+/** The doc's path inside the memfs, relative to `$MEMORY_DIR`. */
+function memfsRelPath(target: DreamTarget): string {
+  return `${MEMORY_SYSTEM_DIR}/${target.fileName}`;
+}
+
+const MANAGED_DESCRIPTION: Record<DreamTarget["kind"], string> = {
+  "agents-md":
+    "Repository guidance for coding agents, maintained by letta dream.",
+  generic: "Document distilled by letta dream.",
+};
+
+/**
+ * Files under `system/` must carry YAML frontmatter (enforced by the memfs
+ * pre-commit hook). The target doc is plain markdown, so we add a managed
+ * frontmatter block when seeding (unless one with a description already
+ * exists) and strip it when copying the doc back out to `--to`.
+ */
+export function addManagedFrontmatter(
+  content: string,
+  kind: DreamTarget["kind"],
+): string {
+  const { frontmatter, body } = parseFrontmatter(content);
+  if (typeof frontmatter.description === "string" && frontmatter.description) {
+    return content;
+  }
+  return `---\ndescription: ${MANAGED_DESCRIPTION[kind]}\n---\n${body}`;
+}
+
+export function stripFrontmatter(content: string): string {
+  return parseFrontmatter(content).body;
 }
 
 const AGENTS_MD_GUIDANCE = [
@@ -59,29 +95,23 @@ const GENERIC_GUIDANCE = [
 
 /**
  * Build the instruction fragment that asks the reflection agent to maintain
- * the target doc as an external memory file, seeded with the current on-disk
- * content so human edits to the repo copy are respected.
+ * the target doc at `$MEMORY_DIR/system/<fileName>`. The doc has already been
+ * seeded there when a base existed, so the agent reads and edits it in place.
  */
-export function buildTargetInstruction(
-  target: DreamTarget,
-  existingContent: string | null,
-): string {
+export function buildTargetInstruction(target: DreamTarget): string {
   const guidance =
     target.kind === "agents-md" ? AGENTS_MD_GUIDANCE : GENERIC_GUIDANCE;
-  const lines = [
-    `In addition to updating memory, maintain an external memory file named "${target.fileName}" at $MEMORY_DIR/${target.fileName}.`,
+  const relPath = memfsRelPath(target);
+  return [
+    `In addition to updating memory, maintain the file at $MEMORY_DIR/${relPath}.`,
     guidance,
     "",
-    "The authoritative current content of this file is below. Treat it as the",
-    "base to revise: apply only the changes the new experience warrants, using",
-    "your judgment. Often no change is needed — if so, leave it as-is. Write the",
-    `final version to $MEMORY_DIR/${target.fileName} (overwriting), then commit.`,
-    "",
-    `--- current ${target.fileName} (${existingContent === null ? "does not exist yet — create it" : "edit in place"}) ---`,
-    existingContent ?? "(none)",
-    `--- end ${target.fileName} ---`,
-  ];
-  return lines.join("\n");
+    `Read the existing $MEMORY_DIR/${relPath} (create it if it does not exist)`,
+    "and revise it in place: apply only the changes the new experience",
+    "warrants, using your judgment. Often no change is needed — if so, leave it",
+    "as-is. Keep the YAML frontmatter block (--- ... ---) at the top intact;",
+    "edit only the body below it. Commit when done.",
+  ].join("\n");
 }
 
 /** Read the current on-disk target doc, or null if it doesn't exist. */
@@ -95,6 +125,69 @@ export async function readExistingTarget(
   }
 }
 
+function existsInMemoryHead(memoryDir: string, relPath: string): boolean {
+  try {
+    execFileSync("git", ["cat-file", "-e", `HEAD:${relPath}`], {
+      cwd: memoryDir,
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Seed the target doc into the agent's memory at `system/<fileName>` when the
+ * memfs has no copy yet, using the current on-disk content as the base. If a
+ * copy already exists in the memfs it is left untouched (the memfs copy is the
+ * source of truth). Must run before the reflection worktree is created, since
+ * the worktree is checked out from HEAD.
+ */
+export async function seedTargetIntoMemory(
+  agentId: string,
+  target: DreamTarget,
+  content: string | null,
+): Promise<{ seeded: boolean }> {
+  if (content === null) {
+    return { seeded: false };
+  }
+  const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+  const relPath = memfsRelPath(target);
+  if (existsInMemoryHead(memoryDir, relPath)) {
+    return { seeded: false };
+  }
+
+  const absPath = join(memoryDir, relPath);
+  await mkdir(dirname(absPath), { recursive: true });
+  await writeFile(
+    absPath,
+    addManagedFrontmatter(content, target.kind),
+    "utf-8",
+  );
+  try {
+    const { getBackend } = await import("@/backend");
+    const syncMode = getBackend().capabilities.localMemfs ? "local" : "remote";
+    const result = await commitMemoryWrite({
+      memoryDir,
+      pathspecs: [relPath],
+      reason: `dream: seed ${target.fileName} into memory`,
+      author: {
+        agentId,
+        authorName: agentId,
+        authorEmail: `${agentId}@letta.com`,
+      },
+      syncMode,
+    });
+    return { seeded: result.committed };
+  } catch (error) {
+    // Roll back the uncommitted file so the parent memfs stays clean — a dirty
+    // parent would block the reflection worktree merge.
+    await rm(absPath, { force: true });
+    throw error;
+  }
+}
+
 /**
  * Read the doc the reflection agent committed into the agent's memory, or null
  * if it wasn't written.
@@ -105,11 +198,19 @@ export function readTargetFromMemory(
 ): string | null {
   const memoryDir = getScopedMemoryFilesystemRoot(agentId);
   try {
-    return execFileSync("git", ["show", `HEAD:${target.fileName}`], {
-      cwd: memoryDir,
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+    const committed = execFileSync(
+      "git",
+      ["show", `HEAD:${memfsRelPath(target)}`],
+      {
+        cwd: memoryDir,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+    // Strip the managed frontmatter so the exported doc is plain markdown.
+    // parseFrontmatter trims the body; restore a trailing newline.
+    const body = stripFrontmatter(committed);
+    return body.length > 0 ? `${body}\n` : body;
   } catch {
     return null;
   }
