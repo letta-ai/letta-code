@@ -50,6 +50,7 @@ const ANSI_CYAN = "\u001b[36m";
 const ANSI_MAGENTA = "\u001b[35m";
 const ANSI_RESET_BOLD = "\u001b[22m";
 const ANSI_RESET_FOREGROUND = "\u001b[39m";
+const REFLECTION_ARENA_CANDIDATE_COUNT = 2;
 
 export type ReflectionArenaCandidateLabel = "1" | "2";
 export type ReflectionArenaChoice = ReflectionArenaCandidateLabel | "tie";
@@ -565,7 +566,10 @@ function candidateIsFinished(candidate: ReflectionArenaCandidate): boolean {
 }
 
 function runIsReady(run: ReflectionArenaRun): boolean {
-  return run.candidates.every(candidateIsFinished);
+  return (
+    run.candidates.length === REFLECTION_ARENA_CANDIDATE_COUNT &&
+    run.candidates.every(candidateIsFinished)
+  );
 }
 
 async function markCandidateComplete(params: {
