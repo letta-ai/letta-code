@@ -72,6 +72,8 @@ import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-to
 import {
   buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
+  launchReflectionArena,
+  listAwaitingReflectionArenaRuns,
   loadReflectionArenaRun,
   REFLECTION_ARENA_MODEL_A_DEFAULT,
   type ReflectionArenaChoice,
@@ -307,6 +309,8 @@ type SubmitHandlerContext = {
   setReflectionArenaChoicePending: Dispatch<
     SetStateAction<{
       questions: ReflectionArenaChoiceQuestion[];
+      readyMessage?: string;
+      readyMessageShown?: boolean;
       runId: string;
     } | null>
   >;
@@ -364,7 +368,7 @@ type ReflectArenaCommandArgs =
       notes?: string;
       runId: string;
     }
-  | { kind: "resume"; runId: string };
+  | { kind: "resume"; runId?: string };
 
 function isReflectCommandFlag(value: string): boolean {
   return (
@@ -405,9 +409,6 @@ function parseReflectArenaCommandArgs(input: string): ReflectArenaCommandArgs {
   }
   if (parts[0] === "resume") {
     const runId = parts[1];
-    if (!runId) {
-      throw new Error("Usage: /reflect-arena resume <run-id>");
-    }
     return { kind: "resume", runId };
   }
 
@@ -2275,28 +2276,64 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 getReflectionSettings(agentId).trigger === "compaction-event" &&
                 isActiveMemfsEnabled(agentId)
               ) {
-                void launchReflectionSubagent({
-                  agentId,
-                  conversationId: compactConversationId,
-                  memfsEnabled: isActiveMemfsEnabled(agentId),
-                  triggerSource: "compaction-event",
-                  skipPendingWorktreeReminderScan: true,
-                  description: AUTO_REFLECTION_DESCRIPTION,
-                  completionConversationId: () => conversationIdRef.current,
-                  recompileByConversation:
-                    systemPromptRecompileByConversationRef.current,
-                  recompileQueuedByConversation:
-                    queuedSystemPromptRecompileByConversationRef.current,
-                  onCompletionMessage: (completionMessage) => {
-                    appendTaskNotificationEvents([completionMessage]);
-                  },
-                  feedbackContext: {
-                    parentAgentName: agentName,
-                    parentAgentDescription: agentDescription,
-                    surface: "letta_code_tui",
-                    model: currentModelId,
-                  },
-                });
+                if (experimentManager.isEnabled("reflection_arena")) {
+                  void launchReflectionArena({
+                    agentId,
+                    conversationId: compactConversationId,
+                    triggerSource: "compaction-event",
+                    models: [
+                      REFLECTION_ARENA_MODEL_A_DEFAULT,
+                      currentModelId ?? "letta/auto",
+                    ],
+                    feedbackContext: {
+                      parentAgentName: agentName,
+                      parentAgentDescription: agentDescription,
+                      surface: "letta_code_tui",
+                      model: currentModelId,
+                    },
+                    onReady: (message, readyRun) => {
+                      setReflectionArenaChoicePending({
+                        runId: readyRun.runId,
+                        readyMessage: message,
+                        readyMessageShown: false,
+                        questions: buildReflectionArenaChoiceQuestions(
+                          readyRun.runId,
+                        ),
+                      });
+                    },
+                  }).catch((reflectionError) => {
+                    debugLog(
+                      "memory",
+                      "Skipping post-compaction reflection arena:",
+                      reflectionError instanceof Error
+                        ? reflectionError.message
+                        : String(reflectionError),
+                    );
+                  });
+                } else {
+                  void launchReflectionSubagent({
+                    agentId,
+                    conversationId: compactConversationId,
+                    memfsEnabled: isActiveMemfsEnabled(agentId),
+                    triggerSource: "compaction-event",
+                    skipPendingWorktreeReminderScan: true,
+                    description: AUTO_REFLECTION_DESCRIPTION,
+                    completionConversationId: () => conversationIdRef.current,
+                    recompileByConversation:
+                      systemPromptRecompileByConversationRef.current,
+                    recompileQueuedByConversation:
+                      queuedSystemPromptRecompileByConversationRef.current,
+                    onCompletionMessage: (completionMessage) => {
+                      appendTaskNotificationEvents([completionMessage]);
+                    },
+                    feedbackContext: {
+                      parentAgentName: agentName,
+                      parentAgentDescription: agentDescription,
+                      surface: "letta_code_tui",
+                      model: currentModelId,
+                    },
+                  });
+                }
               }
             } catch (reflectionError) {
               debugLog(
@@ -3027,19 +3064,48 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               return { submitted: true };
             }
             if (arenaArgs.kind === "resume") {
-              const run = await loadReflectionArenaRun(arenaArgs.runId);
-              if (run.status !== "awaiting_choice") {
-                cmd.fail(
-                  `Reflection arena run ${arenaArgs.runId} is ${run.status}; expected awaiting_choice.`,
-                );
-                return { submitted: true };
+              let awaitingRuns: Awaited<
+                ReturnType<typeof listAwaitingReflectionArenaRuns>
+              > = [];
+              let run:
+                | Awaited<
+                    ReturnType<typeof listAwaitingReflectionArenaRuns>
+                  >[number]
+                | undefined;
+              if (arenaArgs.runId) {
+                run = await loadReflectionArenaRun(arenaArgs.runId);
+                if (run.status !== "awaiting_choice") {
+                  cmd.fail(
+                    `Reflection arena run ${arenaArgs.runId} is ${run.status}; expected awaiting_choice.`,
+                  );
+                  return { submitted: true };
+                }
+              } else {
+                awaitingRuns = await listAwaitingReflectionArenaRuns();
+                run = awaitingRuns[0];
+                if (!run) {
+                  cmd.fail("No reflection arena runs are awaiting a choice.");
+                  return { submitted: true };
+                }
               }
               setReflectionArenaChoicePending({
                 runId: run.runId,
                 questions: buildReflectionArenaChoiceQuestions(run.runId),
               });
+              const otherRuns = awaitingRuns.filter(
+                (awaitingRun) => awaitingRun.runId !== run.runId,
+              );
+              const suffix =
+                otherRuns.length > 0
+                  ? `\n\nOther awaiting runs:\n${otherRuns
+                      .map(
+                        (awaitingRun) =>
+                          `  ${awaitingRun.runId} · created ${awaitingRun.createdAt}`,
+                      )
+                      .join("\n")}`
+                  : "";
               cmd.finish(
-                `Resumed reflection arena choice prompt for run ${run.runId}.`,
+                `Resumed reflection arena choice prompt for run ${run.runId}.${suffix}`,
                 true,
               );
               return { submitted: true };
@@ -3077,13 +3143,21 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             const run = await startReflectionArenaRun({
               agentId,
               conversationId: reflectionConversationId,
+              triggerSource: "manual",
               instruction: arenaArgs.instruction,
               models: [modelA, modelB],
               payload,
+              feedbackContext: {
+                parentAgentName: agentName,
+                parentAgentDescription: agentDescription,
+                surface: "letta_code_tui",
+                model: currentModelId,
+              },
               onReady: (message, readyRun) => {
-                appendTaskNotificationEvents([message]);
                 setReflectionArenaChoicePending({
                   runId: readyRun.runId,
+                  readyMessage: message,
+                  readyMessageShown: false,
                   questions: buildReflectionArenaChoiceQuestions(
                     readyRun.runId,
                   ),
@@ -3127,6 +3201,44 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               conversationIdRef.current ?? "default";
 
             if (reflectArgs.kind === "single") {
+              if (experimentManager.isEnabled("reflection_arena")) {
+                const arenaResult = await launchReflectionArena({
+                  agentId,
+                  conversationId: reflectionConversationId,
+                  triggerSource: "manual",
+                  instruction: reflectArgs.instruction,
+                  models: [
+                    REFLECTION_ARENA_MODEL_A_DEFAULT,
+                    currentModelId ?? "letta/auto",
+                  ],
+                  feedbackContext: {
+                    parentAgentName: agentName,
+                    parentAgentDescription: agentDescription,
+                    surface: "letta_code_tui",
+                    model: currentModelId,
+                  },
+                  onReady: (message, readyRun) => {
+                    setReflectionArenaChoicePending({
+                      runId: readyRun.runId,
+                      readyMessage: message,
+                      readyMessageShown: false,
+                      questions: buildReflectionArenaChoiceQuestions(
+                        readyRun.runId,
+                      ),
+                    });
+                  },
+                });
+                if (!arenaResult.launched) {
+                  cmd.fail("No new transcript content to reflect on.");
+                  return { submitted: true };
+                }
+                cmd.finish(
+                  `Started reflection arena run ${arenaResult.run.runId}. View the transcript payload here: ${arenaResult.payloadPath}`,
+                  true,
+                );
+                return { submitted: true };
+              }
+
               const result = await launchReflectionSubagent({
                 agentId,
                 conversationId: reflectionConversationId,

@@ -10,6 +10,7 @@ import { Text } from "./Text";
 interface QuestionOption {
   label: string;
   description: string;
+  submitImmediately?: boolean;
 }
 
 interface Question {
@@ -18,6 +19,9 @@ interface Question {
   options: QuestionOption[];
   multiSelect: boolean;
   allowOther?: boolean; // default true - set false to hide "Type something" option
+  otherDescription?: string;
+  otherFirst?: boolean;
+  otherLabel?: string;
 }
 
 type Props = {
@@ -70,11 +74,16 @@ export const InlineQuestionApproval = memo(
     // Build options list: regular options + "Type something" (unless allowOther=false)
     // For multi-select, we also track a separate "Submit" action
     const showOther = currentQuestion?.allowOther !== false;
+    const otherOption: QuestionOption = {
+      label: currentQuestion?.otherLabel ?? "Type something.",
+      description: currentQuestion?.otherDescription ?? "",
+    };
     const baseOptions = currentQuestion
-      ? [
-          ...currentQuestion.options,
-          ...(showOther ? [{ label: "Type something.", description: "" }] : []),
-        ]
+      ? showOther
+        ? currentQuestion.otherFirst
+          ? [otherOption, ...currentQuestion.options]
+          : [...currentQuestion.options, otherOption]
+        : currentQuestion.options
       : [];
 
     // For multi-select, add Submit as a separate selectable item
@@ -82,7 +91,11 @@ export const InlineQuestionApproval = memo(
       ? [...baseOptions, { label: "Submit", description: "" }]
       : baseOptions;
 
-    const customOptionIndex = showOther ? baseOptions.length - 1 : -1; // "Type something" index (-1 if disabled)
+    const customOptionIndex = showOther
+      ? currentQuestion?.otherFirst
+        ? 0
+        : baseOptions.length - 1
+      : -1; // "Type something" index (-1 if disabled)
     const submitOptionIndex = currentQuestion?.multiSelect
       ? optionsWithOther.length - 1
       : -1; // Submit index (only for multi-select)
@@ -90,7 +103,7 @@ export const InlineQuestionApproval = memo(
     const isOnCustomOption = showOther && selectedOption === customOptionIndex;
     const isOnSubmitOption = selectedOption === submitOptionIndex;
 
-    const handleSubmitAnswer = (answer: string) => {
+    const handleSubmitAnswer = (answer: string, submitImmediately = false) => {
       if (!currentQuestion) return;
       const newAnswers = {
         ...answers,
@@ -98,7 +111,7 @@ export const InlineQuestionApproval = memo(
       };
       setAnswers(newAnswers);
 
-      if (currentQuestionIndex < questions.length - 1) {
+      if (!submitImmediately && currentQuestionIndex < questions.length - 1) {
         setCurrentQuestionIndex(currentQuestionIndex + 1);
         setSelectedOption(0);
         clearCustomText();
@@ -220,7 +233,10 @@ export const InlineQuestionApproval = memo(
         if (key.return) {
           if (currentQuestion.multiSelect) {
             // Multi-select: Enter toggles the checkbox (only for regular options, not custom)
-            if (selectedOption < customOptionIndex) {
+            if (
+              selectedOption !== customOptionIndex &&
+              selectedOption !== submitOptionIndex
+            ) {
               setSelectedMulti((prev) => {
                 const newSet = new Set(prev);
                 if (newSet.has(selectedOption)) {
@@ -233,14 +249,18 @@ export const InlineQuestionApproval = memo(
             }
           } else {
             // Single-select: Enter selects and submits
-            handleSubmitAnswer(optionsWithOther[selectedOption]?.label || "");
+            const option = optionsWithOther[selectedOption];
+            handleSubmitAnswer(option?.label || "", option?.submitImmediately);
           }
           return;
         }
 
         // Space also toggles for multi-select (like Claude Code) - only regular options
         if (input === " " && currentQuestion.multiSelect) {
-          if (selectedOption < customOptionIndex) {
+          if (
+            selectedOption !== customOptionIndex &&
+            selectedOption !== submitOptionIndex
+          ) {
             setSelectedMulti((prev) => {
               const newSet = new Set(prev);
               if (newSet.has(selectedOption)) {
@@ -257,7 +277,12 @@ export const InlineQuestionApproval = memo(
         // Number keys for quick selection
         if (input >= "1" && input <= "9") {
           const optionIndex = Number.parseInt(input, 10) - 1;
-          if (optionIndex < optionsWithOther.length - 1) {
+          if (
+            optionIndex >= 0 &&
+            optionIndex < optionsWithOther.length &&
+            optionIndex !== submitOptionIndex &&
+            optionIndex !== customOptionIndex
+          ) {
             if (currentQuestion.multiSelect) {
               setSelectedMulti((prev) => {
                 const newSet = new Set(prev);
@@ -269,7 +294,11 @@ export const InlineQuestionApproval = memo(
                 return newSet;
               });
             } else {
-              handleSubmitAnswer(optionsWithOther[optionIndex]?.label || "");
+              const option = optionsWithOther[optionIndex];
+              handleSubmitAnswer(
+                option?.label || "",
+                option?.submitImmediately,
+              );
             }
           }
         }

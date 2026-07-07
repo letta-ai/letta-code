@@ -94,9 +94,12 @@ import {
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
 import {
+  buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
   formatReflectionArenaDeferredMessage,
+  launchReflectionArena,
   parseReflectionArenaChoiceAnswers,
+  REFLECTION_ARENA_MODEL_A_DEFAULT,
   type ReflectionArenaChoiceQuestion,
 } from "@/cli/helpers/reflection-arena";
 import {
@@ -532,6 +535,8 @@ export function App({
   const [reflectionArenaChoicePending, setReflectionArenaChoicePending] =
     useState<{
       questions: ReflectionArenaChoiceQuestion[];
+      readyMessage?: string;
+      readyMessageShown?: boolean;
       runId: string;
     } | null>(null);
 
@@ -3694,6 +3699,35 @@ export function App({
             conversationId: conversationIdRef.current ?? "default",
           }),
         launch: async (triggerSource) => {
+          if (experimentManager.isEnabled("reflection_arena")) {
+            const arenaResult = await launchReflectionArena({
+              agentId: reflectionAgentId,
+              conversationId: conversationIdRef.current ?? "default",
+              triggerSource,
+              models: [
+                REFLECTION_ARENA_MODEL_A_DEFAULT,
+                currentModelId ?? "letta/auto",
+              ],
+              feedbackContext: {
+                parentAgentName: agentName,
+                parentAgentDescription: agentDescription,
+                surface: "letta_code_tui",
+                model: currentModelId,
+              },
+              onReady: (message, readyRun) => {
+                setReflectionArenaChoicePending({
+                  runId: readyRun.runId,
+                  readyMessage: message,
+                  readyMessageShown: false,
+                  questions: buildReflectionArenaChoiceQuestions(
+                    readyRun.runId,
+                  ),
+                });
+              },
+            });
+            return arenaResult.launched;
+          }
+
           const result = await launchReflectionSubagent({
             agentId: reflectionAgentId,
             conversationId: conversationIdRef.current ?? "default",
@@ -4962,7 +4996,7 @@ export function App({
     trajectoryTokenDisplayRef.current,
   );
   const inputVisible = !showExitStats;
-  const reflectionArenaChoiceVisible = Boolean(
+  const reflectionArenaChoiceIdle = Boolean(
     reflectionArenaChoicePending &&
       !showExitStats &&
       !streaming &&
@@ -4971,10 +5005,35 @@ export function App({
       pendingApprovals.length === 0 &&
       !anySelectorOpen,
   );
+  const reflectionArenaChoiceVisible = Boolean(
+    reflectionArenaChoiceIdle &&
+      (!reflectionArenaChoicePending?.readyMessage ||
+        reflectionArenaChoicePending.readyMessageShown),
+  );
+  useEffect(() => {
+    const pending = reflectionArenaChoicePending;
+    if (
+      !reflectionArenaChoiceIdle ||
+      !pending?.readyMessage ||
+      pending.readyMessageShown
+    ) {
+      return;
+    }
+    appendTaskNotificationEvents([pending.readyMessage]);
+    setReflectionArenaChoicePending((current) =>
+      current?.runId === pending.runId
+        ? { ...current, readyMessageShown: true }
+        : current,
+    );
+  }, [
+    reflectionArenaChoiceIdle,
+    reflectionArenaChoicePending,
+    appendTaskNotificationEvents,
+  ]);
   const inputEnabled =
     !showExitStats &&
     pendingApprovals.length === 0 &&
-    !reflectionArenaChoiceVisible &&
+    !reflectionArenaChoiceIdle &&
     !anySelectorOpen;
   const onEscapeCommandCancel = useCallback(() => {
     if (isActiveConnectOperationCancellable()) {

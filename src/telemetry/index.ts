@@ -99,6 +99,7 @@ export interface ReflectionStartData {
   conversation_id?: string;
   start_message_id?: string;
   end_message_id?: string;
+  model?: string;
   version?: string;
   platform?: string;
 }
@@ -111,6 +112,7 @@ export interface ReflectionEndData {
   error?: string;
   step_count?: number;
   duration_ms?: number;
+  model?: string;
   version?: string;
   platform?: string;
 }
@@ -708,6 +710,7 @@ class TelemetryManager {
       conversationId?: string;
       startMessageId?: string;
       endMessageId?: string;
+      model?: string | null;
     },
   ) {
     const data: ReflectionStartData = {
@@ -716,6 +719,7 @@ class TelemetryManager {
       conversation_id: options?.conversationId,
       start_message_id: options?.startMessageId,
       end_message_id: options?.endMessageId,
+      model: options?.model ?? undefined,
       version: getVersion(),
       platform: process.platform,
     };
@@ -734,6 +738,7 @@ class TelemetryManager {
       error?: string;
       stepCount?: number;
       durationMs?: number;
+      model?: string | null;
     },
   ) {
     const data: ReflectionEndData = {
@@ -744,6 +749,7 @@ class TelemetryManager {
       error: options?.error,
       step_count: options?.stepCount,
       duration_ms: options?.durationMs,
+      model: options?.model ?? undefined,
       version: getVersion(),
       platform: process.platform,
     };

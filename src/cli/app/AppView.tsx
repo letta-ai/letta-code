@@ -267,6 +267,8 @@ type AppViewProps = {
   pendingIds: Set<string>;
   reflectionArenaChoicePending: {
     questions: ReflectionArenaChoiceQuestion[];
+    readyMessage?: string;
+    readyMessageShown?: boolean;
     runId: string;
   } | null;
   precomputedDiffsRef: RefObject<Map<string, AdvancedDiffSuccess>>;

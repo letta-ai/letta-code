@@ -1,7 +1,15 @@
+import { execFile as execFileCb } from "node:child_process";
 import { randomInt, randomUUID } from "node:crypto";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  readdir,
+  readFile,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import {
   buildReflectionMemoryScope,
   finalizeReflectionMemoryWorktree,
@@ -9,22 +17,38 @@ import {
   type ReflectionMemoryWorktreeFinalizeResult,
   reflectionIntegrationConsumesTranscript,
 } from "@/agent/memory-worktree";
+import { getBackend } from "@/backend";
+import { buildAgentReference } from "@/cli/helpers/app-urls";
 import {
+  buildReflectionArenaHfChoiceRow,
+  maybeUploadReflectionArenaChoiceToHf,
+} from "@/cli/helpers/reflection-arena-hf-upload";
+import {
+  emitReflectionRunEnd,
+  emitReflectionRunStart,
   finalizeReflectionMemoryWorktreeLaunch,
   prepareReflectionMemoryWorktreeLaunch,
+  REFLECTION_AGENT_ID_WAIT_MS,
+  type ReflectionFeedbackContext,
+  type ReflectionLaunchTriggerSource,
   releaseReflectionLaunch,
   tryReserveReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
 import {
   type AutoReflectionPayload,
+  buildAutoReflectionPayload,
   finalizeAutoReflectionPayload,
 } from "@/cli/helpers/reflection-transcript";
 import { debugWarn } from "@/utils/debug";
 
+const execFile = promisify(execFileCb);
+
 export const REFLECTION_ARENA_MODEL_A_DEFAULT = "letta/auto-memory";
 
+const ANSI_BOLD = "\u001b[1m";
 const ANSI_CYAN = "\u001b[36m";
 const ANSI_MAGENTA = "\u001b[35m";
+const ANSI_RESET_BOLD = "\u001b[22m";
 const ANSI_RESET_FOREGROUND = "\u001b[39m";
 
 export type ReflectionArenaCandidateLabel = "1" | "2";
@@ -85,11 +109,27 @@ export interface ReflectionArenaRun {
 export interface StartReflectionArenaRunOptions {
   agentId: string;
   conversationId: string;
+  feedbackContext?: ReflectionFeedbackContext;
   instruction?: string;
   models: [string, string];
   onReady: (message: string, run: ReflectionArenaRun) => void | Promise<void>;
   payload: AutoReflectionPayload;
+  triggerSource: ReflectionLaunchTriggerSource;
 }
+
+export interface LaunchReflectionArenaOptions {
+  agentId: string;
+  conversationId: string;
+  feedbackContext?: ReflectionFeedbackContext;
+  instruction?: string;
+  models: [string, string];
+  onReady: (message: string, run: ReflectionArenaRun) => void | Promise<void>;
+  triggerSource: ReflectionLaunchTriggerSource;
+}
+
+export type LaunchReflectionArenaResult =
+  | { launched: true; payloadPath: string; run: ReflectionArenaRun }
+  | { launched: false; reason: "no_payload" };
 
 export interface FinalizeReflectionArenaChoiceOptions {
   choice: ReflectionArenaChoice;
@@ -103,11 +143,32 @@ export interface ReflectionArenaChoiceQuestion {
   allowOther?: boolean;
   header: string;
   multiSelect: boolean;
-  options: Array<{ description: string; label: string }>;
+  otherDescription?: string;
+  otherFirst?: boolean;
+  otherLabel?: string;
+  options: Array<{
+    description: string;
+    label: string;
+    submitImmediately?: boolean;
+  }>;
   question: string;
 }
 
 const updateLocks = new Map<string, Promise<void>>();
+
+async function getGitHead(cwd: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFile("git", ["rev-parse", "HEAD"], {
+      cwd,
+      encoding: "utf-8",
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
 
 function getReflectionArenaRoot(): string {
   return join(homedir(), ".letta", "reflection-arena");
@@ -139,6 +200,36 @@ export async function loadReflectionArenaRun(
 ): Promise<ReflectionArenaRun> {
   const raw = await readFile(getReflectionArenaRunPath(runId), "utf-8");
   return JSON.parse(raw) as ReflectionArenaRun;
+}
+
+export async function listAwaitingReflectionArenaRuns(): Promise<
+  ReflectionArenaRun[]
+> {
+  let entries: string[];
+  try {
+    entries = await readdir(getReflectionArenaRunsDir());
+  } catch {
+    return [];
+  }
+
+  const runs = await Promise.all(
+    entries
+      .filter((entry) => entry.endsWith(".json"))
+      .map(async (entry) => {
+        try {
+          const runId = entry.slice(0, -".json".length);
+          return await loadReflectionArenaRun(runId);
+        } catch {
+          return null;
+        }
+      }),
+  );
+
+  return runs
+    .filter(
+      (run): run is ReflectionArenaRun => run?.status === "awaiting_choice",
+    )
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 async function updateReflectionArenaRun(
@@ -211,17 +302,19 @@ export function buildReflectionArenaChoiceQuestions(
           label: "Inspect memory first",
           description:
             "Dismiss this prompt so you can inspect Memory Palace before choosing.",
+          submitImmediately: true,
         },
       ],
     },
     {
-      header: "Reflection arena notes",
-      question:
-        "Optional notes for this choice? Select No notes, or choose Type something and enter notes.",
+      header: "Reflection arena feedback",
+      question: "Optional feedback for this choice?",
       multiSelect: false,
+      otherFirst: true,
+      otherLabel: "Type feedback",
       options: [
         {
-          label: "No notes",
+          label: "No feedback",
           description: "Record the choice without extra grading notes.",
         },
       ],
@@ -265,7 +358,10 @@ export function parseReflectionArenaChoiceAnswers(
   return {
     action: "finalize",
     choice,
-    notes: notes && notes !== "No notes" ? notes : undefined,
+    notes:
+      notes && notes !== "No notes" && notes !== "No feedback"
+        ? notes
+        : undefined,
   };
 }
 
@@ -293,12 +389,18 @@ function formatCandidateReport(candidate: ReflectionArenaCandidate): string {
   const status = result?.success
     ? "completed"
     : `errored: ${result?.error ?? "unknown error"}`;
+  const subagentReference = result?.agentId
+    ? buildAgentReference(result.agentId, {
+        conversationId: result.conversationId,
+      })
+    : candidate.subagentId;
   return colorizeCandidateReport(
     candidate.label,
     [
       `Reflection ${candidate.label}`,
       `Status: ${status}`,
       `Subagent: ${result?.agentId ?? candidate.subagentId}`,
+      `Subagent link: ${subagentReference}`,
       "",
       truncateReport(result?.report),
     ].join("\n"),
@@ -326,34 +428,49 @@ export function formatReflectionArenaAwaitingChoice(
   ].join("\n");
 }
 
+function formatCandidateModelLink(candidate: ReflectionArenaCandidate): string {
+  if (!candidate.result?.agentId) {
+    return candidate.model;
+  }
+  const reference = buildAgentReference(candidate.result.agentId, {
+    conversationId: candidate.result.conversationId,
+  });
+  return `${candidate.model} (${reference})`;
+}
+
 function formatReflectionArenaChoiceResult(params: {
   discarded: ReflectionArenaCandidateLabel[];
+  hfUploadMessage?: string;
   integration?: ReflectionMemoryWorktreeFinalizeResult;
   run: ReflectionArenaRun;
 }): string {
-  const { run, integration, discarded } = params;
+  const { run, integration, discarded, hfUploadMessage } = params;
   const chosen = run.choice?.chosen ?? "tie";
-  const ordered = [...run.candidates].sort((a, b) =>
-    a.label.localeCompare(b.label),
-  );
-  const mapping = ordered
-    .map((candidate) => `Reflection ${candidate.label}: ${candidate.model}`)
-    .join("\n");
+  const winner =
+    chosen === "tie"
+      ? null
+      : run.candidates.find((candidate) => candidate.label === chosen);
+  const losers = discarded
+    .map((label) =>
+      run.candidates.find((candidate) => candidate.label === label),
+    )
+    .filter((candidate): candidate is ReflectionArenaCandidate =>
+      Boolean(candidate),
+    );
+  const selectionLine = winner
+    ? `${ANSI_BOLD}Recorded selection ${formatCandidateModelLink(winner)} over ${losers.map(formatCandidateModelLink).join(" and ") || "the other candidate"}.${ANSI_RESET_BOLD}`
+    : `${ANSI_BOLD}Recorded selection tie / no merge.${ANSI_RESET_BOLD}`;
+
   return [
-    `Recorded reflection arena choice for run ${run.runId}: ${chosen}.`,
-    "",
-    "Model mapping:",
-    mapping,
+    selectionLine,
     "",
     integration
       ? `Memory result: ${integration.summary}`
       : "Memory result: no candidate merged.",
-    discarded.length > 0 ? `Discarded: ${discarded.join(", ")}` : undefined,
+    ...(hfUploadMessage ? [hfUploadMessage] : []),
     `Run file: ${getReflectionArenaRunPath(run.runId)}`,
     `Choice log: ${getReflectionArenaChoiceLogPath()}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ].join("\n");
 }
 
 async function appendChoiceRecord(run: ReflectionArenaRun): Promise<void> {
@@ -388,6 +505,61 @@ async function appendChoiceRecord(run: ReflectionArenaRun): Promise<void> {
   );
 }
 
+async function uploadChoiceRecordToHf(params: {
+  run: ReflectionArenaRun;
+  memoryBaseCommit: string | null;
+  memoryCandidateCommit: string | null;
+}): Promise<string | undefined> {
+  const { run, memoryBaseCommit, memoryCandidateCommit } = params;
+  const choice = run.choice;
+  if (!choice) return undefined;
+
+  const winner =
+    choice.chosen === "tie"
+      ? null
+      : (run.candidates.find(
+          (candidate) => candidate.label === choice.chosen,
+        ) ?? null);
+  const loser =
+    choice.chosen === "tie"
+      ? null
+      : choice.discarded
+          .map((label) =>
+            run.candidates.find((candidate) => candidate.label === label),
+          )
+          .find((candidate): candidate is ReflectionArenaCandidate =>
+            Boolean(candidate),
+          );
+
+  const row = buildReflectionArenaHfChoiceRow({
+    runId: run.runId,
+    choice: choice.chosen === "tie" ? "tie" : "win_loss",
+    winner: winner?.model ?? null,
+    loser: loser?.model ?? null,
+    winnerAgentId: winner?.result?.agentId ?? null,
+    loserAgentId: loser?.result?.agentId ?? null,
+    parentAgentId: run.agentId,
+    timestamp: choice.recordedAt,
+    feedback: choice.notes,
+    parentConversationId: run.conversationId,
+    memoryBaseCommit,
+    memoryCandidateCommit,
+  });
+
+  const result = await maybeUploadReflectionArenaChoiceToHf(row);
+  if (result.uploaded) {
+    return `HF upload: uploaded to ${result.repoId}/${result.path}`;
+  }
+  if (result.reason === "missing_token") {
+    return "HF upload: no HF_TOKEN found; local log only. Run /secrets set HF_TOKEN to enable uploads.";
+  }
+  debugWarn(
+    "memory",
+    `Failed to upload reflection arena choice to Hugging Face: ${result.error ?? "unknown error"}`,
+  );
+  return `HF upload: failed via git-cache-v3; local log only. ${result.error ?? ""}`.trim();
+}
+
 function candidateIsFinished(candidate: ReflectionArenaCandidate): boolean {
   return Boolean(candidate.result);
 }
@@ -414,6 +586,33 @@ async function markCandidateComplete(params: {
     }
     return next;
   });
+}
+
+export async function launchReflectionArena(
+  options: LaunchReflectionArenaOptions,
+): Promise<LaunchReflectionArenaResult> {
+  let systemPrompt: string | undefined;
+  try {
+    const agent = await getBackend().retrieveAgent(options.agentId);
+    systemPrompt = agent.system ?? undefined;
+  } catch {
+    // Non-fatal — the arena payload will just omit the system prompt.
+  }
+
+  const payload = await buildAutoReflectionPayload(
+    options.agentId,
+    options.conversationId,
+    systemPrompt,
+  );
+  if (!payload) {
+    return { launched: false, reason: "no_payload" };
+  }
+
+  const run = await startReflectionArenaRun({
+    ...options,
+    payload,
+  });
+  return { launched: true, payloadPath: payload.payloadPath, run };
 }
 
 export async function startReflectionArenaRun(
@@ -460,7 +659,8 @@ export async function startReflectionArenaRun(
     };
     await saveReflectionArenaRun(run);
 
-    const { spawnBackgroundSubagentTask } = await import("@/tools/impl/task");
+    const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
+      await import("@/tools/impl/task");
     const candidates: ReflectionArenaCandidate[] = prepared.map((candidate) => {
       const { subagentId } = spawnBackgroundSubagentTask({
         subagentType: "reflection",
@@ -484,6 +684,20 @@ export async function startReflectionArenaRun(
           report,
         }) => {
           try {
+            emitReflectionRunEnd({
+              parentAgentId: options.agentId,
+              triggerSource: options.triggerSource,
+              success,
+              subagentId: agentId ?? undefined,
+              conversationId: options.conversationId,
+              error,
+              stepCount,
+              durationMs,
+              feedbackContext: {
+                ...options.feedbackContext,
+                model: candidate.model,
+              },
+            });
             const updated = await markCandidateComplete({
               candidateLabel: candidate.label,
               runId,
@@ -512,6 +726,19 @@ export async function startReflectionArenaRun(
             );
           }
         },
+      });
+      void waitForBackgroundSubagentAgentId(
+        subagentId,
+        REFLECTION_AGENT_ID_WAIT_MS,
+      ).then((resolvedAgentId) => {
+        emitReflectionRunStart({
+          triggerSource: options.triggerSource,
+          subagentId: resolvedAgentId ?? undefined,
+          conversationId: options.conversationId,
+          startMessageId: options.payload.startMessageId,
+          endMessageId: options.payload.endMessageId,
+          model: candidate.model,
+        });
       });
       return {
         label: candidate.label,
@@ -544,6 +771,8 @@ export async function finalizeReflectionArenaChoice(
 
   const discarded: ReflectionArenaCandidateLabel[] = [];
   let integration: ReflectionMemoryWorktreeFinalizeResult | undefined;
+  let memoryBaseCommit: string | null = null;
+  let memoryCandidateCommit: string | null = null;
 
   if (options.choice !== "tie") {
     const chosen = run.candidates.find(
@@ -552,6 +781,8 @@ export async function finalizeReflectionArenaChoice(
     if (!chosen) {
       throw new Error(`Unknown reflection arena label: ${options.choice}`);
     }
+    memoryBaseCommit = chosen.worktree.baseHead;
+    memoryCandidateCommit = await getGitHead(chosen.worktree.worktreeDir);
     const finalized = await finalizeReflectionMemoryWorktreeLaunch({
       worktree: chosen.worktree,
       subagentSuccess: chosen.result?.success ?? false,
@@ -597,10 +828,16 @@ export async function finalizeReflectionArenaChoice(
   };
   await saveReflectionArenaRun(completedRun);
   await appendChoiceRecord(completedRun);
+  const hfUploadMessage = await uploadChoiceRecordToHf({
+    run: completedRun,
+    memoryBaseCommit,
+    memoryCandidateCommit,
+  });
 
   return {
     message: formatReflectionArenaChoiceResult({
       discarded,
+      hfUploadMessage,
       integration,
       run: completedRun,
     }),
