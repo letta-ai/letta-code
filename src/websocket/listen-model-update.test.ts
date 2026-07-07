@@ -551,7 +551,7 @@ describe("listen-client list_models response wiring", () => {
 
     // The response builder should use Promise.allSettled for parallel fetches
     expect(source).toContain("Promise.allSettled");
-    expect(source).toContain("getAvailableModelHandles()");
+    expect(source).toContain("getAvailableModelHandles(");
     expect(source).toContain("listProviders()");
     expect(source).toContain("buildByokProviderAliases(providers)");
   });
@@ -560,7 +560,19 @@ describe("listen-client list_models response wiring", () => {
     const source = readModelToolsetCommandSource();
 
     // Handler should be wrapped in void (async () => { ... })() pattern
-    expect(source).toContain("buildListModelsResponse(parsed.request_id)");
+    expect(source).toContain("buildListModelsResponse(parsed.request_id, {");
+  });
+
+  test("user-initiated force refresh bypasses the availability cache", () => {
+    const source = readModelToolsetCommandSource();
+
+    // The WS command's force flag must reach getAvailableModelHandles as
+    // forceRefresh — otherwise "Refresh model list" can be answered from a
+    // stale-but-within-TTL cache snapshot (LET-9479).
+    expect(source).toContain("forceRefresh: parsed.force === true");
+    expect(source).toContain(
+      "getAvailableModelHandles(\n      options.forceRefresh === true ? { forceRefresh: true } : undefined,\n    )",
+    );
   });
 
   test("response type includes available_handles and byok_provider_aliases fields", () => {

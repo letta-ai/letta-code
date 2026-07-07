@@ -876,8 +876,13 @@ export function isListModelsCommand(
   const c = value as {
     type?: unknown;
     request_id?: unknown;
+    force?: unknown;
   };
-  return c.type === "list_models" && typeof c.request_id === "string";
+  return (
+    c.type === "list_models" &&
+    typeof c.request_id === "string" &&
+    (c.force === undefined || typeof c.force === "boolean")
+  );
 }
 
 export function isListConnectProvidersCommand(
