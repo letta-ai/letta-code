@@ -250,8 +250,12 @@ describe("personality helpers", () => {
     const definitions = getPersonalityBlockDefinitions("blank");
 
     expect(definitions.persona.value).toBe("");
-    expect(definitions.persona.description).toBe("Blank starter personality.");
+    expect(definitions.persona.description).toBe(
+      "Who I am, what I value, and how I approach working with people. This evolves as I learn and grow.",
+    );
     expect(definitions.human.value).toBe("");
-    expect(definitions.human.description).toContain("What I've learned");
+    expect(definitions.human.description).toBe(
+      "What I've learned about the person I'm working with. Understanding them helps me be genuinely helpful rather than generically helpful.",
+    );
   });
 });
