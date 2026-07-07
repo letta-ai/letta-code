@@ -50,6 +50,12 @@ type SlackCommandHandler = (args: {
   ack: () => Promise<void>;
 }) => Promise<void>;
 
+type SlackActionHandler = (args: {
+  body: unknown;
+  action: unknown;
+  ack: () => Promise<void>;
+}) => Promise<void>;
+
 class FakeSlackApp {
   static instances: FakeSlackApp[] = [];
 
@@ -102,6 +108,7 @@ class FakeSlackApp {
   messageHandler: SlackMessageHandler | null = null;
   eventHandlers = new Map<string, SlackEventHandler>();
   commandHandlers = new Map<string, SlackCommandHandler>();
+  actionHandlers = new Map<string, SlackActionHandler>();
   errorHandler: ((error: Error) => Promise<void>) | null = null;
   readonly init = mock(async () => {});
   readonly start = mock(async () => {});
@@ -121,6 +128,10 @@ class FakeSlackApp {
 
   command(name: string, handler: SlackCommandHandler): void {
     this.commandHandlers.set(name, handler);
+  }
+
+  action(name: string, handler: SlackActionHandler): void {
+    this.actionHandlers.set(name, handler);
   }
 
   error(handler: (error: Error) => Promise<void>): void {
@@ -439,6 +450,103 @@ test("slack adapter forwards native channel slash commands as channel slash inpu
     messageId: "trigger-2",
     threadId: null,
     chatType: "channel",
+  });
+});
+
+test("slack adapter forwards model picker selections as /model commands", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const messages: unknown[] = [];
+  adapter.onMessage = async (message) => {
+    messages.push(message);
+  };
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.actionHandlers.get("letta_channel_model_select");
+  if (!handler) {
+    throw new Error("Expected model select action handler");
+  }
+
+  const ack = mock(async () => {});
+  await handler({
+    body: {
+      user: { id: "U123", name: "Alice", team_id: "T123" },
+      channel: { id: "C123", name: "eng" },
+      container: {
+        channel_id: "C123",
+        message_ts: "1712800000.000100",
+        thread_ts: "1712800000.000200",
+      },
+      message: { ts: "1712800000.000100", thread_ts: "1712800000.000200" },
+    },
+    action: {
+      action_id: "letta_channel_model_select",
+      action_ts: "1712800001.000300",
+      selected_option: {
+        value: "openai/gpt-5",
+      },
+    },
+    ack,
+  });
+
+  expect(ack).toHaveBeenCalledTimes(1);
+  expect(messages).toHaveLength(1);
+  expect(messages[0]).toMatchObject({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    senderId: "U123",
+    senderName: "Alice",
+    senderTeamId: "T123",
+    text: "/model openai/gpt-5",
+    threadId: "1712800000.000200",
+    chatType: "channel",
+  });
+});
+
+test("slack adapter includes Block Kit blocks on direct replies", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const blocks = [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: "*Current model:* Auto" },
+    },
+  ];
+
+  await adapter.start();
+  await adapter.sendDirectReply(
+    "C123",
+    "Slack current conversation model: Auto.",
+    {
+      threadId: "1712800000.000200",
+      slackBlocks: blocks,
+    },
+  );
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
+    channel: "C123",
+    text: "Slack current conversation model: Auto.",
+    blocks,
+    thread_ts: "1712800000.000200",
   });
 });
 

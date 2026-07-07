@@ -12,6 +12,7 @@ import {
   buildChannelModelListUnavailableMessage,
   buildChannelModelUpdatedMessage,
   buildChannelModelUpdateFailedMessage,
+  buildSlackModelPickerBlocks,
 } from "@/channels/commands";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
@@ -527,10 +528,40 @@ export async function wireChannelIngress(
           agentId: runtime.agent_id,
           conversationId: runtime.conversation_id,
         });
-        return {
-          handled: true,
-          text: buildChannelCurrentModelMessage(channelId, status),
-        };
+        const text = buildChannelCurrentModelMessage(channelId, status);
+        if (channelId !== "slack") {
+          return {
+            handled: true,
+            text,
+          };
+        }
+
+        try {
+          const response = await buildListModelsResponse(
+            `channel-model-picker-${crypto.randomUUID()}`,
+          );
+          if (!response.success) {
+            return {
+              handled: true,
+              text,
+            };
+          }
+          return {
+            handled: true,
+            text,
+            slackBlocks: buildSlackModelPickerBlocks({
+              current: status,
+              entries: response.entries,
+              availableHandles: response.available_handles,
+              recentHandles: settingsManager.getRecentModels(),
+            }),
+          };
+        } catch {
+          return {
+            handled: true,
+            text,
+          };
+        }
       } catch (error) {
         return {
           handled: true,

@@ -20,6 +20,7 @@ import {
   buildChannelPausedMessage,
   buildChannelResumedMessage,
   buildChannelStatusMessage,
+  buildSlackModelPickerBlocks,
   buildUnsupportedChannelCommandMessage,
   listChannelSlashCommands,
   parseChannelBangCommand,
@@ -339,6 +340,45 @@ describe("channel slash commands", () => {
     expect(text).toContain(
       "Mention the app with @agent /model <handle-or-id> to switch this thread's routed model. Use @agent /model to show the current model. Legacy !model still works after a mention.",
     );
+  });
+
+  test("builds Slack model picker blocks", () => {
+    const blocks = buildSlackModelPickerBlocks({
+      current: {
+        modelLabel: "GPT-5.5",
+        modelHandle: "chatgpt-cameron/gpt-5.5",
+        scope: "conversation",
+      },
+      entries: [
+        {
+          id: "sonnet",
+          handle: "anthropic/claude-sonnet-4-6",
+          label: "Claude Sonnet 4.6",
+          description: "Balanced coding model",
+          isFeatured: true,
+        },
+        {
+          id: "gpt",
+          handle: "openai/gpt-5",
+          label: "GPT-5",
+          description: "",
+        },
+      ],
+      availableHandles: ["openai/gpt-5", "anthropic/claude-sonnet-4-6"],
+      recentHandles: ["anthropic/claude-sonnet-4-6"],
+    });
+
+    expect(blocks).toBeDefined();
+    const selectBlock = blocks?.[1] as Record<string, unknown> | undefined;
+    const accessory = selectBlock?.accessory as
+      | { action_id?: string; type?: string; options?: unknown[] }
+      | undefined;
+    expect(selectBlock?.type).toBe("section");
+    expect(accessory?.type).toBe("static_select");
+    expect(accessory?.action_id).toBe("letta_channel_model_select");
+    expect(accessory?.options).toHaveLength(2);
+    expect(JSON.stringify(blocks)).toContain("Current conversation model");
+    expect(JSON.stringify(blocks)).toContain("Claude Sonnet 4.6");
   });
 
   test("builds model update and unavailable messages", () => {

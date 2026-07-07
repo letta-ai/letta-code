@@ -521,6 +521,7 @@ export type ChannelModelHandler = (params: {
 }) => Promise<{
   handled: boolean;
   text?: string;
+  slackBlocks?: unknown[];
 }>;
 
 export type ChannelReloadHandler = (params: {
@@ -1581,7 +1582,7 @@ export class ChannelRegistry {
   private async handleModelSlashCommand(
     command: { args: string },
     msg: InboundChannelMessage,
-  ): Promise<{ handled: boolean; text?: string }> {
+  ): Promise<{ handled: boolean; text?: string; slackBlocks?: unknown[] }> {
     const route = this.loadAndFindRawRouteForMessage(msg);
     if (!route) {
       return {

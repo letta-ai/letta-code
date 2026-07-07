@@ -208,7 +208,12 @@ export interface ChannelAdapter {
   sendDirectReply(
     chatId: string,
     text: string,
-    options?: { replyToMessageId?: string; threadId?: string | null },
+    options?: {
+      replyToMessageId?: string;
+      threadId?: string | null;
+      /** Slack Block Kit blocks for channel-native direct replies. */
+      slackBlocks?: unknown[];
+    },
   ): Promise<void>;
 
   /**

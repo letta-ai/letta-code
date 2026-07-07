@@ -24,6 +24,12 @@ export type ChannelSlashCommandDefinition = {
 export type ChannelSlashCommandHandlerResult = {
   handled: boolean;
   text?: string;
+  slackBlocks?: unknown[];
+};
+
+type ChannelDirectReplyPayload = {
+  text: string;
+  slackBlocks?: unknown[];
 };
 
 export type ChannelSlashCommandHandlers = {
@@ -513,6 +519,11 @@ type ChannelModelListEntry = Pick<
 >;
 
 const DEFAULT_CHANNEL_MODEL_LIST_LIMIT = 8;
+const SLACK_MODEL_PICKER_OPTION_LIMIT = 100;
+const SLACK_MODEL_OPTION_TEXT_LIMIT = 75;
+const SLACK_MODEL_OPTION_VALUE_LIMIT = 75;
+
+export const SLACK_MODEL_SELECT_ACTION_ID = "letta_channel_model_select";
 
 function getModelEntryRank(entry: ChannelModelListEntry): number {
   if (entry.isDefault) return 0;
@@ -606,6 +617,169 @@ export function buildChannelCurrentModelMessage(
     `${displayName} current ${scope} model: ${params.modelLabel}${handleText}.`,
     `Use ${switchCommand} list to see available models, or ${switchCommand} <handle-or-id> to switch.`,
   ].join("\n");
+}
+
+type SlackModelOption = {
+  text: { type: "plain_text"; text: string; emoji?: boolean };
+  value: string;
+  description?: { type: "plain_text"; text: string; emoji?: boolean };
+};
+
+function escapeSlackMrkdwn(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function truncateSlackPlainText(text: string, limit: number): string {
+  if (text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, limit - 3)).trimEnd()}...`;
+}
+
+function getSlackModelOptionValue(entry: ChannelModelListEntry): string | null {
+  const candidates = [entry.id, entry.handle].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+  return (
+    candidates.find(
+      (value) => value.length <= SLACK_MODEL_OPTION_VALUE_LIMIT,
+    ) ?? null
+  );
+}
+
+function buildSlackModelOption(
+  entry: ChannelModelListEntry,
+): SlackModelOption | null {
+  const value = getSlackModelOptionValue(entry);
+  if (!value) {
+    return null;
+  }
+
+  const labelText =
+    entry.handle === entry.label
+      ? entry.label
+      : `${entry.label} - ${entry.handle}`;
+  const option: SlackModelOption = {
+    text: {
+      type: "plain_text",
+      text: truncateSlackPlainText(labelText, SLACK_MODEL_OPTION_TEXT_LIMIT),
+      emoji: true,
+    },
+    value,
+  };
+  if (entry.description) {
+    option.description = {
+      type: "plain_text",
+      text: truncateSlackPlainText(
+        entry.description,
+        SLACK_MODEL_OPTION_TEXT_LIMIT,
+      ),
+      emoji: true,
+    };
+  }
+  return option;
+}
+
+export function buildSlackModelPickerBlocks(params: {
+  current: {
+    modelLabel: string;
+    modelHandle: string | null;
+    scope?: "agent" | "conversation";
+  };
+  entries: ListModelsResponseModelEntry[];
+  availableHandles?: string[] | null;
+  recentHandles?: string[];
+}): unknown[] | undefined {
+  const entries = params.entries as ChannelModelListEntry[];
+  const byHandle = buildModelEntriesByHandle(entries);
+  const availableHandleList = Array.isArray(params.availableHandles)
+    ? params.availableHandles
+    : null;
+  const availableSet = availableHandleList
+    ? new Set(availableHandleList)
+    : null;
+  const recentEntries = resolveModelHandles({
+    handles: params.recentHandles ?? [],
+    byHandle,
+    availableHandles: availableSet,
+  });
+  const availableEntries = availableHandleList
+    ? resolveModelHandles({ handles: availableHandleList, byHandle })
+    : getFallbackModelEntries(byHandle);
+  const optionEntries = [...recentEntries, ...availableEntries];
+  const options: SlackModelOption[] = [];
+  const seenValues = new Set<string>();
+  for (const entry of optionEntries) {
+    const option = buildSlackModelOption(entry);
+    if (!option || seenValues.has(option.value)) {
+      continue;
+    }
+    seenValues.add(option.value);
+    options.push(option);
+    if (options.length >= SLACK_MODEL_PICKER_OPTION_LIMIT) {
+      break;
+    }
+  }
+
+  if (options.length === 0) {
+    return undefined;
+  }
+
+  const currentScope =
+    params.current.scope === "agent" ? "agent" : "conversation";
+  const currentHandleText = params.current.modelHandle
+    ? `\nHandle: ${escapeSlackMrkdwn(params.current.modelHandle)}`
+    : "";
+  const currentHandle = params.current.modelHandle;
+  const initialOption = options.find((option) => {
+    const entry = optionEntries.find(
+      (candidate) =>
+        candidate.id === option.value || candidate.handle === option.value,
+    );
+    return currentHandle
+      ? entry?.handle === currentHandle || option.value === currentHandle
+      : false;
+  });
+
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*Current ${currentScope} model:* ${escapeSlackMrkdwn(params.current.modelLabel)}${currentHandleText}`,
+      },
+    },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "Choose a model for this routed conversation:",
+      },
+      accessory: {
+        type: "static_select",
+        action_id: SLACK_MODEL_SELECT_ACTION_ID,
+        placeholder: {
+          type: "plain_text",
+          text: "Select a model",
+          emoji: true,
+        },
+        options,
+        ...(initialOption ? { initial_option: initialOption } : {}),
+      },
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: "Need another handle? Mention the app with `@agent /model <handle-or-id>`.",
+        },
+      ],
+    },
+  ];
 }
 
 function formatChannelModelEntry(
@@ -778,12 +952,31 @@ async function handleScopedCommand(params: {
       ) => Promise<ChannelSlashCommandHandlerResult>)
     | undefined;
   defaultText?: string;
-}): Promise<string | null> {
+}): Promise<ChannelDirectReplyPayload | null> {
   const result = await params.handler?.(params.command, params.msg);
   if (!result?.handled) {
     return null;
   }
-  return result.text ?? params.defaultText ?? null;
+  const text = result.text ?? params.defaultText;
+  if (!text) {
+    return null;
+  }
+  return {
+    text,
+    ...(result.slackBlocks ? { slackBlocks: result.slackBlocks } : {}),
+  };
+}
+
+function normalizeDirectReplyPayload(
+  value: string | ChannelDirectReplyPayload | null,
+): ChannelDirectReplyPayload | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === "string") {
+    return { text: value };
+  }
+  return value;
 }
 
 export async function tryHandleChannelSlashCommand(
@@ -809,98 +1002,104 @@ export async function tryHandleChannelSlashCommand(
     return true;
   }
 
-  const text = await (async () => {
-    switch (command.name) {
-      case "help":
-        return buildChannelHelpMessage(msg.channel);
-      case "status":
-        return buildChannelStatusMessage(
-          msg,
-          options.statusContext ?? {
-            adapterRunning: adapter.isRunning(),
-            accountConfigured: false,
-            route: null,
-          },
-        );
-      case "pause":
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.pause,
-        });
-      case "resume":
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.resume,
-        });
-      case "cancel":
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.cancel,
-          defaultText: buildChannelCancelAcceptedMessage(msg.channel),
-        });
-      case "chat":
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.chat,
-        });
-      case "detach":
-        if (!isSlackMentionControl) {
+  const reply = normalizeDirectReplyPayload(
+    await (async () => {
+      switch (command.name) {
+        case "help":
+          return buildChannelHelpMessage(msg.channel);
+        case "status":
+          return buildChannelStatusMessage(
+            msg,
+            options.statusContext ?? {
+              adapterRunning: adapter.isRunning(),
+              accountConfigured: false,
+              route: null,
+            },
+          );
+        case "pause":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.pause,
+          });
+        case "resume":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.resume,
+          });
+        case "cancel":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.cancel,
+            defaultText: buildChannelCancelAcceptedMessage(msg.channel),
+          });
+        case "chat":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.chat,
+          });
+        case "detach":
+          if (!isSlackMentionControl) {
+            return buildUnsupportedChannelCommandMessage(msg.channel, command);
+          }
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.detach,
+          });
+        case "model":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.model,
+          });
+        case "new":
+          if (!isSlackMentionControl) {
+            return buildUnsupportedChannelCommandMessage(msg.channel, command);
+          }
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.newConversation,
+          });
+        case "reflect":
+        case "reflection":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.reflection,
+          });
+        case "reload":
+          if (!isSlackMentionControl) {
+            return buildUnsupportedChannelCommandMessage(msg.channel, command);
+          }
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.reload,
+          });
+        default:
           return buildUnsupportedChannelCommandMessage(msg.channel, command);
-        }
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.detach,
-        });
-      case "model":
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.model,
-        });
-      case "new":
-        if (!isSlackMentionControl) {
-          return buildUnsupportedChannelCommandMessage(msg.channel, command);
-        }
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.newConversation,
-        });
-      case "reflect":
-      case "reflection":
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.reflection,
-        });
-      case "reload":
-        if (!isSlackMentionControl) {
-          return buildUnsupportedChannelCommandMessage(msg.channel, command);
-        }
-        return handleScopedCommand({
-          msg,
-          command,
-          handler: options.handlers?.reload,
-        });
-      default:
-        return buildUnsupportedChannelCommandMessage(msg.channel, command);
-    }
-  })();
+      }
+    })(),
+  );
 
-  if (text === null) {
+  if (reply === null) {
     return false;
   }
 
   await adapter.sendDirectReply(
     msg.chatId,
-    text,
-    msg.messageId || msg.threadId
-      ? { replyToMessageId: msg.messageId, threadId: msg.threadId ?? null }
+    reply.text,
+    msg.messageId || msg.threadId || reply.slackBlocks
+      ? {
+          replyToMessageId: msg.messageId,
+          threadId: msg.threadId ?? null,
+          ...(reply.slackBlocks ? { slackBlocks: reply.slackBlocks } : {}),
+        }
       : undefined,
   );
   return true;

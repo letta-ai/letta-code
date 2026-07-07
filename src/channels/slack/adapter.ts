@@ -2,7 +2,10 @@ import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
 import { isLocalAgentId } from "@/agent/agent-id";
-import { listChannelSlashCommands } from "@/channels/commands";
+import {
+  listChannelSlashCommands,
+  SLACK_MODEL_SELECT_ACTION_ID,
+} from "@/channels/commands";
 import {
   createInboundDebouncer,
   type InboundDebouncer,
@@ -145,17 +148,34 @@ type SlackTextObject = {
   emoji?: boolean;
 };
 
-type SlackBlockElement = {
+type SlackOption = {
+  text: SlackTextObject;
+  value: string;
+  description?: SlackTextObject;
+};
+
+type SlackButtonElement = {
   type: "button";
   text: SlackTextObject;
   url: string;
   action_id: string;
 };
 
+type SlackStaticSelectElement = {
+  type: "static_select";
+  action_id: string;
+  placeholder?: SlackTextObject;
+  options: SlackOption[];
+  initial_option?: SlackOption;
+};
+
+type SlackBlockElement = SlackButtonElement | SlackStaticSelectElement;
+
 type SlackBlock =
   | {
       type: "section";
       text: SlackTextObject;
+      accessory?: SlackBlockElement;
     }
   | {
       type: "context";
@@ -401,6 +421,72 @@ function resolveSlackOutboundThreadTs(params: {
     return firstNonEmptyString(params.threadId);
   }
   return firstNonEmptyString(params.threadId, params.replyToMessageId);
+}
+
+function asSlackBlocks(
+  blocks: unknown[] | undefined,
+): SlackBlock[] | undefined {
+  return Array.isArray(blocks) ? (blocks as SlackBlock[]) : undefined;
+}
+
+function getSlackActionRecord(
+  action: unknown,
+  body: unknown,
+): Record<string, unknown> | null {
+  const directAction = asRecord(action);
+  if (directAction) {
+    return directAction;
+  }
+  const actions = asRecord(body)?.actions;
+  if (!Array.isArray(actions)) {
+    return null;
+  }
+  return asRecord(actions[0]);
+}
+
+function resolveSlackSelectedModel(
+  action: unknown,
+  body: unknown,
+): string | null {
+  const actionRecord = getSlackActionRecord(action, body);
+  const selectedOption = asRecord(actionRecord?.selected_option);
+  return (
+    firstNonEmptyString(selectedOption?.value, actionRecord?.value) ?? null
+  );
+}
+
+function resolveSlackActionChannelId(body: unknown): string | null {
+  const bodyRecord = asRecord(body);
+  const channel = asRecord(bodyRecord?.channel);
+  const container = asRecord(bodyRecord?.container);
+  return firstNonEmptyString(channel?.id, container?.channel_id) ?? null;
+}
+
+function resolveSlackActionThreadId(body: unknown): string | null {
+  const bodyRecord = asRecord(body);
+  const container = asRecord(bodyRecord?.container);
+  const message = asRecord(bodyRecord?.message);
+  return firstNonEmptyString(container?.thread_ts, message?.thread_ts) ?? null;
+}
+
+function resolveSlackActionMessageId(body: unknown): string | undefined {
+  const bodyRecord = asRecord(body);
+  const container = asRecord(bodyRecord?.container);
+  const message = asRecord(bodyRecord?.message);
+  return firstNonEmptyString(container?.message_ts, message?.ts);
+}
+
+function resolveSlackActionUser(body: unknown): {
+  id: string | null;
+  name?: string;
+  teamId?: string;
+} {
+  const user = asRecord(asRecord(body)?.user);
+  return {
+    id: firstNonEmptyString(user?.id) ?? null,
+    name: firstNonEmptyString(user?.name, user?.username, user?.id),
+    teamId: firstNonEmptyString(user?.team_id),
+  };
 }
 
 function resolveSlackSourceThreadTs(
@@ -3425,6 +3511,67 @@ export function createSlackAdapter(
       }
     }
 
+    const handleModelSelectAction = async ({
+      body,
+      action,
+      ack,
+    }: {
+      body: unknown;
+      action: unknown;
+      ack: () => Promise<void>;
+    }) => {
+      await ack();
+      if (!adapter.onMessage) {
+        return;
+      }
+
+      const selectedModel = resolveSlackSelectedModel(action, body);
+      const channelId = resolveSlackActionChannelId(body);
+      const user = resolveSlackActionUser(body);
+      if (!selectedModel || !channelId || !user.id) {
+        return;
+      }
+
+      const actionRecord = getSlackActionRecord(action, body);
+      const messageId = firstNonEmptyString(
+        actionRecord?.action_ts,
+        resolveSlackActionMessageId(body),
+      );
+      const inbound: InboundChannelMessage = {
+        channel: "slack",
+        accountId: config.accountId,
+        chatId: channelId,
+        senderId: user.id,
+        senderTeamId: user.teamId,
+        senderName: user.name,
+        chatLabel: channelId,
+        text: `/model ${selectedModel}`,
+        timestamp: Date.now(),
+        messageId,
+        threadId: resolveSlackActionThreadId(body),
+        chatType: resolveSlackChatType(channelId),
+        isMention: false,
+        raw: body,
+      };
+
+      try {
+        await adapter.onMessage(inbound);
+      } catch (error) {
+        console.error("[Slack] Error handling model select action:", error);
+      }
+    };
+
+    const actionRegistrar = instance as unknown as {
+      action?: (
+        actionId: string,
+        handler: typeof handleModelSelectAction,
+      ) => void;
+    };
+    actionRegistrar.action?.(
+      SLACK_MODEL_SELECT_ACTION_ID,
+      handleModelSelectAction,
+    );
+
     const handleReactionEvent = async (
       event: SlackReactionEvent,
       action: "added" | "removed",
@@ -3766,7 +3913,11 @@ export function createSlackAdapter(
     async sendDirectReply(
       chatId: string,
       text: string,
-      options?: { replyToMessageId?: string; threadId?: string | null },
+      options?: {
+        replyToMessageId?: string;
+        threadId?: string | null;
+        slackBlocks?: unknown[];
+      },
     ): Promise<void> {
       await ensureApp();
       const slackClient = await ensureWriteClient();
@@ -3778,6 +3929,9 @@ export function createSlackAdapter(
       const response = await slackClient.chat.postMessage({
         channel: chatId,
         text,
+        ...(options?.slackBlocks
+          ? { blocks: asSlackBlocks(options.slackBlocks) }
+          : {}),
         ...(threadTs ? { thread_ts: threadTs } : {}),
       });
       const outboundThreadId =
