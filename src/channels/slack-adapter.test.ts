@@ -2123,6 +2123,190 @@ test("slack adapter keeps shell error output out of task titles (LET-9509)", asy
   expect(taskChunk?.title).not.toContain("Exit code");
 });
 
+test("slack adapter closes orphaned progress streams before starting a new one (LET-9515)", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+  const followUpSource = { ...source, messageId: "1712800002.000200" };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Running tool",
+    toolCallId: "call-1",
+    toolName: "exec_command",
+  });
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+
+  // Turn 1's stop fails transiently (rate limit): the Slack-side stream
+  // stays live/spinning even though the adapter resets the card entry.
+  writeClient?.chat.stopStream.mockImplementationOnce(async () => ({
+    ok: false,
+    error: "rate_limited",
+  }));
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "cancelled",
+    sources: [source],
+  });
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledTimes(1);
+
+  // The follow-up turn's new stream must close the orphan first so two live
+  // spinners never render side by side in the thread.
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-2",
+    sources: [followUpSource],
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-2",
+    sources: [followUpSource],
+    kind: "tool",
+    state: "started",
+    message: "Running tool",
+    toolCallId: "call-2",
+    toolName: "exec_command",
+  });
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(2);
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledTimes(2);
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    [{ channel: string; ts: string; chunks?: Array<Record<string, unknown>> }]
+  >;
+  const orphanStop = stopCalls[1]?.[0];
+  expect(orphanStop).toMatchObject({
+    channel: "C123",
+    ts: "1712800000.000300",
+  });
+  // The sweep replays the terminal title the failed stop was trying to
+  // render (turn 1 was cancelled), not a generic label.
+  expect(orphanStop?.chunks?.[0]).toMatchObject({
+    type: "plan_update",
+    title: "Interrupted",
+  });
+});
+
+test("slack adapter drops orphan records once the stream is already terminal", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Running tool",
+    toolCallId: "call-1",
+    toolName: "exec_command",
+  });
+  const writeClient = FakeSlackWriteClient.instances[0];
+  writeClient?.chat.stopStream.mockImplementationOnce(async () => ({
+    ok: false,
+    error: "rate_limited",
+  }));
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "cancelled",
+    sources: [source],
+  });
+
+  // By sweep time the orphan already left streaming state (expired or
+  // finalized): treated as terminal, swept once, and never retried.
+  writeClient?.chat.stopStream.mockImplementationOnce(async () => ({
+    ok: false,
+    error: "message_not_in_streaming_state",
+  }));
+  const followUpSource = { ...source, messageId: "1712800002.000200" };
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-2",
+    sources: [followUpSource],
+    kind: "tool",
+    state: "started",
+    message: "Running tool",
+    toolCallId: "call-2",
+    toolName: "exec_command",
+  });
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(2);
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledTimes(2);
+
+  // A third stream in the thread must not re-attempt the swept orphan.
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-2",
+    outcome: "cancelled",
+    sources: [followUpSource],
+  });
+  const thirdSource = { ...source, messageId: "1712800004.000300" };
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-3",
+    sources: [thirdSource],
+    kind: "tool",
+    state: "started",
+    message: "Running tool",
+    toolCallId: "call-3",
+    toolName: "exec_command",
+  });
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(3);
+  // Stops: failed turn-1 stop, not_in_streaming_state sweep, successful
+  // turn-2 stop — and no extra sweep before stream 3.
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledTimes(3);
+});
+
 test("slack adapter labels subagent task rows and includes prompt previews", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -3451,7 +3635,7 @@ test("slack adapter closes cancelled turns without the red error status", async 
   });
   expect(stopChunks).toContainEqual({
     type: "plan_update",
-    title: "Cancelled",
+    title: "Interrupted",
   });
 });
 
