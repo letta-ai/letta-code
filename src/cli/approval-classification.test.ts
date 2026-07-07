@@ -125,7 +125,7 @@ describe("classifyApprovals", () => {
           toolCallId: "call_missing_cmd",
           toolName: "exec_command",
           toolArgs: JSON.stringify({
-            yield_time_ms: 1000,
+            description: "Wait for command output",
           }),
         },
       ],
@@ -142,7 +142,7 @@ describe("classifyApprovals", () => {
     const [denied] = result.autoDenied;
     expect(denied?.missingRequiredArgs).toEqual(["cmd"]);
     expect(denied?.denyReason).toBe(
-      "exec_command tool missing required parameter: cmd. Received parameters: yield_time_ms",
+      "exec_command tool missing required parameter: cmd. Received parameters: description",
     );
   });
 
