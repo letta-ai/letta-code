@@ -52,6 +52,13 @@ describe("buildTargetInstruction", () => {
     expect(out).toContain("$MEMORY_DIR/system/memory.md");
     expect(out).not.toContain("agents.md");
   });
+
+  test("tells the agent to skip creation (no placeholder) when nothing is learned", () => {
+    const out = buildTargetInstruction(resolveDreamTarget("./AGENTS.md"));
+    expect(out).toContain("do NOT create the file");
+    expect(out).toContain("leave it absent");
+    expect(out).toContain("placeholder");
+  });
 });
 
 describe("managed frontmatter (system/ files require it)", () => {

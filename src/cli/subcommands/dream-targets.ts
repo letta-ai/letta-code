@@ -97,8 +97,12 @@ const GENERIC_GUIDANCE = [
 
 /**
  * Build the instruction fragment that asks the reflection agent to maintain
- * the target doc at `$MEMORY_DIR/system/<fileName>`. The doc has already been
- * synced there from the target, so the agent reads and edits it in place.
+ * the target doc at `$MEMORY_DIR/system/<fileName>`. When the on-disk target
+ * exists it has already been synced there and the agent edits it in place;
+ * when it does not, the agent creates it — but only if the new experience
+ * actually yields durable guidance, so a no-signal run leaves the target
+ * absent (no file → no diff → no PR downstream) rather than committing a
+ * "nothing learned yet" placeholder.
  */
 export function buildTargetInstruction(target: DreamTarget): string {
   const guidance =
@@ -108,11 +112,19 @@ export function buildTargetInstruction(target: DreamTarget): string {
     `In addition to updating memory, maintain the file at $MEMORY_DIR/${relPath}.`,
     guidance,
     "",
-    `Read the existing $MEMORY_DIR/${relPath} (create it if it does not exist)`,
-    "and revise it in place: apply only the changes the new experience",
-    "warrants, using your judgment. Often no change is needed — if so, leave it",
-    "as-is. Keep the YAML frontmatter block (--- ... ---) at the top intact;",
-    "edit only the body below it. Commit when done.",
+    `If $MEMORY_DIR/${relPath} already exists, revise it in place: apply only`,
+    "the changes the new experience warrants, using your judgment. Often no",
+    "change is needed — if so, leave it as-is. Keep the YAML frontmatter block",
+    "(--- ... ---) at the top intact and edit only the body below it.",
+    "",
+    "If it does not exist, create it ONLY when the new experience yields",
+    "durable, forward-looking guidance worth recording, and begin the file with",
+    "a YAML frontmatter block (a --- ... --- header with a short `description:`).",
+    "If there is nothing substantive to record yet, do NOT create the file —",
+    "leave it absent rather than writing a placeholder that says nothing was",
+    "learned. The file should first appear on a run that produces real guidance.",
+    "",
+    "Commit when done.",
   ].join("\n");
 }
 
