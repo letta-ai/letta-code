@@ -83,6 +83,7 @@ import {
 } from "@/cli/helpers/conversation-title";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { setErrorContext } from "@/cli/helpers/error-context";
+import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { parsePatchOperations } from "@/cli/helpers/format-args-display";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -92,6 +93,11 @@ import {
   buildContentFromQueueBatch,
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
+import {
+  finalizeReflectionArenaChoice,
+  parseReflectionArenaChoiceAnswers,
+  type ReflectionArenaChoiceQuestion,
+} from "@/cli/helpers/reflection-arena";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
@@ -521,6 +527,11 @@ export function App({
   const [worktreeDiffSelectorPending, setWorktreeDiffSelectorPending] =
     useState<{
       worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
+    } | null>(null);
+  const [reflectionArenaChoicePending, setReflectionArenaChoicePending] =
+    useState<{
+      questions: ReflectionArenaChoiceQuestion[];
+      runId: string;
     } | null>(null);
 
   // If we have approval requests, we should show the approval dialog instead of the input area
@@ -4128,6 +4139,50 @@ export function App({
     setNeedsEagerApprovalCheck,
   });
 
+  const handleReflectionArenaChoiceSubmit = useCallback(
+    async (answers: Record<string, string>) => {
+      const pending = reflectionArenaChoicePending;
+      if (!pending) return;
+      setReflectionArenaChoicePending(null);
+      setCommandRunning(true);
+      try {
+        const { choice, notes } = parseReflectionArenaChoiceAnswers(answers);
+        const { message } = await finalizeReflectionArenaChoice({
+          runId: pending.runId,
+          choice,
+          notes,
+          recompileByConversation:
+            _systemPromptRecompileByConversationRef.current,
+          recompileQueuedByConversation:
+            _queuedSystemPromptRecompileByConversationRef.current,
+        });
+        appendTaskNotificationEvents([message]);
+      } catch (error) {
+        appendTaskNotificationEvents([
+          `Failed to record reflection arena choice: ${formatErrorDetails(error, agentId)}`,
+        ]);
+      } finally {
+        setCommandRunning(false);
+      }
+    },
+    [
+      reflectionArenaChoicePending,
+      setCommandRunning,
+      appendTaskNotificationEvents,
+      agentId,
+    ],
+  );
+
+  const handleReflectionArenaChoiceCancel = useCallback(() => {
+    const pending = reflectionArenaChoicePending;
+    setReflectionArenaChoicePending(null);
+    if (pending) {
+      appendTaskNotificationEvents([
+        `Reflection arena choice dismissed. Use /reflect-arena choose ${pending.runId} <1|2|tie> [notes] to finalize it later.`,
+      ]);
+    }
+  }, [reflectionArenaChoicePending, appendTaskNotificationEvents]);
+
   const onSubmit = useSubmitHandler({
     abortControllerRef,
     agentDescription,
@@ -4210,6 +4265,7 @@ export function App({
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setProfileConfirmPending,
+    setReflectionArenaChoicePending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
     setSearchQuery,
@@ -4258,6 +4314,7 @@ export function App({
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
+      !reflectionArenaChoicePending &&
       !anySelectorOpen && // Don't dequeue while a selector/overlay is open
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
       !userCancelledRef.current && // Don't dequeue if user just cancelled
@@ -4337,6 +4394,7 @@ export function App({
     pendingApprovals,
     commandRunning,
     isExecutingTool,
+    reflectionArenaChoicePending,
     anySelectorOpen,
     dequeueEpoch,
     queuedOverlayAction,
@@ -4898,7 +4956,10 @@ export function App({
   );
   const inputVisible = !showExitStats;
   const inputEnabled =
-    !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
+    !showExitStats &&
+    pendingApprovals.length === 0 &&
+    !reflectionArenaChoicePending &&
+    !anySelectorOpen;
   const onEscapeCommandCancel = useCallback(() => {
     if (isActiveConnectOperationCancellable()) {
       cancelActiveConnectOperation();
@@ -4931,7 +4992,9 @@ export function App({
         titleData={terminalTitleData}
         shouldAnimate={shouldAnimate}
         hasActiveProgress={terminalTitleTaskRunning}
-        requiresAction={pendingApprovals.length > 0}
+        requiresAction={
+          pendingApprovals.length > 0 || Boolean(reflectionArenaChoicePending)
+        }
         previewTitle={terminalTitlePreviewOverride}
       />
       <AppView
@@ -5000,6 +5063,8 @@ export function App({
         handlePersonalitySelect={handlePersonalitySelect}
         handleProfileEscapeCancel={handleProfileEscapeCancel}
         handleQuestionSubmit={handleQuestionSubmit}
+        handleReflectionArenaChoiceCancel={handleReflectionArenaChoiceCancel}
+        handleReflectionArenaChoiceSubmit={handleReflectionArenaChoiceSubmit}
         handleSleeptimeModeSelect={handleSleeptimeModeSelect}
         handleSystemPromptSelect={handleSystemPromptSelect}
         handleToolsetSelect={handleToolsetSelect}
@@ -5025,6 +5090,7 @@ export function App({
         onSubmit={onSubmit}
         pendingApprovals={pendingApprovals}
         pendingConversationSwitchRef={pendingConversationSwitchRef}
+        reflectionArenaChoicePending={reflectionArenaChoicePending}
         pendingIds={pendingIds}
         precomputedDiffsRef={precomputedDiffsRef}
         profileConfirmPending={profileConfirmPending}

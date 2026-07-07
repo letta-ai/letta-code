@@ -70,6 +70,14 @@ import {
 } from "@/cli/helpers/paste-registry";
 import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-toggle";
 import {
+  buildReflectionArenaChoiceQuestions,
+  finalizeReflectionArenaChoice,
+  REFLECTION_ARENA_MODEL_A_DEFAULT,
+  type ReflectionArenaChoice,
+  type ReflectionArenaChoiceQuestion,
+  startReflectionArenaRun,
+} from "@/cli/helpers/reflection-arena";
+import {
   AUTO_REFLECTION_DESCRIPTION,
   finalizeReflectionMemoryWorktreeLaunch,
   launchReflectionSubagent,
@@ -78,6 +86,7 @@ import {
   tryReserveReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
 import {
+  buildAutoReflectionPayload,
   buildMultiReflectionPayload,
   buildReflectionAutoPayload,
   buildReflectionSelectorPrompt,
@@ -294,6 +303,12 @@ type SubmitHandlerContext = {
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
   >;
+  setReflectionArenaChoicePending: Dispatch<
+    SetStateAction<{
+      questions: ReflectionArenaChoiceQuestion[];
+      runId: string;
+    } | null>
+  >;
   setWorktreeDiffSelectorPending: Dispatch<
     SetStateAction<WorktreeDiffSelectorPending | null>
   >;
@@ -335,6 +350,20 @@ type ReflectCommandArgs =
   | { conversationIds: string[]; instruction?: string; kind: "conversations" }
   | { instruction?: string; kind: "auto" };
 
+type ReflectArenaCommandArgs =
+  | {
+      instruction?: string;
+      kind: "launch";
+      modelA?: string;
+      modelB?: string;
+    }
+  | {
+      choice: ReflectionArenaChoice;
+      kind: "choose";
+      notes?: string;
+      runId: string;
+    };
+
 function isReflectCommandFlag(value: string): boolean {
   return (
     value === "--" ||
@@ -346,6 +375,106 @@ function isReflectCommandFlag(value: string): boolean {
     value === "-i" ||
     value.startsWith("--instruction=")
   );
+}
+
+function parseReflectArenaCommandArgs(input: string): ReflectArenaCommandArgs {
+  const trimmed = input.trim();
+  const command = trimmed.split(/\s+/, 1)[0] ?? "/reflect-arena";
+  const parts = parseModCommandArgv(trimmed.slice(command.length).trim());
+  if (parts[0] === "choose") {
+    const runId = parts[1];
+    const rawChoice = parts[2];
+    if (!runId || !rawChoice) {
+      throw new Error(
+        "Usage: /reflect-arena choose <run-id> <1|2|tie> [notes]",
+      );
+    }
+    if (rawChoice !== "1" && rawChoice !== "2" && rawChoice !== "tie") {
+      throw new Error(
+        "Usage: /reflect-arena choose <run-id> <1|2|tie> [notes]",
+      );
+    }
+    return {
+      kind: "choose",
+      runId,
+      choice: rawChoice,
+      notes: parts.slice(3).join(" ").trim() || undefined,
+    };
+  }
+
+  let modelA: string | undefined;
+  let modelB: string | undefined;
+  const instructions: string[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (!part) continue;
+    if (part === "--model-a") {
+      modelA = parts[index + 1];
+      if (!modelA) throw new Error("Usage: /reflect-arena --model-a <model>");
+      index += 1;
+      continue;
+    }
+    if (part.startsWith("--model-a=")) {
+      modelA = part.slice("--model-a=".length).trim();
+      if (!modelA) throw new Error("Usage: /reflect-arena --model-a <model>");
+      continue;
+    }
+    if (part === "--model-b") {
+      modelB = parts[index + 1];
+      if (!modelB) throw new Error("Usage: /reflect-arena --model-b <model>");
+      index += 1;
+      continue;
+    }
+    if (part.startsWith("--model-b=")) {
+      modelB = part.slice("--model-b=".length).trim();
+      if (!modelB) throw new Error("Usage: /reflect-arena --model-b <model>");
+      continue;
+    }
+    if (
+      part === "--instruction" ||
+      part === "--instructions" ||
+      part === "-i"
+    ) {
+      const instruction = parts
+        .slice(index + 1)
+        .join(" ")
+        .trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect-arena --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      break;
+    }
+    if (part.startsWith("--instruction=")) {
+      const instruction = part.slice("--instruction=".length).trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect-arena --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      continue;
+    }
+    if (part === "--") {
+      const instruction = parts
+        .slice(index + 1)
+        .join(" ")
+        .trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect-arena -- <instruction>");
+      }
+      instructions.push(instruction);
+      break;
+    }
+    throw new Error(
+      "Usage: /reflect-arena [--model-a <model>] [--model-b <model>] [--instruction <instruction>]",
+    );
+  }
+
+  return {
+    kind: "launch",
+    modelA,
+    modelB,
+    instruction: instructions.join("\n").trim() || undefined,
+  };
 }
 
 function parseReflectCommandArgs(input: string): ReflectCommandArgs {
@@ -538,6 +667,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setProfileConfirmPending,
+    setReflectionArenaChoicePending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled,
     setSearchQuery,
@@ -2851,6 +2981,100 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        // Experimental reflection arena - blind A/B reflection model comparison
+        if (
+          trimmed === "/reflect-arena" ||
+          trimmed.startsWith("/reflect-arena ")
+        ) {
+          const cmd = commandRunner.start(msg, "Preparing reflection arena...");
+
+          if (!experimentManager.isEnabled("reflection_arena")) {
+            cmd.fail(
+              "Reflection arena is experimental. Enable it with /experiments or LETTA_REFLECTION_ARENA=1.",
+            );
+            return { submitted: true };
+          }
+
+          if (!isActiveMemfsEnabled(agentId)) {
+            cmd.fail(
+              "Memory filesystem is not enabled. Reflection arena requires MemFS.",
+            );
+            return { submitted: true };
+          }
+
+          try {
+            const arenaArgs = parseReflectArenaCommandArgs(trimmed);
+            if (arenaArgs.kind === "choose") {
+              const { message } = await finalizeReflectionArenaChoice({
+                runId: arenaArgs.runId,
+                choice: arenaArgs.choice,
+                notes: arenaArgs.notes,
+                recompileByConversation:
+                  systemPromptRecompileByConversationRef.current,
+                recompileQueuedByConversation:
+                  queuedSystemPromptRecompileByConversationRef.current,
+              });
+              cmd.finish(message, true);
+              return { submitted: true };
+            }
+
+            let systemPrompt: string | undefined;
+            try {
+              const agent = await getBackend().retrieveAgent(agentId);
+              systemPrompt = agent.system ?? undefined;
+            } catch {
+              // Non-fatal — the arena payload will just omit the system prompt.
+            }
+
+            const reflectionConversationId =
+              conversationIdRef.current ?? "default";
+            const payload = await buildAutoReflectionPayload(
+              agentId,
+              reflectionConversationId,
+              systemPrompt,
+            );
+            if (!payload) {
+              cmd.fail("No new transcript content to reflect on.");
+              return { submitted: true };
+            }
+
+            const modelA = arenaArgs.modelA ?? REFLECTION_ARENA_MODEL_A_DEFAULT;
+            const modelB = arenaArgs.modelB ?? currentModelId;
+            if (!modelB) {
+              cmd.fail(
+                "No comparison model is selected. Use /reflect-arena --model-b <model>.",
+              );
+              return { submitted: true };
+            }
+
+            const run = await startReflectionArenaRun({
+              agentId,
+              conversationId: reflectionConversationId,
+              instruction: arenaArgs.instruction,
+              models: [modelA, modelB],
+              payload,
+              onReady: (message, readyRun) => {
+                appendTaskNotificationEvents([message]);
+                setReflectionArenaChoicePending({
+                  runId: readyRun.runId,
+                  questions: buildReflectionArenaChoiceQuestions(
+                    readyRun.runId,
+                  ),
+                });
+              },
+            });
+            cmd.finish(
+              `Started reflection arena run ${run.runId}. View the transcript payload here: ${run.payloadPath}`,
+              true,
+            );
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to start reflection arena: ${errorDetails}`);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /reflect command - manually launch reflection subagent
         if (trimmed === "/reflect" || trimmed.startsWith("/reflect ")) {
           const cmd = commandRunner.start(msg, "Launching reflection agent...");
@@ -3758,6 +3982,7 @@ ${SYSTEM_REMINDER_CLOSE}
       resetTrajectoryBases,
       systemInfoReminderEnabled,
       appendTaskNotificationEvents,
+      setReflectionArenaChoicePending,
       maybeCarryOverActiveConversationModel,
       setConversationAutoTitleEligibility,
       setConversationIdAndRef,
