@@ -2208,9 +2208,11 @@ test("slack adapter closes orphaned progress streams before starting a new one (
     channel: "C123",
     ts: "1712800000.000300",
   });
+  // The sweep replays the terminal title the failed stop was trying to
+  // render (turn 1 was cancelled), not a generic label.
   expect(orphanStop?.chunks?.[0]).toMatchObject({
     type: "plan_update",
-    title: "Completed",
+    title: "Cancelled",
   });
 });
 

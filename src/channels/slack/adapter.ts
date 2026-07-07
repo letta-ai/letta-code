@@ -2121,9 +2121,10 @@ export function createSlackAdapter(
   // Live Slack-side streams whose stop failed transiently (rate limit,
   // network blip — anything but the dead-stream case): the local entry gets
   // reset for the next turn, but Slack keeps rendering the old spinner.
-  // Recorded per replyKey and swept before the next startStream in the same
-  // thread, so at most one live progress stream exists per thread (LET-9515).
-  const orphanedStreamTsByReplyKey = new Map<string, Set<string>>();
+  // Recorded per replyKey (stream ts → intended terminal plan title) and
+  // swept before the next startStream in the same thread, so at most one
+  // live progress stream exists per thread (LET-9515).
+  const orphanedStreamsByReplyKey = new Map<string, Map<string, string>>();
   const assistantStatusReplyKeys = new Set<string>();
   const assistantStatusTextByReplyKey = new Map<string, string>();
   const progressUpdateThrottleMs = resolveSlackProgressUpdateThrottleMs();
@@ -2606,28 +2607,27 @@ export function createSlackAdapter(
   function rememberOrphanedSlackProgressStream(
     source: ChannelTurnSource,
     streamTs: string,
+    terminalPlanTitle: string,
   ): void {
     const replyKey = getLifecycleReplyKey(source);
     if (!replyKey) {
       return;
     }
-    let orphans = orphanedStreamTsByReplyKey.get(replyKey);
+    let orphans = orphanedStreamsByReplyKey.get(replyKey);
     if (!orphans) {
-      if (
-        orphanedStreamTsByReplyKey.size >= SLACK_ORPHANED_STREAM_THREADS_MAX
-      ) {
-        const oldestKey = orphanedStreamTsByReplyKey.keys().next().value;
+      if (orphanedStreamsByReplyKey.size >= SLACK_ORPHANED_STREAM_THREADS_MAX) {
+        const oldestKey = orphanedStreamsByReplyKey.keys().next().value;
         if (oldestKey !== undefined) {
-          orphanedStreamTsByReplyKey.delete(oldestKey);
+          orphanedStreamsByReplyKey.delete(oldestKey);
         }
       }
-      orphans = new Set();
-      orphanedStreamTsByReplyKey.set(replyKey, orphans);
+      orphans = new Map();
+      orphanedStreamsByReplyKey.set(replyKey, orphans);
     }
     if (orphans.size >= SLACK_ORPHANED_STREAMS_PER_THREAD_MAX) {
       return;
     }
-    orphans.add(streamTs);
+    orphans.set(streamTs, terminalPlanTitle);
     console.warn(
       "[Slack] Progress stream stop failed; deferring close until the next stream in this thread:",
       streamTs,
@@ -2650,21 +2650,21 @@ export function createSlackAdapter(
     if (!replyKey) {
       return;
     }
-    const orphans = orphanedStreamTsByReplyKey.get(replyKey);
+    const orphans = orphanedStreamsByReplyKey.get(replyKey);
     if (!orphans || orphans.size === 0) {
       return;
     }
-    orphanedStreamTsByReplyKey.delete(replyKey);
+    orphanedStreamsByReplyKey.delete(replyKey);
     const stopStream = slackClient.chat.stopStream;
     if (!stopStream) {
       return;
     }
-    for (const ts of orphans) {
+    for (const [ts, terminalPlanTitle] of orphans) {
       try {
         const response = await stopStream.call(slackClient.chat, {
           channel: source.chatId,
           ts,
-          chunks: [{ type: "plan_update", title: "Completed" }],
+          chunks: [{ type: "plan_update", title: terminalPlanTitle }],
         });
         if (
           response.ok === false &&
@@ -3343,11 +3343,21 @@ export function createSlackAdapter(
             entry.lastSentAt = Date.now();
           } else if (!entry.streamDead && entry.streamTs) {
             // The Slack-side stream is still live (spinning) but the entry
-            // reset below wipes our record of it. Remember the orphan so the
-            // next stream in this thread closes it first (LET-9515). Dead
-            // streams are excluded: they already left streaming state, so
-            // there is no spinner to close.
-            rememberOrphanedSlackProgressStream(source, entry.streamTs);
+            // reset below wipes our record of it. Remember the orphan — with
+            // the terminal plan title this stop was trying to render, so the
+            // sweep replays the turn's real outcome instead of guessing — and
+            // the next stream in this thread closes it first (LET-9515).
+            // Dead streams are excluded: they already left streaming state,
+            // so there is no spinner to close.
+            rememberOrphanedSlackProgressStream(
+              source,
+              entry.streamTs,
+              entry.status === "completed"
+                ? formatSlackCompletionPlanTitle(entry)
+                : entry.status === "cancelled"
+                  ? "Cancelled"
+                  : "Failed",
+            );
           }
         } else {
           await upsertSlackProgressCard(
