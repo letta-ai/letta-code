@@ -46,6 +46,12 @@ describe("buildTargetInstruction", () => {
     expect(out).toContain("revise it in place");
   });
 
+  test("agents-md guidance asks for concise, timeless wording", () => {
+    const out = buildTargetInstruction(resolveDreamTarget("./AGENTS.md"));
+    expect(out).toContain("concise and scannable");
+    expect(out).toContain("timelessly");
+  });
+
   test("generic uses generic guidance, not the agents.md standard text", () => {
     const target = resolveDreamTarget("./memory.md");
     const out = buildTargetInstruction(target);
