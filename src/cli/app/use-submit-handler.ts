@@ -72,6 +72,7 @@ import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-to
 import {
   buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
+  loadReflectionArenaRun,
   REFLECTION_ARENA_MODEL_A_DEFAULT,
   type ReflectionArenaChoice,
   type ReflectionArenaChoiceQuestion,
@@ -362,7 +363,8 @@ type ReflectArenaCommandArgs =
       kind: "choose";
       notes?: string;
       runId: string;
-    };
+    }
+  | { kind: "resume"; runId: string };
 
 function isReflectCommandFlag(value: string): boolean {
   return (
@@ -400,6 +402,13 @@ function parseReflectArenaCommandArgs(input: string): ReflectArenaCommandArgs {
       choice: rawChoice,
       notes: parts.slice(3).join(" ").trim() || undefined,
     };
+  }
+  if (parts[0] === "resume") {
+    const runId = parts[1];
+    if (!runId) {
+      throw new Error("Usage: /reflect-arena resume <run-id>");
+    }
+    return { kind: "resume", runId };
   }
 
   let modelA: string | undefined;
@@ -3015,6 +3024,24 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   queuedSystemPromptRecompileByConversationRef.current,
               });
               cmd.finish(message, true);
+              return { submitted: true };
+            }
+            if (arenaArgs.kind === "resume") {
+              const run = await loadReflectionArenaRun(arenaArgs.runId);
+              if (run.status !== "awaiting_choice") {
+                cmd.fail(
+                  `Reflection arena run ${arenaArgs.runId} is ${run.status}; expected awaiting_choice.`,
+                );
+                return { submitted: true };
+              }
+              setReflectionArenaChoicePending({
+                runId: run.runId,
+                questions: buildReflectionArenaChoiceQuestions(run.runId),
+              });
+              cmd.finish(
+                `Resumed reflection arena choice prompt for run ${run.runId}.`,
+                true,
+              );
               return { submitted: true };
             }
 

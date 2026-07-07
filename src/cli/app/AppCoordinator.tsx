@@ -95,6 +95,7 @@ import {
 } from "@/cli/helpers/queued-message-parts";
 import {
   finalizeReflectionArenaChoice,
+  formatReflectionArenaDeferredMessage,
   parseReflectionArenaChoiceAnswers,
   type ReflectionArenaChoiceQuestion,
 } from "@/cli/helpers/reflection-arena";
@@ -4146,11 +4147,17 @@ export function App({
       setReflectionArenaChoicePending(null);
       setCommandRunning(true);
       try {
-        const { choice, notes } = parseReflectionArenaChoiceAnswers(answers);
+        const answer = parseReflectionArenaChoiceAnswers(answers);
+        if (answer.action === "defer") {
+          appendTaskNotificationEvents([
+            formatReflectionArenaDeferredMessage(pending.runId),
+          ]);
+          return;
+        }
         const { message } = await finalizeReflectionArenaChoice({
           runId: pending.runId,
-          choice,
-          notes,
+          choice: answer.choice,
+          notes: answer.notes,
           recompileByConversation:
             _systemPromptRecompileByConversationRef.current,
           recompileQueuedByConversation:
@@ -4178,7 +4185,7 @@ export function App({
     setReflectionArenaChoicePending(null);
     if (pending) {
       appendTaskNotificationEvents([
-        `Reflection arena choice dismissed. Use /reflect-arena choose ${pending.runId} <1|2|tie> [notes] to finalize it later.`,
+        formatReflectionArenaDeferredMessage(pending.runId),
       ]);
     }
   }, [reflectionArenaChoicePending, appendTaskNotificationEvents]);
@@ -4955,10 +4962,19 @@ export function App({
     trajectoryTokenDisplayRef.current,
   );
   const inputVisible = !showExitStats;
+  const reflectionArenaChoiceVisible = Boolean(
+    reflectionArenaChoicePending &&
+      !showExitStats &&
+      !streaming &&
+      !commandRunning &&
+      !isExecutingTool &&
+      pendingApprovals.length === 0 &&
+      !anySelectorOpen,
+  );
   const inputEnabled =
     !showExitStats &&
     pendingApprovals.length === 0 &&
-    !reflectionArenaChoicePending &&
+    !reflectionArenaChoiceVisible &&
     !anySelectorOpen;
   const onEscapeCommandCancel = useCallback(() => {
     if (isActiveConnectOperationCancellable()) {
@@ -4993,7 +5009,7 @@ export function App({
         shouldAnimate={shouldAnimate}
         hasActiveProgress={terminalTitleTaskRunning}
         requiresAction={
-          pendingApprovals.length > 0 || Boolean(reflectionArenaChoicePending)
+          pendingApprovals.length > 0 || reflectionArenaChoiceVisible
         }
         previewTitle={terminalTitlePreviewOverride}
       />
@@ -5090,7 +5106,9 @@ export function App({
         onSubmit={onSubmit}
         pendingApprovals={pendingApprovals}
         pendingConversationSwitchRef={pendingConversationSwitchRef}
-        reflectionArenaChoicePending={reflectionArenaChoicePending}
+        reflectionArenaChoicePending={
+          reflectionArenaChoiceVisible ? reflectionArenaChoicePending : null
+        }
         pendingIds={pendingIds}
         precomputedDiffsRef={precomputedDiffsRef}
         profileConfirmPending={profileConfirmPending}

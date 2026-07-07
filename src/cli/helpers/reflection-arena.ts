@@ -29,6 +29,9 @@ const ANSI_RESET_FOREGROUND = "\u001b[39m";
 
 export type ReflectionArenaCandidateLabel = "1" | "2";
 export type ReflectionArenaChoice = ReflectionArenaCandidateLabel | "tie";
+export type ReflectionArenaChoiceAnswer =
+  | { action: "finalize"; choice: ReflectionArenaChoice; notes?: string }
+  | { action: "defer" };
 
 export const REFLECTION_ARENA_CHOICE_QUESTION =
   "Which reflection should be merged?";
@@ -204,6 +207,11 @@ export function buildReflectionArenaChoiceQuestions(
           label: "Tie / no merge",
           description: "Do not merge either candidate; discard both worktrees.",
         },
+        {
+          label: "Inspect memory first",
+          description:
+            "Dismiss this prompt so you can inspect Memory Palace before choosing.",
+        },
       ],
     },
     {
@@ -223,7 +231,7 @@ export function buildReflectionArenaChoiceQuestions(
 
 export function parseReflectionArenaChoiceAnswers(
   answers: Record<string, string>,
-): { choice: ReflectionArenaChoice; notes?: string } {
+): ReflectionArenaChoiceAnswer {
   const choiceAnswer =
     answers[REFLECTION_ARENA_CHOICE_QUESTION] ??
     Object.entries(answers).find(([question]) =>
@@ -231,6 +239,9 @@ export function parseReflectionArenaChoiceAnswers(
     )?.[1] ??
     "";
   const normalizedChoice = choiceAnswer.trim().toLowerCase();
+  if (normalizedChoice.includes("inspect memory")) {
+    return { action: "defer" };
+  }
   const choice = normalizedChoice.includes("reflection 1")
     ? "1"
     : normalizedChoice.includes("reflection 2")
@@ -239,7 +250,9 @@ export function parseReflectionArenaChoiceAnswers(
         ? "tie"
         : undefined;
   if (!choice) {
-    throw new Error("Choose Reflection 1, Reflection 2, or Tie / no merge.");
+    throw new Error(
+      "Choose Reflection 1, Reflection 2, Tie / no merge, or Inspect memory first.",
+    );
   }
 
   const rawNotes =
@@ -250,9 +263,18 @@ export function parseReflectionArenaChoiceAnswers(
     "";
   const notes = rawNotes.trim();
   return {
+    action: "finalize",
     choice,
     notes: notes && notes !== "No notes" ? notes : undefined,
   };
+}
+
+export function formatReflectionArenaDeferredMessage(runId: string): string {
+  return [
+    `Reflection arena run ${runId} is still awaiting a choice.`,
+    "Inspect Memory Palace, then resume the choice prompt when ready:",
+    `  /reflect-arena resume ${runId}`,
+  ].join("\n");
 }
 
 function colorForCandidate(label: ReflectionArenaCandidateLabel): string {
@@ -299,11 +321,7 @@ export function formatReflectionArenaAwaitingChoice(
     "",
     reports,
     "",
-    "Choose one to merge into memory and discard the other:",
-    `  /reflect-arena choose ${run.runId} 1`,
-    `  /reflect-arena choose ${run.runId} 2`,
-    `  /reflect-arena choose ${run.runId} tie <optional notes>`,
-    "",
+    "Use the reflection arena choice prompt below to select a winner and optionally add notes.",
     `Choice log: ${getReflectionArenaChoiceLogPath()}`,
   ].join("\n");
 }

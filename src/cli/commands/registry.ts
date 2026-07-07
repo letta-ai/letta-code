@@ -89,7 +89,7 @@ export const commands: Record<string, Command> = {
   },
   "/reflect-arena": {
     desc: "Experimental blind A/B reflection model comparison",
-    args: "[--model-a MODEL] [--model-b MODEL] | choose <run-id> <1|2|tie> [notes]",
+    args: "[--model-a MODEL] [--model-b MODEL] | resume <run-id> | choose <run-id> <1|2|tie> [notes]",
     order: 50.1,
     handler: () => {
       // Handled specially in App.tsx
