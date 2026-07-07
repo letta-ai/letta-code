@@ -37,6 +37,7 @@ describe("dream subcommand", () => {
       expect(output).toContain("letta dream");
       expect(output).toContain("--memory");
       expect(output).toContain("--from");
+      expect(output).toContain("--to");
       expect(output).toContain("--instruction");
     } finally {
       captured.restore();
