@@ -33,6 +33,7 @@ import {
   buildAutoReflectionPayload,
   finalizeAutoReflectionPayload,
 } from "@/cli/helpers/reflection-transcript";
+import { telemetry } from "@/telemetry";
 import { debugWarn } from "@/utils/debug";
 
 const execFile = promisify(execFileCb);
@@ -530,6 +531,7 @@ async function uploadChoiceRecordToHf(params: {
     memoryBaseCommit,
     memoryCandidateCommit,
   });
+  telemetry.trackReflectionArenaVote(row);
 
   const result = await maybeUploadReflectionArenaChoiceToHf(row);
   if (result.uploaded) {

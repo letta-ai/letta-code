@@ -30,7 +30,8 @@ export interface TelemetryEvent {
     | "error"
     | "user_input"
     | "reflection_start"
-    | "reflection_end";
+    | "reflection_end"
+    | "reflection_arena_vote";
   timestamp: string;
   data: Record<string, unknown>;
 }
@@ -113,6 +114,24 @@ export interface ReflectionEndData {
   step_count?: number;
   duration_ms?: number;
   model?: string;
+  version?: string;
+  platform?: string;
+}
+
+export interface ReflectionArenaVoteData {
+  run_id: string;
+  choice: "win_loss" | "tie";
+  winner: string | null;
+  loser: string | null;
+  winner_agent_id: string | null;
+  loser_agent_id: string | null;
+  parent_agent_id: string;
+  parent_convo_id: string;
+  timestamp: string;
+  feedbackstr: string | null;
+  lc_version: string;
+  memory_base_commit: string | null;
+  memory_candidate_commit: string | null;
   version?: string;
   platform?: string;
 }
@@ -427,7 +446,8 @@ class TelemetryManager {
       | ErrorData
       | UserInputData
       | ReflectionStartData
-      | ReflectionEndData,
+      | ReflectionEndData
+      | ReflectionArenaVoteData,
   ) {
     if (!this.isTelemetryEnabled()) {
       return;
@@ -754,6 +774,16 @@ class TelemetryManager {
       platform: process.platform,
     };
     this.track("reflection_end", data);
+  }
+
+  trackReflectionArenaVote(
+    vote: Omit<ReflectionArenaVoteData, "version" | "platform">,
+  ) {
+    this.track("reflection_arena_vote", {
+      ...vote,
+      version: getVersion(),
+      platform: process.platform,
+    });
   }
 
   /** Concurrent callers share one in-flight POST (prevents 429 double-flush race on shutdown). */
