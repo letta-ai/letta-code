@@ -101,7 +101,6 @@ import type {
 const EXPERIMENT_IDS = new Set<ExperimentId>([
   "conversation_titles",
   "desktop_conversation_bootstrap",
-  "node",
   "tui_cron",
 ]);
 
