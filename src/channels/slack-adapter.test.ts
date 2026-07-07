@@ -3229,7 +3229,7 @@ test("slack adapter keeps progress cards active across completed continuation li
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(2);
 });
 
-test("slack adapter treats already-closed stream stop errors as benign", async () => {
+test("slack adapter rewrites dead streams with the final card state", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -3302,7 +3302,246 @@ test("slack adapter treats already-closed stream stop errors as benign", async (
     text: "Done.",
     thread_ts: "1712790000.000050",
   });
-  expect(writeClient?.chat.update).not.toHaveBeenCalled();
+  // Slack already took the message out of streaming state (expiry or an
+  // external stop), so stopStream cannot deliver the final retitle. The
+  // adapter rewrites the message via chat.update instead of silently
+  // dropping the terminal state and leaving a red in-progress row.
+  expect(writeClient?.chat.update).toHaveBeenCalledTimes(1);
+  const updateCalls = writeClient?.chat.update.mock.calls as unknown as Array<
+    Array<{
+      channel: string;
+      ts: string;
+      text: string;
+      blocks?: Array<{ type: string; text?: { text?: string } }>;
+    }>
+  >;
+  const updateArgs = updateCalls[0]?.[0];
+  expect(updateArgs).toMatchObject({
+    channel: "C123",
+    ts: "1712800000.000300",
+  });
+  const renderedBlocks = JSON.stringify(updateArgs?.blocks ?? []);
+  expect(renderedBlocks).toContain("Read");
+  expect(renderedBlocks).toContain(":white_check_mark:");
+  expect(renderedBlocks).not.toContain("in_progress");
+});
+
+test("slack adapter closes cancelled turns without the red error status", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "cancelled",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledTimes(1);
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    Array<{ chunks?: Array<Record<string, unknown>> }>
+  >;
+  const stopChunks = stopCalls[0]?.[0]?.chunks ?? [];
+  // A user stop is not a failure: no chunk may carry the red error status.
+  expect(stopChunks.filter((chunk) => chunk.status === "error")).toHaveLength(
+    0,
+  );
+  expect(stopChunks).toContainEqual({
+    type: "task_update",
+    id: "task_call-1",
+    title: "Read",
+    status: "complete",
+  });
+  expect(stopChunks).toContainEqual({
+    type: "plan_update",
+    title: "Cancelled",
+  });
+});
+
+test("slack adapter stops appending after the stream leaves streaming state and rewrites at finish", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  // Slack expired the stream mid-turn (e.g. idle timeout).
+  writeClient?.chat.appendStream.mockResolvedValueOnce({
+    ok: false,
+    error: "message_not_in_streaming_state",
+  });
+
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Searching files",
+    toolCallId: "call-2",
+    toolName: "grep",
+  });
+  const appendCallsAfterDeath =
+    writeClient?.chat.appendStream.mock.calls.length ?? 0;
+
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "completed",
+    message: "Searched files",
+    toolCallId: "call-2",
+    toolName: "grep",
+  });
+  // A dead stream accepts no further appends.
+  expect(writeClient?.chat.appendStream.mock.calls.length ?? 0).toBe(
+    appendCallsAfterDeath,
+  );
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+  // The final assistant reply closes the active card immediately.
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Done.",
+    threadId: "1712790000.000050",
+  });
+
+  // Finishing must not call stopStream on a dead stream; the final state is
+  // rewritten onto the frozen message via chat.update instead.
+  expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.update).toHaveBeenCalledTimes(1);
+  const updateCalls = writeClient?.chat.update.mock.calls as unknown as Array<
+    Array<{ channel: string; ts: string; blocks?: unknown[] }>
+  >;
+  expect(updateCalls[0]?.[0]).toMatchObject({
+    channel: "C123",
+    ts: "1712800000.000300",
+  });
+  const renderedBlocks = JSON.stringify(updateCalls[0]?.[0]?.blocks ?? []);
+  expect(renderedBlocks).toContain("Search");
+  expect(renderedBlocks).not.toContain("in_progress");
+});
+
+test("slack adapter keepalive survives a transient append failure", async () => {
+  process.env.LETTA_SLACK_PROGRESS_STREAM_KEEPALIVE_MS = "20";
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  // One transient failure (rate limit / network blip) must not permanently
+  // silence the keepalive — Slack expires idle streams into a red card.
+  writeClient?.chat.appendStream.mockResolvedValueOnce({
+    ok: false,
+    error: "ratelimited",
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 120));
+
+  expect(
+    writeClient?.chat.appendStream.mock.calls.length ?? 0,
+  ).toBeGreaterThanOrEqual(2);
 });
 
 test("slack adapter includes final error details in rich progress streams", async () => {
