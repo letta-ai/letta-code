@@ -37,12 +37,6 @@ const EXPERIMENT_DEFINITIONS: readonly ExperimentDefinition[] = [
       "Open browser-based worktree diff previews powered by Diffs from Pierre.",
   },
   {
-    id: "node",
-    label: "node",
-    description: "Route API requests through the Letta Node / TS core path.",
-    envVar: "LETTA_NODE",
-  },
-  {
     id: "tui_cron",
     label: "TUI cron scheduler",
     description:

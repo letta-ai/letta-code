@@ -1695,7 +1695,7 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "set_experiment",
           request_id: "experiment-set-1",
-          experiment_id: "node",
+          experiment_id: "tui_cron",
           enabled: true,
         }),
       ),
@@ -3520,11 +3520,9 @@ describe("listen-client experiment command handling", () => {
   test("wraps typed experiment reads and writes over WS", async () => {
     const originalGetSettings = settingsManager.getSettings;
     const originalUpdateSettings = settingsManager.updateSettings;
-    const originalNodeFlag = process.env.LETTA_NODE;
     const globalSettings = { autoConversationTitles: false } as Settings;
 
     try {
-      delete process.env.LETTA_NODE;
       (settingsManager as typeof settingsManager).getSettings = (() =>
         globalSettings) as typeof settingsManager.getSettings;
       (settingsManager as typeof settingsManager).updateSettings = ((
@@ -3560,7 +3558,7 @@ describe("listen-client experiment command handling", () => {
         success: true,
         experiments: expect.arrayContaining([
           expect.objectContaining({
-            id: "node",
+            id: "tui_cron",
             enabled: false,
             source: "default",
           }),
@@ -3577,7 +3575,7 @@ describe("listen-client experiment command handling", () => {
         {
           type: "set_experiment",
           request_id: "experiment-set-1",
-          experiment_id: "node",
+          experiment_id: "tui_cron",
           enabled: true,
         },
         socket as unknown as WebSocket,
@@ -3592,7 +3590,7 @@ describe("listen-client experiment command handling", () => {
         success: true,
         experiments: expect.arrayContaining([
           expect.objectContaining({
-            id: "node",
+            id: "tui_cron",
             enabled: true,
             source: "override",
           }),
@@ -3603,7 +3601,7 @@ describe("listen-client experiment command handling", () => {
         device_status: {
           experiments: expect.arrayContaining([
             expect.objectContaining({
-              id: "node",
+              id: "tui_cron",
               enabled: true,
               source: "override",
             }),
@@ -3638,11 +3636,6 @@ describe("listen-client experiment command handling", () => {
       });
       expect(globalSettings.autoConversationTitles).toBe(true);
     } finally {
-      if (originalNodeFlag === undefined) {
-        delete process.env.LETTA_NODE;
-      } else {
-        process.env.LETTA_NODE = originalNodeFlag;
-      }
       (settingsManager as typeof settingsManager).getSettings =
         originalGetSettings;
       (settingsManager as typeof settingsManager).updateSettings =
@@ -4181,31 +4174,21 @@ describe("listen-client v2 status builders", () => {
   });
 
   test("buildDeviceStatus includes the effective working directory", () => {
-    const originalNodeFlag = process.env.LETTA_NODE;
-    delete process.env.LETTA_NODE;
     const runtime = __listenClientTestUtils.createRuntime();
-    try {
-      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
-      expect(typeof deviceStatus.current_working_directory).toBe("string");
-      expect(
-        (deviceStatus.current_working_directory ?? "").length,
-      ).toBeGreaterThan(0);
-      expect(deviceStatus.current_toolset_preference).toBe("auto");
-      expect(deviceStatus.experiments).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: "node",
-            source: "default",
-          }),
-        ]),
-      );
-    } finally {
-      if (originalNodeFlag === undefined) {
-        delete process.env.LETTA_NODE;
-      } else {
-        process.env.LETTA_NODE = originalNodeFlag;
-      }
-    }
+    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
+    expect(typeof deviceStatus.current_working_directory).toBe("string");
+    expect(
+      (deviceStatus.current_working_directory ?? "").length,
+    ).toBeGreaterThan(0);
+    expect(deviceStatus.current_toolset_preference).toBe("auto");
+    expect(deviceStatus.experiments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "tui_cron",
+          source: "default",
+        }),
+      ]),
+    );
   });
 
   test("buildDeviceStatus includes should_doctor state when available", () => {
