@@ -8,6 +8,7 @@ import {
   buildAgentTerminalLink,
   buildChatUrl,
   isLocalAgentId,
+  LETTA_USAGE_URL,
 } from "@/cli/helpers/app-urls";
 
 describe("app URL helpers", () => {
@@ -59,5 +60,9 @@ describe("app URL helpers", () => {
     expect(buildAgentTerminalLink("agent-abc", undefined, "memories")).toBe(
       `\x1b]8;;${targetUrl}\x1b\\memories\x1b]8;;\x1b\\`,
     );
+  });
+
+  test("billing links use chat.letta.com preferences", () => {
+    expect(LETTA_USAGE_URL).toBe("https://chat.letta.com/preferences/usage");
   });
 });

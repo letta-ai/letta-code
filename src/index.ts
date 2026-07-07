@@ -44,6 +44,7 @@ import {
   preprocessCliArgs,
   renderCliOptionsHelp,
 } from "./cli/args";
+import { AgentSelector } from "./cli/components/AgentSelector";
 import { ConversationSelector } from "./cli/components/ConversationSelector";
 import {
   normalizeConversationShorthandFlags,
@@ -52,6 +53,7 @@ import {
 } from "./cli/flag-utils";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import { ensureFdPath, resolveFdPath } from "./cli/helpers/file-autocomplete";
+import { resolveStartupCreateFailure } from "./cli/helpers/startup-create-failure";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
@@ -1542,6 +1544,7 @@ async function main(): Promise<void> {
     const [loadingState, setLoadingState] = useState<
       | "selecting"
       | "selecting_global"
+      | "selecting_agents"
       | "selecting_conversation"
       | "assembling"
       | "importing"
@@ -1585,6 +1588,10 @@ async function main(): Promise<void> {
     const [failedAgentMessage, setFailedAgentMessage] = useState<string | null>(
       null,
     );
+    const [
+      startupAgentSelectorDisableCreate,
+      setStartupAgentSelectorDisableCreate,
+    ] = useState(false);
     // For custom API backends: available model handles from server and user's selection
     const [availableServerModels, setAvailableServerModels] = useState<
       string[]
@@ -2025,10 +2032,11 @@ async function main(): Promise<void> {
               }
               // If null (createDefaultAgents disabled), fall through
             } catch (err) {
-              console.error(
-                `Failed to create default agent: ${err instanceof Error ? err.message : String(err)}`,
-              );
-              process.exit(1);
+              const fallback = resolveStartupCreateFailure(err);
+              setFailedAgentMessage(fallback.failedAgentMessage);
+              setStartupAgentSelectorDisableCreate(fallback.disableCreateAgent);
+              setLoadingState("selecting_agents");
+              return;
             }
             break;
           }
@@ -2055,6 +2063,7 @@ async function main(): Promise<void> {
         if (
           loadingState === "selecting" ||
           loadingState === "selecting_global" ||
+          loadingState === "selecting_agents" ||
           loadingState === "selecting_conversation"
         ) {
           initStartedRef.current = false;
@@ -2736,6 +2745,33 @@ async function main(): Promise<void> {
       });
     }
 
+    if (loadingState === "selecting_agents") {
+      return React.createElement(AgentSelector, {
+        currentAgentId: selectedGlobalAgentId ?? "loading",
+        title: "Select an existing agent",
+        command: "/agents",
+        initialTab: "pinned",
+        emptyPinnedFallbackTab: "constellation",
+        showNewTab: !startupAgentSelectorDisableCreate,
+        allowDelete: true,
+        allowPinActions: true,
+        notice: failedAgentMessage ?? undefined,
+        onSelect: (selectedAgentId, backendMode) => {
+          configureBackendMode(backendMode);
+          setSelectedGlobalAgentId(selectedAgentId);
+          setLoadingState("assembling");
+        },
+        onCreateNewAgent: (_name, backendMode) => {
+          configureBackendMode(backendMode);
+          setUserRequestedNewAgent(true);
+          setLoadingState("assembling");
+        },
+        onCancel: () => {
+          process.exit(0);
+        },
+      });
+    }
+
     // Show global agent selector in fresh repos with global pinned agents
     if (loadingState === "selecting_global") {
       return React.createElement(ProfileSelectionInline, {
@@ -2771,11 +2807,13 @@ async function main(): Promise<void> {
       });
     }
 
-    // At this point, loadingState is not "selecting", "selecting_global", or "selecting_conversation"
-    // (those are handled above), so it's safe to pass to App
+    // At this point, selection states are handled above, so it's safe to pass to App.
     const appLoadingState = loadingState as Exclude<
       typeof loadingState,
-      "selecting" | "selecting_global" | "selecting_conversation"
+      | "selecting"
+      | "selecting_global"
+      | "selecting_agents"
+      | "selecting_conversation"
     >;
 
     if (!agentId || !conversationId) {

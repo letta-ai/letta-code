@@ -94,6 +94,7 @@ import {
   launchReflectionSubagent,
 } from "./cli/helpers/reflection-launcher";
 import { appendTranscriptDeltaJsonl } from "./cli/helpers/reflection-transcript";
+import { resolveStartupCreateFailure } from "./cli/helpers/startup-create-failure";
 import {
   type DrainStreamHook,
   drainStreamWithResume,
@@ -1526,11 +1527,17 @@ export async function handleHeadlessCommand(
   // Priority 6: Fresh user with no LRU - create default agent
   if (!agent) {
     const { ensureDefaultAgents } = await import("@/agent/defaults");
-    const defaultAgent = await ensureDefaultAgents(backend, {
-      preferredModel: model,
-    });
-    if (defaultAgent) {
-      agent = defaultAgent;
+    try {
+      const defaultAgent = await ensureDefaultAgents(backend, {
+        preferredModel: model,
+      });
+      if (defaultAgent) {
+        agent = defaultAgent;
+      }
+    } catch (error) {
+      const fallback = resolveStartupCreateFailure(error);
+      console.error(fallback.headlessMessage);
+      process.exit(1);
     }
   }
 

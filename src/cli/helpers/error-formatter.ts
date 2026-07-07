@@ -3,12 +3,9 @@ import {
   formatConversationBusyErrorMessage,
   isConversationBusyErrorText,
 } from "@/utils/conversation-busy-error";
-import { buildAgentTerminalLink, buildAppUrl } from "./app-urls";
+import { buildAgentTerminalLink, LETTA_USAGE_URL } from "./app-urls";
 import { getErrorContext } from "./error-context";
 import { checkZaiError } from "./zai-errors";
-
-const LETTA_USAGE_URL = buildAppUrl("/settings/organization/usage");
-const LETTA_AGENTS_URL = buildAppUrl("/projects/default-project/agents");
 
 export type ErrorDisplaySurface = "plain" | "terminal";
 
@@ -743,11 +740,11 @@ export function formatErrorDetails(
       const { billingTier } = getErrorContext();
 
       if (billingTier?.toLowerCase() === "free") {
-        return `You've reached the agent limit (3) for the Free Plan. Delete agents at: ${LETTA_AGENTS_URL}\nOr upgrade to Pro for unlimited agents at: ${LETTA_USAGE_URL}`;
+        return `You've reached the agent limit (3) for the Free Plan. Delete an agent, or upgrade to Pro for unlimited agents at: ${LETTA_USAGE_URL}`;
       }
 
       // Fallback for paid tiers (shouldn't normally hit this, but just in case)
-      return `You've reached your agent limit. Delete agents at: ${LETTA_AGENTS_URL}\nOr check your plan at: ${LETTA_USAGE_URL}`;
+      return `You've reached your agent limit. Delete an agent, or check your plan at: ${LETTA_USAGE_URL}`;
     }
 
     if (hasErrorReason(e, "model-unknown", reasons)) {
@@ -764,7 +761,7 @@ export function formatErrorDetails(
       // Extract the resource type (agents, tools, etc.) from the message
       const match = resourceLimitMsg.match(/limit for (\w+)/);
       const resourceType = match ? match[1] : "resources";
-      return `${resourceLimitMsg}\nUpgrade at: ${LETTA_USAGE_URL}\nDelete ${resourceType} at: ${LETTA_AGENTS_URL}`;
+      return `${resourceLimitMsg}\nUpgrade at: ${LETTA_USAGE_URL}\nDelete ${resourceType} from your workspace.`;
     }
 
     // Check for credit exhaustion error - provide a friendly message

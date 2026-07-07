@@ -41,9 +41,15 @@ interface AgentSelectorProps {
   allowDelete?: boolean;
   /** Whether Shift+P can unpin agents from the selector. */
   allowPinActions?: boolean;
+  /** Initial tab to show when the selector opens. */
+  initialTab?: TabId;
+  /** Tab to switch to if the initial Pinned tab has no valid agents. */
+  emptyPinnedFallbackTab?: TabId;
+  /** Optional notice shown above the tab contents. */
+  notice?: string;
 }
 
-type TabId = "pinned" | "local" | "constellation" | "new";
+export type TabId = "pinned" | "local" | "constellation" | "new";
 
 type ViewState =
   | { type: "list" }
@@ -175,6 +181,9 @@ export function AgentSelector({
   showNewTab = true,
   allowDelete = true,
   allowPinActions = true,
+  initialTab = "pinned",
+  emptyPinnedFallbackTab,
+  notice,
 }: AgentSelectorProps) {
   const terminalWidth = useTerminalWidth();
 
@@ -199,16 +208,14 @@ export function AgentSelector({
     [hasLocalAgents, showNewTab],
   );
 
-  const [activeTab, setActiveTab] = useState<TabId>("pinned");
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
 
-  // If active tab is no longer visible (e.g. local tab hidden after deleting all local agents), fall back
+  // If active tab is no longer visible (e.g. local tab hidden after deleting all local agents), fall back.
   useEffect(() => {
-    if (activeTab === "local" && !hasLocalAgents) {
-      setActiveTab("constellation");
-    } else if (activeTab === "new" && !showNewTab) {
-      setActiveTab("pinned");
+    if (!visibleTabs.some((tab) => tab.id === activeTab)) {
+      setActiveTab(visibleTabs[0]?.id ?? "pinned");
     }
-  }, [activeTab, hasLocalAgents, showNewTab]);
+  }, [activeTab, visibleTabs]);
 
   // Pinned tab state
   const [pinnedAgents, setPinnedAgents] = useState<PinnedAgentData[]>([]);
@@ -531,6 +538,28 @@ export function AgentSelector({
     pinnedStartIndex,
     pinnedStartIndex + DISPLAY_PAGE_SIZE,
   );
+
+  useEffect(() => {
+    if (
+      activeTab === "pinned" &&
+      emptyPinnedFallbackTab &&
+      !pinnedLoading &&
+      validPinnedAgents.length === 0
+    ) {
+      const fallbackTab = visibleTabs.some(
+        (tab) => tab.id === emptyPinnedFallbackTab,
+      )
+        ? emptyPinnedFallbackTab
+        : (visibleTabs[0]?.id ?? "pinned");
+      setActiveTab(fallbackTab);
+    }
+  }, [
+    activeTab,
+    emptyPinnedFallbackTab,
+    pinnedLoading,
+    validPinnedAgents.length,
+    visibleTabs,
+  ]);
 
   // Pagination calculations - Local (current agent pinned to top)
   const sortedLocalAgents = useMemo(
@@ -1081,6 +1110,11 @@ export function AgentSelector({
           }
         />
         <Text dimColor> {TAB_DESCRIPTIONS[activeTab]}</Text>
+        {notice && (
+          <Box marginTop={1}>
+            <Text color="yellow"> {notice}</Text>
+          </Box>
+        )}
         <Box height={1} />
       </Box>
 

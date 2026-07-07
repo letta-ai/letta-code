@@ -1,6 +1,9 @@
 import { isLocalAgentId as isLocalAgentIdShared } from "@/agent/agent-id";
 
 const APP_BASE = "https://app.letta.com";
+const CHAT_BASE = "https://chat.letta.com";
+
+export const LETTA_USAGE_URL = `${CHAT_BASE}/preferences/usage`;
 
 export function isLocalAgentId(agentId: string): boolean {
   return isLocalAgentIdShared(agentId);
