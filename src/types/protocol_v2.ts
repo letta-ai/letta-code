@@ -1379,6 +1379,12 @@ export interface ListModelsCommand {
   type: "list_models";
   /** Echoed back in the response for request correlation. */
   request_id: string;
+  /**
+   * Bypass the listener's availability cache and refetch from the backend.
+   * Sent by user-initiated refreshes so they can never be answered with a
+   * stale-but-within-TTL snapshot.
+   */
+  force?: boolean;
 }
 
 export type ConnectProviderStorageTarget = "local";
