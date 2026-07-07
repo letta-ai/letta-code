@@ -2305,6 +2305,17 @@ export function createSlackAdapter(
     return status;
   }
 
+  function isSlackProgressCardRendering(source: ChannelTurnSource): boolean {
+    const activeKey = getActiveSlackProgressCardKey(source);
+    const entry = activeKey ? progressCardByReplyKey.get(activeKey) : undefined;
+    return Boolean(
+      entry &&
+        (entry.mode === "stream" ||
+          (entry.pendingStreamChunks?.length ?? 0) > 0 ||
+          entry.pendingFlush),
+    );
+  }
+
   async function setSlackAssistantThreadStatus(
     source: ChannelTurnSource,
     status: string,
@@ -3573,6 +3584,10 @@ export function createSlackAdapter(
       }
 
       if (event.type === "queued") {
+        if (isSlackProgressCardRendering(event.source)) {
+          await clearSlackAssistantThreadStatus(event.source);
+          return;
+        }
         const status = getSlackAssistantThreadStatusForTurn(event.source);
         if (status) {
           await setSlackAssistantThreadStatus(event.source, status);
@@ -3583,9 +3598,16 @@ export function createSlackAdapter(
       if (event.type === "processing") {
         await Promise.all(
           getUniqueSlackProgressSources(event.sources).map(async (source) => {
-            const status = getSlackAssistantThreadStatusForTurn(source);
-            if (status) {
-              await setSlackAssistantThreadStatus(source, status);
+            if (
+              canStartSlackStream(source) ||
+              isSlackProgressCardRendering(source)
+            ) {
+              await clearSlackAssistantThreadStatus(source);
+            } else {
+              const status = getSlackAssistantThreadStatusForTurn(source);
+              if (status) {
+                await setSlackAssistantThreadStatus(source, status);
+              }
             }
             await upsertSlackProgressCard(source, "processing", "Working", {
               force: true,

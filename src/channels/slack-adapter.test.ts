@@ -2423,21 +2423,7 @@ test("slack adapter anchors direct message progress to the inbound message", asy
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  const statusCalls =
-    (writeClient?.assistant.threads.setStatus.mock.calls as Array<
-      Array<{
-        channel_id: string;
-        thread_ts: string;
-        status: string;
-      }>
-    >) ?? [];
-  expect(statusCalls[0]?.[0]).toMatchObject({
-    channel_id: "D123",
-    thread_ts: "1712800000.000100",
-  });
-  expect(["is cogitating...", "is thinking...", "is processing..."]).toContain(
-    statusCalls[0]?.[0]?.status ?? "",
-  );
+  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
   expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
     channel: "D123",
     thread_ts: "1712800000.000100",
@@ -2478,11 +2464,6 @@ test("slack adapter anchors direct message progress to the inbound message", asy
       "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
   });
   expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
-  expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
-    channel_id: "D123",
-    thread_ts: "1712800000.000100",
-    status: "",
-  });
 });
 
 test("slack adapter keeps separate task rows for parallel tool progress", async () => {
@@ -3457,8 +3438,11 @@ test("slack adapter shows and finalizes a placeholder row for no-tool turns", as
     (writeClient?.assistant.threads.setStatus.mock.calls as Array<
       Array<{ status: string }>
     >) ?? [];
-  expect(statusCalls.length).toBeGreaterThanOrEqual(3);
-  expect(statusCalls[statusCalls.length - 1]?.[0]?.status).toBe("");
+  expect(statusCalls).toHaveLength(2);
+  expect(["is cogitating...", "is thinking...", "is processing..."]).toContain(
+    statusCalls[0]?.[0]?.status ?? "",
+  );
+  expect(statusCalls[1]?.[0]?.status).toBe("");
 });
 
 test("slack adapter finishes an active progress card when MessageChannel sends", async () => {
