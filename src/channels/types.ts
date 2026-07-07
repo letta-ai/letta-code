@@ -25,6 +25,40 @@ export type ChannelModelPickerData = {
   recentHandles?: string[];
 };
 
+/**
+ * Default channel id used for wire compatibility when WS clients omit
+ * `channel_id` on channel commands. Early protocol versions predate
+ * multi-channel support, when Telegram was the only bundled channel.
+ */
+export const LEGACY_DEFAULT_CHANNEL_ID = "telegram";
+
+/**
+ * Per-turn rich draft streaming policy derived from a channel account's
+ * generic opt-in fields. Returns null when the account has not opted in.
+ * Any channel account config may declare `richDraftStreaming` /
+ * `richPrivateChatDefault`; adapters that also implement
+ * `sendRichMessageDraft` get live draft streaming from the listener.
+ */
+export type ChannelRichDraftStreamingPolicy = {
+  richPrivateChatDefault: boolean;
+};
+
+export function getRichDraftStreamingPolicy(
+  account: unknown,
+): ChannelRichDraftStreamingPolicy | null {
+  if (!account || typeof account !== "object") {
+    return null;
+  }
+  const record = account as {
+    richDraftStreaming?: unknown;
+    richPrivateChatDefault?: unknown;
+  };
+  if (record.richDraftStreaming !== true) {
+    return null;
+  }
+  return { richPrivateChatDefault: record.richPrivateChatDefault !== false };
+}
+
 export const FIRST_PARTY_CHANNEL_IDS = [
   "telegram",
   "slack",
