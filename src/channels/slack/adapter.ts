@@ -44,6 +44,7 @@ import {
   isTaskTool,
   isWebSearchTool,
 } from "@/cli/helpers/tool-name-mapping";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   resolveSlackChannelHistory,
   resolveSlackInboundAttachments,
@@ -543,6 +544,9 @@ function normalizeSlackReactionName(value: string): string {
 const SLACK_INGRESS_DEDUPE_TTL_MS = 60_000;
 const SLACK_INGRESS_DEDUPE_MAX = 2_000;
 const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
+// Slack section blocks cap mrkdwn text at 3000 characters; leave headroom
+// for the truncation marker when rewriting a dead stream's final state.
+const SLACK_DEAD_STREAM_REWRITE_TEXT_MAX = 2_900;
 const SLACK_PROGRESS_CARD_TEXT_MAX = 300;
 const SLACK_PROGRESS_CARD_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const SLACK_PROGRESS_CARD_STATE_MAX = 2_000;
@@ -583,6 +587,13 @@ type SlackProgressCardEntry = {
   source: ChannelTurnSource;
   mode?: "stream";
   streamTs?: string;
+  /**
+   * Set once Slack reports the stream left streaming state while we still
+   * expected it to be live (expiry, external stop). A dead stream never
+   * accepts appends again; the terminal flush rewrites the message via
+   * chat.update instead so the card cannot stay stuck on a red spinner row.
+   */
+  streamDead?: boolean;
   status: SlackProgressCardState;
   latestText: string;
   latestUpdate?: ChannelTurnProgressEvent;
@@ -793,9 +804,15 @@ function buildTerminalSlackStreamChunks(
       }
       continue;
     }
+    // Preserve rows that already reached a real terminal state: completed
+    // rows always, and errored rows unless the turn itself completed (a
+    // completed turn intentionally downgrades stale error rows). Keyed on the
+    // turn outcome, not terminalTaskStatus, so cancelled turns (which now
+    // close remaining rows as "complete"/"Stopped") keep genuine tool
+    // failures visible instead of repainting them green.
     const shouldPreserveTerminalTask =
       task.status === "complete" ||
-      (task.status === "error" && terminalTaskStatus !== "complete");
+      (task.status === "error" && entry.status !== "completed");
     const terminalTask = shouldPreserveTerminalTask
       ? task
       : {
@@ -819,6 +836,69 @@ function buildTerminalSlackStreamChunks(
     chunks.push(buildSlackPlanUpdateChunk(entry));
   }
   return chunks;
+}
+
+/**
+ * Render terminal stream chunks as plain message blocks for a stream Slack
+ * has already taken out of streaming state (expired or externally stopped).
+ *
+ * stopStream no-ops with `message_not_in_streaming_state` on such messages,
+ * which previously dropped the final retitle/error details entirely and left
+ * the card stuck on a red in-progress row. Rewriting the message via
+ * chat.update replaces the stale streaming UI with the real final state.
+ */
+function buildSlackDeadStreamRewrite(
+  entry: SlackProgressCardEntry,
+  chunks: SlackStreamChunk[],
+): { text: string; blocks: SlackBlock[] } {
+  const planTitle = chunks.reduce<string | null>(
+    (latest, chunk) => (chunk.type === "plan_update" ? chunk.title : latest),
+    null,
+  );
+  const headerText =
+    sanitizeSlackProgressText(planTitle ?? "", SLACK_STREAM_CHUNK_TEXT_MAX) ||
+    formatSlackProgressCardText(entry.status, entry.latestText);
+  const lines: string[] = [];
+  for (const chunk of chunks) {
+    if (chunk.type !== "task_update") {
+      continue;
+    }
+    const icon =
+      chunk.status === "error"
+        ? ":warning:"
+        : chunk.status === "complete"
+          ? ":white_check_mark:"
+          : ":hourglass_flowing_sand:";
+    const details = isNonEmptyString(chunk.details)
+      ? ` — ${chunk.details}`
+      : "";
+    lines.push(`${icon} ${chunk.title}${details}`);
+  }
+  const body = truncateChannelProgressText(
+    lines.join("\n"),
+    SLACK_DEAD_STREAM_REWRITE_TEXT_MAX,
+    "…",
+  );
+  const blocks: SlackBlock[] = [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: `*${headerText}*` },
+    },
+  ];
+  if (body) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: body },
+    });
+  }
+  const footnote = buildSlackChatFootnote(entry.source);
+  if (footnote) {
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: footnote }],
+    });
+  }
+  return { text: headerText, blocks };
 }
 
 function isDuplicateSkillTaskDetails(
@@ -2532,6 +2612,7 @@ export function createSlackAdapter(
       }
       entry.mode = "stream";
       entry.streamTs = response.ts;
+      entry.streamDead = undefined;
       rememberMessageThread(response.ts, replyToMessageId);
       rememberSlackStreamTaskDetails(entry, args.chunks ?? []);
       // Once the native stream card is visible, clear Slack's assistant
@@ -2548,12 +2629,70 @@ export function createSlackAdapter(
     }
   }
 
+  function markSlackProgressStreamDead(
+    entry: SlackProgressCardEntry,
+    reason: string,
+  ): void {
+    if (entry.streamDead) {
+      return;
+    }
+    entry.streamDead = true;
+    clearSlackProgressStreamKeepalive(entry);
+    console.warn(
+      "[Slack] Progress stream left streaming state unexpectedly:",
+      reason,
+    );
+    trackBoundaryError({
+      context: "slack progress stream",
+      errorType: "slack_progress_stream_dead",
+      error: reason,
+    });
+  }
+
+  /**
+   * Replace a dead stream's message content with the terminal card state via
+   * chat.update. Slack refuses stream calls once a message leaves streaming
+   * state, so this is the only way the final retitle/error details can still
+   * reach the thread instead of leaving a stuck red spinner row.
+   */
+  async function rewriteDeadSlackProgressStream(
+    entry: SlackProgressCardEntry,
+    chunks: SlackStreamChunk[],
+  ): Promise<boolean> {
+    if (!entry.streamTs) {
+      return false;
+    }
+    try {
+      const slackClient = await ensureWriteClient();
+      const { text, blocks } = buildSlackDeadStreamRewrite(entry, chunks);
+      await slackClient.chat.update({
+        channel: entry.source.chatId,
+        ts: entry.streamTs,
+        text,
+        blocks,
+      });
+      rememberSlackStreamTaskDetails(entry, chunks);
+      return true;
+    } catch (error) {
+      console.warn(
+        "[Slack] Failed to rewrite dead progress stream:",
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
+  }
+
   async function appendSlackProgressStream(
     entry: SlackProgressCardEntry,
     rawChunks: SlackStreamChunk[],
   ): Promise<boolean> {
     if (!entry.streamTs) {
       return true;
+    }
+    if (entry.streamDead) {
+      // Chunks requeue via the flush path and reach the thread through the
+      // terminal dead-stream rewrite instead.
+      return false;
     }
     const chunks = compactSlackStreamChunks(rawChunks, entry);
     if (chunks.length === 0) {
@@ -2572,6 +2711,9 @@ export function createSlackAdapter(
         chunks,
       });
       if (response.ok === false) {
+        if (isSlackMessageNotStreamingStateError(response.error)) {
+          markSlackProgressStreamDead(entry, "append_not_in_streaming_state");
+        }
         console.warn(
           "[Slack] Failed to append progress stream:",
           response.error ?? "unknown error",
@@ -2581,6 +2723,9 @@ export function createSlackAdapter(
       rememberSlackStreamTaskDetails(entry, chunks);
       return true;
     } catch (error) {
+      if (isSlackMessageNotStreamingStateError(error)) {
+        markSlackProgressStreamDead(entry, "append_not_in_streaming_state");
+      }
       console.warn(
         "[Slack] Failed to append progress stream:",
         error instanceof Error ? error.message : error,
@@ -2602,17 +2747,20 @@ export function createSlackAdapter(
     if (!stopStream) {
       return false;
     }
+    // Only a genuinely failed turn closes remaining rows with the red error
+    // status. Cancelled turns are user stops, not failures — their rows close
+    // as "Stopped" with a neutral complete status so an interrupted turn is
+    // visually distinguishable from a crashed one.
     const terminalTaskStatus: SlackStreamTaskStatus =
-      entry.status === "error"
-        ? "error"
-        : entry.status === "cancelled"
-          ? "error"
-          : "complete";
+      entry.status === "error" ? "error" : "complete";
     const chunks = buildTerminalSlackStreamChunks(
       entry,
       terminalTaskStatus,
       finalErrorChunk,
     );
+    if (entry.streamDead) {
+      return await rewriteDeadSlackProgressStream(entry, chunks);
+    }
     try {
       const args: SlackStopStreamArgs = {
         channel: entry.source.chatId,
@@ -2629,7 +2777,8 @@ export function createSlackAdapter(
       const response = await stopStream.call(slackClient.chat, args);
       if (response.ok === false) {
         if (isSlackMessageNotStreamingStateError(response.error)) {
-          return true;
+          markSlackProgressStreamDead(entry, "stop_not_in_streaming_state");
+          return await rewriteDeadSlackProgressStream(entry, chunks);
         }
         console.warn(
           "[Slack] Failed to stop progress stream:",
@@ -2641,7 +2790,8 @@ export function createSlackAdapter(
       return true;
     } catch (error) {
       if (isSlackMessageNotStreamingStateError(error)) {
-        return true;
+        markSlackProgressStreamDead(entry, "stop_not_in_streaming_state");
+        return await rewriteDeadSlackProgressStream(entry, chunks);
       }
       console.warn(
         "[Slack] Failed to stop progress stream:",
@@ -2726,6 +2876,7 @@ export function createSlackAdapter(
       entry.keepaliveTimer ||
       entry.status !== "processing" ||
       entry.mode !== "stream" ||
+      entry.streamDead ||
       !entry.streamTs
     ) {
       return;
@@ -2746,6 +2897,14 @@ export function createSlackAdapter(
           buildSlackPlanUpdateChunk(entry),
         ]);
         if (!didAppend) {
+          // A transient append failure (rate limit, network blip) must not
+          // permanently silence the keepalive: Slack expires idle streams and
+          // an expired stream renders a stuck red warning row. Keep retrying
+          // on the same cadence until the turn finishes or the stream is
+          // confirmed dead.
+          if (!entry.streamDead) {
+            scheduleSlackProgressStreamKeepalive(key, entry);
+          }
           return;
         }
         entry.lastSentAt = Date.now();
@@ -3091,6 +3250,7 @@ export function createSlackAdapter(
         // blocks in the Slack accordion.
         entry.mode = undefined;
         entry.streamTs = undefined;
+        entry.streamDead = undefined;
         entry.toolTasksById = undefined;
         entry.pendingStreamChunks = undefined;
         entry.toolNamesByCallId = undefined;
@@ -3789,6 +3949,18 @@ export function createSlackAdapter(
           event.batchId,
           event.error,
         );
+      }
+
+      if (event.outcome === "error") {
+        // Every turn that surfaces as a red "Turn failed" card also emits a
+        // telemetry event, so genuine SADs are measurable and separable from
+        // cosmetic dead-stream artifacts (slack_progress_stream_dead).
+        trackBoundaryError({
+          context: "slack channel turn",
+          errorType: "slack_channel_turn_error",
+          error: event.error?.trim() || "unknown error",
+          runId: event.runId ?? undefined,
+        });
       }
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
