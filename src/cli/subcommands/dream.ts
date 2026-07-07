@@ -1,5 +1,10 @@
 import { parseArgs } from "node:util";
 import {
+  type ParsedSource,
+  parseFromSource,
+  stageFromSource,
+} from "@/cli/subcommands/dream-sources";
+import {
   buildTargetInstruction,
   type DreamTarget,
   readExistingTarget,
@@ -20,8 +25,10 @@ Run a memory reflection pass for an agent and wait for it to finish.
 Options:
   --memory <agent-id>         Agent whose memory to refine (default:
                               $LETTA_AGENT_ID, then the last-used agent)
-  --from <conv-id>            Conversation transcript to reflect on
-                              (default: the agent's primary "default" history)
+  --from <conv-id|type:path>  What to reflect on: a conversation id (default:
+                              the agent's primary "default" history), or an
+                              external source, e.g. openhands:./events.json
+                              or transcript:./rows.jsonl
   --to <path>                 Maintain a doc (e.g. ./AGENTS.md) from memory;
                               the agent edits it in place, using judgment
   --effort <level>            Reflection effort (reserved; not yet implemented)
@@ -106,6 +113,20 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     }
   }
 
+  // A typed --from (e.g. openhands:./events.json) is an external source; a bare
+  // value is one of the agent's own conversations. Resolve the source now so an
+  // unknown type errors early.
+  let source: ParsedSource | null = null;
+  if (parsed.values.from) {
+    try {
+      source = parseFromSource(parsed.values.from);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      return 1;
+    }
+  }
+
   // --effort is part of the interface but not yet wired up.
   if (!asJson && parsed.values.effort) {
     console.error(
@@ -147,7 +168,34 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     return 1;
   }
 
-  const conversationId = parsed.values.from || "default";
+  // For an external source, stage its converted entries into a synthetic
+  // conversation transcript and reflect on that; the post-reflection recompile
+  // targets the agent's real "default" history (the synthetic conversation is
+  // not a backend conversation). A bare --from reflects on that conversation.
+  let conversationId: string;
+  let stagedEntries: number | undefined;
+  if (source) {
+    try {
+      const staged = await stageFromSource(agentId, source);
+      conversationId = staged.conversationId;
+      stagedEntries = staged.appended;
+      if (!asJson) {
+        console.log(
+          `Staged ${staged.appended} transcript entries (${staged.skipped} already ingested).`,
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (asJson) {
+        emitJson({ launched: false, reason: "source_error", error: message });
+      } else {
+        console.error(`Failed to stage --from source: ${message}`);
+      }
+      return 1;
+    }
+  } else {
+    conversationId = parsed.values.from || "default";
+  }
 
   // Approach A: fold the target-doc maintenance directive into the reflection
   // instruction so the single reflection pass also maintains the doc as an
@@ -173,6 +221,9 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
   const result = await launchReflectionSubagent({
     agentId,
     conversationId,
+    // External sources stage into a synthetic conversation that doesn't exist
+    // in the backend; recompile the agent's real primary history instead.
+    ...(source ? { completionConversationId: "default" } : {}),
     memfsEnabled: true,
     triggerSource: "manual",
     description: "Reflect on recent conversations",
@@ -193,7 +244,12 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
 
   if (!result.launched) {
     if (asJson) {
-      emitJson({ launched: false, reason: result.reason, agentId });
+      emitJson({
+        launched: false,
+        reason: result.reason,
+        agentId,
+        ...(stagedEntries !== undefined ? { stagedEntries } : {}),
+      });
       return result.reason === "no_payload" ? 0 : 1;
     }
     switch (result.reason) {
@@ -269,6 +325,7 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
       agentId,
       conversationId,
       transcriptPath: result.payloadPath,
+      ...(stagedEntries !== undefined ? { stagedEntries } : {}),
       ...(target ? { targetPath: target.path, targetWritten } : {}),
       ...(targetError ? { targetError } : {}),
     });
