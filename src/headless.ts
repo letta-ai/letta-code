@@ -3954,6 +3954,14 @@ async function runBidirectionalMode(
         // to classify the result as "interrupted" vs "error". The `finally`
         // block at the bottom of the user-message branch is what owns nulling.
         (currentAbortController as AbortController).abort();
+        if (lineResolver) {
+          // If the turn is blocked waiting for a permission/external-tool
+          // response, the fast path consumed this interrupt before getNextLine()
+          // could see it. Wake that waiter so the aborted turn can unwind.
+          const resolve = lineResolver;
+          lineResolver = null;
+          resolve(null);
+        }
       } else if (action === "latch") {
         // Narrow pre-controller race: a user message was just dispatched but
         // its AbortController isn't created yet. Latch so the imminent turn

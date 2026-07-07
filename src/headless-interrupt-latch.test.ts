@@ -143,5 +143,10 @@ describe("headless interrupt latch wiring", () => {
     expect(source).toContain(
       "// Controller now exists — close the pre-controller race window.",
     );
+    // Interrupts must wake permission/external-tool waits that are blocked in
+    // getNextLine(), otherwise the fast path consumes the interrupt and hangs.
+    expect(source).toContain(
+      "Wake that waiter so the aborted turn can unwind.",
+    );
   });
 });
