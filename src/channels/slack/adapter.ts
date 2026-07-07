@@ -41,8 +41,8 @@ import {
   isSearchTool,
   isShellTool,
   isTaskTool,
+  isWebSearchTool,
 } from "@/cli/helpers/tool-name-mapping";
-import { isWebSearchToolName } from "@/cli/helpers/web-search-display";
 import {
   resolveSlackChannelHistory,
   resolveSlackInboundAttachments,
@@ -1011,7 +1011,7 @@ function formatSlackToolTaskTitle(
       ? "Checked shell output"
       : "Checking shell output";
   }
-  if (isWebSearchToolName(toolName)) {
+  if (isWebSearchTool(toolName)) {
     if (status === "complete") {
       return "Searched the web";
     }
@@ -1217,7 +1217,7 @@ function getSlackCompletionActivity(
   if (isSearchTool(toolName) || isGlobTool(toolName)) {
     return "searched_files";
   }
-  if (isWebSearchToolName(toolName)) {
+  if (isWebSearchTool(toolName)) {
     return "searched_web";
   }
   if (isSkillToolName(toolName)) {

@@ -7,8 +7,9 @@ import {
   isSearchTool,
   isShellTool,
   isTaskTool,
+  isWebSearchTool,
 } from "@/cli/helpers/tool-name-mapping";
-import { isWebSearchToolName } from "@/cli/helpers/web-search-display";
+
 import type { StreamDelta } from "@/types/protocol_v2";
 import type { ChannelTurnProgressUpdate } from "./types";
 
@@ -569,7 +570,7 @@ function formatToolProgressDetails(
   // Try JSON parse first (complete arguments)
   const parsedArguments = parseToolArguments(summary.argumentsText);
   if (parsedArguments) {
-    if (isWebSearchToolName(summary.name)) {
+    if (isWebSearchTool(summary.name)) {
       const query = firstNonEmptyString(parsedArguments.query);
       const sanitized = sanitizeChannelProgressText(
         query,

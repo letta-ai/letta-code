@@ -1946,7 +1946,7 @@ test("slack adapter streams native task progress and clears thread status", asyn
     state: "started",
     message: "Preparing <tool> @channel & token=abc",
     toolCallId: "call-1",
-    toolName: "shell_exec",
+    toolName: "exec_command",
   });
   const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);

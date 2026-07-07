@@ -1,14 +1,3 @@
-export type WebSearchDisplayState =
-  | "started"
-  | "waiting"
-  | "updated"
-  | "completed"
-  | "error";
-
-export function isWebSearchToolName(name: string | undefined): boolean {
-  return name === "web_search" || name === "WebSearch" || name === "webSearch";
-}
-
 function firstNonEmptyString(...values: unknown[]): string | undefined {
   for (const value of values) {
     if (typeof value === "string" && value.trim().length > 0) {
@@ -88,21 +77,4 @@ export function formatWebSearchArgsDisplay(
   const target = formatWebSearchTarget(args);
   const query = firstNonEmptyString(args.query);
   return query ? `${target} for “${query}”` : target;
-}
-
-function formatWebSearchPrefix(state: WebSearchDisplayState): string {
-  if (state === "completed") {
-    return "Searched";
-  }
-  if (state === "error") {
-    return "Attempted to search";
-  }
-  return "Searching";
-}
-
-export function formatWebSearchProgressTitle(
-  args: Record<string, unknown>,
-  state: WebSearchDisplayState,
-): string {
-  return `${formatWebSearchPrefix(state)} ${formatWebSearchArgsDisplay(args)}`;
 }

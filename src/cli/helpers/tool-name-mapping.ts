@@ -34,13 +34,7 @@ export function getDisplayToolName(rawName: string): string {
 
   // Codex toolset (snake_case)
   if (rawName === "update_plan") return "Planning";
-  if (
-    rawName === "exec_command" ||
-    rawName === "shell_exec" ||
-    rawName === "write_stdin"
-  ) {
-    return "Bash";
-  }
+  if (rawName === "exec_command" || rawName === "write_stdin") return "Bash";
   if (rawName === "shell_command" || rawName === "shell") return "Bash";
   if (rawName === "read_file") return "Read";
   if (rawName === "list_dir") return "LS";
@@ -236,7 +230,6 @@ export function isShellTool(name: string): boolean {
     n === "shell_command" ||
     n === "shellcommand" ||
     n === "exec_command" ||
-    n === "shell_exec" ||
     n === "write_stdin" ||
     n === "run_shell_command" ||
     n === "runshellcommand"
@@ -269,7 +262,7 @@ export function isSearchTool(name: string): boolean {
 /**
  * Checks if a tool is web search.
  */
-export function isWebSearchTool(name: string): boolean {
+export function isWebSearchTool(name: string | undefined): boolean {
   return name === "web_search" || name === "WebSearch" || name === "webSearch";
 }
 

@@ -13,7 +13,7 @@ test("channel progress converts tool call deltas without leaking args", () => {
     tool_calls: [
       {
         tool_call_id: "call-1",
-        name: "shell_exec",
+        name: "exec_command",
         arguments: "token=super-secret @channel",
       },
     ],
@@ -23,10 +23,10 @@ test("channel progress converts tool call deltas without leaking args", () => {
     {
       kind: "tool",
       state: "started",
-      message: "Preparing tool: shell_exec",
+      message: "Preparing tool: exec_command",
       runId: "run-1",
       toolCallId: "call-1",
-      toolName: "shell_exec",
+      toolName: "exec_command",
     },
   ]);
 });

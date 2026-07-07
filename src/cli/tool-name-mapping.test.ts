@@ -3,7 +3,6 @@ import {
   getDisplayToolName,
   isMemoryTool,
   isShellOutputTool,
-  isShellTool,
   isTaskTool,
 } from "@/cli/helpers/tool-name-mapping";
 
@@ -12,11 +11,6 @@ describe("toolNameMapping display mappings", () => {
     expect(getDisplayToolName("memory")).toBe("Memory");
     expect(getDisplayToolName("memory_apply_patch")).toBe("Memory");
     expect(getDisplayToolName("memory_insert")).toBe("Memory");
-  });
-
-  test("maps shell_exec to the shell tool family", () => {
-    expect(getDisplayToolName("shell_exec")).toBe("Bash");
-    expect(isShellTool("shell_exec")).toBe(true);
   });
 
   test("maps web search tools to friendly labels", () => {
