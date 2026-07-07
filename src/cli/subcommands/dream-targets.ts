@@ -86,7 +86,10 @@ const AGENTS_MD_GUIDANCE = [
   "plain Markdown with any headings. Do NOT duplicate human-README content",
   "(project pitch, quickstart, contribution guide). Prefer editing/merging",
   "existing sections over appending; remove guidance that new evidence",
-  "contradicts.",
+  "contradicts. Keep it concise and scannable — favor short bullets over prose",
+  "so a coding agent can skim it quickly. Write timelessly: describe how the",
+  "repo works, not how it recently changed, and avoid time-relative wording",
+  "(currently, for now, no longer) that goes stale.",
 ].join("\n");
 
 const GENERIC_GUIDANCE = [
