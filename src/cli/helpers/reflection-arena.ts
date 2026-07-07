@@ -130,6 +130,7 @@ export type LaunchReflectionArenaResult =
 export interface FinalizeReflectionArenaChoiceOptions {
   choice: ReflectionArenaChoice;
   notes?: string;
+  onHfUploadComplete?: (message: string) => void;
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
   runId: string;
@@ -496,7 +497,7 @@ async function uploadChoiceRecordToHf(params: {
 
   const result = await maybeUploadReflectionArenaChoiceToHf(row);
   if (result.uploaded) {
-    return `HF upload: uploaded to ${result.repoId}/${result.path}`;
+    return `Uploaded reflection arena vote to HF ${result.repoId} dataset`;
   }
   if (result.reason === "missing_token") {
     return "HF upload: no HF_TOKEN found; local log only. Run /secrets set HF_TOKEN to enable uploads.";
@@ -779,16 +780,27 @@ export async function finalizeReflectionArenaChoice(
   };
   await saveReflectionArenaRun(completedRun);
   await appendChoiceRecord(completedRun);
-  const hfUploadMessage = await uploadChoiceRecordToHf({
+  void uploadChoiceRecordToHf({
     run: completedRun,
     memoryBaseCommit,
     memoryCandidateCommit,
-  });
+  })
+    .then((message) => {
+      if (message) {
+        options.onHfUploadComplete?.(message);
+      }
+    })
+    .catch((error) => {
+      debugWarn(
+        "memory",
+        `Failed to upload reflection arena choice to Hugging Face: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      options.onHfUploadComplete?.("HF upload: failed; local log only.");
+    });
 
   return {
     message: formatReflectionArenaChoiceResult({
       discarded,
-      hfUploadMessage,
       integration,
       run: completedRun,
     }),

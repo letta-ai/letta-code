@@ -535,7 +535,6 @@ export function App({
   const [reflectionArenaChoicePending, setReflectionArenaChoicePending] =
     useState<{
       questions: ReflectionArenaChoiceQuestion[];
-      readyMessage?: string;
       runId: string;
     } | null>(null);
 
@@ -3714,9 +3713,9 @@ export function App({
                 model: currentModelId,
               },
               onReady: (message, readyRun) => {
+                appendTaskNotificationEvents([message]);
                 setReflectionArenaChoicePending({
                   runId: readyRun.runId,
-                  readyMessage: message,
                   questions: buildReflectionArenaChoiceQuestions(
                     readyRun.runId,
                   ),
@@ -4184,6 +4183,9 @@ export function App({
           runId: pending.runId,
           choice: answer.choice,
           notes: answer.notes,
+          onHfUploadComplete: (message) => {
+            appendTaskNotificationEvents([message]);
+          },
           recompileByConversation:
             _systemPromptRecompileByConversationRef.current,
           recompileQueuedByConversation:

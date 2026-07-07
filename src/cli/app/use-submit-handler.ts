@@ -309,7 +309,6 @@ type SubmitHandlerContext = {
   setReflectionArenaChoicePending: Dispatch<
     SetStateAction<{
       questions: ReflectionArenaChoiceQuestion[];
-      readyMessage?: string;
       runId: string;
     } | null>
   >;
@@ -2294,9 +2293,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       model: currentModelId,
                     },
                     onReady: (message, readyRun) => {
+                      appendTaskNotificationEvents([message]);
                       setReflectionArenaChoicePending({
                         runId: readyRun.runId,
-                        readyMessage: message,
                         questions: buildReflectionArenaChoiceQuestions(
                           readyRun.runId,
                         ),
@@ -3056,6 +3055,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 runId: arenaArgs.runId,
                 choice: arenaArgs.choice,
                 notes: arenaArgs.notes,
+                onHfUploadComplete: (message) => {
+                  appendTaskNotificationEvents([message]);
+                },
                 recompileByConversation:
                   systemPromptRecompileByConversationRef.current,
                 recompileQueuedByConversation:
@@ -3074,11 +3076,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               }
               setReflectionArenaChoicePending({
                 runId: run.runId,
-                readyMessage: formatReflectionArenaAwaitingChoice(run),
                 questions: buildReflectionArenaChoiceQuestions(run.runId),
               });
               cmd.finish(
-                `Resumed reflection arena choice prompt for run ${run.runId}.`,
+                `${formatReflectionArenaAwaitingChoice(run)}\n\nResumed reflection arena choice prompt for run ${run.runId}.`,
                 true,
               );
               return { submitted: true };
@@ -3127,9 +3128,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 model: currentModelId,
               },
               onReady: (message, readyRun) => {
+                appendTaskNotificationEvents([message]);
                 setReflectionArenaChoicePending({
                   runId: readyRun.runId,
-                  readyMessage: message,
                   questions: buildReflectionArenaChoiceQuestions(
                     readyRun.runId,
                   ),
@@ -3190,9 +3191,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     model: currentModelId,
                   },
                   onReady: (message, readyRun) => {
+                    appendTaskNotificationEvents([message]);
                     setReflectionArenaChoicePending({
                       runId: readyRun.runId,
-                      readyMessage: message,
                       questions: buildReflectionArenaChoiceQuestions(
                         readyRun.runId,
                       ),
