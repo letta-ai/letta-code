@@ -1,4 +1,5 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { join } from "node:path";
 import type { ExternalTranscriptEntry } from "@/cli/helpers/reflection-transcript";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import type { SourceAdapter } from "./types";
@@ -171,13 +172,65 @@ function parseOpenHandsEventsFile(raw: string, path: string): OpenHandsEvent[] {
   );
 }
 
+/** The `<seq>` in `event-<seq>-<uuid>.json` — the durable ordering key. */
+function eventSequence(fileName: string): number {
+  const digits = fileName.match(/^event-(\d+)-/)?.[1];
+  return digits ? Number.parseInt(digits, 10) : 0;
+}
+
 /**
- * Reads a local OpenHands events JSON file (an array, or the
- * `{ items: [...] }` envelope returned by the events API) and converts it.
+ * Read an OpenHands conversation directory, where each event is its own
+ * `event-<seq>-<uuid>.json` file. Accepts either the conversation directory
+ * (with an `events/` subdir) or the `events/` directory itself. Files are
+ * ordered by sequence prefix. (Large tool outputs offloaded to
+ * `observations/` are not needed — tool results are not surfaced to the
+ * reflection payload.)
+ */
+async function readOpenHandsEventDir(dir: string): Promise<OpenHandsEvent[]> {
+  let eventsDir = dir;
+  try {
+    const nested = join(dir, "events");
+    if ((await stat(nested)).isDirectory()) {
+      eventsDir = nested;
+    }
+  } catch {
+    // No events/ subdir — treat `dir` itself as the events directory.
+  }
+
+  const fileNames = (await readdir(eventsDir))
+    .filter((name) => /^event-\d+-.*\.json$/.test(name))
+    .sort((a, b) => eventSequence(a) - eventSequence(b));
+  if (fileNames.length === 0) {
+    throw new Error(
+      `No OpenHands event files (event-*.json) found in ${eventsDir}`,
+    );
+  }
+
+  const events: OpenHandsEvent[] = [];
+  for (const name of fileNames) {
+    const raw = await readFile(join(eventsDir, name), "utf-8");
+    const event = safeJsonParseOr<OpenHandsEvent | null>(raw, null);
+    if (event && typeof event === "object") {
+      events.push(event);
+    }
+  }
+  return events;
+}
+
+/**
+ * Reads local OpenHands events and converts them. The locator may be:
+ *  - a conversation directory (`.../dev_conversations/<id>/`) or its
+ *    `events/` subdir — one `event-<seq>-<uuid>.json` file per event; or
+ *  - a single JSON file (an array, or the `{ items: [...] }` events-API
+ *    envelope).
  */
 export const openHandsAdapter: SourceAdapter = {
   type: "openhands",
   async convert(locator: string): Promise<ExternalTranscriptEntry[]> {
+    const info = await stat(locator).catch(() => null);
+    if (info?.isDirectory()) {
+      return convertOpenHandsEvents(await readOpenHandsEventDir(locator));
+    }
     const raw = await readFile(locator, "utf-8");
     return convertOpenHandsEvents(parseOpenHandsEventsFile(raw, locator));
   },

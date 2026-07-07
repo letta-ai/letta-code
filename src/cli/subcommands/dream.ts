@@ -27,7 +27,7 @@ Options:
                               $LETTA_AGENT_ID, then the last-used agent)
   --from <conv-id|type:path>  What to reflect on: a conversation id (default:
                               the agent's primary "default" history), or an
-                              external source, e.g. openhands:./events.json
+                              external source, e.g. openhands:<conversation-dir>
                               or transcript:./rows.jsonl
   --to <path>                 Maintain a doc (e.g. ./AGENTS.md) from memory;
                               the agent edits it in place, using judgment

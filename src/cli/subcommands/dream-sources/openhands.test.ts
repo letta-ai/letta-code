@@ -1,5 +1,8 @@
-import { describe, expect, test } from "bun:test";
-import { convertOpenHandsEvents } from "./openhands";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { convertOpenHandsEvents, openHandsAdapter } from "./openhands";
 
 const USER_MESSAGE_EVENT = {
   kind: "MessageEvent",
@@ -145,5 +148,66 @@ describe("convertOpenHandsEvents", () => {
       { ...USER_MESSAGE_EVENT, id: "evt-env", source: "environment" },
     ]);
     expect(entries).toEqual([]);
+  });
+});
+
+describe("openHandsAdapter.convert", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "oh-conv-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  async function writeEvent(eventsDir: string, seq: string, event: unknown) {
+    const id = (event as { id: string }).id;
+    await writeFile(
+      join(eventsDir, `event-${seq}-${id}.json`),
+      JSON.stringify(event),
+    );
+  }
+
+  test("reads a conversation directory with an events/ subdir, in sequence order", async () => {
+    const events = join(dir, "events");
+    await mkdir(events, { recursive: true });
+    // Write out of filesystem order to prove sequence sorting.
+    await writeEvent(events, "00001", USER_MESSAGE_EVENT);
+    await writeEvent(events, "00000", {
+      kind: "SystemPromptEvent",
+      id: "evt-sys",
+      source: "agent",
+    });
+    await writeEvent(events, "00002", AGENT_MESSAGE_EVENT);
+    // Non-event files must be ignored.
+    await writeFile(join(dir, "meta.json"), "{}");
+
+    const entries = await openHandsAdapter.convert(dir);
+    expect(entries.map((e) => e.source_message_id)).toEqual([
+      "evt-user-1",
+      "evt-agent-1",
+    ]);
+  });
+
+  test("accepts the events/ directory directly", async () => {
+    await writeEvent(dir, "00000", USER_MESSAGE_EVENT);
+    const entries = await openHandsAdapter.convert(dir);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.source_message_id).toBe("evt-user-1");
+  });
+
+  test("errors on a directory with no event files", async () => {
+    await expect(openHandsAdapter.convert(dir)).rejects.toThrow(
+      "No OpenHands event files",
+    );
+  });
+
+  test("still reads a single JSON events file", async () => {
+    const file = join(dir, "events.json");
+    await writeFile(file, JSON.stringify({ items: [USER_MESSAGE_EVENT] }));
+    const entries = await openHandsAdapter.convert(file);
+    expect(entries).toHaveLength(1);
   });
 });
