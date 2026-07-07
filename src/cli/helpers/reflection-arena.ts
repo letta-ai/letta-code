@@ -60,7 +60,7 @@ export type ReflectionArenaChoiceAnswer =
 export const REFLECTION_ARENA_CHOICE_QUESTION =
   "Which reflection should be merged?";
 export const REFLECTION_ARENA_NOTES_QUESTION =
-  "Optional notes for this choice?";
+  "Optional feedback for this choice?";
 export type ReflectionArenaRunStatus =
   | "running"
   | "awaiting_choice"
@@ -308,7 +308,7 @@ export function buildReflectionArenaChoiceQuestions(
     },
     {
       header: "Reflection arena feedback",
-      question: "Optional feedback for this choice?",
+      question: REFLECTION_ARENA_NOTES_QUESTION,
       multiSelect: false,
       otherFirst: true,
       otherLabel: "Type feedback",
