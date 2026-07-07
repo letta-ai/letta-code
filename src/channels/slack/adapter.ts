@@ -1472,7 +1472,7 @@ function buildSlackPlanUpdateChunk(
   if (entry.status === "cancelled") {
     return {
       type: "plan_update",
-      title: "Cancelled",
+      title: "Interrupted",
     };
   }
   if (entry.status === "completed") {
@@ -1771,7 +1771,7 @@ function resolveSlackLifecycleProgressText(outcome: ChannelTurnOutcome): {
     return { status: "completed", text: "Completed" };
   }
   if (outcome === "cancelled") {
-    return { status: "cancelled", text: "Cancelled" };
+    return { status: "cancelled", text: "Interrupted" };
   }
   return { status: "error", text: "Failed" };
 }
@@ -3355,7 +3355,7 @@ export function createSlackAdapter(
               entry.status === "completed"
                 ? formatSlackCompletionPlanTitle(entry)
                 : entry.status === "cancelled"
-                  ? "Cancelled"
+                  ? "Interrupted"
                   : "Failed",
             );
           }

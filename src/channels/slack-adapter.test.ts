@@ -2212,7 +2212,7 @@ test("slack adapter closes orphaned progress streams before starting a new one (
   // render (turn 1 was cancelled), not a generic label.
   expect(orphanStop?.chunks?.[0]).toMatchObject({
     type: "plan_update",
-    title: "Cancelled",
+    title: "Interrupted",
   });
 });
 
@@ -3635,7 +3635,7 @@ test("slack adapter closes cancelled turns without the red error status", async 
   });
   expect(stopChunks).toContainEqual({
     type: "plan_update",
-    title: "Cancelled",
+    title: "Interrupted",
   });
 });
 
