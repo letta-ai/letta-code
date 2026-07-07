@@ -101,6 +101,7 @@ import {
   parseReflectionArenaChoiceAnswers,
   REFLECTION_ARENA_MODEL_A_DEFAULT,
   type ReflectionArenaChoiceQuestion,
+  sampleReflectionArenaComparisonModel,
 } from "@/cli/helpers/reflection-arena";
 import {
   AUTO_REFLECTION_DESCRIPTION,
@@ -3704,7 +3705,7 @@ export function App({
               triggerSource,
               models: [
                 REFLECTION_ARENA_MODEL_A_DEFAULT,
-                currentModelId ?? "letta/auto",
+                sampleReflectionArenaComparisonModel(),
               ],
               feedbackContext: {
                 parentAgentName: agentName,

@@ -39,6 +39,38 @@ const execFile = promisify(execFileCb);
 
 export const REFLECTION_ARENA_MODEL_A_DEFAULT = "letta/auto-memory";
 
+const REFLECTION_ARENA_COMPARISON_MODEL_POOL: Array<{
+  model: string;
+  weight: number;
+}> = [
+  { model: "lc-anthropic/claude-sonnet-5", weight: 1 },
+  { model: "lc-anthropic/claude-opus-4-8", weight: 3 },
+  { model: "lc-anthropic/claude-fable-5", weight: 1 },
+  { model: "letta/auto", weight: 1 },
+  { model: "gpt-5.5-plus-pro-high", weight: 3 },
+];
+
+export function sampleReflectionArenaComparisonModel(
+  excludedModels: Iterable<string> = [],
+): string {
+  const excluded = new Set(excludedModels);
+  const candidates = REFLECTION_ARENA_COMPARISON_MODEL_POOL.filter(
+    (entry) => !excluded.has(entry.model),
+  );
+  const totalWeight = candidates.reduce(
+    (sum, entry) => sum + Math.max(0, entry.weight),
+    0,
+  );
+  if (totalWeight <= 0) return "letta/auto";
+
+  let offset = randomInt(totalWeight);
+  for (const candidate of candidates) {
+    offset -= Math.max(0, candidate.weight);
+    if (offset < 0) return candidate.model;
+  }
+  return candidates[0]?.model ?? "letta/auto";
+}
+
 const ANSI_BOLD = "\u001b[1m";
 const ANSI_CYAN = "\u001b[36m";
 const ANSI_MAGENTA = "\u001b[35m";
@@ -517,6 +549,21 @@ function candidateIsFinished(candidate: ReflectionArenaCandidate): boolean {
   return Boolean(candidate.result);
 }
 
+function isRetryableArenaModelError(error: string | undefined): boolean {
+  if (!error) return false;
+  const normalized = error.toLowerCase();
+  return [
+    "model not found",
+    "unknown model",
+    "not-enough-credits",
+    "no credits",
+    "out of credits",
+    "insufficient credits",
+    "exceeded-quota",
+    "llm_insufficient_credits",
+  ].some((marker) => normalized.includes(marker));
+}
+
 function runIsReady(run: ReflectionArenaRun): boolean {
   return (
     run.candidates.length === REFLECTION_ARENA_CANDIDATE_COUNT &&
@@ -526,13 +573,20 @@ function runIsReady(run: ReflectionArenaRun): boolean {
 
 async function markCandidateComplete(params: {
   candidateLabel: ReflectionArenaCandidateLabel;
+  model: string;
   result: ReflectionArenaCandidateResult;
   runId: string;
+  subagentId: string;
 }): Promise<ReflectionArenaRun> {
   return updateReflectionArenaRun(params.runId, (run) => {
     const candidates = run.candidates.map((candidate) =>
       candidate.label === params.candidateLabel
-        ? { ...candidate, result: params.result }
+        ? {
+            ...candidate,
+            model: params.model,
+            result: params.result,
+            subagentId: params.subagentId,
+          }
         : candidate,
     );
     const next: ReflectionArenaRun = { ...run, candidates };
@@ -618,84 +672,112 @@ export async function startReflectionArenaRun(
     const { spawnBackgroundSubagentTask, waitForBackgroundSubagentAgentId } =
       await import("@/tools/impl/task");
     const candidates: ReflectionArenaCandidate[] = prepared.map((candidate) => {
-      const { subagentId } = spawnBackgroundSubagentTask({
-        subagentType: "reflection",
-        prompt: candidate.reflectionPrompt,
-        description: "Reflection arena candidate",
-        model: candidate.model,
-        silentCompletion: true,
-        transcriptPath: options.payload.payloadPath,
-        memoryScope: buildReflectionMemoryScope(candidate.worktree),
-        parentScope: {
-          agentId: options.agentId,
-          conversationId: options.conversationId,
-        },
-        onComplete: async ({
-          success,
-          error,
-          agentId,
-          conversationId,
-          stepCount,
-          durationMs,
-          report,
-        }) => {
-          try {
-            emitReflectionRunEnd({
-              parentAgentId: options.agentId,
-              triggerSource: options.triggerSource,
-              success,
-              subagentId: agentId ?? undefined,
-              conversationId: options.conversationId,
-              error,
-              stepCount,
-              durationMs,
-              feedbackContext: {
-                ...options.feedbackContext,
-                model: candidate.model,
-              },
-            });
-            const updated = await markCandidateComplete({
-              candidateLabel: candidate.label,
-              runId,
-              result: {
+      const attemptedModels = new Set<string>();
+
+      const launchAttempt = (model: string): string => {
+        attemptedModels.add(model);
+        const { subagentId } = spawnBackgroundSubagentTask({
+          subagentType: "reflection",
+          prompt: candidate.reflectionPrompt,
+          description: "Reflection arena candidate",
+          model,
+          silentCompletion: true,
+          transcriptPath: options.payload.payloadPath,
+          memoryScope: buildReflectionMemoryScope(candidate.worktree),
+          parentScope: {
+            agentId: options.agentId,
+            conversationId: options.conversationId,
+          },
+          onComplete: async ({
+            success,
+            error,
+            agentId,
+            conversationId,
+            stepCount,
+            durationMs,
+            report,
+          }) => {
+            try {
+              emitReflectionRunEnd({
+                parentAgentId: options.agentId,
+                triggerSource: options.triggerSource,
                 success,
+                subagentId: agentId ?? undefined,
+                conversationId: options.conversationId,
                 error,
-                agentId,
-                conversationId,
                 stepCount,
                 durationMs,
-                report,
-              },
-            });
-            if (updated.status === "awaiting_choice") {
-              releaseReflectionLaunch(options.agentId);
-              releaseReservation = false;
-              await options.onReady(
-                formatReflectionArenaAwaitingChoice(updated),
-                updated,
+                feedbackContext: {
+                  ...options.feedbackContext,
+                  model,
+                },
+              });
+
+              if (
+                !success &&
+                model !== REFLECTION_ARENA_MODEL_A_DEFAULT &&
+                isRetryableArenaModelError(error)
+              ) {
+                const retryModel =
+                  sampleReflectionArenaComparisonModel(attemptedModels);
+                if (!attemptedModels.has(retryModel)) {
+                  debugWarn(
+                    "memory",
+                    `Retrying reflection arena candidate ${candidate.label} with ${retryModel} after ${model} failed: ${error ?? "unknown error"}`,
+                  );
+                  launchAttempt(retryModel);
+                  return;
+                }
+              }
+
+              const updated = await markCandidateComplete({
+                candidateLabel: candidate.label,
+                model,
+                runId,
+                subagentId,
+                result: {
+                  success,
+                  error,
+                  agentId,
+                  conversationId,
+                  stepCount,
+                  durationMs,
+                  report,
+                },
+              });
+              if (updated.status === "awaiting_choice") {
+                releaseReflectionLaunch(options.agentId);
+                releaseReservation = false;
+                await options.onReady(
+                  formatReflectionArenaAwaitingChoice(updated),
+                  updated,
+                );
+              }
+            } catch (completionError) {
+              debugWarn(
+                "memory",
+                `Failed to finish reflection arena candidate ${candidate.label}: ${completionError instanceof Error ? completionError.message : String(completionError)}`,
               );
             }
-          } catch (completionError) {
-            debugWarn(
-              "memory",
-              `Failed to finish reflection arena candidate ${candidate.label}: ${completionError instanceof Error ? completionError.message : String(completionError)}`,
-            );
-          }
-        },
-      });
-      void waitForBackgroundSubagentAgentId(
-        subagentId,
-        REFLECTION_AGENT_ID_WAIT_MS,
-      ).then((resolvedAgentId) => {
-        emitReflectionRunStart({
-          triggerSource: options.triggerSource,
-          subagentId: resolvedAgentId ?? undefined,
-          conversationId: options.conversationId,
-          startMessageId: options.payload.startMessageId,
-          endMessageId: options.payload.endMessageId,
-          model: candidate.model,
+          },
         });
-      });
+        void waitForBackgroundSubagentAgentId(
+          subagentId,
+          REFLECTION_AGENT_ID_WAIT_MS,
+        ).then((resolvedAgentId) => {
+          emitReflectionRunStart({
+            triggerSource: options.triggerSource,
+            subagentId: resolvedAgentId ?? undefined,
+            conversationId: options.conversationId,
+            startMessageId: options.payload.startMessageId,
+            endMessageId: options.payload.endMessageId,
+            model,
+          });
+        });
+        return subagentId;
+      };
+
+      const subagentId = launchAttempt(candidate.model);
       return {
         label: candidate.label,
         model: candidate.model,

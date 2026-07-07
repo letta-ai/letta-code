@@ -78,6 +78,7 @@ import {
   REFLECTION_ARENA_MODEL_A_DEFAULT,
   type ReflectionArenaChoice,
   type ReflectionArenaChoiceQuestion,
+  sampleReflectionArenaComparisonModel,
   startReflectionArenaRun,
 } from "@/cli/helpers/reflection-arena";
 import {
@@ -2284,7 +2285,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     triggerSource: "compaction-event",
                     models: [
                       REFLECTION_ARENA_MODEL_A_DEFAULT,
-                      currentModelId ?? "letta/auto",
+                      sampleReflectionArenaComparisonModel(),
                     ],
                     feedbackContext: {
                       parentAgentName: agentName,
@@ -3106,13 +3107,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             }
 
             const modelA = arenaArgs.modelA ?? REFLECTION_ARENA_MODEL_A_DEFAULT;
-            const modelB = arenaArgs.modelB ?? currentModelId;
-            if (!modelB) {
-              cmd.fail(
-                "No comparison model is selected. Use /reflect-arena --model-b <model>.",
-              );
-              return { submitted: true };
-            }
+            const modelB =
+              arenaArgs.modelB ?? sampleReflectionArenaComparisonModel();
 
             const run = await startReflectionArenaRun({
               agentId,
@@ -3182,7 +3178,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   instruction: reflectArgs.instruction,
                   models: [
                     REFLECTION_ARENA_MODEL_A_DEFAULT,
-                    currentModelId ?? "letta/auto",
+                    sampleReflectionArenaComparisonModel(),
                   ],
                   feedbackContext: {
                     parentAgentName: agentName,

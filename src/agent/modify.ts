@@ -56,6 +56,7 @@ function buildModelSettings(
   const isAnthropic =
     explicitProviderType === "anthropic" ||
     modelHandle.startsWith("anthropic/") ||
+    modelHandle.startsWith("lc-anthropic/") ||
     modelHandle.startsWith("claude-pro-max/") ||
     modelHandle.startsWith("minimax/");
   const isZai =
