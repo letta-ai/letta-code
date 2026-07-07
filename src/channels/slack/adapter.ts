@@ -3745,20 +3745,18 @@ export function createSlackAdapter(
       if (event.type === "processing") {
         await Promise.all(
           getUniqueSlackProgressSources(event.sources).map(async (source) => {
-            if (
-              canStartSlackStream(source) ||
-              isSlackProgressCardRendering(source)
-            ) {
+            if (isSlackProgressCardRendering(source)) {
               await clearSlackAssistantThreadStatus(source);
-            } else {
-              const status = getSlackAssistantThreadStatusForTurn(source);
-              if (status) {
-                await setSlackAssistantThreadStatus(source, status);
-              }
+              return;
             }
-            await upsertSlackProgressCard(source, "processing", "Working", {
-              force: true,
-            });
+            const replyKey = getLifecycleReplyKey(source);
+            if (replyKey && assistantStatusReplyKeys.has(replyKey)) {
+              return;
+            }
+            const status = getSlackAssistantThreadStatusForTurn(source);
+            if (status) {
+              await setSlackAssistantThreadStatus(source, status);
+            }
           }),
         );
         return;

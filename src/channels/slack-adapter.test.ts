@@ -1998,12 +1998,12 @@ test("slack adapter streams native task progress and clears thread status", asyn
       {
         type: "task_update",
         id: "task_turn_active",
-        title: "Still working",
+        title: "Ran",
         status: "in_progress",
       },
     ],
   });
-  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(2);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
   const appendCalls = writeClient?.chat.appendStream.mock
     .calls as unknown as Array<
     [
@@ -2030,13 +2030,7 @@ test("slack adapter streams native task progress and clears thread status", asyn
     title: "Ran",
     status: "complete",
   });
-  expect(appendCall?.chunks?.[2]).toMatchObject({
-    type: "task_update",
-    id: "task_turn_active_1",
-    title: "Still working",
-    status: "in_progress",
-  });
-  expect(appendCall?.chunks).toHaveLength(3);
+  expect(appendCall?.chunks).toHaveLength(2);
   expect(JSON.stringify(appendCall?.chunks)).not.toContain("token=abc");
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
@@ -2544,7 +2538,7 @@ test("slack adapter anchors direct message progress to the inbound message", asy
       {
         type: "task_update",
         id: "task_turn_active",
-        title: "Still working",
+        title: "Read",
         status: "in_progress",
       },
     ],
@@ -3457,7 +3451,7 @@ test("slack adapter keeps failed tool titles without failing completed progress 
   );
 });
 
-test("slack adapter shows and finalizes a placeholder row for no-tool turns", async () => {
+test("slack adapter uses assistant status instead of a placeholder stream for no-tool turns", async () => {
   process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "0";
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -3494,25 +3488,8 @@ test("slack adapter shows and finalizes a placeholder row for no-tool turns", as
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
-    channel: "C123",
-    thread_ts: "1712790000.000050",
-    task_display_mode: "plan",
-    recipient_user_id: "U123",
-    recipient_team_id: "T123",
-    chunks: [
-      {
-        type: "plan_update",
-        title: "Working",
-      },
-      {
-        type: "task_update",
-        id: "task_turn_active",
-        title: "Still working",
-        status: "in_progress",
-      },
-    ],
-  });
+  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.appendStream).not.toHaveBeenCalled();
 
   await adapter.handleTurnLifecycleEvent?.({
     type: "finished",
@@ -3524,24 +3501,7 @@ test("slack adapter shows and finalizes a placeholder row for no-tool turns", as
 
   expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
   expect(writeClient?.chat.update).not.toHaveBeenCalled();
-  expect(writeClient?.chat.stopStream).toHaveBeenCalledWith({
-    channel: "C123",
-    ts: "1712800000.000300",
-    chunks: [
-      {
-        type: "task_update",
-        id: "task_turn_active",
-        title: "Completed",
-        status: "complete",
-      },
-      {
-        type: "plan_update",
-        title: "Completed",
-      },
-    ],
-    markdown_text:
-      "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
-  });
+  expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
   const statusCalls =
     (writeClient?.assistant.threads.setStatus.mock.calls as Array<
       Array<{ status: string }>
