@@ -21,9 +21,9 @@ Before executing the command, please follow these steps:
    - Capture the output of the command.
 
 Usage notes:
-  - The command and description arguments are required.
+  - The command argument is required.
   - You can specify an optional timeout in milliseconds (up to 600000ms / 10 minutes). If not specified, commands will timeout after 120000ms (2 minutes).
-  - Write a clear, concise user-facing description of what this command does. This description may be shown directly in chat as part of a status row like `Running command: <description>` or `Ran command: <description>`. Describe the command's purpose, not its shell syntax. For simple commands, keep it brief (5-10 words). For complex commands (piped commands, obscure flags, or anything hard to understand at a glance), add enough context to clarify what it does.
+  - It is very helpful if you write a clear, concise user-facing description of what this command does. This description may be shown directly in chat as part of a status row like `Running command: <description>` or `Ran command: <description>`. Describe the command's purpose, not its shell syntax. For simple commands, keep it brief (5-10 words). For complex commands (piped commands, obscure flags, or anything hard to understand at a glance), add enough context to clarify what it does.
   - If the output exceeds 30000 characters, output will be truncated before being returned to you.
   - You can use the `run_in_background` parameter to run the command in the background. Only use this if you don't need the result immediately and are OK being notified when the command completes later. You do not need to check the output right away - you'll be notified when it finishes. You do not need to use '&' at the end of the command when using this parameter.
   

@@ -40,7 +40,7 @@ describe("Codex unified exec toolset", () => {
       "",
       "For ordinary one-shot commands, omit `yield_time_ms` and let the default wait for completion; set `yield_time_ms` only when intentionally returning early from a long-running or interactive command.",
       "",
-      "Provide the required `description` field as a clear, concise user-facing status label for what the command does. It may be shown directly in chat with no prefix, so make it grammatical by itself and avoid tense-dependent wording. Use an imperative or purpose phrase like `Find debug log entries` or `Search recent logs for errors`. Describe the command's purpose, not its shell syntax. Keep it brief for simple commands; add only enough context to clarify commands that are hard to parse at a glance.",
+      "Use the optional `description` field for a clear, concise user-facing status label for what the command does. It may be shown directly in chat with no prefix, so make it grammatical by itself and avoid tense-dependent wording. Use an imperative or purpose phrase like `Find debug log entries` or `Search recent logs for errors`. Describe the command's purpose, not its shell syntax. Keep it brief for simple commands; add only enough context to clarify commands that are hard to parse at a glance.",
       "",
       extractCommitGuidance(ShellDescription),
     ].join("\n");

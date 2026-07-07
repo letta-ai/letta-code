@@ -20,7 +20,6 @@ export async function run_shell_command(
 ): Promise<{ message: string }> {
   const result = await shell_command({
     command: args.command,
-    description: args.description,
     workdir: args.dir_path,
     timeout_ms: args.timeout_ms,
     signal: args.signal,

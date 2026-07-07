@@ -15,6 +15,6 @@
       "description": "(OPTIONAL) The path of the directory to run the command in. If not provided, the project root directory is used. Must be a directory within the workspace and must already exist."
     }
   },
-  "required": ["command", "description"],
+  "required": ["command"],
   "additionalProperties": false
 }
