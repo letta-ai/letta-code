@@ -42,8 +42,8 @@ describe("listener memory write push ordering (contract)", () => {
     ["write_memory_file", writeBlock],
     ["delete_memory_file", deleteBlock],
   ] as const) {
-    test(`${name} awaits the remote push before emitting memory_updated`, () => {
-      const pushIdx = block.indexOf("await syncPendingMemoryCommitsAfterTurn(");
+    test(`${name} awaits the bounded push before emitting memory_updated`, () => {
+      const pushIdx = block.indexOf("await awaitMemoryPushBounded(");
       const memoryUpdatedIdx = block.indexOf('type: "memory_updated"');
       // The success-path response emission is the last occurrence — the
       // first occurrence is the `sendFailure` helper at the top of each
@@ -61,4 +61,26 @@ describe("listener memory write push ordering (contract)", () => {
       );
     });
   }
+
+  test("bounded helper races the push against the cap", () => {
+    const helperBlock = handlerBlock(
+      "async function awaitMemoryPushBounded(",
+      "export async function handleListMemoryCommand(",
+    );
+    expect(helperBlock).toContain("await Promise.race([syncPromise,");
+  });
+
+  test("push-await cap stays below the desktop UI's 10s device-command timeout", () => {
+    // useSendDeviceCommand in letta-cloud rejects after DEFAULT_TIMEOUT_MS
+    // (10s) — the skills install/uninstall UI sends write/delete_memory_file
+    // through it with no override. A cap at or above 10s would turn slow
+    // pushes into spurious client-side failures.
+    const match = handlerSource.match(
+      /const MEMORY_PUSH_AWAIT_CAP_MS = ([\d_]+);/,
+    );
+    expect(match).not.toBeNull();
+    const capMs = Number(match?.[1]?.replaceAll("_", ""));
+    expect(capMs).toBeGreaterThan(0);
+    expect(capMs).toBeLessThan(10_000);
+  });
 });
