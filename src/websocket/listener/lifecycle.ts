@@ -6,8 +6,11 @@ import {
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "@/agent/subagent-state";
 import {
+  buildChannelCurrentModelMessage,
+  buildChannelCurrentModelUnavailableMessage,
   buildChannelModelListMessage,
   buildChannelModelListUnavailableMessage,
+  buildChannelModelNotFoundText,
   buildChannelModelUpdatedMessage,
   buildChannelModelUpdateFailedMessage,
 } from "@/channels/commands";
@@ -33,10 +36,12 @@ import { isDebugEnabled } from "@/utils/debug";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
+import { handleReloadCommand } from "./commands";
 import { handleChannelRegistryEvent } from "./commands/channels";
 import {
   applyModelUpdateForRuntime,
   buildListModelsResponse,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import {
@@ -519,6 +524,52 @@ export async function wireChannelIngress(
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
     if (!modelIdentifier) {
       try {
+        const status = await getCurrentModelStatusForRuntime({
+          agentId: runtime.agent_id,
+          conversationId: runtime.conversation_id,
+        });
+        const text = buildChannelCurrentModelMessage(channelId, status);
+        try {
+          const response = await buildListModelsResponse(
+            `channel-model-picker-${crypto.randomUUID()}`,
+          );
+          if (!response.success) {
+            return {
+              handled: true,
+              text,
+            };
+          }
+          return {
+            handled: true,
+            text,
+            modelPicker: {
+              current: status,
+              entries: response.entries,
+              availableHandles: response.available_handles,
+              recentHandles: settingsManager.getRecentModels(),
+            },
+          };
+        } catch {
+          return {
+            handled: true,
+            text,
+          };
+        }
+      } catch (error) {
+        return {
+          handled: true,
+          text: buildChannelCurrentModelUnavailableMessage(
+            channelId,
+            error instanceof Error
+              ? error.message
+              : "Failed to load current model",
+          ),
+        };
+      }
+    }
+
+    if (modelIdentifier.toLowerCase() === "list") {
+      try {
         const response = await buildListModelsResponse(
           `channel-model-list-${crypto.randomUUID()}`,
         );
@@ -560,7 +611,7 @@ export async function wireChannelIngress(
         text: buildChannelModelUpdateFailedMessage(
           channelId,
           modelIdentifier,
-          "Model not found. Use /model to see available models.",
+          buildChannelModelNotFoundText(channelId),
         ),
       };
     }
@@ -606,6 +657,27 @@ export async function wireChannelIngress(
           modelIdentifier,
           error instanceof Error ? error.message : "Failed to update model",
         ),
+      };
+    }
+  });
+
+  registry.setReloadHandler(async ({ runtime }) => {
+    const scopedRuntime = getOrCreateScopedRuntime(
+      listener,
+      runtime.agent_id,
+      runtime.conversation_id,
+    );
+    try {
+      const output = await handleReloadCommand(scopedRuntime);
+      emitDeviceStatusUpdate(socket, scopedRuntime, runtime);
+      return {
+        handled: true,
+        text: output,
+      };
+    } catch (error) {
+      return {
+        handled: true,
+        text: `Failed to reload listener settings: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
   });

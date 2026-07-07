@@ -1,22 +1,50 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
+import { isLocalAgentId } from "@/agent/agent-id";
 import { listChannelSlashCommands } from "@/channels/commands";
 import {
   createInboundDebouncer,
   type InboundDebouncer,
 } from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
-import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
+import {
+  formatChannelLifecycleErrorMessage,
+  getChannelLifecycleErrorDisplay,
+} from "@/channels/lifecycle-error";
+import {
+  isSkillToolName,
+  sanitizeChannelProgressCore,
+  truncateChannelProgressText,
+} from "@/channels/progress";
+import {
+  buildSlackModelPickerBlocks,
+  SLACK_MODEL_SELECT_ACTION_ID,
+} from "@/channels/slack/model-picker-blocks";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
+  ChannelModelPickerData,
   ChannelTurnLifecycleEvent,
+  ChannelTurnOutcome,
+  ChannelTurnProgressEvent,
   ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
   SlackChannelAccount,
 } from "@/channels/types";
+import {
+  getDisplayToolName,
+  isFileEditTool,
+  isFileReadTool,
+  isFileWriteTool,
+  isGlobTool,
+  isSearchTool,
+  isShellTool,
+  isTaskTool,
+  isWebSearchTool,
+} from "@/cli/helpers/tool-name-mapping";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   resolveSlackChannelHistory,
   resolveSlackInboundAttachments,
@@ -36,7 +64,29 @@ type SlackWriteClient = {
       channel: string;
       text: string;
       thread_ts?: string;
+      blocks?: SlackBlock[];
     }) => Promise<{ ts?: string }>;
+    update: (args: {
+      channel: string;
+      ts: string;
+      text: string;
+      blocks?: SlackBlock[];
+    }) => Promise<{ ts?: string }>;
+    startStream?: (args: SlackStartStreamArgs) => Promise<SlackStreamResponse>;
+    appendStream?: (
+      args: SlackAppendStreamArgs,
+    ) => Promise<SlackStreamResponse>;
+    stopStream?: (args: SlackStopStreamArgs) => Promise<SlackStreamResponse>;
+  };
+  assistant?: {
+    threads?: {
+      setStatus?: (args: {
+        channel_id: string;
+        thread_ts: string;
+        status: string;
+        loading_messages?: string[];
+      }) => Promise<unknown>;
+    };
   };
   reactions: {
     add: (args: {
@@ -78,6 +128,9 @@ type SlackReactionEvent = {
   item_user?: string;
   reaction?: string;
   event_ts?: string;
+  team?: string;
+  team_id?: string;
+  user_team?: string;
 };
 
 type SlackCommandPayload = {
@@ -87,7 +140,111 @@ type SlackCommandPayload = {
   user_name?: string;
   channel_id?: string;
   channel_name?: string;
+  team_id?: string;
   trigger_id?: string;
+};
+
+type SlackTextObject = {
+  type: "mrkdwn" | "plain_text";
+  text: string;
+  emoji?: boolean;
+};
+
+type SlackOption = {
+  text: SlackTextObject;
+  value: string;
+  description?: SlackTextObject;
+};
+
+type SlackButtonElement = {
+  type: "button";
+  text: SlackTextObject;
+  url: string;
+  action_id: string;
+};
+
+type SlackStaticSelectElement = {
+  type: "static_select";
+  action_id: string;
+  placeholder?: SlackTextObject;
+  options: SlackOption[];
+  initial_option?: SlackOption;
+};
+
+type SlackBlockElement = SlackButtonElement | SlackStaticSelectElement;
+
+type SlackBlock =
+  | {
+      type: "section";
+      text: SlackTextObject;
+      accessory?: SlackBlockElement;
+    }
+  | {
+      type: "context";
+      elements: SlackTextObject[];
+    }
+  | {
+      type: "divider";
+    }
+  | {
+      type: "actions";
+      elements: SlackBlockElement[];
+    };
+
+type SlackStreamTaskStatus = "pending" | "in_progress" | "complete" | "error";
+
+type SlackStreamChunk =
+  | {
+      type: "markdown_text";
+      text: string;
+    }
+  | {
+      type: "task_update";
+      id: string;
+      title: string;
+      status: SlackStreamTaskStatus;
+      details?: string;
+      output?: string;
+    }
+  | {
+      type: "plan_update";
+      title: string;
+    }
+  | {
+      type: "blocks";
+      blocks: SlackBlock[];
+    };
+
+type SlackStartStreamArgs = {
+  channel: string;
+  thread_ts: string;
+  markdown_text?: string;
+  chunks?: SlackStreamChunk[];
+  task_display_mode?: "timeline" | "plan" | "dense";
+  recipient_user_id?: string;
+  recipient_team_id?: string;
+};
+
+type SlackAppendStreamArgs = {
+  channel: string;
+  ts: string;
+  markdown_text?: string;
+  chunks?: SlackStreamChunk[];
+};
+
+type SlackStopStreamArgs = {
+  channel: string;
+  ts: string;
+  markdown_text?: string;
+  chunks?: SlackStreamChunk[];
+  blocks?: SlackBlock[];
+};
+
+type SlackStreamResponse = {
+  ok?: boolean;
+  channel?: string;
+  ts?: string;
+  error?: string;
 };
 
 type Constructor = abstract new (...args: never[]) => unknown;
@@ -106,6 +263,17 @@ function resolveSlackAppModule(value: unknown): SlackAppConstructor | null {
   return isConstructorFunction<SlackAppConstructor>(app) ? app : null;
 }
 const INITIAL_SLACK_THREAD_HISTORY_LIMIT = 20;
+
+const SLACK_ASSISTANT_STATUS_VERBS = Object.freeze([
+  "cogitating",
+  "thinking",
+  "processing",
+] as const);
+
+function getRandomSlackAssistantStatusVerb(): string {
+  const index = Math.floor(Math.random() * SLACK_ASSISTANT_STATUS_VERBS.length);
+  return `is ${SLACK_ASSISTANT_STATUS_VERBS[index] ?? "thinking"}...`;
+}
 
 function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
   const defaultExport =
@@ -139,10 +307,36 @@ function firstNonEmptyString(...values: unknown[]): string | undefined {
   return values.find(isNonEmptyString);
 }
 
+function getSlackErrorCode(error: unknown): string | undefined {
+  if (isNonEmptyString(error)) {
+    return error;
+  }
+  const record = asRecord(error);
+  return firstNonEmptyString(record?.error, record?.code);
+}
+
+function isSlackMessageNotStreamingStateError(error: unknown): boolean {
+  const code = getSlackErrorCode(error);
+  if (code === "message_not_in_streaming_state") {
+    return true;
+  }
+  return error instanceof Error
+    ? error.message.includes("message_not_in_streaming_state")
+    : false;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function resolveSlackSenderTeamId(value: unknown): string | undefined {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  return firstNonEmptyString(record.user_team, record.team_id, record.team);
 }
 
 function normalizeSlackText(text: string): string {
@@ -232,16 +426,137 @@ function resolveSlackChatType(chatId: string): "direct" | "channel" {
   return chatId.startsWith("D") ? "direct" : "channel";
 }
 
+function resolveSlackOutboundThreadTs(params: {
+  chatId: string;
+  threadId?: string | null;
+  replyToMessageId?: string | null;
+}): string | undefined {
+  if (resolveSlackChatType(params.chatId) === "direct") {
+    return firstNonEmptyString(params.threadId);
+  }
+  return firstNonEmptyString(params.threadId, params.replyToMessageId);
+}
+
+function asSlackBlocks(
+  blocks: unknown[] | undefined,
+): SlackBlock[] | undefined {
+  return Array.isArray(blocks) ? (blocks as SlackBlock[]) : undefined;
+}
+
+function getSlackActionRecord(
+  action: unknown,
+  body: unknown,
+): Record<string, unknown> | null {
+  const directAction = asRecord(action);
+  if (directAction) {
+    return directAction;
+  }
+  const actions = asRecord(body)?.actions;
+  if (!Array.isArray(actions)) {
+    return null;
+  }
+  return asRecord(actions[0]);
+}
+
+function resolveSlackSelectedModel(
+  action: unknown,
+  body: unknown,
+): string | null {
+  const actionRecord = getSlackActionRecord(action, body);
+  const selectedOption = asRecord(actionRecord?.selected_option);
+  return (
+    firstNonEmptyString(selectedOption?.value, actionRecord?.value) ?? null
+  );
+}
+
+function resolveSlackActionChannelId(body: unknown): string | null {
+  const bodyRecord = asRecord(body);
+  const channel = asRecord(bodyRecord?.channel);
+  const container = asRecord(bodyRecord?.container);
+  return firstNonEmptyString(channel?.id, container?.channel_id) ?? null;
+}
+
+function resolveSlackActionThreadId(body: unknown): string | null {
+  const bodyRecord = asRecord(body);
+  const container = asRecord(bodyRecord?.container);
+  const message = asRecord(bodyRecord?.message);
+  return firstNonEmptyString(container?.thread_ts, message?.thread_ts) ?? null;
+}
+
+function resolveSlackActionMessageId(body: unknown): string | undefined {
+  const bodyRecord = asRecord(body);
+  const container = asRecord(bodyRecord?.container);
+  const message = asRecord(bodyRecord?.message);
+  return firstNonEmptyString(container?.message_ts, message?.ts);
+}
+
+function resolveSlackActionUser(body: unknown): {
+  id: string | null;
+  name?: string;
+  teamId?: string;
+} {
+  const user = asRecord(asRecord(body)?.user);
+  return {
+    id: firstNonEmptyString(user?.id) ?? null,
+    name: firstNonEmptyString(user?.name, user?.username, user?.id),
+    teamId: firstNonEmptyString(user?.team_id),
+  };
+}
+
+function resolveSlackSourceThreadTs(
+  source: ChannelTurnSource,
+): string | undefined {
+  if (
+    source.chatType === "direct" ||
+    resolveSlackChatType(source.chatId) === "direct"
+  ) {
+    return firstNonEmptyString(source.threadId);
+  }
+  return firstNonEmptyString(source.threadId, source.messageId);
+}
+
+function resolveSlackProgressThreadTs(
+  source: ChannelTurnSource,
+): string | undefined {
+  if (
+    source.chatType === "direct" ||
+    resolveSlackChatType(source.chatId) === "direct"
+  ) {
+    // Top-level DM replies stay unthreaded, but Slack's assistant status and
+    // native progress stream still need a temporary thread anchor. Use the
+    // inbound DM message ts only for progress/status plumbing.
+    return firstNonEmptyString(source.threadId, source.messageId);
+  }
+  return resolveSlackSourceThreadTs(source);
+}
+
+function resolveSlackOutboundProgressThreadTs(params: {
+  threadId?: string | null;
+  replyToMessageId?: string | null;
+}): string | undefined {
+  return firstNonEmptyString(params.threadId, params.replyToMessageId);
+}
+
 function normalizeSlackReactionName(value: string): string {
   return value.trim().replace(/^:+|:+$/g, "");
 }
 
 const SLACK_INGRESS_DEDUPE_TTL_MS = 60_000;
 const SLACK_INGRESS_DEDUPE_MAX = 2_000;
-const SLACK_LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
-const SLACK_LIFECYCLE_STATE_MAX = 2_000;
 const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
-
+// Slack section blocks cap mrkdwn text at 3000 characters; leave headroom
+// for the truncation marker when rewriting a dead stream's final state.
+const SLACK_DEAD_STREAM_REWRITE_TEXT_MAX = 2_900;
+const SLACK_PROGRESS_CARD_TEXT_MAX = 300;
+const SLACK_PROGRESS_CARD_STATE_TTL_MS = 6 * 60 * 60 * 1000;
+const SLACK_PROGRESS_CARD_STATE_MAX = 2_000;
+const SLACK_STREAM_CHUNK_TEXT_MAX = 256;
+const SLACK_LIFECYCLE_ERROR_TASK_ID = "task_lifecycle_error";
+const SLACK_CHANNEL_RESPONSE_TASK_ID = "task_channel_response";
+const SLACK_TURN_ACTIVE_TASK_ID = "task_turn_active";
+const DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS = 1_000;
+const DEFAULT_SLACK_PROGRESS_STREAM_KEEPALIVE_MS = 60_000;
+const DEFAULT_SLACK_COMPLETION_FINALIZE_GRACE_MS = 500;
 // Threads the agent has sent messages to should auto-subscribe: when a user
 // replies in such a thread without mentioning the agent, the reply is still
 // implicitly addressed to the agent. This TTL controls how long we remember
@@ -249,7 +564,1199 @@ const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
 const SLACK_AGENT_THREAD_TTL_MS = 24 * 60 * 60 * 1000;
 const SLACK_AGENT_THREAD_MAX = 2_000;
 
-type SlackLifecycleState = "queued" | "completed" | "error" | "cancelled";
+type SlackProgressCardState =
+  | "processing"
+  | "completed"
+  | "error"
+  | "cancelled";
+
+type SlackProgressToolTask = {
+  id: string;
+  kind: ChannelTurnProgressEvent["kind"];
+  /** Raw tool name, when known. Titles are re-derived from this per status. */
+  toolName?: string;
+  /** Preformatted channel-facing row title from the progress builder. */
+  toolTitle?: string;
+  title: string;
+  status: SlackStreamTaskStatus;
+  details?: string;
+  wasError?: boolean;
+};
+
+type SlackProgressCardEntry = {
+  source: ChannelTurnSource;
+  mode?: "stream";
+  streamTs?: string;
+  /**
+   * Set once Slack reports the stream left streaming state while we still
+   * expected it to be live (expiry, external stop). A dead stream never
+   * accepts appends again; the terminal flush rewrites the message via
+   * chat.update instead so the card cannot stay stuck on a red spinner row.
+   */
+  streamDead?: boolean;
+  status: SlackProgressCardState;
+  latestText: string;
+  latestUpdate?: ChannelTurnProgressEvent;
+  toolNamesByCallId?: Map<string, string>;
+  toolDetailsByCallId?: Map<string, string>;
+  toolTitlesByCallId?: Map<string, string>;
+  toolTasksById?: Map<string, SlackProgressToolTask>;
+  sentTaskDetailsById?: Map<string, string>;
+  completionHeaderText?: string;
+  reasoningActive?: boolean;
+  placeholderTaskId?: string;
+  placeholderTaskSequence?: number;
+  toolTaskIdsByCallId?: Map<string, string>;
+  pendingStreamChunks?: SlackStreamChunk[];
+  hiddenToolCallIds?: Set<string>;
+  completedFinalizerTimer?: ReturnType<typeof setTimeout>;
+  lastSentText?: string;
+  lastSentAt: number;
+  pendingTimer?: ReturnType<typeof setTimeout>;
+  keepaliveTimer?: ReturnType<typeof setTimeout>;
+  pendingFlush?: Promise<void>;
+  requeuedFailedChunks?: boolean;
+  updatedAt: number;
+};
+
+export function resolveSlackProgressUpdateThrottleMs(): number {
+  const raw = process.env.LETTA_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
+  if (!raw) {
+    return DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
+  }
+  return Math.min(parsed, 30_000);
+}
+
+export function resolveSlackProgressStreamKeepaliveMs(): number {
+  const raw = process.env.LETTA_SLACK_PROGRESS_STREAM_KEEPALIVE_MS;
+  if (!raw) {
+    return DEFAULT_SLACK_PROGRESS_STREAM_KEEPALIVE_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_SLACK_PROGRESS_STREAM_KEEPALIVE_MS;
+  }
+  return Math.min(Math.trunc(parsed), 300_000);
+}
+
+export function resolveSlackCompletionFinalizeGraceMs(): number {
+  const raw = process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS;
+  if (!raw) {
+    return DEFAULT_SLACK_COMPLETION_FINALIZE_GRACE_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_SLACK_COMPLETION_FINALIZE_GRACE_MS;
+  }
+  return Math.min(Math.trunc(parsed), 30_000);
+}
+
+/**
+ * Build a Letta Chat URL for an agent/conversation.
+ * Local-backend agents do not exist at app.letta.com, so return undefined.
+ */
+function buildSlackChatUrl(
+  agentId: string,
+  conversationId: string,
+): string | undefined {
+  if (isLocalAgentId(agentId)) {
+    return undefined;
+  }
+  const base = `https://app.letta.com/chat/${agentId}`;
+  if (conversationId && conversationId !== "default") {
+    return `${base}?conversation=${conversationId}`;
+  }
+  return base;
+}
+
+/**
+ * Build small footnote text with a link to the Letta Chat conversation.
+ * Returns an empty string for local-backend agents.
+ */
+function buildSlackChatFootnote(source: ChannelTurnSource): string {
+  const chatUrl = buildSlackChatUrl(source.agentId, source.conversationId);
+  if (!chatUrl) {
+    return "";
+  }
+  // Slack mrkdwn link format: <URL|text>
+  return `_<${chatUrl}|Open in Letta Chat>_`;
+}
+
+function sanitizeSlackProgressText(text: string, maxLength: number): string {
+  // Shared channel sanitization (secrets, control characters, mentions) plus
+  // Slack-specific mrkdwn escaping and Slack's ellipsis truncation marker.
+  const normalized = sanitizeChannelProgressCore(text)
+    .replace(/[<>]/g, "")
+    .replace(/&/g, "and")
+    .replace(/\s+/g, " ")
+    .trim();
+  return truncateChannelProgressText(normalized, maxLength, "…");
+}
+
+export function formatSlackProgressCardText(
+  status: SlackProgressCardState,
+  progressText: string,
+): string {
+  const safeProgressText = sanitizeSlackProgressText(
+    progressText,
+    SLACK_PROGRESS_CARD_TEXT_MAX,
+  );
+  const statusLine =
+    status === "processing"
+      ? "Letta Code is working on this thread."
+      : status === "completed"
+        ? "Letta Code finished this turn."
+        : status === "cancelled"
+          ? "Letta Code stopped this turn."
+          : "Letta Code hit an error.";
+  return safeProgressText
+    ? `${statusLine}\nStatus: ${safeProgressText}`
+    : statusLine;
+}
+
+function buildSlackLifecycleErrorTaskChunk(
+  errorText: string | null | undefined,
+): SlackStreamChunk {
+  const display = getChannelLifecycleErrorDisplay(errorText);
+  const title =
+    sanitizeSlackProgressText(display.title, SLACK_STREAM_CHUNK_TEXT_MAX) ||
+    "Turn failed";
+  const details = sanitizeSlackProgressText(
+    display.body,
+    SLACK_STREAM_CHUNK_TEXT_MAX,
+  );
+  return {
+    type: "task_update",
+    id: SLACK_LIFECYCLE_ERROR_TASK_ID,
+    title,
+    status: "error",
+    details,
+  };
+}
+
+function formatSlackControlRequestBlocks(
+  event: ChannelControlRequestEvent,
+): SlackBlock[] | undefined {
+  if (event.kind !== "generic_tool_approval") {
+    return undefined;
+  }
+
+  const toolName =
+    sanitizeSlackProgressText(
+      formatSlackToolNameForDisplay(event.toolName),
+      80,
+    ) || "tool";
+  return [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*Approval needed*\nRun \`${toolName}\`?`,
+      },
+    },
+    {
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: "Reply `approve` to allow it, or reply with feedback to deny.",
+        },
+      ],
+    },
+  ];
+}
+
+function buildTerminalSlackStreamChunks(
+  entry: SlackProgressCardEntry,
+  terminalTaskStatus: SlackStreamTaskStatus,
+  finalErrorChunk?: SlackStreamChunk,
+): SlackStreamChunk[] {
+  // Deduplicate pending chunks by task ID, keeping only the latest.
+  // pendingStreamChunks can accumulate multiple updates for the same task
+  // (e.g. in_progress then complete) and Slack accumulates details across
+  // chunks with the same id, so duplicates cause repeated detail text.
+  const rawPending = [...(entry.pendingStreamChunks ?? [])];
+  // Also include ALL tasks from toolTasksById so the stopStream sends
+  // the full final state — appendStream may not render in real-time,
+  // so the block might only populate at stopStream.
+  for (const task of entry.toolTasksById?.values() ?? []) {
+    if (isSlackTransientTask(task)) {
+      if (isSlackTurnActiveTaskId(task.id)) {
+        // Slack keeps prior task rows visible at stopStream time. Close the
+        // transient liveness row explicitly so a finished stream does not show
+        // a warning/error just because "Still working" was still in progress.
+        rawPending.push(
+          toSlackTaskUpdateChunk({
+            ...task,
+            title:
+              entry.status === "completed"
+                ? "Completed"
+                : entry.status === "cancelled"
+                  ? "Stopped"
+                  : "Failed",
+            status: terminalTaskStatus,
+          }),
+        );
+      }
+      continue;
+    }
+    // Preserve rows that already reached a real terminal state: completed
+    // rows always, and errored rows unless the turn itself completed (a
+    // completed turn intentionally downgrades stale error rows). Keyed on the
+    // turn outcome, not terminalTaskStatus, so cancelled turns (which now
+    // close remaining rows as "complete"/"Stopped") keep genuine tool
+    // failures visible instead of repainting them green.
+    const shouldPreserveTerminalTask =
+      task.status === "complete" ||
+      (task.status === "error" && entry.status !== "completed");
+    const terminalTask = shouldPreserveTerminalTask
+      ? task
+      : {
+          ...task,
+          title: formatSlackTaskTitleForStatus(task, terminalTaskStatus),
+          status: terminalTaskStatus,
+        };
+    rawPending.push(toSlackTaskUpdateChunk(terminalTask));
+    if (!shouldPreserveTerminalTask) {
+      entry.toolTasksById?.set(task.id, terminalTask);
+    }
+  }
+  if (finalErrorChunk) {
+    rawPending.push(finalErrorChunk);
+  }
+  const chunks = compactSlackStreamChunks(rawPending, entry);
+  if (
+    entry.status !== "processing" ||
+    chunks.some((chunk) => chunk.type === "task_update")
+  ) {
+    chunks.push(buildSlackPlanUpdateChunk(entry));
+  }
+  return chunks;
+}
+
+/**
+ * Render terminal stream chunks as plain message blocks for a stream Slack
+ * has already taken out of streaming state (expired or externally stopped).
+ *
+ * stopStream no-ops with `message_not_in_streaming_state` on such messages,
+ * which previously dropped the final retitle/error details entirely and left
+ * the card stuck on a red in-progress row. Rewriting the message via
+ * chat.update replaces the stale streaming UI with the real final state.
+ */
+function buildSlackDeadStreamRewrite(
+  entry: SlackProgressCardEntry,
+  chunks: SlackStreamChunk[],
+): { text: string; blocks: SlackBlock[] } {
+  const planTitle = chunks.reduce<string | null>(
+    (latest, chunk) => (chunk.type === "plan_update" ? chunk.title : latest),
+    null,
+  );
+  const headerText =
+    sanitizeSlackProgressText(planTitle ?? "", SLACK_STREAM_CHUNK_TEXT_MAX) ||
+    formatSlackProgressCardText(entry.status, entry.latestText);
+  const lines: string[] = [];
+  for (const chunk of chunks) {
+    if (chunk.type !== "task_update") {
+      continue;
+    }
+    const icon =
+      chunk.status === "error"
+        ? ":warning:"
+        : chunk.status === "complete"
+          ? ":white_check_mark:"
+          : ":hourglass_flowing_sand:";
+    const details = isNonEmptyString(chunk.details)
+      ? ` — ${chunk.details}`
+      : "";
+    lines.push(`${icon} ${chunk.title}${details}`);
+  }
+  const body = truncateChannelProgressText(
+    lines.join("\n"),
+    SLACK_DEAD_STREAM_REWRITE_TEXT_MAX,
+    "…",
+  );
+  const blocks: SlackBlock[] = [
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: `*${headerText}*` },
+    },
+  ];
+  if (body) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: body },
+    });
+  }
+  const footnote = buildSlackChatFootnote(entry.source);
+  if (footnote) {
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: footnote }],
+    });
+  }
+  return { text: headerText, blocks };
+}
+
+function isDuplicateSkillTaskDetails(
+  toolName: string | undefined,
+  title: string,
+  details: string | undefined,
+): boolean {
+  return Boolean(
+    toolName &&
+      details &&
+      isSkillToolName(toolName) &&
+      title === `Skill: ${details}`,
+  );
+}
+
+function shouldIncludeSlackTaskDetails(task: SlackProgressToolTask): boolean {
+  return Boolean(
+    task.details &&
+      !isDuplicateSkillTaskDetails(task.toolName, task.title, task.details) &&
+      (!task.toolTitle ||
+        task.wasError ||
+        (task.toolName && isSkillToolName(task.toolName))) &&
+      !(
+        task.toolName &&
+        isShellTool(task.toolName) &&
+        task.title === task.details
+      ),
+  );
+}
+
+function toSlackTaskUpdateChunk(task: SlackProgressToolTask): SlackStreamChunk {
+  const {
+    kind: _kind,
+    toolName: _toolName,
+    toolTitle: _toolTitle,
+    wasError: _wasError,
+    details,
+    ...chunkTask
+  } = task;
+  const shouldIncludeDetails = shouldIncludeSlackTaskDetails(task);
+  return {
+    type: "task_update",
+    ...chunkTask,
+    title: sanitizeSlackProgressText(
+      chunkTask.title,
+      SLACK_STREAM_CHUNK_TEXT_MAX,
+    ),
+    ...(shouldIncludeDetails
+      ? {
+          details: sanitizeSlackProgressText(
+            details ?? "",
+            SLACK_STREAM_CHUNK_TEXT_MAX,
+          ),
+        }
+      : {}),
+  };
+}
+
+function compactSlackStreamChunks(
+  rawChunks: SlackStreamChunk[],
+  entry: SlackProgressCardEntry,
+): SlackStreamChunk[] {
+  const lastByTaskId = new Map<string, number>();
+  const latestDetailsByTaskId = new Map<string, string>();
+
+  rawChunks.forEach((chunk, i) => {
+    if (chunk.type !== "task_update") {
+      return;
+    }
+    lastByTaskId.set(chunk.id, i);
+    if (isNonEmptyString(chunk.details)) {
+      latestDetailsByTaskId.set(chunk.id, chunk.details);
+    }
+  });
+
+  const compacted = rawChunks.flatMap((chunk, i): SlackStreamChunk[] => {
+    if (chunk.type !== "task_update") {
+      return [chunk];
+    }
+    if (lastByTaskId.get(chunk.id) !== i) {
+      return [];
+    }
+
+    const pendingDetails = chunk.details ?? latestDetailsByTaskId.get(chunk.id);
+    if (!pendingDetails) {
+      return [chunk];
+    }
+    if (entry.sentTaskDetailsById?.get(chunk.id) === pendingDetails) {
+      const { details: _details, ...chunkWithoutDetails } = chunk;
+      return [chunkWithoutDetails];
+    }
+    if (chunk.details === pendingDetails) {
+      return [chunk];
+    }
+    return [{ ...chunk, details: pendingDetails }];
+  });
+  return compacted;
+}
+
+function rememberSlackStreamTaskDetails(
+  entry: SlackProgressCardEntry,
+  chunks: SlackStreamChunk[],
+): void {
+  for (const chunk of chunks) {
+    if (chunk.type !== "task_update" || !isNonEmptyString(chunk.details)) {
+      continue;
+    }
+    entry.sentTaskDetailsById ??= new Map();
+    entry.sentTaskDetailsById.set(chunk.id, chunk.details);
+  }
+}
+
+function isSlackToolActionProgress(update: ChannelTurnProgressEvent): boolean {
+  return (
+    update.kind === "tool" ||
+    update.kind === "approval" ||
+    update.kind === "command" ||
+    update.kind === "thinking" ||
+    update.kind === "responding"
+  );
+}
+
+function isSlackMessageChannelToolName(toolName: string): boolean {
+  return toolName.toLowerCase() === "messagechannel";
+}
+
+function isSlackHiddenToolName(toolName: string): boolean {
+  return isSlackMessageChannelToolName(toolName);
+}
+
+function isSlackTurnActiveTaskId(taskId: string): boolean {
+  return (
+    taskId === SLACK_TURN_ACTIVE_TASK_ID ||
+    taskId.startsWith(`${SLACK_TURN_ACTIVE_TASK_ID}_`)
+  );
+}
+
+function isSlackTransientTask(task: SlackProgressToolTask): boolean {
+  if (task.id === SLACK_CHANNEL_RESPONSE_TASK_ID) {
+    return true;
+  }
+  return isSlackTurnActiveTaskId(task.id) && !task.toolName && !task.toolTitle;
+}
+
+function isSlackMessageChannelToolUpdate(
+  entry: SlackProgressCardEntry | undefined,
+  update: ChannelTurnProgressEvent,
+): boolean {
+  return Boolean(
+    update.kind === "tool" &&
+      ((update.toolName && isSlackMessageChannelToolName(update.toolName)) ||
+        (update.toolCallId &&
+          entry?.hiddenToolCallIds?.has(update.toolCallId))),
+  );
+}
+
+function shouldShowSlackChannelResponseProgress(
+  _entry: SlackProgressCardEntry | undefined,
+  _update: ChannelTurnProgressEvent,
+): _entry is SlackProgressCardEntry {
+  // The final Slack message is already visible as a normal reply. Rendering
+  // MessageChannel as a task row makes "Responded" appear mid-card when the
+  // agent sends a status update and then keeps working.
+  return false;
+}
+
+function formatSlackToolNameForDisplay(toolName: string): string {
+  if (isTaskTool(toolName)) {
+    return "Subagent";
+  }
+  return getDisplayToolName(toolName);
+}
+
+/**
+ * Single source of truth for tool task titles. Titles are always derived
+ * from the raw tool name plus the task status, never re-parsed from
+ * previously rendered display strings.
+ */
+function formatSlackToolTaskTitle(
+  toolName: string,
+  status: SlackStreamTaskStatus,
+  details?: string,
+): string {
+  if (isSkillToolName(toolName)) {
+    return details ? `Skill: ${details}` : "Skill";
+  }
+  if (isTaskTool(toolName)) {
+    return "Subagent";
+  }
+  if (isShellTool(toolName)) {
+    if (details) {
+      return details;
+    }
+    return status === "complete" ? "Ran" : "Running";
+  }
+  if (toolName === "TaskOutput") {
+    return status === "complete"
+      ? "Checked task output"
+      : "Checking task output";
+  }
+  if (toolName === "BashOutput") {
+    return status === "complete"
+      ? "Checked shell output"
+      : "Checking shell output";
+  }
+  if (isWebSearchTool(toolName)) {
+    if (status === "complete") {
+      return "Searched the web";
+    }
+    if (status === "error") {
+      return "Attempted to search the web";
+    }
+    return "Searching the web";
+  }
+  return getDisplayToolName(toolName);
+}
+
+function formatSlackTaskTitleForStatus(
+  task: SlackProgressToolTask,
+  status: SlackStreamTaskStatus,
+): string {
+  if (task.kind === "responding") {
+    return formatSlackChannelResponseTitle(status);
+  }
+  if (task.toolTitle) {
+    return task.toolTitle;
+  }
+  if (task.toolName) {
+    return formatSlackToolTaskTitle(task.toolName, status, task.details);
+  }
+  return task.title;
+}
+
+function rememberSlackToolName(
+  entry: SlackProgressCardEntry,
+  update: ChannelTurnProgressEvent | undefined,
+): void {
+  if (!update?.toolCallId) {
+    return;
+  }
+  if (update.toolName && isSlackHiddenToolName(update.toolName)) {
+    entry.hiddenToolCallIds ??= new Set();
+    entry.hiddenToolCallIds.add(update.toolCallId);
+    entry.toolNamesByCallId?.delete(update.toolCallId);
+    entry.toolDetailsByCallId?.delete(update.toolCallId);
+    entry.toolTitlesByCallId?.delete(update.toolCallId);
+    return;
+  }
+  if (update.toolName) {
+    entry.toolNamesByCallId ??= new Map();
+    entry.toolNamesByCallId.set(update.toolCallId, update.toolName);
+  }
+  if (update.toolDetails) {
+    entry.toolDetailsByCallId ??= new Map();
+    entry.toolDetailsByCallId.set(update.toolCallId, update.toolDetails);
+  }
+  if (update.toolTitle) {
+    entry.toolTitlesByCallId ??= new Map();
+    entry.toolTitlesByCallId.set(update.toolCallId, update.toolTitle);
+  }
+}
+
+function isSlackHiddenToolUpdate(
+  entry: SlackProgressCardEntry | undefined,
+  update: ChannelTurnProgressEvent,
+): boolean {
+  return Boolean(
+    (update.toolName && isSlackHiddenToolName(update.toolName)) ||
+      (update.toolCallId && entry?.hiddenToolCallIds?.has(update.toolCallId)),
+  );
+}
+
+function resolveSlackToolActionName(
+  entry: SlackProgressCardEntry,
+  update: ChannelTurnProgressEvent,
+  details?: string,
+): string | null {
+  if (update.toolCallId && entry.hiddenToolCallIds?.has(update.toolCallId)) {
+    return null;
+  }
+  const approvalPrefix = update.kind === "approval" ? "Approval needed: " : "";
+  const toolTitle =
+    update.toolTitle ??
+    (update.toolCallId
+      ? entry.toolTitlesByCallId?.get(update.toolCallId)
+      : undefined);
+  if (toolTitle) {
+    return sanitizeSlackProgressText(
+      `${approvalPrefix}${toolTitle}`,
+      SLACK_STREAM_CHUNK_TEXT_MAX,
+    );
+  }
+  const toolName =
+    update.toolName ??
+    (update.toolCallId
+      ? entry.toolNamesByCallId?.get(update.toolCallId)
+      : undefined);
+  if (toolName) {
+    if (isSlackHiddenToolName(toolName)) {
+      return null;
+    }
+    const title = formatSlackToolTaskTitle(
+      toolName,
+      toSlackStreamTaskStatus(update),
+      details,
+    );
+    return sanitizeSlackProgressText(
+      `${approvalPrefix}${title}`,
+      SLACK_STREAM_CHUNK_TEXT_MAX,
+    );
+  }
+  if (update.kind === "tool") {
+    return null;
+  }
+  const raw = update.command
+    ? formatSlackToolNameForDisplay(update.command)
+    : update.kind === "approval"
+      ? "Tool approval"
+      : null;
+  if (!raw) {
+    return null;
+  }
+  return sanitizeSlackProgressText(raw, SLACK_STREAM_CHUNK_TEXT_MAX);
+}
+
+function resolveSlackToolActionDetails(
+  entry: SlackProgressCardEntry,
+  update: ChannelTurnProgressEvent,
+): string | undefined {
+  if (update.kind === "approval") {
+    return undefined;
+  }
+  const toolName =
+    update.toolName ??
+    (update.toolCallId
+      ? entry.toolNamesByCallId?.get(update.toolCallId)
+      : undefined);
+  const toolTitle =
+    update.toolTitle ??
+    (update.toolCallId
+      ? entry.toolTitlesByCallId?.get(update.toolCallId)
+      : undefined);
+  if (
+    toolTitle &&
+    update.state !== "error" &&
+    !(toolName && isSkillToolName(toolName))
+  ) {
+    return undefined;
+  }
+  const rememberedDetails = update.toolCallId
+    ? entry.toolDetailsByCallId?.get(update.toolCallId)
+    : undefined;
+  const details = update.toolDetails ?? rememberedDetails;
+  if (!details) {
+    return undefined;
+  }
+  const sanitized = sanitizeSlackProgressText(
+    details,
+    SLACK_STREAM_CHUNK_TEXT_MAX,
+  );
+  return sanitized || undefined;
+}
+
+function pluralizeTool(count: number): string {
+  return `${count} tool${count === 1 ? "" : "s"}`;
+}
+
+type SlackCompletionActivity =
+  | "command"
+  | "shell_output"
+  | "task_output"
+  | "read_file"
+  | "wrote_file"
+  | "updated_file"
+  | "searched_files"
+  | "searched_web"
+  | "used_skill"
+  | "used_subagent"
+  | "used_tool";
+
+function getSlackCompletionActivity(
+  task: SlackProgressToolTask,
+): SlackCompletionActivity | null {
+  if (isSlackTransientTask(task) || task.id === SLACK_LIFECYCLE_ERROR_TASK_ID) {
+    return null;
+  }
+  const toolName = task.toolName;
+  if (!toolName) {
+    return "used_tool";
+  }
+  if (isShellTool(toolName)) {
+    return "command";
+  }
+  if (toolName === "BashOutput") {
+    return "shell_output";
+  }
+  if (toolName === "TaskOutput") {
+    return "task_output";
+  }
+  if (isFileReadTool(toolName)) {
+    return "read_file";
+  }
+  if (isFileWriteTool(toolName)) {
+    return "wrote_file";
+  }
+  if (isFileEditTool(toolName)) {
+    return "updated_file";
+  }
+  if (isSearchTool(toolName) || isGlobTool(toolName)) {
+    return "searched_files";
+  }
+  if (isWebSearchTool(toolName)) {
+    return "searched_web";
+  }
+  if (isSkillToolName(toolName)) {
+    return "used_skill";
+  }
+  if (isTaskTool(toolName)) {
+    return "used_subagent";
+  }
+  return "used_tool";
+}
+
+function pluralizeActivity(
+  count: number,
+  singular: string,
+  plural: string,
+): string {
+  return count === 1 ? singular : plural.replace("{count}", String(count));
+}
+
+function formatSlackCompletionActivity(
+  activity: SlackCompletionActivity,
+  count: number,
+): string {
+  switch (activity) {
+    case "command":
+      return pluralizeActivity(count, "ran a command", "ran {count} commands");
+    case "shell_output":
+      return pluralizeActivity(
+        count,
+        "checked shell output",
+        "checked shell output {count} times",
+      );
+    case "task_output":
+      return pluralizeActivity(
+        count,
+        "checked task output",
+        "checked task output {count} times",
+      );
+    case "read_file":
+      return pluralizeActivity(count, "read a file", "read {count} files");
+    case "wrote_file":
+      return pluralizeActivity(count, "wrote a file", "wrote {count} files");
+    case "updated_file":
+      return pluralizeActivity(
+        count,
+        "updated a file",
+        "updated {count} files",
+      );
+    case "searched_files":
+      return pluralizeActivity(
+        count,
+        "searched files",
+        "searched files {count} times",
+      );
+    case "searched_web":
+      return pluralizeActivity(
+        count,
+        "searched the web",
+        "searched the web {count} times",
+      );
+    case "used_skill":
+      return pluralizeActivity(count, "used a skill", "used {count} skills");
+    case "used_subagent":
+      return pluralizeActivity(
+        count,
+        "used a subagent",
+        "used {count} subagents",
+      );
+    case "used_tool":
+      return pluralizeActivity(count, "used a tool", "used {count} tools");
+  }
+}
+
+function formatSlackCompletionPlanTitle(entry: SlackProgressCardEntry): string {
+  const activityCounts = new Map<SlackCompletionActivity, number>();
+  for (const task of entry.toolTasksById?.values() ?? []) {
+    const activity = getSlackCompletionActivity(task);
+    if (!activity) {
+      continue;
+    }
+    activityCounts.set(activity, (activityCounts.get(activity) ?? 0) + 1);
+  }
+  const summary = Array.from(activityCounts.entries())
+    .map(([activity, count]) => formatSlackCompletionActivity(activity, count))
+    .join(", ");
+  const title = summary
+    ? `${summary.charAt(0).toUpperCase()}${summary.slice(1)}`
+    : "Completed";
+  return (
+    sanitizeSlackProgressText(title, SLACK_PROGRESS_CARD_TEXT_MAX) ||
+    "Completed"
+  );
+}
+
+function buildSlackPlanUpdateChunk(
+  entry: SlackProgressCardEntry,
+): SlackStreamChunk {
+  const tasks = Array.from(entry.toolTasksById?.values() ?? []).filter(
+    (task) => !isSlackTransientTask(task),
+  );
+  const approvalCount = tasks.filter(
+    (task) => task.kind === "approval" && task.status === "pending",
+  ).length;
+  if (approvalCount > 0) {
+    return {
+      type: "plan_update",
+      title:
+        approvalCount === 1
+          ? "Approval needed"
+          : `${approvalCount} approvals needed`,
+    };
+  }
+
+  const runningTasks = tasks.filter(
+    (task) => task.status === "in_progress" || task.status === "pending",
+  );
+  if (tasks.length === 0 && entry.reasoningActive) {
+    return {
+      type: "plan_update",
+      title: "Thinking",
+    };
+  }
+  if (runningTasks.length === 1) {
+    return {
+      type: "plan_update",
+      title: runningTasks[0]?.title ?? "Working",
+    };
+  }
+  if (runningTasks.length > 1) {
+    return {
+      type: "plan_update",
+      title: `Running ${pluralizeTool(runningTasks.length)}`,
+    };
+  }
+
+  if (entry.status === "processing") {
+    return {
+      type: "plan_update",
+      title: entry.reasoningActive ? "Thinking" : "Working",
+    };
+  }
+
+  if (entry.status === "error") {
+    return {
+      type: "plan_update",
+      title: "Failed",
+    };
+  }
+  if (entry.status === "cancelled") {
+    return {
+      type: "plan_update",
+      title: "Cancelled",
+    };
+  }
+  if (entry.status === "completed") {
+    return {
+      type: "plan_update",
+      title: formatSlackCompletionPlanTitle(entry),
+    };
+  }
+
+  const completeCount = tasks.filter(
+    (task) => task.status === "complete",
+  ).length;
+  return {
+    type: "plan_update",
+    title: completeCount > 0 ? "Completed" : "Working",
+  };
+}
+
+function reconcileSlackTurnActiveTask(
+  entry: SlackProgressCardEntry,
+): SlackStreamChunk[] {
+  entry.toolTasksById ??= new Map();
+  const hasVisibleInProgressTask = Array.from(
+    entry.toolTasksById.values(),
+  ).some(
+    (task) => !isSlackTransientTask(task) && task.status === "in_progress",
+  );
+  if (hasVisibleInProgressTask) {
+    return [];
+  }
+
+  const existingId = entry.placeholderTaskId;
+  const existing = existingId ? entry.toolTasksById.get(existingId) : undefined;
+  if (existing && isSlackTransientTask(existing)) {
+    return [];
+  }
+
+  const sequence = entry.placeholderTaskSequence ?? 0;
+  const id =
+    sequence === 0
+      ? SLACK_TURN_ACTIVE_TASK_ID
+      : `${SLACK_TURN_ACTIVE_TASK_ID}_${sequence}`;
+  entry.placeholderTaskSequence = sequence + 1;
+  entry.placeholderTaskId = id;
+
+  const task: SlackProgressToolTask = {
+    id,
+    kind: "thinking",
+    title: "Still working",
+    status: "in_progress",
+  };
+  entry.toolTasksById.set(task.id, task);
+  return [toSlackTaskUpdateChunk(task)];
+}
+
+function resolveSlackToolActionTaskId(
+  entry: SlackProgressCardEntry,
+  update: ChannelTurnProgressEvent,
+): string | null {
+  if (update.toolCallId) {
+    const existingTaskId = entry.toolTaskIdsByCallId?.get(update.toolCallId);
+    if (existingTaskId) {
+      return existingTaskId;
+    }
+
+    const placeholderId = entry.placeholderTaskId;
+    const placeholder = placeholderId
+      ? entry.toolTasksById?.get(placeholderId)
+      : undefined;
+    if (placeholderId && placeholder && isSlackTransientTask(placeholder)) {
+      entry.toolTaskIdsByCallId ??= new Map();
+      entry.toolTaskIdsByCallId.set(update.toolCallId, placeholderId);
+      entry.placeholderTaskId = undefined;
+      return placeholderId;
+    }
+  }
+
+  const raw =
+    update.toolCallId ??
+    update.command ??
+    update.toolName ??
+    (update.kind === "approval" ? "approval" : null);
+  if (!raw) {
+    return null;
+  }
+  const safe = raw.replace(/[^A-Za-z0-9_-]/g, "_").replace(/_+/g, "_");
+  const trimmed = safe.replace(/^_+|_+$/g, "").slice(0, 80);
+  const taskId = `task_${trimmed || "tool"}`;
+  if (update.toolCallId) {
+    entry.toolTaskIdsByCallId ??= new Map();
+    entry.toolTaskIdsByCallId.set(update.toolCallId, taskId);
+  }
+  return taskId;
+}
+
+function toSlackStreamTaskStatus(
+  update: ChannelTurnProgressEvent,
+): SlackStreamTaskStatus {
+  if (update.state === "error") {
+    // Tool-level failures are still part of the work history; the whole Slack
+    // progress card should only show an error state when the turn itself fails.
+    return update.kind === "tool" ? "complete" : "error";
+  }
+  if (update.state === "completed") {
+    return "complete";
+  }
+  if (update.state === "waiting") {
+    return "pending";
+  }
+  return "in_progress";
+}
+
+function formatSlackChannelResponseTitle(
+  status: SlackStreamTaskStatus,
+): string {
+  if (status === "complete") {
+    return "Responded";
+  }
+  if (status === "error") {
+    return "Response failed";
+  }
+  return "Responding";
+}
+
+function buildSlackChannelResponseProgressChunks(
+  entry: SlackProgressCardEntry,
+  update: ChannelTurnProgressEvent,
+): SlackStreamChunk[] {
+  const status = toSlackStreamTaskStatus(update);
+  const title = formatSlackChannelResponseTitle(status);
+  const prevTask = entry.toolTasksById?.get(SLACK_CHANNEL_RESPONSE_TASK_ID);
+  if (prevTask?.title === title && prevTask.status === status) {
+    return [];
+  }
+
+  const task: SlackProgressToolTask = {
+    id: SLACK_CHANNEL_RESPONSE_TASK_ID,
+    kind: "responding",
+    title,
+    status,
+  };
+  entry.toolTasksById ??= new Map();
+  entry.reasoningActive = false;
+  entry.toolTasksById.set(task.id, task);
+  const turnActiveChunks = reconcileSlackTurnActiveTask(entry);
+
+  return [
+    buildSlackPlanUpdateChunk(entry),
+    ...(status === "complete" || status === "error" ? [] : turnActiveChunks),
+    {
+      type: "task_update",
+      id: task.id,
+      title: task.title,
+      status: task.status,
+    },
+    ...(status === "complete" || status === "error" ? turnActiveChunks : []),
+  ];
+}
+
+function buildSlackStreamProgressChunks(
+  entry: SlackProgressCardEntry,
+  update: ChannelTurnProgressEvent,
+): SlackStreamChunk[] {
+  // Handle reasoning/replying events as plan/header state, not task rows.
+  if (update.kind === "thinking" || update.kind === "responding") {
+    const reasoningActive = update.state !== "completed";
+    if (entry.reasoningActive === reasoningActive) {
+      return [];
+    }
+    entry.reasoningActive = reasoningActive;
+    // Do not create a stream for reasoning-only turns before the Slack card is
+    // visible. If a stream already exists, keep a concrete bottom row so the
+    // card does not look done while the run is still thinking between tools.
+    return entry.mode === "stream"
+      ? [
+          buildSlackPlanUpdateChunk(entry),
+          ...reconcileSlackTurnActiveTask(entry),
+        ]
+      : [];
+  }
+
+  if (isSlackMessageChannelToolUpdate(entry, update)) {
+    return buildSlackChannelResponseProgressChunks(entry, update);
+  }
+
+  // Slack replaces task rows that reuse an id, so visible tool calls need
+  // stable per-call task ids to preserve parallel tool history in the card.
+  const id = resolveSlackToolActionTaskId(entry, update);
+  if (!id) {
+    return [];
+  }
+  const status = toSlackStreamTaskStatus(update);
+  const resolvedDetails = resolveSlackToolActionDetails(entry, update);
+  const sentDetails = entry.sentTaskDetailsById?.get(id);
+  // Slack task streams append changed details for a task instead of replacing
+  // them. Once details have rendered, keep that string stable for the task.
+  const details =
+    sentDetails && resolvedDetails && sentDetails !== resolvedDetails
+      ? sentDetails
+      : resolvedDetails;
+  const title = resolveSlackToolActionName(entry, update, details);
+  if (!title) {
+    return [];
+  }
+
+  // Skip the entire appendStream call if nothing has changed for this task.
+  // Slack's streaming API re-renders details on every appendStream, so even
+  // omitting the details field from the chunk doesn't prevent duplication.
+  const prevTask = entry.toolTasksById?.get(id);
+  // Don't downgrade a completed task to error — the server sometimes sends
+  // both a "completed" and an "error" tool_return for the same call; the
+  // completed event arrives first and is the reliable one.
+  if (prevTask && prevTask.status === "complete" && status === "error") {
+    return [];
+  }
+  if (prevTask && prevTask.status === "complete" && status === "in_progress") {
+    return [];
+  }
+  if (
+    prevTask &&
+    prevTask.title === title &&
+    prevTask.status === status &&
+    (prevTask.details ?? "") === (details ?? "")
+  ) {
+    return [];
+  }
+  const toolName =
+    update.toolName ??
+    (update.toolCallId
+      ? entry.toolNamesByCallId?.get(update.toolCallId)
+      : undefined);
+  const toolTitle =
+    update.toolTitle ??
+    (update.toolCallId
+      ? entry.toolTitlesByCallId?.get(update.toolCallId)
+      : undefined);
+  const task: SlackProgressToolTask = {
+    id,
+    kind: update.kind,
+    ...(toolName ? { toolName } : {}),
+    ...(toolTitle ? { toolTitle } : {}),
+    title,
+    status,
+    ...(details ? { details } : {}),
+    ...(update.state === "error" ? { wasError: true } : {}),
+  };
+  entry.toolTasksById ??= new Map();
+  const chunks: SlackStreamChunk[] = [];
+  entry.reasoningActive = false;
+
+  entry.toolTasksById.set(id, task);
+
+  // Only include details in the chunk when they actually changed.
+  // Slack's streaming API accumulates the details field across
+  // appendStream calls with the same task id, so re-sending the same
+  // details when only the status changes causes them to duplicate.
+  const detailsChanged =
+    !prevTask || (prevTask.details ?? "") !== (details ?? "");
+  const shouldIncludeTaskDetails =
+    details &&
+    (detailsChanged || status !== "in_progress") &&
+    !isDuplicateSkillTaskDetails(toolName, title, details) &&
+    (!toolTitle ||
+      update.state === "error" ||
+      (toolName && isSkillToolName(toolName))) &&
+    !(toolName && isShellTool(toolName) && title === details);
+
+  chunks.push(buildSlackPlanUpdateChunk(entry));
+  chunks.push({
+    type: "task_update" as const,
+    id: task.id,
+    title: task.title,
+    status: task.status,
+    ...(shouldIncludeTaskDetails ? { details } : {}),
+  });
+  if (status === "complete" || status === "error") {
+    chunks.push(...reconcileSlackTurnActiveTask(entry));
+  }
+
+  return chunks;
+}
+
+function resolveSlackLifecycleProgressText(outcome: ChannelTurnOutcome): {
+  status: SlackProgressCardState;
+  text: string;
+} {
+  if (outcome === "completed") {
+    return { status: "completed", text: "Completed" };
+  }
+  if (outcome === "cancelled") {
+    return { status: "cancelled", text: "Cancelled" };
+  }
+  return { status: "error", text: "Failed" };
+}
 
 /**
  * Tracks Slack channel threads the agent has sent messages to, so that
@@ -382,13 +1889,17 @@ async function uploadSlackFile(
     throw new Error(`Failed to upload Slack file: HTTP ${uploadResp.status}`);
   }
 
+  const threadTs = resolveSlackOutboundThreadTs({
+    chatId: msg.chatId,
+    threadId: msg.threadId,
+    replyToMessageId: msg.replyToMessageId,
+  });
+
   const completeResp = await slackClient.files.completeUploadExternal({
     files: [{ id: uploadUrlResp.file_id, title: uploadTitle }],
     channel_id: msg.chatId,
     ...(msg.text.trim() ? { initial_comment: msg.text } : {}),
-    ...((msg.threadId ?? msg.replyToMessageId)
-      ? { thread_ts: msg.threadId ?? msg.replyToMessageId }
-      : {}),
+    ...(threadTs ? { thread_ts: threadTs } : {}),
   });
 
   if (!completeResp.ok) {
@@ -425,19 +1936,21 @@ function buildSlackThreadLabel(
   msg: InboundChannelMessage,
   starterText?: string,
 ): string | undefined {
-  if (msg.chatType !== "channel") {
-    return undefined;
-  }
-
   const roomLabel =
-    isNonEmptyString(msg.chatLabel) && msg.chatLabel !== msg.chatId
+    msg.chatType === "channel" &&
+    isNonEmptyString(msg.chatLabel) &&
+    msg.chatLabel !== msg.chatId
       ? ` in ${msg.chatLabel}`
       : "";
   const preview = truncateSlackThreadLabel(starterText ?? msg.text);
+  const threadLabel =
+    msg.chatType === "direct" ? "Slack DM thread" : "Slack thread";
   if (preview) {
-    return `Slack thread${roomLabel}: ${preview}`;
+    return `${threadLabel}${roomLabel}: ${preview}`;
   }
-  return roomLabel ? `Slack thread${roomLabel}` : `Slack thread ${msg.chatId}`;
+  return roomLabel
+    ? `${threadLabel}${roomLabel}`
+    : `${threadLabel} ${msg.chatId}`;
 }
 
 function buildSlackChannelContextLabel(
@@ -578,17 +2091,20 @@ export function createSlackAdapter(
   let writeClient: SlackWriteClient | null = null;
   let running = false;
   let botUserId: string | null = null;
+  let botTeamId: string | null = null;
   const knownThreadIdsByMessageId = new Map<string, string | null>();
   const knownUserDisplayNames = new Map<string, string>();
   const seenIngressMessageKeys = new Map<string, number>();
   // Tracks threads the agent has sent messages to so that inbound replies in
   // those threads are auto-routed without requiring an explicit @mention.
   const agentThreadTracker = createAgentThreadTracker();
-  const lifecycleStateByMessageKey = new Map<
-    string,
-    { state: SlackLifecycleState; updatedAt: number }
-  >();
-  const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
+  const progressCardByReplyKey = new Map<string, SlackProgressCardEntry>();
+  const activeProgressCardKeyByReplyKey = new Map<string, string>();
+  const assistantStatusReplyKeys = new Set<string>();
+  const assistantStatusTextByReplyKey = new Map<string, string>();
+  const progressUpdateThrottleMs = resolveSlackProgressUpdateThrottleMs();
+  const progressStreamKeepaliveMs = resolveSlackProgressStreamKeepaliveMs();
+  const completionFinalizeGraceMs = resolveSlackCompletionFinalizeGraceMs();
 
   // ── Inbound debounce (optional) ───────────────────────────────
   // When `inboundDebounceMs > 0`, short back-to-back messages from the same
@@ -627,6 +2143,63 @@ export function createSlackAdapter(
     opts: { source: SlackDebounceSource; wasMentioned: boolean };
   };
 
+  function getSlackDebounceEntryMessageKey(
+    entry: SlackDebounceEntry,
+  ): string | null {
+    const messageId = entry.inbound.messageId;
+    if (!isNonEmptyString(messageId)) {
+      return null;
+    }
+    return `${entry.inbound.chatId}:${messageId}`;
+  }
+
+  function preferDuplicateSlackDebounceEntry(
+    current: SlackDebounceEntry,
+    candidate: SlackDebounceEntry,
+  ): SlackDebounceEntry {
+    if (current.opts.source === "app_mention") {
+      return current;
+    }
+    if (candidate.opts.source === "app_mention") {
+      return candidate;
+    }
+    if (current.inbound.isMention === true) {
+      return current;
+    }
+    if (candidate.inbound.isMention === true) {
+      return candidate;
+    }
+    return candidate;
+  }
+
+  function dedupeSlackDebounceEntries(
+    entries: SlackDebounceEntry[],
+  ): SlackDebounceEntry[] {
+    const indexByMessageKey = new Map<string, number>();
+    const deduped: SlackDebounceEntry[] = [];
+    for (const entry of entries) {
+      const messageKey = getSlackDebounceEntryMessageKey(entry);
+      if (!messageKey) {
+        deduped.push(entry);
+        continue;
+      }
+      const existingIndex = indexByMessageKey.get(messageKey);
+      if (existingIndex === undefined) {
+        indexByMessageKey.set(messageKey, deduped.length);
+        deduped.push(entry);
+        continue;
+      }
+      const existing = deduped[existingIndex];
+      if (existing) {
+        deduped[existingIndex] = preferDuplicateSlackDebounceEntry(
+          existing,
+          entry,
+        );
+      }
+    }
+    return deduped;
+  }
+
   const debouncer: InboundDebouncer<SlackDebounceEntry> =
     createInboundDebouncer<SlackDebounceEntry>({
       debounceMs,
@@ -634,7 +2207,8 @@ export function createSlackAdapter(
       shouldDebounce: ({ inbound }) =>
         !inbound.attachments?.length && !inbound.reaction,
       onFlush: async (entries) => {
-        const last = entries[entries.length - 1];
+        const dedupedEntries = dedupeSlackDebounceEntries(entries);
+        const last = dedupedEntries[dedupedEntries.length - 1];
         if (!last) return;
 
         // Prune the flushed debounce key from the top-level conversation map.
@@ -677,13 +2251,13 @@ export function createSlackAdapter(
 
         // Merge buffered entries into a single dispatch.
         const combinedText =
-          entries.length === 1
+          dedupedEntries.length === 1
             ? last.inbound.text
-            : entries
+            : dedupedEntries
                 .map((entry) => entry.inbound.text)
                 .filter((text) => text && text.length > 0)
                 .join("\n");
-        const combinedMentioned = entries.some(
+        const combinedMentioned = dedupedEntries.some(
           (entry) =>
             entry.opts.wasMentioned === true ||
             entry.inbound.isMention === true,
@@ -782,26 +2356,31 @@ export function createSlackAdapter(
     }
   }
 
-  function getLifecycleMessageKey(source: ChannelTurnSource): string | null {
-    if (
-      source.channel !== "slack" ||
-      !isNonEmptyString(source.chatId) ||
-      !isNonEmptyString(source.messageId)
-    ) {
-      return null;
-    }
-    return `${source.chatId}:${source.messageId}`;
-  }
-
   function getLifecycleReplyKey(source: ChannelTurnSource): string | null {
     if (source.channel !== "slack" || !isNonEmptyString(source.chatId)) {
       return null;
     }
-    const replyToMessageId = source.threadId ?? source.messageId;
+    const replyToMessageId = resolveSlackProgressThreadTs(source);
     if (!isNonEmptyString(replyToMessageId)) {
       return null;
     }
     return `${source.chatId}:${replyToMessageId}`;
+  }
+
+  function getLifecycleErrorReplyKey(source: ChannelTurnSource): string | null {
+    if (source.channel !== "slack" || !isNonEmptyString(source.chatId)) {
+      return null;
+    }
+    if (
+      source.chatType === "direct" ||
+      resolveSlackChatType(source.chatId) === "direct"
+    ) {
+      const replyToMessageId = resolveSlackSourceThreadTs(source);
+      return isNonEmptyString(replyToMessageId)
+        ? `${source.chatId}:${replyToMessageId}`
+        : `${source.chatId}:direct`;
+    }
+    return getLifecycleReplyKey(source);
   }
 
   function formatSlackLifecycleErrorMessage(
@@ -815,144 +2394,952 @@ export function createSlackAdapter(
     });
   }
 
-  function pruneLifecycleState(now: number = Date.now()): void {
-    for (const [key, entry] of lifecycleStateByMessageKey) {
-      if (entry.updatedAt + SLACK_LIFECYCLE_STATE_TTL_MS <= now) {
-        lifecycleStateByMessageKey.delete(key);
-      }
-    }
-
-    if (lifecycleStateByMessageKey.size <= SLACK_LIFECYCLE_STATE_MAX) {
-      return;
-    }
-
-    const oldestEntries = Array.from(lifecycleStateByMessageKey.entries()).sort(
-      (a, b) => a[1].updatedAt - b[1].updatedAt,
-    );
-    const overflowCount =
-      lifecycleStateByMessageKey.size - SLACK_LIFECYCLE_STATE_MAX;
-    for (let index = 0; index < overflowCount; index += 1) {
-      const entry = oldestEntries[index];
-      if (entry) {
-        lifecycleStateByMessageKey.delete(entry[0]);
-      }
-    }
-  }
-
-  async function sendLifecycleReaction(
-    source: ChannelTurnSource,
-    emoji: string,
-    removeReaction = false,
-  ): Promise<void> {
-    if (!isNonEmptyString(source.messageId)) {
-      return;
-    }
-    await ensureApp();
-    const slackClient = await ensureWriteClient();
-    if (removeReaction) {
-      await slackClient.reactions.remove({
-        channel: source.chatId,
-        timestamp: source.messageId,
-        name: emoji,
-      });
-      return;
-    }
-    await slackClient.reactions.add({
-      channel: source.chatId,
-      timestamp: source.messageId,
-      name: emoji,
-    });
-  }
-
   async function sendLifecycleErrorReply(
     source: ChannelTurnSource,
     errorText: string,
     runId?: string | null,
   ): Promise<void> {
-    const replyToMessageId = source.threadId ?? source.messageId;
-    if (!isNonEmptyString(replyToMessageId)) {
-      return;
-    }
+    const replyToMessageId = resolveSlackSourceThreadTs(source);
 
     await ensureApp();
     const slackClient = await ensureWriteClient();
     const response = await slackClient.chat.postMessage({
       channel: source.chatId,
       text: formatSlackLifecycleErrorMessage(errorText, runId),
-      thread_ts: replyToMessageId,
+      ...(replyToMessageId ? { thread_ts: replyToMessageId } : {}),
     });
-    rememberMessageThread(response.ts, replyToMessageId);
+    rememberMessageThread(response.ts, replyToMessageId ?? null);
   }
 
-  function scheduleLifecycleTransition(
+  function buildSlackProgressCardKey(
     source: ChannelTurnSource,
-    nextState: SlackLifecycleState,
-  ): Promise<void> | null {
-    const key = getLifecycleMessageKey(source);
+    slotId?: string,
+  ): string | null {
+    const replyKey = getLifecycleReplyKey(source);
+    if (!replyKey) {
+      return null;
+    }
+    const turnId = firstNonEmptyString(
+      slotId,
+      source.messageId,
+      source.threadId,
+    );
+    return turnId ? `${replyKey}:slot:${turnId}` : replyKey;
+  }
+
+  function getActiveSlackProgressCardKey(
+    source: ChannelTurnSource,
+  ): string | null {
+    const replyKey = getLifecycleReplyKey(source);
+    if (!replyKey) {
+      return null;
+    }
+    return activeProgressCardKeyByReplyKey.get(replyKey) ?? null;
+  }
+
+  function getOrCreateSlackProgressCardKey(
+    source: ChannelTurnSource,
+    slotId?: string,
+  ): string | null {
+    return (
+      getActiveSlackProgressCardKey(source) ??
+      buildSlackProgressCardKey(source, slotId)
+    );
+  }
+
+  function getSlackProgressReplyTs(source: ChannelTurnSource): string | null {
+    const replyToMessageId = resolveSlackProgressThreadTs(source);
+    return isNonEmptyString(replyToMessageId) ? replyToMessageId : null;
+  }
+
+  function getUniqueSlackProgressSources(
+    sources: ChannelTurnSource[],
+  ): ChannelTurnSource[] {
+    const seen = new Set<string>();
+    const unique: ChannelTurnSource[] = [];
+    for (const source of sources) {
+      const key = getOrCreateSlackProgressCardKey(source);
+      if (!key || seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      unique.push(source);
+    }
+    return unique;
+  }
+
+  function getSlackAssistantThreadStatusForTurn(
+    source: ChannelTurnSource,
+  ): string | null {
+    const key = getLifecycleReplyKey(source);
     if (!key) {
       return null;
     }
+    const existing = assistantStatusTextByReplyKey.get(key);
+    if (existing) {
+      return existing;
+    }
+    const status = getRandomSlackAssistantStatusVerb();
+    assistantStatusTextByReplyKey.set(key, status);
+    return status;
+  }
 
-    const previous =
-      lifecycleOperationByMessageKey.get(key) ?? Promise.resolve();
-    const operation = previous
-      .catch(() => {})
-      .then(async () => {
-        pruneLifecycleState();
-        const currentState = lifecycleStateByMessageKey.get(key)?.state;
-        if (currentState === nextState) {
-          lifecycleStateByMessageKey.set(key, {
-            state: nextState,
-            updatedAt: Date.now(),
-          });
+  function isSlackProgressCardRendering(source: ChannelTurnSource): boolean {
+    const activeKey = getActiveSlackProgressCardKey(source);
+    const entry = activeKey ? progressCardByReplyKey.get(activeKey) : undefined;
+    return Boolean(
+      entry &&
+        (entry.mode === "stream" ||
+          (entry.pendingStreamChunks?.length ?? 0) > 0 ||
+          entry.pendingFlush),
+    );
+  }
+
+  async function setSlackAssistantThreadStatus(
+    source: ChannelTurnSource,
+    status: string,
+  ): Promise<void> {
+    const key = getLifecycleReplyKey(source);
+    const threadTs = getSlackProgressReplyTs(source);
+    if (!key || !threadTs) {
+      return;
+    }
+    await ensureApp();
+    const slackClient = await ensureWriteClient();
+    const assistantThreads = slackClient.assistant?.threads;
+    if (!assistantThreads?.setStatus) {
+      return;
+    }
+    try {
+      await assistantThreads.setStatus({
+        channel_id: source.chatId,
+        thread_ts: threadTs,
+        status,
+        ...(status ? { loading_messages: [status] } : {}),
+      });
+      if (status) {
+        assistantStatusReplyKeys.add(key);
+        assistantStatusTextByReplyKey.set(key, status);
+      } else {
+        assistantStatusReplyKeys.delete(key);
+        assistantStatusTextByReplyKey.delete(key);
+      }
+    } catch (error) {
+      console.warn(
+        "[Slack] Failed to update assistant thread status:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  async function clearSlackAssistantThreadStatus(
+    source: ChannelTurnSource,
+  ): Promise<void> {
+    const key = getLifecycleReplyKey(source);
+    if (!key || !assistantStatusReplyKeys.has(key)) {
+      return;
+    }
+    await setSlackAssistantThreadStatus(source, "");
+  }
+
+  function canStartSlackStream(source: ChannelTurnSource): boolean {
+    if (source.chatType === "direct") {
+      return isNonEmptyString(getSlackProgressReplyTs(source));
+    }
+    if (source.chatType !== "channel") {
+      return true;
+    }
+    return (
+      isNonEmptyString(source.senderId) &&
+      isNonEmptyString(source.senderTeamId ?? botTeamId)
+    );
+  }
+
+  function buildSlackStartStreamArgs(
+    entry: SlackProgressCardEntry,
+    replyToMessageId: string,
+    rawChunks: SlackStreamChunk[],
+  ): SlackStartStreamArgs {
+    const initialChunks = compactSlackStreamChunks(rawChunks, entry);
+    const args: SlackStartStreamArgs = {
+      channel: entry.source.chatId,
+      thread_ts: replyToMessageId,
+      task_display_mode: "plan",
+      chunks: initialChunks,
+    };
+    const recipientTeamId = entry.source.senderTeamId ?? botTeamId;
+    if (
+      entry.source.chatType === "channel" &&
+      isNonEmptyString(entry.source.senderId) &&
+      isNonEmptyString(recipientTeamId)
+    ) {
+      args.recipient_user_id = entry.source.senderId;
+      args.recipient_team_id = recipientTeamId;
+    }
+    return args;
+  }
+
+  async function startSlackProgressStream(
+    entry: SlackProgressCardEntry,
+    replyToMessageId: string,
+    rawChunks: SlackStreamChunk[],
+  ): Promise<boolean> {
+    if (!canStartSlackStream(entry.source)) {
+      return false;
+    }
+    if (rawChunks.length === 0) {
+      return true;
+    }
+    await ensureApp();
+    const slackClient = await ensureWriteClient();
+    const startStream = slackClient.chat.startStream;
+    if (!startStream) {
+      return false;
+    }
+    try {
+      const args = buildSlackStartStreamArgs(
+        entry,
+        replyToMessageId,
+        rawChunks,
+      );
+      const response = await startStream.call(slackClient.chat, args);
+      if (response.ok === false || !isNonEmptyString(response.ts)) {
+        console.warn(
+          "[Slack] Failed to start progress stream:",
+          response.error ?? "missing stream ts",
+        );
+        return false;
+      }
+      entry.mode = "stream";
+      entry.streamTs = response.ts;
+      entry.streamDead = undefined;
+      rememberMessageThread(response.ts, replyToMessageId);
+      rememberSlackStreamTaskDetails(entry, args.chunks ?? []);
+      // Once the native stream card is visible, clear Slack's assistant
+      // thread status so Slack doesn't render a second "is processing" field
+      // under our task card.
+      await clearSlackAssistantThreadStatus(entry.source);
+      return true;
+    } catch (error) {
+      console.warn(
+        "[Slack] Failed to start progress stream:",
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
+  }
+
+  function markSlackProgressStreamDead(
+    entry: SlackProgressCardEntry,
+    reason: string,
+  ): void {
+    if (entry.streamDead) {
+      return;
+    }
+    entry.streamDead = true;
+    clearSlackProgressStreamKeepalive(entry);
+    console.warn(
+      "[Slack] Progress stream left streaming state unexpectedly:",
+      reason,
+    );
+    trackBoundaryError({
+      context: "slack progress stream",
+      errorType: "slack_progress_stream_dead",
+      error: reason,
+    });
+  }
+
+  /**
+   * Replace a dead stream's message content with the terminal card state via
+   * chat.update. Slack refuses stream calls once a message leaves streaming
+   * state, so this is the only way the final retitle/error details can still
+   * reach the thread instead of leaving a stuck red spinner row.
+   */
+  async function rewriteDeadSlackProgressStream(
+    entry: SlackProgressCardEntry,
+    chunks: SlackStreamChunk[],
+  ): Promise<boolean> {
+    if (!entry.streamTs) {
+      return false;
+    }
+    try {
+      const slackClient = await ensureWriteClient();
+      const { text, blocks } = buildSlackDeadStreamRewrite(entry, chunks);
+      await slackClient.chat.update({
+        channel: entry.source.chatId,
+        ts: entry.streamTs,
+        text,
+        blocks,
+      });
+      rememberSlackStreamTaskDetails(entry, chunks);
+      return true;
+    } catch (error) {
+      console.warn(
+        "[Slack] Failed to rewrite dead progress stream:",
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
+  }
+
+  async function appendSlackProgressStream(
+    entry: SlackProgressCardEntry,
+    rawChunks: SlackStreamChunk[],
+  ): Promise<boolean> {
+    if (!entry.streamTs) {
+      return true;
+    }
+    if (entry.streamDead) {
+      // Chunks requeue via the flush path and reach the thread through the
+      // terminal dead-stream rewrite instead.
+      return false;
+    }
+    const chunks = compactSlackStreamChunks(rawChunks, entry);
+    if (chunks.length === 0) {
+      return true;
+    }
+    await ensureApp();
+    const slackClient = await ensureWriteClient();
+    const appendStream = slackClient.chat.appendStream;
+    if (!appendStream) {
+      return false;
+    }
+    try {
+      const response = await appendStream.call(slackClient.chat, {
+        channel: entry.source.chatId,
+        ts: entry.streamTs,
+        chunks,
+      });
+      if (response.ok === false) {
+        if (isSlackMessageNotStreamingStateError(response.error)) {
+          markSlackProgressStreamDead(entry, "append_not_in_streaming_state");
+        }
+        console.warn(
+          "[Slack] Failed to append progress stream:",
+          response.error ?? "unknown error",
+        );
+        return false;
+      }
+      rememberSlackStreamTaskDetails(entry, chunks);
+      return true;
+    } catch (error) {
+      if (isSlackMessageNotStreamingStateError(error)) {
+        markSlackProgressStreamDead(entry, "append_not_in_streaming_state");
+      }
+      console.warn(
+        "[Slack] Failed to append progress stream:",
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
+  }
+
+  async function stopSlackProgressStream(
+    entry: SlackProgressCardEntry,
+    finalErrorChunk?: SlackStreamChunk,
+  ): Promise<boolean> {
+    if (!entry.streamTs) {
+      return true;
+    }
+    await ensureApp();
+    const slackClient = await ensureWriteClient();
+    const stopStream = slackClient.chat.stopStream;
+    if (!stopStream) {
+      return false;
+    }
+    // Only a genuinely failed turn closes remaining rows with the red error
+    // status. Cancelled turns are user stops, not failures — their rows close
+    // as "Stopped" with a neutral complete status so an interrupted turn is
+    // visually distinguishable from a crashed one.
+    const terminalTaskStatus: SlackStreamTaskStatus =
+      entry.status === "error" ? "error" : "complete";
+    const chunks = buildTerminalSlackStreamChunks(
+      entry,
+      terminalTaskStatus,
+      finalErrorChunk,
+    );
+    if (entry.streamDead) {
+      return await rewriteDeadSlackProgressStream(entry, chunks);
+    }
+    try {
+      const args: SlackStopStreamArgs = {
+        channel: entry.source.chatId,
+        ts: entry.streamTs,
+      };
+      if (chunks.length > 0) {
+        args.chunks = chunks;
+      }
+      // Add small footnote with link to Letta Chat for non-local agents.
+      const footnote = buildSlackChatFootnote(entry.source);
+      if (footnote) {
+        args.markdown_text = footnote;
+      }
+      const response = await stopStream.call(slackClient.chat, args);
+      if (response.ok === false) {
+        if (isSlackMessageNotStreamingStateError(response.error)) {
+          markSlackProgressStreamDead(entry, "stop_not_in_streaming_state");
+          return await rewriteDeadSlackProgressStream(entry, chunks);
+        }
+        console.warn(
+          "[Slack] Failed to stop progress stream:",
+          response.error ?? "unknown error",
+        );
+        return false;
+      }
+      rememberSlackStreamTaskDetails(entry, chunks);
+      return true;
+    } catch (error) {
+      if (isSlackMessageNotStreamingStateError(error)) {
+        markSlackProgressStreamDead(entry, "stop_not_in_streaming_state");
+        return await rewriteDeadSlackProgressStream(entry, chunks);
+      }
+      console.warn(
+        "[Slack] Failed to stop progress stream:",
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
+  }
+
+  function scheduleProgressCardFlush(
+    key: string,
+    entry: SlackProgressCardEntry,
+    delayMs: number,
+  ): void {
+    if (entry.pendingTimer) {
+      return;
+    }
+    entry.pendingTimer = setTimeout(() => {
+      entry.pendingTimer = undefined;
+      void flushSlackProgressCard(key, entry);
+    }, delayMs);
+    const timer = entry.pendingTimer as ReturnType<typeof setTimeout> & {
+      unref?: () => void;
+    };
+    timer.unref?.();
+  }
+
+  function clearSlackProgressStreamKeepalive(
+    entry: SlackProgressCardEntry,
+  ): void {
+    if (entry.keepaliveTimer) {
+      clearTimeout(entry.keepaliveTimer);
+      entry.keepaliveTimer = undefined;
+    }
+  }
+
+  function clearSlackCompletionFinalizer(entry: SlackProgressCardEntry): void {
+    if (entry.completedFinalizerTimer) {
+      clearTimeout(entry.completedFinalizerTimer);
+      entry.completedFinalizerTimer = undefined;
+    }
+  }
+
+  function scheduleSlackCompletionFinalizer(
+    key: string,
+    entry: SlackProgressCardEntry,
+    batchId?: string,
+  ): void {
+    clearSlackCompletionFinalizer(entry);
+    if (completionFinalizeGraceMs <= 0) {
+      void finishSlackProgressCards([entry.source], "completed", batchId);
+      return;
+    }
+    entry.completedFinalizerTimer = setTimeout(() => {
+      entry.completedFinalizerTimer = undefined;
+      void (async () => {
+        if (progressCardByReplyKey.get(key) !== entry) {
           return;
         }
+        await finishSlackProgressCards([entry.source], "completed", batchId);
+      })().catch((error) => {
+        console.warn(
+          "[Slack] Failed to finalize completed progress stream:",
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }, completionFinalizeGraceMs);
+    const timer = entry.completedFinalizerTimer as ReturnType<
+      typeof setTimeout
+    > & {
+      unref?: () => void;
+    };
+    timer.unref?.();
+  }
 
-        if (nextState === "queued") {
-          if (!currentState) {
-            await sendLifecycleReaction(source, "eyes");
-            lifecycleStateByMessageKey.set(key, {
-              state: nextState,
-              updatedAt: Date.now(),
-            });
+  function scheduleSlackProgressStreamKeepalive(
+    key: string,
+    entry: SlackProgressCardEntry,
+  ): void {
+    if (
+      progressStreamKeepaliveMs <= 0 ||
+      entry.keepaliveTimer ||
+      entry.status !== "processing" ||
+      entry.mode !== "stream" ||
+      entry.streamDead ||
+      !entry.streamTs
+    ) {
+      return;
+    }
+
+    entry.keepaliveTimer = setTimeout(() => {
+      entry.keepaliveTimer = undefined;
+      void (async () => {
+        if (
+          progressCardByReplyKey.get(key) !== entry ||
+          entry.status !== "processing" ||
+          entry.mode !== "stream" ||
+          !entry.streamTs
+        ) {
+          return;
+        }
+        const didAppend = await appendSlackProgressStream(entry, [
+          buildSlackPlanUpdateChunk(entry),
+        ]);
+        if (!didAppend) {
+          // A transient append failure (rate limit, network blip) must not
+          // permanently silence the keepalive: Slack expires idle streams and
+          // an expired stream renders a stuck red warning row. Keep retrying
+          // on the same cadence until the turn finishes or the stream is
+          // confirmed dead.
+          if (!entry.streamDead) {
+            scheduleSlackProgressStreamKeepalive(key, entry);
           }
           return;
         }
+        entry.lastSentAt = Date.now();
+        scheduleSlackProgressStreamKeepalive(key, entry);
+      })().catch((error) => {
+        console.warn(
+          "[Slack] Failed to keep progress stream alive:",
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }, progressStreamKeepaliveMs);
+    const timer = entry.keepaliveTimer as ReturnType<typeof setTimeout> & {
+      unref?: () => void;
+    };
+    timer.unref?.();
+  }
 
-        if (currentState === "queued") {
-          try {
-            await sendLifecycleReaction(source, "eyes", true);
-          } catch {}
-        }
+  function resetSlackProgressStreamKeepalive(
+    key: string,
+    entry: SlackProgressCardEntry,
+  ): void {
+    clearSlackProgressStreamKeepalive(entry);
+    scheduleSlackProgressStreamKeepalive(key, entry);
+  }
 
-        if (
-          nextState !== "completed" ||
-          config.showCompletedReaction !== false
-        ) {
-          await sendLifecycleReaction(
-            source,
-            nextState === "completed" ? "white_check_mark" : "x",
-          );
-        }
-        lifecycleStateByMessageKey.set(key, {
-          state: nextState,
-          updatedAt: Date.now(),
-        });
-      })
+  async function flushSlackProgressCard(
+    key: string,
+    entry: SlackProgressCardEntry,
+  ): Promise<void> {
+    if (entry.pendingFlush) {
+      await entry.pendingFlush;
+      const latestText = formatSlackProgressCardText(
+        entry.status,
+        entry.latestText,
+      );
+      if (
+        !entry.requeuedFailedChunks &&
+        (entry.lastSentText !== latestText ||
+          (entry.pendingStreamChunks?.length ?? 0) > 0)
+      ) {
+        await flushSlackProgressCard(key, entry);
+      }
+      return;
+    }
+
+    const operation = (async () => {
+      entry.requeuedFailedChunks = false;
+      const replyToMessageId = getSlackProgressReplyTs(entry.source);
+      if (!replyToMessageId) {
+        return;
+      }
+      const text = formatSlackProgressCardText(entry.status, entry.latestText);
+      if (
+        entry.lastSentText === text &&
+        !entry.latestUpdate &&
+        (entry.pendingStreamChunks?.length ?? 0) === 0
+      ) {
+        entry.lastSentAt = Date.now();
+        return;
+      }
+
+      if (
+        entry.status === "processing" &&
+        !entry.mode &&
+        (entry.pendingStreamChunks?.length ?? 0) === 0
+      ) {
+        entry.lastSentAt = Date.now();
+        return;
+      }
+
+      const chunksToSend = [...(entry.pendingStreamChunks ?? [])];
+      entry.pendingStreamChunks = [];
+      let didSend = true;
+      if (!entry.mode) {
+        didSend = await startSlackProgressStream(
+          entry,
+          replyToMessageId,
+          chunksToSend,
+        );
+      } else if (entry.mode === "stream") {
+        didSend = await appendSlackProgressStream(entry, chunksToSend);
+      }
+
+      if (!didSend && chunksToSend.length > 0) {
+        entry.pendingStreamChunks = [
+          ...chunksToSend,
+          ...(entry.pendingStreamChunks ?? []),
+        ];
+        entry.requeuedFailedChunks = true;
+      }
+
+      delete entry.latestUpdate;
+      entry.lastSentText = text;
+      entry.lastSentAt = Date.now();
+      if (didSend && entry.mode === "stream" && entry.status === "processing") {
+        resetSlackProgressStreamKeepalive(key, entry);
+      } else if (entry.mode !== "stream" || entry.status !== "processing") {
+        clearSlackProgressStreamKeepalive(entry);
+      }
+    })()
       .catch((error) => {
         console.warn(
-          `[Slack] Failed to update lifecycle reaction for ${key}:`,
+          "[Slack] Failed to update progress UI:",
           error instanceof Error ? error.message : error,
         );
       })
       .finally(() => {
-        if (lifecycleOperationByMessageKey.get(key) === operation) {
-          lifecycleOperationByMessageKey.delete(key);
+        if (progressCardByReplyKey.get(key) === entry) {
+          entry.pendingFlush = undefined;
         }
       });
 
-    lifecycleOperationByMessageKey.set(key, operation);
-    return operation;
+    entry.pendingFlush = operation;
+    await operation;
+    if (
+      progressCardByReplyKey.get(key) === entry &&
+      !entry.requeuedFailedChunks &&
+      (entry.pendingStreamChunks?.length ?? 0) > 0
+    ) {
+      await flushSlackProgressCard(key, entry);
+    }
+  }
+
+  function pruneSlackProgressCardState(now: number = Date.now()): void {
+    for (const [key, entry] of progressCardByReplyKey) {
+      if (
+        !entry.pendingTimer &&
+        !entry.pendingFlush &&
+        !entry.completedFinalizerTimer &&
+        entry.updatedAt + SLACK_PROGRESS_CARD_STATE_TTL_MS <= now
+      ) {
+        progressCardByReplyKey.delete(key);
+        for (const [replyKey, activeKey] of activeProgressCardKeyByReplyKey) {
+          if (activeKey === key) {
+            activeProgressCardKeyByReplyKey.delete(replyKey);
+          }
+        }
+      }
+    }
+
+    if (progressCardByReplyKey.size <= SLACK_PROGRESS_CARD_STATE_MAX) {
+      return;
+    }
+
+    const oldestEntries = Array.from(progressCardByReplyKey.entries()).sort(
+      (a, b) => a[1].updatedAt - b[1].updatedAt,
+    );
+    const overflowCount =
+      progressCardByReplyKey.size - SLACK_PROGRESS_CARD_STATE_MAX;
+    let removed = 0;
+    for (const [key, entry] of oldestEntries) {
+      if (removed >= overflowCount) {
+        break;
+      }
+      if (
+        entry.pendingTimer ||
+        entry.pendingFlush ||
+        entry.completedFinalizerTimer
+      ) {
+        continue;
+      }
+      progressCardByReplyKey.delete(key);
+      for (const [replyKey, activeKey] of activeProgressCardKeyByReplyKey) {
+        if (activeKey === key) {
+          activeProgressCardKeyByReplyKey.delete(replyKey);
+        }
+      }
+      removed += 1;
+    }
+  }
+
+  async function upsertSlackProgressCard(
+    source: ChannelTurnSource,
+    status: SlackProgressCardState,
+    progressText: string,
+    options: { force?: boolean; update?: ChannelTurnProgressEvent } = {},
+  ): Promise<void> {
+    const key = getOrCreateSlackProgressCardKey(
+      source,
+      options.update?.batchId,
+    );
+    if (!key) {
+      return;
+    }
+    const now = Date.now();
+    pruneSlackProgressCardState(now);
+    const existingEntry = progressCardByReplyKey.get(key);
+    if (options.update?.kind === "tool") {
+      if (isSlackHiddenToolUpdate(existingEntry, options.update)) {
+        if (
+          !shouldShowSlackChannelResponseProgress(existingEntry, options.update)
+        ) {
+          return;
+        }
+      }
+      if (!existingEntry && !options.update.toolName) {
+        return;
+      }
+    }
+    const entry =
+      existingEntry ??
+      ({
+        source,
+        status,
+        latestText: progressText,
+        lastSentAt: 0,
+        updatedAt: now,
+      } satisfies SlackProgressCardEntry);
+    entry.source = source;
+    entry.status = status;
+    entry.latestText = progressText;
+    entry.latestUpdate = options.update;
+    clearSlackCompletionFinalizer(entry);
+    rememberSlackToolName(entry, options.update);
+    let streamChunks = options.update
+      ? buildSlackStreamProgressChunks(entry, options.update)
+      : [];
+    if (!options.update && status === "processing") {
+      const turnActiveChunks = reconcileSlackTurnActiveTask(entry);
+      if (turnActiveChunks.length > 0) {
+        streamChunks = [buildSlackPlanUpdateChunk(entry), ...turnActiveChunks];
+      }
+    }
+    // For thinking/responding events, track header state without creating
+    // stream chunks — we only want a streaming block when actual tools are
+    // called. Still save the entry so an existing stream can update its plan
+    // title, and the next tool update can clear the transient state.
+    const isReasoningEvent =
+      options.update?.kind === "thinking" ||
+      options.update?.kind === "responding";
+    if (options.update && streamChunks.length === 0 && !isReasoningEvent) {
+      return;
+    }
+    if (streamChunks.length > 0) {
+      entry.pendingStreamChunks ??= [];
+      entry.pendingStreamChunks.push(...streamChunks);
+    }
+    entry.updatedAt = now;
+    progressCardByReplyKey.set(key, entry);
+    const replyKey = getLifecycleReplyKey(source);
+    if (replyKey) {
+      activeProgressCardKeyByReplyKey.set(replyKey, key);
+    }
+
+    // Reasoning-only updates with no stream chunks are status state only; they
+    // must not start/throttle the Slack stream. Otherwise the first real tool
+    // can be delayed by the reasoning timestamp and appear only once it has
+    // already completed.
+    if (isReasoningEvent && streamChunks.length === 0) {
+      return;
+    }
+
+    const hasNewTaskDetails = streamChunks.some(
+      (chunk) =>
+        chunk.type === "task_update" &&
+        isNonEmptyString(chunk.details) &&
+        entry.sentTaskDetailsById?.get(chunk.id) !== chunk.details,
+    );
+    if ((options.force || hasNewTaskDetails) && entry.pendingTimer) {
+      clearTimeout(entry.pendingTimer);
+      entry.pendingTimer = undefined;
+    }
+    const elapsed = now - entry.lastSentAt;
+    if (
+      options.force ||
+      hasNewTaskDetails ||
+      entry.lastSentAt === 0 ||
+      progressUpdateThrottleMs === 0 ||
+      elapsed >= progressUpdateThrottleMs
+    ) {
+      await flushSlackProgressCard(key, entry);
+      return;
+    }
+    scheduleProgressCardFlush(
+      key,
+      entry,
+      Math.max(0, progressUpdateThrottleMs - elapsed),
+    );
+  }
+
+  async function finishSlackProgressCards(
+    sources: ChannelTurnSource[],
+    outcome: ChannelTurnOutcome,
+    batchId?: string,
+    errorText?: string | null,
+    completionHeaderText?: string | null,
+  ): Promise<void> {
+    const progress = resolveSlackLifecycleProgressText(outcome);
+    const finalErrorChunk =
+      progress.status === "error"
+        ? buildSlackLifecycleErrorTaskChunk(errorText)
+        : undefined;
+    const uniqueSources = getUniqueSlackProgressSources(sources);
+    await Promise.all(
+      uniqueSources.map(async (source) => {
+        const key = getOrCreateSlackProgressCardKey(source, batchId);
+        if (!key) {
+          await clearSlackAssistantThreadStatus(source);
+          return;
+        }
+        const entry = progressCardByReplyKey.get(key);
+        if (!entry) {
+          await clearSlackAssistantThreadStatus(source);
+          return;
+        }
+        clearSlackProgressStreamKeepalive(entry);
+        clearSlackCompletionFinalizer(entry);
+        if (entry.pendingTimer) {
+          clearTimeout(entry.pendingTimer);
+          entry.pendingTimer = undefined;
+        }
+        entry.source = source;
+        entry.status = progress.status;
+        entry.latestText = progress.text;
+        entry.completionHeaderText =
+          progress.status === "completed"
+            ? (completionHeaderText ?? undefined)
+            : undefined;
+        delete entry.latestUpdate;
+        entry.updatedAt = Date.now();
+        if (entry.mode === "stream") {
+          const didStop = await stopSlackProgressStream(entry, finalErrorChunk);
+          if (didStop) {
+            entry.lastSentText = formatSlackProgressCardText(
+              entry.status,
+              entry.latestText,
+            );
+            entry.lastSentAt = Date.now();
+          }
+        } else {
+          await upsertSlackProgressCard(
+            source,
+            progress.status,
+            progress.text,
+            {
+              force: true,
+            },
+          );
+        }
+        // Reset the entry so the next turn starts fresh with a new
+        // startStream call instead of trying to appendStream to a stopped
+        // stream. Without this, subsequent turns don't create new tool
+        // blocks in the Slack accordion.
+        entry.mode = undefined;
+        entry.streamTs = undefined;
+        entry.streamDead = undefined;
+        entry.toolTasksById = undefined;
+        entry.pendingStreamChunks = undefined;
+        entry.toolNamesByCallId = undefined;
+        entry.toolTitlesByCallId = undefined;
+        entry.toolDetailsByCallId = undefined;
+        entry.sentTaskDetailsById = undefined;
+        entry.completionHeaderText = undefined;
+        entry.reasoningActive = undefined;
+        entry.placeholderTaskId = undefined;
+        entry.placeholderTaskSequence = undefined;
+        entry.toolTaskIdsByCallId = undefined;
+        entry.hiddenToolCallIds = undefined;
+        entry.completedFinalizerTimer = undefined;
+        const replyKey = getLifecycleReplyKey(source);
+        if (replyKey && activeProgressCardKeyByReplyKey.get(replyKey) === key) {
+          activeProgressCardKeyByReplyKey.delete(replyKey);
+        }
+        await clearSlackAssistantThreadStatus(source);
+      }),
+    );
+  }
+
+  async function flushSlackProgressCardsForCompletedLifecycle(
+    sources: ChannelTurnSource[],
+    batchId?: string,
+  ): Promise<void> {
+    const uniqueSources = getUniqueSlackProgressSources(sources);
+    await Promise.all(
+      uniqueSources.map(async (source) => {
+        const key = getOrCreateSlackProgressCardKey(source, batchId);
+        if (!key) {
+          await clearSlackAssistantThreadStatus(source);
+          return;
+        }
+        const entry = progressCardByReplyKey.get(key);
+        if (!entry) {
+          await clearSlackAssistantThreadStatus(source);
+          return;
+        }
+        clearSlackProgressStreamKeepalive(entry);
+        if (entry.pendingTimer) {
+          clearTimeout(entry.pendingTimer);
+          entry.pendingTimer = undefined;
+        }
+        entry.source = source;
+        entry.updatedAt = Date.now();
+        await flushSlackProgressCard(key, entry);
+        if (entry.mode === "stream") {
+          scheduleSlackCompletionFinalizer(key, entry, batchId);
+        }
+        await clearSlackAssistantThreadStatus(source);
+      }),
+    );
+  }
+
+  async function finishSlackProgressCardForOutboundMessage(
+    msg: OutboundChannelMessage,
+  ): Promise<void> {
+    if (msg.channel !== "slack" || msg.reaction) {
+      return;
+    }
+    const replyToMessageId = resolveSlackOutboundProgressThreadTs({
+      threadId: msg.threadId,
+      replyToMessageId: msg.replyToMessageId,
+    });
+    if (!isNonEmptyString(replyToMessageId)) {
+      return;
+    }
+    const replyKey = `${msg.chatId}:${replyToMessageId}`;
+    const cardKey = activeProgressCardKeyByReplyKey.get(replyKey) ?? replyKey;
+    const entry = progressCardByReplyKey.get(cardKey);
+    if (!entry) {
+      return;
+    }
+
+    try {
+      await finishSlackProgressCards(
+        [entry.source],
+        "completed",
+        undefined,
+        undefined,
+        msg.text,
+      );
+    } catch (error) {
+      console.warn(
+        "[Slack] Failed to finish progress card after outbound message:",
+        error,
+      );
+    }
   }
 
   function markIngressMessageSeen(
@@ -1065,9 +3452,9 @@ export function createSlackAdapter(
       });
       const chatType = resolveSlackChatType(channelId);
       const threadId =
-        chatType === "channel"
-          ? (firstNonEmptyString(rawMessage.thread_ts, rawMessage.ts) ?? null)
-          : null;
+        chatType === "direct"
+          ? (firstNonEmptyString(rawMessage.thread_ts) ?? null)
+          : (firstNonEmptyString(rawMessage.thread_ts, rawMessage.ts) ?? null);
       rememberMessageThread(rawMessage.ts, threadId);
       const senderName = await resolveUserName(instance, rawMessage.user);
 
@@ -1098,11 +3485,12 @@ export function createSlackAdapter(
           accountId: config.accountId,
           chatId: channelId,
           senderId: rawMessage.user,
+          senderTeamId: resolveSlackSenderTeamId(rawMessage),
           senderName,
-          text,
+          text: wasMentioned ? normalizeSlackText(text) : text,
           timestamp: slackTimestampToMillis(rawMessage.ts),
           messageId: rawMessage.ts,
-          threadId: null,
+          threadId,
           chatType: "direct",
           isMention: wasMentioned,
           attachments,
@@ -1141,6 +3529,7 @@ export function createSlackAdapter(
         accountId: config.accountId,
         chatId: channelId,
         senderId: rawMessage.user,
+        senderTeamId: resolveSlackSenderTeamId(rawMessage),
         senderName,
         chatLabel: channelId,
         text: wasMentioned ? normalizeSlackText(text) : text,
@@ -1198,6 +3587,7 @@ export function createSlackAdapter(
         accountId: config.accountId,
         chatId: event.channel,
         senderId: event.user,
+        senderTeamId: resolveSlackSenderTeamId(event),
         senderName: await resolveUserName(instance, event.user),
         chatLabel: event.channel,
         text: normalizeSlackText(event.text ?? ""),
@@ -1260,6 +3650,7 @@ export function createSlackAdapter(
         accountId: config.accountId,
         chatId: payload.channel_id,
         senderId: payload.user_id,
+        senderTeamId: firstNonEmptyString(payload.team_id),
         senderName: firstNonEmptyString(payload.user_name, payload.user_id),
         chatLabel: firstNonEmptyString(
           payload.channel_name,
@@ -1293,6 +3684,67 @@ export function createSlackAdapter(
       }
     }
 
+    const handleModelSelectAction = async ({
+      body,
+      action,
+      ack,
+    }: {
+      body: unknown;
+      action: unknown;
+      ack: () => Promise<void>;
+    }) => {
+      await ack();
+      if (!adapter.onMessage) {
+        return;
+      }
+
+      const selectedModel = resolveSlackSelectedModel(action, body);
+      const channelId = resolveSlackActionChannelId(body);
+      const user = resolveSlackActionUser(body);
+      if (!selectedModel || !channelId || !user.id) {
+        return;
+      }
+
+      const actionRecord = getSlackActionRecord(action, body);
+      const messageId = firstNonEmptyString(
+        actionRecord?.action_ts,
+        resolveSlackActionMessageId(body),
+      );
+      const inbound: InboundChannelMessage = {
+        channel: "slack",
+        accountId: config.accountId,
+        chatId: channelId,
+        senderId: user.id,
+        senderTeamId: user.teamId,
+        senderName: user.name,
+        chatLabel: channelId,
+        text: `/model ${selectedModel}`,
+        timestamp: Date.now(),
+        messageId,
+        threadId: resolveSlackActionThreadId(body),
+        chatType: resolveSlackChatType(channelId),
+        isMention: false,
+        raw: body,
+      };
+
+      try {
+        await adapter.onMessage(inbound);
+      } catch (error) {
+        console.error("[Slack] Error handling model select action:", error);
+      }
+    };
+
+    const actionRegistrar = instance as unknown as {
+      action?: (
+        actionId: string,
+        handler: typeof handleModelSelectAction,
+      ) => void;
+    };
+    actionRegistrar.action?.(
+      SLACK_MODEL_SELECT_ACTION_ID,
+      handleModelSelectAction,
+    );
+
     const handleReactionEvent = async (
       event: SlackReactionEvent,
       action: "added" | "removed",
@@ -1322,13 +3774,16 @@ export function createSlackAdapter(
       const threadId =
         chatType === "channel"
           ? (knownThreadIdsByMessageId.get(targetMessageId) ?? targetMessageId)
-          : null;
+          : chatType === "direct"
+            ? (knownThreadIdsByMessageId.get(targetMessageId) ?? null)
+            : null;
 
       const inbound: InboundChannelMessage = {
         channel: "slack",
         accountId: config.accountId,
         chatId,
         senderId: event.user,
+        senderTeamId: resolveSlackSenderTeamId(event),
         senderName: await resolveUserName(instance, event.user),
         chatLabel: chatId,
         text: `Slack reaction ${action}: :${event.reaction}:`,
@@ -1400,6 +3855,7 @@ export function createSlackAdapter(
       const slackApp = await ensureApp();
       const auth = await slackApp.client.auth.test();
       botUserId = isNonEmptyString(auth.user_id) ? auth.user_id : null;
+      botTeamId = firstNonEmptyString(auth.team_id) ?? null;
       await slackApp.start();
       running = true;
 
@@ -1417,9 +3873,18 @@ export function createSlackAdapter(
       app = null;
       writeClient = null;
       botUserId = null;
+      botTeamId = null;
       seenIngressMessageKeys.clear();
-      lifecycleStateByMessageKey.clear();
-      lifecycleOperationByMessageKey.clear();
+      for (const entry of progressCardByReplyKey.values()) {
+        if (entry.pendingTimer) {
+          clearTimeout(entry.pendingTimer);
+        }
+        clearSlackProgressStreamKeepalive(entry);
+      }
+      progressCardByReplyKey.clear();
+      activeProgressCardKeyByReplyKey.clear();
+      assistantStatusReplyKeys.clear();
+      assistantStatusTextByReplyKey.clear();
       pendingTopLevelDebounceKeys.clear();
       appMentionRetryKeys.clear();
       appMentionDispatchedKeys.clear();
@@ -1439,26 +3904,64 @@ export function createSlackAdapter(
       }
 
       if (event.type === "queued") {
-        await scheduleLifecycleTransition(event.source, "queued");
+        if (isSlackProgressCardRendering(event.source)) {
+          await clearSlackAssistantThreadStatus(event.source);
+          return;
+        }
+        const status = getSlackAssistantThreadStatusForTurn(event.source);
+        if (status) {
+          await setSlackAssistantThreadStatus(event.source, status);
+        }
         return;
       }
 
       if (event.type === "processing") {
+        await Promise.all(
+          getUniqueSlackProgressSources(event.sources).map(async (source) => {
+            if (isSlackProgressCardRendering(source)) {
+              await clearSlackAssistantThreadStatus(source);
+              return;
+            }
+            const replyKey = getLifecycleReplyKey(source);
+            if (replyKey && assistantStatusReplyKeys.has(replyKey)) {
+              return;
+            }
+            const status = getSlackAssistantThreadStatusForTurn(source);
+            if (status) {
+              await setSlackAssistantThreadStatus(source, status);
+            }
+          }),
+        );
         return;
       }
 
-      const nextState: SlackLifecycleState =
-        event.outcome === "completed"
-          ? "completed"
-          : event.outcome === "cancelled"
-            ? "cancelled"
-            : "error";
+      if (event.outcome === "completed") {
+        // Completed lifecycle events can be internal continuation boundaries;
+        // the final Slack send still closes the active progress card.
+        await flushSlackProgressCardsForCompletedLifecycle(
+          event.sources,
+          event.batchId,
+        );
+      } else {
+        await finishSlackProgressCards(
+          event.sources,
+          event.outcome,
+          event.batchId,
+          event.error,
+        );
+      }
 
-      await Promise.all(
-        event.sources.map((source) =>
-          scheduleLifecycleTransition(source, nextState),
-        ),
-      );
+      if (event.outcome === "error") {
+        // Every turn that surfaces as a red "Turn failed" card also emits a
+        // telemetry event, so genuine SADs are measurable and separable from
+        // cosmetic dead-stream artifacts (slack_progress_stream_dead).
+        trackBoundaryError({
+          context: "slack channel turn",
+          errorType: "slack_channel_turn_error",
+          error: event.error?.trim() || "unknown error",
+          runId: event.runId ?? undefined,
+        });
+      }
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
       if (!errorText) {
@@ -1467,7 +3970,7 @@ export function createSlackAdapter(
 
       const uniqueReplySources = new Map<string, ChannelTurnSource>();
       for (const source of event.sources) {
-        const key = getLifecycleReplyKey(source);
+        const key = getLifecycleErrorReplyKey(source);
         if (!key || uniqueReplySources.has(key)) {
           continue;
         }
@@ -1485,6 +3988,24 @@ export function createSlackAdapter(
             );
           }
         }),
+      );
+    },
+
+    async handleTurnProgressEvent(
+      event: ChannelTurnProgressEvent,
+    ): Promise<void> {
+      if (!running) {
+        return;
+      }
+      if (!isSlackToolActionProgress(event)) {
+        return;
+      }
+      await Promise.all(
+        getUniqueSlackProgressSources(event.sources).map((source) =>
+          upsertSlackProgressCard(source, "processing", event.message, {
+            update: event,
+          }),
+        ),
       );
     },
 
@@ -1533,19 +4054,27 @@ export function createSlackAdapter(
         ) {
           agentThreadTracker.remember(msg.chatId, outboundThreadId);
         }
+        await finishSlackProgressCardForOutboundMessage(msg);
         return result;
       }
+
+      const threadTs = resolveSlackOutboundThreadTs({
+        chatId: msg.chatId,
+        threadId: msg.threadId,
+        replyToMessageId: msg.replyToMessageId,
+      });
 
       const response = await slackClient.chat.postMessage({
         channel: msg.chatId,
         text: msg.text,
-        ...((msg.threadId ?? msg.replyToMessageId)
-          ? { thread_ts: msg.threadId ?? msg.replyToMessageId }
-          : {}),
+        ...(threadTs ? { thread_ts: threadTs } : {}),
       });
 
       const outboundThreadId =
-        msg.threadId ?? msg.replyToMessageId ?? response.ts ?? null;
+        threadTs ??
+        (resolveSlackChatType(msg.chatId) === "channel"
+          ? (response.ts ?? null)
+          : null);
       rememberMessageThread(response.ts, outboundThreadId);
 
       // Auto-subscribe: track the thread so future user replies in it are
@@ -1559,24 +4088,41 @@ export function createSlackAdapter(
         agentThreadTracker.remember(msg.chatId, outboundThreadId);
       }
 
+      await finishSlackProgressCardForOutboundMessage(msg);
+
       return { messageId: response.ts ?? "" };
     },
 
     async sendDirectReply(
       chatId: string,
       text: string,
-      options?: { replyToMessageId?: string },
+      options?: {
+        replyToMessageId?: string;
+        threadId?: string | null;
+        modelPicker?: ChannelModelPickerData;
+      },
     ): Promise<void> {
       await ensureApp();
       const slackClient = await ensureWriteClient();
+      const threadTs = resolveSlackOutboundThreadTs({
+        chatId,
+        threadId: options?.threadId,
+        replyToMessageId: options?.replyToMessageId,
+      });
+      const pickerBlocks = options?.modelPicker
+        ? buildSlackModelPickerBlocks(options.modelPicker)
+        : undefined;
       const response = await slackClient.chat.postMessage({
         channel: chatId,
         text,
-        ...(options?.replyToMessageId
-          ? { thread_ts: options.replyToMessageId }
-          : {}),
+        ...(pickerBlocks ? { blocks: asSlackBlocks(pickerBlocks) } : {}),
+        ...(threadTs ? { thread_ts: threadTs } : {}),
       });
-      const outboundThreadId = options?.replyToMessageId ?? response.ts ?? null;
+      const outboundThreadId =
+        threadTs ??
+        (resolveSlackChatType(chatId) === "channel"
+          ? (response.ts ?? null)
+          : null);
       rememberMessageThread(response.ts, outboundThreadId);
 
       if (
@@ -1592,15 +4138,20 @@ export function createSlackAdapter(
     ): Promise<void> {
       await ensureApp();
       const slackClient = await ensureWriteClient();
+      const text = formatChannelControlRequestPrompt(event);
+      const blocks = formatSlackControlRequestBlocks(event);
+      const threadTs = resolveSlackSourceThreadTs(event.source);
       const response = await slackClient.chat.postMessage({
         channel: event.source.chatId,
-        text: formatChannelControlRequestPrompt(event),
-        ...((event.source.threadId ?? event.source.messageId)
-          ? { thread_ts: event.source.threadId ?? event.source.messageId }
-          : {}),
+        text,
+        ...(blocks ? { blocks } : {}),
+        ...(threadTs ? { thread_ts: threadTs } : {}),
       });
       const outboundThreadId =
-        event.source.threadId ?? event.source.messageId ?? response.ts ?? null;
+        threadTs ??
+        (resolveSlackChatType(event.source.chatId) === "channel"
+          ? (response.ts ?? null)
+          : null);
       rememberMessageThread(response.ts, outboundThreadId);
 
       if (
@@ -1617,7 +4168,6 @@ export function createSlackAdapter(
     ): Promise<InboundChannelMessage> {
       if (
         msg.channel !== "slack" ||
-        msg.chatType !== "channel" ||
         !isNonEmptyString(msg.threadId) ||
         !isNonEmptyString(msg.messageId)
       ) {

@@ -1,4 +1,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import { buildClientSkillsPayload } from "@/agent/client-skills";
+import { createChannelTurnProgressBuilder } from "@/channels/progress";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
 import type {
@@ -207,6 +209,28 @@ function mapTurnLifecycleOutcome(
     return "error";
   }
   return "completed";
+}
+
+async function buildChannelTurnProgressBuilder(agentId?: string | null) {
+  try {
+    const { clientSkills } = await buildClientSkillsPayload({
+      agentId: agentId ?? undefined,
+    });
+    const skillDescriptionsByName = new Map<string, string>();
+    for (const skill of clientSkills) {
+      if (skill.name && skill.description) {
+        skillDescriptionsByName.set(skill.name, skill.description);
+      }
+    }
+    return createChannelTurnProgressBuilder({ skillDescriptionsByName });
+  } catch (error) {
+    trackBoundaryError({
+      context: "websocket-listener channel progress skill descriptions",
+      errorType: "channel_progress_skill_description_discovery_failed",
+      error,
+    });
+    return createChannelTurnProgressBuilder();
+  }
 }
 
 export async function normalizeMessageContentImages(
@@ -552,6 +576,11 @@ async function drainQueuedMessages(
       let turnError: string | undefined;
       let didThrow = false;
       runtime.activeChannelTurnSources = channelTurnSources;
+      runtime.activeChannelTurnBatchId = dequeuedBatch.batchId;
+      runtime.activeChannelTurnProgress =
+        channelTurnSources.length > 0
+          ? await buildChannelTurnProgressBuilder(queuedTurn.agentId)
+          : null;
       try {
         await processQueuedTurn(queuedTurn, dequeuedBatch);
       } catch (error) {
@@ -560,6 +589,8 @@ async function drainQueuedMessages(
         throw error;
       } finally {
         runtime.activeChannelTurnSources = null;
+        runtime.activeChannelTurnBatchId = null;
+        runtime.activeChannelTurnProgress = null;
         if (channelTurnSources.length > 0) {
           const outcome = mapTurnLifecycleOutcome(
             runtime.lastStopReason,

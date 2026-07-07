@@ -1054,6 +1054,108 @@ export async function appendTranscriptDeltaJsonl(
 }
 
 /**
+ * A transcript entry supplied by an external source adapter (e.g. converted
+ * OpenHands events). Mirrors the on-disk TranscriptEntry shape, but
+ * captured_at may be omitted (stamped at append time).
+ */
+export type ExternalTranscriptEntry =
+  | {
+      kind: "user" | "assistant" | "reasoning" | "error";
+      text: string;
+      captured_at?: string;
+      source_message_id?: string;
+    }
+  | {
+      kind: "tool_call";
+      name?: string;
+      argsText?: string;
+      resultText?: string;
+      resultOk?: boolean;
+      captured_at?: string;
+      source_message_id?: string;
+    };
+
+function externalToTranscriptEntry(
+  entry: ExternalTranscriptEntry,
+  fallbackCapturedAt: string,
+): TranscriptEntry | null {
+  const capturedAt = normalizeString(entry.captured_at) ?? fallbackCapturedAt;
+  if (entry.kind === "tool_call") {
+    return {
+      kind: "tool_call",
+      name: entry.name,
+      argsText: entry.argsText,
+      resultText: entry.resultText,
+      resultOk: entry.resultOk,
+      captured_at: capturedAt,
+      source_message_id: entry.source_message_id,
+    };
+  }
+  if (typeof entry.text !== "string" || entry.text.length === 0) {
+    return null;
+  }
+  return {
+    kind: entry.kind,
+    text: entry.text,
+    captured_at: capturedAt,
+    source_message_id: entry.source_message_id,
+  };
+}
+
+/**
+ * Append externally-sourced transcript entries (already in transcript shape)
+ * for later processing by a reflection pass. Entries whose source_message_id
+ * already exists in the transcript are skipped, so repeated ingestion of an
+ * overlapping event window is idempotent.
+ */
+export async function appendExternalTranscriptEntries(
+  agentId: string,
+  conversationId: string,
+  entries: ExternalTranscriptEntry[],
+): Promise<{ appended: number; skipped: number }> {
+  return withStateLock(agentId, conversationId, async () => {
+    const paths = getReflectionTranscriptPaths(agentId, conversationId);
+    await ensurePaths(paths);
+    const state = await readState(paths);
+
+    const existingIds = new Set(
+      parseTranscriptRows(await readTranscriptLines(paths))
+        .map((row) => row.entry.source_message_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    );
+
+    const fallbackCapturedAt = new Date().toISOString();
+    const fresh: TranscriptEntry[] = [];
+    let skipped = 0;
+    for (const external of entries) {
+      const entry = externalToTranscriptEntry(external, fallbackCapturedAt);
+      if (!entry) {
+        skipped += 1;
+        continue;
+      }
+      const id = entry.source_message_id;
+      if (id && existingIds.has(id)) {
+        skipped += 1;
+        continue;
+      }
+      if (id) {
+        existingIds.add(id);
+      }
+      fresh.push(entry);
+    }
+    if (fresh.length === 0) {
+      return { appended: 0, skipped };
+    }
+
+    const payload = fresh.map((entry) => JSON.stringify(entry)).join("\n");
+    await appendFile(paths.transcriptPath, `${payload}\n`, "utf-8");
+    state.total_completed_steps += countAssistantRows(fresh);
+    await writeState(paths, state);
+    return { appended: fresh.length, skipped };
+  });
+}
+
+/**
  * Strip dynamic / noisy sections from a system prompt so the reflection agent
  * sees only the core behavioural instructions.
  *

@@ -620,12 +620,13 @@ export async function resolveRecoveredApprovalResponse(
     emitRuntimeStateUpdates(runtime, scope);
     return true;
   }
-  const approvedToolCallIds = decisions
-    .filter(
-      (decision): decision is Extract<ApprovalDecision, { type: "approve" }> =>
-        decision.type === "approve",
-    )
-    .map((decision) => decision.approval.toolCallId);
+  const approvedDecisions = decisions.filter(
+    (decision): decision is Extract<ApprovalDecision, { type: "approve" }> =>
+      decision.type === "approve",
+  );
+  const approvedToolCallIds = approvedDecisions.map(
+    (decision) => decision.approval.toolCallId,
+  );
 
   recovered.pendingRequestIds.clear();
   emitRuntimeStateUpdates(runtime, scope);
@@ -636,7 +637,11 @@ export async function resolveRecoveredApprovalResponse(
   setLoopStatus(runtime, "EXECUTING_CLIENT_SIDE_TOOL", scope);
   emitRuntimeStateUpdates(runtime, scope);
   emitToolExecutionStartedEvents(socket, runtime, {
-    toolCallIds: approvedToolCallIds,
+    toolCalls: approvedDecisions.map((decision) => ({
+      toolCallId: decision.approval.toolCallId,
+      toolName: decision.approval.toolName,
+      toolArgs: decision.approval.toolArgs,
+    })),
     runId: runtime.activeRunId ?? undefined,
     agentId: recovered.agentId,
     conversationId: recovered.conversationId,

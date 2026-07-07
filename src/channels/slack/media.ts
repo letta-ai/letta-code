@@ -443,6 +443,12 @@ async function downloadSlackAttachment(params: {
   });
 
   const kind = resolveAttachmentKind(mimeType);
+  // Images are deliberately NOT inlined as base64 (no imageDataBase64):
+  // attachments are saved to disk and surfaced via local_path in the channel
+  // notification, so the agent Reads them on demand through the shared image
+  // resize seam. Inlining every attachment let per-image-legal payloads
+  // accumulate past the inference gateway's request byte limit (LET-9517,
+  // LET-9501).
   const attachment: ChannelMessageAttachment = {
     id: params.file.id,
     name: fileName,
@@ -450,7 +456,6 @@ async function downloadSlackAttachment(params: {
     sizeBytes: buffer.byteLength,
     kind,
     localPath,
-    ...(kind === "image" ? { imageDataBase64: buffer.toString("base64") } : {}),
   };
 
   // Slack voice memos arrive as ordinary audio files/file_share events, so the

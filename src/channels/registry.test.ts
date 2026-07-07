@@ -251,6 +251,61 @@ describe("ChannelRegistry", () => {
     expect(replies[0]?.text).toContain("Telegram is connected to Letta Code");
   });
 
+  test("Slack threaded DM slash command replies stay in the DM thread", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+      threadId?: string | null;
+    }> = [];
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async (chatId, text, options) => {
+        replies.push({
+          chatId,
+          text,
+          replyToMessageId: options?.replyToMessageId,
+          threadId: options?.threadId,
+        });
+      },
+      onMessage: undefined,
+    });
+
+    const adapter = registry.getAdapter("slack", "acct-slack");
+    await adapter?.onMessage?.({
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "D123",
+      senderId: "U123",
+      senderName: "Charles",
+      text: "/help",
+      timestamp: Date.now(),
+      messageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toMatchObject({
+      chatId: "D123",
+      replyToMessageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+    });
+    expect(replies[0]?.text).toContain("Slack is connected to Letta Code");
+  });
+
   test("unsupported slash commands get direct channel guidance instead of agent delivery", async () => {
     const replies: Array<{
       chatId: string;
@@ -1048,6 +1103,21 @@ describe("buildSlackConversationSummary", () => {
     ).toBe("[Slack] DM with Charles");
   });
 
+  test("labels threaded direct messages with a clipped text preview", () => {
+    expect(
+      buildSlackConversationSummary({
+        chatId: "D123",
+        chatType: "direct",
+        threadId: "1712790000.000050",
+        senderId: "U123",
+        senderName: "Charles",
+        text: "  following up in the DM thread about the deploy preview  ",
+      }),
+    ).toBe(
+      "[Slack] DM thread with Charles: following up in the DM thread about the deploy preview",
+    );
+  });
+
   test("labels channel threads with a clipped text preview", () => {
     expect(
       buildSlackConversationSummary({
@@ -1250,6 +1320,111 @@ describe("pending channel control requests", () => {
       ...overrides,
     };
   }
+
+  test("accepted Slack route dispatches immediate queued lifecycle before delivery", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "slack",
+        accountId: "acct-slack",
+        enabled: true,
+        mode: "socket",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "unrestricted",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        createdAt: "2026-06-17T00:00:00.000Z",
+        updatedAt: "2026-06-17T00:00:00.000Z",
+      },
+    ]);
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    const lifecycleEvents: unknown[] = [];
+    const order: string[] = [];
+    const adapter = createAdapter([]);
+    adapter.handleTurnLifecycleEvent = async (event) => {
+      order.push("lifecycle");
+      lifecycleEvents.push(event);
+    };
+    adapter.prepareInboundMessage = async (message) => {
+      order.push("prepare");
+      return message;
+    };
+    registry.registerAdapter(adapter);
+    registry.setMessageHandler((delivery) => {
+      order.push("deliver");
+      delivered.push(delivery);
+    });
+    registry.setReady();
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    });
+
+    await adapter.onMessage?.(createInboundMessage("hello"));
+
+    expect(lifecycleEvents).toEqual([
+      {
+        type: "queued",
+        source: expect.objectContaining({
+          channel: "slack",
+          accountId: "acct-slack",
+          chatId: "C123",
+          threadId: "1712790000.000050",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        }),
+      },
+    ]);
+    expect(delivered).toHaveLength(1);
+    expect(order).toEqual(["lifecycle", "prepare", "deliver"]);
+  });
+
+  test("unrouted Slack thread replies do not dispatch assistant status", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "slack",
+        accountId: "acct-slack",
+        enabled: true,
+        mode: "socket",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "unrestricted",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        createdAt: "2026-06-17T00:00:00.000Z",
+        updatedAt: "2026-06-17T00:00:00.000Z",
+      },
+    ]);
+    const registry = new ChannelRegistry();
+    const delivered: unknown[] = [];
+    const lifecycleEvents: unknown[] = [];
+    const adapter = createAdapter([]);
+    adapter.handleTurnLifecycleEvent = async (event) => {
+      lifecycleEvents.push(event);
+    };
+    registry.registerAdapter(adapter);
+    registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage("unrelated thread", {
+        messageId: "1712800000.999999",
+        threadId: "1712790000.999999",
+      }),
+    );
+
+    expect(lifecycleEvents).toEqual([]);
+    expect(delivered).toEqual([]);
+  });
 
   function createPendingControlRequestEvent(
     overrides: Partial<ChannelControlRequestEvent> = {},
