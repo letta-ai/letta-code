@@ -31,7 +31,6 @@ import type {
   OutboundChannelMessage,
   SlackChannelAccount,
 } from "@/channels/types";
-import { getRandomSlackAssistantStatusVerb } from "@/cli/helpers/thinking-messages";
 import {
   getDisplayToolName,
   isFileEditTool,
@@ -261,6 +260,18 @@ function resolveSlackAppModule(value: unknown): SlackAppConstructor | null {
   return isConstructorFunction<SlackAppConstructor>(app) ? app : null;
 }
 const INITIAL_SLACK_THREAD_HISTORY_LIMIT = 20;
+
+const SLACK_ASSISTANT_STATUS_VERBS = Object.freeze([
+  "cogitating",
+  "thinking",
+  "processing",
+] as const);
+
+function getRandomSlackAssistantStatusVerb(): string {
+  const index = Math.floor(Math.random() * SLACK_ASSISTANT_STATUS_VERBS.length);
+  return `is ${SLACK_ASSISTANT_STATUS_VERBS[index] ?? "thinking"}...`;
+}
+
 function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
   const defaultExport =
     mod && typeof mod === "object" ? Reflect.get(mod, "default") : undefined;
