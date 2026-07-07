@@ -8,6 +8,22 @@
  */
 
 import type { PermissionMode } from "@/permissions/mode";
+import type { ListModelsResponseModelEntry } from "@/types/protocol_v2";
+
+/**
+ * Vendor-neutral model-picker payload produced by the generic channel
+ * `/model` handler. Adapters decide how (or whether) to render it.
+ */
+export type ChannelModelPickerData = {
+  current: {
+    modelLabel: string;
+    modelHandle: string | null;
+    scope?: "agent" | "conversation";
+  };
+  entries: ListModelsResponseModelEntry[];
+  availableHandles?: string[] | null;
+  recentHandles?: string[];
+};
 
 export const FIRST_PARTY_CHANNEL_IDS = [
   "telegram",
@@ -211,8 +227,11 @@ export interface ChannelAdapter {
     options?: {
       replyToMessageId?: string;
       threadId?: string | null;
-      /** Slack Block Kit blocks for channel-native direct replies. */
-      slackBlocks?: unknown[];
+      /**
+       * Structured model-picker data. Adapters with native rich UI (for
+       * example Slack Block Kit) may render it; others fall back to text.
+       */
+      modelPicker?: ChannelModelPickerData;
     },
   ): Promise<void>;
 

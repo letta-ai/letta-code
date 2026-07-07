@@ -2,10 +2,7 @@ import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
 import { isLocalAgentId } from "@/agent/agent-id";
-import {
-  listChannelSlashCommands,
-  SLACK_MODEL_SELECT_ACTION_ID,
-} from "@/channels/commands";
+import { listChannelSlashCommands } from "@/channels/commands";
 import {
   createInboundDebouncer,
   type InboundDebouncer,
@@ -20,9 +17,14 @@ import {
   sanitizeChannelProgressCore,
   truncateChannelProgressText,
 } from "@/channels/progress";
+import {
+  buildSlackModelPickerBlocks,
+  SLACK_MODEL_SELECT_ACTION_ID,
+} from "@/channels/slack/model-picker-blocks";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
+  ChannelModelPickerData,
   ChannelTurnLifecycleEvent,
   ChannelTurnOutcome,
   ChannelTurnProgressEvent,
@@ -3925,7 +3927,7 @@ export function createSlackAdapter(
       options?: {
         replyToMessageId?: string;
         threadId?: string | null;
-        slackBlocks?: unknown[];
+        modelPicker?: ChannelModelPickerData;
       },
     ): Promise<void> {
       await ensureApp();
@@ -3935,12 +3937,13 @@ export function createSlackAdapter(
         threadId: options?.threadId,
         replyToMessageId: options?.replyToMessageId,
       });
+      const pickerBlocks = options?.modelPicker
+        ? buildSlackModelPickerBlocks(options.modelPicker)
+        : undefined;
       const response = await slackClient.chat.postMessage({
         channel: chatId,
         text,
-        ...(options?.slackBlocks
-          ? { blocks: asSlackBlocks(options.slackBlocks) }
-          : {}),
+        ...(pickerBlocks ? { blocks: asSlackBlocks(pickerBlocks) } : {}),
         ...(threadTs ? { thread_ts: threadTs } : {}),
       });
       const outboundThreadId =

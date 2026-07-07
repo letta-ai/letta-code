@@ -20,13 +20,13 @@ import {
   buildChannelPausedMessage,
   buildChannelResumedMessage,
   buildChannelStatusMessage,
-  buildSlackModelPickerBlocks,
   buildUnsupportedChannelCommandMessage,
   listChannelSlashCommands,
   parseChannelBangCommand,
   parseChannelSlashCommand,
   tryHandleChannelSlashCommand,
 } from "@/channels/commands";
+import { buildSlackModelPickerBlocks } from "@/channels/slack/model-picker-blocks";
 import type { ChannelAdapter, InboundChannelMessage } from "@/channels/types";
 
 describe("channel slash commands", () => {

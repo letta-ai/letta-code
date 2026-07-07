@@ -85,6 +85,7 @@ import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
   ChannelDefaultPermissionMode,
+  ChannelModelPickerData,
   ChannelRoute,
   ChannelStartupLogger,
   ChannelTurnLifecycleEvent,
@@ -521,7 +522,7 @@ export type ChannelModelHandler = (params: {
 }) => Promise<{
   handled: boolean;
   text?: string;
-  slackBlocks?: unknown[];
+  modelPicker?: ChannelModelPickerData;
 }>;
 
 export type ChannelReloadHandler = (params: {
@@ -1582,7 +1583,11 @@ export class ChannelRegistry {
   private async handleModelSlashCommand(
     command: { args: string },
     msg: InboundChannelMessage,
-  ): Promise<{ handled: boolean; text?: string; slackBlocks?: unknown[] }> {
+  ): Promise<{
+    handled: boolean;
+    text?: string;
+    modelPicker?: ChannelModelPickerData;
+  }> {
     const route = this.loadAndFindRawRouteForMessage(msg);
     if (!route) {
       return {

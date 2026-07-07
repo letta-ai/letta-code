@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, expect, mock, test } from "bun:test";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { buildSlackModelPickerBlocks } from "@/channels/slack/model-picker-blocks";
 import type { ChannelMessageAttachment } from "@/channels/types";
 
 type SlackMessageHandler = (args: {
@@ -513,7 +514,7 @@ test("slack adapter forwards model picker selections as /model commands", async 
   });
 });
 
-test("slack adapter includes Block Kit blocks on direct replies", async () => {
+test("slack adapter renders model picker blocks on direct replies", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -524,12 +525,24 @@ test("slack adapter includes Block Kit blocks on direct replies", async () => {
     dmPolicy: "pairing",
     allowedUsers: [],
   });
-  const blocks = [
-    {
-      type: "section",
-      text: { type: "mrkdwn", text: "*Current model:* Auto" },
+  const modelPicker = {
+    current: {
+      modelLabel: "Auto",
+      modelHandle: "letta/auto",
+      scope: "conversation" as const,
     },
-  ];
+    entries: [
+      {
+        id: "auto",
+        handle: "letta/auto",
+        label: "Auto",
+        description: "Recommended default",
+        isDefault: true,
+      },
+    ],
+    availableHandles: ["letta/auto"],
+    recentHandles: [],
+  };
 
   await adapter.start();
   await adapter.sendDirectReply(
@@ -537,7 +550,7 @@ test("slack adapter includes Block Kit blocks on direct replies", async () => {
     "Slack current conversation model: Auto.",
     {
       threadId: "1712800000.000200",
-      slackBlocks: blocks,
+      modelPicker,
     },
   );
 
@@ -545,7 +558,7 @@ test("slack adapter includes Block Kit blocks on direct replies", async () => {
   expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
     channel: "C123",
     text: "Slack current conversation model: Auto.",
-    blocks,
+    blocks: buildSlackModelPickerBlocks(modelPicker),
     thread_ts: "1712800000.000200",
   });
 });
