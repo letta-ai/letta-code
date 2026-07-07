@@ -61,8 +61,8 @@ export function emitLocalToolCalls(
 }
 
 /**
- * Emit a `tool_return_message` for each locally-executed tool result. Results
- * that carry no tool output (approval-only entries) are skipped.
+ * Emit a `tool_return_message` for each locally-executed tool result. Denied
+ * approvals are represented as error returns so every call has a terminal event.
  */
 export function emitLocalToolReturns(
   results: ApprovalResult[],
@@ -70,18 +70,23 @@ export function emitLocalToolReturns(
 ): void {
   const date = new Date().toISOString();
   for (const result of results) {
-    // ApprovalReturn entries carry an approval decision, not tool output.
-    if (!("tool_return" in result)) continue;
+    const isToolResult = "tool_return" in result;
     const msg: ToolReturnMessageWire = {
       type: "message",
       message_type: "tool_return_message",
       id: `tool-return-${result.tool_call_id}`,
       date,
-      status: result.status,
+      status: isToolResult ? result.status : "error",
       tool_call_id: result.tool_call_id,
-      tool_return: getDisplayableToolReturn(result.tool_return),
-      stdout: result.stdout,
-      stderr: result.stderr,
+      tool_return: isToolResult
+        ? getDisplayableToolReturn(result.tool_return)
+        : `Error: request to call tool denied. User reason: ${result.reason ?? "Denied"}`,
+      ...(isToolResult
+        ? {
+            stdout: result.stdout,
+            stderr: result.stderr,
+          }
+        : {}),
       session_id: sessionId,
       uuid: `tool-return-${result.tool_call_id}`,
     };

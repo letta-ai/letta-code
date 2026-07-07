@@ -81,14 +81,28 @@ describe("emitLocalToolReturns", () => {
     expect(line?.tool_return).toBe("a\nb");
   });
 
-  test("skips approval-only results that carry no tool output", () => {
+  test("emits denied approvals as error returns", () => {
     const results = [
-      { type: "approval", tool_call_id: "c", approve: true },
+      {
+        type: "approval",
+        tool_call_id: "c",
+        approve: false,
+        reason: "Denied by live test",
+      },
     ] as unknown as ApprovalResult[];
 
-    const lines = captureWireLines(() => emitLocalToolReturns(results, "s"));
+    const [line] = captureWireLines(() => emitLocalToolReturns(results, "s"));
 
-    expect(lines).toHaveLength(0);
+    expect(line).toMatchObject({
+      type: "message",
+      message_type: "tool_return_message",
+      tool_call_id: "c",
+      status: "error",
+      tool_return:
+        "Error: request to call tool denied. User reason: Denied by live test",
+      session_id: "s",
+      uuid: "tool-return-c",
+    });
   });
 });
 
