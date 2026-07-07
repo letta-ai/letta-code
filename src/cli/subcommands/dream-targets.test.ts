@@ -7,8 +7,8 @@ import {
   buildTargetInstruction,
   readExistingTarget,
   resolveDreamTarget,
-  seedTargetIntoMemory,
   stripFrontmatter,
+  syncTargetIntoMemory,
   writeTarget,
 } from "./dream-targets";
 
@@ -69,11 +69,11 @@ describe("managed frontmatter (system/ files require it)", () => {
   });
 });
 
-describe("seedTargetIntoMemory", () => {
-  test("is a no-op when there is no on-disk content to seed", async () => {
+describe("syncTargetIntoMemory", () => {
+  test("is a no-op when there is no on-disk content to sync", async () => {
     const target = resolveDreamTarget("./AGENTS.md");
-    expect(await seedTargetIntoMemory("agent-x", target, null)).toEqual({
-      seeded: false,
+    expect(await syncTargetIntoMemory("agent-x", target, null)).toEqual({
+      synced: false,
     });
   });
 });

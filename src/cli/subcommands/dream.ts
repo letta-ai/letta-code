@@ -10,7 +10,7 @@ import {
   readExistingTarget,
   readTargetFromMemory,
   resolveDreamTarget,
-  seedTargetIntoMemory,
+  syncTargetIntoMemory,
   writeTarget,
 } from "@/cli/subcommands/dream-targets";
 import { settingsManager } from "@/settings-manager";
@@ -200,19 +200,20 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
 
   // Approach A: fold the target-doc maintenance directive into the reflection
   // instruction so the single reflection pass also maintains the doc (in the
-  // agent's system/ memory). Seed the doc into the memfs from the on-disk
-  // target first (only if the memfs has no copy yet) so the agent edits an
-  // existing file. We read the result back out of the memfs afterwards.
+  // agent's system/ memory). Sync the doc into the memfs from the on-disk
+  // target first (when the memfs has no copy or the target changed) so the
+  // agent starts from the current shared state. We read the result back out of
+  // the memfs afterwards.
   let instruction = parsed.values.instruction;
   if (target) {
     const existing = await readExistingTarget(target);
     try {
-      await seedTargetIntoMemory(agentId, target, existing);
+      await syncTargetIntoMemory(agentId, target, existing);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!asJson) {
         console.error(
-          `Note: could not seed ${target.fileName} into memory (${message}); the reflection will create it.`,
+          `Note: could not sync ${target.fileName} into memory (${message}); the reflection will create it.`,
         );
       }
     }

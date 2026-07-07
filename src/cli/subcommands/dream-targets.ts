@@ -14,12 +14,14 @@ import { parseFrontmatter } from "@/utils/frontmatter";
  * agent's in-context memory at `$MEMORY_DIR/system/<fileName>`, and we copy the
  * committed result out to `path` afterwards.
  *
- * On the first run the doc is seeded into the memfs from `path` (if `path`
- * exists and the memfs has no copy yet); thereafter the memfs copy is the
- * source of truth. This is cycle-free (updates are gated by the reflection
- * cursor) but does NOT merge out-of-band edits made to `path` between runs.
- * The dream owns the generated doc; reconciling human edits or unmerged-PR
- * drift is the caller's responsibility (e.g. the automation side), not here.
+ * Each run syncs the doc into the memfs from `path` when the memfs has no copy
+ * or `path` has changed (another agent's merged edits, or a human edit), so the
+ * agent starts from the current shared state — the repo is the source of truth
+ * for a doc shared across agents (one agent per user+repo). Updates to the doc
+ * are gated by the reflection cursor (no new experience → no change), so this
+ * is churn-free. Choosing which on-disk revision is "current" (base branch vs
+ * an open PR branch carrying this agent's unmerged output) and resolving
+ * cross-agent PR conflicts is the caller's (automation's) responsibility.
  *
  * Note: because the doc lives in `system/`, it is compiled into the agent's
  * system prompt. That is acceptable for a dedicated dreaming agent with a small
@@ -96,7 +98,7 @@ const GENERIC_GUIDANCE = [
 /**
  * Build the instruction fragment that asks the reflection agent to maintain
  * the target doc at `$MEMORY_DIR/system/<fileName>`. The doc has already been
- * seeded there when a base existed, so the agent reads and edits it in place.
+ * synced there from the target, so the agent reads and edits it in place.
  */
 export function buildTargetInstruction(target: DreamTarget): string {
   const guidance =
@@ -125,37 +127,50 @@ export async function readExistingTarget(
   }
 }
 
-function existsInMemoryHead(memoryDir: string, relPath: string): boolean {
+/** The committed memfs content at `relPath` (via `git show HEAD:…`), or null. */
+function readMemfsHead(memoryDir: string, relPath: string): string | null {
   try {
-    execFileSync("git", ["cat-file", "-e", `HEAD:${relPath}`], {
+    return execFileSync("git", ["show", `HEAD:${relPath}`], {
       cwd: memoryDir,
-      stdio: "ignore",
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
     });
-    return true;
   } catch {
-    return false;
+    return null;
   }
 }
 
 /**
- * Seed the target doc into the agent's memory at `system/<fileName>` when the
- * memfs has no copy yet, using the current on-disk content as the base. If a
- * copy already exists in the memfs it is left untouched (the memfs copy is the
- * source of truth). Must run before the reflection worktree is created, since
- * the worktree is checked out from HEAD.
+ * Sync the on-disk target doc into the agent's memory at `system/<fileName>`:
+ * write it when the memfs has no copy OR the on-disk copy differs from the
+ * memfs copy (e.g. another agent's merged edits, or a human edit landed in the
+ * repo). The repo is the source of truth for a doc shared across agents (one
+ * agent per user+repo), so each run starts from the current shared state; the
+ * agent's durable knowledge still lives in its memory blocks. Bodies are
+ * compared (the memfs copy carries managed frontmatter the on-disk copy lacks).
+ *
+ * Must run before the reflection worktree is created, since the worktree is
+ * checked out from HEAD. Selecting which on-disk revision counts as "current"
+ * (base branch vs an open PR branch with this agent's unmerged output) is the
+ * caller's responsibility.
  */
-export async function seedTargetIntoMemory(
+export async function syncTargetIntoMemory(
   agentId: string,
   target: DreamTarget,
   content: string | null,
-): Promise<{ seeded: boolean }> {
+): Promise<{ synced: boolean }> {
   if (content === null) {
-    return { seeded: false };
+    return { synced: false };
   }
   const memoryDir = getScopedMemoryFilesystemRoot(agentId);
   const relPath = memfsRelPath(target);
-  if (existsInMemoryHead(memoryDir, relPath)) {
-    return { seeded: false };
+
+  const committed = readMemfsHead(memoryDir, relPath);
+  if (
+    committed !== null &&
+    stripFrontmatter(committed) === stripFrontmatter(content)
+  ) {
+    return { synced: false };
   }
 
   const absPath = join(memoryDir, relPath);
@@ -171,7 +186,7 @@ export async function seedTargetIntoMemory(
     const result = await commitMemoryWrite({
       memoryDir,
       pathspecs: [relPath],
-      reason: `dream: seed ${target.fileName} into memory`,
+      reason: `dream: sync ${target.fileName} from target`,
       author: {
         agentId,
         authorName: agentId,
@@ -179,7 +194,7 @@ export async function seedTargetIntoMemory(
       },
       syncMode,
     });
-    return { seeded: result.committed };
+    return { synced: result.committed };
   } catch (error) {
     // Roll back the uncommitted file so the parent memfs stays clean — a dirty
     // parent would block the reflection worktree merge.
@@ -197,23 +212,14 @@ export function readTargetFromMemory(
   target: DreamTarget,
 ): string | null {
   const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-  try {
-    const committed = execFileSync(
-      "git",
-      ["show", `HEAD:${memfsRelPath(target)}`],
-      {
-        cwd: memoryDir,
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-      },
-    );
-    // Strip the managed frontmatter so the exported doc is plain markdown.
-    // parseFrontmatter trims the body; restore a trailing newline.
-    const body = stripFrontmatter(committed);
-    return body.length > 0 ? `${body}\n` : body;
-  } catch {
+  const committed = readMemfsHead(memoryDir, memfsRelPath(target));
+  if (committed === null) {
     return null;
   }
+  // Strip the managed frontmatter so the exported doc is plain markdown.
+  // parseFrontmatter trims the body; restore a trailing newline.
+  const body = stripFrontmatter(committed);
+  return body.length > 0 ? `${body}\n` : body;
 }
 
 /** Write the rendered doc to the target path, creating parent dirs. */
