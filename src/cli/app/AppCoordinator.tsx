@@ -536,7 +536,6 @@ export function App({
     useState<{
       questions: ReflectionArenaChoiceQuestion[];
       readyMessage?: string;
-      readyMessageShown?: boolean;
       runId: string;
     } | null>(null);
 
@@ -3718,7 +3717,6 @@ export function App({
                 setReflectionArenaChoicePending({
                   runId: readyRun.runId,
                   readyMessage: message,
-                  readyMessageShown: false,
                   questions: buildReflectionArenaChoiceQuestions(
                     readyRun.runId,
                   ),
@@ -4182,12 +4180,6 @@ export function App({
       setCommandRunning(true);
       try {
         const answer = parseReflectionArenaChoiceAnswers(answers);
-        if (answer.action === "defer") {
-          appendTaskNotificationEvents([
-            formatReflectionArenaDeferredMessage(pending.runId),
-          ]);
-          return;
-        }
         const { message } = await finalizeReflectionArenaChoice({
           runId: pending.runId,
           choice: answer.choice,
@@ -4996,7 +4988,7 @@ export function App({
     trajectoryTokenDisplayRef.current,
   );
   const inputVisible = !showExitStats;
-  const reflectionArenaChoiceIdle = Boolean(
+  const reflectionArenaChoiceVisible = Boolean(
     reflectionArenaChoicePending &&
       !showExitStats &&
       !streaming &&
@@ -5005,35 +4997,10 @@ export function App({
       pendingApprovals.length === 0 &&
       !anySelectorOpen,
   );
-  const reflectionArenaChoiceVisible = Boolean(
-    reflectionArenaChoiceIdle &&
-      (!reflectionArenaChoicePending?.readyMessage ||
-        reflectionArenaChoicePending.readyMessageShown),
-  );
-  useEffect(() => {
-    const pending = reflectionArenaChoicePending;
-    if (
-      !reflectionArenaChoiceIdle ||
-      !pending?.readyMessage ||
-      pending.readyMessageShown
-    ) {
-      return;
-    }
-    appendTaskNotificationEvents([pending.readyMessage]);
-    setReflectionArenaChoicePending((current) =>
-      current?.runId === pending.runId
-        ? { ...current, readyMessageShown: true }
-        : current,
-    );
-  }, [
-    reflectionArenaChoiceIdle,
-    reflectionArenaChoicePending,
-    appendTaskNotificationEvents,
-  ]);
   const inputEnabled =
     !showExitStats &&
     pendingApprovals.length === 0 &&
-    !reflectionArenaChoiceIdle &&
+    !reflectionArenaChoiceVisible &&
     !anySelectorOpen;
   const onEscapeCommandCancel = useCallback(() => {
     if (isActiveConnectOperationCancellable()) {

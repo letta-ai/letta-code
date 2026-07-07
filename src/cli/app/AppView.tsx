@@ -51,6 +51,7 @@ import { StatusMessage } from "@/cli/components/StatusMessage";
 import { SubagentGroupDisplay } from "@/cli/components/SubagentGroupDisplay";
 import { SubagentManager } from "@/cli/components/SubagentManager";
 import { SystemPromptSelector } from "@/cli/components/SystemPromptSelector";
+import { Text } from "@/cli/components/Text";
 import { ToolCallMessage } from "@/cli/components/ToolCallMessageRich";
 import { ToolsetSelector } from "@/cli/components/ToolsetSelector";
 import { UserMessage } from "@/cli/components/UserMessageRich";
@@ -268,7 +269,6 @@ type AppViewProps = {
   reflectionArenaChoicePending: {
     questions: ReflectionArenaChoiceQuestion[];
     readyMessage?: string;
-    readyMessageShown?: boolean;
     runId: string;
   } | null;
   precomputedDiffsRef: RefObject<Map<string, AdvancedDiffSuccess>>;
@@ -704,6 +704,9 @@ export function AppView(props: AppViewProps) {
             {/* Reflection arena choice prompt - merges the selected memory worktree */}
             {reflectionArenaChoicePending && !currentApproval && (
               <Box marginTop={1} flexDirection="column">
+                {reflectionArenaChoicePending.readyMessage && (
+                  <Text>{reflectionArenaChoicePending.readyMessage}</Text>
+                )}
                 <InlineQuestionApproval
                   key={reflectionArenaChoicePending.runId}
                   questions={reflectionArenaChoicePending.questions}

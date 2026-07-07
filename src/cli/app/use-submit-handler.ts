@@ -72,8 +72,8 @@ import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-to
 import {
   buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
+  formatReflectionArenaAwaitingChoice,
   launchReflectionArena,
-  listAwaitingReflectionArenaRuns,
   loadReflectionArenaRun,
   REFLECTION_ARENA_MODEL_A_DEFAULT,
   type ReflectionArenaChoice,
@@ -310,7 +310,6 @@ type SubmitHandlerContext = {
     SetStateAction<{
       questions: ReflectionArenaChoiceQuestion[];
       readyMessage?: string;
-      readyMessageShown?: boolean;
       runId: string;
     } | null>
   >;
@@ -368,7 +367,7 @@ type ReflectArenaCommandArgs =
       notes?: string;
       runId: string;
     }
-  | { kind: "resume"; runId?: string };
+  | { kind: "resume"; runId: string };
 
 function isReflectCommandFlag(value: string): boolean {
   return (
@@ -409,6 +408,9 @@ function parseReflectArenaCommandArgs(input: string): ReflectArenaCommandArgs {
   }
   if (parts[0] === "resume") {
     const runId = parts[1];
+    if (!runId) {
+      throw new Error("Usage: /reflect-arena resume <run-id>");
+    }
     return { kind: "resume", runId };
   }
 
@@ -2295,7 +2297,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       setReflectionArenaChoicePending({
                         runId: readyRun.runId,
                         readyMessage: message,
-                        readyMessageShown: false,
                         questions: buildReflectionArenaChoiceQuestions(
                           readyRun.runId,
                         ),
@@ -3064,48 +3065,20 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               return { submitted: true };
             }
             if (arenaArgs.kind === "resume") {
-              let awaitingRuns: Awaited<
-                ReturnType<typeof listAwaitingReflectionArenaRuns>
-              > = [];
-              let run:
-                | Awaited<
-                    ReturnType<typeof listAwaitingReflectionArenaRuns>
-                  >[number]
-                | undefined;
-              if (arenaArgs.runId) {
-                run = await loadReflectionArenaRun(arenaArgs.runId);
-                if (run.status !== "awaiting_choice") {
-                  cmd.fail(
-                    `Reflection arena run ${arenaArgs.runId} is ${run.status}; expected awaiting_choice.`,
-                  );
-                  return { submitted: true };
-                }
-              } else {
-                awaitingRuns = await listAwaitingReflectionArenaRuns();
-                run = awaitingRuns[0];
-                if (!run) {
-                  cmd.fail("No reflection arena runs are awaiting a choice.");
-                  return { submitted: true };
-                }
+              const run = await loadReflectionArenaRun(arenaArgs.runId);
+              if (run.status !== "awaiting_choice") {
+                cmd.fail(
+                  `Reflection arena run ${arenaArgs.runId} is ${run.status}; expected awaiting_choice.`,
+                );
+                return { submitted: true };
               }
               setReflectionArenaChoicePending({
                 runId: run.runId,
+                readyMessage: formatReflectionArenaAwaitingChoice(run),
                 questions: buildReflectionArenaChoiceQuestions(run.runId),
               });
-              const otherRuns = awaitingRuns.filter(
-                (awaitingRun) => awaitingRun.runId !== run.runId,
-              );
-              const suffix =
-                otherRuns.length > 0
-                  ? `\n\nOther awaiting runs:\n${otherRuns
-                      .map(
-                        (awaitingRun) =>
-                          `  ${awaitingRun.runId} · created ${awaitingRun.createdAt}`,
-                      )
-                      .join("\n")}`
-                  : "";
               cmd.finish(
-                `Resumed reflection arena choice prompt for run ${run.runId}.${suffix}`,
+                `Resumed reflection arena choice prompt for run ${run.runId}.`,
                 true,
               );
               return { submitted: true };
@@ -3157,7 +3130,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 setReflectionArenaChoicePending({
                   runId: readyRun.runId,
                   readyMessage: message,
-                  readyMessageShown: false,
                   questions: buildReflectionArenaChoiceQuestions(
                     readyRun.runId,
                   ),
@@ -3221,7 +3193,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     setReflectionArenaChoicePending({
                       runId: readyRun.runId,
                       readyMessage: message,
-                      readyMessageShown: false,
                       questions: buildReflectionArenaChoiceQuestions(
                         readyRun.runId,
                       ),

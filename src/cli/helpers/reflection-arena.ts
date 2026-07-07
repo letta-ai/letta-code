@@ -1,12 +1,6 @@
 import { execFile as execFileCb } from "node:child_process";
 import { randomInt, randomUUID } from "node:crypto";
-import {
-  appendFile,
-  mkdir,
-  readdir,
-  readFile,
-  writeFile,
-} from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -54,9 +48,10 @@ const REFLECTION_ARENA_CANDIDATE_COUNT = 2;
 
 export type ReflectionArenaCandidateLabel = "1" | "2";
 export type ReflectionArenaChoice = ReflectionArenaCandidateLabel | "tie";
-export type ReflectionArenaChoiceAnswer =
-  | { action: "finalize"; choice: ReflectionArenaChoice; notes?: string }
-  | { action: "defer" };
+export interface ReflectionArenaChoiceAnswer {
+  choice: ReflectionArenaChoice;
+  notes?: string;
+}
 
 export const REFLECTION_ARENA_CHOICE_QUESTION =
   "Which reflection should be merged?";
@@ -144,13 +139,9 @@ export interface ReflectionArenaChoiceQuestion {
   allowOther?: boolean;
   header: string;
   multiSelect: boolean;
-  otherDescription?: string;
-  otherFirst?: boolean;
-  otherLabel?: string;
   options: Array<{
     description: string;
     label: string;
-    submitImmediately?: boolean;
   }>;
   question: string;
 }
@@ -201,36 +192,6 @@ export async function loadReflectionArenaRun(
 ): Promise<ReflectionArenaRun> {
   const raw = await readFile(getReflectionArenaRunPath(runId), "utf-8");
   return JSON.parse(raw) as ReflectionArenaRun;
-}
-
-export async function listAwaitingReflectionArenaRuns(): Promise<
-  ReflectionArenaRun[]
-> {
-  let entries: string[];
-  try {
-    entries = await readdir(getReflectionArenaRunsDir());
-  } catch {
-    return [];
-  }
-
-  const runs = await Promise.all(
-    entries
-      .filter((entry) => entry.endsWith(".json"))
-      .map(async (entry) => {
-        try {
-          const runId = entry.slice(0, -".json".length);
-          return await loadReflectionArenaRun(runId);
-        } catch {
-          return null;
-        }
-      }),
-  );
-
-  return runs
-    .filter(
-      (run): run is ReflectionArenaRun => run?.status === "awaiting_choice",
-    )
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 async function updateReflectionArenaRun(
@@ -299,20 +260,12 @@ export function buildReflectionArenaChoiceQuestions(
           label: "Tie / no merge",
           description: "Do not merge either candidate; discard both worktrees.",
         },
-        {
-          label: "Inspect memory first",
-          description:
-            "Dismiss this prompt so you can inspect Memory Palace before choosing.",
-          submitImmediately: true,
-        },
       ],
     },
     {
       header: "Reflection arena feedback",
       question: REFLECTION_ARENA_NOTES_QUESTION,
       multiSelect: false,
-      otherFirst: true,
-      otherLabel: "Type feedback",
       options: [
         {
           label: "No feedback",
@@ -333,9 +286,6 @@ export function parseReflectionArenaChoiceAnswers(
     )?.[1] ??
     "";
   const normalizedChoice = choiceAnswer.trim().toLowerCase();
-  if (normalizedChoice.includes("inspect memory")) {
-    return { action: "defer" };
-  }
   const choice = normalizedChoice.includes("reflection 1")
     ? "1"
     : normalizedChoice.includes("reflection 2")
@@ -344,9 +294,7 @@ export function parseReflectionArenaChoiceAnswers(
         ? "tie"
         : undefined;
   if (!choice) {
-    throw new Error(
-      "Choose Reflection 1, Reflection 2, Tie / no merge, or Inspect memory first.",
-    );
+    throw new Error("Choose Reflection 1, Reflection 2, or Tie / no merge.");
   }
 
   const rawNotes =
@@ -357,7 +305,6 @@ export function parseReflectionArenaChoiceAnswers(
     "";
   const notes = rawNotes.trim();
   return {
-    action: "finalize",
     choice,
     notes:
       notes && notes !== "No notes" && notes !== "No feedback"
