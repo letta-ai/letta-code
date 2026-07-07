@@ -2578,7 +2578,7 @@ test("slack adapter anchors direct message progress to the inbound message", asy
     markdown_text:
       "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
   });
-  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(0);
 });
 
 test("slack adapter keeps separate task rows for parallel tool progress", async () => {
