@@ -320,6 +320,31 @@ function toBidirectionalQueuedInput(
   };
 }
 
+/**
+ * Decide what an incoming `control_request: interrupt` should do, given the
+ * current turn state. Extracted as a pure function so the policy is unit-
+ * testable and shared between the fast-path (`rl.on("line", ...)`) and the
+ * main-loop interrupt handlers.
+ *
+ * - `abort-active`: a turn is running — abort its AbortController now.
+ * - `latch`: no controller exists yet, but a user message has just been
+ *   dispatched and its controller is about to be created (the narrow
+ *   pre-controller race). Latch so the imminent turn aborts immediately.
+ * - `noop`: the session is idle (no active or starting turn). Respond success
+ *   but do NOT latch — latching here would poison the next user turn, which
+ *   would create a controller and immediately abort itself.
+ */
+export type InterruptAction = "abort-active" | "latch" | "noop";
+
+export function decideInterruptAction(state: {
+  hasActiveController: boolean;
+  turnStarting: boolean;
+}): InterruptAction {
+  if (state.hasActiveController) return "abort-active";
+  if (state.turnStarting) return "latch";
+  return "noop";
+}
+
 export const __headlessTestUtils = {
   trackTelemetryUserInputFromContent,
   shouldTrackTelemetryForQueuedMessage,
@@ -3618,6 +3643,17 @@ async function runBidirectionalMode(
 
   // Track current operation for interrupt support
   let currentAbortController: AbortController | null = null;
+  // Latch: an interrupt may arrive on stdin between the user message and
+  // when the abort controller for that turn is created (the gap is small but
+  // real — readline fires the next line before the main loop's microtask
+  // creating the controller runs). When that happens, set this flag so the
+  // turn aborts immediately after creation.
+  let pendingInterrupt = false;
+  // True only in the narrow window between a user message being handed to the
+  // main loop and its AbortController being created. Gates `pendingInterrupt`
+  // so an *idle* interrupt (no turn running or starting) is a no-op success
+  // instead of poisoning the next user turn. See decideInterruptAction.
+  let turnStarting = false;
   const reminderContextTracker = createContextTracker();
   const sharedReminderState = createSharedReminderState();
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
@@ -3748,6 +3784,11 @@ async function runBidirectionalMode(
   };
 
   let turnInProgress = false;
+  // Set when a turn ends interrupted (aborted mid-flight). A cancel during a
+  // tool's approval gate leaves the agent in `requires_approval` with a
+  // dangling approval; the next user turn must clear it before sending or the
+  // run errors on stale state (surfaces downstream as a bare "refusal").
+  let priorTurnInterrupted = false;
 
   const msgQueueRuntime = new QueueRuntime({
     callbacks: {
@@ -3883,7 +3924,68 @@ async function runBidirectionalMode(
   // Feed lines into queue or resolver
   rl.on("line", (line) => {
     maybeNotifyBlocked(line);
+    // Fast path: handle control_request:interrupt synchronously so we can
+    // abort an in-flight drain without waiting for the main loop to dequeue.
+    // Without this, a runaway thinking turn never sees the interrupt because
+    // `getNextLine()` isn't called until the current drain returns.
+    let parsedLine: {
+      type?: string;
+      request?: { subtype?: string };
+      request_id?: string | number;
+    } | null = null;
+    try {
+      parsedLine = JSON.parse(line);
+    } catch {
+      // Not JSON — the main loop will surface the parse error.
+    }
+    const interruptRequestId =
+      parsedLine?.type === "control_request" &&
+      parsedLine?.request?.subtype === "interrupt"
+        ? String(parsedLine.request_id ?? "")
+        : null;
+    if (interruptRequestId !== null) {
+      const action = decideInterruptAction({
+        hasActiveController: currentAbortController !== null,
+        turnStarting,
+      });
+      if (action === "abort-active") {
+        // Abort the in-flight turn. Do NOT null the controller here — the
+        // turn's epilogue (line ~4275) reads currentAbortController?.signal.aborted
+        // to classify the result as "interrupted" vs "error". The `finally`
+        // block at the bottom of the user-message branch is what owns nulling.
+        (currentAbortController as AbortController).abort();
+        if (lineResolver) {
+          // If the turn is blocked waiting for a permission/external-tool
+          // response, the fast path consumed this interrupt before getNextLine()
+          // could see it. Wake that waiter so the aborted turn can unwind.
+          const resolve = lineResolver;
+          lineResolver = null;
+          resolve(null);
+        }
+      } else if (action === "latch") {
+        // Narrow pre-controller race: a user message was just dispatched but
+        // its AbortController isn't created yet. Latch so the imminent turn
+        // aborts. An idle interrupt ("noop") must NOT latch — that would
+        // poison the next user turn.
+        pendingInterrupt = true;
+      }
+      const interruptResponse: ControlResponse = {
+        type: "control_response",
+        response: {
+          subtype: "success",
+          request_id: interruptRequestId,
+        },
+        session_id: sessionId,
+        uuid: randomUUID(),
+      };
+      writeWireMessage(interruptResponse);
+      return;
+    }
     if (lineResolver) {
+      // Handing a user message to a waiting main loop opens the pre-controller
+      // race window: mark turnStarting so an interrupt arriving in the same
+      // stdin burst (before the controller exists) latches via "latch" above.
+      if (parsedLine?.type === "user") turnStarting = true;
       const resolve = lineResolver;
       lineResolver = null;
       resolve(line);
@@ -4177,10 +4279,19 @@ async function runBidirectionalMode(
         };
         writeWireMessage(initResponse);
       } else if (subtype === "interrupt") {
-        // Abort current operation if any
-        if (currentAbortController !== null) {
+        // Abort current operation if any. Do NOT null the controller — the
+        // turn's epilogue (line ~4415) reads currentAbortController?.signal.aborted
+        // to classify the result as "interrupted" vs "error", and the
+        // user-message branch's `finally` is what owns nulling. Mirrors the
+        // fast path in rl.on("line", ...).
+        if (
+          currentAbortController !== null &&
+          decideInterruptAction({
+            hasActiveController: true,
+            turnStarting,
+          }) === "abort-active"
+        ) {
           (currentAbortController as AbortController).abort();
-          currentAbortController = null;
         }
         const interruptResponse: ControlResponse = {
           type: "control_response",
@@ -4438,11 +4549,24 @@ async function runBidirectionalMode(
 
       const userContent = mergeBidirectionalQueuedInput(queuedInputs);
       if (userContent === null) {
+        // No turn will start — clear the pre-controller window so a latched
+        // interrupt doesn't carry over to a later, unrelated turn.
+        turnStarting = false;
+        pendingInterrupt = false;
         continue;
       }
 
-      // Create abort controller for this operation
+      // Create abort controller for this operation.  Drain any latched
+      // interrupt that arrived before the controller existed (race between
+      // the readline 'line' event and the microtask that creates the
+      // controller — see rl.on("line", ...) above).
       currentAbortController = new AbortController();
+      if (pendingInterrupt) {
+        pendingInterrupt = false;
+        currentAbortController.abort();
+      }
+      // Controller now exists — close the pre-controller race window.
+      turnStarting = false;
 
       turnInProgress = true;
       try {
@@ -4512,6 +4636,28 @@ async function runBidirectionalMode(
           continue;
         }
         currentInput = turnStartEmission.input;
+
+        // If the previous turn was interrupted mid-tool-call, the agent may be
+        // left in `requires_approval` with a dangling approval. Sending this
+        // fresh turn against that stale state makes the run error (a silent
+        // "refusal" downstream). Clear it first, reusing the same recovery the
+        // resume path uses. Best-effort: a recovery failure must not abort the
+        // new turn. (PR #2631 — handle interrupts.)
+        if (priorTurnInterrupted) {
+          priorTurnInterrupted = false;
+          try {
+            await resolveAllPendingApprovals();
+          } catch (recoveryError) {
+            debugWarn(
+              "approval",
+              `Post-interrupt approval recovery failed: ${
+                recoveryError instanceof Error
+                  ? recoveryError.message
+                  : String(recoveryError)
+              }`,
+            );
+          }
+        }
 
         // Approval handling loop - continue until end_turn or error
         while (true) {
@@ -5014,6 +5160,9 @@ async function runBidirectionalMode(
         });
         turnInProgress = false;
         blockedEmittedThisTurn = false;
+        // Remember whether this turn was interrupted so the next user turn can
+        // clear any dangling approval before sending (see priorTurnInterrupted).
+        priorTurnInterrupted = currentAbortController?.signal.aborted === true;
         currentAbortController = null;
       }
       continue;
