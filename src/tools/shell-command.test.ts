@@ -3,11 +3,12 @@ import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { shell_command } from "@/tools/impl/shell-command.js";
@@ -82,6 +83,36 @@ test("shell_command falls back when preferred shell is missing", async () => {
       if (original === undefined) delete process.env.SHELL;
       else process.env.SHELL = original;
     }
+  }
+});
+
+test("shell_command surfaces deleted runtime cwd recovery once", async () => {
+  const fallbackDir = mkdtempSync(join(tmpdir(), "shell-cwd-fallback-"));
+  const deletedDir = mkdtempSync(join(tmpdir(), "shell-cwd-deleted-"));
+  const originalUserCwd = process.env.USER_CWD;
+  rmSync(deletedDir, { recursive: true, force: true });
+  process.env.USER_CWD = fallbackDir;
+
+  try {
+    const { first, second } = await runWithRuntimeContext(
+      { workingDirectory: deletedDir },
+      async () => {
+        const first = await shell_command({ command: "echo recovered" });
+        const second = await shell_command({ command: "echo later" });
+        return { first, second };
+      },
+    );
+
+    expect(first.output).toContain(
+      `Note: working directory ${deletedDir} no longer exists; running in ${fallbackDir} instead.`,
+    );
+    expect(first.output).toContain("recovered");
+    expect(second.output).toContain("later");
+    expect(second.output).not.toContain("working directory");
+  } finally {
+    if (originalUserCwd === undefined) delete process.env.USER_CWD;
+    else process.env.USER_CWD = originalUserCwd;
+    rmSync(fallbackDir, { recursive: true, force: true });
   }
 });
 

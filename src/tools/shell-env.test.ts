@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { configureBackendMode } from "@/backend";
@@ -273,62 +275,75 @@ test("getShellEnv injects AGENT_ID aliases", () => {
 });
 
 test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
-  const env = runWithRuntimeContext(
-    {
-      agentId: "agent-runtime-scope",
-      agentName: "Runtime Scope Agent",
-      conversationId: "conv-runtime-scope",
-      workingDirectory: "/tmp/runtime-scope-cwd",
-    },
-    () => getShellEnv(),
-  );
+  const runtimeCwd = mkdtempSync(path.join(tmpdir(), "runtime-scope-cwd-"));
 
-  expect(env.AGENT_ID).toBe("agent-runtime-scope");
-  expect(env.LETTA_AGENT_ID).toBe("agent-runtime-scope");
-  expect(env.AGENT_NAME).toBe("Runtime Scope Agent");
-  expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
-  expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
-  expect(env.USER_CWD).toBe("/tmp/runtime-scope-cwd");
+  try {
+    const env = runWithRuntimeContext(
+      {
+        agentId: "agent-runtime-scope",
+        agentName: "Runtime Scope Agent",
+        conversationId: "conv-runtime-scope",
+        workingDirectory: runtimeCwd,
+      },
+      () => getShellEnv(),
+    );
+
+    expect(env.AGENT_ID).toBe("agent-runtime-scope");
+    expect(env.LETTA_AGENT_ID).toBe("agent-runtime-scope");
+    expect(env.AGENT_NAME).toBe("Runtime Scope Agent");
+    expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
+    expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
+    expect(env.USER_CWD).toBe(runtimeCwd);
+  } finally {
+    rmSync(runtimeCwd, { recursive: true, force: true });
+  }
 });
 
 test("getShellEnv isolates overlapping runtime scopes", async () => {
+  const cwdA = mkdtempSync(path.join(tmpdir(), "agent-a-"));
+  const cwdB = mkdtempSync(path.join(tmpdir(), "agent-b-"));
   let releaseAgentA!: () => void;
   const waitForAgentA = new Promise<void>((resolve) => {
     releaseAgentA = resolve;
   });
 
-  const taskA = runWithRuntimeContext(
-    {
-      agentId: "agent-a",
-      conversationId: "conv-a",
-      workingDirectory: "/tmp/agent-a",
-    },
-    async () => {
-      await waitForAgentA;
-      return getShellEnv();
-    },
-  );
+  try {
+    const taskA = runWithRuntimeContext(
+      {
+        agentId: "agent-a",
+        conversationId: "conv-a",
+        workingDirectory: cwdA,
+      },
+      async () => {
+        await waitForAgentA;
+        return getShellEnv();
+      },
+    );
 
-  const taskB = runWithRuntimeContext(
-    {
-      agentId: "agent-b",
-      conversationId: "conv-b",
-      workingDirectory: "/tmp/agent-b",
-    },
-    async () => {
-      releaseAgentA();
-      return getShellEnv();
-    },
-  );
+    const taskB = runWithRuntimeContext(
+      {
+        agentId: "agent-b",
+        conversationId: "conv-b",
+        workingDirectory: cwdB,
+      },
+      async () => {
+        releaseAgentA();
+        return getShellEnv();
+      },
+    );
 
-  const [envA, envB] = await Promise.all([taskA, taskB]);
+    const [envA, envB] = await Promise.all([taskA, taskB]);
 
-  expect(envA.AGENT_ID).toBe("agent-a");
-  expect(envA.CONVERSATION_ID).toBe("conv-a");
-  expect(envA.USER_CWD).toBe("/tmp/agent-a");
-  expect(envB.AGENT_ID).toBe("agent-b");
-  expect(envB.CONVERSATION_ID).toBe("conv-b");
-  expect(envB.USER_CWD).toBe("/tmp/agent-b");
+    expect(envA.AGENT_ID).toBe("agent-a");
+    expect(envA.CONVERSATION_ID).toBe("conv-a");
+    expect(envA.USER_CWD).toBe(cwdA);
+    expect(envB.AGENT_ID).toBe("agent-b");
+    expect(envB.CONVERSATION_ID).toBe("conv-b");
+    expect(envB.USER_CWD).toBe(cwdB);
+  } finally {
+    rmSync(cwdA, { recursive: true, force: true });
+    rmSync(cwdB, { recursive: true, force: true });
+  }
 });
 
 test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", () => {
