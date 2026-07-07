@@ -1092,7 +1092,9 @@ function formatSlackToolTaskTitle(
     if (details) {
       return details;
     }
-    return status === "complete" ? "Ran" : "Running";
+    // "Ran" also covers errors: the command did run and finish; the row's
+    // error status conveys the failure.
+    return status === "complete" || status === "error" ? "Ran" : "Running";
   }
   if (toolName === "TaskOutput") {
     return status === "complete"
@@ -1251,7 +1253,13 @@ function resolveSlackToolActionDetails(
   const rememberedDetails = update.toolCallId
     ? entry.toolDetailsByCallId?.get(update.toolCallId)
     : undefined;
-  const details = update.toolDetails ?? rememberedDetails;
+  // Error-output previews only ever render as detail text under the row
+  // title; toolDetails/toolTitle stay argument-derived so tool output can
+  // never become a header (LET-9509).
+  const details =
+    (update.state === "error" ? update.errorDetails : undefined) ??
+    update.toolDetails ??
+    rememberedDetails;
   if (!details) {
     return undefined;
   }
@@ -1663,7 +1671,15 @@ function buildSlackStreamProgressChunks(
     sentDetails && resolvedDetails && sentDetails !== resolvedDetails
       ? sentDetails
       : resolvedDetails;
-  const title = resolveSlackToolActionName(entry, update, details);
+  // Titles only ever derive from argument summaries — resolved details can
+  // carry an error-output preview, which must never become a header
+  // (LET-9509).
+  const titleDetails =
+    update.toolDetails ??
+    (update.toolCallId
+      ? entry.toolDetailsByCallId?.get(update.toolCallId)
+      : undefined);
+  const title = resolveSlackToolActionName(entry, update, titleDetails);
   if (!title) {
     return [];
   }

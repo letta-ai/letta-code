@@ -2056,6 +2056,73 @@ test("slack adapter streams native task progress and clears thread status", asyn
   });
 });
 
+test("slack adapter keeps shell error output out of task titles (LET-9509)", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+  // Failed shell call whose arguments never produced details (fragmented
+  // stream): the error-output preview must render as detail text only.
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "error",
+    message: "Tool failed",
+    toolCallId: "call-1",
+    toolName: "Bash",
+    errorDetails:
+      "Exit code: 1 run 28890486751 is still in progress; logs will be available when it is complete",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  const startCall = (
+    writeClient?.chat.startStream.mock.calls as unknown as Array<
+      [{ chunks?: Array<Record<string, unknown>> }]
+    >
+  )[0]?.[0];
+  const taskChunk = startCall?.chunks?.find(
+    (chunk) => chunk.type === "task_update" && chunk.id === "task_call-1",
+  );
+  // Tool-level failures render as complete rows by design (card-level error
+  // state is reserved for turn failures); the important assertions here are
+  // the title and where the error preview lands.
+  expect(taskChunk).toMatchObject({
+    title: "Ran",
+    status: "complete",
+    details:
+      "Exit code: 1 run 28890486751 is still in progress; logs will be available when it is complete",
+  });
+  expect(taskChunk?.title).not.toContain("Exit code");
+});
+
 test("slack adapter labels subagent task rows and includes prompt previews", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,

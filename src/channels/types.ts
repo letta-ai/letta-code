@@ -173,6 +173,12 @@ export interface ChannelTurnProgressUpdate {
   toolName?: string;
   /** Optional sanitized argument summary for expanded tool progress details. */
   toolDetails?: string;
+  /**
+   * Optional sanitized error-output preview for failed tool calls. Kept
+   * separate from toolDetails so surfaces can render it as secondary detail
+   * text; it must never be used as a row title/header (LET-9509).
+   */
+  errorDetails?: string;
   /** Optional sanitized row title for native/rich progress surfaces. */
   toolTitle?: string;
   command?: string;
