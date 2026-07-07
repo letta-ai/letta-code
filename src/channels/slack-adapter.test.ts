@@ -4284,7 +4284,7 @@ test("inbound debounce: attachment mid-burst flushes pending debounced messages 
   ]);
 });
 
-test("inbound debounce: message arrives first, then app_mention for same ts → single dispatch with mention", async () => {
+test("inbound debounce: message arrives first, then app_mention for same ts → single dispatch without duplicate mention text", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -4314,7 +4314,7 @@ test("inbound debounce: message arrives first, then app_mention for same ts → 
     message: {
       channel: "C123",
       user: "U123",
-      text: "<@U0AS42PTEAX> help",
+      text: "<@U0AS42PTEAX> /model",
       ts: "1712800000.000099",
       thread_ts: "1712800000.000099",
     },
@@ -4324,7 +4324,7 @@ test("inbound debounce: message arrives first, then app_mention for same ts → 
     event: {
       channel: "C123",
       user: "U123",
-      text: "<@U0AS42PTEAX> help",
+      text: "<@U0AS42PTEAX> /model",
       ts: "1712800000.000099",
       thread_ts: "1712800000.000099",
     },
@@ -4335,9 +4335,10 @@ test("inbound debounce: message arrives first, then app_mention for same ts → 
 
   await sleep(80);
 
-  // One combined dispatch; `isMention` is true.
-  expect(dispatched).toHaveLength(1);
-  expect(dispatched[0]?.isMention).toBe(true);
+  // One dispatch; the duplicate message/app_mention events for the same Slack
+  // message must not become `/model\n/model`, which would parse the second
+  // command as a model handle.
+  expect(dispatched).toEqual([{ text: "/model", isMention: true }]);
 });
 
 test("inbound debounce: app_mention arrives first, message-for-same-ts is dropped by dedupe", async () => {

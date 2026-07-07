@@ -1964,6 +1964,63 @@ export function createSlackAdapter(
     opts: { source: SlackDebounceSource; wasMentioned: boolean };
   };
 
+  function getSlackDebounceEntryMessageKey(
+    entry: SlackDebounceEntry,
+  ): string | null {
+    const messageId = entry.inbound.messageId;
+    if (!isNonEmptyString(messageId)) {
+      return null;
+    }
+    return `${entry.inbound.chatId}:${messageId}`;
+  }
+
+  function preferDuplicateSlackDebounceEntry(
+    current: SlackDebounceEntry,
+    candidate: SlackDebounceEntry,
+  ): SlackDebounceEntry {
+    if (current.opts.source === "app_mention") {
+      return current;
+    }
+    if (candidate.opts.source === "app_mention") {
+      return candidate;
+    }
+    if (current.inbound.isMention === true) {
+      return current;
+    }
+    if (candidate.inbound.isMention === true) {
+      return candidate;
+    }
+    return candidate;
+  }
+
+  function dedupeSlackDebounceEntries(
+    entries: SlackDebounceEntry[],
+  ): SlackDebounceEntry[] {
+    const indexByMessageKey = new Map<string, number>();
+    const deduped: SlackDebounceEntry[] = [];
+    for (const entry of entries) {
+      const messageKey = getSlackDebounceEntryMessageKey(entry);
+      if (!messageKey) {
+        deduped.push(entry);
+        continue;
+      }
+      const existingIndex = indexByMessageKey.get(messageKey);
+      if (existingIndex === undefined) {
+        indexByMessageKey.set(messageKey, deduped.length);
+        deduped.push(entry);
+        continue;
+      }
+      const existing = deduped[existingIndex];
+      if (existing) {
+        deduped[existingIndex] = preferDuplicateSlackDebounceEntry(
+          existing,
+          entry,
+        );
+      }
+    }
+    return deduped;
+  }
+
   const debouncer: InboundDebouncer<SlackDebounceEntry> =
     createInboundDebouncer<SlackDebounceEntry>({
       debounceMs,
@@ -1971,7 +2028,8 @@ export function createSlackAdapter(
       shouldDebounce: ({ inbound }) =>
         !inbound.attachments?.length && !inbound.reaction,
       onFlush: async (entries) => {
-        const last = entries[entries.length - 1];
+        const dedupedEntries = dedupeSlackDebounceEntries(entries);
+        const last = dedupedEntries[dedupedEntries.length - 1];
         if (!last) return;
 
         // Prune the flushed debounce key from the top-level conversation map.
@@ -2014,13 +2072,13 @@ export function createSlackAdapter(
 
         // Merge buffered entries into a single dispatch.
         const combinedText =
-          entries.length === 1
+          dedupedEntries.length === 1
             ? last.inbound.text
-            : entries
+            : dedupedEntries
                 .map((entry) => entry.inbound.text)
                 .filter((text) => text && text.length > 0)
                 .join("\n");
-        const combinedMentioned = entries.some(
+        const combinedMentioned = dedupedEntries.some(
           (entry) =>
             entry.opts.wasMentioned === true ||
             entry.inbound.isMention === true,
