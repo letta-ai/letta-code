@@ -199,15 +199,18 @@ export function replaceBodyPreservingFrontmatter(
     );
   }
 
-  const normalizedBody = ensureTrailingNewline(newBody.trim());
-  if (!normalizedBody.trim()) {
-    throw new Error("Personality content cannot be empty");
-  }
+  const trimmedBody = newBody.trim();
+  const normalizedBody = trimmedBody ? ensureTrailingNewline(trimmedBody) : "";
 
   const { frontmatter } = parseMdxFrontmatter(existingPersonaFile);
   const mergedFrontmatter = { ...frontmatter };
   if (options?.description !== undefined) {
     mergedFrontmatter.description = options.description;
+  }
+
+  if (!normalizedBody) {
+    // Frontmatter-only file (e.g. the blank personality's empty persona).
+    return `${serializeFrontmatter(mergedFrontmatter)}\n`;
   }
 
   return `${serializeFrontmatter(mergedFrontmatter)}\n\n${normalizedBody}`;
