@@ -51,6 +51,32 @@ describe("channel slash commands", () => {
     expect(parseChannelBangCommand("hello !help")).toBeNull();
   });
 
+  test("collapses stacked duplicate channel commands before parsing args", () => {
+    expect(parseChannelSlashCommand("/model\n/model")).toEqual({
+      name: "model",
+      args: "",
+      raw: "/model",
+    });
+    expect(parseChannelSlashCommand("/model list\n/model list")).toEqual({
+      name: "model",
+      args: "list",
+      raw: "/model list",
+    });
+    expect(parseChannelBangCommand("!model\n!model")).toEqual({
+      name: "model",
+      args: "",
+      raw: "!model",
+    });
+  });
+
+  test("keeps non-command continuation lines as channel command args", () => {
+    expect(parseChannelSlashCommand("/model\nletta/auto")).toEqual({
+      name: "model",
+      args: "letta/auto",
+      raw: "/model",
+    });
+  });
+
   test("handles Slack mention slash commands as control commands", async () => {
     const replies: Array<{
       chatId: string;

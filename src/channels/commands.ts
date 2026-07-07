@@ -146,12 +146,18 @@ export function listChannelSlashCommands(): ChannelSlashCommandDefinition[] {
   }));
 }
 
-export function parseChannelSlashCommand(
+type ChannelCommandPrefix = "/" | "!";
+
+function parseSingleLineChannelCommand(
   text: string,
+  prefix: ChannelCommandPrefix,
 ): ParsedChannelSlashCommand | null {
   const trimmed = text.trim();
+  const escapedPrefix = prefix === "/" ? "\\/" : "!";
   const match = trimmed.match(
-    /^\/([A-Za-z][\w-]*)(?:@[A-Za-z0-9_]+)?(?:\s+(.*))?$/,
+    new RegExp(
+      `^${escapedPrefix}([A-Za-z][\\w-]*)(?:@[A-Za-z0-9_]+)?(?:[^\\S\\r\\n]+(.*))?$`,
+    ),
   );
   if (!match) {
     return null;
@@ -168,24 +174,65 @@ export function parseChannelSlashCommand(
   };
 }
 
-export function parseChannelBangCommand(
+function parseAnySingleLineChannelCommand(
   text: string,
 ): ParsedChannelSlashCommand | null {
-  const trimmed = text.trim();
-  const match = trimmed.match(/^!([A-Za-z][\w-]*)(?:\s+(.*))?$/);
-  if (!match) {
-    return null;
-  }
-  const [, name, args] = match;
-  if (!name) {
+  return (
+    parseSingleLineChannelCommand(text, "/") ??
+    parseSingleLineChannelCommand(text, "!")
+  );
+}
+
+function parseChannelCommand(
+  text: string,
+  prefix: ChannelCommandPrefix,
+): ParsedChannelSlashCommand | null {
+  const lines = text
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const [firstLine, ...remainingLines] = lines;
+  if (!firstLine) {
     return null;
   }
 
+  const firstCommand = parseSingleLineChannelCommand(firstLine, prefix);
+  if (!firstCommand) {
+    return null;
+  }
+
+  // Debounced channel input can stack duplicate Slack event copies. If a later
+  // line is another channel command, never treat it as the first command's arg.
+  const laterCommand = remainingLines.find((line) =>
+    Boolean(parseAnySingleLineChannelCommand(line)),
+  );
+  if (laterCommand) {
+    return firstCommand;
+  }
+
+  const continuationArgs = remainingLines.join("\n").trim();
+  if (!continuationArgs) {
+    return firstCommand;
+  }
   return {
-    name: name.toLowerCase(),
-    args: args?.trim() ?? "",
-    raw: trimmed,
+    ...firstCommand,
+    args: [firstCommand.args, continuationArgs]
+      .filter((part) => part.length > 0)
+      .join("\n"),
   };
+}
+
+export function parseChannelSlashCommand(
+  text: string,
+): ParsedChannelSlashCommand | null {
+  return parseChannelCommand(text, "/");
+}
+
+export function parseChannelBangCommand(
+  text: string,
+): ParsedChannelSlashCommand | null {
+  return parseChannelCommand(text, "!");
 }
 
 function supportedCommandsText(prefix: "/" | "!" = "/"): string {
