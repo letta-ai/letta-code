@@ -1,4 +1,3 @@
-import { writeFileSync } from "node:fs";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
@@ -40,48 +39,6 @@ function createStream(
     controller,
     async *[Symbol.asyncIterator]() {
       for (const chunk of chunks) {
-        yield chunk;
-      }
-    },
-  } as unknown as Stream<LettaStreamingResponse>;
-}
-
-function createDelayedStream(
-  chunks: LettaStreamingResponse[],
-  delayMs: number,
-): Stream<LettaStreamingResponse> {
-  const controller = new AbortController();
-  let wroteReadyFile = false;
-  const waitForDelay = () =>
-    new Promise<boolean>((resolve) => {
-      if (!wroteReadyFile) {
-        wroteReadyFile = true;
-        const readyFile = process.env.LETTA_CODE_FAKE_HEADLESS_DELAY_READY_FILE;
-        if (readyFile) {
-          try {
-            writeFileSync(readyFile, "ready");
-          } catch {
-            // Test signal only; never let it affect the fake backend stream.
-          }
-        }
-      }
-      const timeout = setTimeout(() => resolve(false), delayMs);
-      controller.signal.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timeout);
-          resolve(true);
-        },
-        { once: true },
-      );
-    });
-
-  return {
-    controller,
-    async *[Symbol.asyncIterator]() {
-      if (delayMs > 0 && (await waitForDelay())) return;
-      for (const chunk of chunks) {
-        if (controller.signal.aborted) return;
         yield chunk;
       }
     },
@@ -152,23 +109,14 @@ export class DeterministicToolCallExecutor implements HeadlessTurnExecutor {
 
     this.toolCallSeq += 1;
     const toolCallId = `tool-call-fake-shell-${this.toolCallSeq}`;
-    const delayMs =
-      Number(process.env.LETTA_CODE_FAKE_HEADLESS_TOOL_DELAY_MS ?? "0") || 0;
-    const command =
-      process.env.LETTA_CODE_FAKE_HEADLESS_TOOL_COMMAND ??
-      "echo deterministic-tool-ok";
-    const description =
-      process.env.LETTA_CODE_FAKE_HEADLESS_TOOL_DESCRIPTION ??
-      "Run deterministic tool call";
-    const chunks = [
+    return createStream([
       {
         message_type: "approval_request_message",
         tool_call: {
           tool_call_id: toolCallId,
           name: "Bash",
           arguments: JSON.stringify({
-            command,
-            description,
+            command: "echo deterministic-tool-ok",
             login: false,
           }),
         },
@@ -177,9 +125,6 @@ export class DeterministicToolCallExecutor implements HeadlessTurnExecutor {
         message_type: "stop_reason",
         stop_reason: "requires_approval",
       } as LettaStreamingResponse,
-    ];
-    return delayMs > 0
-      ? createDelayedStream(chunks, delayMs)
-      : createStream(chunks);
+    ]);
   }
 }
