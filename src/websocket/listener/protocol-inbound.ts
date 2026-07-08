@@ -1091,6 +1091,8 @@ export function isCronRunsCommand(value: unknown): value is CronRunsCommand {
     limit?: unknown;
     offset?: unknown;
     run_id?: unknown;
+    backend_run_id?: unknown;
+    cron_run_id?: unknown;
   };
   return (
     c.type === "cron_runs" &&
@@ -1098,7 +1100,9 @@ export function isCronRunsCommand(value: unknown): value is CronRunsCommand {
     typeof c.task_id === "string" &&
     (c.limit === undefined || typeof c.limit === "number") &&
     (c.offset === undefined || typeof c.offset === "number") &&
-    (c.run_id === undefined || typeof c.run_id === "string")
+    (c.run_id === undefined || typeof c.run_id === "string") &&
+    (c.backend_run_id === undefined || typeof c.backend_run_id === "string") &&
+    (c.cron_run_id === undefined || typeof c.cron_run_id === "string")
   );
 }
 

@@ -36,16 +36,23 @@ export {
 } from "./parse-interval";
 export {
   appendCronRunLog,
+  appendCronRunLogForCronRun,
   appendCronRunLogForTask,
+  type CronRunLogAction,
   type CronRunLogEntry,
   type CronRunLogPage,
+  type CronRunLogPageOptions,
+  type CronRunLogRunEntryInput,
+  type CronRunLogRunReference,
   type CronRunLogStatus,
+  type CronRunLogTaskEntryInput,
   DEFAULT_CRON_RUN_LOG_KEEP_LINES,
   DEFAULT_CRON_RUN_LOG_MAX_BYTES,
   getCronRunLogPath,
   readCronRunLogEntries,
   readCronRunLogEntriesPage,
   resolveCronRunLogPath,
+  safeAppendCronRunLogForCronRun,
   safeAppendCronRunLogForTask,
 } from "./run-log";
 export {

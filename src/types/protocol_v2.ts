@@ -96,23 +96,60 @@ export interface CronTask {
 }
 
 export type CronRunLogStatus = "ok" | "error" | "skipped";
+export type CronRunLogAction =
+  | "fire_started"
+  | "enqueued"
+  | "enqueue_failed"
+  | "blocked"
+  | "dequeued"
+  | "turn_started"
+  | "backend_run_started"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "dropped"
+  | "cleared"
+  | "removed"
+  | "pump_failed"
+  | "listener_closed_before_drain"
+  | "finished";
 
 export interface CronRunLogEntry {
   ts: number;
   jobId: string;
-  action: "finished";
+  action: CronRunLogAction;
   status?: CronRunLogStatus;
   outcome?: CronRunOutcome;
   reason?: CronRunReason;
   error?: string;
+  errorClass?: string;
+  errorMessage?: string;
   summary?: string;
   agentId?: string;
   conversationId?: string;
+  cronRunId?: string;
   runId?: string;
+  backendRunId?: string;
+  batchId?: string;
   runAtMs?: number;
   queueItemId?: string;
+  queueLen?: number;
+  queueLenAfter?: number;
+  mergedCount?: number;
+  blockedReason?: string;
+  droppedReason?: string;
+  clearedReason?: string;
+  clearedCount?: number;
+  removedReason?: string;
+  stopReason?: string;
+  schedulerPid?: number;
+  schedulerToken?: string;
+  schedulerStartedAt?: string;
   scheduledFor?: string | null;
   firedAt?: string;
+  missedCount?: number;
+  windowStart?: string;
+  windowEnd?: string;
 }
 
 export interface CronRunLogPage {
@@ -1694,8 +1731,12 @@ export interface CronRunsCommand {
   limit?: number;
   /** Page offset for run-log entries. */
   offset?: number;
-  /** Optional run id filter. */
+  /** Optional generic filter matching public runId, backendRunId, or cronRunId. */
   run_id?: string;
+  /** Optional exact backend run id filter. */
+  backend_run_id?: string;
+  /** Optional exact per-fire cron run id filter. */
+  cron_run_id?: string;
 }
 
 export interface CronTriggerCommand {

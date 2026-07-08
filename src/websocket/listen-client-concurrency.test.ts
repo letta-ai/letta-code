@@ -19,8 +19,10 @@ import {
   getReflectionTranscriptPaths,
   getReflectionTranscriptState,
 } from "@/cli/helpers/reflection-transcript";
+import { getCronRunLogPath, readCronRunLogEntries } from "@/cron/run-log";
 import { permissionMode } from "@/permissions/mode";
 import type {
+  CronPromptQueueItem,
   MessageQueueItem,
   ModContinueQueueItem,
   TaskNotificationQueueItem,
@@ -121,13 +123,29 @@ const drainHandlers = new Map<
   string,
   (abortSignal?: AbortSignal) => Promise<DrainResult>
 >();
+const drainRunIdsByConversation = new Map<string, string[]>();
+type DrainChunkCallback = (event: {
+  chunk: Record<string, unknown>;
+  shouldOutput: boolean;
+  errorInfo?: null;
+}) => void;
 const drainStreamWithResumeMock = mock(
   async (
     stream: MockStream,
     _buffers: unknown,
     _refresh: () => void,
     abortSignal?: AbortSignal,
+    _resumeCursor?: unknown,
+    onChunk?: DrainChunkCallback,
   ) => {
+    const runIds = drainRunIdsByConversation.get(stream.conversationId) ?? [];
+    for (const runId of runIds) {
+      onChunk?.({
+        chunk: { run_id: runId },
+        shouldOutput: false,
+        errorInfo: null,
+      });
+    }
     const handler = drainHandlers.get(stream.conversationId);
     if (handler) {
       return handler(abortSignal);
@@ -460,6 +478,7 @@ describe("listen-client multi-worker concurrency", () => {
     conversationMessagesStreamMock.mockClear();
     fetchRunErrorDetailMock.mockClear();
     drainHandlers.clear();
+    drainRunIdsByConversation.clear();
     __listenClientTestUtils.setActiveRuntime(null);
   });
 
@@ -1448,6 +1467,76 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtime.queueRuntime.peek().map((item) => item.id)).toEqual([
       otherMessageItem.id,
     ]);
+  });
+
+  test("consumeQueuedTurn carries cron run metadata and writes a dequeued lifecycle event", async () => {
+    const originalLettaHome = process.env.LETTA_HOME;
+    const cronHome = await mkdtemp(join(tmpdir(), "letta-cron-turn-"));
+    try {
+      process.env.LETTA_HOME = cronHome;
+      const runtime = __listenClientTestUtils.createRuntime();
+      const cronInput = {
+        kind: "cron_prompt",
+        source: "cron",
+        text: "Scheduled task text",
+        cronTaskId: "task-cron-1",
+        cronRunId: "cron-run-1",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      } satisfies Omit<CronPromptQueueItem, "id" | "enqueuedAt">;
+      const cronItem = runtime.queueRuntime.enqueue(cronInput);
+
+      if (!cronItem) {
+        throw new Error("Expected queued cron item");
+      }
+
+      const consumed = __listenClientTestUtils.consumeQueuedTurn(runtime);
+
+      expect(consumed).not.toBeNull();
+      if (!consumed) {
+        throw new Error("Expected consumed cron turn");
+      }
+      expect(consumed.queuedTurn.cronRuns).toEqual([
+        {
+          cronTaskId: "task-cron-1",
+          cronRunId: "cron-run-1",
+          queueItemId: cronItem.id,
+          batchId: consumed.dequeuedBatch.batchId,
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          enqueuedAt: cronItem.enqueuedAt,
+        },
+      ]);
+      expect(consumed.queuedTurn.messages).toEqual([
+        {
+          role: "user",
+          content: [{ type: "text", text: "Scheduled task text" }],
+        },
+      ]);
+      expect(runtime.queueRuntime.length).toBe(0);
+
+      const entries = readCronRunLogEntries(getCronRunLogPath("task-cron-1"), {
+        jobId: "task-cron-1",
+        limit: 10,
+      });
+      expect(entries).toEqual([
+        expect.objectContaining({
+          action: "dequeued",
+          cronRunId: "cron-run-1",
+          queueItemId: cronItem.id,
+          batchId: consumed.dequeuedBatch.batchId,
+          queueLenAfter: 0,
+          mergedCount: 1,
+        }),
+      ]);
+    } finally {
+      if (originalLettaHome === undefined) {
+        delete process.env.LETTA_HOME;
+      } else {
+        process.env.LETTA_HOME = originalLettaHome;
+      }
+      await rm(cronHome, { recursive: true, force: true });
+    }
   });
 
   test("consumeQueuedTurn builds a user turn from a mod_continue-only batch", () => {
@@ -2494,6 +2583,94 @@ describe("listen-client multi-worker concurrency", () => {
         otid: "cm-user-otid",
       }),
     ]);
+  });
+
+  test("handleIncomingMessage writes cron turn and backend run lifecycle without prompt text", async () => {
+    const originalLettaHome = process.env.LETTA_HOME;
+    const cronHome = await mkdtemp(join(tmpdir(), "letta-cron-lifecycle-"));
+    try {
+      process.env.LETTA_HOME = cronHome;
+      const agentId = "agent-cron-lifecycle";
+      const conversationId = "conv-cron-lifecycle";
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        agentId,
+        conversationId,
+      );
+      const socket = new MockSocket();
+      drainRunIdsByConversation.set(conversationId, ["backend-run-cron-1"]);
+
+      await __listenClientTestUtils.handleIncomingMessage(
+        {
+          type: "message",
+          agentId,
+          conversationId,
+          cronRuns: [
+            {
+              cronTaskId: "task-cron-lifecycle",
+              cronRunId: "cron-run-lifecycle",
+              queueItemId: "q-cron-lifecycle",
+              batchId: "batch-cron-lifecycle",
+              agentId,
+              conversationId,
+            },
+          ],
+          messages: [
+            {
+              role: "user",
+              content: "secret prompt text must not be logged",
+            },
+          ],
+        },
+        socket as unknown as WebSocket,
+        runtime,
+        undefined,
+        "conn-cron-lifecycle",
+        "batch-cron-lifecycle",
+      );
+
+      const logPath = getCronRunLogPath("task-cron-lifecycle");
+      const entries = readCronRunLogEntries(logPath, {
+        jobId: "task-cron-lifecycle",
+        limit: 10,
+      });
+      expect(entries.map((entry) => entry.action)).toEqual([
+        "turn_started",
+        "backend_run_started",
+        "completed",
+      ]);
+      expect(entries).toEqual([
+        expect.objectContaining({
+          action: "turn_started",
+          cronRunId: "cron-run-lifecycle",
+          queueItemId: "q-cron-lifecycle",
+          batchId: "batch-cron-lifecycle",
+        }),
+        expect.objectContaining({
+          action: "backend_run_started",
+          cronRunId: "cron-run-lifecycle",
+          backendRunId: "backend-run-cron-1",
+          runId: "backend-run-cron-1",
+        }),
+        expect.objectContaining({
+          action: "completed",
+          cronRunId: "cron-run-lifecycle",
+          backendRunId: "backend-run-cron-1",
+          runId: "backend-run-cron-1",
+          stopReason: "end_turn",
+        }),
+      ]);
+      const rawLog = await readFile(logPath, "utf-8");
+      expect(rawLog).not.toContain("secret prompt text");
+    } finally {
+      if (originalLettaHome === undefined) {
+        delete process.env.LETTA_HOME;
+      } else {
+        process.env.LETTA_HOME = originalLettaHome;
+      }
+      await rm(cronHome, { recursive: true, force: true });
+    }
   });
 
   test("secret_apply refreshes the next user payload for the same conversation", async () => {

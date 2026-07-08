@@ -65,6 +65,8 @@ export type CronPromptQueueItem = QueueItemBase & {
   text: string;
   /** Cron task ID for tracing. */
   cronTaskId: string;
+  /** Durable per-fire schedule run ID. Required for scheduler-created items. */
+  cronRunId?: string;
 };
 
 export type ModContinueQueueItem = QueueItemBase & {

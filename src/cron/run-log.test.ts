@@ -98,9 +98,12 @@ describe("cron run log", () => {
     appendCronRunLog(logPath, {
       ts: 1000,
       jobId: "job-1",
-      action: "finished",
+      action: "dequeued",
       status: "ok",
+      cronRunId: "cron-run-1",
+      batchId: "batch-1",
       queueItemId: "q-1",
+      queueLenAfter: 0,
     });
     appendCronRunLog(logPath, {
       ts: 2000,
@@ -126,13 +129,19 @@ describe("cron run log", () => {
       limit: 10,
     });
     expect(entries.map((entry) => entry.ts)).toEqual([1000, 2000]);
-    expect(entries[0]?.queueItemId).toBe("q-1");
+    expect(entries[0]).toMatchObject({
+      action: "dequeued",
+      cronRunId: "cron-run-1",
+      batchId: "batch-1",
+      queueItemId: "q-1",
+      queueLenAfter: 0,
+    });
     expect(entries[1]?.error).toBe("boom");
     expect(entries[1]?.outcome).toBe("failed");
     expect(entries[1]?.reason).toBe("queue_full");
   });
 
-  test("reads newest page first and filters by run id", () => {
+  test("reads newest page first and filters by public, backend, or cron run id", () => {
     const logPath = getCronRunLogPath("job-1");
     appendCronRunLog(logPath, {
       ts: 1000,
@@ -140,6 +149,8 @@ describe("cron run log", () => {
       action: "finished",
       status: "ok",
       runId: "run-1",
+      backendRunId: "run-1",
+      cronRunId: "cron-run-1",
     });
     appendCronRunLog(logPath, {
       ts: 2000,
@@ -147,16 +158,51 @@ describe("cron run log", () => {
       action: "finished",
       status: "error",
       runId: "run-2",
+      backendRunId: "run-2",
+      cronRunId: "cron-run-2",
+    });
+    appendCronRunLog(logPath, {
+      ts: 3000,
+      jobId: "job-1",
+      action: "backend_run_started",
+      status: "ok",
+      backendRunId: "backend-only-3",
+      cronRunId: "cron-run-3",
     });
 
     expect(readCronRunLogEntriesPage(logPath, { limit: 1 })).toMatchObject({
-      total: 2,
+      total: 3,
       hasMore: true,
       nextOffset: 1,
-      entries: [{ ts: 2000 }],
+      entries: [{ ts: 3000 }],
     });
     expect(
       readCronRunLogEntriesPage(logPath, { runId: "run-1" }).entries,
     ).toEqual([expect.objectContaining({ runId: "run-1", ts: 1000 })]);
+    expect(
+      readCronRunLogEntriesPage(logPath, { runId: "backend-only-3" }).entries,
+    ).toEqual([
+      expect.objectContaining({
+        action: "backend_run_started",
+        backendRunId: "backend-only-3",
+        ts: 3000,
+      }),
+    ]);
+    expect(
+      readCronRunLogEntriesPage(logPath, { backendRunId: "backend-only-3" })
+        .entries,
+    ).toEqual([
+      expect.objectContaining({
+        action: "backend_run_started",
+        backendRunId: "backend-only-3",
+        ts: 3000,
+      }),
+    ]);
+    expect(
+      readCronRunLogEntriesPage(logPath, { runId: "cron-run-2" }).entries,
+    ).toEqual([expect.objectContaining({ cronRunId: "cron-run-2", ts: 2000 })]);
+    expect(
+      readCronRunLogEntriesPage(logPath, { cronRunId: "cron-run-3" }).entries,
+    ).toEqual([expect.objectContaining({ cronRunId: "cron-run-3", ts: 3000 })]);
   });
 });

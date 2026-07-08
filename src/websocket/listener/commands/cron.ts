@@ -200,6 +200,8 @@ export async function handleCronCommand(
           limit: parsed.limit,
           offset: parsed.offset,
           runId: parsed.run_id,
+          backendRunId: parsed.backend_run_id,
+          cronRunId: parsed.cron_run_id,
         },
       );
       safeSocketSend(

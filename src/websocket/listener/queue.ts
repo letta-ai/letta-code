@@ -2,6 +2,10 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import { buildClientSkillsPayload } from "@/agent/client-skills";
 import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
 import type { ChannelTurnSource } from "@/channels/types";
+import {
+  type CronRunLogRunEntryInput,
+  safeAppendCronRunLogForCronRun,
+} from "@/cron/run-log";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -33,6 +37,7 @@ import { resolveRuntimeScope } from "./scope";
 import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
+  CronQueuedTurnRun,
   InboundMessagePayload,
   IncomingMessage,
   StartListenerOptions,
@@ -72,6 +77,62 @@ function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
     (a.agentId ?? null) === (b.agentId ?? null) &&
     (a.conversationId ?? null) === (b.conversationId ?? null)
   );
+}
+
+function isCronPromptWithRunId(item: QueueItem): item is Extract<
+  QueueItem,
+  { kind: "cron_prompt" }
+> & {
+  cronRunId: string;
+} {
+  return item.kind === "cron_prompt" && typeof item.cronRunId === "string";
+}
+
+export function recordCronQueueLifecycleForItems(
+  items: readonly QueueItem[],
+  entry: CronRunLogRunEntryInput,
+): void {
+  for (const item of items) {
+    if (!isCronPromptWithRunId(item)) {
+      continue;
+    }
+    safeAppendCronRunLogForCronRun(
+      {
+        jobId: item.cronTaskId,
+        cronRunId: item.cronRunId,
+        queueItemId: item.id,
+        agentId: item.agentId,
+        conversationId: item.conversationId,
+      },
+      {
+        ...entry,
+        queueItemId: entry.queueItemId ?? item.id,
+        agentId: entry.agentId ?? item.agentId,
+        conversationId: entry.conversationId ?? item.conversationId,
+      },
+    );
+  }
+}
+
+function collectCronQueuedTurnRuns(
+  batch: DequeuedBatch,
+): CronQueuedTurnRun[] | undefined {
+  const runs: CronQueuedTurnRun[] = [];
+  for (const item of batch.items) {
+    if (!isCronPromptWithRunId(item)) {
+      continue;
+    }
+    runs.push({
+      cronTaskId: item.cronTaskId,
+      cronRunId: item.cronRunId,
+      queueItemId: item.id,
+      batchId: batch.batchId,
+      agentId: item.agentId,
+      conversationId: item.conversationId,
+      enqueuedAt: item.enqueuedAt,
+    });
+  }
+  return runs.length > 0 ? runs : undefined;
 }
 
 function mergeDequeuedBatchContent(
@@ -259,6 +320,7 @@ function buildQueuedTurnMessage(
   batch: DequeuedBatch,
 ): IncomingMessage | null {
   const channelTurnSources = collectBatchChannelTurnSources(runtime, batch);
+  const cronRuns = collectCronQueuedTurnRuns(batch);
   const actingUserId = pickBatchActingUserId(batch.items);
   const primaryItem = getPrimaryQueueMessageItem(batch.items);
   if (!primaryItem) {
@@ -280,6 +342,7 @@ function buildQueuedTurnMessage(
       agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
       conversationId: scopeItem?.conversationId ?? runtime.conversationId,
       ...(channelTurnSources ? { channelTurnSources } : {}),
+      ...(cronRuns ? { cronRuns } : {}),
       ...(actingUserId ? { actingUserId } : {}),
       messages: [
         {
@@ -324,6 +387,7 @@ function buildQueuedTurnMessage(
   return {
     ...template,
     ...(channelTurnSources ? { channelTurnSources } : {}),
+    ...(cronRuns ? { cronRuns } : {}),
     ...(actingUserId ? { actingUserId } : {}),
     messages,
   };
@@ -425,6 +489,14 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     return null;
   }
 
+  recordCronQueueLifecycleForItems(dequeuedBatch.items, {
+    action: "dequeued",
+    status: "ok",
+    batchId: dequeuedBatch.batchId,
+    queueLenAfter: dequeuedBatch.queueLenAfter,
+    mergedCount: dequeuedBatch.mergedCount,
+  });
+
   const queuedTurn = buildQueuedTurnMessage(runtime, dequeuedBatch);
   if (!queuedTurn) {
     return null;
@@ -471,11 +543,22 @@ async function drainQueuedMessages(
         runtime.listener !== getActiveRuntime() ||
         runtime.listener.intentionallyClosed
       ) {
+        recordCronQueueLifecycleForItems(runtime.queueRuntime.peek(), {
+          action: "listener_closed_before_drain",
+          status: "skipped",
+          queueLen: runtime.queueRuntime.length,
+        });
         return;
       }
 
       const blockedReason = computeListenerQueueBlockedReason(runtime);
       if (blockedReason) {
+        recordCronQueueLifecycleForItems(runtime.queueRuntime.peek(), {
+          action: "blocked",
+          status: "skipped",
+          blockedReason,
+          queueLen: runtime.queueRuntime.length,
+        });
         runtime.queueRuntime.tryDequeue(blockedReason);
         return;
       }
@@ -567,12 +650,24 @@ export function scheduleQueuePump(
         runtime.listener !== getActiveRuntime() ||
         runtime.listener.intentionallyClosed
       ) {
+        recordCronQueueLifecycleForItems(runtime.queueRuntime.peek(), {
+          action: "listener_closed_before_drain",
+          status: "skipped",
+          queueLen: runtime.queueRuntime.length,
+        });
         return;
       }
       await drainQueuedMessages(runtime, socket, opts, processQueuedTurn);
     })
     .catch((error: unknown) => {
       runtime.queuePumpScheduled = false;
+      recordCronQueueLifecycleForItems(runtime.queueRuntime.peek(), {
+        action: "pump_failed",
+        status: "error",
+        error: error instanceof Error ? error.message : String(error),
+        errorClass: error instanceof Error ? error.name : undefined,
+        queueLen: runtime.queueRuntime.length,
+      });
       trackBoundaryError({
         errorType: "listener_queue_pump_failed",
         error,

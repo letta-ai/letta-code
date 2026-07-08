@@ -23,27 +23,80 @@ import {
 } from "./cron-file";
 
 export type CronRunLogStatus = "ok" | "error" | "skipped";
+export type CronRunLogAction =
+  | "fire_started"
+  | "enqueued"
+  | "enqueue_failed"
+  | "blocked"
+  | "dequeued"
+  | "turn_started"
+  | "backend_run_started"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "dropped"
+  | "cleared"
+  | "removed"
+  | "pump_failed"
+  | "listener_closed_before_drain"
+  | "finished";
 
 export interface CronRunLogEntry {
   ts: number;
   jobId: string;
-  action: "finished";
+  action: CronRunLogAction;
   status?: CronRunLogStatus;
   outcome?: CronRunOutcome;
   reason?: CronRunReason;
   error?: string;
+  errorClass?: string;
+  errorMessage?: string;
   summary?: string;
   agentId?: string;
   conversationId?: string;
+  cronRunId?: string;
   runId?: string;
+  backendRunId?: string;
+  batchId?: string;
   runAtMs?: number;
   queueItemId?: string;
+  queueLen?: number;
+  queueLenAfter?: number;
+  mergedCount?: number;
+  blockedReason?: string;
+  droppedReason?: string;
+  clearedReason?: string;
+  clearedCount?: number;
+  removedReason?: string;
+  stopReason?: string;
+  schedulerPid?: number;
+  schedulerToken?: string;
+  schedulerStartedAt?: string;
   scheduledFor?: string | null;
   firedAt?: string;
   missedCount?: number;
   windowStart?: string;
   windowEnd?: string;
 }
+
+const CRON_RUN_LOG_ACTIONS = new Set<CronRunLogAction>([
+  "fire_started",
+  "enqueued",
+  "enqueue_failed",
+  "blocked",
+  "dequeued",
+  "turn_started",
+  "backend_run_started",
+  "completed",
+  "failed",
+  "cancelled",
+  "dropped",
+  "cleared",
+  "removed",
+  "pump_failed",
+  "listener_closed_before_drain",
+  "finished",
+]);
 
 export interface CronRunLogPage {
   entries: CronRunLogEntry[];
@@ -164,7 +217,10 @@ function parseAllRunLogEntries(raw: string, jobId?: string): CronRunLogEntry[] {
       if (!obj || typeof obj !== "object") {
         continue;
       }
-      if (obj.action !== "finished") {
+      if (
+        typeof obj.action !== "string" ||
+        !CRON_RUN_LOG_ACTIONS.has(obj.action as CronRunLogAction)
+      ) {
         continue;
       }
       if (typeof obj.jobId !== "string" || obj.jobId.trim().length === 0) {
@@ -179,17 +235,34 @@ function parseAllRunLogEntries(raw: string, jobId?: string): CronRunLogEntry[] {
       entries.push({
         ts: obj.ts,
         jobId: obj.jobId,
-        action: "finished",
+        action: obj.action as CronRunLogAction,
         status: obj.status,
         outcome: obj.outcome,
         reason: obj.reason,
         error: obj.error,
+        errorClass: obj.errorClass,
+        errorMessage: obj.errorMessage,
         summary: obj.summary,
         agentId: obj.agentId,
         conversationId: obj.conversationId,
+        cronRunId: obj.cronRunId,
         runId: obj.runId,
+        backendRunId: obj.backendRunId,
+        batchId: obj.batchId,
         runAtMs: obj.runAtMs,
         queueItemId: obj.queueItemId,
+        queueLen: obj.queueLen,
+        queueLenAfter: obj.queueLenAfter,
+        mergedCount: obj.mergedCount,
+        blockedReason: obj.blockedReason,
+        droppedReason: obj.droppedReason,
+        clearedReason: obj.clearedReason,
+        clearedCount: obj.clearedCount,
+        removedReason: obj.removedReason,
+        stopReason: obj.stopReason,
+        schedulerPid: obj.schedulerPid,
+        schedulerToken: obj.schedulerToken,
+        schedulerStartedAt: obj.schedulerStartedAt,
         scheduledFor: obj.scheduledFor,
         firedAt: obj.firedAt,
         missedCount: obj.missedCount,
@@ -217,17 +290,48 @@ export function readCronRunLogEntries(
   return parseAllRunLogEntries(raw, opts?.jobId).slice(-limit);
 }
 
+export interface CronRunLogPageOptions {
+  limit?: number;
+  offset?: number;
+  jobId?: string;
+  /** Generic filter that matches public runId, backendRunId, or cronRunId. */
+  runId?: string;
+  /** Exact backend run id filter. */
+  backendRunId?: string;
+  /** Exact per-fire cron run id filter. */
+  cronRunId?: string;
+}
+
 export function readCronRunLogEntriesPage(
   filePath: string,
-  opts?: { limit?: number; offset?: number; jobId?: string; runId?: string },
+  opts?: CronRunLogPageOptions,
 ): CronRunLogPage {
   const limit = Math.max(1, Math.min(200, Math.floor(opts?.limit ?? 50)));
   const offset = Math.max(0, Math.floor(opts?.offset ?? 0));
+  const genericRunId = opts?.runId?.trim();
+  const backendRunId = opts?.backendRunId?.trim();
+  const cronRunId = opts?.cronRunId?.trim();
   const entries = readCronRunLogEntries(filePath, {
     limit: 5000,
     jobId: opts?.jobId,
   })
-    .filter((entry) => !opts?.runId || entry.runId === opts.runId)
+    .filter((entry) => {
+      if (
+        genericRunId &&
+        entry.runId !== genericRunId &&
+        entry.backendRunId !== genericRunId &&
+        entry.cronRunId !== genericRunId
+      ) {
+        return false;
+      }
+      if (backendRunId && entry.backendRunId !== backendRunId) {
+        return false;
+      }
+      if (cronRunId && entry.cronRunId !== cronRunId) {
+        return false;
+      }
+      return true;
+    })
     .toSorted((a, b) => b.ts - a.ts);
   const pageEntries = entries.slice(offset, offset + limit);
   const nextOffset = offset + pageEntries.length;
@@ -241,19 +345,57 @@ export function readCronRunLogEntriesPage(
   };
 }
 
+export type CronRunLogTaskEntryInput = Omit<
+  CronRunLogEntry,
+  "action" | "agentId" | "jobId" | "ts"
+> & {
+  action?: CronRunLogAction;
+  ts?: number;
+};
+
 export function appendCronRunLogForTask(
   task: CronTask,
-  entry: Omit<CronRunLogEntry, "action" | "agentId" | "jobId" | "ts"> & {
-    ts?: number;
-  },
+  entry: CronRunLogTaskEntryInput,
 ): void {
+  const { action, ts, ...rest } = entry;
   appendCronRunLog(getCronRunLogPath(task.id), {
-    ts: entry.ts ?? Date.now(),
+    ts: ts ?? Date.now(),
     jobId: task.id,
-    action: "finished",
+    action: action ?? "finished",
     agentId: task.agent_id,
     conversationId: task.conversation_id,
-    ...entry,
+    ...rest,
+  });
+}
+
+export type CronRunLogRunReference = {
+  jobId: string;
+  cronRunId: string;
+  queueItemId?: string;
+  agentId?: string;
+  conversationId?: string;
+};
+
+export type CronRunLogRunEntryInput = Omit<
+  CronRunLogEntry,
+  "jobId" | "ts" | "cronRunId"
+> & {
+  ts?: number;
+};
+
+export function appendCronRunLogForCronRun(
+  ref: CronRunLogRunReference,
+  entry: CronRunLogRunEntryInput,
+): void {
+  const { ts, ...rest } = entry;
+  appendCronRunLog(getCronRunLogPath(ref.jobId), {
+    ts: ts ?? Date.now(),
+    jobId: ref.jobId,
+    cronRunId: ref.cronRunId,
+    queueItemId: ref.queueItemId,
+    agentId: ref.agentId,
+    conversationId: ref.conversationId,
+    ...rest,
   });
 }
 
@@ -266,6 +408,20 @@ export function safeAppendCronRunLogForTask(
   } catch (err) {
     console.error(
       `[Cron] Error writing run log for task ${task.id}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+export function safeAppendCronRunLogForCronRun(
+  ref: CronRunLogRunReference,
+  entry: Parameters<typeof appendCronRunLogForCronRun>[1],
+): void {
+  try {
+    appendCronRunLogForCronRun(ref, entry);
+  } catch (err) {
+    console.error(
+      `[Cron] Error writing run log for cron run ${ref.cronRunId}:`,
       err instanceof Error ? err.message : err,
     );
   }
