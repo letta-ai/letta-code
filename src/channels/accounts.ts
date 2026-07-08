@@ -129,11 +129,12 @@ function getConfigSchemaSecretFieldPaths(channelId: string): string[] {
 }
 
 function getSecretFieldPaths(account: ChannelAccount): string[] {
+  const persistedRefPaths = Object.keys(getSecretRefs(account));
   if (isSlackChannelAccount(account)) {
-    return ["botToken", "appToken"];
+    return [...new Set(["botToken", "appToken", ...persistedRefPaths])];
   }
   if (isTelegramChannelAccount(account) || isDiscordChannelAccount(account)) {
-    return ["token"];
+    return [...new Set(["token", ...persistedRefPaths])];
   }
   if (
     isCustomChannelAccount(account) ||
@@ -143,10 +144,11 @@ function getSecretFieldPaths(account: ChannelAccount): string[] {
       ...new Set([
         ...FALLBACK_CONFIG_SECRET_FIELD_PATHS,
         ...getConfigSchemaSecretFieldPaths(account.channel),
+        ...persistedRefPaths,
       ]),
     ];
   }
-  return [];
+  return persistedRefPaths;
 }
 
 function getSecretValueFromAccount(

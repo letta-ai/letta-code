@@ -394,6 +394,72 @@ describe("channel credential storage", () => {
     expect(persisted.accounts[0]?.config).not.toHaveProperty("api_key", "");
   });
 
+  test("persisted plugin secret refs hydrate and delete without plugin metadata", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    mkdirSync(join(channelsRoot, "schemasecret"), { recursive: true });
+    writeFileSync(
+      join(channelsRoot, "schemasecret", "accounts.json"),
+      `${JSON.stringify(
+        {
+          accounts: [
+            {
+              channel: "schemasecret",
+              accountId: "schema-account",
+              enabled: true,
+              dmPolicy: "pairing",
+              allowedUsers: [],
+              config: {
+                endpoint: "https://example.test/webhook",
+              },
+              __letta_secret_refs: {
+                "config.api_key": true,
+              },
+              createdAt: "2026-05-26T00:00:00.000Z",
+              updatedAt: "2026-05-26T00:00:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    secrets.set(
+      buildChannelSecretName(
+        "schemasecret",
+        "schema-account",
+        "config.api_key",
+      ),
+      "schema-secret",
+    );
+    __testClearUserChannelPluginCache();
+    clearChannelAccountStores();
+
+    const hydrated = (await getChannelAccountWithSecrets(
+      "schemasecret",
+      "schema-account",
+    )) as CustomChannelAccount | null;
+
+    expect(hydrated?.config).toEqual(
+      expect.objectContaining({
+        endpoint: "https://example.test/webhook",
+        api_key: "schema-secret",
+      }),
+    );
+
+    expect(
+      await removeChannelAccountWithSecrets("schemasecret", "schema-account"),
+    ).toBe(true);
+    expect(
+      secrets.has(
+        buildChannelSecretName(
+          "schemasecret",
+          "schema-account",
+          "config.api_key",
+        ),
+      ),
+    ).toBe(false);
+  });
+
   test("auto falls back to file mode when keyring is unavailable", async () => {
     __setChannelCredentialsStoreModeForTests("auto");
     __setChannelKeychainAvailableForTests(false);
