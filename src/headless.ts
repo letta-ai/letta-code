@@ -2440,13 +2440,7 @@ ${SYSTEM_REMINDER_CLOSE}
       };
       writeWireMessage(resultEvent);
     } else {
-      await writeFinalHeadlessStdout(
-        `${resultText}\n\n${formatAgentReplyMetadata({
-          agentId: agent.id,
-          conversationId,
-          environment: responseEnvironment,
-        })}\n`,
-      );
+      await writeFinalHeadlessStdout(`${resultText}\n`);
     }
 
     await exitHeadless(0, "headless_environment_message_complete");
