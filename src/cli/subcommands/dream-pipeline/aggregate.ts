@@ -141,7 +141,13 @@ export async function runDreamAggregation(
 
     return await new Promise<DreamAggregationOutcome>((resolve) => {
       spawnBackgroundSubagentTask({
-        subagentType: "general-purpose",
+        // The deployed agent keeps its own (default + persona) system prompt;
+        // the subagent TYPE controls the harness side. "reflection" carries
+        // the memory-subagent launch profile, which is what points the child's
+        // $MEMORY_DIR (and cwd, and sandbox) at the memory worktree — without
+        // it the aggregator has no harness-provided memory dir and can end up
+        // editing the real memfs directly, bypassing finalize/recompile.
+        subagentType: "reflection",
         prompt,
         description: "Dream: aggregate reflections into memory",
         silentCompletion: true,
