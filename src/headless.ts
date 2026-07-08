@@ -354,6 +354,7 @@ export const __headlessTestUtils = {
   contentToTaskNotificationText,
   toBidirectionalQueuedInput,
   prepareHeadlessToolExecutionContext,
+  waitForEnvironmentAssistantMessage,
 };
 
 type ReflectionOverrides = {
@@ -737,21 +738,54 @@ function messageTime(message: LettaMessage): number {
   return date ? new Date(date).getTime() : 0;
 }
 
+function agentLastRunCompletionMs(agent: AgentState): number | null {
+  const raw = (agent as { last_run_completion?: unknown }).last_run_completion;
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function agentLastStopReason(agent: AgentState): StopReasonType | null {
+  const raw = (agent as { last_stop_reason?: unknown }).last_stop_reason;
+  return typeof raw === "string" && raw.length > 0
+    ? (raw as StopReasonType)
+    : null;
+}
+
 async function waitForEnvironmentAssistantMessage(params: {
   backend: ReturnType<typeof getBackend>;
   agentId: string;
   conversationId: string;
   startedAtMs: number;
+  baselineLastRunCompletionMs?: number | null;
   timeoutMs?: number;
   pollIntervalMs?: number;
-}): Promise<string> {
+}): Promise<{ text: string; stopReason: StopReasonType | null }> {
   const timeoutMs = params.timeoutMs ?? 10 * 60_000;
   const pollIntervalMs = params.pollIntervalMs ?? 1_000;
   const deadline = Date.now() + timeoutMs;
   let lastText = "";
-  let stableCount = 0;
+  let postCompletionStableCount = 0;
+  let observedCompletion = false;
+  let observedStopReason: StopReasonType | null = null;
 
   while (Date.now() < deadline) {
+    const freshAgent = await params.backend.retrieveAgent(params.agentId);
+    const completionMs = agentLastRunCompletionMs(freshAgent);
+    const baselineCompletionMs = params.baselineLastRunCompletionMs ?? null;
+    const wasObservedCompletion = observedCompletion;
+    if (
+      completionMs !== null &&
+      (baselineCompletionMs === null || completionMs > baselineCompletionMs) &&
+      completionMs >= params.startedAtMs - 5_000
+    ) {
+      observedCompletion = true;
+      observedStopReason = agentLastStopReason(freshAgent);
+      if (!wasObservedCompletion) {
+        postCompletionStableCount = 0;
+      }
+    }
+
     const page =
       params.conversationId === "default"
         ? await params.backend.listAgentMessages(params.agentId, {
@@ -776,21 +810,23 @@ async function waitForEnvironmentAssistantMessage(params: {
     const text = assistant ? extractMessageText(assistant).trim() : "";
     if (text.length > 0) {
       if (text === lastText) {
-        stableCount += 1;
+        if (observedCompletion) postCompletionStableCount += 1;
       } else {
         lastText = text;
-        stableCount = 1;
+        postCompletionStableCount = observedCompletion ? 1 : 0;
       }
-      if (stableCount >= 2) {
-        return text;
+      if (observedCompletion && postCompletionStableCount >= 2) {
+        return { text, stopReason: observedStopReason };
       }
     }
 
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
-  if (lastText) return lastText;
-  throw new Error("Timed out waiting for environment response");
+  if (observedCompletion && lastText) {
+    return { text: lastText, stopReason: observedStopReason };
+  }
+  throw new Error("Timed out waiting for environment turn completion");
 }
 
 type ReplyEnvironmentMetadata =
@@ -2261,7 +2297,6 @@ ${SYSTEM_REMINDER_CLOSE}
   );
 
   if (usesRemoteEnvironment) {
-    const startedAtMs = Date.now();
     const environmentSelector = String(explicitEnvironmentSelector);
     const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
     const environmentRouting = useCloudSandbox
@@ -2332,6 +2367,8 @@ ${SYSTEM_REMINDER_CLOSE}
       }
       await exitHeadless(1, "headless_environment_unsupported");
     }
+    const startedAtMs = Date.now();
+    const baselineLastRunCompletionMs = agentLastRunCompletionMs(agent);
     await sendEnvironmentMessage(connectionId, {
       agentId: agent.id,
       conversationId,
@@ -2345,12 +2382,14 @@ ${SYSTEM_REMINDER_CLOSE}
       ],
     });
 
-    const resultText = await waitForEnvironmentAssistantMessage({
+    const environmentResult = await waitForEnvironmentAssistantMessage({
       backend,
       agentId: agent.id,
       conversationId,
       startedAtMs,
+      baselineLastRunCompletionMs,
     });
+    const resultText = environmentResult.text;
     const stats = sessionStats.getSnapshot();
 
     if (outputFormat === "json") {
@@ -2368,6 +2407,10 @@ ${SYSTEM_REMINDER_CLOSE}
             conversation_id: conversationId,
             environment: responseEnvironment,
             usage: null,
+            ...(environmentResult.stopReason &&
+            environmentResult.stopReason !== "end_turn"
+              ? { stop_reason: environmentResult.stopReason }
+              : {}),
           },
           null,
           2,
@@ -2390,6 +2433,10 @@ ${SYSTEM_REMINDER_CLOSE}
         run_ids: [],
         usage: null,
         uuid: `result-${agent.id}-${Date.now()}`,
+        ...(environmentResult.stopReason &&
+        environmentResult.stopReason !== "end_turn"
+          ? { stop_reason: environmentResult.stopReason }
+          : {}),
       };
       writeWireMessage(resultEvent);
     } else {
