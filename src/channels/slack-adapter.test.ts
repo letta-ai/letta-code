@@ -219,6 +219,9 @@ class FakeSlackWriteClient {
 const resolveSlackInboundAttachmentsMock = mock(
   async (): Promise<ChannelMessageAttachment[]> => [],
 );
+const resolveSlackCurrentMessageAttachmentsMock = mock(
+  async (): Promise<ChannelMessageAttachment[]> => [],
+);
 const resolveSlackThreadStarterMock = mock(
   async (): Promise<{
     text: string;
@@ -271,6 +274,8 @@ mock.module("./slack/runtime", () => ({
 
 mock.module("./slack/media", () => ({
   resolveSlackChannelHistory: resolveSlackChannelHistoryMock,
+  resolveSlackCurrentMessageAttachments:
+    resolveSlackCurrentMessageAttachmentsMock,
   resolveSlackInboundAttachments: resolveSlackInboundAttachmentsMock,
   resolveSlackThreadStarter: resolveSlackThreadStarterMock,
   resolveSlackThreadHistory: resolveSlackThreadHistoryMock,
@@ -309,6 +314,8 @@ beforeEach(() => {
   FakeSlackWriteClient.disableStartStream = false;
   resolveSlackInboundAttachmentsMock.mockReset();
   resolveSlackInboundAttachmentsMock.mockImplementation(async () => []);
+  resolveSlackCurrentMessageAttachmentsMock.mockReset();
+  resolveSlackCurrentMessageAttachmentsMock.mockImplementation(async () => []);
   resolveSlackThreadStarterMock.mockReset();
   resolveSlackThreadStarterMock.mockImplementation(async () => null);
   resolveSlackThreadHistoryMock.mockReset();
@@ -1272,11 +1279,6 @@ test("slack adapter rehydrates bot-authored Slack thread context on existing rou
 
   resolveSlackThreadHistoryMock.mockResolvedValueOnce([
     {
-      text: "Already-delivered human context",
-      userId: "U222",
-      ts: "1712795000.000060",
-    },
-    {
       text: "Automated deployment note since the last human turn",
       botId: "BDEPLOY",
       ts: "1712796000.000070",
@@ -1313,7 +1315,77 @@ test("slack adapter rehydrates bot-authored Slack thread context on existing rou
   ]);
   expect(resolveSlackThreadStarterMock).not.toHaveBeenCalled();
   expect(resolveSlackThreadHistoryMock).toHaveBeenCalledTimes(1);
+  expect(resolveSlackThreadHistoryMock).toHaveBeenCalledWith(
+    expect.objectContaining({ include: "bot" }),
+  );
   expect(resolveSlackChannelHistoryMock).not.toHaveBeenCalled();
+});
+
+test("slack adapter hydrates exact thread_broadcast attachments before prompt formatting", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+
+  resolveSlackCurrentMessageAttachmentsMock.mockResolvedValueOnce([
+    {
+      id: "FZIP",
+      name: "source.zip",
+      mimeType: "application/zip",
+      kind: "file",
+      localPath: "/tmp/source.zip",
+    },
+  ]);
+
+  const prepared = await adapter.prepareInboundMessage?.(
+    {
+      channel: "slack",
+      accountId: "slack-test-account",
+      chatId: "C123",
+      chatLabel: "#random",
+      senderId: "U123",
+      senderName: "Dorota",
+      text: "broadcasting files",
+      timestamp: 1712800000100,
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: false,
+      raw: {
+        type: "message",
+        subtype: "thread_broadcast",
+        channel: "C123",
+        user: "U123",
+        ts: "1712800000.000100",
+        thread_ts: "1712790000.000050",
+      },
+    },
+    { isFirstRouteTurn: false },
+  );
+
+  expect(prepared?.attachments).toEqual([
+    expect.objectContaining({ id: "FZIP", localPath: "/tmp/source.zip" }),
+  ]);
+  expect(resolveSlackCurrentMessageAttachmentsMock).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channelId: "C123",
+      threadTs: "1712790000.000050",
+      messageTs: "1712800000.000100",
+      accountId: "slack-test-account",
+      token: "xoxb-test-token-1234567890",
+    }),
+  );
+  expect(resolveSlackThreadHistoryMock).toHaveBeenCalledWith(
+    expect.objectContaining({ include: "bot" }),
+  );
 });
 
 test("slack adapter hydrates recent channel context, including bot-authored entries, when a mention creates a new thread", async () => {

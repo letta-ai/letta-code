@@ -48,6 +48,7 @@ import {
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   resolveSlackChannelHistory,
+  resolveSlackCurrentMessageAttachments,
   resolveSlackInboundAttachments,
   resolveSlackThreadHistory,
   resolveSlackThreadStarter,
@@ -342,6 +343,19 @@ function resolveSlackSenderTeamId(value: unknown): string | undefined {
 
 function normalizeSlackText(text: string): string {
   return text.replace(/^(?:\s*<@[A-Z0-9]+>\s*)+/, "").trim();
+}
+
+function shouldHydrateCurrentSlackMessageAttachments(
+  msg: InboundChannelMessage,
+): boolean {
+  if (msg.attachments?.length || msg.chatType !== "channel") {
+    return false;
+  }
+  const raw = asRecord(msg.raw);
+  if (!raw) {
+    return false;
+  }
+  return raw.type === "app_mention" || raw.subtype === "thread_broadcast";
 }
 
 const IGNORED_SLACK_MESSAGE_SUBTYPES = new Set([
@@ -4443,10 +4457,13 @@ export function createSlackAdapter(
         isFirstRouteTurn &&
         msg.isMention === true &&
         msg.threadId === msg.messageId;
+      const shouldHydrateCurrentAttachments =
+        shouldHydrateCurrentSlackMessageAttachments(msg);
 
       if (
         !shouldHydrateExistingThreadContext &&
-        !shouldHydrateChannelBootstrapContext
+        !shouldHydrateChannelBootstrapContext &&
+        !shouldHydrateCurrentAttachments
       ) {
         return msg;
       }
@@ -4457,6 +4474,15 @@ export function createSlackAdapter(
         token: config.botToken,
         transcribeVoice: config.transcribeVoice === true,
       };
+      const currentAttachments = shouldHydrateCurrentAttachments
+        ? await resolveSlackCurrentMessageAttachments({
+            channelId: msg.chatId,
+            threadTs: msg.threadId,
+            messageTs: msg.messageId,
+            client: slackApp.client,
+            ...threadAttachmentParams,
+          })
+        : [];
       const starter =
         shouldHydrateExistingThreadContext && isFirstRouteTurn
           ? await resolveSlackThreadStarter({
@@ -4473,6 +4499,7 @@ export function createSlackAdapter(
             client: slackApp.client,
             currentMessageTs: msg.messageId,
             limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
+            include: !isFirstRouteTurn ? "bot" : "all",
             ...threadAttachmentParams,
           })
         : await resolveSlackChannelHistory({
@@ -4482,16 +4509,9 @@ export function createSlackAdapter(
             limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
             ...threadAttachmentParams,
           });
-      // Existing routed thread turns already deliver human messages into the
-      // Letta conversation. Bot-authored Slack messages are intentionally not
-      // runnable input, so rehydrate those skipped entries as context on the
-      // next human turn instead of waking the agent for every bot event.
-      const history =
-        shouldHydrateExistingThreadContext && !isFirstRouteTurn
-          ? resolvedHistory.filter((entry) => isNonEmptyString(entry.botId))
-          : resolvedHistory;
+      const history = resolvedHistory;
 
-      if (!starter && history.length === 0) {
+      if (!starter && history.length === 0 && currentAttachments.length === 0) {
         return msg;
       }
 
@@ -4526,6 +4546,9 @@ export function createSlackAdapter(
 
       return {
         ...msg,
+        ...(currentAttachments.length > 0
+          ? { attachments: currentAttachments }
+          : {}),
         threadContext: {
           label: shouldHydrateExistingThreadContext
             ? buildSlackThreadLabel(msg, starter?.text)
