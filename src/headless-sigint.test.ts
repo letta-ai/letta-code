@@ -55,6 +55,7 @@ async function runDelayedToolSigintScenario(): Promise<SigintScenarioSummary> {
   tempRoots.push(tmpRoot);
   const homeDir = join(tmpRoot, "home");
   const backendDir = join(tmpRoot, "backend");
+  const delayReadyPath = join(tmpRoot, "delay-ready.txt");
   const markerPath = join(tmpRoot, "late-tool-marker.txt");
   mkdirSync(join(homeDir, ".letta"), { recursive: true });
 
@@ -108,7 +109,8 @@ async function runDelayedToolSigintScenario(): Promise<SigintScenarioSummary> {
         LETTA_BASE_URL: `http://127.0.0.1:${address.port}`,
         LETTA_CODE_DEV_BACKEND_DIR: backendDir,
         LETTA_CODE_FAKE_HEADLESS_TOOL_COMMAND: `printf late-after-sigint > '${markerPath}'`,
-        LETTA_CODE_FAKE_HEADLESS_TOOL_DELAY_MS: "1000",
+        LETTA_CODE_FAKE_HEADLESS_TOOL_DELAY_MS: "5000",
+        LETTA_CODE_FAKE_HEADLESS_DELAY_READY_FILE: delayReadyPath,
         LETTA_CODE_FAKE_HEADLESS_TOOL_DESCRIPTION: "write SIGINT marker",
         LETTA_DESKTOP_MODE: "1",
         LETTA_FS_SANDBOX: "0",
@@ -132,15 +134,13 @@ async function runDelayedToolSigintScenario(): Promise<SigintScenarioSummary> {
 
   child.stdout.on("data", (chunk) => {
     stdout += chunk.toString();
-    if (!sigintSent && stdout.includes('"subtype":"init"')) {
-      setTimeout(sendSigint, 250);
-    }
   });
   child.stderr.on("data", (chunk) => {
     stderr += chunk.toString();
   });
 
-  const fallbackSigint = setTimeout(sendSigint, 3000);
+  const fallbackSigint = setTimeout(sendSigint, 6000);
+  void waitForFile(delayReadyPath, 6000).then(sendSigint, sendSigint);
   const hardTimeout = setTimeout(() => {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL");
@@ -168,6 +168,16 @@ async function runDelayedToolSigintScenario(): Promise<SigintScenarioSummary> {
     stderr,
     telemetryRequests,
   };
+}
+
+async function waitForFile(path: string, timeoutMs: number): Promise<void> {
+  const startedAt = Date.now();
+  while (!existsSync(path)) {
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new Error(`Timed out waiting for ${path}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
 }
 
 function formatSummary(summary: SigintScenarioSummary): string {

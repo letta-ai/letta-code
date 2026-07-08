@@ -1,3 +1,4 @@
+import { writeFileSync } from "node:fs";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
@@ -50,8 +51,20 @@ function createDelayedStream(
   delayMs: number,
 ): Stream<LettaStreamingResponse> {
   const controller = new AbortController();
+  let wroteReadyFile = false;
   const waitForDelay = () =>
     new Promise<boolean>((resolve) => {
+      if (!wroteReadyFile) {
+        wroteReadyFile = true;
+        const readyFile = process.env.LETTA_CODE_FAKE_HEADLESS_DELAY_READY_FILE;
+        if (readyFile) {
+          try {
+            writeFileSync(readyFile, "ready");
+          } catch {
+            // Test signal only; never let it affect the fake backend stream.
+          }
+        }
+      }
       const timeout = setTimeout(() => resolve(false), delayMs);
       controller.signal.addEventListener(
         "abort",
