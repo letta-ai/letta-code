@@ -3437,14 +3437,23 @@ export function createSlackAdapter(
     if (msg.channel !== "slack" || msg.reaction) {
       return;
     }
-    const replyToMessageId = resolveSlackOutboundProgressThreadTs({
+    const anchorTs = resolveSlackOutboundProgressThreadTs({
       threadId: msg.threadId,
       replyToMessageId: msg.replyToMessageId,
     });
-    if (!isNonEmptyString(replyToMessageId)) {
+    if (!isNonEmptyString(anchorTs)) {
       return;
     }
-    const replyKey = `${msg.chatId}:${replyToMessageId}`;
+    // Canonicalize the anchor to its thread root before the card lookup.
+    // Outbound replies can be anchored to a non-root message in the thread
+    // (MessageChannel `replyTo` nulls threadId, and Slack happily threads a
+    // reply-ts `thread_ts` under the parent), while progress cards are always
+    // keyed by the thread root. Any bot message posted into a thread with a
+    // live progress stream must invalidate that stream — the card closes out
+    // above the reply and post-reply work reassembles as a fresh card below
+    // (LET-9524).
+    const rootTs = knownThreadIdsByMessageId.get(anchorTs) ?? anchorTs;
+    const replyKey = `${msg.chatId}:${rootTs}`;
     const cardKey = activeProgressCardKeyByReplyKey.get(replyKey) ?? replyKey;
     const entry = progressCardByReplyKey.get(cardKey);
     if (!entry) {
@@ -4256,6 +4265,18 @@ export function createSlackAdapter(
       ) {
         agentThreadTracker.remember(chatId, outboundThreadId);
       }
+
+      // Direct replies (channel command responses, notices) are bot messages
+      // in the thread like any other: if a live progress stream exists there,
+      // close it out so the spinner never renders above a newer bot message
+      // (LET-9524).
+      await finishSlackProgressCardForOutboundMessage({
+        channel: "slack",
+        chatId,
+        text,
+        threadId: options?.threadId ?? null,
+        replyToMessageId: options?.replyToMessageId,
+      });
     },
 
     async handleControlRequestEvent(

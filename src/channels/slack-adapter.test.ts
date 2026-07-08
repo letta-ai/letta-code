@@ -4127,6 +4127,146 @@ test("slack adapter finishes an active progress card when MessageChannel sends",
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(2);
 });
 
+test("slack adapter closes the active card when the reply is anchored to a non-root message (LET-9524)", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  adapter.onMessage = mock(async () => {});
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000200",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const messageHandler = app?.messageHandler;
+  if (!messageHandler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  // The user's follow-up is a non-root message in the thread; ingestion
+  // remembers its ts → thread-root mapping.
+  await messageHandler({
+    message: {
+      channel: "C123",
+      user: "U123",
+      text: "did it work?",
+      ts: "1712800000.000200",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Running command",
+    toolCallId: "call-1",
+    toolName: "Bash",
+    toolDetails: "bun --version",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+
+  // MessageChannel `replyTo` sends null the threadId and anchor the outbound
+  // message to the replied-to (non-root) ts. The card must still close.
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Yes, it worked.",
+    threadId: null,
+    replyToMessageId: "1712800000.000200",
+  });
+
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    Array<{ channel: string; ts: string; chunks?: unknown[] }>
+  >;
+  expect(stopCalls?.length).toBe(1);
+  expect(stopCalls?.[0]?.[0]).toMatchObject({
+    channel: "C123",
+    ts: "1712800000.000300",
+  });
+
+  // Post-reply work reassembles as a fresh card below the reply.
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-2",
+    toolName: "read_file",
+  });
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(2);
+});
+
+test("slack adapter closes the active card when a direct reply posts into the thread (LET-9524)", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Running command",
+    toolCallId: "call-1",
+    toolName: "Bash",
+    toolDetails: "bun --version",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+
+  await adapter.sendDirectReply("C123", "Model updated.", {
+    threadId: "1712790000.000050",
+  });
+
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledTimes(1);
+});
+
 test("slack adapter suppresses MessageChannel responding rows with an active progress card", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
