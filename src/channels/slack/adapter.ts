@@ -634,6 +634,8 @@ type SlackProgressCardEntry = {
   keepaliveTimer?: ReturnType<typeof setTimeout>;
   /** Proactive status-stream roll timer (Slack hard-caps stream lifetime). */
   streamRollTimer?: ReturnType<typeof setTimeout>;
+  /** Reactive (death-triggered) rolls consumed this turn. */
+  deathRollCount?: number;
   pendingFlush?: Promise<void>;
   requeuedFailedChunks?: boolean;
   updatedAt: number;
@@ -657,6 +659,11 @@ export function resolveSlackProgressUpdateThrottleMs(): number {
 // report ~3 minutes (AuraHQ-ai/aura#1121), so the cap is not a stable
 // constant. Roll status streams well inside the tightest observed value.
 const DEFAULT_SLACK_STATUS_STREAM_ROLL_MS = 150_000;
+
+// Reactive rollover bound per turn (vercel/chat#672 pattern): recovery must
+// not loop if Slack keeps killing fresh streams; past the bound the turn
+// degrades to the edited-message transport instead.
+const SLACK_MAX_DEATH_ROLLS_PER_TURN = 8;
 
 export function resolveSlackStatusStreamRollMs(): number {
   const raw = process.env.LETTA_SLACK_STATUS_STREAM_ROLL_MS;
@@ -899,6 +906,22 @@ function buildSlackLifecycleErrorTaskChunk(
     status: "error",
     details,
   };
+}
+
+/**
+ * Rebuild the full card content for a fresh stream: the current plan title
+ * plus every known task row. Used by reactive rollover so the rich card
+ * survives a mid-turn stream death with its history intact
+ * (vercel/chat#672's "re-seed the latest structured chunk snapshot").
+ */
+function buildSlackTaskSnapshotChunks(
+  entry: SlackProgressCardEntry,
+): SlackStreamChunk[] {
+  const chunks: SlackStreamChunk[] = [buildSlackPlanUpdateChunk(entry)];
+  for (const task of entry.toolTasksById?.values() ?? []) {
+    chunks.push(toSlackTaskUpdateChunk(task));
+  }
+  return chunks;
 }
 
 function formatSlackControlRequestBlocks(
@@ -3282,6 +3305,9 @@ export function createSlackAdapter(
           // leave the red corpse on screen until the next progress event.
           if (!entry.streamDead) {
             scheduleSlackProgressStreamKeepalive(key, entry);
+          } else if (await rollDeadSlackProgressStream(entry)) {
+            resetSlackProgressStreamKeepalive(key, entry);
+            scheduleSlackStatusStreamRoll(key, entry);
           } else {
             await degradeDeadSlackStreamToText(entry);
           }
@@ -3486,6 +3512,69 @@ export function createSlackAdapter(
       );
       return false;
     }
+  }
+
+  /**
+   * Reactive rollover (primary recovery, vercel/chat#671/#672 pattern): when
+   * Slack kills a stream mid-turn — undocumented total-lifetime cap, external
+   * stop — continue the SAME view on a fresh stream in the same thread. The
+   * simple view re-arms with its current title; the card view re-seeds the
+   * full task snapshot so the card survives with history intact. The dead
+   * message is then deleted: its content is fully reproduced by the fresh
+   * stream, and removing it kills the red frozen-card artifact (a dead
+   * plan-only stream is an empty message either way). Bounded per turn so a
+   * pathological kill-loop degrades instead of spinning.
+   */
+  async function rollDeadSlackProgressStream(
+    entry: SlackProgressCardEntry,
+  ): Promise<boolean> {
+    if (
+      entry.status !== "processing" ||
+      !entry.streamDead ||
+      !isNonEmptyString(entry.streamTs) ||
+      (entry.mode !== "stream" && entry.mode !== "status-stream")
+    ) {
+      return false;
+    }
+    if ((entry.deathRollCount ?? 0) >= SLACK_MAX_DEATH_ROLLS_PER_TURN) {
+      return false;
+    }
+    const replyToMessageId = getSlackProgressReplyTs(entry.source);
+    if (!replyToMessageId) {
+      return false;
+    }
+    entry.deathRollCount = (entry.deathRollCount ?? 0) + 1;
+    const oldTs = entry.streamTs;
+    const oldMode = entry.mode;
+    clearSlackStatusStreamRoll(entry);
+    entry.mode = undefined;
+    entry.streamTs = undefined;
+    entry.streamDead = undefined;
+    entry.lastPlanTitle = undefined;
+    const didStart =
+      oldMode === "status-stream"
+        ? await startSlackStatusStream(entry, replyToMessageId)
+        : await startSlackProgressStream(
+            entry,
+            replyToMessageId,
+            buildSlackTaskSnapshotChunks(entry),
+          );
+    if (!didStart) {
+      entry.mode = oldMode;
+      entry.streamTs = oldTs;
+      entry.streamDead = true;
+      return false;
+    }
+    try {
+      const slackClient = await ensureWriteClient();
+      await slackClient.chat.delete?.({
+        channel: entry.source.chatId,
+        ts: oldTs,
+      });
+    } catch {
+      // Best-effort: the fresh stream fully reproduces the content below.
+    }
+    return true;
   }
 
   /**
@@ -3696,7 +3785,10 @@ export function createSlackAdapter(
       }
 
       if (!didSend && entry.streamDead && entry.status === "processing") {
-        didSend = await degradeDeadSlackStreamToText(entry);
+        didSend = await rollDeadSlackProgressStream(entry);
+        if (!didSend) {
+          didSend = await degradeDeadSlackStreamToText(entry);
+        }
       }
 
       delete entry.latestUpdate;
@@ -3982,6 +4074,7 @@ export function createSlackAdapter(
         entry.streamDead = undefined;
         entry.textTs = undefined;
         entry.lastPlanTitle = undefined;
+        entry.deathRollCount = undefined;
         entry.toolTasksById = undefined;
         entry.pendingStreamChunks = undefined;
         entry.toolNamesByCallId = undefined;

@@ -3702,7 +3702,9 @@ test("slack adapter closes cancelled turns without the red error status", async 
   });
 });
 
-test("slack adapter stops appending after the stream leaves streaming state and rewrites at finish", async () => {
+test("slack adapter rolls a dead card stream onto a fresh stream with the task snapshot re-seeded", async () => {
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
+  FakeSlackWriteClient.distinctStreamTs = true;
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -3739,7 +3741,8 @@ test("slack adapter stops appending after the stream leaves streaming state and 
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  // Slack expired the stream mid-turn (e.g. idle timeout).
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  // Slack kills the stream mid-turn (undocumented total-lifetime cap).
   writeClient?.chat.appendStream.mockResolvedValueOnce({
     ok: false,
     error: "message_not_in_streaming_state",
@@ -3755,20 +3758,32 @@ test("slack adapter stops appending after the stream leaves streaming state and 
     toolCallId: "call-2",
     toolName: "grep",
   });
-  const appendCallsAfterDeath =
-    writeClient?.chat.appendStream.mock.calls.length ?? 0;
-  // Death degrades the corpse to the edited-message transport immediately:
-  // the red frozen card becomes a live plain status message (chat.update on
-  // the stream's own ts), so the surface keeps moving mid-turn.
-  expect(writeClient?.chat.update.mock.calls.length ?? 0).toBeGreaterThan(0);
-  const degradeCalls = writeClient?.chat.update.mock.calls as unknown as Array<
+
+  // Reactive rollover: a fresh stream opens in the same thread, re-seeded
+  // with the full task snapshot, and the dead card is deleted.
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(2);
+  const startCalls = writeClient?.chat.startStream.mock
+    .calls as unknown as Array<
+    Array<{ chunks?: Array<{ type: string; title?: string; id?: string }> }>
+  >;
+  const reseedChunks = startCalls[1]?.[0]?.chunks ?? [];
+  expect(reseedChunks[0]?.type).toBe("plan_update");
+  expect(
+    reseedChunks.filter((chunk) => chunk.type === "task_update").length,
+  ).toBeGreaterThan(0);
+  const deleteCalls = writeClient?.chat.delete.mock.calls as unknown as Array<
     Array<{ channel: string; ts: string }>
   >;
-  expect(degradeCalls[0]?.[0]).toMatchObject({
+  expect(deleteCalls.length).toBe(1);
+  expect(deleteCalls[0]?.[0]).toMatchObject({
     channel: "C123",
     ts: "1712800000.000300",
   });
+  // No degrade: the card view survived the death.
+  expect(writeClient?.chat.update).not.toHaveBeenCalled();
 
+  // Progress continues onto the rolled stream.
+  const appendsBefore = writeClient?.chat.appendStream.mock.calls.length ?? 0;
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
     batchId: "batch-1",
@@ -3779,9 +3794,8 @@ test("slack adapter stops appending after the stream leaves streaming state and 
     toolCallId: "call-2",
     toolName: "grep",
   });
-  // A dead stream accepts no further appends; progress continues as edits.
-  expect(writeClient?.chat.appendStream.mock.calls.length ?? 0).toBe(
-    appendCallsAfterDeath,
+  expect(writeClient?.chat.appendStream.mock.calls.length ?? 0).toBeGreaterThan(
+    appendsBefore,
   );
 
   await adapter.handleTurnLifecycleEvent?.({
@@ -3790,7 +3804,6 @@ test("slack adapter stops appending after the stream leaves streaming state and 
     outcome: "completed",
     sources: [source],
   });
-  // The final assistant reply closes the active card immediately.
   await adapter.sendMessage({
     channel: "slack",
     accountId: "slack-test-account",
@@ -3798,27 +3811,86 @@ test("slack adapter stops appending after the stream leaves streaming state and 
     text: "Done.",
     threadId: "1712790000.000050",
   });
-
-  // Finishing must not call stopStream on a dead stream; the final state is
-  // rendered onto the taken-over message via chat.update instead.
-  expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
-  const updateCalls = writeClient?.chat.update.mock.calls as unknown as Array<
-    Array<{ channel: string; ts: string; text?: string; blocks?: unknown[] }>
+  // The rolled stream is live, so the terminal close is a normal stop on the
+  // fresh stream's ts — not a dead-stream rewrite.
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    Array<{ ts?: string }>
   >;
-  expect(updateCalls.length).toBeGreaterThan(1);
-  const lastUpdate = updateCalls[updateCalls.length - 1]?.[0];
-  expect(lastUpdate).toMatchObject({
+  expect(stopCalls.length).toBe(1);
+  expect(stopCalls[0]?.[0]?.ts).toBe("1712800000.000301");
+});
+
+test("slack adapter degrades to text edits only when the rollover itself fails", async () => {
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
+  FakeSlackWriteClient.distinctStreamTs = true;
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  // The stream dies AND the recovery startStream fails too.
+  writeClient?.chat.appendStream.mockResolvedValueOnce({
+    ok: false,
+    error: "message_not_in_streaming_state",
+  });
+  writeClient?.chat.startStream.mockResolvedValueOnce({
+    ok: false,
+    error: "internal_error",
+  });
+
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Searching files",
+    toolCallId: "call-2",
+    toolName: "grep",
+  });
+
+  // Final guard: the corpse is taken over as the plain-text live transport.
+  const updateCalls = writeClient?.chat.update.mock.calls as unknown as Array<
+    Array<{ channel: string; ts: string }>
+  >;
+  expect(updateCalls.length).toBeGreaterThan(0);
+  expect(updateCalls[0]?.[0]).toMatchObject({
     channel: "C123",
     ts: "1712800000.000300",
   });
-  // The terminal edit is a single line (the reply supplies the completion
-  // header) — individual task rows are not re-dumped as text.
-  const rendered = JSON.stringify(lastUpdate);
-  expect(rendered).toContain("Done.");
-  expect(rendered).not.toContain(":white_check_mark:");
-  expect(rendered).not.toContain("in_progress");
+  expect(writeClient?.chat.delete).not.toHaveBeenCalled();
 });
-
 test("slack adapter keepalive survives a transient append failure", async () => {
   process.env.LETTA_SLACK_PROGRESS_STREAM_KEEPALIVE_MS = "20";
   const adapter = createSlackAdapter({
