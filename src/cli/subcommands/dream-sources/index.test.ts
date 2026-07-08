@@ -119,7 +119,7 @@ describe("stageFromSource", () => {
       .filter((line) => line.trim().length > 0)
       .map((line) => JSON.parse(line));
     expect(rows).toHaveLength(2);
-    expect(rows[0].source_message_id).toBe("e1");
+    expect(rows[0].source_message_id).toBe("openhands:events:1");
   });
 
   test("stages Claude Code sessions through the same idempotent transcript path", async () => {
