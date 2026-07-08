@@ -8,7 +8,7 @@
 // review to its own subagents — the pipeline imposes no fan-out structure.
 
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, join } from "node:path";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   buildReflectionMemoryScope,
@@ -18,46 +18,30 @@ import {
 import { finalizeReflectionMemoryWorktreeLaunch } from "@/cli/helpers/reflection-launcher";
 import { debugWarn } from "@/utils/debug";
 import { getDreamAggregateDir } from "./paths";
-import { type AggregationInput, buildAggregationPrompt } from "./prompts";
+import { buildAggregationPrompt } from "./prompts";
 import {
   type BatchReflectionResult,
   gitOutput,
   recordConversationTrajectory,
 } from "./reflect";
+import { getOrCreateDreamAggregator } from "./reflector";
 
 export interface DreamAggregationOutcome {
   success: boolean;
   message: string;
   error?: string;
   subagentId?: string;
-  /** True when there was nothing to merge and memory was left untouched. */
-  skippedEmpty: boolean;
 }
 
 export interface RunDreamAggregationParams {
   agentId: string;
   conversationId: string;
-  /** Persistent reflector agent the pass runs on (fresh conversation). */
-  reflectorAgentId: string;
-  runId: string;
   runRoot: string;
   reflections: BatchReflectionResult[];
   instruction?: string;
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
   log?: (line: string) => void;
-}
-
-function aggregationInputForBatch(
-  result: BatchReflectionResult,
-): AggregationInput {
-  return {
-    label: `batch-${result.batchIndex}`,
-    // The batch directory (output/, report.json, trajectory.json, input/).
-    dir: dirname(result.outputDir),
-    timeRange: result.timeRange,
-    sessionCount: result.sessionIds.length,
-  };
 }
 
 /**
@@ -120,14 +104,18 @@ export async function runDreamAggregation(
       success: true,
       message:
         "Reflections found no durable learnings to persist; memory left unchanged.",
-      skippedEmpty: true,
     };
   }
 
   const aggregateDir = getDreamAggregateDir(params.runRoot);
   await mkdir(aggregateDir, { recursive: true });
 
-  const inputs = withContent.map(aggregationInputForBatch);
+  // The aggregator is its own persistent hidden agent (default system prompt
+  // + aggregator persona), separate from the reflector.
+  const aggregatorAgentId = await getOrCreateDreamAggregator({
+    primaryAgentId: params.agentId,
+    log,
+  });
 
   const memoryDir = getScopedMemoryFilesystemRoot(params.agentId);
   const worktree = await createReflectionMemoryWorktree({
@@ -136,7 +124,8 @@ export async function runDreamAggregation(
 
   try {
     const prompt = buildAggregationPrompt({
-      inputs,
+      batchesDir: join(params.runRoot, "batches"),
+      batchCount: params.reflections.length,
       instruction: params.instruction,
     });
     const baseScope = buildReflectionMemoryScope(worktree);
@@ -147,16 +136,16 @@ export async function runDreamAggregation(
 
     const { spawnBackgroundSubagentTask } = await import("@/tools/impl/task");
     log(
-      `[aggregate] integrating ${inputs.length} reflection output(s) into memory`,
+      `[aggregate] integrating ${withContent.length} reflection output(s) into memory`,
     );
 
     return await new Promise<DreamAggregationOutcome>((resolve) => {
       spawnBackgroundSubagentTask({
-        subagentType: "reflection",
+        subagentType: "general-purpose",
         prompt,
         description: "Dream: aggregate reflections into memory",
         silentCompletion: true,
-        existingAgentId: params.reflectorAgentId,
+        existingAgentId: aggregatorAgentId,
         memoryScope,
         parentScope: {
           agentId: params.agentId,
@@ -192,7 +181,7 @@ export async function runDreamAggregation(
                 error,
                 durationMs,
                 stepCount,
-                inputs: inputs.map((r) => r.label),
+                inputs: withContent.map((r) => `batch-${r.batchIndex}`),
                 report: report ?? "",
               },
               null,
@@ -220,7 +209,6 @@ export async function runDreamAggregation(
               message: completionMessage,
               error: completionSuccess ? undefined : (error ?? undefined),
               subagentId: subagentAgentId,
-              skippedEmpty: false,
             });
           } catch (finalizeError) {
             resolve({
@@ -231,7 +219,6 @@ export async function runDreamAggregation(
                   : String(finalizeError)
               }`,
               error: String(finalizeError),
-              skippedEmpty: false,
             });
           }
         },

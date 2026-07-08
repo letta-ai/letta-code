@@ -1,18 +1,27 @@
-Integrate {{count}} reflection memory filesystems into the primary agent's memory. You are the aggregation pass of a batch reflection run and you make the FINAL commit — nothing else will edit memory after you.
+Multiple reflection agents have each processed a time-ordered batch of recorded sessions and produced independent memory filesystems. Your job is to merge them into the primary agent's memory filesystem.
 
-Reflection directories to merge, in time order (later directories are more recent evidence):
-{{dirList}}
+The reflection directories are the {{count}} numbered subdirectories of:
+{{batchesDir}}
 
-Each directory contains: `output/` — the memory filesystem that reflection agent produced (your primary input); `report.json` — its final report on what it stored and why; `trajectory.json` — its own run as a normalized transcript; `input/` — the original session transcripts it reviewed. All of it is read-only — your writes stay under `$MEMORY_DIR`.
+Subdirectory numbers are in time order — higher numbers reflect more recent sessions and are more recent evidence. A batch whose `output/` has no commits beyond the seed files produced no learnings; skip it.
 
-Reports and output trees are your primary inputs. When outputs disagree, a fact looks dubious, or you must weigh how important or well-grounded a learning is, drill into that reflection's trajectory and the original session transcripts to check the evidence. Use bounded reads (`grep`, `head`, `sed -n`) — trajectories can be large.
+Merge into the memory filesystem at `$MEMORY_DIR` — the primary agent's REAL memory (a git repo), including everything learned in past sessions. Inspect it first (`find`, `cat` the `system/` files, `git log` for past reflection history) and reconcile new learnings with what is already stored: update existing files at the source, never concatenate competing versions. The reflection directories are read-only inputs; all writes stay under `$MEMORY_DIR`. Use Edit for existing files and Bash heredocs for new ones.
 
-Unlike the reflection agents, your `$MEMORY_DIR` is the primary agent's REAL memory filesystem, including everything learned in past sessions. This prompt does not inline its contents — start by inspecting it yourself (`find`, `cat` the `system/` files, `git log` for past reflection history). Your job:
+## Commit
 
-1. **Merge** — fold each reflection output into the existing structure. Update existing files where a topic already has a home; create new files only for genuinely new topics. The new reflections describe recent activity — treat them as newer evidence than existing memory, but edit identity and behavioral files surgically, never wholesale.
-2. **Reconcile** — resolve contradictions between reflections and existing memory at the source; deduplicate facts that arrived from multiple batches; drop anything ephemeral a reflection let through.
-3. **Evaluate structure** — after merging, review the final tree: `system/` stays concise (demote verbose content to reference files), descriptions and `[[path]]` cross-references stay accurate, no redundant index files, no near-duplicate skills.
+When the merge is complete, from `$MEMORY_DIR`:
 
-When there are more reflection outputs than you can carefully review at once, you may use the Task tool to delegate legwork to subagents — e.g. have one summarize a contiguous, time-ordered subset of reflection directories and propose merged content, then integrate their findings yourself. Subagents are for reading and analysis; every edit and the commit stay yours.
+```bash
+git add -A
+git commit -m "feat(aggregation): merge <N> reflection outputs 🔮
 
-Then commit following your commit conventions and return a report: sources merged, key decisions, contradictions resolved and how, anything dropped and why.{{instructionSection}}
+Sources:
+- <batch directories merged>
+
+Notes:
+- <key merge decisions, contradictions resolved>"
+```
+
+## Report
+
+Return a final report: sources merged, key decisions, contradictions resolved and how, anything dropped and why, and the commit subject.{{instructionSection}}

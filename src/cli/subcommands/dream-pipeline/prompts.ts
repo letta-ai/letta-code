@@ -6,8 +6,12 @@
 // render() throws on unresolved {{vars}} so a renamed placeholder fails at
 // run start instead of leaking into a prompt.
 
+import aggregatorPersonaMd from "./prompts/aggregator-persona.md";
 import aggregatorUserMd from "./prompts/aggregator-user.md";
 import reflectionUserMd from "./prompts/reflection-user.md";
+
+/** Persona block for the persistent aggregator agent (default system prompt). */
+export const AGGREGATOR_PERSONA: string = aggregatorPersonaMd.trim();
 
 function render(
   template: string,
@@ -48,33 +52,15 @@ export function buildBatchReflectionPrompt(input: {
   });
 }
 
-/** One reflection agent's directory, listed inline in the aggregator prompt. */
-export interface AggregationInput {
-  label: string;
-  /** The batch directory: contains output/, report.json, trajectory.json, input/. */
-  dir: string;
-  timeRange?: { start: string; end: string };
-  sessionCount?: number;
-}
-
-function describeAggregationInput(entry: AggregationInput): string {
-  const details: string[] = [];
-  if (entry.timeRange) {
-    details.push(`${entry.timeRange.start} → ${entry.timeRange.end}`);
-  }
-  if (entry.sessionCount !== undefined) {
-    details.push(`${entry.sessionCount} session(s)`);
-  }
-  return `- ${entry.dir}${details.length ? `  (${details.join(", ")})` : ""}`;
-}
-
 export function buildAggregationPrompt(input: {
-  inputs: AggregationInput[];
+  /** The run's batches/ directory; each numbered subdir is one reflection. */
+  batchesDir: string;
+  batchCount: number;
   instruction?: string;
 }): string {
   return render(aggregatorUserMd, {
-    count: input.inputs.length,
-    dirList: input.inputs.map(describeAggregationInput).join("\n"),
+    count: input.batchCount,
+    batchesDir: input.batchesDir,
     instructionSection: instructionSection(input.instruction),
   });
 }

@@ -23,7 +23,6 @@ import {
 } from "@/agent/trajectories/registry";
 import type { DiscoveredSession } from "@/agent/trajectories/types";
 import {
-  type DreamLedger,
   dreamLedgerKey,
   filterSessionsAgainstLedger,
   readDreamLedger,
@@ -86,7 +85,6 @@ export interface DreamSelection {
   sessions: DiscoveredSession[];
   /** Sessions excluded because the ledger already covers them. */
   skippedByLedger: DiscoveredSession[];
-  ledger: DreamLedger;
 }
 
 async function discoverForSpec(
@@ -133,10 +131,10 @@ export async function selectDreamSessions(params: {
     a.startTime.localeCompare(b.startTime),
   );
 
-  const ledger = await readDreamLedger(params.agentId);
   if (params.force) {
-    return { sessions: discovered, skippedByLedger: [], ledger };
+    return { sessions: discovered, skippedByLedger: [] };
   }
+  const ledger = await readDreamLedger(params.agentId);
   const { fresh, skipped } = filterSessionsAgainstLedger(ledger, discovered);
-  return { sessions: fresh, skippedByLedger: skipped, ledger };
+  return { sessions: fresh, skippedByLedger: skipped };
 }

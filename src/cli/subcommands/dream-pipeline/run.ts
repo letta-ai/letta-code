@@ -179,7 +179,6 @@ export async function runDreamPipeline(
       agentId: options.agentId,
       conversationId: options.conversationId,
       reflectorAgentId,
-      runId,
       runRoot,
       batches,
       normalizedJsonByKey,
@@ -219,8 +218,6 @@ export async function runDreamPipeline(
     const aggregation = await runDreamAggregation({
       agentId: options.agentId,
       conversationId: options.conversationId,
-      reflectorAgentId,
-      runId,
       runRoot,
       reflections: batchResults,
       instruction: combinedAggregationInstruction || undefined,
@@ -314,11 +311,6 @@ export async function rerunDreamAggregationForRun(options: {
     return { kind: "already_active" };
   }
   try {
-    const reflectorAgentId = await getOrCreateDreamReflector({
-      primaryAgentId: options.agentId,
-      log,
-    });
-
     // Preserve the previous aggregation attempt's artifacts.
     const aggregateDir = join(options.runRoot, "aggregate");
     if (existsSync(aggregateDir)) {
@@ -333,8 +325,6 @@ export async function rerunDreamAggregationForRun(options: {
     const aggregation = await runDreamAggregation({
       agentId: options.agentId,
       conversationId: options.conversationId,
-      reflectorAgentId,
-      runId,
       runRoot: options.runRoot,
       reflections: batchResults,
       instruction: options.instruction,

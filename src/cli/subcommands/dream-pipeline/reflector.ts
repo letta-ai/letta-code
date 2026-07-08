@@ -1,62 +1,60 @@
-// Persistent "reflector" agent for the dream pipeline: one agent per primary
-// agent, created lazily and reused across runs. Every batch reflection, merge
-// stage, and aggregation pass runs as a FRESH CONVERSATION on this one agent
-// (the deploy path spawns `--agent <id> --new`, so parallel batches never
-// contend), instead of minting a throwaway agent per spawn. The reflector's
-// conversation list therefore doubles as the dream run history, and recorded
-// conversations are re-ingestable via the `letta:` trajectory source.
+// Persistent worker agents for the dream pipeline, one pair per primary
+// agent, created lazily and reused across runs:
 //
-// The reflector is created with subagent semantics (hidden, no memory blocks,
-// no memfs) — its working memory is always the fresh tree or worktree handed
-// to each conversation via $MEMORY_DIR. A reflector is recreated when its
-// stored model no longer matches the primary agent's (old ones are left
-// behind; they are hidden and inert).
+// - The REFLECTOR carries the builtin reflection system prompt; every batch
+//   reflection runs as a FRESH CONVERSATION on it (the deploy path spawns
+//   `--agent <id> --new`, so parallel batches never contend).
+// - The AGGREGATOR carries the default letta-code system prompt with the
+//   aggregator persona block (matching the batch-reflection prototype); the
+//   aggregation pass runs as a fresh conversation on it.
+//
+// A worker's conversation list therefore doubles as the dream run history,
+// and recorded conversations are re-ingestable via the `letta:` trajectory
+// source. Workers are created with subagent semantics (hidden, no memfs) —
+// their working memory is always the fresh tree or worktree handed to each
+// conversation via $MEMORY_DIR. A worker is recreated when its stored model no
+// longer matches the primary agent's (old ones are left behind; they are
+// hidden and inert).
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { createAgent } from "@/agent/create";
+import { type CreateAgentOptions, createAgent } from "@/agent/create";
 import { getAllSubagentConfigs } from "@/agent/subagents";
 import { getModelHandleFromAgent } from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { debugWarn } from "@/utils/debug";
 import { getDreamRootDir } from "./paths";
+import { AGGREGATOR_PERSONA } from "./prompts";
 
-const REFLECTOR_STATE_SCHEMA_VERSION = "v1" as const;
+const WORKER_STATE_SCHEMA_VERSION = "v1" as const;
 
-interface DreamReflectorState {
-  schema_version: typeof REFLECTOR_STATE_SCHEMA_VERSION;
+interface DreamWorkerState {
+  schema_version: typeof WORKER_STATE_SCHEMA_VERSION;
   agentId: string;
   model: string | null;
   createdAt: string;
 }
 
-function reflectorStatePath(primaryAgentId: string): string {
-  return join(getDreamRootDir(primaryAgentId), "reflector.json");
-}
-
-async function readReflectorState(
-  primaryAgentId: string,
-): Promise<DreamReflectorState | null> {
+async function readWorkerState(
+  statePath: string,
+): Promise<DreamWorkerState | null> {
   let raw: string;
   try {
-    raw = await readFile(reflectorStatePath(primaryAgentId), "utf-8");
+    raw = await readFile(statePath, "utf-8");
   } catch {
     return null;
   }
-  const parsed = safeJsonParseOr<Partial<DreamReflectorState> | null>(
-    raw,
-    null,
-  );
+  const parsed = safeJsonParseOr<Partial<DreamWorkerState> | null>(raw, null);
   if (
     !parsed ||
-    parsed.schema_version !== REFLECTOR_STATE_SCHEMA_VERSION ||
+    parsed.schema_version !== WORKER_STATE_SCHEMA_VERSION ||
     typeof parsed.agentId !== "string"
   ) {
     return null;
   }
   return {
-    schema_version: REFLECTOR_STATE_SCHEMA_VERSION,
+    schema_version: WORKER_STATE_SCHEMA_VERSION,
     agentId: parsed.agentId,
     model: typeof parsed.model === "string" ? parsed.model : null,
     createdAt:
@@ -86,6 +84,66 @@ async function agentExists(agentId: string): Promise<boolean> {
   }
 }
 
+async function getOrCreateDreamWorker(params: {
+  primaryAgentId: string;
+  stateFileName: string;
+  logLabel: string;
+  createOptions: (
+    desiredModel: string | null,
+  ) => Promise<CreateAgentOptions> | CreateAgentOptions;
+  log?: (line: string) => void;
+}): Promise<string> {
+  const log = params.log ?? (() => {});
+  const statePath = join(
+    getDreamRootDir(params.primaryAgentId),
+    params.stateFileName,
+  );
+  const desiredModel = await primaryModelHandle(params.primaryAgentId);
+
+  const existing = await readWorkerState(statePath);
+  if (existing) {
+    const modelMatches =
+      desiredModel === null || existing.model === desiredModel;
+    if (modelMatches && (await agentExists(existing.agentId))) {
+      return existing.agentId;
+    }
+    if (!modelMatches) {
+      log(
+        `[${params.logLabel}] model changed (${existing.model} → ${desiredModel}); creating a new ${params.logLabel}`,
+      );
+    }
+  }
+
+  const { agent: created } = await createAgent({
+    ...(await params.createOptions(desiredModel)),
+    ...(desiredModel ? { model: desiredModel } : {}),
+    baseTools: [],
+    asSubagent: true,
+  });
+
+  const state: DreamWorkerState = {
+    schema_version: WORKER_STATE_SCHEMA_VERSION,
+    agentId: created.id,
+    model: desiredModel,
+    createdAt: new Date().toISOString(),
+  };
+  await mkdir(dirname(statePath), { recursive: true });
+  try {
+    await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
+  } catch (error) {
+    debugWarn(
+      "memory",
+      `Failed to persist ${params.logLabel} state: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  log(
+    `[${params.logLabel}] created ${created.id} (model ${desiredModel ?? "default"})`,
+  );
+  return created.id;
+}
+
 /**
  * Return the reflector agent id for a primary agent, creating one when none
  * exists (or when the stored one vanished or its model drifted from the
@@ -95,61 +153,61 @@ export async function getOrCreateDreamReflector(params: {
   primaryAgentId: string;
   log?: (line: string) => void;
 }): Promise<string> {
-  const log = params.log ?? (() => {});
-  const desiredModel = await primaryModelHandle(params.primaryAgentId);
-
-  const existing = await readReflectorState(params.primaryAgentId);
-  if (existing) {
-    const modelMatches =
-      desiredModel === null || existing.model === desiredModel;
-    if (modelMatches && (await agentExists(existing.agentId))) {
-      return existing.agentId;
-    }
-    if (!modelMatches) {
-      log(
-        `[reflector] model changed (${existing.model} → ${desiredModel}); creating a new reflector`,
-      );
-    }
-  }
-
-  const configs = await getAllSubagentConfigs();
-  const reflectionPrompt = configs.reflection?.systemPrompt;
-  if (!reflectionPrompt) {
-    throw new Error("Builtin reflection subagent config not found");
-  }
-
-  const { agent: created } = await createAgent({
-    name: "dream-reflector",
-    description: `Dream pipeline reflector for ${params.primaryAgentId}`,
-    systemPromptCustom: reflectionPrompt,
-    ...(desiredModel ? { model: desiredModel } : {}),
-    baseTools: [],
-    tags: [
-      "type:reflection",
-      "role:dream-reflector",
-      `parent:${params.primaryAgentId}`,
-    ],
-    asSubagent: true,
+  return getOrCreateDreamWorker({
+    primaryAgentId: params.primaryAgentId,
+    stateFileName: "reflector.json",
+    logLabel: "reflector",
+    log: params.log,
+    createOptions: async () => {
+      const configs = await getAllSubagentConfigs();
+      const reflectionPrompt = configs.reflection?.systemPrompt;
+      if (!reflectionPrompt) {
+        throw new Error("Builtin reflection subagent config not found");
+      }
+      return {
+        name: "dream-reflector",
+        description: `Dream pipeline reflector for ${params.primaryAgentId}`,
+        systemPromptCustom: reflectionPrompt,
+        tags: [
+          "type:reflection",
+          "role:dream-reflector",
+          `parent:${params.primaryAgentId}`,
+        ],
+      };
+    },
   });
+}
 
-  const state: DreamReflectorState = {
-    schema_version: REFLECTOR_STATE_SCHEMA_VERSION,
-    agentId: created.id,
-    model: desiredModel,
-    createdAt: new Date().toISOString(),
-  };
-  const statePath = reflectorStatePath(params.primaryAgentId);
-  await mkdir(dirname(statePath), { recursive: true });
-  try {
-    await writeFile(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf-8");
-  } catch (error) {
-    debugWarn(
-      "memory",
-      `Failed to persist reflector state: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  log(`[reflector] created ${created.id} (model ${desiredModel ?? "default"})`);
-  return created.id;
+/**
+ * Return the aggregator agent id for a primary agent. Matches the prototype's
+ * setup: the DEFAULT letta-code system prompt with the aggregator persona as
+ * its persona memory block.
+ */
+export async function getOrCreateDreamAggregator(params: {
+  primaryAgentId: string;
+  log?: (line: string) => void;
+}): Promise<string> {
+  return getOrCreateDreamWorker({
+    primaryAgentId: params.primaryAgentId,
+    stateFileName: "aggregator.json",
+    logLabel: "aggregator",
+    log: params.log,
+    createOptions: () => ({
+      name: "dream-aggregator",
+      description: `Dream pipeline aggregator for ${params.primaryAgentId}`,
+      memoryBlocks: [
+        {
+          label: "persona",
+          value: AGGREGATOR_PERSONA,
+          description:
+            "Who I am: a memory aggregator agent merging reflection outputs into one cohesive memory filesystem.",
+        },
+      ],
+      tags: [
+        "type:aggregation",
+        "role:dream-aggregator",
+        `parent:${params.primaryAgentId}`,
+      ],
+    }),
+  });
 }

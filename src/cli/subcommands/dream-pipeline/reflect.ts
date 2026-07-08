@@ -158,7 +158,6 @@ export interface RunBatchReflectionsParams {
   conversationId: string;
   /** Persistent reflector agent every batch runs on (fresh conversation each). */
   reflectorAgentId: string;
-  runId: string;
   runRoot: string;
   batches: DreamBatch[];
   /** dreamLedgerKey(session) → normalized-v1 JSON (already serialized). */

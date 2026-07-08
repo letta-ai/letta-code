@@ -1,7 +1,7 @@
 // Self-contained HTML visualization for a dream run: every reflection agent's
-// trajectory + generated memory filesystem, the fan-out merge stages, and the
-// aggregator (trajectory, final tree snapshot, and the patch it landed on the
-// real memfs), embedded as JSON in one file with a vanilla-JS viewer.
+// trajectory + generated memory filesystem, and the aggregator (trajectory,
+// final tree snapshot, and the patch it landed on the real memfs), embedded
+// as JSON in one file with a vanilla-JS viewer.
 //
 // Reads only the run directory's own artifacts (manifest.json, per-batch
 // input/payload/output/trajectory/report, aggregate/*), so it can re-render
@@ -34,7 +34,7 @@ interface VizFile {
 
 interface VizAgent {
   id: string;
-  role: "reflection" | "merge" | "aggregator";
+  role: "reflection" | "aggregator";
   label: string;
   batchIndex?: number;
   /** Backend agent the pass ran on (the persistent reflector). */
@@ -225,43 +225,6 @@ function loadBatchAgent(
   };
 }
 
-function loadMergeAgent(
-  stageDir: string,
-  label: string,
-  reflectorAgentId?: string,
-): VizAgent {
-  const report = readJsonIfExists<StoredReport>(join(stageDir, "report.json"));
-  const outputDir = join(stageDir, "output");
-  const steps = loadSteps(join(stageDir, "trajectory.json"));
-  return {
-    id: `merge-${label}`,
-    role: "merge",
-    label: `merge: ${label}`,
-    agentId: reflectorAgentId,
-    conversationId: report?.conversationId,
-    sessionIds: report?.inputs ?? [],
-    success: report?.success ?? false,
-    error: report?.error,
-    durationMs: report?.durationMs ?? 0,
-    report: report?.report ?? "",
-    steps,
-    files: collectFiles(outputDir),
-    inputFiles: [],
-    gitLog: git(outputDir, ["log", "--format=%h  %s", "--reverse"]),
-    gitDiff: truncate(
-      git(outputDir, [
-        "log",
-        "-p",
-        "--reverse",
-        "--skip=1",
-        "--format=commit %h%n%s%n",
-      ]),
-      DIFF_CAP,
-    ).text,
-    stats: statsFor(steps),
-  };
-}
-
 function loadAggregatorAgent(
   aggregateDir: string,
   reflectorAgentId?: string,
@@ -325,15 +288,6 @@ function buildData(runRoot: string): VizData {
         reflectorAgentId,
       );
       if (agent) agents.push(agent);
-    }
-  }
-
-  const mergesRoot = join(runRoot, "aggregate", "merges");
-  if (existsSync(mergesRoot)) {
-    for (const name of readdirSync(mergesRoot).sort()) {
-      agents.push(
-        loadMergeAgent(join(mergesRoot, name), name, reflectorAgentId),
-      );
     }
   }
 
