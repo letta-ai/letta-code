@@ -1,17 +1,17 @@
-import { createOpenHandsSource } from "@/agent/trajectories/sources/openhands";
+import { createCodexSource } from "@/agent/trajectories/sources/codex";
 import type { ExternalTranscriptEntry } from "@/cli/helpers/reflection-transcript";
 import { normalizedSessionToExternalEntries } from "./trajectory";
-import type { SourceAdapter } from "./types";
+import type { DreamAdapter } from "./types";
 
-export const openHandsAdapter: SourceAdapter = {
-  type: "openhands",
+export const codexAdapter: DreamAdapter = {
+  type: "codex",
   async convert(locator: string): Promise<ExternalTranscriptEntry[]> {
-    const source = createOpenHandsSource();
+    const source = createCodexSource();
     const sessions = (await source.discover(locator)).sort((a, b) =>
       a.startTime.localeCompare(b.startTime),
     );
     if (sessions.length === 0) {
-      throw new Error(`No OpenHands sessions found for ${locator}`);
+      throw new Error(`No Codex sessions found for ${locator}`);
     }
 
     const entries: ExternalTranscriptEntry[] = [];

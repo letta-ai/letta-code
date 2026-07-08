@@ -35,9 +35,9 @@ describe("parseFromSource", () => {
     );
   });
 
-  test("errors on an unknown source type", () => {
+  test("errors on an unknown dream source type", () => {
     expect(() => parseFromSource("github:letta-ai/x")).toThrow(
-      'Unknown source type "github"',
+      'Unknown dream source type "github"',
     );
   });
 

@@ -1,9 +1,9 @@
 import { createClaudeCodeSource } from "@/agent/trajectories/sources/claude-code";
 import type { ExternalTranscriptEntry } from "@/cli/helpers/reflection-transcript";
 import { normalizedSessionToExternalEntries } from "./trajectory";
-import type { SourceAdapter } from "./types";
+import type { DreamAdapter } from "./types";
 
-export const claudeCodeAdapter: SourceAdapter = {
+export const claudeCodeAdapter: DreamAdapter = {
   type: "claude",
   async convert(locator: string): Promise<ExternalTranscriptEntry[]> {
     const source = createClaudeCodeSource();

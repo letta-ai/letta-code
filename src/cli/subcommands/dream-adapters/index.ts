@@ -4,15 +4,15 @@ import { claudeCodeAdapter } from "./claude-code";
 import { codexAdapter } from "./codex";
 import { openHandsAdapter } from "./openhands";
 import { transcriptAdapter } from "./transcript";
-import type { SourceAdapter } from "./types";
+import type { DreamAdapter } from "./types";
 
-export type { SourceAdapter } from "./types";
+export type { DreamAdapter } from "./types";
 
 /**
- * Registered source adapters, keyed by the `<type>` in `--from <type>:<path>`.
- * Add a new source type by importing its adapter and adding one entry here.
+ * Registered dream adapters, keyed by the `<type>` in `--from <type>:<path>`.
+ * Add a new dream source type by importing its adapter and adding one entry here.
  */
-const ADAPTERS: Record<string, SourceAdapter> = {
+const ADAPTERS: Record<string, DreamAdapter> = {
   claude: claudeCodeAdapter,
   codex: codexAdapter,
   openhands: openHandsAdapter,
@@ -20,7 +20,7 @@ const ADAPTERS: Record<string, SourceAdapter> = {
 };
 
 export interface ParsedSource {
-  adapter: SourceAdapter;
+  adapter: DreamAdapter;
   locator: string;
 }
 
@@ -37,7 +37,7 @@ export function parseFromSource(spec: string): ParsedSource | null {
   const adapter = ADAPTERS[type];
   if (!adapter) {
     throw new Error(
-      `Unknown source type "${type}". Supported: ${Object.keys(ADAPTERS).join(", ")}`,
+      `Unknown dream source type "${type}". Supported: ${Object.keys(ADAPTERS).join(", ")}`,
     );
   }
   if (!locator) {

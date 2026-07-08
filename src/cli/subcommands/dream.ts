@@ -3,7 +3,7 @@ import {
   type ParsedSource,
   parseFromSource,
   stageFromSource,
-} from "@/cli/subcommands/dream-sources";
+} from "@/cli/subcommands/dream-adapters";
 import {
   buildTargetInstruction,
   type DreamTarget,
