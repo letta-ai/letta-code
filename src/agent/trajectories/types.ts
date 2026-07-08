@@ -13,6 +13,8 @@ export interface NormalizedRecord {
   role: "meta" | "user" | "reasoning" | "assistant" | "tool";
   content?: string | null;
   timestamp?: string;
+  /** Stable raw-source id for adapters that need idempotent external staging. */
+  source_id?: string;
   source?: string;
   tool_calls?: { id: string; name: string; args: string }[];
   tool_call_id?: string;

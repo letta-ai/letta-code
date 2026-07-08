@@ -221,6 +221,8 @@ export interface PseudoRow {
     | "tool_result";
   content?: string;
   timestamp?: Date | null;
+  /** Stable id from the raw source record, when available. */
+  sourceId?: string;
   toolName?: string;
   toolCallId?: string;
   toolInputJson?: string;
@@ -314,6 +316,8 @@ export function normalizeSessionRows(
     } else {
       continue; // metadata rows: transport, not conversation
     }
+
+    if (row.sourceId) record.source_id = row.sourceId;
 
     const ts = row.timestamp;
     if (ts instanceof Date && !Number.isNaN(ts.getTime())) {

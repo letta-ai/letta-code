@@ -167,16 +167,19 @@ describe("createOpenHandsSource", () => {
       {
         role: "user",
         content: "Fix the failing test",
+        source_id: "evt-user-1",
         timestamp: "2026-07-04T09:15:23.123Z",
       },
       {
         role: "reasoning",
         content: "I'll run the tests first.",
+        source_id: "evt-action-1:thought",
         timestamp: "2026-07-04T09:15:30.001Z",
       },
       {
         role: "assistant",
         content: null,
+        source_id: "evt-action-1",
         tool_calls: [
           {
             id: "toolu_01ABC",
@@ -190,11 +193,13 @@ describe("createOpenHandsSource", () => {
         role: "tool",
         tool_call_id: "toolu_01ABC",
         content: "1 pass, 0 fail",
+        source_id: "evt-obs-1",
         timestamp: "2026-07-04T09:15:35.445Z",
       },
       {
         role: "assistant",
         content: "Done — the test passes now.",
+        source_id: "evt-agent-1",
         timestamp: "2026-07-04T09:16:00.000Z",
       },
     ]);

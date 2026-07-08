@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { appendExternalTranscriptEntries } from "@/cli/helpers/reflection-transcript";
-import { claudeCodeAdapter } from "./claude-code";
-import { codexAdapter } from "./codex";
-import { openHandsAdapter } from "./openhands";
+import { claudeCodeAdapter } from "./claude-code-dream-adapter";
+import { codexAdapter } from "./codex-dream-adapter";
+import { openHandsAdapter } from "./openhands-dream-adapter";
 import { transcriptAdapter } from "./transcript";
 import type { DreamAdapter } from "./types";
 

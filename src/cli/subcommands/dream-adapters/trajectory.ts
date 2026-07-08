@@ -34,7 +34,7 @@ export function normalizedSessionToExternalEntries(
 
   for (const [index, record] of session.records.entries()) {
     const captured_at = record.timestamp;
-    const source_message_id = `${prefix}:${index}`;
+    const source_message_id = record.source_id ?? `${prefix}:${index}`;
 
     if (record.role === "meta") continue;
 
@@ -64,7 +64,10 @@ export function normalizedSessionToExternalEntries(
             resultText,
             resultOk: resultOk(resultText),
             captured_at,
-            source_message_id: `${source_message_id}:tool:${callIndex}:${call.id}`,
+            source_message_id:
+              record.source_id && record.tool_calls.length === 1
+                ? record.source_id
+                : `${source_message_id}:tool:${callIndex}:${call.id}`,
           });
         }
       } else if (

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openHandsAdapter } from "./openhands";
+import { openHandsAdapter } from "./openhands-dream-adapter";
 
 const USER_MESSAGE_EVENT = {
   kind: "MessageEvent",
@@ -97,13 +97,13 @@ describe("openHandsAdapter.convert", () => {
         kind: "user",
         text: "Fix the failing test",
         captured_at: "2026-07-04T09:15:23.123Z",
-        source_message_id: "openhands:conv-abc:1",
+        source_message_id: "evt-user-1",
       },
       {
         kind: "assistant",
         text: "Done — the test passes now.",
         captured_at: "2026-07-04T09:16:00.000Z",
-        source_message_id: "openhands:conv-abc:2",
+        source_message_id: "evt-agent-1",
       },
     ]);
   });
@@ -122,13 +122,13 @@ describe("openHandsAdapter.convert", () => {
         kind: "user",
         text: "Fix the failing test",
         captured_at: "2026-07-04T09:15:23.123Z",
-        source_message_id: `openhands:${dir.split("/").at(-1)}:1`,
+        source_message_id: "evt-user-1",
       },
       {
         kind: "reasoning",
         text: "I'll run the tests first.",
         captured_at: "2026-07-04T09:15:30.001Z",
-        source_message_id: `openhands:${dir.split("/").at(-1)}:2`,
+        source_message_id: "evt-action-1:thought",
       },
       {
         kind: "tool_call",
@@ -137,13 +137,13 @@ describe("openHandsAdapter.convert", () => {
         resultText: "1 pass, 0 fail",
         resultOk: true,
         captured_at: "2026-07-04T09:15:30.001Z",
-        source_message_id: `openhands:${dir.split("/").at(-1)}:3:tool:0:toolu_01ABC`,
+        source_message_id: "evt-action-1",
       },
       {
         kind: "assistant",
         text: "Done — the test passes now.",
         captured_at: "2026-07-04T09:16:00.000Z",
-        source_message_id: `openhands:${dir.split("/").at(-1)}:5`,
+        source_message_id: "evt-agent-1",
       },
     ]);
   });
@@ -171,10 +171,10 @@ describe("openHandsAdapter.convert", () => {
 
     const entries = await openHandsAdapter.convert(dir);
     expect(entries.map((entry) => entry.source_message_id)).toEqual([
-      "openhands:conv-a:1",
-      "openhands:conv-a:2",
-      "openhands:conv-b:1",
-      "openhands:conv-b:2",
+      "conv-a-user",
+      "conv-a-agent",
+      "conv-b-user",
+      "conv-b-agent",
     ]);
   });
 
@@ -193,8 +193,8 @@ describe("openHandsAdapter.convert", () => {
     const entries = await openHandsAdapter.convert(file);
     expect(entries.map((entry) => entry.kind)).toEqual(["user", "assistant"]);
     expect(entries.map((entry) => entry.source_message_id)).toEqual([
-      "openhands:events:1",
-      "openhands:events:2",
+      "evt-user-1",
+      "evt-agent-1",
     ]);
   });
 });

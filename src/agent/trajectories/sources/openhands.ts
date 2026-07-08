@@ -130,12 +130,14 @@ export function openHandsEventsToRows(events: OpenHandsEvent[]): PseudoRow[] {
               turnType: "user_prompt",
               content: text,
               timestamp: ts,
+              sourceId: event.id,
             }
           : {
               role: "assistant",
               turnType: "assistant_response",
               content: text,
               timestamp: ts,
+              sourceId: event.id,
             },
       );
       continue;
@@ -151,6 +153,7 @@ export function openHandsEventsToRows(events: OpenHandsEvent[]): PseudoRow[] {
           turnType: "assistant_thinking",
           content: thought,
           timestamp: ts,
+          sourceId: `${event.id}:thought`,
         });
       }
       const callId = event.tool_call_id || `oh_${event.id}`;
@@ -162,6 +165,7 @@ export function openHandsEventsToRows(events: OpenHandsEvent[]): PseudoRow[] {
         toolName: event.tool_name,
         toolCallId: callId,
         toolInputJson: actionArgsText(event) ?? "{}",
+        sourceId: event.id,
       });
       continue;
     }
@@ -177,6 +181,7 @@ export function openHandsEventsToRows(events: OpenHandsEvent[]): PseudoRow[] {
         content: resultText,
         timestamp: ts,
         toolCallId: callId,
+        sourceId: event.id,
       });
     }
   }

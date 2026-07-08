@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { codexAdapter } from "./codex";
+import { codexAdapter } from "./codex-dream-adapter";
 
 describe("codexAdapter.convert", () => {
   let dir: string;
