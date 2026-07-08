@@ -3,6 +3,7 @@ import {
   DEFAULT_SLACK_PERMISSION_MODE,
   type SlackChannelAccount,
   type SlackDefaultPermissionMode,
+  type SlackProgressUiMode,
 } from "@/channels/types";
 import { migratePermissionMode } from "@/permissions/mode";
 
@@ -15,6 +16,7 @@ const SLACK_CONFIG_KEYS = new Set([
   "transcribe_voice",
   "show_completed_reaction",
   "listen_mode",
+  "progress_ui",
 ]);
 
 function isString(value: unknown): value is string {
@@ -27,6 +29,10 @@ function isNullableString(value: unknown): value is string | null {
 
 function isBoolean(value: unknown): value is boolean {
   return value === true || value === false;
+}
+
+function isProgressUiMode(value: unknown): value is SlackProgressUiMode {
+  return value === "rich" || value === "text";
 }
 
 function isDefaultPermissionMode(
@@ -62,7 +68,9 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
           isBoolean(config.transcribe_voice)) &&
         (config.show_completed_reaction === undefined ||
           isBoolean(config.show_completed_reaction)) &&
-        (config.listen_mode === undefined || isBoolean(config.listen_mode))
+        (config.listen_mode === undefined || isBoolean(config.listen_mode)) &&
+        (config.progress_ui === undefined ||
+          isProgressUiMode(config.progress_ui))
       );
     },
 
@@ -87,6 +95,9 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
         listenMode: isBoolean(config.listen_mode)
           ? config.listen_mode
           : undefined,
+        progressUi: isProgressUiMode(config.progress_ui)
+          ? config.progress_ui
+          : undefined,
       };
     },
 
@@ -100,6 +111,7 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
           account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
         transcribe_voice: account.transcribeVoice === true,
         listen_mode: account.listenMode === true,
+        progress_ui: account.progressUi === "text" ? "text" : "rich",
       };
     },
 
@@ -113,6 +125,7 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
           account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
         transcribe_voice: account.transcribeVoice === true,
         listen_mode: account.listenMode === true,
+        progress_ui: account.progressUi === "text" ? "text" : "rich",
       };
     },
 

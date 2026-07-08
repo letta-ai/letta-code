@@ -142,6 +142,8 @@ class FakeSlackApp {
 
 class FakeSlackWriteClient {
   static instances: FakeSlackWriteClient[] = [];
+  /** Simulates a Slack client/workspace without chat.startStream support. */
+  static disableStartStream = false;
 
   readonly token: string;
   readonly options: Record<string, unknown> | undefined;
@@ -207,6 +209,9 @@ class FakeSlackWriteClient {
   constructor(token: string, options?: Record<string, unknown>) {
     this.token = token;
     this.options = options;
+    if (FakeSlackWriteClient.disableStartStream) {
+      (this.chat as { startStream?: unknown }).startStream = undefined;
+    }
     FakeSlackWriteClient.instances.push(this);
   }
 }
@@ -301,6 +306,7 @@ const fetchMock = mock(
 beforeEach(() => {
   FakeSlackApp.instances.length = 0;
   FakeSlackWriteClient.instances.length = 0;
+  FakeSlackWriteClient.disableStartStream = false;
   resolveSlackInboundAttachmentsMock.mockReset();
   resolveSlackInboundAttachmentsMock.mockImplementation(async () => []);
   resolveSlackThreadStarterMock.mockReset();
@@ -336,7 +342,7 @@ afterEach(() => {
   for (const instance of FakeSlackWriteClient.instances) {
     instance.chat.postMessage.mockClear();
     instance.chat.update.mockClear();
-    instance.chat.startStream.mockClear();
+    instance.chat.startStream?.mockClear();
     instance.chat.appendStream.mockClear();
     instance.chat.stopStream.mockClear();
     instance.assistant.threads.setStatus.mockClear();
@@ -5246,4 +5252,161 @@ test("slack adapter closes the progress stream at turn end despite the chat foot
     type: "markdown_text",
     text: "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
   });
+});
+
+test("slack adapter text progress mode posts one status message and edits it in place", async () => {
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    progressUi: "text",
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "completed",
+    message: "Read files",
+    toolCallId: "call-1",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+  await sleep(200);
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  // Text mode never touches the streaming API.
+  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.appendStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
+  // One status message posted in-thread, then edited in place.
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
+  const postCalls = writeClient?.chat.postMessage.mock
+    .calls as unknown as Array<
+    Array<{ channel: string; text: string; thread_ts?: string }>
+  >;
+  expect(postCalls[0]?.[0]).toMatchObject({
+    channel: "C123",
+    thread_ts: "1712790000.000050",
+  });
+  expect(postCalls[0]?.[0]?.text).toContain("Working");
+  const updateCalls = writeClient?.chat.update.mock.calls as unknown as Array<
+    Array<{
+      channel: string;
+      ts: string;
+      text: string;
+      blocks?: Array<{ type: string }>;
+    }>
+  >;
+  expect(updateCalls.length).toBeGreaterThan(0);
+  const terminalArgs = updateCalls[updateCalls.length - 1]?.[0];
+  // Terminal edit collapses to the activity summary plus the footnote.
+  expect(terminalArgs).toMatchObject({
+    channel: "C123",
+    ts: "1712800000.000100",
+    text: "Read a file",
+  });
+  const renderedBlocks = JSON.stringify(terminalArgs?.blocks ?? []);
+  expect(renderedBlocks).toContain("*Read a file*");
+  expect(renderedBlocks).toContain("Open in Letta Chat");
+});
+
+test("slack adapter degrades rich progress to text mode when chat.startStream is unavailable", async () => {
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
+  FakeSlackWriteClient.disableStartStream = true;
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+  await sleep(200);
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  // Degraded to the plain status message instead of silently dropping
+  // progress (the old behavior requeued chunks forever and rendered nothing).
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
+  const postCalls = writeClient?.chat.postMessage.mock
+    .calls as unknown as Array<
+    Array<{ channel: string; text: string; thread_ts?: string }>
+  >;
+  expect(postCalls[0]?.[0]?.text).toContain("Working");
+  const updateCalls = writeClient?.chat.update.mock.calls as unknown as Array<
+    Array<{ text: string }>
+  >;
+  expect(updateCalls[updateCalls.length - 1]?.[0]?.text).toBe("Read a file");
 });
