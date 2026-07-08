@@ -22,6 +22,10 @@ export type TelemetryBackend =
   | "self_hosted_api"
   | "unknown";
 
+export interface TelemetryInitOptions {
+  handleSigint?: boolean;
+}
+
 export interface TelemetryEvent {
   type:
     | "session_start"
@@ -221,6 +225,7 @@ class TelemetryManager {
   private sessionEndTracked = false;
   private initialized = false;
   private flushInterval: NodeJS.Timeout | null = null;
+  private sigintHandler: (() => void) | null = null;
   private serverVersion: string | null = null;
   /** Deduplicates concurrent flushes (prevents the 429 double-flush race on shutdown). */
   private inflightFlush: Promise<void> | null = null;
@@ -326,8 +331,15 @@ class TelemetryManager {
   /**
    * Initialize telemetry and start periodic flushing
    */
-  init() {
-    if (!this.isTelemetryEnabled() || this.initialized) {
+  init(options: TelemetryInitOptions = {}) {
+    if (!this.isTelemetryEnabled()) {
+      return;
+    }
+    const handleSigint = options.handleSigint ?? true;
+    if (this.initialized) {
+      if (handleSigint) {
+        this.installSigintHandler();
+      }
       return;
     }
     this.initialized = true;
@@ -353,18 +365,9 @@ class TelemetryManager {
     // Don't let the interval prevent process from exiting
     this.flushInterval.unref();
 
-    // Await drain() (bounded by DRAIN_TIMEOUT_MS) so the final batch ships before exit.
-    process.on("SIGINT", () => {
-      void (async () => {
-        try {
-          this.trackSessionEnd(undefined, "sigint");
-          await this.drain();
-        } catch {
-          // Silently ignore - don't prevent process from exiting
-        }
-        process.exit(0);
-      })();
-    });
+    if (handleSigint) {
+      this.installSigintHandler();
+    }
 
     process.on("uncaughtException", (error) => {
       void (async () => {
@@ -453,6 +456,26 @@ class TelemetryManager {
         }
       });
     }
+  }
+
+  private installSigintHandler() {
+    if (this.sigintHandler) {
+      return;
+    }
+
+    // Await drain() (bounded by DRAIN_TIMEOUT_MS) so the final batch ships before exit.
+    this.sigintHandler = () => {
+      void (async () => {
+        try {
+          this.trackSessionEnd(undefined, "sigint");
+          await this.drain();
+        } catch {
+          // Silently ignore - don't prevent process from exiting
+        }
+        process.exit(0);
+      })();
+    };
+    process.on("SIGINT", this.sigintHandler);
   }
 
   /**
@@ -817,6 +840,10 @@ class TelemetryManager {
     if (this.flushInterval) {
       clearInterval(this.flushInterval);
       this.flushInterval = null;
+    }
+    if (this.sigintHandler) {
+      process.removeListener("SIGINT", this.sigintHandler);
+      this.sigintHandler = null;
     }
     this.initialized = false;
   }

@@ -8,6 +8,7 @@ import { validateRequiredParams } from "./validation.js";
 
 interface ShellCommandArgs {
   command: string;
+  description?: string;
   workdir?: string;
   login?: boolean;
   timeout_ms?: number;

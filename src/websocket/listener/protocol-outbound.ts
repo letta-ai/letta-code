@@ -5,6 +5,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
+import { getChannelRegistry } from "@/channels/registry";
 import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
@@ -1128,6 +1129,54 @@ export function createLifecycleMessageBase<TMessageType extends string>(
   };
 }
 
+function getActiveChannelTurnProgressContext(runtime: RuntimeCarrier): {
+  sources: NonNullable<ConversationRuntime["activeChannelTurnSources"]>;
+  batchId: string | null;
+  progressBuilder: NonNullable<
+    ConversationRuntime["activeChannelTurnProgress"]
+  >;
+} | null {
+  if (!runtime || !("activeChannelTurnSources" in runtime)) {
+    return null;
+  }
+  const sources = runtime.activeChannelTurnSources;
+  const progressBuilder = runtime.activeChannelTurnProgress;
+  if (!sources || sources.length === 0 || !progressBuilder) {
+    return null;
+  }
+  return {
+    sources,
+    batchId: runtime.activeChannelTurnBatchId,
+    progressBuilder,
+  };
+}
+
+function dispatchChannelTurnProgressFromDelta(
+  runtime: RuntimeCarrier,
+  delta: StreamDelta,
+): void {
+  const context = getActiveChannelTurnProgressContext(runtime);
+  if (!context) {
+    return;
+  }
+  const updates = context.progressBuilder.buildUpdates(delta);
+  if (updates.length === 0) {
+    return;
+  }
+  const registry = getChannelRegistry();
+  if (!registry) {
+    return;
+  }
+  for (const update of updates) {
+    void registry.dispatchTurnProgressEvent({
+      type: "progress",
+      sources: context.sources,
+      ...update,
+      ...(context.batchId ? { batchId: context.batchId } : {}),
+    });
+  }
+}
+
 export function emitCanonicalMessageDelta(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -1138,6 +1187,7 @@ export function emitCanonicalMessageDelta(
   },
 ): void {
   emitStreamDelta(socket, runtime, delta, scope);
+  dispatchChannelTurnProgressFromDelta(runtime, delta);
 }
 
 export function emitLoopErrorDelta(

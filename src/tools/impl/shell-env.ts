@@ -382,13 +382,24 @@ export function getShellEnv(): NodeJS.ProcessEnv {
         const inheritedParentMemoryDir = parentAgentId
           ? getScopedMemoryFilesystemRoot(parentAgentId)
           : null;
+        const inheritedParentAgentDir = inheritedParentMemoryDir
+          ? path.dirname(inheritedParentMemoryDir)
+          : null;
+        const inheritedMemoryPath = inheritedMemoryDir
+          ? path.resolve(inheritedMemoryDir)
+          : null;
+        const inheritedMemoryIsParentScoped =
+          inheritedMemoryPath && inheritedParentMemoryDir
+            ? inheritedMemoryPath === path.resolve(inheritedParentMemoryDir) ||
+              Boolean(
+                inheritedParentAgentDir &&
+                  inheritedMemoryPath.startsWith(
+                    `${path.resolve(inheritedParentAgentDir)}${path.sep}memory-worktrees${path.sep}`,
+                  ),
+              )
+            : false;
 
-        if (
-          inheritedMemoryDir &&
-          inheritedParentMemoryDir &&
-          path.resolve(inheritedMemoryDir) ===
-            path.resolve(inheritedParentMemoryDir)
-        ) {
+        if (inheritedMemoryDir && inheritedMemoryIsParentScoped) {
           env.MEMORY_DIR = inheritedMemoryDir;
           env.LETTA_MEMORY_DIR = inheritedLettaMemoryDir || inheritedMemoryDir;
         } else {

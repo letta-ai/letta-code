@@ -68,6 +68,71 @@ function trackListenerError(
   });
 }
 
+// Cap on how long a GUI-initiated memory write waits for the remote push
+// before responding. Common-case pushes land well under this, so the client
+// gets a response that is safely ordered after the server-of-record update
+// (LET-9481). Slower pushes fall back to responding immediately while the
+// push finishes in the background — the web UI reconciles that path with its
+// own retry loop. MUST stay below the desktop UI's 10s device-command
+// timeout (useSendDeviceCommand DEFAULT_TIMEOUT_MS), or skill install /
+// uninstall would report spurious timeout failures on slow networks.
+const MEMORY_PUSH_AWAIT_CAP_MS = 8_000;
+
+/**
+ * Push pending memory commits, waiting up to `MEMORY_PUSH_AWAIT_CAP_MS` so
+ * the caller can order its response/notifications after the remote update.
+ * On cap expiry the push keeps running detached (failures are logged).
+ */
+async function awaitMemoryPushBounded(
+  commandName: string,
+  agentId: string,
+  memoryRoot: string,
+): Promise<void> {
+  const { syncPendingMemoryCommitsAfterTurn } = await import(
+    "@/agent/memory-git"
+  );
+  const syncPromise = syncPendingMemoryCommitsAfterTurn(agentId, {
+    memoryDir: memoryRoot,
+  });
+
+  const warnOnFailure = (result: { status: string; summary: string }): void => {
+    if (result.status === "push_failed" || result.status === "conflict") {
+      console.warn(
+        `[${commandName}] push failed for ${agentId}: ${result.summary}`,
+      );
+    }
+  };
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const capPromise = new Promise<"timed_out">((resolve) => {
+    timer = setTimeout(() => resolve("timed_out"), MEMORY_PUSH_AWAIT_CAP_MS);
+  });
+
+  try {
+    const result = await Promise.race([syncPromise, capPromise]);
+    if (result === "timed_out") {
+      console.warn(
+        `[${commandName}] push still in flight after ${MEMORY_PUSH_AWAIT_CAP_MS}ms for ${agentId}; responding now, push continues in background`,
+      );
+      syncPromise.then(warnOnFailure).catch((err) => {
+        console.warn(
+          `[${commandName}] background push failed for ${agentId}:`,
+          err instanceof Error ? err.message : err,
+        );
+      });
+      return;
+    }
+    warnOnFailure(result);
+  } catch (err) {
+    console.warn(
+      `[${commandName}] push failed for ${agentId}:`,
+      err instanceof Error ? err.message : err,
+    );
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function handleListMemoryCommand(
   parsed: ListMemoryCommand,
   socket: WebSocket,
@@ -797,19 +862,21 @@ export function handleMemoryProtocolCommand(
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
         });
 
-        // ── Push immediately (non-turn writes don't get post-turn sync) ─
+        // ── Push before notifying (non-turn writes don't get post-turn ──
+        // sync). Server-of-record reads (e.g. the agent profile picture
+        // endpoint) are served from the remote memfs, so emitting
+        // memory_updated / the response before the push lands lets the UI
+        // refetch stale bytes and drop its optimistic state (LET-9481).
+        // Bounded: a slow push falls back to responding immediately with
+        // the push continuing in the background. Push failures are
+        // warn-and-continue — the local commit succeeded and a later sync
+        // will retry.
         if (commitResult.committed && !memorySyncMode) {
-          const { syncPendingMemoryCommitsAfterTurn } = await import(
-            "@/agent/memory-git"
+          await awaitMemoryPushBounded(
+            "write_memory_file",
+            parsed.agent_id,
+            memoryRoot,
           );
-          syncPendingMemoryCommitsAfterTurn(parsed.agent_id, {
-            memoryDir: memoryRoot,
-          }).catch((err) => {
-            console.warn(
-              `[write_memory_file] background push failed for ${parsed.agent_id}:`,
-              err instanceof Error ? err.message : err,
-            );
-          });
         }
 
         // ── Notify UI so the memory view auto-refreshes ────────────────
@@ -988,19 +1055,15 @@ export function handleMemoryProtocolCommand(
           ...(memorySyncMode ? { syncMode: memorySyncMode } : {}),
         });
 
-        // ── Push immediately (non-turn writes don't get post-turn sync) ─
+        // ── Push before notifying (non-turn deletes don't get post-turn ─
+        // sync). Same bounded ordering requirement as write_memory_file:
+        // remote reads must not race the push (LET-9481).
         if (commitResult.committed && !memorySyncMode) {
-          const { syncPendingMemoryCommitsAfterTurn } = await import(
-            "@/agent/memory-git"
+          await awaitMemoryPushBounded(
+            "delete_memory_file",
+            parsed.agent_id,
+            memoryRoot,
           );
-          syncPendingMemoryCommitsAfterTurn(parsed.agent_id, {
-            memoryDir: memoryRoot,
-          }).catch((err) => {
-            console.warn(
-              `[delete_memory_file] background push failed for ${parsed.agent_id}:`,
-              err instanceof Error ? err.message : err,
-            );
-          });
         }
 
         if (commitResult.committed) {

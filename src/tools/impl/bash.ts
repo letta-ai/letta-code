@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  consumeWorkingDirectoryRecovery,
+  getCurrentWorkingDirectory,
+} from "@/runtime-context";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
   appendBackgroundProcessOutput,
@@ -18,7 +21,7 @@ import {
   selectAvailableShellLauncher,
   withStrictShellPrelude,
 } from "./shell-launchers.js";
-import { spawnWithLauncher } from "./shell-runner.js";
+import { type ShellExecutionError, spawnWithLauncher } from "./shell-runner.js";
 import { applyShellSandbox } from "./shell-sandbox.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
@@ -121,8 +124,10 @@ export async function spawnCommand(
         });
         return result;
       } catch (error) {
-        const err = error as NodeJS.ErrnoException;
-        if (err.code !== "ENOENT") {
+        const err = error as ShellExecutionError;
+        // Only an executable-lookup ENOENT justifies retrying other shells.
+        // A missing cwd fails identically for every launcher.
+        if (err.code !== "ENOENT" || err.reason === "cwd_missing") {
           throw error;
         }
         cachedWorkingLauncher = null;
@@ -154,8 +159,8 @@ export async function spawnCommand(
       cachedWorkingLauncher = launcher;
       return result;
     } catch (error) {
-      const err = error as NodeJS.ErrnoException;
-      if (err.code === "ENOENT") {
+      const err = error as ShellExecutionError;
+      if (err.code === "ENOENT" && err.reason !== "cwd_missing") {
         tried.push(launcher[0] || "unknown");
         lastError = err;
         continue;
@@ -220,6 +225,14 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       status: "success",
     };
   }
+
+  // If the runtime cwd was found deleted and repaired to a fallback (e.g. the
+  // agent removed its own worktree), tell the model instead of silently
+  // running from a different directory.
+  const recoveredFrom = consumeWorkingDirectoryRecovery();
+  const recoveryNote = recoveredFrom
+    ? `Note: working directory ${recoveredFrom} no longer exists; running in ${userCwd} instead.\n`
+    : "";
 
   if (run_in_background) {
     try {
@@ -321,7 +334,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       content: [
         {
           type: "text",
-          text: `Command running in background with ID: ${bashId}\nOutput file: ${outputFile}`,
+          text: `${recoveryNote}Command running in background with ID: ${bashId}\nOutput file: ${outputFile}`,
         },
       ],
       status: "success",
@@ -356,7 +369,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         content: [
           {
             type: "text",
-            text: `Exit code: ${exitCode}\n${truncatedOutput}`,
+            text: `${recoveryNote}Exit code: ${exitCode}\n${truncatedOutput}`,
           },
         ],
         status: "error",
@@ -364,7 +377,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     }
 
     return {
-      content: [{ type: "text", text: truncatedOutput }],
+      content: [{ type: "text", text: `${recoveryNote}${truncatedOutput}` }],
       status: "success",
     };
   } catch (error) {
@@ -404,7 +417,14 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     );
 
     return {
-      content: [{ type: "text", text: truncatedError }],
+      content: [
+        {
+          type: "text",
+          // Interrupt results must stay byte-exact (downstream code compares
+          // against INTERRUPTED_BY_USER), so skip the recovery note on abort.
+          text: isAbort ? truncatedError : `${recoveryNote}${truncatedError}`,
+        },
+      ],
       status: "error",
     };
   }

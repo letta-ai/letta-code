@@ -101,7 +101,6 @@ import type {
 const EXPERIMENT_IDS = new Set<ExperimentId>([
   "conversation_titles",
   "desktop_conversation_bootstrap",
-  "node",
   "tui_cron",
 ]);
 
@@ -877,8 +876,13 @@ export function isListModelsCommand(
   const c = value as {
     type?: unknown;
     request_id?: unknown;
+    force?: unknown;
   };
-  return c.type === "list_models" && typeof c.request_id === "string";
+  return (
+    c.type === "list_models" &&
+    typeof c.request_id === "string" &&
+    (c.force === undefined || typeof c.force === "boolean")
+  );
 }
 
 export function isListConnectProvidersCommand(

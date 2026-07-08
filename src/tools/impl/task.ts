@@ -18,7 +18,10 @@ import {
   discoverSubagents,
   getAllSubagentConfigs,
 } from "@/agent/subagents";
-import { spawnSubagent } from "@/agent/subagents/manager";
+import {
+  type SubagentMemoryScope,
+  spawnSubagent,
+} from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -88,6 +91,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
    * subagents.
    */
   transcriptPath?: string;
+  /** Optional exact memory scope for harness-created memory worktrees. */
+  memoryScope?: SubagentMemoryScope;
   /**
    * When true, skip injecting the completion notification into the primary
    * agent's message queue and hide from SubagentGroupDisplay.
@@ -332,6 +337,7 @@ export function spawnBackgroundSubagentTask(
     completionSummary,
     onComplete,
     transcriptPath,
+    memoryScope,
     deps,
   } = args;
   const shouldEmitCompletionNotification =
@@ -404,6 +410,7 @@ export function spawnBackgroundSubagentTask(
     parentAgentIdForSpawn,
     transcriptPath,
     resolvedParentScope?.conversationId,
+    memoryScope,
   )
     .then(async (result) => {
       bgTask.status = result.success ? "completed" : "failed";

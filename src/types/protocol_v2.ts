@@ -38,7 +38,6 @@ export type ExperimentId =
   | "conversation_titles"
   | "desktop_conversation_bootstrap"
   | "diffs"
-  | "node"
   | "tui_cron";
 
 export type ExperimentSource = "override" | "env" | "default";
@@ -557,6 +556,8 @@ export interface UmiLifecycleMessageBase {
 export interface ClientToolStartMessage extends UmiLifecycleMessageBase {
   message_type: "client_tool_start";
   tool_call_id: string;
+  tool_name?: string;
+  tool_args?: string;
 }
 
 export interface ClientToolEndMessage extends UmiLifecycleMessageBase {
@@ -1378,6 +1379,12 @@ export interface ListModelsCommand {
   type: "list_models";
   /** Echoed back in the response for request correlation. */
   request_id: string;
+  /**
+   * Bypass the listener's availability cache and refetch from the backend.
+   * Sent by user-initiated refreshes so they can never be answered with a
+   * stale-but-within-TTL snapshot.
+   */
+  force?: boolean;
 }
 
 export type ConnectProviderStorageTarget = "local";
