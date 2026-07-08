@@ -14,7 +14,12 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "transcribe_voice",
   "download_media",
   "media_max_bytes",
+  "message_prefix",
 ]);
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
 
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
@@ -60,7 +65,8 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         (config.download_media === undefined ||
           isBoolean(config.download_media)) &&
         (config.media_max_bytes === undefined ||
-          isPositiveNumber(config.media_max_bytes))
+          isPositiveNumber(config.media_max_bytes)) &&
+        (config.message_prefix === undefined || isString(config.message_prefix))
       );
     },
 
@@ -90,6 +96,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         mediaMaxBytes: isPositiveNumber(config.media_max_bytes)
           ? config.media_max_bytes
           : undefined,
+        messagePrefix: isString(config.message_prefix)
+          ? config.message_prefix
+          : undefined,
       };
     },
 
@@ -103,6 +112,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
+        message_prefix: account.messagePrefix,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -117,6 +127,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
+        message_prefix: account.messagePrefix,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },

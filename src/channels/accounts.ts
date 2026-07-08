@@ -53,6 +53,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
   listen_mode: "listenMode",
+  message_prefix: "messagePrefix",
   media_max_bytes: "mediaMaxBytes",
   mention_patterns: "mentionPatterns",
   recipient_aliases: "recipientAliases",

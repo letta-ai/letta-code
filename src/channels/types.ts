@@ -826,6 +826,8 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** Optional prefix prepended to outbound agent text messages. */
+  messagePrefix?: string;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {

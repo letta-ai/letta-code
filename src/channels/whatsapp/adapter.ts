@@ -566,6 +566,14 @@ export function createWhatsAppAdapter(
       } catch {
         // Presence is best-effort.
       }
+      if (
+        account.messagePrefix &&
+        msg.text?.trim() &&
+        !msg.reaction &&
+        !msg.removeReaction
+      ) {
+        msg = { ...msg, text: account.messagePrefix + msg.text };
+      }
       const payload = buildWhatsAppOutboundPayload(msg);
       const result = await sendToWhatsApp(
         targetJid,
@@ -586,9 +594,12 @@ export function createWhatsAppAdapter(
         lidToJid,
         sock,
       });
+      const prefixed = account.messagePrefix
+        ? account.messagePrefix + text
+        : text;
       const result = await sendToWhatsApp(
         targetJid,
-        { text },
+        { text: prefixed },
         buildQuotedOptions(targetJid, options?.replyToMessageId),
       );
       rememberSent(result.key?.id ?? "", result);
