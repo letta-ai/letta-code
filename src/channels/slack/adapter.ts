@@ -544,9 +544,6 @@ function normalizeSlackReactionName(value: string): string {
 const SLACK_INGRESS_DEDUPE_TTL_MS = 60_000;
 const SLACK_INGRESS_DEDUPE_MAX = 2_000;
 const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
-// Slack section blocks cap mrkdwn text at 3000 characters; leave headroom
-// for the truncation marker when rewriting a dead stream's final state.
-const SLACK_DEAD_STREAM_REWRITE_TEXT_MAX = 2_900;
 const SLACK_PROGRESS_CARD_TEXT_MAX = 300;
 const SLACK_PROGRESS_CARD_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const SLACK_PROGRESS_CARD_STATE_MAX = 2_000;
@@ -841,13 +838,16 @@ function buildTerminalSlackStreamChunks(
 }
 
 /**
- * Render terminal stream chunks as plain message blocks for a stream Slack
- * has already taken out of streaming state (expired or externally stopped).
+ * Render the terminal state as a single plain message block for a stream
+ * Slack has already taken out of streaming state (expired or externally
+ * stopped). stopStream no-ops with `message_not_in_streaming_state` on such
+ * messages, so the rich close cannot be delivered.
  *
- * stopStream no-ops with `message_not_in_streaming_state` on such messages,
- * which previously dropped the final retitle/error details entirely and left
- * the card stuck on a red in-progress row. Rewriting the message via
- * chat.update replaces the stale streaming UI with the real final state.
+ * Deliberately minimal: just the terminal plan title (the same summary the
+ * rich card would have shown, e.g. "Ran 3 commands, wrote a file") plus the
+ * chat footnote. The previous per-task ":white_check_mark: title — details"
+ * dump duplicated rows the card already displayed, coalesced into the
+ * preceding reply as a wall of text, and had truncation/encoding artifacts.
  */
 function buildSlackDeadStreamRewrite(
   entry: SlackProgressCardEntry,
@@ -860,39 +860,12 @@ function buildSlackDeadStreamRewrite(
   const headerText =
     sanitizeSlackProgressText(planTitle ?? "", SLACK_STREAM_CHUNK_TEXT_MAX) ||
     formatSlackProgressCardText(entry.status, entry.latestText);
-  const lines: string[] = [];
-  for (const chunk of chunks) {
-    if (chunk.type !== "task_update") {
-      continue;
-    }
-    const icon =
-      chunk.status === "error"
-        ? ":warning:"
-        : chunk.status === "complete"
-          ? ":white_check_mark:"
-          : ":hourglass_flowing_sand:";
-    const details = isNonEmptyString(chunk.details)
-      ? ` — ${chunk.details}`
-      : "";
-    lines.push(`${icon} ${chunk.title}${details}`);
-  }
-  const body = truncateChannelProgressText(
-    lines.join("\n"),
-    SLACK_DEAD_STREAM_REWRITE_TEXT_MAX,
-    "…",
-  );
   const blocks: SlackBlock[] = [
     {
       type: "section",
       text: { type: "mrkdwn", text: `*${headerText}*` },
     },
   ];
-  if (body) {
-    blocks.push({
-      type: "section",
-      text: { type: "mrkdwn", text: body },
-    });
-  }
   const footnote = buildSlackChatFootnote(entry.source);
   if (footnote) {
     blocks.push({

@@ -3577,7 +3577,9 @@ test("slack adapter rewrites dead streams with the final card state", async () =
   // Slack already took the message out of streaming state (expiry or an
   // external stop), so stopStream cannot deliver the final retitle. The
   // adapter rewrites the message via chat.update instead of silently
-  // dropping the terminal state and leaving a red in-progress row.
+  // dropping the terminal state and leaving a red in-progress row. The
+  // rewrite is a single terminal summary line (plan title + footnote) — no
+  // per-task dump: the card already showed the rows while it was live.
   expect(writeClient?.chat.update).toHaveBeenCalledTimes(1);
   const updateCalls = writeClient?.chat.update.mock.calls as unknown as Array<
     Array<{
@@ -3591,10 +3593,13 @@ test("slack adapter rewrites dead streams with the final card state", async () =
   expect(updateArgs).toMatchObject({
     channel: "C123",
     ts: "1712800000.000300",
+    text: "Read a file",
   });
   const renderedBlocks = JSON.stringify(updateArgs?.blocks ?? []);
-  expect(renderedBlocks).toContain("Read");
-  expect(renderedBlocks).toContain(":white_check_mark:");
+  expect(renderedBlocks).toContain("*Read a file*");
+  expect(renderedBlocks).toContain("Open in Letta Chat");
+  expect(renderedBlocks).not.toContain("task_update");
+  expect(renderedBlocks).not.toContain(":white_check_mark:");
   expect(renderedBlocks).not.toContain("in_progress");
 });
 
@@ -3759,8 +3764,11 @@ test("slack adapter stops appending after the stream leaves streaming state and 
     channel: "C123",
     ts: "1712800000.000300",
   });
+  // The rewrite is a single terminal summary title covering the turn's
+  // activity — individual task rows are not re-dumped as text.
   const renderedBlocks = JSON.stringify(updateCalls[0]?.[0]?.blocks ?? []);
-  expect(renderedBlocks).toContain("Search");
+  expect(renderedBlocks).toContain("*Read a file, searched files*");
+  expect(renderedBlocks).not.toContain(":white_check_mark:");
   expect(renderedBlocks).not.toContain("in_progress");
 });
 
