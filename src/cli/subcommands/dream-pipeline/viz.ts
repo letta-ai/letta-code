@@ -3,13 +3,13 @@
 // final tree snapshot, and the patch it landed on the real memfs), embedded
 // as JSON in one file with a vanilla-JS viewer.
 //
-// Reads only the run directory's own artifacts (manifest.json, per-batch
-// input/payload/output/trajectory/report, aggregate/*), so it can re-render
-// any past run at any time.
+// Reads only the run directory's own artifacts (per-batch
+// input/output/trajectory/report, aggregate/*), so it can re-render any past
+// run at any time.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import type { NormalizedRecord } from "@/agent/trajectories/types";
 import { getDreamRootDir, getDreamRunRoot } from "./paths";
 
@@ -176,6 +176,7 @@ function statsFor(steps: VizStep[]): VizAgent["stats"] {
 interface StoredReport {
   subagentId?: string;
   subagentAgentId?: string;
+  agentId?: string;
   conversationId?: string;
   label?: string;
   sessionIds?: string[];
@@ -186,11 +187,7 @@ interface StoredReport {
   report?: string;
 }
 
-function loadBatchAgent(
-  batchDir: string,
-  index: number,
-  reflectorAgentId?: string,
-): VizAgent | null {
+function loadBatchAgent(batchDir: string, index: number): VizAgent | null {
   const report = readJsonIfExists<StoredReport>(join(batchDir, "report.json"));
   const outputDir = join(batchDir, "output");
   if (!report && !existsSync(outputDir)) return null;
@@ -200,7 +197,7 @@ function loadBatchAgent(
     role: "reflection",
     label: `batch ${index}`,
     batchIndex: index,
-    agentId: reflectorAgentId,
+    agentId: report?.agentId,
     conversationId: report?.conversationId,
     sessionIds: report?.sessionIds ?? [],
     success: report?.success ?? false,
@@ -225,10 +222,7 @@ function loadBatchAgent(
   };
 }
 
-function loadAggregatorAgent(
-  aggregateDir: string,
-  reflectorAgentId?: string,
-): VizAgent | null {
+function loadAggregatorAgent(aggregateDir: string): VizAgent | null {
   if (!existsSync(aggregateDir)) return null;
   const report = readJsonIfExists<StoredReport>(
     join(aggregateDir, "report.json"),
@@ -240,7 +234,7 @@ function loadAggregatorAgent(
     id: "aggregator",
     role: "aggregator",
     label: "aggregator",
-    agentId: report?.subagentAgentId ?? reflectorAgentId,
+    agentId: report?.subagentAgentId,
     conversationId: report?.conversationId,
     sessionIds: report?.inputs ?? [],
     success: report?.success ?? false,
@@ -260,19 +254,12 @@ function loadAggregatorAgent(
 }
 
 interface VizData {
-  manifest: Record<string, unknown>;
+  runId: string;
   agents: VizAgent[];
   runRoot: string;
 }
 
 function buildData(runRoot: string): VizData {
-  const manifest =
-    readJsonIfExists<Record<string, unknown>>(join(runRoot, "manifest.json")) ??
-    {};
-  const reflectorAgentId =
-    typeof manifest.reflectorAgentId === "string"
-      ? manifest.reflectorAgentId
-      : undefined;
   const agents: VizAgent[] = [];
 
   const batchesRoot = join(runRoot, "batches");
@@ -282,22 +269,15 @@ function buildData(runRoot: string): VizData {
       .map((name) => Number.parseInt(name, 10))
       .sort((a, b) => a - b);
     for (const index of indices) {
-      const agent = loadBatchAgent(
-        join(batchesRoot, String(index)),
-        index,
-        reflectorAgentId,
-      );
+      const agent = loadBatchAgent(join(batchesRoot, String(index)), index);
       if (agent) agents.push(agent);
     }
   }
 
-  const aggregator = loadAggregatorAgent(
-    join(runRoot, "aggregate"),
-    reflectorAgentId,
-  );
+  const aggregator = loadAggregatorAgent(join(runRoot, "aggregate"));
   if (aggregator) agents.push(aggregator);
 
-  return { manifest, agents, runRoot };
+  return { runId: basename(runRoot), agents, runRoot };
 }
 
 /** Resolve "latest", a run id, or an absolute run-root path to a run root. */
@@ -332,7 +312,7 @@ export function generateDreamViz(runRoot: string): {
 
 function renderHtml(data: VizData): string {
   const json = JSON.stringify(data).replace(/<\//g, "<\\/");
-  const runId = String(data.manifest.runId ?? "dream run");
+  const runId = data.runId;
   return `<!doctype html>
 <title>Dream — ${runId}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -440,15 +420,13 @@ function renderRail() {
   const rail = document.getElementById("rail");
   rail.textContent = "";
   rail.appendChild(el("h1", null, "Dream Run"));
-  rail.appendChild(el("div", "runid mono", String(DATA.manifest.runId || "")));
+  rail.appendChild(el("div", "runid mono", DATA.runId));
   const meta = el("div", "runmeta");
-  const m = DATA.manifest;
   const okCount = reflections.filter(r => r.success).length;
-  const sessionCount = (m.sessions || []).length;
+  const sessionCount = reflections.reduce((n, r) => n + r.sessionIds.length, 0);
   meta.innerHTML =
     "<div><b>" + reflections.length + "</b> batches · <b>" + sessionCount + "</b> sessions</div>" +
-    "<div><b>" + okCount + "/" + reflections.length + "</b> reflections succeeded</div>" +
-    (m.batchTokenBudget ? "<div>budget <b>" + m.batchTokenBudget + "</b> tok/batch</div>" : "");
+    "<div><b>" + okCount + "/" + reflections.length + "</b> reflections succeeded</div>";
   rail.appendChild(meta);
 
   rail.appendChild(el("div", "navhead", "Reflection agents"));

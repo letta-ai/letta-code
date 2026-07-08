@@ -135,6 +135,8 @@ function pageItems<T>(page: unknown): T[] {
 export interface BatchReflectionResult {
   batchIndex: number;
   subagentId: string;
+  /** The reflector agent this batch ran on. */
+  agentId?: string;
   /** Conversation on the reflector agent this batch ran as. */
   conversationId?: string;
   sessionIds: string[];
@@ -216,6 +218,7 @@ async function runOneBatch(
   const completion = await new Promise<{
     success: boolean;
     error?: string;
+    agentId?: string;
     conversationId?: string;
     stepCount?: number;
     durationMs?: number;
@@ -251,6 +254,7 @@ async function runOneBatch(
   const result: BatchReflectionResult = {
     batchIndex: batch.index,
     subagentId: completion.subagentId,
+    agentId: completion.agentId,
     conversationId: completion.conversationId,
     sessionIds: batch.sessions.map((s) => s.sessionId),
     timeRange: { start: batch.startTime, end: batch.endTime },

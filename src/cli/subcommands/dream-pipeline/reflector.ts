@@ -12,9 +12,7 @@
 // and recorded conversations are re-ingestable via the `letta:` trajectory
 // source. Workers are created with subagent semantics (hidden, no memfs) —
 // their working memory is always the fresh tree or worktree handed to each
-// conversation via $MEMORY_DIR. A worker is recreated when its stored model no
-// longer matches the primary agent's (old ones are left behind; they are
-// hidden and inert).
+// conversation via $MEMORY_DIR.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -32,13 +30,9 @@ const WORKER_STATE_SCHEMA_VERSION = "v1" as const;
 interface DreamWorkerState {
   schema_version: typeof WORKER_STATE_SCHEMA_VERSION;
   agentId: string;
-  model: string | null;
-  createdAt: string;
 }
 
-async function readWorkerState(
-  statePath: string,
-): Promise<DreamWorkerState | null> {
+async function readWorkerAgentId(statePath: string): Promise<string | null> {
   let raw: string;
   try {
     raw = await readFile(statePath, "utf-8");
@@ -53,15 +47,7 @@ async function readWorkerState(
   ) {
     return null;
   }
-  return {
-    schema_version: WORKER_STATE_SCHEMA_VERSION,
-    agentId: parsed.agentId,
-    model: typeof parsed.model === "string" ? parsed.model : null,
-    createdAt:
-      typeof parsed.createdAt === "string"
-        ? parsed.createdAt
-        : new Date().toISOString(),
-  };
+  return parsed.agentId;
 }
 
 async function primaryModelHandle(
@@ -88,9 +74,7 @@ async function getOrCreateDreamWorker(params: {
   primaryAgentId: string;
   stateFileName: string;
   logLabel: string;
-  createOptions: (
-    desiredModel: string | null,
-  ) => Promise<CreateAgentOptions> | CreateAgentOptions;
+  createOptions: () => Promise<CreateAgentOptions> | CreateAgentOptions;
   log?: (line: string) => void;
 }): Promise<string> {
   const log = params.log ?? (() => {});
@@ -98,24 +82,16 @@ async function getOrCreateDreamWorker(params: {
     getDreamRootDir(params.primaryAgentId),
     params.stateFileName,
   );
-  const desiredModel = await primaryModelHandle(params.primaryAgentId);
 
-  const existing = await readWorkerState(statePath);
-  if (existing) {
-    const modelMatches =
-      desiredModel === null || existing.model === desiredModel;
-    if (modelMatches && (await agentExists(existing.agentId))) {
-      return existing.agentId;
-    }
-    if (!modelMatches) {
-      log(
-        `[${params.logLabel}] model changed (${existing.model} → ${desiredModel}); creating a new ${params.logLabel}`,
-      );
-    }
+  const existingAgentId = await readWorkerAgentId(statePath);
+  if (existingAgentId && (await agentExists(existingAgentId))) {
+    return existingAgentId;
   }
 
+  // Match the primary agent's model at creation time.
+  const desiredModel = await primaryModelHandle(params.primaryAgentId);
   const { agent: created } = await createAgent({
-    ...(await params.createOptions(desiredModel)),
+    ...(await params.createOptions()),
     ...(desiredModel ? { model: desiredModel } : {}),
     baseTools: [],
     asSubagent: true,
@@ -124,8 +100,6 @@ async function getOrCreateDreamWorker(params: {
   const state: DreamWorkerState = {
     schema_version: WORKER_STATE_SCHEMA_VERSION,
     agentId: created.id,
-    model: desiredModel,
-    createdAt: new Date().toISOString(),
   };
   await mkdir(dirname(statePath), { recursive: true });
   try {
@@ -146,8 +120,7 @@ async function getOrCreateDreamWorker(params: {
 
 /**
  * Return the reflector agent id for a primary agent, creating one when none
- * exists (or when the stored one vanished or its model drifted from the
- * primary's).
+ * exists (or the stored one vanished).
  */
 export async function getOrCreateDreamReflector(params: {
   primaryAgentId: string;

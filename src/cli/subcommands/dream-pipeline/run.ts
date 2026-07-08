@@ -5,9 +5,9 @@
 // aggregator is working. Every run re-processes whatever its --from specs
 // select; use cursors (e.g. claude:<session>) to narrow repeat runs.
 
-import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { getTrajectorySource } from "@/agent/trajectories/registry";
 import {
   type DiscoveredSession,
@@ -65,17 +65,6 @@ export type DreamPipelineResult =
       aggregation?: DreamAggregationOutcome;
       vizPath?: string;
     };
-
-async function writeRunManifest(
-  runRoot: string,
-  manifest: Record<string, unknown>,
-): Promise<void> {
-  await writeFile(
-    join(runRoot, "manifest.json"),
-    `${JSON.stringify(manifest, null, 2)}\n`,
-    "utf-8",
-  );
-}
 
 /** Best-effort viz.html render into the run root. */
 async function writeRunViz(runRoot: string): Promise<string | undefined> {
@@ -142,26 +131,6 @@ export async function runDreamPipeline(
       `Selected ${sessions.length} session(s) in ${batches.length} batch(es)`,
     );
 
-    const baseManifest = {
-      runId,
-      createdAt: new Date().toISOString(),
-      agentId: options.agentId,
-      specs: options.specs,
-      batchTokenBudget: options.batchTokenBudget,
-      maxSessionsPerBatch: options.maxSessionsPerBatch,
-      concurrency: options.concurrency ?? batches.length,
-      reflectorAgentId,
-      sessions: measuredSessions,
-      batchPlan: batches.map((batch) => ({
-        index: batch.index,
-        sessionIds: batch.sessions.map((s) => s.sessionId),
-        estTokens: batch.estTokens,
-        startTime: batch.startTime,
-        endTime: batch.endTime,
-      })),
-    };
-    await writeRunManifest(runRoot, baseManifest);
-
     const batchResults = await runBatchReflections({
       agentId: options.agentId,
       conversationId: options.conversationId,
@@ -177,11 +146,6 @@ export async function runDreamPipeline(
     const failedBatches = batchResults.filter((r) => !r.success);
     if (failedBatches.length === batchResults.length) {
       const message = `All ${batchResults.length} reflection batch(es) failed; memory left unchanged.`;
-      await writeRunManifest(runRoot, {
-        ...baseManifest,
-        batches: batchResults,
-        outcome: { success: false, message },
-      });
       return {
         kind: "completed",
         runId,
@@ -210,17 +174,6 @@ export async function runDreamPipeline(
       recompileByConversation: options.recompileByConversation,
       recompileQueuedByConversation: options.recompileQueuedByConversation,
       log,
-    });
-
-    await writeRunManifest(runRoot, {
-      ...baseManifest,
-      batches: batchResults,
-      aggregation,
-      outcome: {
-        success: aggregation.success,
-        failedBatchCount: failedBatches.length,
-        message: aggregation.message,
-      },
     });
 
     const suffix =
@@ -252,8 +205,7 @@ export interface RerunAggregationResult {
 
 /**
  * Re-run ONLY the aggregation pass of a recorded dream run, using its existing
- * batch reflection outputs. The previous aggregate artifacts are set aside as
- * aggregate-prev-<n>.
+ * batch reflection outputs, rebuilt from each batch directory's report.json.
  */
 export async function rerunDreamAggregationForRun(options: {
   agentId: string;
@@ -265,22 +217,27 @@ export async function rerunDreamAggregationForRun(options: {
   log?: (line: string) => void;
 }): Promise<RerunAggregationResult | { kind: "already_active" }> {
   const log = options.log ?? (() => {});
-  const manifestRaw = await readFile(
-    join(options.runRoot, "manifest.json"),
-    "utf-8",
-  );
-  const manifest = JSON.parse(manifestRaw) as {
-    runId?: string;
-    batches?: BatchReflectionResult[];
-  };
-  const runId = manifest.runId ?? basename(options.runRoot);
-  const batchResults = (manifest.batches ?? []).filter(
-    (batch) =>
-      typeof batch?.outputDir === "string" && existsSync(batch.outputDir),
-  );
+  const batchesDir = join(options.runRoot, "batches");
+  const batchResults: BatchReflectionResult[] = [];
+  if (existsSync(batchesDir)) {
+    for (const name of readdirSync(batchesDir).sort(
+      (a, b) => Number(a) - Number(b),
+    )) {
+      try {
+        const report = JSON.parse(
+          await readFile(join(batchesDir, name, "report.json"), "utf-8"),
+        ) as BatchReflectionResult;
+        if (existsSync(report.outputDir)) {
+          batchResults.push(report);
+        }
+      } catch {
+        // A batch without a readable report contributes nothing.
+      }
+    }
+  }
   if (batchResults.length === 0) {
     throw new Error(
-      `No recorded batch outputs found in ${options.runRoot}/manifest.json — run the full dream first`,
+      `No recorded batch outputs found under ${batchesDir} — run the full dream first`,
     );
   }
 
@@ -288,16 +245,8 @@ export async function rerunDreamAggregationForRun(options: {
     return { kind: "already_active" };
   }
   try {
-    // Preserve the previous aggregation attempt's artifacts.
-    const aggregateDir = join(options.runRoot, "aggregate");
-    if (existsSync(aggregateDir)) {
-      let n = 1;
-      while (existsSync(join(options.runRoot, `aggregate-prev-${n}`))) n++;
-      await rename(aggregateDir, join(options.runRoot, `aggregate-prev-${n}`));
-    }
-
     log(
-      `[aggregate] re-running aggregation for ${runId} over ${batchResults.length} recorded batch(es)`,
+      `[aggregate] re-running aggregation over ${batchResults.length} recorded batch(es)`,
     );
     const aggregation = await runDreamAggregation({
       agentId: options.agentId,
@@ -308,13 +257,6 @@ export async function rerunDreamAggregationForRun(options: {
       recompileByConversation: options.recompileByConversation,
       recompileQueuedByConversation: options.recompileQueuedByConversation,
       log,
-    });
-
-    await writeRunManifest(options.runRoot, {
-      ...(JSON.parse(manifestRaw) as Record<string, unknown>),
-      aggregation,
-      aggregationRerun: true,
-      outcome: { success: aggregation.success, message: aggregation.message },
     });
 
     return {
