@@ -615,6 +615,8 @@ type SlackProgressCardEntry = {
   toolTasksById?: Map<string, SlackProgressToolTask>;
   sentTaskDetailsById?: Map<string, string>;
   completionHeaderText?: string;
+  /** Sanitized turn error text, set for error outcomes at finish time. */
+  errorText?: string;
   reasoningActive?: boolean;
   placeholderTaskId?: string;
   placeholderTaskSequence?: number;
@@ -842,7 +844,16 @@ function formatSlackTextProgressTerminalText(
       formatSlackCompletionPlanTitle(entry)
     );
   }
-  return entry.status === "cancelled" ? "Interrupted" : "Failed";
+  if (entry.status === "cancelled") {
+    return "Interrupted";
+  }
+  // A bare "Failed" is zero observability for a genuinely dead turn: carry
+  // the turn error into the terminal line whenever we have one.
+  const errorLine = sanitizeSlackProgressText(
+    entry.errorText ?? "",
+    SLACK_STREAM_CHUNK_TEXT_MAX,
+  );
+  return errorLine ? `Failed — ${errorLine}` : "Failed";
 }
 
 function buildSlackLifecycleErrorTaskChunk(
@@ -994,6 +1005,29 @@ function buildSlackDeadStreamRewrite(
       text: { type: "mrkdwn", text: `*${headerText}*` },
     },
   ];
+  // Error outcomes keep their reason: the terminal rewrite is the only
+  // surface left once the stream is dead, so a red close with no error text
+  // reads as an unexplained agent death.
+  const errorDetails = chunks.reduce<string | undefined>(
+    (found, chunk) =>
+      chunk.type === "task_update" && chunk.status === "error" && chunk.details
+        ? chunk.details
+        : found,
+    entry.errorText,
+  );
+  const errorLine =
+    entry.status === "error"
+      ? sanitizeSlackProgressText(
+          errorDetails ?? "",
+          SLACK_STREAM_CHUNK_TEXT_MAX,
+        )
+      : "";
+  if (errorLine) {
+    blocks.splice(1, 0, {
+      type: "section",
+      text: { type: "mrkdwn", text: errorLine },
+    });
+  }
   const footnote = buildSlackChatFootnote(entry.source);
   if (footnote) {
     blocks.push({
@@ -1001,7 +1035,10 @@ function buildSlackDeadStreamRewrite(
       elements: [{ type: "mrkdwn", text: footnote }],
     });
   }
-  return { text: headerText, blocks };
+  return {
+    text: errorLine ? `${headerText} — ${errorLine}` : headerText,
+    blocks,
+  };
 }
 
 function isDuplicateSkillTaskDetails(
@@ -3128,9 +3165,13 @@ export function createSlackAdapter(
           // permanently silence the keepalive: Slack expires idle streams and
           // an expired stream renders a stuck red warning row. Keep retrying
           // on the same cadence until the turn finishes or the stream is
-          // confirmed dead.
+          // confirmed dead — and once it is, degrade to the edited-message
+          // transport immediately so a long-running silent tool does not
+          // leave the red corpse on screen until the next progress event.
           if (!entry.streamDead) {
             scheduleSlackProgressStreamKeepalive(key, entry);
+          } else {
+            await degradeDeadSlackStreamToText(entry);
           }
           return;
         }
@@ -3336,6 +3377,45 @@ export function createSlackAdapter(
   }
 
   /**
+   * Take over a mid-turn dead stream as the plain-text live transport.
+   *
+   * Slack can force-stop a stream while the turn is still running (hard
+   * stream lifetime, external stop). The corpse renders as a red warning row
+   * that reads as an agent death even though the turn is healthy, and every
+   * later update is silently skipped — minutes of zero on-surface liveness
+   * (observed live 2026-07-08 on a 10-minute, 64-command turn). Rewrite the
+   * dead message in place via chat.update and continue the turn on the
+   * edited-message transport; the terminal edit then lands as usual.
+   */
+  async function degradeDeadSlackStreamToText(
+    entry: SlackProgressCardEntry,
+  ): Promise<boolean> {
+    if (
+      entry.status !== "processing" ||
+      !entry.streamDead ||
+      !isNonEmptyString(entry.streamTs) ||
+      (entry.mode !== "stream" && entry.mode !== "status-stream")
+    ) {
+      return false;
+    }
+    const replyToMessageId = getSlackProgressReplyTs(entry.source);
+    if (!replyToMessageId) {
+      return false;
+    }
+    clearSlackProgressStreamKeepalive(entry);
+    entry.textTs = entry.streamTs;
+    entry.mode = "text";
+    entry.streamTs = undefined;
+    entry.streamDead = undefined;
+    entry.lastPlanTitle = undefined;
+    entry.pendingStreamChunks = [];
+    entry.requeuedFailedChunks = false;
+    // Force the text transport to actually edit the corpse.
+    entry.lastSentText = undefined;
+    return await upsertSlackTextProgressMessage(entry, replyToMessageId);
+  }
+
+  /**
    * Plain-text progress ("text" progress UI): one status message per turn,
    * posted on the first flush with visible activity and edited in place
    * afterwards. The terminal edit collapses to the turn's activity summary
@@ -3501,6 +3581,10 @@ export function createSlackAdapter(
           ...(entry.pendingStreamChunks ?? []),
         ];
         entry.requeuedFailedChunks = true;
+      }
+
+      if (!didSend && entry.streamDead && entry.status === "processing") {
+        didSend = await degradeDeadSlackStreamToText(entry);
       }
 
       delete entry.latestUpdate;
@@ -3731,6 +3815,12 @@ export function createSlackAdapter(
         entry.completionHeaderText =
           progress.status === "completed"
             ? (completionHeaderText ?? undefined)
+            : undefined;
+        entry.errorText =
+          progress.status === "error"
+            ? (getChannelLifecycleErrorDisplay(errorText).body ??
+              errorText ??
+              undefined)
             : undefined;
         delete entry.latestUpdate;
         entry.updatedAt = Date.now();

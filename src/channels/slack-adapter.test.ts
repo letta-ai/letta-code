@@ -3747,6 +3747,17 @@ test("slack adapter stops appending after the stream leaves streaming state and 
   });
   const appendCallsAfterDeath =
     writeClient?.chat.appendStream.mock.calls.length ?? 0;
+  // Death degrades the corpse to the edited-message transport immediately:
+  // the red frozen card becomes a live plain status message (chat.update on
+  // the stream's own ts), so the surface keeps moving mid-turn.
+  expect(writeClient?.chat.update.mock.calls.length ?? 0).toBeGreaterThan(0);
+  const degradeCalls = writeClient?.chat.update.mock.calls as unknown as Array<
+    Array<{ channel: string; ts: string }>
+  >;
+  expect(degradeCalls[0]?.[0]).toMatchObject({
+    channel: "C123",
+    ts: "1712800000.000300",
+  });
 
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
@@ -3758,7 +3769,7 @@ test("slack adapter stops appending after the stream leaves streaming state and 
     toolCallId: "call-2",
     toolName: "grep",
   });
-  // A dead stream accepts no further appends.
+  // A dead stream accepts no further appends; progress continues as edits.
   expect(writeClient?.chat.appendStream.mock.calls.length ?? 0).toBe(
     appendCallsAfterDeath,
   );
@@ -3779,22 +3790,23 @@ test("slack adapter stops appending after the stream leaves streaming state and 
   });
 
   // Finishing must not call stopStream on a dead stream; the final state is
-  // rewritten onto the frozen message via chat.update instead.
+  // rendered onto the taken-over message via chat.update instead.
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
-  expect(writeClient?.chat.update).toHaveBeenCalledTimes(1);
   const updateCalls = writeClient?.chat.update.mock.calls as unknown as Array<
-    Array<{ channel: string; ts: string; blocks?: unknown[] }>
+    Array<{ channel: string; ts: string; text?: string; blocks?: unknown[] }>
   >;
-  expect(updateCalls[0]?.[0]).toMatchObject({
+  expect(updateCalls.length).toBeGreaterThan(1);
+  const lastUpdate = updateCalls[updateCalls.length - 1]?.[0];
+  expect(lastUpdate).toMatchObject({
     channel: "C123",
     ts: "1712800000.000300",
   });
-  // The rewrite is a single terminal summary title covering the turn's
-  // activity — individual task rows are not re-dumped as text.
-  const renderedBlocks = JSON.stringify(updateCalls[0]?.[0]?.blocks ?? []);
-  expect(renderedBlocks).toContain("*Read a file, searched files*");
-  expect(renderedBlocks).not.toContain(":white_check_mark:");
-  expect(renderedBlocks).not.toContain("in_progress");
+  // The terminal edit is a single line (the reply supplies the completion
+  // header) — individual task rows are not re-dumped as text.
+  const rendered = JSON.stringify(lastUpdate);
+  expect(rendered).toContain("Done.");
+  expect(rendered).not.toContain(":white_check_mark:");
+  expect(rendered).not.toContain("in_progress");
 });
 
 test("slack adapter keepalive survives a transient append failure", async () => {
