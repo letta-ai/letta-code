@@ -559,7 +559,13 @@ const SLACK_LIFECYCLE_ERROR_TASK_ID = "task_lifecycle_error";
 const SLACK_CHANNEL_RESPONSE_TASK_ID = "task_channel_response";
 const SLACK_TURN_ACTIVE_TASK_ID = "task_turn_active";
 const DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS = 1_000;
-const DEFAULT_SLACK_PROGRESS_STREAM_KEEPALIVE_MS = 60_000;
+// Keepalive doubles as the stream-death detector: a dead stream is only
+// discovered when a write is rejected, so during quiet stretches (long
+// silent tools) the keepalive cadence bounds how long a killed stream sits
+// blank before reactive rollover re-arms it. 15s keeps that gap under the
+// ~19s recovery gap measured on the leading competitor while staying far
+// below appendStream's rate limit (Tier 4, 100+/min).
+const DEFAULT_SLACK_PROGRESS_STREAM_KEEPALIVE_MS = 15_000;
 const DEFAULT_SLACK_COMPLETION_FINALIZE_GRACE_MS = 500;
 // Threads the agent has sent messages to should auto-subscribe: when a user
 // replies in such a thread without mentioning the agent, the reply is still
