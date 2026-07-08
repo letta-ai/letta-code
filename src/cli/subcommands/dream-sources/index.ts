@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { appendExternalTranscriptEntries } from "@/cli/helpers/reflection-transcript";
+import { claudeCodeAdapter } from "./claude-code";
+import { codexAdapter } from "./codex";
 import { openHandsAdapter } from "./openhands";
 import { transcriptAdapter } from "./transcript";
 import type { SourceAdapter } from "./types";
@@ -11,6 +13,8 @@ export type { SourceAdapter } from "./types";
  * Add a new source type by importing its adapter and adding one entry here.
  */
 const ADAPTERS: Record<string, SourceAdapter> = {
+  claude: claudeCodeAdapter,
+  codex: codexAdapter,
   openhands: openHandsAdapter,
   transcript: transcriptAdapter,
 };
