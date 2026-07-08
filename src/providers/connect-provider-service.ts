@@ -116,6 +116,7 @@ function serializeFields(
     label: field.label,
     ...(field.placeholder ? { placeholder: field.placeholder } : {}),
     ...(field.secret !== undefined ? { secret: field.secret } : {}),
+    required: true,
   }));
 }
 
@@ -310,7 +311,7 @@ export async function connectProvider<TTarget extends ProviderStorageTarget>(
     resolved.accessKey,
     resolved.region,
     resolved.profile,
-    { target: input.target },
+    { target: input.target, connection: resolved.options },
   );
   await createOrUpdateProvider(
     provider.providerType,
