@@ -3,6 +3,7 @@ import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
 import {
   emitDeviceStatusIfOpen,
   emitLoopStatusIfOpen,
+  emitProtocolV2Message,
   setLoopStatus,
 } from "./protocol-outbound";
 import { evictConversationRuntimeIfIdle } from "./runtime";
@@ -298,6 +299,10 @@ export function requestApprovalOverWS(
     }
     runtime.lastStopReason = "requires_approval";
     setLoopStatus(runtime, "WAITING_ON_APPROVAL");
+    emitProtocolV2Message(socket, runtime, controlRequest, {
+      agent_id: runtime.agentId,
+      conversation_id: runtime.conversationId,
+    });
     emitLoopStatusIfOpen(runtime.listener, {
       agent_id: runtime.agentId,
       conversation_id: runtime.conversationId,

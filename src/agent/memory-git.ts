@@ -32,11 +32,10 @@ import {
 import { apiRequest } from "@/backend/api/request";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getUtf16Bom } from "@/utils/text-files";
+import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 
 const execFile = promisify(execFileCb);
-
-export const GIT_MEMORY_ENABLED_TAG = "git-memory-enabled";
 
 const RETRYABLE_GIT_HTTP_ERROR_RE =
   /(?:\bHTTP\s+(?:520|521|522|523|524)\b|The requested URL returned error:\s*(?:520|521|522|523|524))/i;
@@ -965,6 +964,9 @@ url=$(git config --local --get letta.memoryRepository.url 2>/dev/null)
 [ -z "$url" ] && exit 0
 branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || exit 0
 [ -z "$branch" ] && exit 0
+# Reflection and other harness worktrees commit on temporary branches; only the
+# main MemFS checkout should push to the optional memory repository remote.
+[ "$branch" != "main" ] && exit 0
 log="$(git rev-parse --git-dir)/memory-repository-push.log"
 (
   {
@@ -2300,7 +2302,12 @@ export async function addGitMemoryTag(
   try {
     const { getBackend } = await import("@/backend");
     const backend = getBackend();
-    const agent = prefetchedAgent ?? (await backend.retrieveAgent(agentId));
+    // Always request tags explicitly: without `include: ["agent.tags"]` the
+    // API can omit tags, and writing back an incomplete list would wipe the
+    // agent's other tags.
+    const agent =
+      prefetchedAgent ??
+      (await backend.retrieveAgent(agentId, { include: ["agent.tags"] }));
     const tags = agent.tags || [];
     if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
       await backend.updateAgent(agentId, {
@@ -2312,29 +2319,6 @@ export async function addGitMemoryTag(
     debugWarn(
       "memfs-git",
       `Failed to add git-memory tag: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-/**
- * Remove the git-memory-enabled tag from an agent.
- */
-export async function removeGitMemoryTag(agentId: string): Promise<void> {
-  try {
-    const { getBackend } = await import("@/backend");
-    const backend = getBackend();
-    const agent = await backend.retrieveAgent(agentId);
-    const tags = agent.tags || [];
-    if (tags.includes(GIT_MEMORY_ENABLED_TAG)) {
-      await backend.updateAgent(agentId, {
-        tags: tags.filter((t) => t !== GIT_MEMORY_ENABLED_TAG),
-      });
-      debugLog("memfs-git", `Removed ${GIT_MEMORY_ENABLED_TAG} tag`);
-    }
-  } catch (err) {
-    debugWarn(
-      "memfs-git",
-      `Failed to remove git-memory tag: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }

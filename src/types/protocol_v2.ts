@@ -38,7 +38,6 @@ export type ExperimentId =
   | "conversation_titles"
   | "desktop_conversation_bootstrap"
   | "diffs"
-  | "node"
   | "tui_cron";
 
 export type ExperimentSource = "override" | "env" | "default";
@@ -557,6 +556,8 @@ export interface UmiLifecycleMessageBase {
 export interface ClientToolStartMessage extends UmiLifecycleMessageBase {
   message_type: "client_tool_start";
   tool_call_id: string;
+  tool_name?: string;
+  tool_args?: string;
 }
 
 export interface ClientToolEndMessage extends UmiLifecycleMessageBase {
@@ -1276,6 +1277,8 @@ export interface MemoryFileEntry {
   content: string;
   size: number;
   references?: string[];
+  kind?: "markdown" | "image";
+  mime_type?: string | null;
 }
 
 export interface ListMemoryResponseMessage {
@@ -1376,6 +1379,12 @@ export interface ListModelsCommand {
   type: "list_models";
   /** Echoed back in the response for request correlation. */
   request_id: string;
+  /**
+   * Bypass the listener's availability cache and refetch from the backend.
+   * Sent by user-initiated refreshes so they can never be answered with a
+   * stale-but-within-TTL snapshot.
+   */
+  force?: boolean;
 }
 
 export type ConnectProviderStorageTarget = "local";
@@ -1828,6 +1837,16 @@ export interface ConversationCreateCommand {
   request_id: string;
   /** Body forwarded to the Letta conversations create API. */
   body: ConversationCreateParams;
+  /**
+   * Set by cloud-api when relaying the command: the authenticated WS
+   * subscriber's cloud user id. The listener echoes it back as the
+   * `X-Letta-Acting-User-Id` HTTP header on the outbound
+   * conversations.create call so cloud attributes the new conversation
+   * to the human who actually created it — not the user whose API key
+   * spawned the sandbox / desktop runtime. Absent for self-hosted or
+   * direct (non-relayed) flows.
+   */
+  acting_user_id?: string;
 }
 
 export interface ConversationUpdateCommand {
@@ -1861,6 +1880,12 @@ export interface ConversationForkCommand {
   request_id: string;
   conversation_id: string;
   body?: ConversationForkBody;
+  /**
+   * Set by cloud-api when relaying the command — see
+   * `ConversationCreateCommand.acting_user_id`. The fork produces a new
+   * conversation, so it is attributed the same way.
+   */
+  acting_user_id?: string;
 }
 
 export interface ConversationMessagesListCommand {
@@ -2795,6 +2820,7 @@ export type WsProtocolCommand =
 export type WsProtocolCommandType = WsProtocolCommand["type"];
 
 export type WsProtocolMessage =
+  | ControlRequest
   | DeviceStatusUpdateMessage
   | LoopStatusUpdateMessage
   | QueueUpdateMessage

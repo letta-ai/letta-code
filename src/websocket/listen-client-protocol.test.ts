@@ -16,7 +16,7 @@ import { models } from "@/agent/model";
 import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getPersonalityOption,
-} from "@/agent/personality";
+} from "@/agent/personality-presets";
 import { clearAllSubagents, registerSubagent } from "@/agent/subagent-state";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
@@ -1695,7 +1695,7 @@ describe("listen-client parseServerMessage", () => {
         JSON.stringify({
           type: "set_experiment",
           request_id: "experiment-set-1",
-          experiment_id: "node",
+          experiment_id: "tui_cron",
           enabled: true,
         }),
       ),
@@ -2441,6 +2441,75 @@ describe("listen-client memory command handling", () => {
         }),
       ]);
       expect(messages[0].entries[0]?.content).toContain("Hello from memory");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  test("lists supported image assets alongside markdown memory", async () => {
+    const tempRoot = await mkdtemp(join(os.tmpdir(), "letta-list-memory-"));
+    const socket = new MockSocket(WebSocket.OPEN);
+    const pngBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const ensureLocalMemfsCheckoutMock = mock(async () => {
+      await mkdir(join(tempRoot, ".git"), { recursive: true });
+      await mkdir(join(tempRoot, "system"), { recursive: true });
+      await writeFile(
+        join(tempRoot, "system", "persona.md"),
+        "---\ndescription: Persona\n---\nHello from memory\n",
+      );
+      await writeFile(join(tempRoot, "profile.png"), pngBytes);
+      await writeFile(join(tempRoot, "notes.bin"), Buffer.from([0x00, 0x01]));
+    });
+
+    try {
+      await __listenClientTestUtils.handleListMemoryCommand(
+        {
+          type: "list_memory",
+          request_id: "list-memory-images-1",
+          agent_id: "agent-1",
+          include_references: true,
+        },
+        socket as unknown as WebSocket,
+        {
+          getMemoryFilesystemRoot: () => tempRoot,
+          isMemfsEnabledOnServer: async () => true,
+          ensureLocalMemfsCheckout: ensureLocalMemfsCheckoutMock,
+        },
+      );
+
+      const messages = socket.sentPayloads.map((payload) =>
+        JSON.parse(payload as string),
+      );
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toMatchObject({
+        type: "list_memory_response",
+        request_id: "list-memory-images-1",
+        success: true,
+        done: true,
+        total: 2,
+      });
+      // Scanner orders directories first, so system/persona.md precedes
+      // the root-level profile.png. Unsupported binaries stay hidden.
+      expect(messages[0].entries).toEqual([
+        expect.objectContaining({
+          relative_path: "system/persona.md",
+          is_system: true,
+          description: "Persona",
+          kind: "markdown",
+          mime_type: "text/markdown",
+          references: [],
+        }),
+        expect.objectContaining({
+          relative_path: "profile.png",
+          is_system: false,
+          description: null,
+          content: "",
+          size: pngBytes.length,
+          kind: "image",
+          mime_type: "image/png",
+          references: [],
+        }),
+      ]);
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }
@@ -3451,11 +3520,9 @@ describe("listen-client experiment command handling", () => {
   test("wraps typed experiment reads and writes over WS", async () => {
     const originalGetSettings = settingsManager.getSettings;
     const originalUpdateSettings = settingsManager.updateSettings;
-    const originalNodeFlag = process.env.LETTA_NODE;
     const globalSettings = { autoConversationTitles: false } as Settings;
 
     try {
-      delete process.env.LETTA_NODE;
       (settingsManager as typeof settingsManager).getSettings = (() =>
         globalSettings) as typeof settingsManager.getSettings;
       (settingsManager as typeof settingsManager).updateSettings = ((
@@ -3491,7 +3558,7 @@ describe("listen-client experiment command handling", () => {
         success: true,
         experiments: expect.arrayContaining([
           expect.objectContaining({
-            id: "node",
+            id: "tui_cron",
             enabled: false,
             source: "default",
           }),
@@ -3508,7 +3575,7 @@ describe("listen-client experiment command handling", () => {
         {
           type: "set_experiment",
           request_id: "experiment-set-1",
-          experiment_id: "node",
+          experiment_id: "tui_cron",
           enabled: true,
         },
         socket as unknown as WebSocket,
@@ -3523,7 +3590,7 @@ describe("listen-client experiment command handling", () => {
         success: true,
         experiments: expect.arrayContaining([
           expect.objectContaining({
-            id: "node",
+            id: "tui_cron",
             enabled: true,
             source: "override",
           }),
@@ -3534,7 +3601,7 @@ describe("listen-client experiment command handling", () => {
         device_status: {
           experiments: expect.arrayContaining([
             expect.objectContaining({
-              id: "node",
+              id: "tui_cron",
               enabled: true,
               source: "override",
             }),
@@ -3569,11 +3636,6 @@ describe("listen-client experiment command handling", () => {
       });
       expect(globalSettings.autoConversationTitles).toBe(true);
     } finally {
-      if (originalNodeFlag === undefined) {
-        delete process.env.LETTA_NODE;
-      } else {
-        process.env.LETTA_NODE = originalNodeFlag;
-      }
       (settingsManager as typeof settingsManager).getSettings =
         originalGetSettings;
       (settingsManager as typeof settingsManager).updateSettings =
@@ -4112,31 +4174,21 @@ describe("listen-client v2 status builders", () => {
   });
 
   test("buildDeviceStatus includes the effective working directory", () => {
-    const originalNodeFlag = process.env.LETTA_NODE;
-    delete process.env.LETTA_NODE;
     const runtime = __listenClientTestUtils.createRuntime();
-    try {
-      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
-      expect(typeof deviceStatus.current_working_directory).toBe("string");
-      expect(
-        (deviceStatus.current_working_directory ?? "").length,
-      ).toBeGreaterThan(0);
-      expect(deviceStatus.current_toolset_preference).toBe("auto");
-      expect(deviceStatus.experiments).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: "node",
-            source: "default",
-          }),
-        ]),
-      );
-    } finally {
-      if (originalNodeFlag === undefined) {
-        delete process.env.LETTA_NODE;
-      } else {
-        process.env.LETTA_NODE = originalNodeFlag;
-      }
-    }
+    const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
+    expect(typeof deviceStatus.current_working_directory).toBe("string");
+    expect(
+      (deviceStatus.current_working_directory ?? "").length,
+    ).toBeGreaterThan(0);
+    expect(deviceStatus.current_toolset_preference).toBe("auto");
+    expect(deviceStatus.experiments).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "tui_cron",
+          source: "default",
+        }),
+      ]),
+    );
   });
 
   test("buildDeviceStatus includes should_doctor state when available", () => {
@@ -5226,7 +5278,7 @@ describe("listen-client capability-gated approval flow", () => {
     }
   });
 
-  test("requestApprovalOverWS exposes the control request through device status instead of stream_delta", () => {
+  test("requestApprovalOverWS emits control_request and exposes it through device status", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
       listener,
@@ -5254,8 +5306,21 @@ describe("listen-client capability-gated approval flow", () => {
     const deviceStatus = outbound.find(
       (payload) => payload.type === "update_device_status",
     );
+    const controlRequest = outbound.find(
+      (payload) => payload.type === "control_request",
+    );
+    expect(controlRequest).toBeDefined();
     expect(loopStatus).toBeDefined();
     expect(deviceStatus).toBeDefined();
+    expect(controlRequest.type).toBe("control_request");
+    expect(controlRequest.request_id).toBe(requestId);
+    expect(controlRequest.request).toEqual(
+      makeControlRequest(requestId).request,
+    );
+    expect(controlRequest.runtime).toEqual({
+      agent_id: "agent-1",
+      conversation_id: "default",
+    });
     expect(loopStatus.type).toBe("update_loop_status");
     expect(loopStatus.loop_status.status).toBe("WAITING_ON_APPROVAL");
     expect(runtime.lastStopReason).toBe("requires_approval");

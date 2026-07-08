@@ -22,6 +22,10 @@ export type TelemetryBackend =
   | "self_hosted_api"
   | "unknown";
 
+export interface TelemetryInitOptions {
+  handleSigint?: boolean;
+}
+
 export interface TelemetryEvent {
   type:
     | "session_start"
@@ -326,7 +330,7 @@ class TelemetryManager {
   /**
    * Initialize telemetry and start periodic flushing
    */
-  init() {
+  init(options: TelemetryInitOptions = {}) {
     if (!this.isTelemetryEnabled() || this.initialized) {
       return;
     }
@@ -353,18 +357,20 @@ class TelemetryManager {
     // Don't let the interval prevent process from exiting
     this.flushInterval.unref();
 
-    // Await drain() (bounded by DRAIN_TIMEOUT_MS) so the final batch ships before exit.
-    process.on("SIGINT", () => {
-      void (async () => {
-        try {
-          this.trackSessionEnd(undefined, "sigint");
-          await this.drain();
-        } catch {
-          // Silently ignore - don't prevent process from exiting
-        }
-        process.exit(0);
-      })();
-    });
+    if (options.handleSigint !== false) {
+      // Await drain() (bounded by DRAIN_TIMEOUT_MS) so the final batch ships before exit.
+      process.on("SIGINT", () => {
+        void (async () => {
+          try {
+            this.trackSessionEnd(undefined, "sigint");
+            await this.drain();
+          } catch {
+            // Silently ignore - don't prevent process from exiting
+          }
+          process.exit(0);
+        })();
+      });
+    }
 
     process.on("uncaughtException", (error) => {
       void (async () => {

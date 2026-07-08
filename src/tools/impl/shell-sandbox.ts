@@ -23,8 +23,9 @@ import { wrapLauncher } from "@/sandbox/wrap";
  * symlinks, command substitution, globbing, and subprocesses). The kernel
  * resolves real paths regardless of how the command spelled them.
  *
- * Enabled by default; set `LETTA_FS_SANDBOX=0` to opt out. No-ops when the host
- * has no sandbox backend.
+ * OFF by default; set `LETTA_FS_SANDBOX=1` to opt in (recommended for
+ * multi-tenant deployments where agents must not read each other's memory).
+ * No-ops when the host has no sandbox backend.
  */
 
 export interface ShellSandboxResult {

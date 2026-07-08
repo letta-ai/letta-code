@@ -12,12 +12,12 @@ import {
   type ModelReasoningEffort,
   shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
+import { applyPersonalityToMemory } from "@/agent/personality";
 import {
-  applyPersonalityToMemory,
   getPersonalityBlockValues,
   getPersonalityOption,
   type PersonalityId,
-} from "@/agent/personality";
+} from "@/agent/personality-presets";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";

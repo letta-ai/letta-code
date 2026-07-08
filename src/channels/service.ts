@@ -116,7 +116,6 @@ export interface ChannelConfigSnapshot {
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
-  showCompletedReaction?: boolean;
   listenMode?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
@@ -232,7 +231,6 @@ export interface ChannelAccountSnapshot {
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
-  showCompletedReaction?: boolean;
   listenMode?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
@@ -651,7 +649,6 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
     defaultPermissionMode:
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: account.transcribeVoice === true,
-    showCompletedReaction: account.showCompletedReaction !== false,
     listenMode: account.listenMode === true,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
@@ -786,7 +783,6 @@ function createAccountFromPatch(
     defaultPermissionMode:
       normalizedPatch.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: normalizedPatch.transcribeVoice === true,
-    showCompletedReaction: normalizedPatch.showCompletedReaction !== false,
     listenMode: normalizedPatch.listenMode === true,
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
@@ -971,10 +967,6 @@ function mergeAccountPatch(
       DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice:
       normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
-    showCompletedReaction:
-      normalizedPatch.showCompletedReaction ??
-      existing.showCompletedReaction ??
-      true,
     listenMode: normalizedPatch.listenMode ?? existing.listenMode ?? false,
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
@@ -1153,7 +1145,6 @@ export function getChannelConfigSnapshot(
     defaultPermissionMode:
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: account.transcribeVoice === true,
-    showCompletedReaction: account.showCompletedReaction !== false,
     listenMode: account.listenMode === true,
   };
 }
@@ -1195,7 +1186,6 @@ export async function setChannelConfigLive(
       autoThreadOnMention: normalizedPatch.autoThreadOnMention,
       threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
-      showCompletedReaction: normalizedPatch.showCompletedReaction,
       listenMode: normalizedPatch.listenMode,
       removeStaleRoutes: normalizedPatch.removeStaleRoutes,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
@@ -1235,7 +1225,6 @@ export async function setChannelConfigLive(
         autoThreadOnMention: normalizedPatch.autoThreadOnMention,
         threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
         acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
-        showCompletedReaction: normalizedPatch.showCompletedReaction,
         listenMode: normalizedPatch.listenMode,
         removeStaleRoutes: normalizedPatch.removeStaleRoutes,
         inboundDebounceMs: normalizedPatch.inboundDebounceMs,

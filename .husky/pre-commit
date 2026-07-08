@@ -46,6 +46,13 @@ if ! node scripts/check-filename-casing.js --staged 2>/dev/null; then
   exit 1
 fi
 
+# Check staged skill metadata for required name headers
+if ! node scripts/check-skill-frontmatter.js --staged; then
+  echo ""
+  echo "❌ Invalid skill metadata — run 'bun run check:skill-frontmatter' for details."
+  exit 1
+fi
+
 # Lint staged files only (fast)
 # Guard: lint-staged v16 exits code 1 when no files match, which would
 # fail the hook even on empty commits. Only run if lintable files are staged.

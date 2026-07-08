@@ -29,6 +29,7 @@ export type ChannelLifecycleErrorKind =
 
 export interface ChannelLifecycleErrorDisplayOptions {
   automaticRetry?: boolean;
+  runId?: string | null;
 }
 
 export interface ChannelLifecycleErrorDisplay {
@@ -147,7 +148,8 @@ export function getChannelLifecycleErrorDisplay(
   options: ChannelLifecycleErrorDisplayOptions = {},
 ): ChannelLifecycleErrorDisplay {
   const normalized = sanitizeChannelLifecycleErrorText(errorText);
-  const runId = extractChannelLifecycleRunId(errorText);
+  const optionsRunId = options.runId?.trim();
+  const runId = optionsRunId || extractChannelLifecycleRunId(errorText);
 
   if (!normalized || RAW_LOOP_ERROR_PATTERN.test(normalized)) {
     return {
@@ -211,8 +213,16 @@ export function formatChannelLifecycleErrorMessage(
 
   if (options.codeBlock) {
     const escaped = body.replace(/```/g, "``\u200b`");
-    return `${display.title}:\n\`\`\`\n${escaped}\n\`\`\``;
+    const lines = [`${display.title}:`, "```", escaped, "```"];
+    if (display.runId) {
+      lines.push("", `Run ID: ${display.runId}`);
+    }
+    return lines.join("\n");
   }
 
-  return `${display.title}:\n${body}`;
+  const lines = [`${display.title}:`, body];
+  if (display.runId) {
+    lines.push("", `Run ID: ${display.runId}`);
+  }
+  return lines.join("\n");
 }

@@ -16,6 +16,16 @@ test("false when the flag is off (no host probe needed)", () => {
   expect(willSandboxShell(REPO_CWD, {}, SEATBELT)).toBe(false);
 });
 
+test("false by default: the shell sandbox is opt-in, even with roots and a backend", () => {
+  // Same env as the passing parent case below, minus the opt-in flag.
+  expect(willSandboxShell(REPO_CWD, { MEMORY_DIR: MEM }, SEATBELT)).toBe(false);
+});
+
+test("false when the flag is explicitly off", () => {
+  const env = { LETTA_FS_SANDBOX: "0", MEMORY_DIR: MEM };
+  expect(willSandboxShell(REPO_CWD, env, SEATBELT)).toBe(false);
+});
+
 test("false when already inside a sandbox", () => {
   const env = {
     LETTA_FS_SANDBOX: "1",

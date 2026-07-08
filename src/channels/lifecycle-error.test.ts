@@ -94,6 +94,21 @@ describe("formatChannelLifecycleErrorMessage", () => {
       ),
     ).not.toContain("```");
   });
+
+  test("appends explicit run IDs to generic channel errors", () => {
+    expect(
+      formatChannelLifecycleErrorMessage("Unexpected stop reason: error", {
+        codeBlock: true,
+        runId: "run-456",
+      }),
+    ).toBe(
+      "Turn failed:\n" +
+        "```\n" +
+        "Something went wrong while processing that message. Please try again.\n" +
+        "```\n\n" +
+        "Run ID: run-456",
+    );
+  });
 });
 
 describe("sanitizeChannelLifecycleErrorText", () => {

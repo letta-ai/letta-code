@@ -43,6 +43,12 @@ type StreamingToolOutputState = {
   timer: ReturnType<typeof setTimeout> | null;
 };
 
+type ClientToolExecutionInfo = {
+  toolCallId: string;
+  toolName?: string;
+  toolArgs?: string;
+};
+
 function truncateInterruptToolReturn(text: string): string {
   const { content } = truncateByChars(
     text,
@@ -375,16 +381,22 @@ export function emitToolExecutionStartedEvents(
   socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
-    toolCallIds: string[];
+    toolCallIds?: string[];
+    toolCalls?: ClientToolExecutionInfo[];
     runId?: string | null;
     agentId?: string;
     conversationId?: string;
   },
 ): void {
-  for (const toolCallId of params.toolCallIds) {
+  const toolCalls: ClientToolExecutionInfo[] =
+    params.toolCalls ??
+    (params.toolCallIds ?? []).map((toolCallId) => ({ toolCallId }));
+  for (const toolCall of toolCalls) {
     const delta: ClientToolStartMessage = {
       ...createLifecycleMessageBase("client_tool_start", params.runId),
-      tool_call_id: toolCallId,
+      tool_call_id: toolCall.toolCallId,
+      ...(toolCall.toolName ? { tool_name: toolCall.toolName } : {}),
+      ...(toolCall.toolArgs ? { tool_args: toolCall.toolArgs } : {}),
     };
     emitCanonicalMessageDelta(socket, runtime, delta, {
       agent_id: params.agentId,

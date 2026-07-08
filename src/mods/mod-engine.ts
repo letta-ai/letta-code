@@ -1095,7 +1095,7 @@ function createLettaModApi(
     recordCapabilityDiagnostic({
       capability: { id: apiId, kind: "statusline" },
       error: new Error(
-        `${apiId} is no longer available. Use letta.ui.openPanel({ id, order, render }) instead — order 0 is the primary line (replaces agent · model), negative orders stack below it.`,
+        `${apiId} is no longer available. Use letta.ui.openPanel({ id, order, render }) instead — order 0 is the primary line (replaces agent · model), order 1 replaces the default product-status row, orders > 1 render additive panels above input, and negative orders stack below it.`,
       ),
       phase: "deprecated_api",
       severity: "warning",
