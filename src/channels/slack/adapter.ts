@@ -642,6 +642,12 @@ type SlackProgressCardEntry = {
   streamRollTimer?: ReturnType<typeof setTimeout>;
   /** Reactive (death-triggered) rolls consumed this turn. */
   deathRollCount?: number;
+  /**
+   * Last concrete activity title (tool title / "Running N tools"). Between
+   * steps the status header stays on this instead of oscillating through
+   * generic filler — end-users read "Thinking"/"Working" churn as noise.
+   */
+  stickyPlanTitle?: string;
   pendingFlush?: Promise<void>;
   requeuedFailedChunks?: boolean;
   updatedAt: number;
@@ -1636,22 +1642,28 @@ function buildSlackPlanUpdateChunk(
     };
   }
   if (runningTasks.length === 1) {
+    const title = runningTasks[0]?.title ?? "Thinking";
+    entry.stickyPlanTitle = title;
     return {
       type: "plan_update",
-      title: runningTasks[0]?.title ?? "Working",
+      title,
     };
   }
   if (runningTasks.length > 1) {
+    const title = `Running ${pluralizeTool(runningTasks.length)}`;
+    entry.stickyPlanTitle = title;
     return {
       type: "plan_update",
-      title: `Running ${pluralizeTool(runningTasks.length)}`,
+      title,
     };
   }
 
   if (entry.status === "processing") {
+    // Between steps (reasoning gaps, tool boundaries) hold the last concrete
+    // activity title rather than flapping through generic filler.
     return {
       type: "plan_update",
-      title: entry.reasoningActive ? "Thinking" : "Working",
+      title: entry.stickyPlanTitle ?? "Thinking",
     };
   }
 
@@ -1679,7 +1691,8 @@ function buildSlackPlanUpdateChunk(
   ).length;
   return {
     type: "plan_update",
-    title: completeCount > 0 ? "Completed" : "Working",
+    title:
+      completeCount > 0 ? "Completed" : (entry.stickyPlanTitle ?? "Thinking"),
   };
 }
 
@@ -4081,6 +4094,7 @@ export function createSlackAdapter(
         entry.textTs = undefined;
         entry.lastPlanTitle = undefined;
         entry.deathRollCount = undefined;
+        entry.stickyPlanTitle = undefined;
         entry.toolTasksById = undefined;
         entry.pendingStreamChunks = undefined;
         entry.toolNamesByCallId = undefined;

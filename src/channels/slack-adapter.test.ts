@@ -2092,7 +2092,9 @@ test("slack adapter streams native task progress and clears thread status", asyn
   });
   expect(appendCall?.chunks?.[0]).toMatchObject({
     type: "plan_update",
-    title: "Working",
+    // Sticky header: after the tool completes the header keeps the last
+    // concrete activity title rather than degrading to generic filler.
+    title: "Running",
   });
   expect(appendCall?.chunks?.[1]).toMatchObject({
     type: "task_update",
@@ -2773,7 +2775,9 @@ test("slack adapter keeps reasoning updates out of concrete task rows", async ()
       [
         {
           type: "plan_update",
-          title: "Thinking",
+          // Sticky header: the reasoning gap between tools holds the last
+          // concrete activity title instead of generic "Thinking"/"Working".
+          title: "Read",
         },
       ],
       expect.arrayContaining([
