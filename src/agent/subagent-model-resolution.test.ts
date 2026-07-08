@@ -6,6 +6,7 @@ import {
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
 } from "@/agent/subagents/context-budget";
 import {
+  buildForkSystemReminderForTest,
   buildSubagentArgs,
   buildSubagentPrompt,
   getModelHandleFromAgent,
@@ -27,6 +28,21 @@ describe("recallPromptForBackend", () => {
     expect(localPrompt).toContain("~/.letta/lc-local-backend");
     expect(localPrompt).not.toContain("--mode <mode>");
     expect(localPrompt).not.toContain("Semantic similarity search");
+  });
+});
+
+describe("memory fork prompt", () => {
+  test("injects memory-edit instructions for forked memory subagents", () => {
+    const reminder = buildForkSystemReminderForTest("memory", "api");
+
+    expect(reminder).toContain("independent memory-writing subagent");
+    expect(reminder).toContain("make the requested memory edit");
+    expect(reminder).toContain("$MEMORY_DIR");
+    expect(reminder).toContain("git commit");
+    expect(reminder).toContain("limited to Bash, Edit, and TaskOutput");
+    expect(reminder).not.toContain(
+      "search previous conversation history and provide a report",
+    );
   });
 });
 

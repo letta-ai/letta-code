@@ -85,29 +85,32 @@ test("default mode - auto-allows memory_apply_patch", () => {
   expect(result.reason).toBe("Default behavior for tool");
 });
 
-test("default mode - treats Agent like Task for safe subagent auto-approval", () => {
-  permissionMode.setMode("standard");
+test.each(["recall", "memory"])(
+  "default mode - treats Agent like Task for safe %s subagent auto-approval",
+  (subagentType) => {
+    permissionMode.setMode("standard");
 
-  const permissions: PermissionRules = {
-    allow: [],
-    deny: [],
-    ask: [],
-  };
+    const permissions: PermissionRules = {
+      allow: [],
+      deny: [],
+      ask: [],
+    };
 
-  const result = checkPermission(
-    "Agent",
-    {
-      subagent_type: "recall",
-      prompt: "find prior notes",
-      description: "Search history",
-    },
-    permissions,
-    "/Users/test/project",
-  );
+    const result = checkPermission(
+      "Agent",
+      {
+        subagent_type: subagentType,
+        prompt: "do the safe background task",
+        description: "Safe subagent",
+      },
+      permissions,
+      "/Users/test/project",
+    );
 
-  expect(result.decision).toBe("allow");
-  expect(result.reason).toBe("Default behavior for tool");
-});
+    expect(result.decision).toBe("allow");
+    expect(result.reason).toBe("Default behavior for tool");
+  },
+);
 
 // ============================================================================
 // Permission Mode: unrestricted

@@ -11,6 +11,7 @@ import { spawn } from "node:child_process";
 import { getAvailableModelHandles } from "@/agent/available-models";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getDefaultModelForTier, resolveModel } from "@/agent/model";
+import memorySubagentPrompt from "@/agent/prompts/memory_subagent.md";
 import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
 import {
@@ -1418,6 +1419,23 @@ ${SYSTEM_REMINDER_CLOSE}
 `;
   }
 
+  if (subagentType === "memory") {
+    return `${SYSTEM_REMINDER_OPEN}
+You have been forked from the primary conversational thread to run as an independent memory-writing subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference — you are NOT the primary agent and do not share its tools.
+
+**Your sole task is now to make the requested memory edit. Ignore any existing ongoing tasks.** Do not attempt to continue, finish, or act on anything the primary agent was in the middle of doing beyond the explicit memory-edit request below.
+
+Your toolset is limited to Bash, Edit, and TaskOutput. You cannot call memory tools, recall tools, skills, dispatch further tasks, or edit anything outside the parent agent's memory filesystem.
+
+You CANNOT ask questions mid-execution — all instructions are provided upfront.
+Your final message will be returned to the caller.
+
+${memorySubagentPrompt}
+${SYSTEM_REMINDER_CLOSE}
+
+`;
+  }
+
   return `${SYSTEM_REMINDER_OPEN}
 You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference — you are NOT the primary agent and do not share its full toolset.
 
@@ -1430,6 +1448,13 @@ Your final message will be returned to the caller.
 ${SYSTEM_REMINDER_CLOSE}
 
 `;
+}
+
+export function buildForkSystemReminderForTest(
+  subagentType?: string,
+  backendMode?: BackendMode,
+): string {
+  return buildForkSystemReminder(subagentType, backendMode);
 }
 
 /**

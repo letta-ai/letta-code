@@ -808,6 +808,8 @@ const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
   "Recall",
   "reflection", // Memory reflection - writes constrained by memory-subagent sandbox
   "Reflection",
+  "memory", // Direct memory edits - forked writer constrained by memory-subagent sandbox
+  "Memory",
   "history-analyzer", // History analysis - writes constrained by memory-subagent sandbox
 ]);
 

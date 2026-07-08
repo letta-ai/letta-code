@@ -18,10 +18,14 @@ describe("Codex unified exec toolset", () => {
     expect(OPENAI_DEFAULT_TOOLS).toContain("exec_command");
     expect(OPENAI_DEFAULT_TOOLS).toContain("write_stdin");
     expect(OPENAI_DEFAULT_TOOLS).not.toContain("shell_command");
+    expect(OPENAI_DEFAULT_TOOLS).toContain("Task");
+    expect(OPENAI_DEFAULT_TOOLS).toContain("TaskOutput");
+    expect(OPENAI_DEFAULT_TOOLS).not.toContain("memory_apply_patch");
 
     expect(OPENAI_PASCAL_TOOLS).toContain("exec_command");
     expect(OPENAI_PASCAL_TOOLS).toContain("write_stdin");
     expect(OPENAI_PASCAL_TOOLS).not.toContain("ShellCommand");
+    expect(OPENAI_PASCAL_TOOLS).not.toContain("memory_apply_patch");
   });
 
   test("documents LC-specific omission of upstream sandbox fields", () => {
