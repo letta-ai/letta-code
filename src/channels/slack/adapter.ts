@@ -2323,12 +2323,12 @@ export function createSlackAdapter(
   const progressStreamKeepaliveMs = resolveSlackProgressStreamKeepaliveMs();
   const statusStreamRollMs = resolveSlackStatusStreamRollMs();
   const completionFinalizeGraceMs = resolveSlackCompletionFinalizeGraceMs();
-  // Per-account progress rendering style. "rich" (default) uses streamed
-  // progress cards; "text" posts one plain status message per turn and edits
-  // it in place. "rich" degrades to "text" when the Slack client/workspace
-  // does not expose chat.startStream.
+  // Per-account progress rendering style. "text" (default) shows one dim
+  // status-stream placeholder per turn (simple view); "rich" uses streamed
+  // task-card progress. "rich" degrades to "text" when the Slack
+  // client/workspace does not expose chat.startStream.
   const configuredProgressUi: SlackProgressUiMode =
-    config.progressUi === "text" ? "text" : "rich";
+    config.progressUi === "rich" ? "rich" : "text";
 
   // ── Inbound debounce (optional) ───────────────────────────────
   // When `inboundDebounceMs > 0`, short back-to-back messages from the same

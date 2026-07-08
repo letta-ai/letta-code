@@ -48,21 +48,21 @@ describe("slackAccountConfigAdapter progress_ui", () => {
     ).toBeUndefined();
   });
 
-  test("emits progress_ui in config views, defaulting to rich", () => {
+  test("emits progress_ui in config views, defaulting to text", () => {
     expect(
       slackAccountConfigAdapter.toAccountConfig(baseAccount).progress_ui,
-    ).toBe("rich");
+    ).toBe("text");
     expect(
       slackAccountConfigAdapter.toAccountConfig({
         ...baseAccount,
-        progressUi: "text",
+        progressUi: "rich",
       }).progress_ui,
-    ).toBe("text");
+    ).toBe("rich");
     expect(
       slackAccountConfigAdapter.toConfigSnapshotConfig({
         ...baseAccount,
-        progressUi: "text",
+        progressUi: "rich",
       }).progress_ui,
-    ).toBe("text");
+    ).toBe("rich");
   });
 });

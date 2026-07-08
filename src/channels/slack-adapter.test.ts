@@ -314,6 +314,9 @@ const slackAccountDefaults = {
   accountId: "slack-test-account",
   displayName: "Test Workspace",
   agentId: null,
+  // Most tests exercise the rich card view explicitly; the shipped default
+  // is "text" (simple view), pinned by its own test below.
+  progressUi: "rich",
   defaultPermissionMode: "standard",
   createdAt: "2026-04-11T00:00:00.000Z",
   updatedAt: "2026-04-11T00:00:00.000Z",
@@ -5367,6 +5370,50 @@ test("slack adapter closes the progress stream at turn end despite the chat foot
   const chunkTypes = (stopArgs?.chunks ?? []).map((chunk) => chunk.type);
   expect(chunkTypes).not.toContain("markdown_text");
   expect(stopArgs?.markdown_text).toBeUndefined();
+});
+
+test("slack adapter defaults to the simple progress view when progress_ui is unset", async () => {
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
+  const { progressUi: _omitted, ...defaultsWithoutProgressUi } =
+    slackAccountDefaults;
+  const adapter = createSlackAdapter({
+    ...defaultsWithoutProgressUi,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+
+  // Simple view signature: a plan-only status stream opens at turn start
+  // (the rich card would not stream anything before the first tool event).
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  const startCalls = writeClient?.chat.startStream.mock
+    .calls as unknown as Array<Array<{ chunks?: Array<{ type: string }> }>>;
+  const chunks = startCalls[0]?.[0]?.chunks ?? [];
+  expect(chunks.every((chunk) => chunk.type === "plan_update")).toBe(true);
 });
 
 test("slack adapter simple view opens a status stream at turn start and the reply becomes the message", async () => {

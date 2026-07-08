@@ -325,7 +325,7 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     delete (next as unknown as Record<string, unknown>).showCompletedReaction;
     (next as SlackChannelAccount).listenMode =
       (next as SlackChannelAccount).listenMode === true;
-    if ((next as SlackChannelAccount).progressUi !== "text") {
+    if ((next as SlackChannelAccount).progressUi !== "rich") {
       delete (next as SlackChannelAccount).progressUi;
     }
   }
