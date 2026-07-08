@@ -23,6 +23,10 @@ function isString(value: unknown): value is string {
   return typeof value === "string";
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
@@ -138,7 +142,7 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
         : undefined;
 
       return {
-        token: isString(config.token) ? config.token : undefined,
+        token: isNonEmptyString(config.token) ? config.token : undefined,
         agentId: isNullableString(config.agent_id)
           ? config.agent_id
           : undefined,
@@ -211,6 +215,6 @@ export const discordAccountConfigAdapter: ChannelAccountConfigAdapter<DiscordCha
     },
 
     shouldRefreshDisplayName(patch) {
-      return patch.token !== undefined;
+      return patch.token !== undefined && patch.token.trim().length > 0;
     },
   };

@@ -21,6 +21,10 @@ function isString(value: unknown): value is string {
   return typeof value === "string";
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
 }
@@ -68,8 +72,12 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
 
     toAccountPatch(config) {
       return {
-        botToken: isString(config.bot_token) ? config.bot_token : undefined,
-        appToken: isString(config.app_token) ? config.app_token : undefined,
+        botToken: isNonEmptyString(config.bot_token)
+          ? config.bot_token
+          : undefined,
+        appToken: isNonEmptyString(config.app_token)
+          ? config.app_token
+          : undefined,
         mode: config.mode === "socket" ? "socket" : undefined,
         agentId: isNullableString(config.agent_id)
           ? config.agent_id
@@ -117,6 +125,9 @@ export const slackAccountConfigAdapter: ChannelAccountConfigAdapter<SlackChannel
     },
 
     shouldRefreshDisplayName(patch) {
-      return patch.botToken !== undefined || patch.appToken !== undefined;
+      return (
+        (patch.botToken !== undefined && patch.botToken.trim().length > 0) ||
+        (patch.appToken !== undefined && patch.appToken.trim().length > 0)
+      );
     },
   };

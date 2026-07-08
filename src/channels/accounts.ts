@@ -75,6 +75,25 @@ const CHANNEL_SECRET_REFS_KEY = "__letta_secret_refs";
 const SECRET_PRESENT_PLACEHOLDER = "__letta_channel_secret_present__";
 const pendingSecretWrites: Promise<unknown>[] = [];
 
+class ChannelCredentialHydrationError extends Error {
+  constructor(
+    channelId: string,
+    accountId: string,
+    fieldPath: string,
+    cause?: unknown,
+  ) {
+    const detail =
+      cause instanceof Error && cause.message.trim().length > 0
+        ? ` ${cause.message}`
+        : "";
+    super(
+      `Could not load ${channelId}/${accountId}/${fieldPath} from the channel credential store.${detail} Re-add this channel credential or set LETTA_CHANNEL_CREDENTIALS_STORE=file and update the account before restarting the channel listener. The saved secret reference was preserved.`,
+      { cause },
+    );
+    this.name = "ChannelCredentialHydrationError";
+  }
+}
+
 type ChannelAccountWithSecretRefs = ChannelAccount & {
   [CHANNEL_SECRET_REFS_KEY]?: Record<string, true>;
 };
@@ -155,16 +174,6 @@ function markSecretRef(account: ChannelAccount, fieldPath: string): void {
     ...getSecretRefs(account),
     [fieldPath]: true,
   };
-}
-
-function unmarkSecretRef(account: ChannelAccount, fieldPath: string): void {
-  const refs = getSecretRefs(account);
-  delete refs[fieldPath];
-  if (Object.keys(refs).length === 0) {
-    delete (account as ChannelAccountWithSecretRefs)[CHANNEL_SECRET_REFS_KEY];
-    return;
-  }
-  (account as ChannelAccountWithSecretRefs)[CHANNEL_SECRET_REFS_KEY] = refs;
 }
 
 function applySecretPlaceholders(account: ChannelAccount): void {
@@ -595,7 +604,6 @@ export async function hydrateChannelAccountSecrets(
   }
 
   let migratedPlaintextSecrets = false;
-  let removedMissingSecretRefs = false;
 
   for (const account of store.accounts) {
     for (const fieldPath of getSecretFieldPaths(account)) {
@@ -611,24 +619,39 @@ export async function hydrateChannelAccountSecrets(
           );
           migratedPlaintextSecrets = true;
         } else {
-          const storedValue = await getChannelSecret(
-            account.channel,
-            account.accountId,
-            fieldPath,
-          );
-          if (storedValue) {
+          let storedValue: string | null;
+          try {
+            storedValue = await getChannelSecret(
+              account.channel,
+              account.accountId,
+              fieldPath,
+            );
+          } catch (error) {
+            throw new ChannelCredentialHydrationError(
+              account.channel,
+              account.accountId,
+              fieldPath,
+              error,
+            );
+          }
+          if (storedValue && storedValue.trim().length > 0) {
             setSecretValueOnAccount(account, fieldPath, storedValue);
           } else {
-            unmarkSecretRef(account, fieldPath);
-            setSecretValueOnAccount(account, fieldPath, "");
-            removedMissingSecretRefs = true;
+            // A persisted ref means the account expects this secret to exist in
+            // secure storage. Do not clear the ref or save an empty credential:
+            // that destroys the user's only pointer to the original secret.
+            throw new ChannelCredentialHydrationError(
+              account.channel,
+              account.accountId,
+              fieldPath,
+            );
           }
         }
       }
     }
   }
 
-  if (migratedPlaintextSecrets || removedMissingSecretRefs) {
+  if (migratedPlaintextSecrets) {
     saveChannelAccounts(channelId);
     await flushPendingChannelSecretWrites();
   }

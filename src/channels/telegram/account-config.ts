@@ -17,6 +17,10 @@ function isString(value: unknown): value is string {
   return typeof value === "string";
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function isBoolean(value: unknown): value is boolean {
   return typeof value === "boolean";
 }
@@ -53,7 +57,7 @@ export const telegramAccountConfigAdapter: ChannelAccountConfigAdapter<TelegramC
 
     toAccountPatch(config) {
       return {
-        token: isString(config.token) ? config.token : undefined,
+        token: isNonEmptyString(config.token) ? config.token : undefined,
         groupMode: isTelegramGroupMode(config.group_mode)
           ? config.group_mode
           : undefined,
@@ -106,6 +110,6 @@ export const telegramAccountConfigAdapter: ChannelAccountConfigAdapter<TelegramC
     },
 
     shouldRefreshDisplayName(patch) {
-      return patch.token !== undefined;
+      return patch.token !== undefined && patch.token.trim().length > 0;
     },
   };

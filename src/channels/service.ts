@@ -26,6 +26,7 @@ import {
 } from "./pairing";
 import {
   getChannelDisplayName,
+  getChannelPluginMetadata,
   getSupportedChannelIds,
   isSupportedChannelId,
 } from "./plugin-registry";
@@ -655,12 +656,46 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
   };
 }
 
+function hasNonEmptyCredential(value: string | undefined): value is string {
+  return value !== undefined && value.trim().length > 0;
+}
+
+function assertEnabledAccountPatchHasCredentials(
+  channelId: SupportedChannelId,
+  patch: ChannelAccountPatch,
+): void {
+  if (patch.enabled !== true) {
+    return;
+  }
+
+  if (channelId === "telegram" && !hasNonEmptyCredential(patch.token)) {
+    throw new Error(
+      'Channel "telegram" account is missing a token. Configure it first.',
+    );
+  }
+  if (channelId === "discord" && !hasNonEmptyCredential(patch.token)) {
+    throw new Error(
+      'Channel "discord" account is missing a token. Configure it first.',
+    );
+  }
+  if (
+    channelId === "slack" &&
+    (!hasNonEmptyCredential(patch.botToken) ||
+      !hasNonEmptyCredential(patch.appToken))
+  ) {
+    throw new Error(
+      'Channel "slack" account is missing a bot token or app token. Configure it first.',
+    );
+  }
+}
+
 function createAccountFromPatch(
   channelId: SupportedChannelId,
   accountId: string,
   patch: ChannelAccountPatch,
 ): ChannelAccount {
   const normalizedPatch = normalizeChannelAccountPatch(channelId, patch);
+  assertEnabledAccountPatchHasCredentials(channelId, normalizedPatch);
   const now = new Date().toISOString();
   if (channelId === "telegram") {
     return {
@@ -791,6 +826,62 @@ function createAccountFromPatch(
   };
 }
 
+const KNOWN_CONFIG_SECRET_KEYS = new Set(["bot_token", "auth"]);
+
+function mergeCredentialPatchValue(
+  existingValue: string,
+  patchValue: string | undefined,
+): string {
+  if (hasNonEmptyCredential(patchValue)) {
+    return patchValue;
+  }
+  return existingValue;
+}
+
+function getConfigSecretKeys(channelId: string): Set<string> {
+  const secretKeys = new Set(KNOWN_CONFIG_SECRET_KEYS);
+  try {
+    for (const field of getChannelPluginMetadata(channelId).configSchema
+      ?.fields ?? []) {
+      if (field.type === "secret") {
+        secretKeys.add(field.key);
+      }
+    }
+  } catch {
+    // Unsupported channels should have been rejected earlier. Keep config
+    // merging conservative instead of letting metadata lookup failures turn a
+    // harmless settings save into a credential wipe.
+  }
+  return secretKeys;
+}
+
+function mergePluginConfigPatch(
+  channelId: string,
+  existingConfig: ChannelProtocolConfig,
+  patchConfig: ChannelProtocolConfig | undefined,
+): ChannelProtocolConfig {
+  if (patchConfig === undefined) {
+    return { ...existingConfig };
+  }
+
+  const secretKeys = getConfigSecretKeys(channelId);
+  const nextConfig = { ...existingConfig };
+  for (const [key, value] of Object.entries(patchConfig)) {
+    const existingValue = existingConfig[key];
+    if (
+      secretKeys.has(key) &&
+      typeof value === "string" &&
+      value.trim().length === 0 &&
+      typeof existingValue === "string" &&
+      existingValue.trim().length > 0
+    ) {
+      continue;
+    }
+    nextConfig[key] = value;
+  }
+  return nextConfig;
+}
+
 function mergeAccountPatch(
   existing: ChannelAccount,
   patch: ChannelAccountPatch,
@@ -805,7 +896,7 @@ function mergeAccountPatch(
           ? normalizeDisplayName(normalizedPatch.displayName)
           : existing.displayName,
       enabled: normalizedPatch.enabled ?? existing.enabled,
-      token: normalizedPatch.token ?? existing.token,
+      token: mergeCredentialPatchValue(existing.token, normalizedPatch.token),
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       groupMode:
@@ -836,7 +927,7 @@ function mergeAccountPatch(
           ? normalizeDisplayName(normalizedPatch.displayName)
           : existing.displayName,
       enabled: normalizedPatch.enabled ?? existing.enabled,
-      token: normalizedPatch.token ?? existing.token,
+      token: mergeCredentialPatchValue(existing.token, normalizedPatch.token),
       agentId: normalizedPatch.agentId ?? existing.agentId,
       defaultPermissionMode:
         normalizedPatch.defaultPermissionMode ??
@@ -931,8 +1022,9 @@ function mergeAccountPatch(
     // state in the generic `config` bag. Snapshots returned to clients redact
     // secrets (e.g. `bot_token` is replaced with `has_bot_token: boolean`), so
     // the client cannot send the secret back on every save. Merge the patch
-    // into the existing config so omitted keys are preserved; pass `null`
-    // explicitly to clear a key.
+    // into the existing config so omitted keys are preserved. Blank strings for
+    // known secret fields mean "unchanged"; pass `null` explicitly to clear a
+    // key where the caller accepts nullable config values.
     return {
       ...existing,
       displayName:
@@ -942,10 +1034,11 @@ function mergeAccountPatch(
       enabled: normalizedPatch.enabled ?? existing.enabled,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
-      config:
-        normalizedPatch.config !== undefined
-          ? { ...existing.config, ...normalizedPatch.config }
-          : { ...existing.config },
+      config: mergePluginConfigPatch(
+        existing.channel,
+        existing.config,
+        normalizedPatch.config,
+      ),
       updatedAt: nextUpdatedAt,
     };
   }
@@ -958,8 +1051,14 @@ function mergeAccountPatch(
         : existing.displayName,
     enabled: normalizedPatch.enabled ?? existing.enabled,
     mode: normalizedPatch.mode ?? existing.mode,
-    botToken: normalizedPatch.botToken ?? existing.botToken,
-    appToken: normalizedPatch.appToken ?? existing.appToken,
+    botToken: mergeCredentialPatchValue(
+      existing.botToken,
+      normalizedPatch.botToken,
+    ),
+    appToken: mergeCredentialPatchValue(
+      existing.appToken,
+      normalizedPatch.appToken,
+    ),
     agentId: normalizedPatch.agentId ?? existing.agentId,
     defaultPermissionMode:
       normalizedPatch.defaultPermissionMode ??

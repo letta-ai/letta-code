@@ -4,6 +4,7 @@ import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
+  getChannelAccount,
   LEGACY_CHANNEL_ACCOUNT_ID,
 } from "@/channels/accounts";
 import {
@@ -530,6 +531,164 @@ describe("channel service", () => {
         channelId: "telegram",
         accountId: "telegram-bot",
         config: expect.objectContaining({ has_token: true }),
+      }),
+    );
+  });
+
+  test("createChannelAccountLive rejects enabled accounts with blank required tokens", () => {
+    expect(() =>
+      createChannelAccountLive(
+        "telegram",
+        { enabled: true, token: "", dmPolicy: "pairing" },
+        { accountId: "telegram-empty" },
+      ),
+    ).toThrow(/missing a token/i);
+    expect(() =>
+      createChannelAccountLive(
+        "discord",
+        { enabled: true, token: "", dmPolicy: "pairing" },
+        { accountId: "discord-empty" },
+      ),
+    ).toThrow(/missing a token/i);
+    expect(() =>
+      createChannelAccountLive(
+        "slack",
+        {
+          enabled: true,
+          botToken: "xoxb-test-token",
+          appToken: "",
+          dmPolicy: "pairing",
+        },
+        { accountId: "slack-empty" },
+      ),
+    ).toThrow(/missing a bot token or app token/i);
+  });
+
+  test("blank channel config secrets preserve existing credentials", async () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        token: "telegram-old-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-bot" },
+    );
+    createChannelAccountLive(
+      "discord",
+      {
+        displayName: "Discord Bot",
+        enabled: false,
+        token: "discord-old-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "discord-bot" },
+    );
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "Slack Bot",
+        enabled: false,
+        botToken: "xoxb-old-token",
+        appToken: "xapp-old-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "slack-bot" },
+    );
+
+    await setChannelConfigLive(
+      "telegram",
+      { config: { token: "" } },
+      "telegram-bot",
+    );
+    await setChannelConfigLive(
+      "discord",
+      { config: { token: "" } },
+      "discord-bot",
+    );
+    await setChannelConfigLive(
+      "slack",
+      { config: { bot_token: "", app_token: "" } },
+      "slack-bot",
+    );
+    updateChannelAccountLive("telegram", "telegram-bot", { token: "" });
+    updateChannelAccountLive("discord", "discord-bot", { token: "" });
+    updateChannelAccountLive("slack", "slack-bot", {
+      botToken: "",
+      appToken: "",
+    });
+
+    expect(getChannelAccount("telegram", "telegram-bot")).toEqual(
+      expect.objectContaining({ token: "telegram-old-token" }),
+    );
+    expect(getChannelAccount("discord", "discord-bot")).toEqual(
+      expect.objectContaining({ token: "discord-old-token" }),
+    );
+    expect(getChannelAccount("slack", "slack-bot")).toEqual(
+      expect.objectContaining({
+        botToken: "xoxb-old-token",
+        appToken: "xapp-old-token",
+      }),
+    );
+  });
+
+  test("non-empty channel config secrets replace existing credentials", () => {
+    createChannelAccountLive(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        token: "telegram-old-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-bot" },
+    );
+    createChannelAccountLive(
+      "discord",
+      {
+        displayName: "Discord Bot",
+        enabled: false,
+        token: "discord-old-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "discord-bot" },
+    );
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "Slack Bot",
+        enabled: false,
+        botToken: "xoxb-old-token",
+        appToken: "xapp-old-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "slack-bot" },
+    );
+
+    updateChannelAccountLive("telegram", "telegram-bot", {
+      config: { token: "telegram-new-token" },
+    });
+    updateChannelAccountLive("discord", "discord-bot", {
+      config: { token: "discord-new-token" },
+    });
+    updateChannelAccountLive("slack", "slack-bot", {
+      config: {
+        bot_token: "xoxb-new-token",
+        app_token: "xapp-new-token",
+      },
+    });
+
+    expect(getChannelAccount("telegram", "telegram-bot")).toEqual(
+      expect.objectContaining({ token: "telegram-new-token" }),
+    );
+    expect(getChannelAccount("discord", "discord-bot")).toEqual(
+      expect.objectContaining({ token: "discord-new-token" }),
+    );
+    expect(getChannelAccount("slack", "slack-bot")).toEqual(
+      expect.objectContaining({
+        botToken: "xoxb-new-token",
+        appToken: "xapp-new-token",
       }),
     );
   });
