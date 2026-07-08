@@ -53,6 +53,10 @@ type WhatsAppSocket = {
   ) => Promise<{ key?: { id?: string }; message?: unknown }>;
   sendPresenceUpdate?: (presence: string, jid?: string) => Promise<void>;
   groupMetadata?: (jid: string) => Promise<{ subject?: string }>;
+  chatModify?: (
+    modify: Record<string, unknown>,
+    jid: string,
+  ) => Promise<unknown>;
 };
 
 type WhatsAppMessage = {
@@ -400,6 +404,22 @@ export function createWhatsAppAdapter(
       if (!messageStore.has(messageId)) {
         messageStore.set(messageId, msg);
         setTimeout(() => messageStore.delete(messageId), 24 * 60 * 60 * 1000);
+      }
+
+      // Mark inbound messages as read immediately (fire-and-forget, best-effort).
+      // Skip fromMe — no need to mark our own sent messages.
+      if (msg.key?.fromMe !== true) {
+        void sock
+          ?.chatModify?.(
+            { markRead: true, lastMessages: [{ key: msg.key }] },
+            msg.key.remoteJid ?? remoteJid,
+          )
+          .catch((err) =>
+            console.warn(
+              `[WhatsApp:${account.accountId}] markRead failed:`,
+              err instanceof Error ? err.message : err,
+            ),
+          );
       }
 
       const selfChat = isSelfChat(remoteJid, selfPhoneJid, selfLid);
