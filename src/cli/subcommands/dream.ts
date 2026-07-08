@@ -69,8 +69,6 @@ Options:
   --max-sessions <n>          Max sessions per batch (default ${DEFAULT_MAX_SESSIONS_PER_BATCH})
   --concurrency <n>           Cap concurrent batch reflections (default: every
                               batch runs its own reflection agent at once)
-  --force                     Ignore the ingest ledger and re-reflect sessions
-                              that were already dreamed on
   --effort <level>            Reflection effort (reserved; not yet implemented)
   --timeout <seconds>         Fail if the run has not completed in this many
                               seconds (default: 1500)
@@ -81,9 +79,8 @@ Options:
 Notes:
   - Requires the memory filesystem to be enabled for the agent.
   - Conversation reflection processes transcript content recorded since the
-    last successful reflection; typed sources skip sessions already recorded
-    in the ingest ledger (re-process with --force). Either way, exits 0 with
-    no action when nothing is new.
+    last successful reflection. Typed sources re-process whatever they select
+    on every run; use a cursor (e.g. claude:<session>) to narrow repeats.
 `.trim(),
   );
 }
@@ -99,7 +96,6 @@ const DREAM_OPTIONS = {
   budget: { type: "string" },
   "max-sessions": { type: "string" },
   concurrency: { type: "string" },
-  force: { type: "boolean" },
   effort: { type: "string" },
   timeout: { type: "string" },
   instruction: { type: "string", short: "i" },
@@ -203,7 +199,6 @@ async function runPipelineDream(params: {
     instruction: values.instruction,
     aggregationInstruction,
     planOnly: Boolean(values.plan),
-    force: Boolean(values.force),
     batchTokenBudget: budget,
     maxSessionsPerBatch: maxSessions,
     concurrency,
@@ -245,18 +240,9 @@ async function runPipelineDream(params: {
     }
     case "nothing_new": {
       if (asJson) {
-        emitJson({
-          launched: false,
-          reason: "no_new_sessions",
-          agentId,
-          skippedByLedger: result.skippedByLedger,
-        });
+        emitJson({ launched: false, reason: "no_sessions", agentId });
       } else {
-        console.log(
-          result.skippedByLedger > 0
-            ? `No new sessions to dream on (${result.skippedByLedger} already reflected; use --force to re-process).`
-            : "No sessions found for the given sources.",
-        );
+        console.log("No sessions found for the given sources.");
       }
       return 0;
     }
@@ -274,7 +260,6 @@ async function runPipelineDream(params: {
           plan: true,
           agentId,
           sessionCount: result.sessions.length,
-          skippedByLedger: result.skippedByLedger,
           batches: result.batches.map((batch) => ({
             index: batch.index,
             estTokens: batch.estTokens,
@@ -290,11 +275,7 @@ async function runPipelineDream(params: {
         return 0;
       }
       console.log(
-        `Would reflect on ${result.sessions.length} session(s) in ${result.batches.length} batch(es)` +
-          (result.skippedByLedger > 0
-            ? ` (${result.skippedByLedger} skipped: already reflected)`
-            : "") +
-          ":",
+        `Would reflect on ${result.sessions.length} session(s) in ${result.batches.length} batch(es):`,
       );
       for (const batch of result.batches) {
         console.log(
@@ -331,7 +312,6 @@ async function runPipelineDream(params: {
           runId: result.runId,
           runRoot: result.runRoot,
           sessionCount: result.sessionCount,
-          skippedByLedger: result.skippedByLedger,
           batches: result.batches.map((batch) => ({
             index: batch.batchIndex,
             success: batch.success,

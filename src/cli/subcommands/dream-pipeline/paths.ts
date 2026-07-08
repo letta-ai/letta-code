@@ -5,8 +5,7 @@
 // (which treats child directories as conversation ids) never picks it up:
 //
 //   {transcriptRoot}/{agentId}/.dream/
-//     ledger.json                          — per-agent ingest ledger
-//     reflector.json                       — persistent reflector agent state
+//     reflector.json / aggregator.json     — persistent worker agent state
 //     runs/{runId}/
 //       manifest.json                      — run config, selection, batches, results
 //       batches/{index}/                   — self-contained per reflection agent:
@@ -23,10 +22,6 @@ import { join } from "node:path";
 import { getDreamRootDir } from "@/utils/transcript-paths";
 
 export { getDreamRootDir } from "@/utils/transcript-paths";
-
-export function getDreamLedgerPath(agentId: string): string {
-  return join(getDreamRootDir(agentId), "ledger.json");
-}
 
 export function getDreamRunRoot(agentId: string, runId: string): string {
   return join(getDreamRootDir(agentId), "runs", runId);

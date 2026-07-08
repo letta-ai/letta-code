@@ -2,9 +2,8 @@
 //
 // Holds the per-agent reflection reservation for the whole run so automatic
 // conversation reflections cannot merge into the memory filesystem while the
-// aggregator is working. The ingest ledger is updated only for sessions whose
-// batch succeeded AND whose aggregation committed, so failures leave sessions
-// eligible for the next run.
+// aggregator is working. Every run re-processes whatever its --from specs
+// select; use cursors (e.g. claude:<session>) to narrow repeat runs.
 
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -20,11 +19,14 @@ import {
 } from "@/cli/helpers/reflection-launcher";
 import { type DreamAggregationOutcome, runDreamAggregation } from "./aggregate";
 import { type DreamBatch, packDreamBatches } from "./batching";
-import { dreamLedgerKey, recordDreamedSessions } from "./ledger";
 import { getDreamRunRoot, newDreamRunId } from "./paths";
 import { type BatchReflectionResult, runBatchReflections } from "./reflect";
 import { getOrCreateDreamReflector } from "./reflector";
-import { type DreamSourceSpec, selectDreamSessions } from "./select";
+import {
+  type DreamSourceSpec,
+  selectDreamSessions,
+  sessionKey,
+} from "./select";
 
 export interface DreamPipelineOptions {
   agentId: string;
@@ -35,7 +37,6 @@ export interface DreamPipelineOptions {
   /** Extra instruction for the aggregation pass only (e.g. --to doc upkeep). */
   aggregationInstruction?: string;
   planOnly?: boolean;
-  force?: boolean;
   batchTokenBudget: number;
   maxSessionsPerBatch: number;
   /** Cap on concurrent batch reflections; default: every batch at once. */
@@ -46,13 +47,12 @@ export interface DreamPipelineOptions {
 }
 
 export type DreamPipelineResult =
-  | { kind: "nothing_new"; skippedByLedger: number }
+  | { kind: "nothing_new" }
   | { kind: "already_active" }
   | {
       kind: "plan";
       sessions: DiscoveredSession[];
       batches: DreamBatch[];
-      skippedByLedger: number;
     }
   | {
       kind: "completed";
@@ -61,7 +61,6 @@ export type DreamPipelineResult =
       success: boolean;
       message: string;
       sessionCount: number;
-      skippedByLedger: number;
       batches: BatchReflectionResult[];
       aggregation?: DreamAggregationOutcome;
       vizPath?: string;
@@ -95,16 +94,12 @@ export async function runDreamPipeline(
 ): Promise<DreamPipelineResult> {
   const log = options.log ?? (() => {});
 
-  const selection = await selectDreamSessions({
+  const sessions = await selectDreamSessions({
     agentId: options.agentId,
     specs: options.specs,
-    force: options.force,
   });
-  if (selection.sessions.length === 0) {
-    return {
-      kind: "nothing_new",
-      skippedByLedger: selection.skippedByLedger.length,
-    };
+  if (sessions.length === 0) {
+    return { kind: "nothing_new" };
   }
 
   // Normalize the selected sessions up front and pack on the size of the
@@ -114,11 +109,11 @@ export async function runDreamPipeline(
   // actually read keeps batches near budget — and makes --plan match reality.
   const normalizedJsonByKey = new Map<string, string>();
   const measuredSessions: DiscoveredSession[] = [];
-  for (const session of selection.sessions) {
+  for (const session of sessions) {
     const source = getTrajectorySource(session.harness);
     const { records } = await source.normalize(session);
     const json = JSON.stringify(records, null, 1);
-    normalizedJsonByKey.set(dreamLedgerKey(session), json);
+    normalizedJsonByKey.set(sessionKey(session), json);
     measuredSessions.push({ ...session, estTokens: estimateTokens(json) });
   }
 
@@ -128,12 +123,7 @@ export async function runDreamPipeline(
     options.maxSessionsPerBatch,
   );
   if (options.planOnly) {
-    return {
-      kind: "plan",
-      sessions: measuredSessions,
-      batches,
-      skippedByLedger: selection.skippedByLedger.length,
-    };
+    return { kind: "plan", sessions: measuredSessions, batches };
   }
 
   if (!tryReserveReflectionLaunch(options.agentId)) {
@@ -149,10 +139,7 @@ export async function runDreamPipeline(
       log,
     });
     log(
-      `Selected ${selection.sessions.length} session(s) in ${batches.length} batch(es)` +
-        (selection.skippedByLedger.length > 0
-          ? ` (${selection.skippedByLedger.length} already reflected)`
-          : ""),
+      `Selected ${sessions.length} session(s) in ${batches.length} batch(es)`,
     );
 
     const baseManifest = {
@@ -201,8 +188,7 @@ export async function runDreamPipeline(
         runRoot,
         success: false,
         message,
-        sessionCount: selection.sessions.length,
-        skippedByLedger: selection.skippedByLedger.length,
+        sessionCount: sessions.length,
         batches: batchResults,
         vizPath: await writeRunViz(runRoot),
       };
@@ -226,13 +212,6 @@ export async function runDreamPipeline(
       log,
     });
 
-    if (aggregation.success) {
-      const reflectedSessions = batchResults
-        .filter((r) => r.success)
-        .flatMap((r) => batches[r.batchIndex]?.sessions ?? []);
-      await recordDreamedSessions(options.agentId, reflectedSessions, runId);
-    }
-
     await writeRunManifest(runRoot, {
       ...baseManifest,
       batches: batchResults,
@@ -246,7 +225,7 @@ export async function runDreamPipeline(
 
     const suffix =
       failedBatches.length > 0
-        ? ` (${failedBatches.length} batch(es) failed and will be retried next run)`
+        ? ` (${failedBatches.length} batch(es) failed)`
         : "";
     return {
       kind: "completed",
@@ -254,8 +233,7 @@ export async function runDreamPipeline(
       runRoot,
       success: aggregation.success,
       message: `${aggregation.message}${suffix}`,
-      sessionCount: selection.sessions.length,
-      skippedByLedger: selection.skippedByLedger.length,
+      sessionCount: sessions.length,
       batches: batchResults,
       aggregation,
       vizPath: await writeRunViz(runRoot),
@@ -275,8 +253,7 @@ export interface RerunAggregationResult {
 /**
  * Re-run ONLY the aggregation pass of a recorded dream run, using its existing
  * batch reflection outputs. The previous aggregate artifacts are set aside as
- * aggregate-prev-<n>; the ingest ledger is not touched (the original run
- * already recorded its sessions).
+ * aggregate-prev-<n>.
  */
 export async function rerunDreamAggregationForRun(options: {
   agentId: string;

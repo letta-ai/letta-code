@@ -1,6 +1,6 @@
 // Session selection for a dream run: parse `--from` specs, discover sessions
-// per trajectory source, apply cursor semantics, dedupe across sources, and
-// filter against the agent's ingest ledger.
+// per trajectory source, apply cursor semantics, and dedupe across sources.
+// Every run re-processes whatever its specs select; use cursors to narrow.
 //
 // Spec forms:
 //   "claude"                 → all sessions in the harness's default store
@@ -22,11 +22,6 @@ import {
   listTrajectorySourceTypes,
 } from "@/agent/trajectories/registry";
 import type { DiscoveredSession } from "@/agent/trajectories/types";
-import {
-  dreamLedgerKey,
-  filterSessionsAgainstLedger,
-  readDreamLedger,
-} from "./ledger";
 
 /**
  * Harnesses whose sources can discover a whole local store with no locator.
@@ -80,11 +75,9 @@ export function parseDreamSourceSpec(spec: string): DreamSourceSpec | null {
   return locator ? { type, locator } : { type };
 }
 
-export interface DreamSelection {
-  /** Sessions to reflect on, time-ordered, deduped across sources. */
-  sessions: DiscoveredSession[];
-  /** Sessions excluded because the ledger already covers them. */
-  skippedByLedger: DiscoveredSession[];
+/** A stable identity for a discovered session across sources. */
+export function sessionKey(session: DiscoveredSession): string {
+  return `${session.harness}:${session.sessionId}`;
 }
 
 async function discoverForSpec(
@@ -113,28 +106,21 @@ async function discoverForSpec(
   return located;
 }
 
+/** Discover, dedupe, and time-order the sessions the specs select. */
 export async function selectDreamSessions(params: {
   agentId: string;
   specs: DreamSourceSpec[];
-  force?: boolean;
-}): Promise<DreamSelection> {
+}): Promise<DiscoveredSession[]> {
   const byKey = new Map<string, DiscoveredSession>();
   for (const spec of params.specs) {
     for (const session of await discoverForSpec(params.agentId, spec)) {
-      const key = dreamLedgerKey(session);
+      const key = sessionKey(session);
       if (!byKey.has(key)) {
         byKey.set(key, session);
       }
     }
   }
-  const discovered = [...byKey.values()].sort((a, b) =>
+  return [...byKey.values()].sort((a, b) =>
     a.startTime.localeCompare(b.startTime),
   );
-
-  if (params.force) {
-    return { sessions: discovered, skippedByLedger: [] };
-  }
-  const ledger = await readDreamLedger(params.agentId);
-  const { fresh, skipped } = filterSessionsAgainstLedger(ledger, discovered);
-  return { sessions: fresh, skippedByLedger: skipped };
 }
