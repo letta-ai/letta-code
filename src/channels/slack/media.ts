@@ -83,6 +83,8 @@ export type SlackThreadMessage = {
   attachments?: ChannelMessageAttachment[];
 };
 
+type SlackThreadHistoryEntryKind = "all" | "bot";
+
 async function mapSlackThreadMessage(
   message: SlackRepliesPageMessage,
   attachmentOptions?: SlackThreadAttachmentOptions,
@@ -617,6 +619,52 @@ export async function resolveSlackInboundAttachments(params: {
   });
 }
 
+export async function resolveSlackCurrentMessageAttachments(
+  params: {
+    channelId: string;
+    threadTs: string;
+    messageTs: string;
+    client: SlackRepliesClient;
+  } & SlackThreadAttachmentParams,
+): Promise<ChannelMessageAttachment[]> {
+  const attachmentOptions = resolveSlackThreadAttachmentOptions(params);
+  if (!attachmentOptions) {
+    return [];
+  }
+
+  const fetchLimit = 200;
+  let cursor: string | undefined;
+
+  try {
+    do {
+      const response = (await params.client.conversations.replies({
+        channel: params.channelId,
+        ts: params.threadTs,
+        limit: fetchLimit,
+        inclusive: true,
+        ...(cursor ? { cursor } : {}),
+      })) as SlackRepliesPage;
+
+      const message = (response.messages ?? []).find(
+        (entry) => entry.ts === params.messageTs,
+      );
+      if (message) {
+        return resolveSlackMessageAttachments(message, attachmentOptions);
+      }
+
+      const nextCursor = response.response_metadata?.next_cursor;
+      cursor =
+        typeof nextCursor === "string" && nextCursor.trim().length > 0
+          ? nextCursor.trim()
+          : undefined;
+    } while (cursor);
+  } catch {
+    return [];
+  }
+
+  return [];
+}
+
 export async function readSlackAttachmentFile(
   localPath: string,
 ): Promise<Buffer> {
@@ -662,6 +710,7 @@ export async function resolveSlackThreadHistory(
     client: SlackRepliesClient;
     currentMessageTs?: string;
     limit?: number;
+    include?: SlackThreadHistoryEntryKind;
   } & SlackThreadAttachmentParams,
 ): Promise<SlackThreadMessage[]> {
   const maxMessages = params.limit ?? 20;
@@ -685,6 +734,9 @@ export async function resolveSlackThreadHistory(
       })) as SlackRepliesPage;
 
       for (const message of response.messages ?? []) {
+        if (params.include === "bot" && !isNonEmptyString(message.bot_id)) {
+          continue;
+        }
         if (!hasSlackThreadMessageContent(message, attachmentOptions)) {
           continue;
         }
