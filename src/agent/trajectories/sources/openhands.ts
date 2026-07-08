@@ -16,15 +16,24 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import type { PseudoRow, SessionContext } from "./normalize-core";
-import { normalizeSessionRows, parseTimestamp } from "./normalize-core";
-import { buildDiscoveredSession, statOrNull } from "./store-utils";
+import type {
+  PseudoRow,
+  SessionContext,
+} from "@/agent/trajectories/normalize-core";
+import {
+  normalizeSessionRows,
+  parseTimestamp,
+} from "@/agent/trajectories/normalize-core";
+import {
+  buildDiscoveredSession,
+  statOrNull,
+} from "@/agent/trajectories/store-utils";
 import type {
   DiscoveredSession,
   NormalizedRecord,
   NormalizedSession,
   TrajectorySource,
-} from "./types";
+} from "@/agent/trajectories/types";
 
 interface OpenHandsTextContent {
   type?: string;

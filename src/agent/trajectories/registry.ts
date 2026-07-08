@@ -1,11 +1,11 @@
 // Registry of the built-in trajectory sources, keyed by the scheme used in
 // `--from <type>[:<locator>]`.
 
-import { createClaudeCodeSource } from "./claude-code";
-import { createCodexSource } from "./codex";
-import { createLettaSource } from "./letta";
-import { createNormalizedFileSource } from "./normalized-file";
-import { createOpenHandsSource } from "./openhands";
+import { createClaudeCodeSource } from "./sources/claude-code";
+import { createCodexSource } from "./sources/codex";
+import { createLettaSource } from "./sources/letta";
+import { createNormalizedFileSource } from "./sources/normalized-file";
+import { createOpenHandsSource } from "./sources/openhands";
 import type { TrajectorySource } from "./types";
 
 const FACTORIES: Record<string, () => TrajectorySource> = {

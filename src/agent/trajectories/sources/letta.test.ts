@@ -59,7 +59,9 @@ describe("letta trajectory source", () => {
     expect(sessions.length).toBe(1);
     const session = sessions[0];
     expect(session?.harness).toBe("letta");
-    expect(session?.sessionId).toBe(`${AGENT_ID}/default`);
+    // A letta conversation IS the session — its conversation id is the
+    // session id.
+    expect(session?.sessionId).toBe("default");
     expect(session?.startTime).toBe("2026-07-01T09:00:00Z");
     expect(session?.endTime).toBe("2026-07-01T09:01:00Z");
     expect(session?.recordCount).toBe(4);

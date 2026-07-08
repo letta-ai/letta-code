@@ -9,20 +9,24 @@
 //
 // There is no store-wide discovery: the locator names one conversation as
 // `<agent-id>/<conversation-id>` (callers canonicalize bare agent ids and
-// conversation ids into that form).
+// conversation ids into that form). A letta conversation IS the session — its
+// conversation id is the session id.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { getTranscriptRoot } from "@/utils/transcript-paths";
-import type { PseudoRow } from "./normalize-core";
-import { normalizeSessionRows, parseTimestamp } from "./normalize-core";
-import { statOrNull } from "./store-utils";
+import type { PseudoRow } from "@/agent/trajectories/normalize-core";
+import {
+  normalizeSessionRows,
+  parseTimestamp,
+} from "@/agent/trajectories/normalize-core";
+import { statOrNull } from "@/agent/trajectories/store-utils";
 import type {
   DiscoveredSession,
   NormalizedSession,
   TrajectorySource,
-} from "./types";
-import { estimateTokens } from "./types";
+} from "@/agent/trajectories/types";
+import { estimateTokens } from "@/agent/trajectories/types";
+import { getTranscriptRoot } from "@/utils/transcript-paths";
 
 interface LettaTranscriptRow {
   kind?: string;
@@ -160,7 +164,7 @@ export function createLettaSource(transcriptRoot?: string): TrajectorySource {
     return [
       {
         harness: "letta",
-        sessionId: locator,
+        sessionId: conversationId,
         path: transcriptPath,
         startTime: timestamps[0] ?? "",
         endTime: timestamps[timestamps.length - 1] ?? "",

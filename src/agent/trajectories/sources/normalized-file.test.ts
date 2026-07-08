@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { NormalizedRecord } from "@/agent/trajectories/types";
+import { isNormalizedRecordArray } from "@/agent/trajectories/types";
 import { createNormalizedFileSource } from "./normalized-file";
-import type { NormalizedRecord } from "./types";
-import { isNormalizedRecordArray } from "./types";
 
 const VALID_RECORDS: NormalizedRecord[] = [
   {

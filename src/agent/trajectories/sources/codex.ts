@@ -10,25 +10,28 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
-import type { PseudoRow, SessionContext } from "./normalize-core";
+import type {
+  PseudoRow,
+  SessionContext,
+} from "@/agent/trajectories/normalize-core";
 import {
   blocksText,
   CODEX_INJECTED_PREFIXES,
   normalizeSessionRows,
   parseTimestamp,
-} from "./normalize-core";
+} from "@/agent/trajectories/normalize-core";
 import {
   buildDiscoveredSession,
   listFilesRecursive,
   matchSessionIds,
   statOrNull,
-} from "./store-utils";
+} from "@/agent/trajectories/store-utils";
 import type {
   DiscoveredSession,
   NormalizedRecord,
   NormalizedSession,
   TrajectorySource,
-} from "./types";
+} from "@/agent/trajectories/types";
 
 interface CodexParseOutput {
   rows: PseudoRow[];

@@ -5,14 +5,20 @@
 
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { listFilesRecursive, statOrNull } from "./store-utils";
+import {
+  listFilesRecursive,
+  statOrNull,
+} from "@/agent/trajectories/store-utils";
 import type {
   DiscoveredSession,
   NormalizedRecord,
   NormalizedSession,
   TrajectorySource,
-} from "./types";
-import { estimateTokens, isNormalizedRecordArray } from "./types";
+} from "@/agent/trajectories/types";
+import {
+  estimateTokens,
+  isNormalizedRecordArray,
+} from "@/agent/trajectories/types";
 
 interface LoadedTranscript {
   session: DiscoveredSession;
