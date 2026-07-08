@@ -26,7 +26,9 @@ import {
   buildChannelSecretName,
   getActiveChannelCredentialsStoreMode,
 } from "@/channels/credential-store";
+import { __testClearUserChannelPluginCache } from "@/channels/plugin-registry";
 import type {
+  CustomChannelAccount,
   SlackChannelAccount,
   TelegramChannelAccount,
 } from "@/channels/types";
@@ -72,6 +74,50 @@ function makeTelegramAccount(): TelegramChannelAccount {
   };
 }
 
+function writeSchemaSecretChannel(root: string): void {
+  const channelDir = join(root, "schemasecret");
+  mkdirSync(channelDir, { recursive: true });
+  writeFileSync(
+    join(channelDir, "channel.json"),
+    `${JSON.stringify(
+      {
+        id: "schemasecret",
+        displayName: "Schema Secret",
+        entry: "./plugin.mjs",
+        configSchema: {
+          version: 1,
+          fields: [
+            { type: "text", key: "endpoint", label: "Endpoint" },
+            { type: "secret", key: "api_key", label: "API Key" },
+          ],
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  writeFileSync(
+    join(channelDir, "plugin.mjs"),
+    "export const channelPlugin = { metadata: { id: 'schemasecret', displayName: 'Schema Secret' }, createAdapter() { throw new Error('not used'); } };\n",
+  );
+}
+
+function makeSchemaSecretAccount(): CustomChannelAccount {
+  return {
+    channel: "schemasecret",
+    accountId: "schema-account",
+    enabled: true,
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    config: {
+      endpoint: "https://example.test/webhook",
+      api_key: "schema-secret",
+    },
+    createdAt: "2026-05-26T00:00:00.000Z",
+    updatedAt: "2026-05-26T00:00:00.000Z",
+  };
+}
+
 describe("channel credential storage", () => {
   let channelsRoot: string;
   let secrets: Map<string, string>;
@@ -81,6 +127,7 @@ describe("channel credential storage", () => {
     secrets = new Map<string, string>();
     clearChannelAccountStores();
     __testOverrideChannelsRoot(channelsRoot);
+    __testClearUserChannelPluginCache();
     __setChannelCredentialsStoreModeForTests(null);
     __setActiveChannelCredentialsStoreModeForTests(null);
     __setChannelKeychainAvailableForTests(null);
@@ -96,6 +143,7 @@ describe("channel credential storage", () => {
   afterEach(() => {
     clearChannelAccountStores();
     __testOverrideChannelsRoot(null);
+    __testClearUserChannelPluginCache();
     __setChannelCredentialsStoreModeForTests(null);
     __setActiveChannelCredentialsStoreModeForTests(null);
     __setChannelKeychainAvailableForTests(null);
@@ -246,6 +294,104 @@ describe("channel credential storage", () => {
     expect(
       secrets.has(buildChannelSecretName("slack", "slack-account", "appToken")),
     ).toBe(false);
+  });
+
+  test("keyring mode stores schema-declared plugin secrets outside accounts.json and hydrates them", async () => {
+    writeSchemaSecretChannel(channelsRoot);
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    await upsertChannelAccountWithSecrets(
+      "schemasecret",
+      makeSchemaSecretAccount(),
+    );
+    await flushPendingChannelSecretWrites();
+
+    expect(
+      secrets.get(
+        buildChannelSecretName(
+          "schemasecret",
+          "schema-account",
+          "config.api_key",
+        ),
+      ),
+    ).toBe("schema-secret");
+
+    const persisted = readAccountsFile(channelsRoot, "schemasecret") as {
+      accounts: Array<Record<string, unknown>>;
+    };
+    expect(JSON.stringify(persisted)).not.toContain("schema-secret");
+    expect(persisted.accounts[0]).toMatchObject({
+      config: {
+        endpoint: "https://example.test/webhook",
+      },
+      __letta_secret_refs: {
+        "config.api_key": true,
+      },
+    });
+
+    clearChannelAccountStores();
+    const hydrated = (await getChannelAccountWithSecrets(
+      "schemasecret",
+      "schema-account",
+    )) as CustomChannelAccount | null;
+
+    expect(hydrated?.config).toEqual(
+      expect.objectContaining({
+        endpoint: "https://example.test/webhook",
+        api_key: "schema-secret",
+      }),
+    );
+
+    expect(
+      await removeChannelAccountWithSecrets("schemasecret", "schema-account"),
+    ).toBe(true);
+    expect(
+      secrets.has(
+        buildChannelSecretName(
+          "schemasecret",
+          "schema-account",
+          "config.api_key",
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  test("missing keyring refs preserve schema-declared plugin refs instead of writing blank config", async () => {
+    writeSchemaSecretChannel(channelsRoot);
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    await upsertChannelAccountWithSecrets(
+      "schemasecret",
+      makeSchemaSecretAccount(),
+    );
+    await flushPendingChannelSecretWrites();
+    secrets.clear();
+    clearChannelAccountStores();
+
+    const beforeText = readFileSync(
+      join(channelsRoot, "schemasecret", "accounts.json"),
+      "utf-8",
+    );
+
+    await expect(hydrateChannelAccountSecrets("schemasecret")).rejects.toThrow(
+      /saved secret reference was preserved/i,
+    );
+
+    const afterText = readFileSync(
+      join(channelsRoot, "schemasecret", "accounts.json"),
+      "utf-8",
+    );
+    expect(afterText).toBe(beforeText);
+    const persisted = JSON.parse(afterText) as {
+      accounts: Array<
+        { config?: Record<string, unknown> } & Record<string, unknown>
+      >;
+    };
+    expect(persisted.accounts[0]).toMatchObject({
+      __letta_secret_refs: {
+        "config.api_key": true,
+      },
+    });
+    expect(persisted.accounts[0]?.config).not.toHaveProperty("api_key", "");
   });
 
   test("auto falls back to file mode when keyring is unavailable", async () => {

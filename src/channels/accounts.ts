@@ -13,6 +13,7 @@ import {
   getChannelSecret,
   setChannelSecret,
 } from "./credential-store";
+import { getChannelPluginMetadata } from "./plugin-registry";
 import type {
   ChannelAccount,
   ChannelDefaultPermissionMode,
@@ -109,6 +110,24 @@ function isSecretPlaceholder(value: unknown): boolean {
   return value === SECRET_PRESENT_PLACEHOLDER;
 }
 
+const FALLBACK_CONFIG_SECRET_FIELD_PATHS = ["config.bot_token", "config.auth"];
+
+function getConfigSchemaSecretFieldPaths(channelId: string): string[] {
+  try {
+    return (
+      getChannelPluginMetadata(channelId)
+        .configSchema?.fields.filter((field) => field.type === "secret")
+        .map((field) => `config.${field.key}`) ?? []
+    );
+  } catch {
+    // Metadata lookup for user-installed plugins depends on local manifests.
+    // Account load/save must remain conservative if a plugin was removed or its
+    // manifest is temporarily unreadable: preserve the built-in fallback secret
+    // keys and do not make the account store unusable.
+    return [];
+  }
+}
+
 function getSecretFieldPaths(account: ChannelAccount): string[] {
   if (isSlackChannelAccount(account)) {
     return ["botToken", "appToken"];
@@ -120,7 +139,12 @@ function getSecretFieldPaths(account: ChannelAccount): string[] {
     isCustomChannelAccount(account) ||
     !isFirstPartyChannelId(account.channel)
   ) {
-    return ["config.bot_token", "config.auth"];
+    return [
+      ...new Set([
+        ...FALLBACK_CONFIG_SECRET_FIELD_PATHS,
+        ...getConfigSchemaSecretFieldPaths(account.channel),
+      ]),
+    ];
   }
   return [];
 }

@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
@@ -7,12 +10,14 @@ import {
   getChannelAccount,
   LEGACY_CHANNEL_ACCOUNT_ID,
 } from "@/channels/accounts";
+import { __testOverrideChannelsRoot } from "@/channels/config";
 import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
   clearPairingStores,
   createPairingCode,
 } from "@/channels/pairing";
+import { __testClearUserChannelPluginCache } from "@/channels/plugin-registry";
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
@@ -61,6 +66,34 @@ describe("channel service", () => {
     return targetId;
   }
 
+  function writeSchemaSecretChannel(root: string): void {
+    const channelDir = join(root, "schemasecret");
+    mkdirSync(channelDir, { recursive: true });
+    writeFileSync(
+      join(channelDir, "channel.json"),
+      `${JSON.stringify(
+        {
+          id: "schemasecret",
+          displayName: "Schema Secret",
+          entry: "./plugin.mjs",
+          configSchema: {
+            version: 1,
+            fields: [
+              { type: "text", key: "endpoint", label: "Endpoint" },
+              { type: "secret", key: "api_key", label: "API Key" },
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    writeFileSync(
+      join(channelDir, "plugin.mjs"),
+      "export const channelPlugin = { metadata: { id: 'schemasecret', displayName: 'Schema Secret' }, createAdapter() { throw new Error('not used'); } };\n",
+    );
+  }
+
   function resetState(): void {
     clearChannelAccountStores();
     clearAllRoutes();
@@ -75,6 +108,8 @@ describe("channel service", () => {
     __testOverrideLoadTargetStore(null);
     __testOverrideSaveTargetStore(null);
     __testOverrideResolveChannelAccountDisplayName(null);
+    __testOverrideChannelsRoot(null);
+    __testClearUserChannelPluginCache();
   }
 
   beforeEach(() => {
@@ -794,6 +829,64 @@ describe("channel service", () => {
         }),
       }),
     );
+  });
+
+  test("schema-declared plugin secret blank saves preserve existing config credentials", async () => {
+    const channelsRoot = mkdtempSync(join(tmpdir(), "letta-channel-service-"));
+    try {
+      __testOverrideChannelsRoot(channelsRoot);
+      __testClearUserChannelPluginCache();
+      writeSchemaSecretChannel(channelsRoot);
+
+      createChannelAccountLive(
+        "schemasecret",
+        {
+          enabled: false,
+          dmPolicy: "pairing",
+          config: {
+            endpoint: "https://old.example.test/webhook",
+            api_key: "plugin-old-api-key",
+          },
+        },
+        { accountId: "schema-account" },
+      );
+
+      await setChannelConfigLive(
+        "schemasecret",
+        {
+          config: {
+            endpoint: "https://new.example.test/webhook",
+            api_key: "",
+          },
+        },
+        "schema-account",
+      );
+      expect(getChannelAccount("schemasecret", "schema-account")).toEqual(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            endpoint: "https://new.example.test/webhook",
+            api_key: "plugin-old-api-key",
+          }),
+        }),
+      );
+
+      await setChannelConfigLive(
+        "schemasecret",
+        { config: { api_key: "plugin-new-api-key" } },
+        "schema-account",
+      );
+      expect(getChannelAccount("schemasecret", "schema-account")).toEqual(
+        expect.objectContaining({
+          config: expect.objectContaining({
+            api_key: "plugin-new-api-key",
+          }),
+        }),
+      );
+    } finally {
+      __testOverrideChannelsRoot(null);
+      __testClearUserChannelPluginCache();
+      rmSync(channelsRoot, { recursive: true, force: true });
+    }
   });
 
   test("non-empty channel config secrets replace existing credentials", () => {
