@@ -2935,10 +2935,9 @@ export function createSlackAdapter(
       entry.streamDead = undefined;
       rememberMessageThread(response.ts, replyToMessageId);
       rememberSlackStreamTaskDetails(entry, args.chunks ?? []);
-      // Once the native stream card is visible, clear Slack's assistant
-      // thread status so Slack doesn't render a second "is processing" field
-      // under our task card.
-      await clearSlackAssistantThreadStatus(entry.source);
+      // The assistant thread status ("is working…") deliberately stays set
+      // while the card streams: the footer is the turn-level liveness signal
+      // and coexists with the card, matching leading agent integrations.
       return true;
     } catch (error) {
       console.warn(
@@ -4884,33 +4883,32 @@ export function createSlackAdapter(
       if (event.type === "processing") {
         await Promise.all(
           getUniqueSlackProgressSources(event.sources).map(async (source) => {
-            if (configuredProgressUi === "text") {
-              // Simple view: the "is working" footer and the dim status
-              // placeholder appear together at turn start.
-              const replyKey = getLifecycleReplyKey(source);
-              const status = getSlackAssistantThreadStatusForTurn(source);
-              if (
-                status &&
-                (!replyKey || !assistantStatusReplyKeys.has(replyKey))
-              ) {
-                await setSlackAssistantThreadStatus(source, status);
-              }
+            // Turn start: the "is working…" footer is the default liveness
+            // signal for BOTH progress views. The visual placeholder is
+            // deferred until concrete activity exists (first tool event) so
+            // reply-only turns — and listen-mode agents following busy human
+            // threads — never spawn stream messages just to think. The one
+            // exception: a turn that OPENS a thread from a flat channel
+            // mention spawns the placeholder immediately, because the flat
+            // channel has no footer and would otherwise show zero feedback
+            // until the first event.
+            const replyKey = getLifecycleReplyKey(source);
+            const status = getSlackAssistantThreadStatusForTurn(source);
+            if (
+              status &&
+              (!replyKey || !assistantStatusReplyKeys.has(replyKey))
+            ) {
+              await setSlackAssistantThreadStatus(source, status);
+            }
+            const opensThread =
+              source.chatType === "channel" &&
+              isNonEmptyString(source.messageId) &&
+              (!isNonEmptyString(source.threadId) ||
+                source.threadId === source.messageId);
+            if (configuredProgressUi === "text" && opensThread) {
               await upsertSlackProgressCard(source, "processing", "Thinking", {
                 force: true,
               });
-              return;
-            }
-            if (isSlackProgressCardRendering(source)) {
-              await clearSlackAssistantThreadStatus(source);
-              return;
-            }
-            const replyKey = getLifecycleReplyKey(source);
-            if (replyKey && assistantStatusReplyKeys.has(replyKey)) {
-              return;
-            }
-            const status = getSlackAssistantThreadStatusForTurn(source);
-            if (status) {
-              await setSlackAssistantThreadStatus(source, status);
             }
           }),
         );

@@ -1975,7 +1975,7 @@ test("slack adapter does not add lifecycle reactions for rich progress turns", a
   expect(writeClient?.reactions.remove.mock.calls ?? []).toHaveLength(0);
 });
 
-test("slack adapter streams native task progress and clears thread status", async () => {
+test("slack adapter streams native task progress and keeps the thread status set", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -2021,11 +2021,11 @@ test("slack adapter streams native task progress and clears thread status", asyn
   });
   const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
-  expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
-    channel_id: "C123",
-    thread_ts: "1712790000.000050",
-    status: "",
-  });
+  // The "is working…" footer stays set while the card streams — it is the
+  // turn-level liveness signal and coexists with the card.
+  const statusCalls = writeClient?.assistant.threads.setStatus.mock
+    .calls as unknown as Array<Array<{ status: string }>>;
+  expect(statusCalls.some((call) => call[0]?.status === "")).toBe(false);
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
@@ -2111,6 +2111,8 @@ test("slack adapter streams native task progress and clears thread status", asyn
   expect(appendCall?.chunks).toHaveLength(3);
   expect(JSON.stringify(appendCall?.chunks)).not.toContain("token=abc");
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
+  // After the turn finished, the footer clears (the mid-turn assertions
+  // above pinned that streaming did NOT clear it early).
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
     channel_id: "C123",
     thread_ts: "1712790000.000050",
@@ -5398,7 +5400,7 @@ test("slack adapter defaults to the simple progress view when progress_ui is uns
     senderId: "U123",
     senderTeamId: "T123",
     messageId: "1712800000.000100",
-    threadId: "1712790000.000050",
+    threadId: "1712800000.000100",
     agentId: "agent-1",
     conversationId: "conv-1",
   };
@@ -5418,6 +5420,70 @@ test("slack adapter defaults to the simple progress view when progress_ui is uns
     .calls as unknown as Array<Array<{ chunks?: Array<{ type: string }> }>>;
   const chunks = startCalls[0]?.[0]?.chunks ?? [];
   expect(chunks.every((chunk) => chunk.type === "plan_update")).toBe(true);
+});
+
+test("slack adapter defers the status placeholder in established threads until concrete activity", async () => {
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    progressUi: "text",
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    // Mid-thread turn: the inbound message is NOT the thread root.
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+
+  // Thinking alone spawns nothing: the footer carries turn liveness, so
+  // reply-only turns and listen-mode agents never emit stream messages.
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalled();
+  const statusCalls = writeClient?.assistant.threads.setStatus.mock
+    .calls as unknown as Array<Array<{ status: string }>>;
+  expect(statusCalls[statusCalls.length - 1]?.[0]?.status).not.toBe("");
+
+  // First concrete activity spawns the placeholder with the tool title.
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Sleeping five minutes",
+    toolCallId: "call-1",
+    toolName: "exec_command",
+  });
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  const startCalls = writeClient?.chat.startStream.mock
+    .calls as unknown as Array<
+    Array<{ chunks?: Array<{ type: string; title?: string }> }>
+  >;
+  const chunks = startCalls[0]?.[0]?.chunks ?? [];
+  expect(chunks[0]?.type).toBe("plan_update");
+  expect(chunks[0]?.title).not.toBe("Thinking");
 });
 
 test("slack adapter simple view opens a status stream at turn start and the reply becomes the message", async () => {
@@ -5441,7 +5507,7 @@ test("slack adapter simple view opens a status stream at turn start and the repl
     senderId: "U123",
     senderTeamId: "T123",
     messageId: "1712800000.000100",
-    threadId: "1712790000.000050",
+    threadId: "1712800000.000100",
     agentId: "agent-1",
     conversationId: "conv-1",
   };
@@ -5497,7 +5563,7 @@ test("slack adapter simple view opens a status stream at turn start and the repl
     accountId: "slack-test-account",
     chatId: "C123",
     text: "Here is what I found.",
-    threadId: "1712790000.000050",
+    threadId: "1712800000.000100",
     agentId: "agent-1",
     conversationId: "conv-1",
   });
@@ -5628,7 +5694,7 @@ test("slack adapter simple view rolls the status stream before Slack's lifetime 
     senderId: "U123",
     senderTeamId: "T123",
     messageId: "1712800000.000100",
-    threadId: "1712790000.000050",
+    threadId: "1712800000.000100",
     agentId: "agent-1",
     conversationId: "conv-1",
   };
@@ -5656,7 +5722,7 @@ test("slack adapter simple view rolls the status stream before Slack's lifetime 
     accountId: "slack-test-account",
     chatId: "C123",
     text: "Long turn done.",
-    threadId: "1712790000.000050",
+    threadId: "1712800000.000100",
     agentId: "agent-1",
     conversationId: "conv-1",
   });
