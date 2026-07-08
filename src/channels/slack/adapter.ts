@@ -688,7 +688,7 @@ function buildSlackChatFootnote(identity: {
     return "";
   }
   // Slack mrkdwn link format: <URL|text>
-  return `<${chatUrl}|Webapp>`;
+  return `<${chatUrl}|View on web>`;
 }
 
 // Slack section blocks cap mrkdwn text at 3000 characters.

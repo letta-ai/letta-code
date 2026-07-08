@@ -3600,7 +3600,7 @@ test("slack adapter rewrites dead streams with the final card state", async () =
   });
   const renderedBlocks = JSON.stringify(updateArgs?.blocks ?? []);
   expect(renderedBlocks).toContain("*Read a file*");
-  expect(renderedBlocks).toContain("Webapp");
+  expect(renderedBlocks).toContain("View on web");
   expect(renderedBlocks).not.toContain("task_update");
   expect(renderedBlocks).not.toContain(":white_check_mark:");
   expect(renderedBlocks).not.toContain("in_progress");
@@ -5346,7 +5346,7 @@ test("slack adapter text progress mode posts one status message and edits it in 
   });
   const renderedBlocks = JSON.stringify(terminalArgs?.blocks ?? []);
   expect(renderedBlocks).toContain("*Read a file*");
-  expect(renderedBlocks).toContain("Webapp");
+  expect(renderedBlocks).toContain("View on web");
 });
 
 test("slack adapter degrades rich progress to text mode when chat.startStream is unavailable", async () => {
@@ -5410,7 +5410,7 @@ test("slack adapter degrades rich progress to text mode when chat.startStream is
   expect(updateCalls[updateCalls.length - 1]?.[0]?.text).toBe("Read a file");
 });
 
-test("slack adapter sendMessage renders a Webapp context footnote when identity is provided", async () => {
+test("slack adapter sendMessage renders a View on web context footnote when identity is provided", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -5463,7 +5463,7 @@ test("slack adapter sendMessage renders a Webapp context footnote when identity 
   const footnoteBlock = blocks[blocks.length - 1];
   expect(footnoteBlock?.type).toBe("context");
   expect(footnoteBlock?.elements?.[0]?.text).toBe(
-    "<https://chat.letta.com/chat/agent-1?conversation=conv-1|Webapp>",
+    "<https://chat.letta.com/chat/agent-1?conversation=conv-1|View on web>",
   );
   // Without identity: plain text, no blocks.
   expect(postCalls[1]?.[0]?.blocks).toBeUndefined();
