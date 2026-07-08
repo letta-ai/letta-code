@@ -19,6 +19,7 @@ import {
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
+  clearStaleProcessingFlagIfIdle,
   emitListenerStatus,
   evictConversationRuntimeIfIdle,
   getActiveRuntime,
@@ -393,6 +394,15 @@ export function shouldProcessInboundMessageDirectly(
     return false;
   }
 
+  const activeScope = resolveRuntimeScope(runtime.listener, {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  });
+  const pendingControlRequestCount = activeScope
+    ? getPendingControlRequestCount(runtime.listener, activeScope)
+    : 0;
+  clearStaleProcessingFlagIfIdle(runtime, pendingControlRequestCount);
+
   if (
     runtime.queueRuntime.length > 0 ||
     runtime.queuePumpActive ||
@@ -416,17 +426,11 @@ export function shouldProcessInboundMessageDirectly(
     return false;
   }
 
-  const activeScope = resolveRuntimeScope(runtime.listener, {
-    agent_id: runtime.agentId,
-    conversation_id: runtime.conversationId,
-  });
   return (
     getListenerBlockedReason({
       loopStatus: runtime.loopStatus,
       isProcessing: runtime.isProcessing,
-      pendingApprovalsLen: activeScope
-        ? getPendingControlRequestCount(runtime.listener, activeScope)
-        : 0,
+      pendingApprovalsLen: pendingControlRequestCount,
       cancelRequested: runtime.cancelRequested,
       isRecoveringApprovals: runtime.isRecoveringApprovals,
     }) === null
@@ -504,12 +508,15 @@ function computeListenerQueueBlockedReason(
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
   });
+  const pendingControlRequestCount = activeScope
+    ? getPendingControlRequestCount(runtime.listener, activeScope)
+    : 0;
+  clearStaleProcessingFlagIfIdle(runtime, pendingControlRequestCount);
+
   return getListenerBlockedReason({
     loopStatus: runtime.loopStatus,
     isProcessing: runtime.isProcessing,
-    pendingApprovalsLen: activeScope
-      ? getPendingControlRequestCount(runtime.listener, activeScope)
-      : 0,
+    pendingApprovalsLen: pendingControlRequestCount,
     cancelRequested: runtime.cancelRequested,
     isRecoveringApprovals: runtime.isRecoveringApprovals,
   });

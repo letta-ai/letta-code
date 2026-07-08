@@ -1,6 +1,7 @@
 import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
 import type { PendingControlRequest } from "@/types/protocol_v2";
+import { debugWarn } from "@/utils/debug";
 import {
   normalizeConversationId,
   normalizeCwdAgentId,
@@ -244,6 +245,16 @@ export function clearActiveRunState(runtime: ConversationRuntime): void {
   runtime.activeAbortController = null;
 }
 
+export function markConversationRuntimeIdle(
+  runtime: ConversationRuntime,
+): void {
+  runtime.isProcessing = false;
+  runtime.isRecoveringApprovals = false;
+  runtime.activeExecutingToolCallIds = [];
+  runtime.loopStatus = "WAITING_ON_INPUT";
+  clearActiveRunState(runtime);
+}
+
 export function clearRecoveredApprovalState(
   runtime: ConversationRuntime,
 ): void {
@@ -265,13 +276,50 @@ export function clearConversationRuntimeState(
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
-  runtime.activeExecutingToolCallIds = [];
-  runtime.loopStatus = "WAITING_ON_INPUT";
   runtime.continuationEpoch += 1;
   runtime.pendingTurns = 0;
   runtime.queuePumpActive = false;
   runtime.queuePumpScheduled = false;
-  clearActiveRunState(runtime);
+  markConversationRuntimeIdle(runtime);
+}
+
+// Defensive queue recovery: if an earlier cleanup path already returned the
+// conversation to an idle loop state and cleared every active-work handle, a
+// stale processing bit should not permanently block queued turns.
+export function clearStaleProcessingFlagIfIdle(
+  runtime: ConversationRuntime,
+  pendingControlRequestCount: number,
+): boolean {
+  if (
+    !runtime.isProcessing ||
+    runtime.loopStatus !== "WAITING_ON_INPUT" ||
+    runtime.cancelRequested ||
+    runtime.isRecoveringApprovals ||
+    pendingControlRequestCount > 0 ||
+    runtime.pendingApprovalResolvers.size > 0 ||
+    runtime.pendingApprovalBatchByToolCallId.size > 0 ||
+    runtime.recoveredApprovalState !== null ||
+    runtime.pendingInterruptedResults !== null ||
+    runtime.pendingInterruptedContext !== null ||
+    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
+    runtime.activeExecutingToolCallIds.length > 0 ||
+    runtime.activeWorkingDirectory !== null ||
+    runtime.activeRunId !== null ||
+    runtime.activeRunStartedAt !== null ||
+    runtime.activeAbortController !== null
+  ) {
+    return false;
+  }
+
+  debugWarn(
+    "listener",
+    "Clearing stale processing flag for idle conversation runtime %s/%s (queueLen=%d)",
+    runtime.agentId ?? "unknown-agent",
+    runtime.conversationId,
+    runtime.queueRuntime?.length ?? 0,
+  );
+  runtime.isProcessing = false;
+  return true;
 }
 
 export function getRecoveredApprovalStateForScope(
