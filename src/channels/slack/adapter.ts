@@ -32,6 +32,7 @@ import type {
   InboundChannelMessage,
   OutboundChannelMessage,
   SlackChannelAccount,
+  SlackProgressUiMode,
 } from "@/channels/types";
 import {
   getDisplayToolName,
@@ -584,8 +585,10 @@ type SlackProgressToolTask = {
 
 type SlackProgressCardEntry = {
   source: ChannelTurnSource;
-  mode?: "stream";
+  mode?: "stream" | "text";
   streamTs?: string;
+  /** Message ts of the plain text-mode progress message, edited in place. */
+  textTs?: string;
   /**
    * Set once Slack reports the stream left streaming state while we still
    * expected it to be live (expiry, external stop). A dead stream never
@@ -715,6 +718,48 @@ export function formatSlackProgressCardText(
   return safeProgressText
     ? `${statusLine}\nStatus: ${safeProgressText}`
     : statusLine;
+}
+
+/**
+ * Live line for text progress mode: the title of the task currently in
+ * progress (same vocabulary as the rich card rows), falling back to the most
+ * recent task title, then a generic placeholder. ASCII only.
+ */
+function formatSlackTextProgressLiveText(
+  entry: SlackProgressCardEntry,
+): string {
+  let inProgressTitle: string | undefined;
+  let latestTitle: string | undefined;
+  for (const task of entry.toolTasksById?.values() ?? []) {
+    if (isSlackTransientTask(task)) {
+      continue;
+    }
+    latestTitle = task.title;
+    if (task.status === "in_progress") {
+      inProgressTitle = task.title;
+    }
+  }
+  const detail = sanitizeSlackProgressText(
+    inProgressTitle ?? latestTitle ?? "",
+    SLACK_PROGRESS_CARD_TEXT_MAX,
+  );
+  return detail ? `_Working: ${detail}_` : "_Working..._";
+}
+
+/**
+ * Terminal line for text progress mode: the same activity summary the rich
+ * card uses for its terminal plan title.
+ */
+function formatSlackTextProgressTerminalText(
+  entry: SlackProgressCardEntry,
+): string {
+  if (entry.status === "completed") {
+    return (
+      entry.completionHeaderText?.trim() ||
+      formatSlackCompletionPlanTitle(entry)
+    );
+  }
+  return entry.status === "cancelled" ? "Interrupted" : "Failed";
 }
 
 function buildSlackLifecycleErrorTaskChunk(
@@ -2103,6 +2148,12 @@ export function createSlackAdapter(
   const progressUpdateThrottleMs = resolveSlackProgressUpdateThrottleMs();
   const progressStreamKeepaliveMs = resolveSlackProgressStreamKeepaliveMs();
   const completionFinalizeGraceMs = resolveSlackCompletionFinalizeGraceMs();
+  // Per-account progress rendering style. "rich" (default) uses streamed
+  // progress cards; "text" posts one plain status message per turn and edits
+  // it in place. "rich" degrades to "text" when the Slack client/workspace
+  // does not expose chat.startStream.
+  const configuredProgressUi: SlackProgressUiMode =
+    config.progressUi === "text" ? "text" : "rich";
 
   // ── Inbound debounce (optional) ───────────────────────────────
   // When `inboundDebounceMs > 0`, short back-to-back messages from the same
@@ -3018,6 +3069,77 @@ export function createSlackAdapter(
     scheduleSlackProgressStreamKeepalive(key, entry);
   }
 
+  /**
+   * Plain-text progress ("text" progress UI): one status message per turn,
+   * posted on the first flush with visible activity and edited in place
+   * afterwards. The terminal edit collapses to the turn's activity summary
+   * (the rich card's terminal plan title) plus the chat footnote. Also the
+   * automatic degradation target when chat.startStream is unavailable.
+   */
+  async function upsertSlackTextProgressMessage(
+    entry: SlackProgressCardEntry,
+    replyToMessageId: string,
+  ): Promise<boolean> {
+    const slackClient = await ensureWriteClient();
+    const terminal = entry.status !== "processing";
+    try {
+      if (!entry.textTs) {
+        if (terminal) {
+          // Nothing was ever posted for this turn; a terminal-only status
+          // message would be noise (the reply itself is the outcome).
+          return true;
+        }
+        const response = await slackClient.chat.postMessage({
+          channel: entry.source.chatId,
+          text: formatSlackTextProgressLiveText(entry),
+          thread_ts: replyToMessageId,
+        });
+        if (!isNonEmptyString(response.ts)) {
+          return false;
+        }
+        entry.mode = "text";
+        entry.textTs = response.ts;
+        rememberMessageThread(response.ts, replyToMessageId);
+        return true;
+      }
+      if (terminal) {
+        const headerText = formatSlackTextProgressTerminalText(entry);
+        const blocks: SlackBlock[] = [
+          {
+            type: "section",
+            text: { type: "mrkdwn", text: `*${headerText}*` },
+          },
+        ];
+        const footnote = buildSlackChatFootnote(entry.source);
+        if (footnote) {
+          blocks.push({
+            type: "context",
+            elements: [{ type: "mrkdwn", text: footnote }],
+          });
+        }
+        await slackClient.chat.update({
+          channel: entry.source.chatId,
+          ts: entry.textTs,
+          text: headerText,
+          blocks,
+        });
+        return true;
+      }
+      await slackClient.chat.update({
+        channel: entry.source.chatId,
+        ts: entry.textTs,
+        text: formatSlackTextProgressLiveText(entry),
+      });
+      return true;
+    } catch (error) {
+      console.warn(
+        "[Slack] Failed to send text progress update:",
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
+  }
+
   async function flushSlackProgressCard(
     key: string,
     entry: SlackProgressCardEntry,
@@ -3067,13 +3189,27 @@ export function createSlackAdapter(
       entry.pendingStreamChunks = [];
       let didSend = true;
       if (!entry.mode) {
-        didSend = await startSlackProgressStream(
-          entry,
-          replyToMessageId,
-          chunksToSend,
-        );
+        // Route the turn's first visible progress: text mode by explicit
+        // config, or as automatic degradation when the Slack client/workspace
+        // does not expose chat.startStream.
+        const slackClient = await ensureWriteClient();
+        const canStream = typeof slackClient.chat.startStream === "function";
+        if (configuredProgressUi === "text" || !canStream) {
+          didSend = await upsertSlackTextProgressMessage(
+            entry,
+            replyToMessageId,
+          );
+        } else {
+          didSend = await startSlackProgressStream(
+            entry,
+            replyToMessageId,
+            chunksToSend,
+          );
+        }
       } else if (entry.mode === "stream") {
         didSend = await appendSlackProgressStream(entry, chunksToSend);
+      } else {
+        didSend = await upsertSlackTextProgressMessage(entry, replyToMessageId);
       }
 
       if (!didSend && chunksToSend.length > 0) {
@@ -3356,6 +3492,7 @@ export function createSlackAdapter(
         entry.mode = undefined;
         entry.streamTs = undefined;
         entry.streamDead = undefined;
+        entry.textTs = undefined;
         entry.toolTasksById = undefined;
         entry.pendingStreamChunks = undefined;
         entry.toolNamesByCallId = undefined;
@@ -3403,7 +3540,7 @@ export function createSlackAdapter(
         entry.source = source;
         entry.updatedAt = Date.now();
         await flushSlackProgressCard(key, entry);
-        if (entry.mode === "stream") {
+        if (entry.mode === "stream" || entry.mode === "text") {
           scheduleSlackCompletionFinalizer(key, entry, batchId);
         }
         await clearSlackAssistantThreadStatus(source);

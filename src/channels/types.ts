@@ -659,6 +659,14 @@ export interface TelegramChannelAccount extends ChannelAccountBase {
   inboundDebounceMs?: number;
 }
 
+/**
+ * Turn-progress rendering style for Slack threads.
+ * - "rich" (default): native streamed progress cards (chat.startStream).
+ * - "text": one plain status message per turn, edited in place while the
+ *   turn runs and finished as a terminal activity summary.
+ */
+export type SlackProgressUiMode = "rich" | "text";
+
 export interface SlackChannelAccount extends ChannelAccountBase {
   channel: "slack";
   mode: SlackChannelMode;
@@ -670,6 +678,12 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   transcribeVoice?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
+  /**
+   * Turn-progress rendering style. Defaults to "rich" (streamed progress
+   * cards). "rich" degrades to "text" automatically when the Slack
+   * client/workspace does not support chat.startStream.
+   */
+  progressUi?: SlackProgressUiMode;
   /**
    * Optional debounce window (ms) for inbound messages. When greater than
    * `0`, short back-to-back messages from the same sender in the same

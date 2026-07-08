@@ -53,6 +53,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   listen_mode: "listenMode",
   media_max_bytes: "mediaMaxBytes",
   mention_patterns: "mentionPatterns",
+  progress_ui: "progressUi",
   recipient_aliases: "recipientAliases",
   remove_stale_routes: "removeStaleRoutes",
   rich_draft_streaming: "richDraftStreaming",
@@ -324,6 +325,9 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     delete (next as unknown as Record<string, unknown>).showCompletedReaction;
     (next as SlackChannelAccount).listenMode =
       (next as SlackChannelAccount).listenMode === true;
+    if ((next as SlackChannelAccount).progressUi !== "text") {
+      delete (next as SlackChannelAccount).progressUi;
+    }
   }
   if (isDiscordChannelAccount(next)) {
     const migrated = migratePermissionMode(
