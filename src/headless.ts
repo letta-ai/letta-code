@@ -1593,9 +1593,13 @@ export async function handleHeadlessCommand(
       "@/agent/memory-filesystem"
     );
     const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
-    if (!memfsEnabled && !isStatelessSubagent && (await isLettaCloud())) {
+    if (!memfsEnabled && !isSubagent && (await isLettaCloud())) {
       // Auto-enable memfs for existing agents that don't have it yet.
       // Matches interactive mode behavior where memfs defaults to enabled.
+      // Subagent sessions never auto-enable: a deployed memfs-less worker
+      // (e.g. the dream pipeline's reflector, whose $MEMORY_DIR is a
+      // harness-provided tree) must not grow a memfs checkout as a side
+      // effect — the local sync would also violate its sandbox.
       startupMemfsFlag = true;
     }
   }

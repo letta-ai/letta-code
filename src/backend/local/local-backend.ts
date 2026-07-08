@@ -122,7 +122,7 @@ function memoryBlockPath(label: string): string {
   return `system/${normalized}.md`;
 }
 
-function renderInitialMemoryFile(input: {
+export function renderInitialMemoryFile(input: {
   label: string;
   value: string;
   description?: string | null;

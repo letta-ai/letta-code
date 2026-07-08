@@ -463,13 +463,28 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--no-skills");
   });
 
-  test("does not inject reflection-only flags when deploying an existing reflection agent", () => {
+  test("injects reflection-only flags when deploying an existing reflection agent", () => {
+    // A redeployed persistent reflector (dream pipeline) must see the same
+    // prompt surface as a freshly created reflection subagent.
     const args = buildSubagentArgs(
       "reflection",
       { ...baseConfig, name: "reflection" },
       null,
       "hello",
       "agent-existing-reflection",
+    );
+
+    expect(args).toContain("--no-system-info-reminder");
+    expect(args).toContain("--no-skills");
+  });
+
+  test("does not inject reflection-only flags when deploying a general-purpose agent", () => {
+    const args = buildSubagentArgs(
+      "general-purpose",
+      baseConfig,
+      null,
+      "hello",
+      "agent-existing",
     );
 
     expect(args).not.toContain("--no-system-info-reminder");

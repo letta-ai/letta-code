@@ -22,6 +22,7 @@ import { getServerUrl } from "@/backend/api/client";
 import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import { getDreamRootDir } from "@/utils/transcript-paths";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
 
 /**
@@ -385,6 +386,12 @@ export function getShellEnv(): NodeJS.ProcessEnv {
         const inheritedParentAgentDir = inheritedParentMemoryDir
           ? path.dirname(inheritedParentMemoryDir)
           : null;
+        // The parent's dream directory holds batch reflection output trees;
+        // it is keyed by the parent agent id, so a MEMORY_DIR inside it is
+        // parent-scoped the same way a reflection memory worktree is.
+        const inheritedParentDreamDir = parentAgentId
+          ? getDreamRootDir(parentAgentId)
+          : null;
         const inheritedMemoryPath = inheritedMemoryDir
           ? path.resolve(inheritedMemoryDir)
           : null;
@@ -395,6 +402,12 @@ export function getShellEnv(): NodeJS.ProcessEnv {
                 inheritedParentAgentDir &&
                   inheritedMemoryPath.startsWith(
                     `${path.resolve(inheritedParentAgentDir)}${path.sep}memory-worktrees${path.sep}`,
+                  ),
+              ) ||
+              Boolean(
+                inheritedParentDreamDir &&
+                  inheritedMemoryPath.startsWith(
+                    `${path.resolve(inheritedParentDreamDir)}${path.sep}`,
                   ),
               )
             : false;

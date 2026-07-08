@@ -192,6 +192,13 @@ export interface CreateAgentOptions {
   blockValues?: Record<string, string>;
   /** Tags to organize and categorize the agent */
   tags?: string[];
+  /**
+   * Create with subagent semantics (no default memory blocks, no memfs,
+   * hidden, no settings persistence) even when this process is not itself a
+   * subagent. Used for harness-managed worker agents like the dream
+   * pipeline's persistent reflector.
+   */
+  asSubagent?: boolean;
 }
 
 export async function createAgent(
@@ -225,7 +232,8 @@ export async function createAgent(
   const embeddingModelVal = options.embeddingModel;
   const parallelToolCallsVal = options.parallelToolCalls ?? true;
   // Subagents are ephemeral and don't carry memory blocks of their own.
-  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  const isSubagent =
+    options.asSubagent ?? process.env.LETTA_CODE_AGENT_ROLE === "subagent";
 
   // Resolve model identifier to handle
   let modelHandle: string;

@@ -1,9 +1,16 @@
 import { parseArgs } from "node:util";
 import {
-  type ParsedSource,
-  parseFromSource,
-  stageFromSource,
-} from "@/cli/subcommands/dream-sources";
+  DEFAULT_BATCH_TOKEN_BUDGET,
+  DEFAULT_MAX_SESSIONS_PER_BATCH,
+} from "@/cli/subcommands/dream-pipeline/batching";
+import {
+  type DreamPipelineResult,
+  runDreamPipeline,
+} from "@/cli/subcommands/dream-pipeline/run";
+import {
+  type DreamSourceSpec,
+  parseDreamSourceSpec,
+} from "@/cli/subcommands/dream-pipeline/select";
 import {
   buildTargetInstruction,
   type DreamTarget,
@@ -26,23 +33,57 @@ Run a memory reflection pass for an agent and wait for it to finish.
 Options:
   --memory <agent-id>         Agent whose memory to refine (default:
                               $LETTA_AGENT_ID, then the last-used agent)
-  --from <conv-id|type:path>  What to reflect on: a conversation id (default:
-                              the agent's primary "default" history), or an
-                              external source, e.g. openhands:<conversation-dir>
-                              or transcript:./rows.jsonl
+  --from <source>             What to reflect on. Repeatable. Each value is:
+                                <conv-id>            one of the agent's own
+                                                     conversations (default:
+                                                     the primary "default"
+                                                     history)
+                                <harness>            every recorded session in
+                                                     that harness's local store
+                                                     (claude, codex)
+                                <harness>:<session>  that session onwards
+                                                     (claude, codex), or the
+                                                     exact sessions the path
+                                                     names (openhands:<dir>,
+                                                     transcript:<file|dir>)
+                                letta[:<locator>]    a letta conversation's
+                                                     recorded transcript:
+                                                     <conv-id>, <agent-id>
+                                                     (its default history), or
+                                                     <agent-id>/<conv-id>;
+                                                     bare letta = this agent's
+                                                     default history
+                              Typed sources run the batch pipeline: sessions
+                              are normalized, packed into time-ordered batches,
+                              reflected on in parallel, and merged into memory
+                              by an aggregation pass.
   --to <path>                 Maintain a doc (e.g. ./AGENTS.md) from memory;
                               the agent edits it in place, using judgment
+  --plan                      With typed sources: show the selected sessions
+                              and batch plan, then exit without reflecting
+  --viz <run-id|latest|path>  Regenerate viz.html for a recorded dream run and
+                              exit (each run also writes one automatically)
+  --aggregate <run-id|latest> Re-run ONLY the aggregation pass of a recorded
+                              dream run, using its existing batch outputs
+  --budget <tokens>           Per-batch token budget (default ${DEFAULT_BATCH_TOKEN_BUDGET})
+  --max-sessions <n>          Max sessions per batch (default ${DEFAULT_MAX_SESSIONS_PER_BATCH})
+  --concurrency <n>           Cap concurrent batch reflections (default: every
+                              batch runs its own reflection agent at once)
+  --force                     Ignore the ingest ledger and re-reflect sessions
+                              that were already dreamed on
   --effort <level>            Reflection effort (reserved; not yet implemented)
-  --timeout <seconds>         Fail if the reflection pass has not completed
-                              in this many seconds (default: 1500)
+  --timeout <seconds>         Fail if the run has not completed in this many
+                              seconds (default: 1500)
   -i, --instruction <text>    Additional instruction for the reflection pass
   --json                      Emit machine-readable JSON output
   -h, --help                  Show this help
 
 Notes:
   - Requires the memory filesystem to be enabled for the agent.
-  - Processes conversation transcript content recorded since the last
-    successful reflection; exits 0 with no action when nothing is new.
+  - Conversation reflection processes transcript content recorded since the
+    last successful reflection; typed sources skip sessions already recorded
+    in the ingest ledger (re-process with --force). Either way, exits 0 with
+    no action when nothing is new.
 `.trim(),
   );
 }
@@ -50,8 +91,15 @@ Notes:
 const DREAM_OPTIONS = {
   help: { type: "boolean", short: "h" },
   memory: { type: "string" },
-  from: { type: "string" },
+  from: { type: "string", multiple: true },
   to: { type: "string" },
+  plan: { type: "boolean" },
+  viz: { type: "string" },
+  aggregate: { type: "string" },
+  budget: { type: "string" },
+  "max-sessions": { type: "string" },
+  concurrency: { type: "string" },
+  force: { type: "boolean" },
   effort: { type: "string" },
   timeout: { type: "string" },
   instruction: { type: "string", short: "i" },
@@ -77,6 +125,242 @@ interface DreamCompletion {
 
 function emitJson(payload: Record<string, unknown>): void {
   console.log(JSON.stringify(payload));
+}
+
+function parsePositiveInt(
+  value: string | undefined,
+  fallback: number,
+  name: string,
+): number {
+  if (value === undefined) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Invalid --${name} "${value}": must be a positive integer`);
+  }
+  return parsed;
+}
+
+async function runPipelineDream(params: {
+  agentId: string;
+  specs: DreamSourceSpec[];
+  values: ReturnType<typeof parseDreamArgs>["values"];
+  target?: DreamTarget;
+  timeoutSeconds: number;
+  asJson: boolean;
+}): Promise<number> {
+  const { agentId, specs, values, target, timeoutSeconds, asJson } = params;
+
+  let budget: number;
+  let maxSessions: number;
+  let concurrency: number | undefined;
+  try {
+    budget = parsePositiveInt(
+      values.budget,
+      DEFAULT_BATCH_TOKEN_BUDGET,
+      "budget",
+    );
+    maxSessions = parsePositiveInt(
+      values["max-sessions"],
+      DEFAULT_MAX_SESSIONS_PER_BATCH,
+      "max-sessions",
+    );
+    // No --concurrency → every batch gets its own concurrent reflection agent.
+    concurrency =
+      values.concurrency !== undefined
+        ? parsePositiveInt(values.concurrency, 1, "concurrency")
+        : undefined;
+  } catch (error) {
+    console.error(
+      `Error: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return 1;
+  }
+
+  // Sync the --to doc into the memfs first so the aggregator's worktree clone
+  // starts from the current shared state; its upkeep directive rides on the
+  // aggregation instruction since the aggregator owns the final memory state.
+  let aggregationInstruction: string | undefined;
+  if (target && !values.plan) {
+    const existing = await readExistingTarget(target);
+    try {
+      await syncTargetIntoMemory(agentId, target, existing);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!asJson) {
+        console.error(
+          `Note: could not sync ${target.fileName} into memory (${message}); the reflection will create it.`,
+        );
+      }
+    }
+    aggregationInstruction = buildTargetInstruction(target);
+  }
+
+  const log = asJson ? () => {} : (line: string) => console.log(line);
+  const pipelinePromise = runDreamPipeline({
+    agentId,
+    conversationId: "default",
+    specs,
+    instruction: values.instruction,
+    aggregationInstruction,
+    planOnly: Boolean(values.plan),
+    force: Boolean(values.force),
+    batchTokenBudget: budget,
+    maxSessionsPerBatch: maxSessions,
+    concurrency,
+    recompileByConversation: new Map(),
+    recompileQueuedByConversation: new Set(),
+    log,
+  });
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<{ kind: "timeout" }>((resolve) => {
+    timeoutHandle = setTimeout(
+      () => resolve({ kind: "timeout" }),
+      timeoutSeconds * 1000,
+    );
+  });
+  const result: DreamPipelineResult | { kind: "timeout" } = await Promise.race([
+    pipelinePromise,
+    timeout,
+  ]);
+  if (timeoutHandle !== undefined) {
+    clearTimeout(timeoutHandle);
+  }
+
+  switch (result.kind) {
+    case "timeout": {
+      const message = `Dream run did not complete within ${timeoutSeconds}s; batch agents may still be running.`;
+      if (asJson) {
+        emitJson({
+          launched: true,
+          success: false,
+          timedOut: true,
+          agentId,
+          message,
+        });
+      } else {
+        console.error(message);
+      }
+      return 1;
+    }
+    case "nothing_new": {
+      if (asJson) {
+        emitJson({
+          launched: false,
+          reason: "no_new_sessions",
+          agentId,
+          skippedByLedger: result.skippedByLedger,
+        });
+      } else {
+        console.log(
+          result.skippedByLedger > 0
+            ? `No new sessions to dream on (${result.skippedByLedger} already reflected; use --force to re-process).`
+            : "No sessions found for the given sources.",
+        );
+      }
+      return 0;
+    }
+    case "already_active": {
+      if (asJson) {
+        emitJson({ launched: false, reason: "already_active", agentId });
+      } else {
+        console.error("A reflection pass is already running for this agent.");
+      }
+      return 1;
+    }
+    case "plan": {
+      if (asJson) {
+        emitJson({
+          plan: true,
+          agentId,
+          sessionCount: result.sessions.length,
+          skippedByLedger: result.skippedByLedger,
+          batches: result.batches.map((batch) => ({
+            index: batch.index,
+            estTokens: batch.estTokens,
+            startTime: batch.startTime,
+            endTime: batch.endTime,
+            sessions: batch.sessions.map((s) => ({
+              harness: s.harness,
+              sessionId: s.sessionId,
+              estTokens: s.estTokens,
+            })),
+          })),
+        });
+        return 0;
+      }
+      console.log(
+        `Would reflect on ${result.sessions.length} session(s) in ${result.batches.length} batch(es)` +
+          (result.skippedByLedger > 0
+            ? ` (${result.skippedByLedger} skipped: already reflected)`
+            : "") +
+          ":",
+      );
+      for (const batch of result.batches) {
+        console.log(
+          `  batch ${batch.index}: ${batch.sessions.length} session(s), ~${batch.estTokens} tokens, ${batch.startTime} → ${batch.endTime}`,
+        );
+        for (const session of batch.sessions) {
+          console.log(
+            `    - ${session.harness}:${session.sessionId} (~${session.estTokens} tokens)`,
+          );
+        }
+      }
+      return 0;
+    }
+    case "completed": {
+      let targetWritten = false;
+      let targetError: string | undefined;
+      if (target && result.success) {
+        try {
+          const rendered = readTargetFromMemory(agentId, target);
+          if (rendered !== null) {
+            await writeTarget(target, rendered);
+            targetWritten = true;
+          }
+        } catch (error) {
+          targetError = error instanceof Error ? error.message : String(error);
+        }
+      }
+      if (asJson) {
+        emitJson({
+          launched: true,
+          success: result.success && !targetError,
+          message: result.message,
+          agentId,
+          runId: result.runId,
+          runRoot: result.runRoot,
+          sessionCount: result.sessionCount,
+          skippedByLedger: result.skippedByLedger,
+          batches: result.batches.map((batch) => ({
+            index: batch.batchIndex,
+            success: batch.success,
+            commitCount: batch.commitCount,
+            ...(batch.error ? { error: batch.error } : {}),
+          })),
+          ...(result.vizPath ? { vizPath: result.vizPath } : {}),
+          ...(target ? { targetPath: target.path, targetWritten } : {}),
+          ...(targetError ? { targetError } : {}),
+        });
+      } else {
+        if (result.success) {
+          console.log(result.message);
+        } else {
+          console.error(result.message);
+        }
+        if (result.vizPath) {
+          console.log(`Viz: ${result.vizPath}`);
+        }
+        if (targetWritten) {
+          console.log(`Wrote ${target?.path}`);
+        }
+        if (targetError) {
+          console.error(`Failed to write --to target: ${targetError}`);
+        }
+      }
+      return result.success && !targetError ? 0 : 1;
+    }
+  }
 }
 
 export async function runDreamSubcommand(argv: string[]): Promise<number> {
@@ -114,18 +398,40 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     }
   }
 
-  // A typed --from (e.g. openhands:./events.json) is an external source; a bare
-  // value is one of the agent's own conversations. Resolve the source now so an
-  // unknown type errors early.
-  let source: ParsedSource | null = null;
-  if (parsed.values.from) {
+  // Classify each --from value: a typed harness source (batch pipeline) or a
+  // bare conversation id (the agent's own history — single reflection pass).
+  const specs: DreamSourceSpec[] = [];
+  const conversationIds: string[] = [];
+  for (const value of parsed.values.from ?? []) {
+    let spec: DreamSourceSpec | null;
     try {
-      source = parseFromSource(parsed.values.from);
+      spec = parseDreamSourceSpec(value);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Error: ${message}`);
       return 1;
     }
+    if (spec) {
+      specs.push(spec);
+    } else {
+      conversationIds.push(value);
+    }
+  }
+  if (specs.length > 0 && conversationIds.length > 0) {
+    console.error(
+      "Error: cannot mix harness sources and conversation ids in one dream run.",
+    );
+    return 1;
+  }
+  if (conversationIds.length > 1) {
+    console.error(
+      "Error: at most one conversation id can be reflected on per run.",
+    );
+    return 1;
+  }
+  if (specs.length === 0 && parsed.values.plan) {
+    console.error("Error: --plan requires at least one typed --from source.");
+    return 1;
   }
 
   // --effort is part of the interface but not yet wired up.
@@ -169,34 +475,92 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     return 1;
   }
 
-  // For an external source, stage its converted entries into a synthetic
-  // conversation transcript and reflect on that; the post-reflection recompile
-  // targets the agent's real "default" history (the synthetic conversation is
-  // not a backend conversation). A bare --from reflects on that conversation.
-  let conversationId: string;
-  let stagedEntries: number | undefined;
-  if (source) {
+  if (parsed.values.aggregate) {
     try {
-      const staged = await stageFromSource(agentId, source);
-      conversationId = staged.conversationId;
-      stagedEntries = staged.appended;
-      if (!asJson) {
-        console.log(
-          `Staged ${staged.appended} transcript entries (${staged.skipped} already ingested).`,
-        );
+      const { resolveDreamRunRoot } = await import(
+        "@/cli/subcommands/dream-pipeline/viz"
+      );
+      const { rerunDreamAggregationForRun } = await import(
+        "@/cli/subcommands/dream-pipeline/run"
+      );
+      const runRoot = resolveDreamRunRoot(agentId, parsed.values.aggregate);
+      const log = asJson ? () => {} : (line: string) => console.log(line);
+      const result = await rerunDreamAggregationForRun({
+        agentId,
+        conversationId: "default",
+        runRoot,
+        instruction: parsed.values.instruction,
+        recompileByConversation: new Map(),
+        recompileQueuedByConversation: new Set(),
+        log,
+      });
+      if ("kind" in result) {
+        console.error("A reflection pass is already running for this agent.");
+        return 1;
       }
+      if (asJson) {
+        emitJson({
+          aggregate: true,
+          agentId,
+          runRoot: result.runRoot,
+          success: result.success,
+          message: result.message,
+          ...(result.vizPath ? { vizPath: result.vizPath } : {}),
+        });
+      } else {
+        if (result.success) {
+          console.log(result.message);
+        } else {
+          console.error(result.message);
+        }
+        if (result.vizPath) {
+          console.log(`Viz: ${result.vizPath}`);
+        }
+      }
+      return result.success ? 0 : 1;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (asJson) {
-        emitJson({ launched: false, reason: "source_error", error: message });
-      } else {
-        console.error(`Failed to stage --from source: ${message}`);
-      }
+      console.error(`Error: ${message}`);
       return 1;
     }
-  } else {
-    conversationId = parsed.values.from || "default";
   }
+
+  if (parsed.values.viz) {
+    try {
+      const { writeFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const { generateDreamViz, resolveDreamRunRoot } = await import(
+        "@/cli/subcommands/dream-pipeline/viz"
+      );
+      const runRoot = resolveDreamRunRoot(agentId, parsed.values.viz);
+      const { html, agentCount } = generateDreamViz(runRoot);
+      const vizPath = join(runRoot, "viz.html");
+      await writeFile(vizPath, html, "utf-8");
+      if (asJson) {
+        emitJson({ viz: true, agentId, runRoot, vizPath, agentCount });
+      } else {
+        console.log(`Wrote ${vizPath} (${agentCount} agent(s))`);
+      }
+      return 0;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`Error: ${message}`);
+      return 1;
+    }
+  }
+
+  if (specs.length > 0) {
+    return runPipelineDream({
+      agentId,
+      specs,
+      values: parsed.values,
+      target,
+      timeoutSeconds,
+      asJson,
+    });
+  }
+
+  const conversationId = conversationIds[0] || "default";
 
   // Approach A: fold the target-doc maintenance directive into the reflection
   // instruction so the single reflection pass also maintains the doc (in the
@@ -235,9 +599,6 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
   const result = await launchReflectionSubagent({
     agentId,
     conversationId,
-    // External sources stage into a synthetic conversation that doesn't exist
-    // in the backend; recompile the agent's real primary history instead.
-    ...(source ? { completionConversationId: "default" } : {}),
     memfsEnabled: true,
     triggerSource: "manual",
     description: "Reflect on recent conversations",
@@ -258,12 +619,7 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
 
   if (!result.launched) {
     if (asJson) {
-      emitJson({
-        launched: false,
-        reason: result.reason,
-        agentId,
-        ...(stagedEntries !== undefined ? { stagedEntries } : {}),
-      });
+      emitJson({ launched: false, reason: result.reason, agentId });
       return result.reason === "no_payload" ? 0 : 1;
     }
     switch (result.reason) {
@@ -339,7 +695,6 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
       agentId,
       conversationId,
       transcriptPath: result.payloadPath,
-      ...(stagedEntries !== undefined ? { stagedEntries } : {}),
       ...(target ? { targetPath: target.path, targetWritten } : {}),
       ...(targetError ? { targetError } : {}),
     });
