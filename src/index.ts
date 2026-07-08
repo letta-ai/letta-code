@@ -979,7 +979,7 @@ async function main(): Promise<void> {
   // Initialize telemetry (enabled by default, opt-out via LETTA_CODE_TELEM=0)
   // Surface is set here so session_start captures the correct mode.
   telemetry.setSurface(getTerminalTelemetrySurface(isHeadless));
-  telemetry.init();
+  telemetry.init({ handleSigint: !isHeadless });
 
   if (!isHeadless) {
     // TUI-only startup tasks: keep headless runs free of extra background work.

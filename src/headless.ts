@@ -17,6 +17,7 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { detectShellContext } from "@/utils/shell-context";
+import { createSigintAbortSignal } from "@/utils/sigint-abort";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
@@ -2483,8 +2484,30 @@ ${SYSTEM_REMINDER_CLOSE}
     }
   };
 
+  // One-shot mode has no input loop, so wire SIGINT directly into the turn.
+  const sigintSignal = createSigintAbortSignal();
+  const exitInterrupted = async (): Promise<never> => {
+    if (outputFormat === "stream-json") {
+      const errorMsg: ErrorMessage = {
+        type: "error",
+        message: "Interrupted by SIGINT",
+        stop_reason: "cancelled",
+        session_id: sessionId,
+        uuid: `error-interrupted-${randomUUID()}`,
+      };
+      await writeWireMessageAsync(errorMsg);
+    } else {
+      console.error("Interrupted by SIGINT");
+    }
+    return exitHeadless(130, "headless_sigint_interrupted");
+  };
+
   try {
     while (true) {
+      if (sigintSignal.aborted) {
+        await exitInterrupted();
+      }
+
       const hasApprovalContinuation = currentInput.some(
         (item) => item.type === "approval",
       );
@@ -2537,14 +2560,23 @@ ${SYSTEM_REMINDER_CLOSE}
           modEvents: headlessModAdapter.events,
         });
         availableTools = turnToolContext.availableTools;
-        stream = await sendMessageStream(conversationId, currentInput, {
-          agentId: agent.id,
-          overrideModel: overrideModelHandle,
-          preparedToolContext:
-            turnToolContext.preparedToolContext.preparedToolContext,
-        });
+        stream = await sendMessageStream(
+          conversationId,
+          currentInput,
+          {
+            agentId: agent.id,
+            overrideModel: overrideModelHandle,
+            preparedToolContext:
+              turnToolContext.preparedToolContext.preparedToolContext,
+          },
+          { maxRetries: 0, signal: sigintSignal },
+        );
         turnToolContextId = getStreamToolContextId(stream);
       } catch (preStreamError) {
+        if (sigintSignal.aborted) {
+          await exitInterrupted();
+        }
+
         // Extract error detail using shared helper (handles nested/direct/message shapes)
         const errorDetail = extractConflictDetail(preStreamError);
 
@@ -2823,7 +2855,7 @@ ${SYSTEM_REMINDER_CLOSE}
           stream,
           buffers,
           () => {},
-          undefined,
+          sigintSignal,
           undefined,
           streamJsonHook,
           reminderContextTracker,
@@ -2839,7 +2871,7 @@ ${SYSTEM_REMINDER_CLOSE}
           stream,
           buffers,
           () => {}, // No UI refresh needed in headless mode
-          undefined,
+          sigintSignal,
           undefined,
           undefined,
           reminderContextTracker,
@@ -2853,6 +2885,11 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
+
+      // Exit before dispatching tool calls produced after an interrupt.
+      if (stopReason === "cancelled" || sigintSignal.aborted) {
+        await exitInterrupted();
+      }
 
       // Check max turns after each turn (server may have taken multiple steps),
       // but defer the limit when we're still resolving pending approvals.
@@ -2991,9 +3028,15 @@ ${SYSTEM_REMINDER_CLOSE}
           decisions,
           undefined,
           {
+            abortSignal: sigintSignal,
             toolContextId: turnToolContextId ?? undefined,
           },
         );
+
+        // Don't send interrupted tool results back for another provider round.
+        if (sigintSignal.aborted) {
+          await exitInterrupted();
+        }
 
         if (outputFormat === "stream-json") {
           emitLocalToolReturns(executedResults, sessionId);
