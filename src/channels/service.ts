@@ -689,6 +689,28 @@ function assertEnabledAccountPatchHasCredentials(
   }
 }
 
+function assertEnabledAccountIsConfigured(account: ChannelAccount): void {
+  if (!account.enabled || isAccountConfigured(account)) {
+    return;
+  }
+
+  if (isTelegramChannelAccount(account)) {
+    throw new Error(
+      'Channel "telegram" account is missing a token. Configure it first.',
+    );
+  }
+  if (isDiscordChannelAccount(account)) {
+    throw new Error(
+      'Channel "discord" account is missing a token. Configure it first.',
+    );
+  }
+  if (isSlackChannelAccount(account)) {
+    throw new Error(
+      'Channel "slack" account is missing a bot token or app token. Configure it first.',
+    );
+  }
+}
+
 function createAccountFromPatch(
   channelId: SupportedChannelId,
   accountId: string,
@@ -1023,8 +1045,8 @@ function mergeAccountPatch(
     // secrets (e.g. `bot_token` is replaced with `has_bot_token: boolean`), so
     // the client cannot send the secret back on every save. Merge the patch
     // into the existing config so omitted keys are preserved. Blank strings for
-    // known secret fields mean "unchanged"; pass `null` explicitly to clear a
-    // key where the caller accepts nullable config values.
+    // known secret fields mean "unchanged". `null` remains an explicit value;
+    // credential clear/delete flows are separate follow-up work.
     return {
       ...existing,
       displayName:
@@ -1568,6 +1590,7 @@ export function updateChannelAccountLive(
   }
 
   const nextAccount = mergeAccountPatch(existing, patch);
+  assertEnabledAccountIsConfigured(nextAccount);
   const shouldResetRoutes =
     (isSlackChannelAccount(existing) ||
       isDiscordChannelAccount(existing) ||
@@ -1625,6 +1648,7 @@ export async function updateChannelAccountLiveWithSecrets(
   }
 
   const nextAccount = mergeAccountPatch(existing, patch);
+  assertEnabledAccountIsConfigured(nextAccount);
   const shouldResetRoutes =
     (isSlackChannelAccount(existing) ||
       isDiscordChannelAccount(existing) ||

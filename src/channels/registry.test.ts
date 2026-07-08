@@ -33,6 +33,7 @@ import {
   getRoute,
 } from "@/channels/routing";
 import type {
+  ChannelAccount,
   ChannelAdapter,
   ChannelControlRequestEvent,
   InboundChannelMessage,
@@ -116,6 +117,65 @@ describe("ChannelRegistry", () => {
     expect(logs).toContain("[Channels] requested: telegram");
     expect(logs.some((line) => line.includes("root:"))).toBe(true);
     expect(logs.some((line) => line.includes("accounts=0"))).toBe(true);
+  });
+
+  test("startChannelAccount rejects blank required credentials before adapter creation", async () => {
+    const now = "2026-06-17T00:00:00.000Z";
+    const accounts: ChannelAccount[] = [
+      {
+        channel: "telegram",
+        accountId: "telegram-empty",
+        enabled: true,
+        token: "",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        binding: { agentId: null, conversationId: null },
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        channel: "discord",
+        accountId: "discord-empty",
+        enabled: true,
+        token: "",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        allowedChannels: [],
+        agentId: null,
+        defaultPermissionMode: "standard",
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        channel: "slack",
+        accountId: "slack-empty",
+        enabled: true,
+        mode: "socket",
+        botToken: "xoxb-test-token",
+        appToken: "",
+        agentId: null,
+        defaultPermissionMode: "unrestricted",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+    __testOverrideLoadChannelAccounts((channelId) =>
+      accounts.filter((account) => account.channel === channelId),
+    );
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+
+    await expect(
+      registry.startChannelAccount("telegram", "telegram-empty"),
+    ).rejects.toThrow(/missing a token/i);
+    await expect(
+      registry.startChannelAccount("discord", "discord-empty"),
+    ).rejects.toThrow(/missing a token/i);
+    await expect(
+      registry.startChannelAccount("slack", "slack-empty"),
+    ).rejects.toThrow(/missing a bot token or app token/i);
   });
 
   test("startChannelAccount rejects Signal accounts sharing one daemon", async () => {

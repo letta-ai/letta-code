@@ -33,6 +33,7 @@ import {
   refreshChannelAccountDisplayNameLive,
   removeChannelAccountLive,
   setChannelConfigLive,
+  startChannelAccountLive,
   updateChannelAccountLive,
   updateChannelRouteLive,
 } from "@/channels/service";
@@ -564,6 +565,69 @@ describe("channel service", () => {
     ).toThrow(/missing a bot token or app token/i);
   });
 
+  test("existing accounts with blank required tokens cannot be enabled or started", async () => {
+    createChannelAccountLive(
+      "telegram",
+      { enabled: false, token: "", dmPolicy: "pairing" },
+      { accountId: "telegram-empty" },
+    );
+    createChannelAccountLive(
+      "discord",
+      { enabled: false, token: "", dmPolicy: "pairing" },
+      { accountId: "discord-empty" },
+    );
+    createChannelAccountLive(
+      "slack",
+      {
+        enabled: false,
+        botToken: "",
+        appToken: "",
+        dmPolicy: "pairing",
+      },
+      { accountId: "slack-empty" },
+    );
+
+    expect(() =>
+      updateChannelAccountLive("telegram", "telegram-empty", {
+        enabled: true,
+      }),
+    ).toThrow(/missing a token/i);
+    expect(() =>
+      updateChannelAccountLive("discord", "discord-empty", {
+        enabled: true,
+      }),
+    ).toThrow(/missing a token/i);
+    expect(() =>
+      updateChannelAccountLive("slack", "slack-empty", {
+        enabled: true,
+      }),
+    ).toThrow(/missing a bot token or app token/i);
+
+    expect(getChannelAccount("telegram", "telegram-empty")).toEqual(
+      expect.objectContaining({ enabled: false, token: "" }),
+    );
+    expect(getChannelAccount("discord", "discord-empty")).toEqual(
+      expect.objectContaining({ enabled: false, token: "" }),
+    );
+    expect(getChannelAccount("slack", "slack-empty")).toEqual(
+      expect.objectContaining({
+        enabled: false,
+        botToken: "",
+        appToken: "",
+      }),
+    );
+
+    await expect(
+      startChannelAccountLive("telegram", "telegram-empty"),
+    ).rejects.toThrow(/missing a token/i);
+    await expect(
+      startChannelAccountLive("discord", "discord-empty"),
+    ).rejects.toThrow(/missing a token/i);
+    await expect(
+      startChannelAccountLive("slack", "slack-empty"),
+    ).rejects.toThrow(/missing a bot token or app token/i);
+  });
+
   test("blank channel config secrets preserve existing credentials", async () => {
     createChannelAccountLive(
       "telegram",
@@ -629,6 +693,105 @@ describe("channel service", () => {
       expect.objectContaining({
         botToken: "xoxb-old-token",
         appToken: "xapp-old-token",
+      }),
+    );
+  });
+
+  test("partial Slack token updates preserve the omitted token", () => {
+    createChannelAccountLive(
+      "slack",
+      {
+        displayName: "Slack Bot",
+        enabled: false,
+        botToken: "xoxb-old-token",
+        appToken: "xapp-old-token",
+        dmPolicy: "pairing",
+      },
+      { accountId: "slack-bot" },
+    );
+
+    updateChannelAccountLive("slack", "slack-bot", {
+      botToken: "xoxb-new-token",
+    });
+    expect(getChannelAccount("slack", "slack-bot")).toEqual(
+      expect.objectContaining({
+        botToken: "xoxb-new-token",
+        appToken: "xapp-old-token",
+      }),
+    );
+
+    updateChannelAccountLive("slack", "slack-bot", {
+      config: { app_token: "xapp-new-token" },
+    });
+    expect(getChannelAccount("slack", "slack-bot")).toEqual(
+      expect.objectContaining({
+        botToken: "xoxb-new-token",
+        appToken: "xapp-new-token",
+      }),
+    );
+  });
+
+  test("custom channel blank secret config patches preserve existing values", async () => {
+    createChannelAccountLive(
+      "custom",
+      {
+        enabled: false,
+        dmPolicy: "pairing",
+        config: {
+          url: "https://old.example.test/webhook",
+          bot_token: "custom-old-bot-token",
+          auth: "custom-old-auth-token",
+        },
+      },
+      { accountId: "custom-bot" },
+    );
+
+    await setChannelConfigLive(
+      "custom",
+      {
+        config: {
+          url: "https://new.example.test/webhook",
+          bot_token: "",
+          auth: "",
+        },
+      },
+      "custom-bot",
+    );
+    expect(getChannelAccount("custom", "custom-bot")).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          url: "https://new.example.test/webhook",
+          bot_token: "custom-old-bot-token",
+          auth: "custom-old-auth-token",
+        }),
+      }),
+    );
+
+    await setChannelConfigLive(
+      "custom",
+      { config: { bot_token: "custom-new-bot-token" } },
+      "custom-bot",
+    );
+    expect(getChannelAccount("custom", "custom-bot")).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          bot_token: "custom-new-bot-token",
+          auth: "custom-old-auth-token",
+        }),
+      }),
+    );
+
+    await setChannelConfigLive(
+      "custom",
+      { config: { auth: null } },
+      "custom-bot",
+    );
+    expect(getChannelAccount("custom", "custom-bot")).toEqual(
+      expect.objectContaining({
+        config: expect.objectContaining({
+          bot_token: "custom-new-bot-token",
+          auth: null,
+        }),
       }),
     );
   });

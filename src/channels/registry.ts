@@ -133,6 +133,28 @@ function normalizeAgentId(agentId: string | null | undefined): string | null {
   return normalized ? normalized : null;
 }
 
+function assertAccountHasCredentialsForStart(account: ChannelAccount): void {
+  if (isTelegramChannelAccount(account) && account.token.trim().length === 0) {
+    throw new Error(
+      'Channel "telegram" account is missing a token. Configure it first.',
+    );
+  }
+  if (isDiscordChannelAccount(account) && account.token.trim().length === 0) {
+    throw new Error(
+      'Channel "discord" account is missing a token. Configure it first.',
+    );
+  }
+  if (
+    isSlackChannelAccount(account) &&
+    (account.botToken.trim().length === 0 ||
+      account.appToken.trim().length === 0)
+  ) {
+    throw new Error(
+      'Channel "slack" account is missing a bot token or app token. Configure it first.',
+    );
+  }
+}
+
 function normalizeSignalBaseUrlForConflictKey(baseUrl: string): string {
   try {
     const url = new URL(baseUrl);
@@ -1070,6 +1092,8 @@ export class ChannelRegistry {
       );
       return false;
     }
+
+    assertAccountHasCredentialsForStart(account);
 
     if (isSignalChannelAccount(account)) {
       const conflict = findSignalBaseUrlConflictForStart(
