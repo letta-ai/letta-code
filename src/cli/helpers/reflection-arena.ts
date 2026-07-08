@@ -48,7 +48,7 @@ const REFLECTION_ARENA_COMPARISON_MODEL_POOL: Array<{
   { model: "lc-anthropic/claude-opus-4-8", weight: 3 },
   { model: "lc-anthropic/claude-fable-5", weight: 1 },
   { model: "letta/auto", weight: 1 },
-  { model: "deepseek-v4-pro", weight: 1 },
+  { model: "deepseek/deepseek-v4-pro", weight: 1 },
   { model: "minimax-m3", weight: 1 },
   { model: "gpt-5.5-plus-pro-high", weight: 3 },
 ];
