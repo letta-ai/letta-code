@@ -1,13 +1,14 @@
-// Batch reflection stage: one reflection subagent per batch, each writing to a
-// fresh seeded memory tree. Unlike the conversation-reflection path, no memory
-// worktree is involved — the trees are standalone git repos under the run
-// directory, and nothing here touches the agent's real memory filesystem
-// (integration is the aggregation stage's job).
+// Batch reflection stage: one reflection subagent per batch, each editing its
+// own isolated CLONE of the primary agent's memory filesystem (taken at a
+// shared base revision), so it reconciles new learnings against existing
+// memory in place. Nothing here touches the real memfs — the aggregation
+// stage reads each batch's diff against the base and synthesizes one edit.
 //
 // Each batch directory is self-contained:
 //   input/            the batch's normalized session transcripts (listed
 //                     inline in the reflection agent's prompt)
-//   output/           the memory filesystem the reflection agent produced
+//   output/           the agent's edited clone of the memory filesystem
+//   diff.patch        the batch's changes relative to the base revision
 //   trajectory.json   the agent's own run, normalized-v1 (same format as
 //                     input/), fetched from its conversation on the reflector
 //   report.json       structured outcome + the agent's final report
@@ -16,12 +17,13 @@ import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { normalizeLettaMessages } from "@/agent/trajectories/letta-messages";
 import { debugWarn } from "@/utils/debug";
 import type { DreamBatch } from "./batching";
+import { cloneMemoryTree } from "./clone";
 import { getDreamBatchDir, normalizedSessionFileName } from "./paths";
 import { buildBatchReflectionPrompt } from "./prompts";
-import { seedFreshMemoryTree } from "./seed";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,18 +32,23 @@ export async function gitOutput(cwd: string, args: string[]): Promise<string> {
   return stdout.trim();
 }
 
-/** Commits beyond the seed commit, and whether the tree has uncommitted edits. */
+/** Commits past the base revision, and whether the tree has uncommitted edits. */
 export async function inspectMemoryTree(
   memoryDir: string,
+  baseRevision: string,
 ): Promise<{ commitCount: number; dirty: boolean }> {
   let commitCount = 0;
   let dirty = false;
   try {
     const total = Number.parseInt(
-      await gitOutput(memoryDir, ["rev-list", "--count", "HEAD"]),
+      await gitOutput(memoryDir, [
+        "rev-list",
+        "--count",
+        `${baseRevision}..HEAD`,
+      ]),
       10,
     );
-    commitCount = Number.isFinite(total) ? Math.max(0, total - 1) : 0;
+    commitCount = Number.isFinite(total) ? Math.max(0, total) : 0;
     dirty = (await gitOutput(memoryDir, ["status", "--porcelain"])) !== "";
   } catch (error) {
     debugWarn(
@@ -143,11 +150,13 @@ export interface BatchReflectionResult {
   timeRange: { start: string; end: string };
   outputDir: string;
   reportPath: string;
+  /** Memfs revision the batch's clone (and diff.patch) is based on. */
+  baseRevision: string;
   /** The agent's run as a normalized-v1 transcript (null if nothing recorded). */
   trajectoryPath: string | null;
   success: boolean;
   error?: string;
-  /** Commits the agent made beyond the seed commit. */
+  /** Commits the agent made past the base revision. */
   commitCount: number;
   /** Uncommitted edits left behind (agent broke protocol; contents still on disk). */
   dirty: boolean;
@@ -162,7 +171,7 @@ export interface RunBatchReflectionsParams {
   reflectorAgentId: string;
   runRoot: string;
   batches: DreamBatch[];
-  /** dreamLedgerKey(session) → normalized-v1 JSON (already serialized). */
+  /** sessionKey(session) → normalized-v1 JSON (already serialized). */
   normalizedJsonByKey: Map<string, string>;
   concurrency: number;
   instruction?: string;
@@ -180,7 +189,10 @@ async function runOneBatch(
   const reportPath = join(batchDir, "report.json");
   const trajectoryFilePath = join(batchDir, "trajectory.json");
   await mkdir(inputDir, { recursive: true });
-  await seedFreshMemoryTree(outputDir, params.agentId);
+  const baseRevision = await cloneMemoryTree(
+    getScopedMemoryFilesystemRoot(params.agentId),
+    outputDir,
+  );
 
   // Stage this batch's normalized sessions into its own input/ directory so
   // the batch is self-contained and the aggregator can consult the original
@@ -250,7 +262,23 @@ async function runOneBatch(
     completion.conversationId,
     trajectoryFilePath,
   );
-  const { commitCount, dirty } = await inspectMemoryTree(outputDir);
+  const { commitCount, dirty } = await inspectMemoryTree(
+    outputDir,
+    baseRevision,
+  );
+  // The batch's changes relative to the shared base — the aggregator's
+  // primary input.
+  try {
+    const patch = await gitOutput(outputDir, ["diff", baseRevision, "HEAD"]);
+    await writeFile(join(batchDir, "diff.patch"), `${patch}\n`, "utf-8");
+  } catch (error) {
+    debugWarn(
+      "memory",
+      `Failed to write diff for batch ${batch.index}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
   const result: BatchReflectionResult = {
     batchIndex: batch.index,
     subagentId: completion.subagentId,
@@ -260,6 +288,7 @@ async function runOneBatch(
     timeRange: { start: batch.startTime, end: batch.endTime },
     outputDir,
     reportPath,
+    baseRevision,
     trajectoryPath,
     success: completion.success,
     error: completion.error,

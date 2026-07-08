@@ -5,6 +5,6 @@ Normalized session transcripts to review, in {{inputDir}}:
 
 Each file is a JSON array whose optional leading record is `{"role": "meta", ...}` (source harness, cwd, git branch, model) followed by timestamped `user` / `reasoning` / `assistant` / `tool` records. These are recorded sessions from external coding harnesses — the "assistant" in them is that harness's agent, not you and not the primary agent.
 
-Your `$MEMORY_DIR` is a freshly seeded memory filesystem, not the primary agent's live memory — inspect it directly (this prompt does not inline its contents). Distill ONLY what these sessions teach — durable facts, preferences, corrections, and reusable workflows — into it. A separate aggregation pass will later merge your output with the agent's existing memory, so do not worry about what may already be stored elsewhere; do make your output self-contained and well-organized.
+Your `$MEMORY_DIR` is an isolated copy of the primary agent's memory filesystem at its current revision. Other reflection agents are processing other batches against their own copies in parallel; an aggregation pass will later synthesize everyone's changes into the real memory. Integrate this batch's durable learnings into the existing structure: update existing files where a topic already has a home, skip anything already captured, resolve contradictions at the source, and create new files only for genuinely new topics.
 
 Review every session, then follow your phases, commit durable changes, and return your final report.{{instructionSection}}

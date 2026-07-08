@@ -177,6 +177,7 @@ interface StoredReport {
   subagentId?: string;
   subagentAgentId?: string;
   agentId?: string;
+  baseRevision?: string;
   conversationId?: string;
   label?: string;
   sessionIds?: string[];
@@ -192,6 +193,7 @@ function loadBatchAgent(batchDir: string, index: number): VizAgent | null {
   const outputDir = join(batchDir, "output");
   if (!report && !existsSync(outputDir)) return null;
   const steps = loadSteps(join(batchDir, "trajectory.json"));
+  const base = report?.baseRevision;
   return {
     id: `batch-${index}`,
     role: "reflection",
@@ -207,17 +209,11 @@ function loadBatchAgent(batchDir: string, index: number): VizAgent | null {
     steps,
     files: collectFiles(outputDir),
     inputFiles: collectFiles(join(batchDir, "input")),
-    gitLog: git(outputDir, ["log", "--format=%h  %s", "--reverse"]),
-    gitDiff: truncate(
-      git(outputDir, [
-        "log",
-        "-p",
-        "--reverse",
-        "--skip=1",
-        "--format=commit %h%n%s%n",
-      ]),
-      DIFF_CAP,
-    ).text,
+    gitLog: base
+      ? git(outputDir, ["log", "--format=%h  %s", "--reverse", `${base}..HEAD`])
+      : "",
+    gitDiff: truncate(readTextIfExists(join(batchDir, "diff.patch")), DIFF_CAP)
+      .text,
     stats: statsFor(steps),
   };
 }

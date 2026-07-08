@@ -1,11 +1,11 @@
-// Aggregation stage: merge every batch reflection output into the agent's
-// real memory filesystem, in ONE pass. The aggregator always runs (even for
-// one batch) and is the ONLY stage that touches the real memfs — it works in
-// a memory worktree cloned from it, so it sees existing memory plus the git
-// history of past reflections, and its commit is merged back (with recompile)
-// through the same finalize path as conversation reflections. When the input
-// count is large, the aggregator itself decides whether to delegate subset
-// review to its own subagents — the pipeline imposes no fan-out structure.
+// Aggregation stage: synthesize every batch's memory changes (diffs against
+// the shared base revision) into the agent's real memory filesystem, in ONE
+// pass. The aggregator always runs (even for one batch) and is the ONLY stage
+// that touches the real memfs — it works in a memory worktree cloned from it,
+// and its commit is merged back (with recompile) through the same finalize
+// path as conversation reflections. When the input count is large, the
+// aggregator itself decides whether to delegate aspects to its own subagents
+// — the pipeline imposes no fan-out structure.
 
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
