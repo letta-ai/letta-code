@@ -76,4 +76,64 @@ describe("dream subcommand", () => {
       captured.restore();
     }
   });
+
+  test("rejects unknown typed sources", async () => {
+    const captured = captureConsole();
+    try {
+      const exitCode = await runDreamSubcommand(["--from", "cursor:/tmp/x"]);
+      expect(exitCode).toBe(1);
+      expect(captured.errors.join("\n")).toContain("Unknown source type");
+    } finally {
+      captured.restore();
+    }
+  });
+
+  test("rejects mixing harness sources and conversation ids", async () => {
+    const captured = captureConsole();
+    try {
+      const exitCode = await runDreamSubcommand([
+        "--from",
+        "claude",
+        "--from",
+        "default",
+      ]);
+      expect(exitCode).toBe(1);
+      expect(captured.errors.join("\n")).toContain(
+        "cannot mix harness sources and conversation ids",
+      );
+    } finally {
+      captured.restore();
+    }
+  });
+
+  test("rejects multiple conversation ids", async () => {
+    const captured = captureConsole();
+    try {
+      const exitCode = await runDreamSubcommand([
+        "--from",
+        "default",
+        "--from",
+        "other-conversation",
+      ]);
+      expect(exitCode).toBe(1);
+      expect(captured.errors.join("\n")).toContain(
+        "at most one conversation id",
+      );
+    } finally {
+      captured.restore();
+    }
+  });
+
+  test("rejects --plan without a typed source", async () => {
+    const captured = captureConsole();
+    try {
+      const exitCode = await runDreamSubcommand(["--plan"]);
+      expect(exitCode).toBe(1);
+      expect(captured.errors.join("\n")).toContain(
+        "--plan requires at least one typed --from source",
+      );
+    } finally {
+      captured.restore();
+    }
+  });
 });

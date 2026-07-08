@@ -20,3 +20,14 @@ export function getTranscriptRoot(): string {
   }
   return join(homedir(), ".letta", "transcripts");
 }
+
+/**
+ * Root for an agent's dream pipeline state (ingest ledger + batch reflection
+ * runs), under that agent's transcript directory. Lives here (rather than in
+ * the dream pipeline) because the cross-agent memory guard must recognize a
+ * parent's dream directory as parent-scoped when subagents inherit a
+ * MEMORY_DIR pointing at a batch output tree inside it.
+ */
+export function getDreamRootDir(agentId: string): string {
+  return join(getTranscriptRoot(), agentId, ".dream");
+}

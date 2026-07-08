@@ -940,6 +940,12 @@ export function buildSubagentArgs(
     }
     // Don't pass --system (existing agent keeps its prompt)
     // Don't pass --model (existing agent keeps its model)
+    if (type === "reflection") {
+      // Reflection runs need the same prompt surface whether the agent is
+      // fresh or a redeployed persistent reflector (see new-agent branch).
+      args.push("--no-system-info-reminder");
+      args.push("--no-skills");
+    }
   } else {
     // Create new agent (original behavior)
     args.push("--new-agent", "--system", type);
@@ -1272,6 +1278,7 @@ async function executeSubagent(
             maxTurns,
             parentAgentIdOverride,
             transcriptPath,
+            memoryScope,
           );
         }
       }
