@@ -161,10 +161,29 @@ class FakeSlackWriteClient {
       }),
     ),
     stopStream: mock(
-      async (): Promise<{ ok: boolean; ts?: string; error?: string }> => ({
-        ok: true,
-        ts: "1712800000.000300",
-      }),
+      async (args?: {
+        markdown_text?: string;
+        chunks?: unknown[];
+      }): Promise<{ ok: boolean; ts?: string; error?: string }> => {
+        // Pin the real Slack wire contract: chat.stopStream rejects
+        // markdown_text combined with chunks (verified live 2026-07-07).
+        // Sending both silently broke every terminal card close in prod
+        // while the previous accept-anything mock kept tests green.
+        if (
+          typeof args?.markdown_text === "string" &&
+          Array.isArray(args?.chunks) &&
+          args.chunks.length > 0
+        ) {
+          return {
+            ok: false,
+            error: "cannot_provide_both_markdown_text_and_chunks",
+          };
+        }
+        return {
+          ok: true,
+          ts: "1712800000.000300",
+        };
+      },
     ),
   };
   readonly assistant = {
@@ -2836,9 +2855,13 @@ test("slack adapter anchors direct message progress to the inbound message", asy
         type: "plan_update",
         title: "Read a file",
       },
+      // The Letta Chat footnote must ride inside chunks: Slack rejects
+      // markdown_text combined with chunks on chat.stopStream.
+      {
+        type: "markdown_text",
+        text: "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
+      },
     ],
-    markdown_text:
-      "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
   });
   expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(0);
 });
@@ -3858,9 +3881,13 @@ test("slack adapter includes final error details in rich progress streams", asyn
         type: "plan_update",
         title: "Failed",
       }),
+      // The Letta Chat footnote must ride inside chunks: Slack rejects
+      // markdown_text combined with chunks on chat.stopStream.
+      expect.objectContaining({
+        type: "markdown_text",
+        text: "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
+      }),
     ]),
-    markdown_text:
-      "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
   });
 });
 
@@ -5095,4 +5122,128 @@ test("inbound debounce: app_mention arrives first, message-for-same-ts is droppe
   await sleep(80);
 
   expect(onMessage).toHaveBeenCalledTimes(1);
+});
+
+test("slack adapter closes the progress stream at turn end despite the chat footnote (stopStream wire contract)", async () => {
+  // Regression: chat.stopStream rejects markdown_text combined with chunks
+  // (cannot_provide_both_markdown_text_and_chunks). The footnote must be sent
+  // as a trailing markdown_text chunk or every terminal close fails and the
+  // spinner card never leaves streaming state. Replays a full channel turn
+  // with fire-and-forget progress dispatch, matching the listener's
+  // dispatchChannelTurnProgressFromDelta semantics.
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  adapter.onMessage = mock(async () => {});
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000200",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+
+  const progress = (
+    event: Record<string, unknown>,
+  ): Promise<void> | undefined =>
+    adapter.handleTurnProgressEvent?.({
+      type: "progress",
+      batchId: "batch-1",
+      sources: [source],
+      ...event,
+    } as Parameters<NonNullable<typeof adapter.handleTurnProgressEvent>>[0]);
+
+  await adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+
+  void progress({ kind: "thinking", state: "updated", message: "Thinking" });
+  void progress({
+    kind: "tool",
+    state: "started",
+    message: "Running command",
+    toolCallId: "call-1",
+    toolName: "Bash",
+    toolDetails: "ps aux | grep letta",
+  });
+  await sleep(5);
+  void progress({
+    kind: "tool",
+    state: "completed",
+    message: "Ran command",
+    toolCallId: "call-1",
+  });
+  void progress({
+    kind: "tool",
+    state: "started",
+    message: "Sending message",
+    toolCallId: "call-2",
+    toolName: "MessageChannel",
+  });
+
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Still good.",
+    threadId: null,
+    replyToMessageId: "1712800000.000200",
+  });
+
+  void progress({
+    kind: "tool",
+    state: "completed",
+    message: "Sent message",
+    toolCallId: "call-2",
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+  await sleep(200);
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as Array<
+    Array<{
+      markdown_text?: string;
+      chunks?: Array<{ type: string; text?: string }>;
+    }>
+  >;
+  expect(stopCalls.length).toBeGreaterThan(0);
+  for (const [args] of stopCalls) {
+    // The contract-enforcing mock rejects the combination, but assert the
+    // shape explicitly so the intent survives mock changes.
+    expect(
+      typeof args?.markdown_text === "string" &&
+        (args?.chunks?.length ?? 0) > 0,
+    ).toBe(false);
+  }
+  // The close must actually succeed: the footnote rides as a trailing chunk.
+  const [stopArgs] = stopCalls[0] ?? [];
+  expect(stopArgs?.chunks?.at(-1)).toEqual({
+    type: "markdown_text",
+    text: "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
+  });
 });

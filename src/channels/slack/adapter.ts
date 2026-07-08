@@ -2874,12 +2874,19 @@ export function createSlackAdapter(
         channel: entry.source.chatId,
         ts: entry.streamTs,
       };
-      if (chunks.length > 0) {
-        args.chunks = chunks;
-      }
       // Add small footnote with link to Letta Chat for non-local agents.
+      // The Slack API rejects `markdown_text` combined with `chunks`
+      // (`cannot_provide_both_markdown_text_and_chunks`) even though the SDK
+      // types advertise both, so the footnote must ride inside the chunks
+      // array. Sending both silently broke EVERY terminal stop — cards only
+      // left streaming state when Slack expired them (verified against the
+      // live API, 2026-07-07).
       const footnote = buildSlackChatFootnote(entry.source);
-      if (footnote) {
+      if (chunks.length > 0) {
+        args.chunks = footnote
+          ? [...chunks, { type: "markdown_text", text: footnote }]
+          : chunks;
+      } else if (footnote) {
         args.markdown_text = footnote;
       }
       const response = await stopStream.call(slackClient.chat, args);
