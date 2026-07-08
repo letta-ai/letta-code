@@ -147,14 +147,25 @@ class FakeSlackWriteClient {
 
   readonly token: string;
   readonly options: Record<string, unknown> | undefined;
+  /** Stream content mode per stream ts, mirroring the live API contract. */
+  readonly streamModesByTs = new Map<string, "chunks" | "markdown_text">();
   readonly chat = {
     postMessage: mock(async () => ({ ts: "1712800000.000100" })),
     update: mock(async () => ({ ts: "1712800000.000100" })),
     startStream: mock(
-      async (): Promise<{ ok: boolean; ts?: string; error?: string }> => ({
-        ok: true,
-        ts: "1712800000.000300",
-      }),
+      async (args?: {
+        markdown_text?: string;
+        chunks?: unknown[];
+      }): Promise<{ ok: boolean; ts?: string; error?: string }> => {
+        const ts = "1712800000.000300";
+        this.streamModesByTs.set(
+          ts,
+          Array.isArray(args?.chunks) && args.chunks.length > 0
+            ? "chunks"
+            : "markdown_text",
+        );
+        return { ok: true, ts };
+      },
     ),
     appendStream: mock(
       async (): Promise<{ ok: boolean; ts?: string; error?: string }> => ({
@@ -164,6 +175,7 @@ class FakeSlackWriteClient {
     ),
     stopStream: mock(
       async (args?: {
+        ts?: string;
         markdown_text?: string;
         chunks?: unknown[];
       }): Promise<{ ok: boolean; ts?: string; error?: string }> => {
@@ -180,6 +192,16 @@ class FakeSlackWriteClient {
             ok: false,
             error: "cannot_provide_both_markdown_text_and_chunks",
           };
+        }
+        // Also pin streaming_mode_mismatch: a stream started with chunks
+        // cannot stop with top-level markdown_text (verified live
+        // 2026-07-08); final text must ride as a markdown_text CHUNK.
+        if (
+          typeof args?.markdown_text === "string" &&
+          args?.ts &&
+          this.streamModesByTs.get(args.ts) === "chunks"
+        ) {
+          return { ok: false, error: "streaming_mode_mismatch" };
         }
         return {
           ok: true,
@@ -5253,7 +5275,122 @@ test("slack adapter closes the progress stream at turn end despite the chat foot
   expect(stopArgs?.markdown_text).toBeUndefined();
 });
 
-test("slack adapter text progress mode posts one status message and edits it in place", async () => {
+test("slack adapter simple view opens a status stream at turn start and the reply becomes the message", async () => {
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    progressUi: "text",
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  // The placeholder opens at turn start: a stream with a single plan_update
+  // and no task chunks (no card chrome).
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  const startCalls = writeClient?.chat.startStream.mock
+    .calls as unknown as Array<
+    Array<{ chunks?: Array<{ type: string; title?: string }> }>
+  >;
+  expect(startCalls[0]?.[0]?.chunks).toEqual([
+    { type: "plan_update", title: "Thinking..." },
+  ]);
+  // The "is working" footer is kept alongside the placeholder.
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalled();
+
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
+  // Activity swaps the plan title via appendStream.
+  const appendCalls = writeClient?.chat.appendStream.mock
+    .calls as unknown as Array<
+    Array<{ chunks?: Array<{ type: string; title?: string }> }>
+  >;
+  expect(appendCalls.length).toBeGreaterThan(0);
+  expect(
+    appendCalls.every((call) =>
+      (call[0]?.chunks ?? []).every((chunk) => chunk.type === "plan_update"),
+    ),
+  ).toBe(true);
+
+  // The agent reply arrives: the stream stops with the reply text riding as
+  // a markdown_text chunk plus the web footnote as a context block, and no
+  // separate chat.postMessage happens.
+  const result = await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Here is what I found.",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  });
+  expect(result.messageId).toBe("1712800000.000300");
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    Array<{
+      chunks?: Array<{ type: string; text?: string }>;
+      blocks?: Array<{
+        type: string;
+        elements?: Array<{ type: string; text: string }>;
+      }>;
+      markdown_text?: string;
+    }>
+  >;
+  expect(stopCalls.length).toBe(1);
+  const stopArgs = stopCalls[0]?.[0];
+  expect(stopArgs?.markdown_text).toBeUndefined();
+  expect(stopArgs?.chunks).toEqual([
+    { type: "markdown_text", text: "Here is what I found." },
+  ]);
+  expect(stopArgs?.blocks?.[0]?.type).toBe("context");
+  expect(stopArgs?.blocks?.[0]?.elements?.[0]?.text).toBe(
+    "<https://chat.letta.com/chat/agent-1?conversation=conv-1|View on web>",
+  );
+
+  // The finish lifecycle must not close the already-fulfilled stream again.
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "finished",
+    batchId: "batch-1",
+    outcome: "completed",
+    sources: [source],
+  });
+  await sleep(200);
+  expect(writeClient?.chat.stopStream).toHaveBeenCalledTimes(1);
+});
+
+test("slack adapter simple view stops a reply-less turn with the activity summary title", async () => {
   process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -5313,40 +5450,14 @@ test("slack adapter text progress mode posts one status message and edits it in 
   await sleep(200);
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  // Text mode never touches the streaming API.
-  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
-  expect(writeClient?.chat.appendStream).not.toHaveBeenCalled();
-  expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
-  // One status message posted in-thread, then edited in place.
-  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
-  const postCalls = writeClient?.chat.postMessage.mock
-    .calls as unknown as Array<
-    Array<{ channel: string; text: string; thread_ts?: string }>
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    Array<{ chunks?: Array<{ type: string; title?: string }> }>
   >;
-  expect(postCalls[0]?.[0]).toMatchObject({
-    channel: "C123",
-    thread_ts: "1712790000.000050",
-  });
-  expect(postCalls[0]?.[0]?.text).toContain("Working");
-  const updateCalls = writeClient?.chat.update.mock.calls as unknown as Array<
-    Array<{
-      channel: string;
-      ts: string;
-      text: string;
-      blocks?: Array<{ type: string }>;
-    }>
-  >;
-  expect(updateCalls.length).toBeGreaterThan(0);
-  const terminalArgs = updateCalls[updateCalls.length - 1]?.[0];
-  // Terminal edit collapses to the activity summary plus the footnote.
-  expect(terminalArgs).toMatchObject({
-    channel: "C123",
-    ts: "1712800000.000100",
-    text: "Read a file",
-  });
-  const renderedBlocks = JSON.stringify(terminalArgs?.blocks ?? []);
-  expect(renderedBlocks).toContain("*Read a file*");
-  expect(renderedBlocks).toContain("View on web");
+  expect(stopCalls.length).toBe(1);
+  expect(stopCalls[0]?.[0]?.chunks).toEqual([
+    { type: "plan_update", title: "Read a file" },
+  ]);
 });
 
 test("slack adapter degrades rich progress to text mode when chat.startStream is unavailable", async () => {

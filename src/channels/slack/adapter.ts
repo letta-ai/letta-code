@@ -585,8 +585,18 @@ type SlackProgressToolTask = {
 
 type SlackProgressCardEntry = {
   source: ChannelTurnSource;
-  mode?: "stream" | "text";
+  /**
+   * Progress transport for this turn:
+   * - "stream": native streaming card with task rows (card view)
+   * - "status-stream": native stream carrying only plan_update titles — a
+   *   shimmering dim status line that the reply replaces at stop (simple view)
+   * - "text": plain message edited in place (fallback when the client/
+   *   workspace does not support chat.startStream)
+   */
+  mode?: "stream" | "status-stream" | "text";
   streamTs?: string;
+  /** Last plan title delivered to a status stream (dedupes appends). */
+  lastPlanTitle?: string;
   /** Message ts of the plain text-mode progress message, edited in place. */
   textTs?: string;
   /**
@@ -696,7 +706,7 @@ const SLACK_SECTION_TEXT_MAX = 3_000;
 
 /**
  * Render an outbound reply as mrkdwn section blocks with a small context
- * footnote (web deep link) below the text, Devin-style. Returns undefined
+ * footnote (web deep link) below the text. Returns undefined
  * when the text cannot be represented within Slack's 50-block limit, in
  * which case the caller falls back to plain text without the footnote.
  */
@@ -793,6 +803,30 @@ function formatSlackTextProgressLiveText(
     SLACK_PROGRESS_CARD_TEXT_MAX,
   );
   return detail ? `_Working: ${detail}_` : "_Working..._";
+}
+
+/**
+ * Live status title for the simple view: the title of the task currently in
+ * progress (same vocabulary as card rows), falling back to the most recent
+ * task title, then a generic placeholder. Plan titles are plain text.
+ */
+function formatSlackStatusStreamTitle(entry: SlackProgressCardEntry): string {
+  let inProgressTitle: string | undefined;
+  let latestTitle: string | undefined;
+  for (const task of entry.toolTasksById?.values() ?? []) {
+    if (isSlackTransientTask(task)) {
+      continue;
+    }
+    latestTitle = task.title;
+    if (task.status === "in_progress") {
+      inProgressTitle = task.title;
+    }
+  }
+  const detail = sanitizeSlackProgressText(
+    inProgressTitle ?? latestTitle ?? "",
+    SLACK_PROGRESS_CARD_TEXT_MAX,
+  );
+  return detail || "Thinking...";
 }
 
 /**
@@ -2952,7 +2986,7 @@ export function createSlackAdapter(
       // terminal stop until #3275), and delivering it as a markdown_text
       // CHUNK renders as loud full-size body text under the card. The web
       // deep link rides as a small context block on outbound replies
-      // instead (Devin-style), and on the block-rendered terminal paths
+      // instead, and on the block-rendered terminal paths
       // (text progress mode, dead-stream rewrite).
       if (chunks.length > 0) {
         args.chunks = chunks;
@@ -3058,7 +3092,7 @@ export function createSlackAdapter(
       progressStreamKeepaliveMs <= 0 ||
       entry.keepaliveTimer ||
       entry.status !== "processing" ||
-      entry.mode !== "stream" ||
+      (entry.mode !== "stream" && entry.mode !== "status-stream") ||
       entry.streamDead ||
       !entry.streamTs
     ) {
@@ -3071,13 +3105,23 @@ export function createSlackAdapter(
         if (
           progressCardByReplyKey.get(key) !== entry ||
           entry.status !== "processing" ||
-          entry.mode !== "stream" ||
+          (entry.mode !== "stream" && entry.mode !== "status-stream") ||
           !entry.streamTs
         ) {
           return;
         }
+        // Status streams keep their current title on keepalive appends so the
+        // refresh causes no visible change.
+        const keepaliveChunk: SlackStreamChunk =
+          entry.mode === "status-stream"
+            ? {
+                type: "plan_update",
+                title:
+                  entry.lastPlanTitle ?? formatSlackStatusStreamTitle(entry),
+              }
+            : buildSlackPlanUpdateChunk(entry);
         const didAppend = await appendSlackProgressStream(entry, [
-          buildSlackPlanUpdateChunk(entry),
+          keepaliveChunk,
         ]);
         if (!didAppend) {
           // A transient append failure (rate limit, network blip) must not
@@ -3111,6 +3155,184 @@ export function createSlackAdapter(
   ): void {
     clearSlackProgressStreamKeepalive(entry);
     scheduleSlackProgressStreamKeepalive(key, entry);
+  }
+
+  /**
+   * Start a simple-view status stream: a native stream carrying a single
+   * plan_update title. Renders as a shimmering agent name over a dim status
+   * line — no task card chrome. The assistant thread status ("is working")
+   * footer is deliberately kept alongside it, unlike the task-card stream.
+   */
+  async function startSlackStatusStream(
+    entry: SlackProgressCardEntry,
+    replyToMessageId: string,
+  ): Promise<boolean> {
+    if (!canStartSlackStream(entry.source)) {
+      return false;
+    }
+    await ensureApp();
+    const slackClient = await ensureWriteClient();
+    const startStream = slackClient.chat.startStream;
+    if (!startStream) {
+      return false;
+    }
+    await sweepOrphanedSlackProgressStreams(entry.source, slackClient);
+    try {
+      const title = formatSlackStatusStreamTitle(entry);
+      const args: SlackStartStreamArgs = {
+        channel: entry.source.chatId,
+        thread_ts: replyToMessageId,
+        chunks: [{ type: "plan_update", title }],
+      };
+      const recipientTeamId = entry.source.senderTeamId ?? botTeamId;
+      if (
+        entry.source.chatType === "channel" &&
+        isNonEmptyString(entry.source.senderId) &&
+        isNonEmptyString(recipientTeamId)
+      ) {
+        args.recipient_user_id = entry.source.senderId;
+        args.recipient_team_id = recipientTeamId;
+      }
+      const response = await startStream.call(slackClient.chat, args);
+      if (response.ok === false || !isNonEmptyString(response.ts)) {
+        console.warn(
+          "[Slack] Failed to start status stream:",
+          response.error ?? "missing stream ts",
+        );
+        return false;
+      }
+      entry.mode = "status-stream";
+      entry.streamTs = response.ts;
+      entry.streamDead = undefined;
+      entry.lastPlanTitle = title;
+      rememberMessageThread(response.ts, replyToMessageId);
+      return true;
+    } catch (error) {
+      console.warn(
+        "[Slack] Failed to start status stream:",
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Advance a simple-view status stream: live flushes swap the plan title;
+   * terminal flushes stop the stream with the turn's activity summary (only
+   * reached when no reply closed the stream first — the reply path stops the
+   * stream with the reply text itself in sendMessage).
+   */
+  async function progressSlackStatusStream(
+    entry: SlackProgressCardEntry,
+  ): Promise<boolean> {
+    if (!entry.streamTs) {
+      return false;
+    }
+    const terminal = entry.status !== "processing";
+    const slackClient = await ensureWriteClient();
+    try {
+      if (!terminal) {
+        if (entry.streamDead) {
+          // Nothing to update live; the terminal flush rewrites the message.
+          return true;
+        }
+        const title = formatSlackStatusStreamTitle(entry);
+        if (title === entry.lastPlanTitle) {
+          return true;
+        }
+        const appendStream = slackClient.chat.appendStream;
+        if (!appendStream) {
+          return false;
+        }
+        const response = await appendStream.call(slackClient.chat, {
+          channel: entry.source.chatId,
+          ts: entry.streamTs,
+          chunks: [{ type: "plan_update", title }],
+        });
+        if (response.ok === false) {
+          if (isSlackMessageNotStreamingStateError(response.error)) {
+            markSlackProgressStreamDead(
+              entry,
+              "status_append_not_in_streaming_state",
+            );
+          }
+          return false;
+        }
+        entry.lastPlanTitle = title;
+        return true;
+      }
+      const title = formatSlackTextProgressTerminalText(entry);
+      if (entry.streamDead) {
+        return await rewriteDeadSlackStatusStream(entry, title);
+      }
+      const stopStream = slackClient.chat.stopStream;
+      if (!stopStream) {
+        return false;
+      }
+      const response = await stopStream.call(slackClient.chat, {
+        channel: entry.source.chatId,
+        ts: entry.streamTs,
+        chunks: [{ type: "plan_update", title }],
+      });
+      if (response.ok === false) {
+        if (isSlackMessageNotStreamingStateError(response.error)) {
+          markSlackProgressStreamDead(
+            entry,
+            "status_stop_not_in_streaming_state",
+          );
+          return await rewriteDeadSlackStatusStream(entry, title);
+        }
+        return false;
+      }
+      entry.lastPlanTitle = title;
+      return true;
+    } catch (error) {
+      console.warn(
+        "[Slack] Failed to update status stream:",
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Terminal fallback for a dead status stream: Slack refuses stream calls
+   * once a message leaves streaming state, so rewrite it via chat.update into
+   * the terminal summary line plus the web footnote.
+   */
+  async function rewriteDeadSlackStatusStream(
+    entry: SlackProgressCardEntry,
+    title: string,
+  ): Promise<boolean> {
+    if (!entry.streamTs) {
+      return false;
+    }
+    try {
+      const slackClient = await ensureWriteClient();
+      const blocks: SlackBlock[] = [
+        { type: "section", text: { type: "mrkdwn", text: `*${title}*` } },
+      ];
+      const footnote = buildSlackChatFootnote(entry.source);
+      if (footnote) {
+        blocks.push({
+          type: "context",
+          elements: [{ type: "mrkdwn", text: footnote }],
+        });
+      }
+      await slackClient.chat.update({
+        channel: entry.source.chatId,
+        ts: entry.streamTs,
+        text: title,
+        blocks,
+      });
+      return true;
+    } catch (error) {
+      console.warn(
+        "[Slack] Failed to rewrite dead status stream:",
+        error instanceof Error ? error.message : error,
+      );
+      return false;
+    }
   }
 
   /**
@@ -3223,7 +3445,8 @@ export function createSlackAdapter(
       if (
         entry.status === "processing" &&
         !entry.mode &&
-        (entry.pendingStreamChunks?.length ?? 0) === 0
+        (entry.pendingStreamChunks?.length ?? 0) === 0 &&
+        configuredProgressUi !== "text"
       ) {
         entry.lastSentAt = Date.now();
         return;
@@ -3233,12 +3456,26 @@ export function createSlackAdapter(
       entry.pendingStreamChunks = [];
       let didSend = true;
       if (!entry.mode) {
-        // Route the turn's first visible progress: text mode by explicit
-        // config, or as automatic degradation when the Slack client/workspace
-        // does not expose chat.startStream.
+        // Route the turn's first visible progress: the simple view (a native
+        // status stream) by explicit config, the task-card stream otherwise.
+        // Both degrade to the plain edited-message transport when the Slack
+        // client/workspace does not expose chat.startStream.
         const slackClient = await ensureWriteClient();
         const canStream = typeof slackClient.chat.startStream === "function";
-        if (configuredProgressUi === "text" || !canStream) {
+        if (configuredProgressUi === "text") {
+          if (entry.status !== "processing") {
+            // Turn already over with nothing on screen: the reply itself is
+            // the outcome, a terminal-only status artifact would be noise.
+            didSend = true;
+          } else if (canStream) {
+            didSend = await startSlackStatusStream(entry, replyToMessageId);
+          } else {
+            didSend = await upsertSlackTextProgressMessage(
+              entry,
+              replyToMessageId,
+            );
+          }
+        } else if (!canStream) {
           didSend = await upsertSlackTextProgressMessage(
             entry,
             replyToMessageId,
@@ -3252,6 +3489,8 @@ export function createSlackAdapter(
         }
       } else if (entry.mode === "stream") {
         didSend = await appendSlackProgressStream(entry, chunksToSend);
+      } else if (entry.mode === "status-stream") {
+        didSend = await progressSlackStatusStream(entry);
       } else {
         didSend = await upsertSlackTextProgressMessage(entry, replyToMessageId);
       }
@@ -3267,9 +3506,11 @@ export function createSlackAdapter(
       delete entry.latestUpdate;
       entry.lastSentText = text;
       entry.lastSentAt = Date.now();
-      if (didSend && entry.mode === "stream" && entry.status === "processing") {
+      const isLiveStream =
+        entry.mode === "stream" || entry.mode === "status-stream";
+      if (didSend && isLiveStream && entry.status === "processing") {
         resetSlackProgressStreamKeepalive(key, entry);
-      } else if (entry.mode !== "stream" || entry.status !== "processing") {
+      } else if (!isLiveStream || entry.status !== "processing") {
         clearSlackProgressStreamKeepalive(entry);
       }
     })()
@@ -3537,6 +3778,7 @@ export function createSlackAdapter(
         entry.streamTs = undefined;
         entry.streamDead = undefined;
         entry.textTs = undefined;
+        entry.lastPlanTitle = undefined;
         entry.toolTasksById = undefined;
         entry.pendingStreamChunks = undefined;
         entry.toolNamesByCallId = undefined;
@@ -3584,12 +3826,125 @@ export function createSlackAdapter(
         entry.source = source;
         entry.updatedAt = Date.now();
         await flushSlackProgressCard(key, entry);
-        if (entry.mode === "stream" || entry.mode === "text") {
+        if (entry.mode) {
           scheduleSlackCompletionFinalizer(key, entry, batchId);
         }
         await clearSlackAssistantThreadStatus(source);
       }),
     );
+  }
+
+  function dropSlackProgressCardEntry(
+    key: string,
+    entry: SlackProgressCardEntry,
+  ): void {
+    clearSlackProgressStreamKeepalive(entry);
+    clearSlackCompletionFinalizer(entry);
+    if (entry.pendingTimer) {
+      clearTimeout(entry.pendingTimer);
+      entry.pendingTimer = undefined;
+    }
+    if (progressCardByReplyKey.get(key) === entry) {
+      progressCardByReplyKey.delete(key);
+    }
+    const replyKey = getLifecycleReplyKey(entry.source);
+    if (replyKey && activeProgressCardKeyByReplyKey.get(replyKey) === key) {
+      activeProgressCardKeyByReplyKey.delete(replyKey);
+    }
+  }
+
+  /**
+   * Simple view: fulfill an outbound reply by stopping the thread's live
+   * status stream with the reply text — the shimmering placeholder becomes
+   * the final message (one message per turn), with the web deep link attached
+   * as a context block. Returns the message ts on success; undefined falls
+   * back to a regular chat.postMessage.
+   */
+  async function maybeFulfillReplyViaStatusStream(
+    msg: OutboundChannelMessage,
+  ): Promise<string | undefined> {
+    if (!isNonEmptyString(msg.text)) {
+      return undefined;
+    }
+    const anchorTs = resolveSlackOutboundProgressThreadTs({
+      threadId: msg.threadId,
+      replyToMessageId: msg.replyToMessageId,
+    });
+    if (!isNonEmptyString(anchorTs)) {
+      return undefined;
+    }
+    const rootTs = knownThreadIdsByMessageId.get(anchorTs) ?? anchorTs;
+    const replyKey = `${msg.chatId}:${rootTs}`;
+    const cardKey = activeProgressCardKeyByReplyKey.get(replyKey) ?? replyKey;
+    const entry = progressCardByReplyKey.get(cardKey);
+    if (!entry || entry.mode !== "status-stream") {
+      return undefined;
+    }
+    if (entry.pendingFlush) {
+      try {
+        await entry.pendingFlush;
+      } catch {
+        // Flush failures are already logged; the stream state check below
+        // decides whether the stop can still proceed.
+      }
+    }
+    if (
+      entry.mode !== "status-stream" ||
+      !isNonEmptyString(entry.streamTs) ||
+      entry.streamDead
+    ) {
+      return undefined;
+    }
+    const slackClient = await ensureWriteClient();
+    const stopStream = slackClient.chat.stopStream;
+    if (!stopStream) {
+      return undefined;
+    }
+    const footnote =
+      isNonEmptyString(msg.agentId) && isNonEmptyString(msg.conversationId)
+        ? buildSlackChatFootnote({
+            agentId: msg.agentId,
+            conversationId: msg.conversationId,
+          })
+        : "";
+    try {
+      const response = await stopStream.call(slackClient.chat, {
+        channel: entry.source.chatId,
+        ts: entry.streamTs,
+        chunks: [{ type: "markdown_text", text: msg.text }],
+        ...(footnote
+          ? {
+              blocks: [
+                {
+                  type: "context",
+                  elements: [{ type: "mrkdwn", text: footnote }],
+                },
+              ],
+            }
+          : {}),
+      });
+      if (response.ok === false) {
+        if (isSlackMessageNotStreamingStateError(response.error)) {
+          markSlackProgressStreamDead(
+            entry,
+            "reply_stop_not_in_streaming_state",
+          );
+        }
+        return undefined;
+      }
+    } catch (error) {
+      console.warn(
+        "[Slack] Failed to deliver reply via status stream:",
+        error instanceof Error ? error.message : error,
+      );
+      return undefined;
+    }
+    const ts = entry.streamTs;
+    // The placeholder is now the reply. Drop the entry so the turn's finish
+    // lifecycle does not try to close it a second time.
+    dropSlackProgressCardEntry(cardKey, entry);
+    await clearSlackAssistantThreadStatus(entry.source);
+    return ts;
   }
 
   async function finishSlackProgressCardForOutboundMessage(
@@ -4213,6 +4568,22 @@ export function createSlackAdapter(
       if (event.type === "processing") {
         await Promise.all(
           getUniqueSlackProgressSources(event.sources).map(async (source) => {
+            if (configuredProgressUi === "text") {
+              // Simple view: the "is working" footer and the dim status
+              // placeholder appear together at turn start.
+              const replyKey = getLifecycleReplyKey(source);
+              const status = getSlackAssistantThreadStatusForTurn(source);
+              if (
+                status &&
+                (!replyKey || !assistantStatusReplyKeys.has(replyKey))
+              ) {
+                await setSlackAssistantThreadStatus(source, status);
+              }
+              await upsertSlackProgressCard(source, "processing", "Thinking", {
+                force: true,
+              });
+              return;
+            }
             if (isSlackProgressCardRendering(source)) {
               await clearSlackAssistantThreadStatus(source);
               return;
@@ -4359,8 +4730,26 @@ export function createSlackAdapter(
         replyToMessageId: msg.replyToMessageId,
       });
 
-      // Devin-style web deep link: a small context-block footnote under
-      // every reply, when the caller supplied the sending identity.
+      // Simple view: when a live status stream exists for this thread, the
+      // reply stops the stream and the placeholder becomes the message.
+      const streamReplyTs = await maybeFulfillReplyViaStatusStream(msg);
+      if (streamReplyTs) {
+        const streamThreadId =
+          threadTs ??
+          (resolveSlackChatType(msg.chatId) === "channel"
+            ? streamReplyTs
+            : null);
+        if (
+          resolveSlackChatType(msg.chatId) === "channel" &&
+          isNonEmptyString(streamThreadId)
+        ) {
+          agentThreadTracker.remember(msg.chatId, streamThreadId);
+        }
+        return { messageId: streamReplyTs };
+      }
+
+      // Web deep link: a small context-block footnote under every reply,
+      // when the caller supplied the sending identity.
       const footnote =
         isNonEmptyString(msg.agentId) && isNonEmptyString(msg.conversationId)
           ? buildSlackChatFootnote({
