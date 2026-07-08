@@ -58,7 +58,39 @@ const channelTestFiles = findTestFiles("src/channels", [
   "src/channels/slack-media.test.ts",
 ]);
 
-const opts = { stdio: "inherit", shell: process.platform === "win32" };
+function buildUnitTestEnv() {
+  const env = {
+    ...process.env,
+    // CI runners can expose a real OS keyring, especially macOS. Unit tests
+    // should not touch it unless a test explicitly opts into keyring mode with
+    // credential-store test overrides.
+    LETTA_CHANNEL_CREDENTIALS_STORE:
+      process.env.LETTA_CHANNEL_CREDENTIALS_STORE || "file",
+  };
+
+  for (const key of [
+    "AGENT_ID",
+    "AGENT_NAME",
+    "CONVERSATION_ID",
+    "LETTA_AGENT_ID",
+    "LETTA_CODE_AGENT_ROLE",
+    "LETTA_CONVERSATION_ID",
+    "LETTA_MEMORY_DIR",
+    "LETTA_PARENT_AGENT_ID",
+    "MEMORY_DIR",
+    "USER_CWD",
+  ]) {
+    delete env[key];
+  }
+
+  return env;
+}
+
+const opts = {
+  stdio: "inherit",
+  shell: process.platform === "win32",
+  env: buildUnitTestEnv(),
+};
 let exitCode = 0;
 
 // Run slack-media in isolation first (clean module registry)
