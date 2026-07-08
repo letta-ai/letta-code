@@ -6,6 +6,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ChalkInstance } from "chalk";
 import type { ModelReasoningEffort } from "@/agent/model";
+import type { SubagentLifecycleContext } from "@/agent/subagent-state";
 
 export interface ModWorkspaceContext {
   cwd: string;
@@ -63,6 +64,7 @@ export interface ModBackgroundAgentContext {
   type: string;
   status: string;
   durationMs: number;
+  agentId: string | null;
 }
 
 export interface ModUiCapabilities {
@@ -430,6 +432,7 @@ export interface ModContext {
   workspace: ModWorkspaceContext;
   cwd: string;
   sessionId: string | null;
+  conversationSummary: string | null;
   lastRunId: string | null;
   agent: ModAgentContext;
   model: ModModelContext;
@@ -443,6 +446,7 @@ export interface ModContext {
   reflection: ModReflectionContext;
   memfs: ModMemfsContext;
   backgroundAgents: ModBackgroundAgentContext[];
+  subagents: SubagentLifecycleContext;
 }
 
 export interface ModCommandContext extends ModInvocationContext {
@@ -466,6 +470,8 @@ export interface ModPanelRenderContext extends ModContext {
   row: (left: string, right: string, width: number) => string;
   /** Spread parts evenly across `width` (ANSI-aware). */
   columns: (parts: string[], width: number) => string;
+  /** Build a terminal hyperlink string. */
+  link: (label: string, url: string) => string;
   /** Chalk instance for coloring panel output. */
   chalk: ChalkInstance;
 }
@@ -474,9 +480,10 @@ export type ModPanelRender = (ctx: ModPanelRenderContext) => string | string[];
 
 /**
  * Panels are placed by a signed `order` around the input:
- * `> 0` renders above the input (highest at the top), `0` is the primary line
- * just below the input (overrides the built-in agent · model line), and `< 0`
- * stacks below the primary line. A panel whose render is empty is hidden.
+ * `> 1` renders above the input (highest at the top), `1` replaces the default
+ * product-status row, `0` is the primary line just below the input (overrides
+ * the built-in agent · model line), and `< 0` stacks below the primary line.
+ * A panel whose render is empty is hidden.
  */
 export interface ModPanelOptions {
   id: string;

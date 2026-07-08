@@ -465,6 +465,7 @@ function createAssertionModContext(repoRoot: string): ModContext {
   return {
     app: { version: "mod-learning-eval" },
     backgroundAgents: [],
+    subagents: { list: () => [] },
     contextWindow: {
       currentUsage: null,
       remainingPercentage: null,
@@ -493,6 +494,7 @@ function createAssertionModContext(repoRoot: string): ModContext {
     permissionMode: "standard",
     reflection: { mode: null, stepCount: 0 },
     sessionId: "mod-learning-eval-conversation",
+    conversationSummary: null,
     systemPromptId: null,
     terminalWidth: 80,
     toolset: "default",
@@ -842,7 +844,8 @@ function buildHeadlessArgs(
     "-p",
     prompt,
     "--new-agent",
-    "--no-memfs",
+    "--memfs-startup",
+    "skip",
     "--no-system-info-reminder",
     "--yolo",
     "--output-format",

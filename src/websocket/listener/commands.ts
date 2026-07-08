@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type WebSocket from "ws";
+import { actingUserRequestOptions } from "@/agent/acting-user";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
   applySetMaxContext,
@@ -17,6 +18,10 @@ import {
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import {
+  formatSkillNameFrontmatterRepairReport,
+  repairMissingSkillNameFrontmatter,
+} from "@/cli/helpers/skill-name-frontmatter-repair";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
@@ -102,7 +107,10 @@ export async function handleExecuteCommand(
 
     switch (command.command_id) {
       case "clear":
-        output = await handleClearCommand(socket, conversationRuntime, opts);
+        output = await handleClearCommand(socket, conversationRuntime, {
+          ...opts,
+          actingUserId: command.runtime.acting_user_id,
+        });
         break;
 
       case "doctor":
@@ -572,6 +580,8 @@ async function handleClearCommand(
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
     connectionId?: string;
+    /** Cloud user id stamped on the relayed frame; echoed on the create call. */
+    actingUserId?: string;
   },
 ): Promise<string> {
   const backend = getBackend();
@@ -594,10 +604,14 @@ async function handleClearCommand(
     });
   }
 
-  // Create a new conversation
-  const conversation = await backend.createConversation({
-    agent_id: agentId,
-  });
+  // Create a new conversation, attributing it to the human who ran
+  // /clear when the frame was relayed by cloud with an acting user.
+  const conversation = await backend.createConversation(
+    {
+      agent_id: agentId,
+    },
+    actingUserRequestOptions(opts.actingUserId),
+  );
 
   // Clear runtime state for the current conversation
   clearConversationRuntimeState(conversationRuntime);
@@ -640,8 +654,16 @@ async function handleDoctorCommand(
   const memoryDir = settingsManager.isMemfsEnabled(agentId)
     ? getScopedMemoryFilesystemRoot(agentId)
     : undefined;
+  const skillNameFrontmatterRepair =
+    await repairMissingSkillNameFrontmatter(memoryDir);
+  const skillNameFrontmatterRepairReport =
+    formatSkillNameFrontmatterRepairReport(skillNameFrontmatterRepair);
 
-  const doctorMessage = buildDoctorMessage({ gitContext, memoryDir });
+  const doctorMessage = buildDoctorMessage({
+    gitContext,
+    memoryDir,
+    skillNameFrontmatterRepairReport,
+  });
 
   // Feed the doctor prompt as a user message through the normal turn pipeline.
   // This triggers a full agent turn whose deltas stream back to the web UI.
@@ -795,11 +817,11 @@ async function handleSetMaxContextCommand(
 /**
  * /channels — Manage external channel integrations.
  *
- * Subcommands (via WS):
- *   /channels telegram pair <code>    — Approve pairing + bind chat to this agent/conversation
- *   /channels telegram enable --chat-id <id> — Bind a known chat to this agent/conversation
- *   /channels telegram disable        — Unbind this agent/conversation
- *   /channels status                  — Show channel status
+ * Subcommands (via WS), generic across all supported channels:
+ *   /channels <channel> pair <code>    — Approve pairing + bind chat to this agent/conversation
+ *   /channels <channel> enable --chat-id <id> — Bind a known chat to this agent/conversation
+ *   /channels <channel> disable        — Unbind this agent/conversation
+ *   /channels status                   — Show channel status
  */
 async function handleChannelsCommand(
   _socket: WebSocket,
@@ -828,10 +850,12 @@ async function handleChannelsCommand(
     const { getPendingPairings, getApprovedUsers, loadPairingStore } =
       await import("@/channels/pairing");
 
-    const channels = ["telegram"];
+    const { getSupportedChannelIds } = await import(
+      "@/channels/plugin-registry"
+    );
     const lines: string[] = [];
 
-    for (const ch of channels) {
+    for (const ch of getSupportedChannelIds()) {
       const accounts = listChannelAccountSnapshots(ch);
       if (accounts.length === 0) {
         lines.push(`${ch}: not configured`);
@@ -851,7 +875,15 @@ async function handleChannelsCommand(
     return lines.join("\n") || "No channels configured.";
   }
 
-  if (subCmd === "telegram") {
+  const {
+    getSupportedChannelIds,
+    isSupportedChannelId,
+    getChannelDisplayName,
+  } = await import("@/channels/plugin-registry");
+
+  if (subCmd && isSupportedChannelId(subCmd)) {
+    const ch = subCmd;
+    const displayName = getChannelDisplayName(ch);
     const accountIdFlag = rest.indexOf("--account-id");
     const accountId =
       accountIdFlag >= 0 ? (rest[accountIdFlag + 1] ?? undefined) : undefined;
@@ -859,18 +891,18 @@ async function handleChannelsCommand(
     if (action === "pair") {
       const code = rest[0];
       if (!code) {
-        return "Usage: /channels telegram pair <code>";
+        return `Usage: /channels ${ch} pair <code>`;
       }
 
       const { completePairing } = await import("@/channels/registry");
       const { loadRoutes } = await import("@/channels/routing");
       const { loadPairingStore } = await import("@/channels/pairing");
 
-      loadRoutes("telegram");
-      loadPairingStore("telegram");
+      loadRoutes(ch);
+      loadPairingStore(ch);
 
       const result = completePairing(
-        "telegram",
+        ch,
         code,
         agentId,
         conversationId,
@@ -888,7 +920,7 @@ async function handleChannelsCommand(
       const chatId = chatIdFlag >= 0 ? rest[chatIdFlag + 1] : undefined;
 
       if (!chatId) {
-        return "Usage: /channels telegram enable --chat-id <id> [--account-id <id>]";
+        return `Usage: /channels ${ch} enable --chat-id <id> [--account-id <id>]`;
       }
 
       const { getChannelAccount, listChannelAccounts } = await import(
@@ -898,26 +930,26 @@ async function handleChannelsCommand(
 
       let resolvedAccountId = accountId?.trim();
       if (resolvedAccountId) {
-        if (!getChannelAccount("telegram", resolvedAccountId)) {
-          return `Unknown Telegram account: ${resolvedAccountId}`;
+        if (!getChannelAccount(ch, resolvedAccountId)) {
+          return `Unknown ${displayName} account: ${resolvedAccountId}`;
         }
       } else {
-        const accounts = listChannelAccounts("telegram");
+        const accounts = listChannelAccounts(ch);
         if (accounts.length === 0) {
-          return "Telegram is not configured yet.";
+          return `${displayName} is not configured yet.`;
         }
         if (accounts.length > 1) {
-          return "Telegram has multiple accounts. Re-run with --account-id <id>.";
+          return `${displayName} has multiple accounts. Re-run with --account-id <id>.`;
         }
         resolvedAccountId = accounts[0]?.accountId;
       }
 
       if (!resolvedAccountId) {
-        return "Could not resolve a Telegram account for this route.";
+        return `Could not resolve a ${displayName} account for this route.`;
       }
 
-      loadRoutes("telegram");
-      addRoute("telegram", {
+      loadRoutes(ch);
+      addRoute(ch, {
         accountId: resolvedAccountId,
         chatId,
         agentId,
@@ -926,7 +958,7 @@ async function handleChannelsCommand(
         createdAt: new Date().toISOString(),
       });
 
-      return `Route created: telegram:${chatId} → ${agentId}/${conversationId}`;
+      return `Route created: ${ch}:${chatId} → ${agentId}/${conversationId}`;
     }
 
     if (action === "disable") {
@@ -934,15 +966,15 @@ async function handleChannelsCommand(
         "@/channels/routing"
       );
 
-      loadRoutes("telegram");
-      const removed = removeRoutesForScope("telegram", agentId, conversationId);
+      loadRoutes(ch);
+      const removed = removeRoutesForScope(ch, agentId, conversationId);
       return removed > 0
         ? `Removed ${removed} route(s) for this agent/conversation.`
         : "No routes found for this agent/conversation.";
     }
 
-    return "Usage: /channels telegram <pair|enable|disable>";
+    return `Usage: /channels ${ch} <pair|enable|disable>`;
   }
 
-  return "Usage: /channels <telegram|status>";
+  return `Usage: /channels <status|${getSupportedChannelIds().join("|")}> ...`;
 }

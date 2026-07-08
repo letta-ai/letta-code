@@ -1,18 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import stripAnsi from "strip-ansi";
-import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import { shouldRenderDefaultStatuslineRenderer } from "@/cli/display/statusline/default-renderer-activation";
-import {
-  DEFAULT_STATUSLINE_RENDERER_ID,
-  getBuiltinStatuslineRenderer,
-  getBuiltinStatuslineRenderers,
-} from "@/cli/display/statusline/registry";
 import {
   buildDefaultStatuslineParts,
   getDefaultStatuslineRightColumnWidth,
 } from "@/cli/display/statusline/renderers/Default";
-import type { StatuslineRenderContext } from "@/cli/display/statusline/types";
-import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
+import type { StatuslineUiContext } from "@/cli/display/statusline/types";
+import { buildCliModContext } from "@/cli/helpers/cli-mod-context";
+import type { ModContext } from "@/mods/types";
 
 const DEFAULT_STATUSLINE_ACTIVATION = {
   hideFooterContent: false,
@@ -22,7 +17,7 @@ const DEFAULT_STATUSLINE_ACTIVATION = {
   transientHintActive: false,
 };
 
-function createStatuslineContext({
+function createStatuslineFixture({
   agentName = "Letta Code",
   modelDisplayName = "GPT-5.5 (ChatGPT)",
   reasoningEffort = "high",
@@ -36,52 +31,34 @@ function createStatuslineContext({
   rightColumnWidth?: number;
   terminalWidth?: number;
   toolset?: string;
-} = {}): StatuslineRenderContext {
-  return buildStatuslineRenderContext({
-    payload: buildStatusLinePayload({
+} = {}): { context: ModContext; ui: StatuslineUiContext } {
+  return {
+    context: buildCliModContext({
       agentName,
       currentDirectory: "/tmp/project",
       modelDisplayName,
+      modelProvider: "chatgpt-plus-pro",
       projectDirectory: "/tmp/project",
       reasoningEffort,
       terminalWidth,
       toolset,
     }),
     ui: {
-      currentModelProvider: "chatgpt-plus-pro",
       hasTemporaryModelOverride: false,
       isByokProvider: false,
-      isLocalBackend: true,
       isOpenAICodexProvider: false,
       rightColumnWidth,
     },
-  });
+  };
 }
 
 describe("statusline renderers", () => {
-  test("default renderer is built in", () => {
-    expect(DEFAULT_STATUSLINE_RENDERER_ID).toBe("default");
-    expect(getBuiltinStatuslineRenderer(undefined).id).toBe("default");
-    expect(getBuiltinStatuslineRenderer("missing").id).toBe("default");
-  });
+  test("CLI mod context exposes broad app state", () => {
+    const { context } = createStatuslineFixture({ toolset: "computer" });
 
-  test("registry exposes the default renderer", () => {
-    expect(
-      getBuiltinStatuslineRenderers().map((renderer) => renderer.id),
-    ).toEqual(["default"]);
-  });
-
-  test("context exposes broad app state and raw payload", () => {
-    const context = createStatuslineContext({ toolset: "computer" });
-
-    expect(context.rawPayload.toolset).toBe("computer");
     expect(context.toolset).toBe("computer");
     expect(context.workspace.currentDir).toBe("/tmp/project");
     expect(context.workspace.projectDir).toBe("/tmp/project");
-    expect(context.components.Box).toBeDefined();
-    expect(context.components.Text).toBeDefined();
-    expect(context.components.Spacer).toBeDefined();
-    expect(context.statuses).toEqual({});
     expect(context.agent.name).toBe("Letta Code");
     expect(context.model.displayName).toBe("GPT-5.5 (ChatGPT)");
     expect(context.model.provider).toBe("chatgpt-plus-pro");
@@ -89,7 +66,8 @@ describe("statusline renderers", () => {
   });
 
   test("default renderer shows compact agent and model label", () => {
-    const output = buildDefaultStatuslineParts(createStatuslineContext());
+    const { context, ui } = createStatuslineFixture();
+    const output = buildDefaultStatuslineParts(context, ui);
 
     expect(stripAnsi(String(output.right)).trim()).toBe(
       "Letta Code · GPT-5.5 (ChatGPT)",
@@ -97,9 +75,10 @@ describe("statusline renderers", () => {
   });
 
   test("default renderer omits reasoning and backend labels", () => {
-    const output = buildDefaultStatuslineParts(
-      createStatuslineContext({ modelDisplayName: "No model selected" }),
-    );
+    const { context, ui } = createStatuslineFixture({
+      modelDisplayName: "No model selected",
+    });
+    const output = buildDefaultStatuslineParts(context, ui);
 
     expect(stripAnsi(String(output.right)).trim()).toBe(
       "Letta Code · No model selected",
@@ -107,16 +86,16 @@ describe("statusline renderers", () => {
   });
 
   test("default renderer uses idle row width for long agent names", () => {
-    const context = createStatuslineContext({
+    const { context, ui } = createStatuslineFixture({
       agentName: "A Very Long Agent Name",
       modelDisplayName: "Claude",
       rightColumnWidth: 36,
       terminalWidth: 80,
     });
 
-    expect(getDefaultStatuslineRightColumnWidth(context)).toBe(76);
+    expect(getDefaultStatuslineRightColumnWidth(context, ui)).toBe(76);
     expect(
-      stripAnsi(String(buildDefaultStatuslineParts(context).right)),
+      stripAnsi(String(buildDefaultStatuslineParts(context, ui).right)),
     ).toContain("A Very Long Agent Name");
   });
 

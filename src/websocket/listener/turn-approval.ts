@@ -421,12 +421,13 @@ export async function handleApprovalStop(params: {
     return interruptTermination();
   }
 
-  lastExecutingToolCallIds = decisions
-    .filter(
-      (decision): decision is Extract<Decision, { type: "approve" }> =>
-        decision.type === "approve",
-    )
-    .map((decision) => decision.approval.toolCallId);
+  const approvedDecisions = decisions.filter(
+    (decision): decision is Extract<Decision, { type: "approve" }> =>
+      decision.type === "approve",
+  );
+  lastExecutingToolCallIds = approvedDecisions.map(
+    (decision) => decision.approval.toolCallId,
+  );
   runtime.activeExecutingToolCallIds = [...lastExecutingToolCallIds];
   setLoopStatus(runtime, "EXECUTING_CLIENT_SIDE_TOOL", {
     agent_id: agentId,
@@ -439,7 +440,11 @@ export async function handleApprovalStop(params: {
   const executionRunId =
     runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
   emitToolExecutionStartedEvents(socket, runtime, {
-    toolCallIds: lastExecutingToolCallIds,
+    toolCalls: approvedDecisions.map((decision) => ({
+      toolCallId: decision.approval.toolCallId,
+      toolName: decision.approval.toolName,
+      toolArgs: decision.approval.toolArgs,
+    })),
     runId: executionRunId,
     agentId,
     conversationId,

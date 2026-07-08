@@ -27,6 +27,7 @@ import {
   buildListModelsEntries,
   buildListModelsResponse,
   buildModelUpdateStatusMessage,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import {
@@ -446,6 +447,7 @@ export const __listenClientTestUtils = {
   buildListModelsEntries,
   buildListModelsResponse,
   buildModelUpdateStatusMessage,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
   applyModelUpdateForRuntime,
   stopRuntime: (

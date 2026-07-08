@@ -183,6 +183,40 @@ test("deriveSelfAgentRootsForTrees collapses in-tree memory roots to the agent d
   expect(roots).toEqual([canonicalizeRoot(agentDir)]);
 });
 
+test("deriveSelfAgentRootsForTrees collapses specific memory worktrees to the agent dir", () => {
+  const tree = getDefaultAgentsTreeRoot();
+  const agentDir = join(tree, "abc");
+  const roots = deriveSelfAgentRootsForTrees(
+    [join(agentDir, "memory-worktrees", "reflection-123")],
+    [tree],
+  );
+  expect(roots).toEqual([canonicalizeRoot(agentDir)]);
+});
+
+test("memory-subagent policy can write an exact reflection worktree and parent git metadata", () => {
+  const tree = getDefaultAgentsTreeRoot();
+  const agentDir = join(tree, "abc");
+  const reflectionWorktree = join(
+    agentDir,
+    "memory-worktrees",
+    "reflection-123",
+  );
+  const gitCommonDir = join(agentDir, "memory", ".git");
+
+  const policy = buildMemorySubagentSandboxPolicy({
+    memoryRoots: [reflectionWorktree, gitCommonDir],
+  });
+
+  expect(policy.writableRoots).toEqual([
+    canonicalizeRoot(reflectionWorktree),
+    canonicalizeRoot(gitCommonDir),
+  ]);
+  expect(policy.readonlyRoots).toEqual([canonicalizeRoot(agentDir)]);
+  expect(policy.writableRoots).not.toContain(
+    canonicalizeRoot(join(agentDir, "memory")),
+  );
+});
+
 test("deriveSelfAgentRootsForTrees keeps roots outside the tree as-is", () => {
   const tree = getDefaultAgentsTreeRoot();
   const outside = canonicalizeRoot("/tmp");

@@ -15,6 +15,7 @@ import {
   getCurrentAgentId,
   setConversationId,
   setCurrentAgentId,
+  setCurrentAgentName,
 } from "@/agent/context";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
@@ -39,12 +40,14 @@ import {
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import {
   getReflectionSettings,
+  type ReflectionSettings,
   type ReflectionTrigger,
 } from "@/cli/helpers/memory-reminder";
 import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
+  queuePendingReflectionWorktreeReminders,
 } from "@/cli/helpers/reflection-launcher";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
@@ -64,7 +67,7 @@ import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
-import { createTelegramRichDraftStreamer } from "./channel-rich-draft-streamer";
+import { createChannelRichDraftStreamer } from "./channel-rich-draft-streamer";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
@@ -309,10 +312,18 @@ export function buildMaybeLaunchReflectionSubagent(params: {
   socket: ListenerTransport;
   agentId: string;
   conversationId: string;
+  reflectionSettings?: ReflectionSettings;
   cachedAgent?: AgentState | null;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
-    const { runtime, socket, agentId, conversationId, cachedAgent } = params;
+    const {
+      runtime,
+      socket,
+      agentId,
+      conversationId,
+      reflectionSettings,
+      cachedAgent,
+    } = params;
 
     if (!agentId) {
       return false;
@@ -323,6 +334,8 @@ export function buildMaybeLaunchReflectionSubagent(params: {
       conversationId,
       memfsEnabled: settingsManager.isMemfsEnabled(agentId),
       triggerSource,
+      skipPendingWorktreeReminderScan: triggerSource === "compaction-event",
+      reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
       systemPrompt: cachedAgent?.system ?? undefined,
       recompileByConversation:
@@ -435,7 +448,7 @@ export async function handleIncomingMessage(
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
-  const richDraftStreamer = createTelegramRichDraftStreamer({
+  const richDraftStreamer = createChannelRichDraftStreamer({
     batchId: dequeuedBatchId,
     sources: msg.channelTurnSources,
   });
@@ -444,6 +457,7 @@ export async function handleIncomingMessage(
   runtime.cancelRequested = false;
   runtime.lastStopReason = null;
   runtime.lastTerminalLoopErrorMessage = null;
+  runtime.lastTerminalLoopErrorRunId = null;
   const turnAbortController = new AbortController();
   runtime.activeAbortController = turnAbortController;
   const turnAbortSignal = turnAbortController.signal;
@@ -490,6 +504,7 @@ export async function handleIncomingMessage(
 
     // Set agent context for tools that need it (e.g., Skill tool)
     setCurrentAgentId(agentId);
+    setCurrentAgentName(listenAgentMetadata?.name ?? null);
     setConversationId(conversationId);
 
     if (isDebugEnabled()) {
@@ -601,6 +616,9 @@ export async function handleIncomingMessage(
                 .last_run_completion ?? null,
           };
         }
+        setCurrentAgentName(
+          listenAgentMetadata?.name ?? cachedAgent?.name ?? null,
+        );
         const { parts: reminderParts } = await buildSharedReminderParts(
           buildListenReminderContext({
             agentId: agentId || "",
@@ -946,11 +964,17 @@ export async function handleIncomingMessage(
             reflectionSettings,
             reminderState: runtime.reminderState,
             contextTracker: runtime.contextTracker,
+            onCompaction: () =>
+              queuePendingReflectionWorktreeReminders({
+                agentId: agentId || "",
+                conversationId,
+              }),
             launch: buildMaybeLaunchReflectionSubagent({
               runtime,
               socket,
               agentId: agentId || "",
               conversationId,
+              reflectionSettings,
               cachedAgent,
             }),
           });
@@ -1282,11 +1306,13 @@ export async function handleIncomingMessage(
         const errorMessage =
           errorDetail || `Unexpected stop reason: ${stopReason}`;
 
+        const terminalRunId =
+          runId || runtime.activeRunId || runErrorInfo?.run_id;
         const formattedError = emitLoopErrorNotice(socket, runtime, {
           message: errorMessage,
           stopReason: effectiveStopReason,
           isTerminal: true,
-          runId: runId,
+          runId: terminalRunId,
           agentId,
           conversationId,
           runErrorInfo: runErrorInfo ?? undefined,
@@ -1294,6 +1320,7 @@ export async function handleIncomingMessage(
           abortSignal: turnAbortSignal,
         });
         runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
+        runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
         break;
       }
 
@@ -1392,10 +1419,12 @@ export async function handleIncomingMessage(
     });
 
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const terminalRunId = runtime.activeRunId;
     const formattedError = emitLoopErrorNotice(socket, runtime, {
       message: errorMessage,
       stopReason: "error",
       isTerminal: true,
+      runId: terminalRunId,
       agentId: agentId || undefined,
       conversationId,
       error,
@@ -1403,6 +1432,7 @@ export async function handleIncomingMessage(
       abortSignal: turnAbortSignal,
     });
     runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
+    runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
     if (isDebugEnabled()) {
       console.error("[Listen] Error handling message:", error);
     }

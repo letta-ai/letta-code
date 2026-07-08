@@ -11,7 +11,17 @@
 export type StartupTarget =
   | { action: "resume"; agentId: string; conversationId?: string }
   | { action: "select" }
-  | { action: "create" };
+  | {
+      action: "create";
+      /**
+       * Why we're creating: an explicit `--new-agent` request vs a true
+       * fresh start (nothing to resume or select). Callers map this to a
+       * default personality — e.g. the interactive CLI creates a Tutor
+       * agent for fresh starts and a standard Letta Code agent for
+       * `--new-agent`.
+       */
+      trigger: "force-new" | "fresh-start";
+    };
 
 export interface StartupResolutionInput {
   /** The pinned agent to resume when exactly one pin exists for the active org */
@@ -67,7 +77,7 @@ export function resolveStartupTarget(
 ): StartupTarget {
   // --new-agent always creates
   if (input.forceNew) {
-    return { action: "create" };
+    return { action: "create", trigger: "force-new" };
   }
 
   // Step 1: Pinned agent
@@ -128,5 +138,5 @@ export function resolveStartupTarget(
   }
 
   // Step 7: True fresh user — create default agent
-  return { action: "create" };
+  return { action: "create", trigger: "fresh-start" };
 }

@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { configureBackendMode } from "@/backend";
 import {
+  disableLocalBackendMemfsForProcess,
   getLocalBackendMemoryFilesystemRoot,
-  LOCAL_BACKEND_NO_MEMFS_ENV,
+  resetLocalBackendMemfsForProcess,
 } from "@/backend/local/paths";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -272,60 +275,75 @@ test("getShellEnv injects AGENT_ID aliases", () => {
 });
 
 test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
-  const env = runWithRuntimeContext(
-    {
-      agentId: "agent-runtime-scope",
-      conversationId: "conv-runtime-scope",
-      workingDirectory: "/tmp/runtime-scope-cwd",
-    },
-    () => getShellEnv(),
-  );
+  const runtimeCwd = mkdtempSync(path.join(tmpdir(), "runtime-scope-cwd-"));
 
-  expect(env.AGENT_ID).toBe("agent-runtime-scope");
-  expect(env.LETTA_AGENT_ID).toBe("agent-runtime-scope");
-  expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
-  expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
-  expect(env.USER_CWD).toBe("/tmp/runtime-scope-cwd");
+  try {
+    const env = runWithRuntimeContext(
+      {
+        agentId: "agent-runtime-scope",
+        agentName: "Runtime Scope Agent",
+        conversationId: "conv-runtime-scope",
+        workingDirectory: runtimeCwd,
+      },
+      () => getShellEnv(),
+    );
+
+    expect(env.AGENT_ID).toBe("agent-runtime-scope");
+    expect(env.LETTA_AGENT_ID).toBe("agent-runtime-scope");
+    expect(env.AGENT_NAME).toBe("Runtime Scope Agent");
+    expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
+    expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
+    expect(env.USER_CWD).toBe(runtimeCwd);
+  } finally {
+    rmSync(runtimeCwd, { recursive: true, force: true });
+  }
 });
 
 test("getShellEnv isolates overlapping runtime scopes", async () => {
+  const cwdA = mkdtempSync(path.join(tmpdir(), "agent-a-"));
+  const cwdB = mkdtempSync(path.join(tmpdir(), "agent-b-"));
   let releaseAgentA!: () => void;
   const waitForAgentA = new Promise<void>((resolve) => {
     releaseAgentA = resolve;
   });
 
-  const taskA = runWithRuntimeContext(
-    {
-      agentId: "agent-a",
-      conversationId: "conv-a",
-      workingDirectory: "/tmp/agent-a",
-    },
-    async () => {
-      await waitForAgentA;
-      return getShellEnv();
-    },
-  );
+  try {
+    const taskA = runWithRuntimeContext(
+      {
+        agentId: "agent-a",
+        conversationId: "conv-a",
+        workingDirectory: cwdA,
+      },
+      async () => {
+        await waitForAgentA;
+        return getShellEnv();
+      },
+    );
 
-  const taskB = runWithRuntimeContext(
-    {
-      agentId: "agent-b",
-      conversationId: "conv-b",
-      workingDirectory: "/tmp/agent-b",
-    },
-    async () => {
-      releaseAgentA();
-      return getShellEnv();
-    },
-  );
+    const taskB = runWithRuntimeContext(
+      {
+        agentId: "agent-b",
+        conversationId: "conv-b",
+        workingDirectory: cwdB,
+      },
+      async () => {
+        releaseAgentA();
+        return getShellEnv();
+      },
+    );
 
-  const [envA, envB] = await Promise.all([taskA, taskB]);
+    const [envA, envB] = await Promise.all([taskA, taskB]);
 
-  expect(envA.AGENT_ID).toBe("agent-a");
-  expect(envA.CONVERSATION_ID).toBe("conv-a");
-  expect(envA.USER_CWD).toBe("/tmp/agent-a");
-  expect(envB.AGENT_ID).toBe("agent-b");
-  expect(envB.CONVERSATION_ID).toBe("conv-b");
-  expect(envB.USER_CWD).toBe("/tmp/agent-b");
+    expect(envA.AGENT_ID).toBe("agent-a");
+    expect(envA.CONVERSATION_ID).toBe("conv-a");
+    expect(envA.USER_CWD).toBe(cwdA);
+    expect(envB.AGENT_ID).toBe("agent-b");
+    expect(envB.CONVERSATION_ID).toBe("conv-b");
+    expect(envB.USER_CWD).toBe(cwdB);
+  } finally {
+    rmSync(cwdA, { recursive: true, force: true });
+    rmSync(cwdB, { recursive: true, force: true });
+  }
 });
 
 test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", () => {
@@ -404,6 +422,49 @@ test("getShellEnv preserves inherited parent MEMORY_DIR for subagents", () => {
   });
 });
 
+test("getShellEnv preserves inherited parent memory worktree dir for subagents", () => {
+  const parentAgentId = `agent-parent-${Date.now()}`;
+  const childAgentId = `agent-child-${Date.now()}`;
+  const parentMemoryDir = getMemoryFilesystemRoot(parentAgentId);
+  const worktreeMemoryDir = path.join(
+    path.dirname(parentMemoryDir),
+    "memory-worktrees",
+    "reflection-test",
+  );
+
+  withTemporaryAgentEnv(childAgentId, () => {
+    withTemporaryEnv(
+      {
+        LETTA_CODE_AGENT_ROLE: "subagent",
+        LETTA_PARENT_AGENT_ID: parentAgentId,
+        MEMORY_DIR: worktreeMemoryDir,
+        LETTA_MEMORY_DIR: worktreeMemoryDir,
+      },
+      () => {
+        const originalIsMemfsEnabled =
+          settingsManager.isMemfsEnabled.bind(settingsManager);
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = () => false;
+
+        try {
+          const env = getShellEnv();
+          expect(env.MEMORY_DIR).toBe(worktreeMemoryDir);
+          expect(env.LETTA_MEMORY_DIR).toBe(worktreeMemoryDir);
+        } finally {
+          (
+            settingsManager as unknown as {
+              isMemfsEnabled: (id: string) => boolean;
+            }
+          ).isMemfsEnabled = originalIsMemfsEnabled;
+        }
+      },
+    );
+  });
+});
+
 test("getShellEnv injects MEMORY_DIR aliases when memfs is enabled", () => {
   withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
     const original = settingsManager.isMemfsEnabled.bind(settingsManager);
@@ -458,33 +519,33 @@ test("getShellEnv injects local backend MemFS path for --backend local", () => {
   }
 });
 
-test("getShellEnv does not inject local backend MemFS path when local --no-memfs is active", () => {
+test("getShellEnv does not inject local backend MemFS path for stateless subagent processes", () => {
   const agentId = `agent-local-no-memfs-shell-env-${Date.now()}`;
   configureBackendMode("local");
+  disableLocalBackendMemfsForProcess();
   try {
-    withTemporaryEnv({ [LOCAL_BACKEND_NO_MEMFS_ENV]: "1" }, () => {
-      withTemporaryAgentEnv(agentId, () => {
-        const original = settingsManager.isMemfsEnabled.bind(settingsManager);
+    withTemporaryAgentEnv(agentId, () => {
+      const original = settingsManager.isMemfsEnabled.bind(settingsManager);
+      (
+        settingsManager as unknown as {
+          isMemfsEnabled: (id: string) => boolean;
+        }
+      ).isMemfsEnabled = () => true;
+
+      try {
+        const env = getShellEnv();
+        expect(env.LETTA_MEMORY_DIR).toBeUndefined();
+        expect(env.MEMORY_DIR).toBeUndefined();
+      } finally {
         (
           settingsManager as unknown as {
             isMemfsEnabled: (id: string) => boolean;
           }
-        ).isMemfsEnabled = () => true;
-
-        try {
-          const env = getShellEnv();
-          expect(env.LETTA_MEMORY_DIR).toBeUndefined();
-          expect(env.MEMORY_DIR).toBeUndefined();
-        } finally {
-          (
-            settingsManager as unknown as {
-              isMemfsEnabled: (id: string) => boolean;
-            }
-          ).isMemfsEnabled = original;
-        }
-      });
+        ).isMemfsEnabled = original;
+      }
     });
   } finally {
+    resetLocalBackendMemfsForProcess();
     configureBackendMode("api");
   }
 });

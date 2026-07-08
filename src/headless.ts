@@ -4,7 +4,10 @@ import type {
   AgentState,
   MessageCreate,
 } from "@letta-ai/letta-client/resources/agents/agents";
-import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  ApprovalCreate,
+  Message as LettaMessage,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
@@ -14,6 +17,7 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { detectShellContext } from "@/utils/shell-context";
+import { createSigintAbortSignal } from "@/utils/sigint-abort";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
@@ -44,10 +48,8 @@ import {
   resolveModel,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
-import {
-  buildCreateAgentOptionsForPersonality,
-  resolvePersonalityId,
-} from "./agent/personality";
+import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
+import { resolvePersonalityId } from "./agent/personality-presets";
 import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
@@ -59,9 +61,11 @@ import {
   getBackend,
 } from "./backend";
 import {
-  isLocalBackendNoMemfsEnvEnabled,
-  LOCAL_BACKEND_NO_MEMFS_ENV,
-} from "./backend/local/paths";
+  type EnvironmentConnection,
+  resolveAgentSandboxConnectionId,
+  resolveEnvironmentConnectionId,
+  sendEnvironmentMessage,
+} from "./backend/api/environments";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -108,6 +112,10 @@ import {
   emitHeadlessConversationClose,
   emitHeadlessConversationOpen,
 } from "./headless-mod-adapter";
+import {
+  emitLocalToolCalls,
+  emitLocalToolReturns,
+} from "./headless-tool-events";
 import { computeDiffPreviews } from "./helpers/diff-preview";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import type { ModAdapter } from "./mods/mod-adapter";
@@ -143,7 +151,6 @@ import {
   prepareToolExecutionContextForScope,
 } from "./tools/toolset";
 import type {
-  AutoApprovalMessage,
   BootstrapSessionStateRequest,
   CanUseToolControlRequest,
   CanUseToolResponse,
@@ -317,12 +324,38 @@ function toBidirectionalQueuedInput(
   };
 }
 
+/**
+ * Decide what an incoming `control_request: interrupt` should do, given the
+ * current turn state. Extracted as a pure function so the policy is unit-
+ * testable and shared between the fast-path (`rl.on("line", ...)`) and the
+ * main-loop interrupt handlers.
+ *
+ * - `abort-active`: a turn is running — abort its AbortController now.
+ * - `latch`: no controller exists yet, but a user message has just been
+ *   dispatched and its controller is about to be created (the narrow
+ *   pre-controller race). Latch so the imminent turn aborts immediately.
+ * - `noop`: the session is idle (no active or starting turn). Respond success
+ *   but do NOT latch — latching here would poison the next user turn, which
+ *   would create a controller and immediately abort itself.
+ */
+export type InterruptAction = "abort-active" | "latch" | "noop";
+
+export function decideInterruptAction(state: {
+  hasActiveController: boolean;
+  turnStarting: boolean;
+}): InterruptAction {
+  if (state.hasActiveController) return "abort-active";
+  if (state.turnStarting) return "latch";
+  return "noop";
+}
+
 export const __headlessTestUtils = {
   trackTelemetryUserInputFromContent,
   shouldTrackTelemetryForQueuedMessage,
   contentToTaskNotificationText,
   toBidirectionalQueuedInput,
   prepareHeadlessToolExecutionContext,
+  waitForEnvironmentAssistantMessage,
 };
 
 type ReflectionOverrides = {
@@ -652,6 +685,214 @@ async function writeFinalHeadlessStdout(text: string): Promise<void> {
   });
 }
 
+function pageItems<T>(page: unknown): T[] {
+  if (Array.isArray(page)) return page as T[];
+  if (page && typeof page === "object") {
+    const maybePage = page as {
+      getPaginatedItems?: () => T[];
+      items?: T[];
+    };
+    if (typeof maybePage.getPaginatedItems === "function") {
+      return maybePage.getPaginatedItems();
+    }
+    if (Array.isArray(maybePage.items)) {
+      return maybePage.items;
+    }
+  }
+  return [];
+}
+
+function extractMessageText(message: LettaMessage): string {
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (
+          part &&
+          typeof part === "object" &&
+          "type" in part &&
+          part.type === "text" &&
+          "text" in part &&
+          typeof part.text === "string"
+        ) {
+          return part.text;
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
+}
+
+function isAssistantMessage(message: LettaMessage): boolean {
+  return (
+    (message as { message_type?: string }).message_type === "assistant_message"
+  );
+}
+
+function messageTime(message: LettaMessage): number {
+  const date =
+    (message as { date?: string; created_at?: string }).date ??
+    (message as { created_at?: string }).created_at;
+  return date ? new Date(date).getTime() : 0;
+}
+
+function agentLastRunCompletionMs(agent: AgentState): number | null {
+  const raw = (agent as { last_run_completion?: unknown }).last_run_completion;
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function agentLastStopReason(agent: AgentState): StopReasonType | null {
+  const raw = (agent as { last_stop_reason?: unknown }).last_stop_reason;
+  return typeof raw === "string" && raw.length > 0
+    ? (raw as StopReasonType)
+    : null;
+}
+
+async function waitForEnvironmentAssistantMessage(params: {
+  backend: ReturnType<typeof getBackend>;
+  agentId: string;
+  conversationId: string;
+  startedAtMs: number;
+  baselineLastRunCompletionMs?: number | null;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}): Promise<{ text: string; stopReason: StopReasonType | null }> {
+  const timeoutMs = params.timeoutMs ?? 10 * 60_000;
+  const pollIntervalMs = params.pollIntervalMs ?? 1_000;
+  const deadline = Date.now() + timeoutMs;
+  let lastText = "";
+  let postCompletionStableCount = 0;
+  let observedCompletion = false;
+  let observedStopReason: StopReasonType | null = null;
+
+  while (Date.now() < deadline) {
+    const freshAgent = await params.backend.retrieveAgent(params.agentId);
+    const completionMs = agentLastRunCompletionMs(freshAgent);
+    const baselineCompletionMs = params.baselineLastRunCompletionMs ?? null;
+    const wasObservedCompletion = observedCompletion;
+    if (
+      completionMs !== null &&
+      (baselineCompletionMs === null || completionMs > baselineCompletionMs) &&
+      completionMs >= params.startedAtMs - 5_000
+    ) {
+      observedCompletion = true;
+      observedStopReason = agentLastStopReason(freshAgent);
+      if (!wasObservedCompletion) {
+        postCompletionStableCount = 0;
+      }
+    }
+
+    const page =
+      params.conversationId === "default"
+        ? await params.backend.listAgentMessages(params.agentId, {
+            conversation_id: "default",
+            limit: 50,
+            order: "desc",
+          })
+        : await params.backend.listConversationMessages(params.conversationId, {
+            limit: 50,
+            order: "desc",
+          });
+
+    const messages = pageItems<LettaMessage>(page);
+    const assistant = messages
+      .filter(
+        (message) =>
+          isAssistantMessage(message) &&
+          messageTime(message) >= params.startedAtMs - 2_000,
+      )
+      .sort((a, b) => messageTime(b) - messageTime(a))[0];
+
+    const text = assistant ? extractMessageText(assistant).trim() : "";
+    if (text.length > 0) {
+      if (text === lastText) {
+        if (observedCompletion) postCompletionStableCount += 1;
+      } else {
+        lastText = text;
+        postCompletionStableCount = observedCompletion ? 1 : 0;
+      }
+      if (observedCompletion && postCompletionStableCount >= 2) {
+        return { text, stopReason: observedStopReason };
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  if (observedCompletion && lastText) {
+    return { text: lastText, stopReason: observedStopReason };
+  }
+  throw new Error("Timed out waiting for environment turn completion");
+}
+
+type ReplyEnvironmentMetadata =
+  | {
+      source: "same-environment";
+    }
+  | {
+      source: "explicit" | "cloud-sandbox";
+      input: string;
+      id: string;
+      connection_id: string;
+      device_id: string;
+      name: string;
+    };
+
+function buildEnvironmentResponseMetadata(params: {
+  source: Extract<
+    ReplyEnvironmentMetadata,
+    { source: "explicit" | "cloud-sandbox" }
+  >["source"];
+  input: string;
+  connectionId: string;
+  environment: EnvironmentConnection;
+}): ReplyEnvironmentMetadata {
+  return {
+    source: params.source,
+    input: params.input,
+    id: params.environment.id,
+    connection_id: params.connectionId,
+    device_id: params.environment.deviceId,
+    name: params.environment.connectionName,
+  };
+}
+
+function formatAgentReplyMetadata(params: {
+  agentId: string;
+  conversationId: string;
+  environment?: ReplyEnvironmentMetadata;
+}): string {
+  return JSON.stringify({
+    agent_id: params.agentId,
+    conversation_id: params.conversationId,
+    ...(params.environment ? { environment: params.environment } : {}),
+  });
+}
+
+function isCloudEnvironmentSelector(
+  selector: string | boolean | undefined,
+): boolean {
+  if (typeof selector !== "string") return false;
+  const normalized = selector.trim().toLowerCase();
+  return normalized === "cloud" || normalized === "cloud-sandbox";
+}
+
+function getEnvironmentRoutedMessagingUnsupportedReason(
+  environment: EnvironmentConnection,
+): string | null {
+  if (environment.metadata?.environmentMessageProtocol === "v2-input") {
+    return null;
+  }
+  return `Environment ${environment.connectionName} (${environment.deviceId}) is running Letta Code ${
+    environment.metadata?.lettaCodeVersion ?? "unknown"
+  } and does not advertise environment-routed headless messaging support. Update that runtime or omit --environment to use same-environment messaging.`;
+}
+
 export async function handleHeadlessCommand(
   parsedArgs: ParsedCliArgs,
   model?: string,
@@ -786,6 +1027,10 @@ export async function handleHeadlessCommand(
   // --new: Create a new conversation (for concurrent sessions)
   let forceNewConversation = values.new ?? false;
   const fromAgentId = values["from-agent"];
+  const explicitEnvironmentSelector = values.environment || values.env;
+  const usesRemoteEnvironment =
+    typeof explicitEnvironmentSelector === "string" &&
+    explicitEnvironmentSelector.trim().length > 0;
 
   // Resolve agent (same logic as interactive mode)
   let agent: AgentState | null = null;
@@ -808,13 +1053,19 @@ export async function handleHeadlessCommand(
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
   const memfsFlag = values.memfs;
-  const noMemfsFlag = values["no-memfs"];
-  const localNoMemfsRequested = Boolean(
-    backend.capabilities.localMemfs &&
-      (noMemfsFlag || isLocalBackendNoMemfsEnvEnabled()),
-  );
-  if (localNoMemfsRequested) {
-    process.env[LOCAL_BACKEND_NO_MEMFS_ENV] = "1";
+  // Newly created subagents are ephemeral and deliberately stateless: they
+  // never get memfs (no repo clone per spawn). This role-based carve-out is
+  // the only supported non-memfs path — there is no user-facing opt-out.
+  // Fork/recall subagents deploy an EXISTING (memfs-tagged) agent instead of
+  // creating one (`--agent`/`--conv`, not `--new-agent`), so they keep their
+  // memory: the tag-driven sync below handles them like any other agent.
+  const isSubagentRole = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  const isStatelessSubagent = isSubagentRole && Boolean(values["new-agent"]);
+  if (isStatelessSubagent && backend.capabilities.localMemfs) {
+    const { disableLocalBackendMemfsForProcess } = await import(
+      "@/backend/local/paths"
+    );
+    disableLocalBackendMemfsForProcess();
   }
   // Startup policy for the git-backed memory pull on session init.
   // "blocking" (default): await the pull before proceeding.
@@ -825,11 +1076,9 @@ export async function handleHeadlessCommand(
     memfsStartupRaw === "background" || memfsStartupRaw === "skip"
       ? memfsStartupRaw
       : "blocking";
-  const requestedMemoryPromptMode: "memfs" | "standard" | undefined = memfsFlag
+  const requestedMemoryPromptMode: "memfs" | undefined = memfsFlag
     ? "memfs"
-    : noMemfsFlag || localNoMemfsRequested
-      ? "standard"
-      : undefined;
+    : undefined;
   if (memfsFlag && !backend.capabilities.remoteMemfs) {
     trackHeadlessBoundaryError(
       "headless_memfs_unsupported_backend",
@@ -839,8 +1088,7 @@ export async function handleHeadlessCommand(
     console.error("Error: --memfs is not supported by this backend yet");
     process.exit(1);
   }
-  const shouldAutoEnableMemfsForNewAgent =
-    !memfsFlag && !noMemfsFlag && !localNoMemfsRequested;
+  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !isStatelessSubagent;
   const fromAfFile = resolveImportFlagAlias({
     importFlagValue: values.import,
     fromAfFlagValue: values["from-af"],
@@ -1147,7 +1395,6 @@ export async function handleHeadlessCommand(
         modelOverride: model,
         stripMessages: true,
         stripSkills: false,
-        enableMemfs: noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
       });
     } else {
       // Import from local file
@@ -1157,7 +1404,6 @@ export async function handleHeadlessCommand(
         modelOverride: model,
         stripMessages: true,
         stripSkills: false,
-        enableMemfs: noMemfsFlag || localNoMemfsRequested ? false : memfsFlag,
       });
     }
 
@@ -1219,7 +1465,7 @@ export async function handleHeadlessCommand(
       (await isLettaCloud());
     const effectiveMemoryMode: MemoryPromptMode | undefined = backend
       .capabilities.localMemfs
-      ? localNoMemfsRequested
+      ? isStatelessSubagent
         ? "standard"
         : "local-memfs"
       : (requestedMemoryPromptMode ??
@@ -1384,7 +1630,7 @@ export async function handleHeadlessCommand(
       "@/agent/memory-filesystem"
     );
     const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
-    if (!memfsEnabled && !noMemfsFlag && (await isLettaCloud())) {
+    if (!memfsEnabled && !isStatelessSubagent && (await isLettaCloud())) {
       // Auto-enable memfs for existing agents that don't have it yet.
       // Matches interactive mode behavior where memfs defaults to enabled.
       startupMemfsFlag = true;
@@ -1409,15 +1655,13 @@ export async function handleHeadlessCommand(
   //   "skip"                 – skip the pull this session.
   if (!backend.capabilities.remoteMemfs) {
     if (backend.capabilities.localMemfs) {
-      settingsManager.setMemfsEnabled(agent.id, !localNoMemfsRequested);
-    } else if (noMemfsFlag || localNoMemfsRequested) {
-      settingsManager.setMemfsEnabled(agent.id, false);
+      settingsManager.setMemfsEnabled(agent.id, !isStatelessSubagent);
     }
   } else if (memfsStartupPolicy === "skip") {
-    // Run enable/disable logic but skip the git pull.
+    // Run enable logic but skip the git pull.
     try {
       const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
-      await applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
+      await applyMemfsFlags(agent.id, startupMemfsFlag, {
         pullOnExistingRepo: false,
         agentTags: agent.tags,
         skipPromptUpdate: forceNew,
@@ -1436,7 +1680,7 @@ export async function handleHeadlessCommand(
   } else if (memfsStartupPolicy === "background") {
     // Fire pull async; don't block session initialisation.
     const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
-    memfsBgPromise = applyMemfsFlags(agent.id, startupMemfsFlag, noMemfsFlag, {
+    memfsBgPromise = applyMemfsFlags(agent.id, startupMemfsFlag, {
       pullOnExistingRepo: true,
       agentTags: agent.tags,
       skipPromptUpdate: forceNew,
@@ -1455,16 +1699,11 @@ export async function handleHeadlessCommand(
     // "blocking" — original behaviour.
     try {
       const { applyMemfsFlags } = await import("@/agent/memory-filesystem");
-      const memfsResult = await applyMemfsFlags(
-        agent.id,
-        startupMemfsFlag,
-        noMemfsFlag,
-        {
-          pullOnExistingRepo: true,
-          agentTags: agent.tags,
-          skipPromptUpdate: forceNew,
-        },
-      );
+      const memfsResult = await applyMemfsFlags(agent.id, startupMemfsFlag, {
+        pullOnExistingRepo: true,
+        agentTags: agent.tags,
+        skipPromptUpdate: forceNew,
+      });
       if (memfsResult.pullSummary?.includes("CONFLICT")) {
         trackHeadlessBoundaryError(
           "headless_memfs_conflict",
@@ -1653,7 +1892,12 @@ export async function handleHeadlessCommand(
   }
 
   // Set agent context for tools that need it (e.g., Skill tool, Task tool)
-  setAgentContext(agent.id, skillsDirectory, resolvedSkillSources);
+  setAgentContext(
+    agent.id,
+    skillsDirectory,
+    resolvedSkillSources,
+    agent.name ?? null,
+  );
 
   // Validate output format
   const outputFormat = values["output-format"] || "text";
@@ -1667,6 +1911,12 @@ export async function handleHeadlessCommand(
   if (inputFormat && inputFormat !== "stream-json") {
     console.error(
       `Error: Invalid input format "${inputFormat}". Valid formats: stream-json`,
+    );
+    process.exit(1);
+  }
+  if (usesRemoteEnvironment && isBidirectionalMode) {
+    console.error(
+      "Error: remote environment routing cannot be used with --input-format stream-json",
     );
     process.exit(1);
   }
@@ -1979,29 +2229,33 @@ ${SYSTEM_REMINDER_CLOSE}
     pushPart(systemReminder);
   }
 
-  const lastRunAt = (agent as { last_run_completion?: string })
-    .last_run_completion;
-  const { parts: sharedReminderParts } = await buildSharedReminderParts({
-    mode: isSubagent ? "subagent" : "headless-one-shot",
-    agent: {
-      id: agent.id,
-      name: agent.name,
-      description: agent.description,
-      lastRunAt: lastRunAt ?? null,
-      conversationId,
-    },
-    state: sharedReminderState,
-    systemInfoReminderEnabled,
-    workingDirectory: getCurrentWorkingDirectory(),
-    skillSources: resolvedSkillSources,
-    shellContext: detectShellContext(),
-  });
-  for (const part of sharedReminderParts) {
-    pushPart(part.text);
+  if (!usesRemoteEnvironment) {
+    const lastRunAt = (agent as { last_run_completion?: string })
+      .last_run_completion;
+    const { parts: sharedReminderParts } = await buildSharedReminderParts({
+      mode: isSubagent ? "subagent" : "headless-one-shot",
+      agent: {
+        id: agent.id,
+        name: agent.name,
+        description: agent.description,
+        lastRunAt: lastRunAt ?? null,
+        conversationId,
+      },
+      state: sharedReminderState,
+      systemInfoReminderEnabled,
+      workingDirectory: getCurrentWorkingDirectory(),
+      skillSources: resolvedSkillSources,
+      shellContext: detectShellContext(),
+    });
+    for (const part of sharedReminderParts) {
+      pushPart(part.text);
+    }
   }
 
-  // Pre-load specific skills' full content (used by subagents with skills: field)
-  if (preLoadSkillsRaw) {
+  // Pre-load specific skills' full content (used by subagents with skills: field).
+  // Environment-routed turns run in the selected remote runtime, which injects
+  // its own local context and skills, so avoid prepending this process' context.
+  if (preLoadSkillsRaw && !usesRemoteEnvironment) {
     const { readFile: readFileAsync } = await import("node:fs/promises");
     const { skillPathById } = await buildClientSkillsPayload({
       agentId: agent.id,
@@ -2042,6 +2296,156 @@ ${SYSTEM_REMINDER_CLOSE}
     "user",
     agent.llm_config?.model ?? "unknown",
   );
+
+  if (usesRemoteEnvironment) {
+    const environmentSelector = String(explicitEnvironmentSelector);
+    const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
+    const environmentRouting = useCloudSandbox
+      ? await resolveAgentSandboxConnectionId(agent.id)
+      : await resolveEnvironmentConnectionId(environmentSelector);
+    const { connectionId, environment } = environmentRouting;
+    const responseEnvironment = buildEnvironmentResponseMetadata({
+      source: useCloudSandbox ? "cloud-sandbox" : "explicit",
+      input: environmentSelector,
+      connectionId,
+      environment,
+    });
+    const unsupportedReason =
+      getEnvironmentRoutedMessagingUnsupportedReason(environment);
+    if (unsupportedReason) {
+      if (outputFormat === "json") {
+        await writeFinalHeadlessStdout(
+          `${JSON.stringify(
+            {
+              type: "result",
+              subtype: "error",
+              is_error: true,
+              duration_ms: Math.round(sessionStats.getSnapshot().totalWallMs),
+              duration_api_ms: Math.round(
+                sessionStats.getSnapshot().totalApiMs,
+              ),
+              num_turns: 0,
+              result: unsupportedReason,
+              agent_id: agent.id,
+              conversation_id: conversationId,
+              environment: responseEnvironment,
+              usage: null,
+              stop_reason: "error",
+            },
+            null,
+            2,
+          )}\n`,
+        );
+      } else if (outputFormat === "stream-json") {
+        const resultEvent: ResultMessage & {
+          environment: ReplyEnvironmentMetadata;
+        } = {
+          type: "result",
+          subtype: "error",
+          session_id: sessionId,
+          duration_ms: Math.round(sessionStats.getSnapshot().totalWallMs),
+          duration_api_ms: Math.round(sessionStats.getSnapshot().totalApiMs),
+          num_turns: 0,
+          result: unsupportedReason,
+          agent_id: agent.id,
+          conversation_id: conversationId,
+          environment: responseEnvironment,
+          run_ids: [],
+          usage: null,
+          uuid: `result-${agent.id}-${Date.now()}`,
+          stop_reason: "error",
+        };
+        writeWireMessage(resultEvent);
+      } else {
+        console.error(`Error: ${unsupportedReason}`);
+        await writeFinalHeadlessStdout(
+          `${formatAgentReplyMetadata({
+            agentId: agent.id,
+            conversationId,
+            environment: responseEnvironment,
+          })}\n`,
+        );
+      }
+      await exitHeadless(1, "headless_environment_unsupported");
+    }
+    const startedAtMs = Date.now();
+    const baselineLastRunCompletionMs = agentLastRunCompletionMs(agent);
+    await sendEnvironmentMessage(connectionId, {
+      agentId: agent.id,
+      conversationId,
+      messages: [
+        {
+          role: "user",
+          content: contentParts,
+          client_message_id: randomUUID(),
+          otid: randomUUID(),
+        },
+      ],
+    });
+
+    const environmentResult = await waitForEnvironmentAssistantMessage({
+      backend,
+      agentId: agent.id,
+      conversationId,
+      startedAtMs,
+      baselineLastRunCompletionMs,
+    });
+    const resultText = environmentResult.text;
+    const stats = sessionStats.getSnapshot();
+
+    if (outputFormat === "json") {
+      await writeFinalHeadlessStdout(
+        `${JSON.stringify(
+          {
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            duration_ms: Math.round(stats.totalWallMs),
+            duration_api_ms: Math.round(stats.totalApiMs),
+            num_turns: 1,
+            result: resultText,
+            agent_id: agent.id,
+            conversation_id: conversationId,
+            environment: responseEnvironment,
+            usage: null,
+            ...(environmentResult.stopReason &&
+            environmentResult.stopReason !== "end_turn"
+              ? { stop_reason: environmentResult.stopReason }
+              : {}),
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    } else if (outputFormat === "stream-json") {
+      const resultEvent: ResultMessage & {
+        environment: ReplyEnvironmentMetadata;
+      } = {
+        type: "result",
+        subtype: "success",
+        session_id: sessionId,
+        duration_ms: Math.round(stats.totalWallMs),
+        duration_api_ms: Math.round(stats.totalApiMs),
+        num_turns: 1,
+        result: resultText,
+        agent_id: agent.id,
+        conversation_id: conversationId,
+        environment: responseEnvironment,
+        run_ids: [],
+        usage: null,
+        uuid: `result-${agent.id}-${Date.now()}`,
+        ...(environmentResult.stopReason &&
+        environmentResult.stopReason !== "end_turn"
+          ? { stop_reason: environmentResult.stopReason }
+          : {}),
+      };
+      writeWireMessage(resultEvent);
+    } else {
+      await writeFinalHeadlessStdout(`${resultText}\n`);
+    }
+
+    await exitHeadless(0, "headless_environment_message_complete");
+  }
 
   // Start with the user message
   let currentInput: Array<MessageCreate | ApprovalCreate> = [
@@ -2121,8 +2525,30 @@ ${SYSTEM_REMINDER_CLOSE}
     }
   };
 
+  // One-shot mode has no input loop, so wire SIGINT directly into the turn.
+  const sigintSignal = createSigintAbortSignal();
+  const exitInterrupted = async (): Promise<never> => {
+    if (outputFormat === "stream-json") {
+      const errorMsg: ErrorMessage = {
+        type: "error",
+        message: "Interrupted by SIGINT",
+        stop_reason: "cancelled",
+        session_id: sessionId,
+        uuid: `error-interrupted-${randomUUID()}`,
+      };
+      await writeWireMessageAsync(errorMsg);
+    } else {
+      console.error("Interrupted by SIGINT");
+    }
+    return exitHeadless(130, "headless_sigint_interrupted");
+  };
+
   try {
     while (true) {
+      if (sigintSignal.aborted) {
+        await exitInterrupted();
+      }
+
       const hasApprovalContinuation = currentInput.some(
         (item) => item.type === "approval",
       );
@@ -2175,14 +2601,23 @@ ${SYSTEM_REMINDER_CLOSE}
           modEvents: headlessModAdapter.events,
         });
         availableTools = turnToolContext.availableTools;
-        stream = await sendMessageStream(conversationId, currentInput, {
-          agentId: agent.id,
-          overrideModel: overrideModelHandle,
-          preparedToolContext:
-            turnToolContext.preparedToolContext.preparedToolContext,
-        });
+        stream = await sendMessageStream(
+          conversationId,
+          currentInput,
+          {
+            agentId: agent.id,
+            overrideModel: overrideModelHandle,
+            preparedToolContext:
+              turnToolContext.preparedToolContext.preparedToolContext,
+          },
+          { maxRetries: 0, signal: sigintSignal },
+        );
         turnToolContextId = getStreamToolContextId(stream);
       } catch (preStreamError) {
+        if (sigintSignal.aborted) {
+          await exitInterrupted();
+        }
+
         // Extract error detail using shared helper (handles nested/direct/message shapes)
         const errorDetail = extractConflictDetail(preStreamError);
 
@@ -2365,14 +2800,10 @@ ${SYSTEM_REMINDER_CLOSE}
       let approvalPendingRecovery = false;
 
       if (outputFormat === "stream-json") {
-        // Track approval requests across streamed chunks
-        const autoApprovalEmitted = new Set<string>();
-
-        const streamJsonHook: DrainStreamHook = async ({
+        const streamJsonHook: DrainStreamHook = ({
           chunk,
           shouldOutput,
           errorInfo,
-          updatedApproval,
         }) => {
           let shouldOutputChunk = shouldOutput;
 
@@ -2420,40 +2851,16 @@ ${SYSTEM_REMINDER_CLOSE}
             return { stopReason: "error", shouldAccumulate: true };
           }
 
-          // Check if this approval will be auto-approved. Dedup per tool_call_id
+          // Approval-flow chunks are omitted from stream-json so the stream
+          // matches other coding agents (Claude Code / Codex): the canonical
+          // tool_call_message emitted post-drain is the single call event, and
+          // approvals are handled out-of-band. See emitLocalToolCalls.
+          const messageType = (chunk as { message_type?: string }).message_type;
           if (
-            updatedApproval &&
-            !autoApprovalEmitted.has(updatedApproval.toolCallId)
+            messageType === "approval_request_message" ||
+            messageType === "approval_response_message"
           ) {
-            const { autoAllowed } = await classifyApprovals([updatedApproval], {
-              alwaysRequiresUserInput: isInteractiveApprovalTool,
-              requireArgsForAutoApprove: true,
-              missingNameReason: "Tool call incomplete - missing name",
-              toolContextId: turnToolContextId ?? undefined,
-            });
-
-            const [approval] = autoAllowed;
-            if (approval) {
-              const permission = approval.permission;
-              shouldOutputChunk = false;
-              const autoApprovalMsg: AutoApprovalMessage = {
-                type: "auto_approval",
-                tool_call: {
-                  name: approval.approval.toolName,
-                  tool_call_id: approval.approval.toolCallId,
-                  arguments: approval.approval.toolArgs || "{}",
-                },
-                reason: permission.reason || "Allowed by permission rule",
-                matched_rule:
-                  "matchedRule" in permission && permission.matchedRule
-                    ? permission.matchedRule
-                    : "auto-approved",
-                session_id: sessionId,
-                uuid: `auto-approval-${approval.approval.toolCallId}`,
-              };
-              writeWireMessage(autoApprovalMsg);
-              autoApprovalEmitted.add(approval.approval.toolCallId);
-            }
+            shouldOutputChunk = false;
           }
 
           if (shouldOutputChunk) {
@@ -2489,7 +2896,7 @@ ${SYSTEM_REMINDER_CLOSE}
           stream,
           buffers,
           () => {},
-          undefined,
+          sigintSignal,
           undefined,
           streamJsonHook,
           reminderContextTracker,
@@ -2505,7 +2912,7 @@ ${SYSTEM_REMINDER_CLOSE}
           stream,
           buffers,
           () => {}, // No UI refresh needed in headless mode
-          undefined,
+          sigintSignal,
           undefined,
           undefined,
           reminderContextTracker,
@@ -2519,6 +2926,11 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
+
+      // Exit before dispatching tool calls produced after an interrupt.
+      if (stopReason === "cancelled" || sigintSignal.aborted) {
+        await exitInterrupted();
+      }
 
       // Check max turns after each turn (server may have taken multiple steps),
       // but defer the limit when we're still resolving pending approvals.
@@ -2645,13 +3057,31 @@ ${SYSTEM_REMINDER_CLOSE}
         const { executeApprovalBatch } = await import(
           "@/agent/approval-execution"
         );
+
+        // Local tools execute client-side, so their calls + returns never reach
+        // the server stream. Surface them on the wire so stream-json consumers get
+        // the same tool_call_message → tool_return_message pairing as server tools.
+        if (outputFormat === "stream-json") {
+          emitLocalToolCalls(decisions, sessionId);
+        }
+
         const executedResults = await executeApprovalBatch(
           decisions,
           undefined,
           {
+            abortSignal: sigintSignal,
             toolContextId: turnToolContextId ?? undefined,
           },
         );
+
+        // Don't send interrupted tool results back for another provider round.
+        if (sigintSignal.aborted) {
+          await exitInterrupted();
+        }
+
+        if (outputFormat === "stream-json") {
+          emitLocalToolReturns(executedResults, sessionId);
+        }
 
         // Send all results in one batch
         const approvalInputWithOtid = {
@@ -3148,6 +3578,9 @@ ${SYSTEM_REMINDER_CLOSE}
       result: resultText,
       agent_id: agent.id,
       conversation_id: conversationId,
+      ...(fromAgentId
+        ? { environment: { source: "same-environment" as const } }
+        : {}),
       usage,
     };
     await writeFinalHeadlessStdout(`${JSON.stringify(output, null, 2)}\n`);
@@ -3168,7 +3601,9 @@ ${SYSTEM_REMINDER_CLOSE}
       allRunIds.size > 0
         ? `result-${Array.from(allRunIds).pop()}`
         : `result-${agent.id}`;
-    const resultEvent: ResultMessage = {
+    const resultEvent: ResultMessage & {
+      environment?: ReplyEnvironmentMetadata;
+    } = {
       type: "result",
       subtype: "success",
       session_id: sessionId,
@@ -3178,6 +3613,9 @@ ${SYSTEM_REMINDER_CLOSE}
       result: resultText,
       agent_id: agent.id,
       conversation_id: conversationId,
+      ...(fromAgentId
+        ? { environment: { source: "same-environment" as const } }
+        : {}),
       run_ids: Array.from(allRunIds),
       usage,
       uuid: resultUuid,
@@ -3276,6 +3714,17 @@ async function runBidirectionalMode(
 
   // Track current operation for interrupt support
   let currentAbortController: AbortController | null = null;
+  // Latch: an interrupt may arrive on stdin between the user message and
+  // when the abort controller for that turn is created (the gap is small but
+  // real — readline fires the next line before the main loop's microtask
+  // creating the controller runs). When that happens, set this flag so the
+  // turn aborts immediately after creation.
+  let pendingInterrupt = false;
+  // True only in the narrow window between a user message being handed to the
+  // main loop and its AbortController being created. Gates `pendingInterrupt`
+  // so an *idle* interrupt (no turn running or starting) is a no-op success
+  // instead of poisoning the next user turn. See decideInterruptAction.
+  let turnStarting = false;
   const reminderContextTracker = createContextTracker();
   const sharedReminderState = createSharedReminderState();
   const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
@@ -3287,6 +3736,7 @@ async function runBidirectionalMode(
       conversationId,
       memfsEnabled: settingsManager.isMemfsEnabled(agent.id),
       triggerSource,
+      reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
       systemPrompt: agent.system ?? undefined,
       recompileByConversation: systemPromptRecompileByConversation,
@@ -3405,6 +3855,11 @@ async function runBidirectionalMode(
   };
 
   let turnInProgress = false;
+  // Set when a turn ends interrupted (aborted mid-flight). A cancel during a
+  // tool's approval gate leaves the agent in `requires_approval` with a
+  // dangling approval; the next user turn must clear it before sending or the
+  // run errors on stale state (surfaces downstream as a bare "refusal").
+  let priorTurnInterrupted = false;
 
   const msgQueueRuntime = new QueueRuntime({
     callbacks: {
@@ -3540,7 +3995,68 @@ async function runBidirectionalMode(
   // Feed lines into queue or resolver
   rl.on("line", (line) => {
     maybeNotifyBlocked(line);
+    // Fast path: handle control_request:interrupt synchronously so we can
+    // abort an in-flight drain without waiting for the main loop to dequeue.
+    // Without this, a runaway thinking turn never sees the interrupt because
+    // `getNextLine()` isn't called until the current drain returns.
+    let parsedLine: {
+      type?: string;
+      request?: { subtype?: string };
+      request_id?: string | number;
+    } | null = null;
+    try {
+      parsedLine = JSON.parse(line);
+    } catch {
+      // Not JSON — the main loop will surface the parse error.
+    }
+    const interruptRequestId =
+      parsedLine?.type === "control_request" &&
+      parsedLine?.request?.subtype === "interrupt"
+        ? String(parsedLine.request_id ?? "")
+        : null;
+    if (interruptRequestId !== null) {
+      const action = decideInterruptAction({
+        hasActiveController: currentAbortController !== null,
+        turnStarting,
+      });
+      if (action === "abort-active") {
+        // Abort the in-flight turn. Do NOT null the controller here — the
+        // turn's epilogue (line ~4275) reads currentAbortController?.signal.aborted
+        // to classify the result as "interrupted" vs "error". The `finally`
+        // block at the bottom of the user-message branch is what owns nulling.
+        (currentAbortController as AbortController).abort();
+        if (lineResolver) {
+          // If the turn is blocked waiting for a permission/external-tool
+          // response, the fast path consumed this interrupt before getNextLine()
+          // could see it. Wake that waiter so the aborted turn can unwind.
+          const resolve = lineResolver;
+          lineResolver = null;
+          resolve(null);
+        }
+      } else if (action === "latch") {
+        // Narrow pre-controller race: a user message was just dispatched but
+        // its AbortController isn't created yet. Latch so the imminent turn
+        // aborts. An idle interrupt ("noop") must NOT latch — that would
+        // poison the next user turn.
+        pendingInterrupt = true;
+      }
+      const interruptResponse: ControlResponse = {
+        type: "control_response",
+        response: {
+          subtype: "success",
+          request_id: interruptRequestId,
+        },
+        session_id: sessionId,
+        uuid: randomUUID(),
+      };
+      writeWireMessage(interruptResponse);
+      return;
+    }
     if (lineResolver) {
+      // Handing a user message to a waiting main loop opens the pre-controller
+      // race window: mark turnStarting so an interrupt arriving in the same
+      // stdin burst (before the controller exists) latches via "latch" above.
+      if (parsedLine?.type === "user") turnStarting = true;
       const resolve = lineResolver;
       lineResolver = null;
       resolve(line);
@@ -3834,10 +4350,19 @@ async function runBidirectionalMode(
         };
         writeWireMessage(initResponse);
       } else if (subtype === "interrupt") {
-        // Abort current operation if any
-        if (currentAbortController !== null) {
+        // Abort current operation if any. Do NOT null the controller — the
+        // turn's epilogue (line ~4415) reads currentAbortController?.signal.aborted
+        // to classify the result as "interrupted" vs "error", and the
+        // user-message branch's `finally` is what owns nulling. Mirrors the
+        // fast path in rl.on("line", ...).
+        if (
+          currentAbortController !== null &&
+          decideInterruptAction({
+            hasActiveController: true,
+            turnStarting,
+          }) === "abort-active"
+        ) {
           (currentAbortController as AbortController).abort();
-          currentAbortController = null;
         }
         const interruptResponse: ControlResponse = {
           type: "control_response",
@@ -4095,11 +4620,24 @@ async function runBidirectionalMode(
 
       const userContent = mergeBidirectionalQueuedInput(queuedInputs);
       if (userContent === null) {
+        // No turn will start — clear the pre-controller window so a latched
+        // interrupt doesn't carry over to a later, unrelated turn.
+        turnStarting = false;
+        pendingInterrupt = false;
         continue;
       }
 
-      // Create abort controller for this operation
+      // Create abort controller for this operation.  Drain any latched
+      // interrupt that arrived before the controller existed (race between
+      // the readline 'line' event and the microtask that creates the
+      // controller — see rl.on("line", ...) above).
       currentAbortController = new AbortController();
+      if (pendingInterrupt) {
+        pendingInterrupt = false;
+        currentAbortController.abort();
+      }
+      // Controller now exists — close the pre-controller race window.
+      turnStarting = false;
 
       turnInProgress = true;
       try {
@@ -4169,6 +4707,28 @@ async function runBidirectionalMode(
           continue;
         }
         currentInput = turnStartEmission.input;
+
+        // If the previous turn was interrupted mid-tool-call, the agent may be
+        // left in `requires_approval` with a dangling approval. Sending this
+        // fresh turn against that stale state makes the run error (a silent
+        // "refusal" downstream). Clear it first, reusing the same recovery the
+        // resume path uses. Best-effort: a recovery failure must not abort the
+        // new turn. (PR #2631 — handle interrupts.)
+        if (priorTurnInterrupted) {
+          priorTurnInterrupted = false;
+          try {
+            await resolveAllPendingApprovals();
+          } catch (recoveryError) {
+            debugWarn(
+              "approval",
+              `Post-interrupt approval recovery failed: ${
+                recoveryError instanceof Error
+                  ? recoveryError.message
+                  : String(recoveryError)
+              }`,
+            );
+          }
+        }
 
         // Approval handling loop - continue until end_turn or error
         while (true) {
@@ -4318,6 +4878,16 @@ async function runBidirectionalMode(
               return { shouldAccumulate: true };
             }
 
+            // Omit approval-flow chunks from stream-json (see one-shot path).
+            const messageType = (chunk as { message_type?: string })
+              .message_type;
+            if (
+              messageType === "approval_request_message" ||
+              messageType === "approval_response_message"
+            ) {
+              return { shouldAccumulate: true };
+            }
+
             const chunkWithIds = chunk as typeof chunk & {
               otid?: string;
               id?: string;
@@ -4425,26 +4995,6 @@ async function runBidirectionalMode(
               })),
             ];
 
-            for (const approvalItem of autoAllowed) {
-              const permission = approvalItem.permission;
-              const autoApprovalMsg: AutoApprovalMessage = {
-                type: "auto_approval",
-                tool_call: {
-                  name: approvalItem.approval.toolName,
-                  tool_call_id: approvalItem.approval.toolCallId,
-                  arguments: approvalItem.approval.toolArgs,
-                },
-                reason: permission.reason || "auto-approved",
-                matched_rule:
-                  "matchedRule" in permission && permission.matchedRule
-                    ? permission.matchedRule
-                    : "auto-approved",
-                session_id: sessionId,
-                uuid: `auto-approval-${approvalItem.approval.toolCallId}`,
-              };
-              writeWireMessage(autoApprovalMsg);
-            }
-
             for (const ac of needsUserInput) {
               // permission.decision is ask/alwaysAsk - request permission from SDK
               const permResponse = await requestPermission(
@@ -4468,21 +5018,6 @@ async function runBidirectionalMode(
                   approval: finalApproval,
                   matchedRule: "SDK callback approved",
                 });
-
-                // Emit auto_approval event for SDK-approved tool
-                const autoApprovalMsg: AutoApprovalMessage = {
-                  type: "auto_approval",
-                  tool_call: {
-                    name: finalApproval.toolName,
-                    tool_call_id: finalApproval.toolCallId,
-                    arguments: finalApproval.toolArgs,
-                  },
-                  reason: permResponse.reason || "SDK callback approved",
-                  matched_rule: "canUseTool callback",
-                  session_id: sessionId,
-                  uuid: `auto-approval-${ac.approval.toolCallId}`,
-                };
-                writeWireMessage(autoApprovalMsg);
               } else {
                 decisions.push({
                   type: "deny",
@@ -4496,11 +5031,18 @@ async function runBidirectionalMode(
             const { executeApprovalBatch } = await import(
               "@/agent/approval-execution"
             );
+
+            // Bidirectional mode always emits stream-json. Surface locally
+            // executed tool calls + returns (see one-shot path above).
+            emitLocalToolCalls(decisions, sessionId);
+
             const executedResults = await executeApprovalBatch(
               decisions,
               undefined,
               { toolContextId: turnToolContextId ?? undefined },
             );
+
+            emitLocalToolReturns(executedResults, sessionId);
 
             // Send approval results back to continue
             const approvalInputWithOtid = {
@@ -4671,6 +5213,9 @@ async function runBidirectionalMode(
         });
         turnInProgress = false;
         blockedEmittedThisTurn = false;
+        // Remember whether this turn was interrupted so the next user turn can
+        // clear any dangling approval before sending (see priorTurnInterrupted).
+        priorTurnInterrupted = currentAbortController?.signal.aborted === true;
         currentAbortController = null;
       }
       continue;

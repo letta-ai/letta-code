@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { actingUserRequestOptions } from "@/agent/acting-user";
 import { getBackend } from "@/backend";
 import type {
   AgentCreateCommand,
@@ -145,7 +146,14 @@ export async function handleAgentConversationManagementCommand(
 
   if (parsed.type === "agent_create") {
     try {
-      const agent = await backend.createAgent(parsed.body);
+      const { prepareRawCreateAgentBodyForMemfs, enableMemfsIfCloud } =
+        await import("@/agent/memory-filesystem");
+      const body = await prepareRawCreateAgentBodyForMemfs(parsed.body);
+      const agent = await backend.createAgent(body);
+      // Finish memfs setup (settings, repo clone, legacy tool detach) without
+      // blocking the response. The tag is already stamped at creation, so
+      // lazy sync paths can complete this even if the process dies here.
+      void enableMemfsIfCloud(agent.id);
       safeSocketSend(
         socket,
         {
@@ -302,7 +310,10 @@ export async function handleAgentConversationManagementCommand(
 
   if (parsed.type === "conversation_create") {
     try {
-      const conversation = await backend.createConversation(parsed.body);
+      const conversation = await backend.createConversation(
+        parsed.body,
+        actingUserRequestOptions(parsed.acting_user_id),
+      );
       safeSocketSend(
         socket,
         {
@@ -410,6 +421,7 @@ export async function handleAgentConversationManagementCommand(
           ...(typeof parsed.body?.hidden === "boolean"
             ? { hidden: parsed.body.hidden }
             : {}),
+          ...(actingUserRequestOptions(parsed.acting_user_id) ?? {}),
         },
       );
       safeSocketSend(

@@ -12,25 +12,33 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
+import {
+  getSubagentLifecycleSnapshot,
+  subscribeToSubagentLifecycle,
+} from "@/agent/subagent-state";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
-import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
+import {
+  PRODUCT_STATUS_SPINNER_INTERVAL_MS,
+  PRODUCT_STATUS_SPINNER_PULSE_INTERVAL_MS,
+  withDefaultProductStatusPanel,
+} from "@/cli/display/product-status/default";
 import { shouldRenderDefaultStatuslineRenderer } from "@/cli/display/statusline/default-renderer-activation";
 import { truncateToWidth } from "@/cli/display/statusline/formatting";
 import {
-  DEFAULT_STATUSLINE_RENDERER_ID,
-  getBuiltinStatuslineRenderer,
-} from "@/cli/display/statusline/registry";
-import { buildDefaultStatuslineParts } from "@/cli/display/statusline/renderers/Default";
+  buildDefaultStatuslineParts,
+  renderDefaultStatusline,
+} from "@/cli/display/statusline/renderers/Default";
+import type { StatuslineUiContext } from "@/cli/display/statusline/types";
 import { bytesToTokens, formatCompact } from "@/cli/helpers/format";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import {
   type ExecutionPhase,
   getPhaseVisual,
 } from "@/cli/helpers/phase-visuals";
-import type { StatusLinePayload } from "@/cli/helpers/status-line-payload";
 import { getRandomThinkingTip } from "@/cli/helpers/thinking-messages";
 import { useShimmerAnimation } from "@/cli/hooks/use-shimmer-animation";
 import { useTokenSmoothing } from "@/cli/hooks/use-token-smoothing";
@@ -45,11 +53,11 @@ import { permissionMode } from "@/permissions/mode";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { settingsManager } from "@/settings-manager";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
+import { BRAILLE_SPINNER_FRAMES } from "./BlinkingSpinner";
 import { colors } from "./colors";
 import { InputAssist } from "./InputAssist";
 import { ModPanelRow, renderModPanelLines } from "./ModPanelRow";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
-import { ProductStatusRow } from "./ProductStatusRow";
 import { QueuedMessages } from "./QueuedMessages";
 import { ShimmerText } from "./ShimmerText";
 import {
@@ -447,14 +455,14 @@ const StatuslineSlot = memo(function StatuslineSlot({
   modeColor,
   modeGlyph,
   showExitHint,
-  currentModelProvider,
   isOpenAICodexProvider,
   isByokProvider,
-  isLocalBackend = false,
   hasTemporaryModelOverride,
   hideFooter,
   rightColumnWidth,
-  statusLinePayload,
+  modContext,
+  subagentLifecycleSnapshot: _subagentLifecycleSnapshot,
+  subagentLifecycleTick: _subagentLifecycleTick,
   modAdapter,
   transientHint,
 }: {
@@ -465,14 +473,14 @@ const StatuslineSlot = memo(function StatuslineSlot({
   modeColor: string | null;
   modeGlyph?: string | null;
   showExitHint: boolean;
-  currentModelProvider?: string | null;
   isOpenAICodexProvider: boolean;
   isByokProvider: boolean;
-  isLocalBackend?: boolean;
   hasTemporaryModelOverride?: boolean;
   hideFooter: boolean;
   rightColumnWidth: number;
-  statusLinePayload: StatusLinePayload;
+  modContext: ModContext;
+  subagentLifecycleSnapshot: ReturnType<typeof getSubagentLifecycleSnapshot>;
+  subagentLifecycleTick: number;
   modAdapter: LocalModAdapter;
   transientHint?: StatuslineTransientHint | null;
 }) {
@@ -483,21 +491,12 @@ const StatuslineSlot = memo(function StatuslineSlot({
     escapePressed,
   });
 
-  const statuslineContext = buildStatuslineRenderContext({
-    payload: statusLinePayload,
-    ui: {
-      currentModelProvider: currentModelProvider ?? null,
-      hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
-      isByokProvider,
-      isLocalBackend,
-      isOpenAICodexProvider,
-      rightColumnWidth,
-    },
-  });
-
-  const builtInStatuslineRenderer = getBuiltinStatuslineRenderer(
-    DEFAULT_STATUSLINE_RENDERER_ID,
-  );
+  const statuslineUi: StatuslineUiContext = {
+    hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
+    isByokProvider,
+    isOpenAICodexProvider,
+    rightColumnWidth,
+  };
 
   // The order-0 "primary" panel overrides the built-in agent · model line.
   const panels = modAdapter.registry?.ui.panels ?? {};
@@ -511,12 +510,8 @@ const StatuslineSlot = memo(function StatuslineSlot({
   const idleSlotAvailable = !hideFooterContent && !preemption && !transientHint;
 
   if (idleSlotAvailable && primaryPanel) {
-    const rowWidth = Math.max(0, (statuslineContext.terminalWidth ?? 0) - 1);
-    const lines = renderModPanelLines(
-      primaryPanel,
-      rowWidth,
-      statuslineContext,
-    );
+    const rowWidth = Math.max(0, (modContext.terminalWidth ?? 0) - 1);
+    const lines = renderModPanelLines(primaryPanel, rowWidth, modContext);
     if (lines.length > 0) {
       return (
         <Box flexDirection="column">
@@ -534,7 +529,8 @@ const StatuslineSlot = memo(function StatuslineSlot({
   }
 
   const defaultStatuslineParts = buildDefaultStatuslineParts(
-    statuslineContext,
+    modContext,
+    statuslineUi,
     rightColumnWidth,
   );
   const rightLabel = defaultStatuslineParts.right;
@@ -570,7 +566,7 @@ const StatuslineSlot = memo(function StatuslineSlot({
   });
 
   if (shouldRenderDefaultStatusline) {
-    return builtInStatuslineRenderer.render(statuslineContext);
+    return renderDefaultStatusline(modContext, statuslineUi);
   }
 
   return (
@@ -904,7 +900,6 @@ export function Input({
   agentName,
   currentModel,
   currentModelProvider,
-  isLocalBackend = false,
   hasTemporaryModelOverride = false,
   currentReasoningEffort,
   fileAutocompleteFdPath,
@@ -921,7 +916,7 @@ export function Input({
   executionPhase = null,
   terminalWidth,
   shouldAnimate = true,
-  statusLinePayload,
+  modContext,
   modAdapter,
   statusLinePrompt,
   onCycleReasoningEffort,
@@ -955,7 +950,6 @@ export function Input({
   agentName?: string | null;
   currentModel?: string | null;
   currentModelProvider?: string | null;
-  isLocalBackend?: boolean;
   hasTemporaryModelOverride?: boolean;
   currentReasoningEffort?: ModelReasoningEffort | null;
   fileAutocompleteFdPath?: string | null;
@@ -972,7 +966,7 @@ export function Input({
   executionPhase?: ExecutionPhase;
   terminalWidth: number;
   shouldAnimate?: boolean;
-  statusLinePayload: StatusLinePayload;
+  modContext: ModContext;
   modAdapter: LocalModAdapter;
   statusLinePrompt?: string;
   onCycleReasoningEffort?: () => void;
@@ -1860,67 +1854,149 @@ export function Input({
     previousFooterNotificationRef.current = footerNotification ?? null;
   }, [footerNotification, showStatuslineTransientHint]);
 
+  const subagentLifecycleSnapshot = useSyncExternalStore(
+    subscribeToSubagentLifecycle,
+    getSubagentLifecycleSnapshot,
+  );
+  const hasActiveSubagent = subagentLifecycleSnapshot.some(
+    (agent) => agent.status === "pending" || agent.status === "running",
+  );
+  const [subagentLifecycleTick, setSubagentLifecycleTick] = useState(0);
+
+  useEffect(() => {
+    if (!hasActiveSubagent) return;
+    const timer = setInterval(
+      () => setSubagentLifecycleTick((value) => value + 1),
+      1000,
+    );
+    return () => clearInterval(timer);
+  }, [hasActiveSubagent]);
+
+  const liveBackgroundAgents = useMemo<ModContext["backgroundAgents"]>(() => {
+    void subagentLifecycleTick;
+    const now = Date.now();
+    return subagentLifecycleSnapshot
+      .filter(
+        (agent) =>
+          !agent.visibleInTranscript &&
+          (agent.status === "pending" || agent.status === "running"),
+      )
+      .map((agent) => ({
+        type: agent.type,
+        status: agent.status,
+        durationMs: Math.max(0, now - agent.startedAtMs),
+        agentId: agent.agentId ?? null,
+      }));
+  }, [subagentLifecycleSnapshot, subagentLifecycleTick]);
+
+  const hasActiveProductStatus = liveBackgroundAgents.length > 0;
+  const shouldAnimateProductStatus = hasActiveProductStatus && shouldAnimate;
+  const [productStatusSpinnerFrameIndex, setProductStatusSpinnerFrameIndex] =
+    useState(0);
+  const [productStatusSpinnerPulseOn, setProductStatusSpinnerPulseOn] =
+    useState(true);
+
+  useEffect(() => {
+    setProductStatusSpinnerFrameIndex(0);
+    if (!shouldAnimateProductStatus) return;
+    const timer = setInterval(() => {
+      setProductStatusSpinnerFrameIndex(
+        (value) => (value + 1) % BRAILLE_SPINNER_FRAMES.length,
+      );
+    }, PRODUCT_STATUS_SPINNER_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [shouldAnimateProductStatus]);
+
+  useEffect(() => {
+    setProductStatusSpinnerPulseOn(true);
+    if (!shouldAnimateProductStatus) return;
+    const timer = setInterval(() => {
+      setProductStatusSpinnerPulseOn((value) => !value);
+    }, PRODUCT_STATUS_SPINNER_PULSE_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [shouldAnimateProductStatus]);
+
+  const panelModContext = useMemo<ModContext>(
+    () => ({
+      ...modContext,
+      backgroundAgents: liveBackgroundAgents,
+    }),
+    [liveBackgroundAgents, modContext],
+  );
+
+  const activeBackgroundAgentUrl = useMemo(() => {
+    const agent = subagentLifecycleSnapshot.find(
+      (a) =>
+        !a.visibleInTranscript &&
+        (a.status === "pending" || a.status === "running") &&
+        a.agentUrl,
+    );
+    return agent?.agentUrl ?? null;
+  }, [subagentLifecycleSnapshot]);
+
+  const panelsWithDefaultProductStatus = useMemo(
+    () =>
+      withDefaultProductStatusPanel(modAdapter.registry?.ui.panels, {
+        spinnerDimmed:
+          shouldAnimateProductStatus && !productStatusSpinnerPulseOn,
+        spinnerFrame:
+          BRAILLE_SPINNER_FRAMES[productStatusSpinnerFrameIndex] ??
+          BRAILLE_SPINNER_FRAMES[0],
+        agentUrl: activeBackgroundAgentUrl,
+      }),
+    [
+      modAdapter.registry?.ui.panels,
+      productStatusSpinnerFrameIndex,
+      productStatusSpinnerPulseOn,
+      shouldAnimateProductStatus,
+      activeBackgroundAgentUrl,
+    ],
+  );
+
   // Decoupled from input churn (value/cursorPos) so panel content only
   // re-renders when the panels themselves change, mirroring how BtwPane
   // stays flash-free. Folding this into lowerPane would rebuild it on every
   // keystroke.
-  const panelLiveContext = useMemo<ModContext>(
-    () =>
-      buildStatuslineRenderContext({
-        payload: statusLinePayload,
-        ui: {
-          currentModelProvider: currentModelProvider ?? null,
-          hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
-          isByokProvider:
-            currentModelProvider?.startsWith("lc-") ||
-            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
-          isLocalBackend,
-          isOpenAICodexProvider:
-            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
-          rightColumnWidth: footerRightColumnWidth,
-        },
-      }),
-    [
-      currentModelProvider,
-      footerRightColumnWidth,
-      hasTemporaryModelOverride,
-      isLocalBackend,
-      statusLinePayload,
-    ],
-  );
-
   const modPanelRow = useMemo(() => {
+    void subagentLifecycleSnapshot;
+    void subagentLifecycleTick;
     if (suppressDividers) return null;
     return (
       <ModPanelRow
-        panels={modAdapter.registry?.ui.panels}
+        panels={panelsWithDefaultProductStatus}
         terminalWidth={terminalWidth}
         placement="above"
-        context={panelLiveContext}
+        context={panelModContext}
       />
     );
   }, [
     suppressDividers,
-    modAdapter.registry?.ui.panels,
+    panelsWithDefaultProductStatus,
     terminalWidth,
-    panelLiveContext,
+    panelModContext,
+    subagentLifecycleSnapshot,
+    subagentLifecycleTick,
   ]);
 
   const modPanelRowBelow = useMemo(() => {
+    void subagentLifecycleSnapshot;
+    void subagentLifecycleTick;
     if (suppressDividers) return null;
     return (
       <ModPanelRow
-        panels={modAdapter.registry?.ui.panels}
+        panels={panelsWithDefaultProductStatus}
         terminalWidth={terminalWidth}
         placement="below"
-        context={panelLiveContext}
+        context={panelModContext}
       />
     );
   }, [
     suppressDividers,
-    modAdapter.registry?.ui.panels,
+    panelsWithDefaultProductStatus,
     terminalWidth,
-    panelLiveContext,
+    panelModContext,
+    subagentLifecycleSnapshot,
+    subagentLifecycleTick,
   ]);
 
   const lowerPane = useMemo(() => {
@@ -1934,10 +2010,6 @@ export function Input({
         {interactionEnabled ? (
           <Box flexDirection="column">
             {modPanelRow}
-
-            {!suppressDividers && (
-              <ProductStatusRow terminalWidth={terminalWidth} />
-            )}
 
             {/* Top horizontal divider */}
             {!suppressDividers && (
@@ -2023,7 +2095,6 @@ export function Input({
                 modeColor={modeInfo?.color ?? null}
                 modeGlyph={modeInfo?.glyph ?? null}
                 showExitHint={modeInfo?.showExitHint ?? false}
-                currentModelProvider={currentModelProvider}
                 isOpenAICodexProvider={
                   currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
                 }
@@ -2031,11 +2102,12 @@ export function Input({
                   currentModelProvider?.startsWith("lc-") ||
                   currentModelProvider === OPENAI_CODEX_PROVIDER_NAME
                 }
-                isLocalBackend={isLocalBackend}
                 hasTemporaryModelOverride={hasTemporaryModelOverride}
                 hideFooter={hideFooter}
                 rightColumnWidth={footerRightColumnWidth}
-                statusLinePayload={statusLinePayload}
+                modContext={panelModContext}
+                subagentLifecycleSnapshot={subagentLifecycleSnapshot}
+                subagentLifecycleTick={subagentLifecycleTick}
                 modAdapter={modAdapter}
                 transientHint={statuslineTransientHint}
               />
@@ -2087,16 +2159,16 @@ export function Input({
     footerRightColumnWidth,
     reserveInputSpace,
     inputChromeHeight,
-    statusLinePayload,
+    panelModContext,
+    subagentLifecycleSnapshot,
+    subagentLifecycleTick,
     modAdapter,
 
     promptChar,
     promptVisualWidth,
     suppressDividers,
     queueMode,
-    isLocalBackend,
     inspirationalPlaceholder,
-    terminalWidth,
     statuslineTransientHint,
   ]);
 

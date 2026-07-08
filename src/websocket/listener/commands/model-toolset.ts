@@ -73,6 +73,12 @@ type ModelScopeSnapshot = {
   } | null;
 };
 
+export type CurrentModelStatus = {
+  modelHandle: string | null;
+  modelLabel: string;
+  scope: "agent" | "conversation";
+};
+
 function inferProviderTypeFromRegistryHandle(
   modelHandle: string,
 ): string | undefined {
@@ -174,6 +180,21 @@ async function getCurrentModelScopeSnapshot(params: {
       agent.llm_config as ModelScopeSnapshot["llmConfig"],
       conversationContextWindow ?? agentContextWindow,
     ),
+  };
+}
+
+export async function getCurrentModelStatusForRuntime(params: {
+  agentId: string;
+  conversationId: string;
+}): Promise<CurrentModelStatus> {
+  const snapshot = await getCurrentModelScopeSnapshot(params);
+  const modelInfo = snapshot.modelHandle
+    ? getModelInfo(snapshot.modelHandle)
+    : null;
+  return {
+    modelHandle: snapshot.modelHandle,
+    modelLabel: modelInfo?.label ?? snapshot.modelHandle ?? "unknown",
+    scope: params.conversationId === "default" ? "agent" : "conversation",
   };
 }
 
@@ -576,11 +597,17 @@ export function buildListModelsEntries(): ListModelsResponseModelEntry[] {
  */
 export async function buildListModelsResponse(
   requestId: string,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<ListModelsResponseMessage> {
   const entries = buildListModelsEntries();
 
   const [handlesResult, providersResult] = await Promise.allSettled([
-    getAvailableModelHandles(),
+    // User-initiated refreshes bypass the availability cache: within the
+    // cache TTL a stale snapshot would otherwise make every "Refresh model
+    // list" click return the same wrong answer.
+    getAvailableModelHandles(
+      options.forceRefresh === true ? { forceRefresh: true } : undefined,
+    ),
     listProviders(),
   ]);
 
@@ -619,7 +646,9 @@ export function handleModelToolsetCommand(
   if (isListModelsCommand(parsed)) {
     runDetachedListenerTask("list_models", async () => {
       try {
-        const response = await buildListModelsResponse(parsed.request_id);
+        const response = await buildListModelsResponse(parsed.request_id, {
+          forceRefresh: parsed.force === true,
+        });
         safeSocketSend(
           socket,
           response,
