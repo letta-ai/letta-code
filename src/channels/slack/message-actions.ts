@@ -33,6 +33,8 @@ async function sendSlackMessage(
     fileName: request.filename,
     title: request.title,
     parseMode: formatted.parseMode,
+    agentId: route.agentId,
+    conversationId: route.conversationId,
   });
 
   return request.mediaPath

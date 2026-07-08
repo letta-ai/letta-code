@@ -400,6 +400,10 @@ export interface OutboundChannelMessage {
   removeReaction?: boolean;
   /** Optional: target message id for reactions. */
   targetMessageId?: string;
+  /** Optional: sending agent identity, used by adapters that render web deep links. */
+  agentId?: string;
+  /** Optional: conversation identity, used by adapters that render web deep links. */
+  conversationId?: string;
 }
 
 export interface OutboundChannelRichMessageDraft {

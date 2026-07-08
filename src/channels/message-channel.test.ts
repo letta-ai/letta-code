@@ -112,6 +112,8 @@ describe("MessageChannel", () => {
       replyToMessageId: undefined,
       threadId: null,
       parseMode: undefined,
+      agentId: "agent-1",
+      conversationId: "default",
     });
   });
 
@@ -179,6 +181,8 @@ describe("MessageChannel", () => {
       replyToMessageId: undefined,
       threadId: null,
       parseMode: undefined,
+      agentId: "agent-1",
+      conversationId: "default",
     });
   });
 
@@ -247,6 +251,8 @@ describe("MessageChannel", () => {
       replyToMessageId: undefined,
       threadId: "1712790000.000050",
       parseMode: undefined,
+      agentId: "agent-1",
+      conversationId: "default",
     });
   });
 
@@ -301,6 +307,8 @@ describe("MessageChannel", () => {
       replyToMessageId: undefined,
       threadId: "1712790000.000050",
       parseMode: undefined,
+      agentId: "agent-1",
+      conversationId: "conv-thread",
     });
   });
 
@@ -367,6 +375,8 @@ describe("MessageChannel", () => {
       replyToMessageId: undefined,
       threadId: "1712790000.000050",
       parseMode: undefined,
+      agentId: "agent-1",
+      conversationId: "conv-channel",
     });
   });
 
@@ -488,6 +498,8 @@ describe("MessageChannel", () => {
       fileName: "release-notes.png",
       title: "Release notes",
       parseMode: undefined,
+      agentId: "agent-1",
+      conversationId: "conv-thread",
     });
   });
 
@@ -1410,6 +1422,8 @@ describe("MessageChannel", () => {
       replyToMessageId: undefined,
       threadId: null,
       parseMode: undefined,
+      agentId: "agent-1",
+      conversationId: "default",
     });
   });
 

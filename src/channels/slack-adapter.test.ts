@@ -2861,12 +2861,9 @@ test("slack adapter anchors direct message progress to the inbound message", asy
         type: "plan_update",
         title: "Read a file",
       },
-      // The Letta Chat footnote must ride inside chunks: Slack rejects
-      // markdown_text combined with chunks on chat.stopStream.
-      {
-        type: "markdown_text",
-        text: "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
-      },
+      // No footnote chunk: the web deep link rides on outbound replies as a
+      // context block, never on the terminal stop (markdown_text chunks
+      // render as loud full-size body text under the card).
     ],
   });
   expect(writeClient?.chat.appendStream).toHaveBeenCalledTimes(0);
@@ -3603,7 +3600,7 @@ test("slack adapter rewrites dead streams with the final card state", async () =
   });
   const renderedBlocks = JSON.stringify(updateArgs?.blocks ?? []);
   expect(renderedBlocks).toContain("*Read a file*");
-  expect(renderedBlocks).toContain("Open in Letta Chat");
+  expect(renderedBlocks).toContain("Webapp");
   expect(renderedBlocks).not.toContain("task_update");
   expect(renderedBlocks).not.toContain(":white_check_mark:");
   expect(renderedBlocks).not.toContain("in_progress");
@@ -3894,12 +3891,6 @@ test("slack adapter includes final error details in rich progress streams", asyn
       expect.objectContaining({
         type: "plan_update",
         title: "Failed",
-      }),
-      // The Letta Chat footnote must ride inside chunks: Slack rejects
-      // markdown_text combined with chunks on chat.stopStream.
-      expect.objectContaining({
-        type: "markdown_text",
-        text: "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
       }),
     ]),
   });
@@ -5254,12 +5245,12 @@ test("slack adapter closes the progress stream at turn end despite the chat foot
         (args?.chunks?.length ?? 0) > 0,
     ).toBe(false);
   }
-  // The close must actually succeed: the footnote rides as a trailing chunk.
+  // The close must actually succeed: chunks only, no footnote riding along
+  // (the web deep link is delivered on outbound replies instead).
   const [stopArgs] = stopCalls[0] ?? [];
-  expect(stopArgs?.chunks?.at(-1)).toEqual({
-    type: "markdown_text",
-    text: "_<https://app.letta.com/chat/agent-1?conversation=conv-1|Open in Letta Chat>_",
-  });
+  const chunkTypes = (stopArgs?.chunks ?? []).map((chunk) => chunk.type);
+  expect(chunkTypes).not.toContain("markdown_text");
+  expect(stopArgs?.markdown_text).toBeUndefined();
 });
 
 test("slack adapter text progress mode posts one status message and edits it in place", async () => {
@@ -5355,7 +5346,7 @@ test("slack adapter text progress mode posts one status message and edits it in 
   });
   const renderedBlocks = JSON.stringify(terminalArgs?.blocks ?? []);
   expect(renderedBlocks).toContain("*Read a file*");
-  expect(renderedBlocks).toContain("Open in Letta Chat");
+  expect(renderedBlocks).toContain("Webapp");
 });
 
 test("slack adapter degrades rich progress to text mode when chat.startStream is unavailable", async () => {
@@ -5417,4 +5408,63 @@ test("slack adapter degrades rich progress to text mode when chat.startStream is
     Array<{ text: string }>
   >;
   expect(updateCalls[updateCalls.length - 1]?.[0]?.text).toBe("Read a file");
+});
+
+test("slack adapter sendMessage renders a Webapp context footnote when identity is provided", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  await adapter.start();
+
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Reply with a footnote.",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  });
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Reply without identity.",
+    threadId: "1712790000.000050",
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  const postCalls = writeClient?.chat.postMessage.mock
+    .calls as unknown as Array<
+    Array<{
+      channel: string;
+      text: string;
+      blocks?: Array<{
+        type: string;
+        text?: { type: string; text: string };
+        elements?: Array<{ type: string; text: string }>;
+      }>;
+    }>
+  >;
+  const withIdentity = postCalls[0]?.[0];
+  expect(withIdentity?.text).toBe("Reply with a footnote.");
+  const blocks = withIdentity?.blocks ?? [];
+  expect(blocks[0]).toMatchObject({
+    type: "section",
+    text: { type: "mrkdwn", text: "Reply with a footnote." },
+  });
+  const footnoteBlock = blocks[blocks.length - 1];
+  expect(footnoteBlock?.type).toBe("context");
+  expect(footnoteBlock?.elements?.[0]?.text).toBe(
+    "<https://chat.letta.com/chat/agent-1?conversation=conv-1|Webapp>",
+  );
+  // Without identity: plain text, no blocks.
+  expect(postCalls[1]?.[0]?.blocks).toBeUndefined();
 });

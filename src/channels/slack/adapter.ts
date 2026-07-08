@@ -658,8 +658,8 @@ export function resolveSlackCompletionFinalizeGraceMs(): number {
 }
 
 /**
- * Build a Letta Chat URL for an agent/conversation.
- * Local-backend agents do not exist at app.letta.com, so return undefined.
+ * Build a chat.letta.com deep link for an agent/conversation.
+ * Local-backend agents do not exist on the web app, so return undefined.
  */
 function buildSlackChatUrl(
   agentId: string,
@@ -668,7 +668,7 @@ function buildSlackChatUrl(
   if (isLocalAgentId(agentId)) {
     return undefined;
   }
-  const base = `https://app.letta.com/chat/${agentId}`;
+  const base = `https://chat.letta.com/chat/${agentId}`;
   if (conversationId && conversationId !== "default") {
     return `${base}?conversation=${conversationId}`;
   }
@@ -676,16 +676,65 @@ function buildSlackChatUrl(
 }
 
 /**
- * Build small footnote text with a link to the Letta Chat conversation.
+ * Build small footnote text with a web deep link for the conversation.
  * Returns an empty string for local-backend agents.
  */
-function buildSlackChatFootnote(source: ChannelTurnSource): string {
-  const chatUrl = buildSlackChatUrl(source.agentId, source.conversationId);
+function buildSlackChatFootnote(identity: {
+  agentId: string;
+  conversationId: string;
+}): string {
+  const chatUrl = buildSlackChatUrl(identity.agentId, identity.conversationId);
   if (!chatUrl) {
     return "";
   }
   // Slack mrkdwn link format: <URL|text>
-  return `_<${chatUrl}|Open in Letta Chat>_`;
+  return `<${chatUrl}|Webapp>`;
+}
+
+// Slack section blocks cap mrkdwn text at 3000 characters.
+const SLACK_SECTION_TEXT_MAX = 3_000;
+
+/**
+ * Render an outbound reply as mrkdwn section blocks with a small context
+ * footnote (web deep link) below the text, Devin-style. Returns undefined
+ * when the text cannot be represented within Slack's 50-block limit, in
+ * which case the caller falls back to plain text without the footnote.
+ */
+function buildSlackReplyBlocksWithFootnote(
+  text: string,
+  footnote: string,
+): SlackBlock[] | undefined {
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 0) {
+    if (remaining.length <= SLACK_SECTION_TEXT_MAX) {
+      chunks.push(remaining);
+      break;
+    }
+    let cut = remaining.lastIndexOf("\n", SLACK_SECTION_TEXT_MAX);
+    if (cut <= 0) {
+      cut = remaining.lastIndexOf(" ", SLACK_SECTION_TEXT_MAX);
+    }
+    if (cut <= 0) {
+      cut = SLACK_SECTION_TEXT_MAX;
+    }
+    chunks.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut);
+  }
+  const sections = chunks.filter((chunk) => chunk.trim().length > 0);
+  // Slack allows at most 50 blocks per message; leave room for the footnote.
+  if (sections.length === 0 || sections.length > 49) {
+    return undefined;
+  }
+  const blocks: SlackBlock[] = sections.map((chunk) => ({
+    type: "section",
+    text: { type: "mrkdwn", text: chunk },
+  }));
+  blocks.push({
+    type: "context",
+    elements: [{ type: "mrkdwn", text: footnote }],
+  });
+  return blocks;
 }
 
 function sanitizeSlackProgressText(text: string, maxLength: number): string {
@@ -2898,20 +2947,15 @@ export function createSlackAdapter(
         channel: entry.source.chatId,
         ts: entry.streamTs,
       };
-      // Add small footnote with link to Letta Chat for non-local agents.
-      // The Slack API rejects `markdown_text` combined with `chunks`
-      // (`cannot_provide_both_markdown_text_and_chunks`) even though the SDK
-      // types advertise both, so the footnote must ride inside the chunks
-      // array. Sending both silently broke EVERY terminal stop — cards only
-      // left streaming state when Slack expired them (verified against the
-      // live API, 2026-07-07).
-      const footnote = buildSlackChatFootnote(entry.source);
+      // No footnote on the terminal stop: markdown_text cannot be combined
+      // with chunks (the API rejects the pair; it silently broke every
+      // terminal stop until #3275), and delivering it as a markdown_text
+      // CHUNK renders as loud full-size body text under the card. The web
+      // deep link rides as a small context block on outbound replies
+      // instead (Devin-style), and on the block-rendered terminal paths
+      // (text progress mode, dead-stream rewrite).
       if (chunks.length > 0) {
-        args.chunks = footnote
-          ? [...chunks, { type: "markdown_text", text: footnote }]
-          : chunks;
-      } else if (footnote) {
-        args.markdown_text = footnote;
+        args.chunks = chunks;
       }
       const response = await stopStream.call(slackClient.chat, args);
       if (response.ok === false) {
@@ -4315,9 +4359,22 @@ export function createSlackAdapter(
         replyToMessageId: msg.replyToMessageId,
       });
 
+      // Devin-style web deep link: a small context-block footnote under
+      // every reply, when the caller supplied the sending identity.
+      const footnote =
+        isNonEmptyString(msg.agentId) && isNonEmptyString(msg.conversationId)
+          ? buildSlackChatFootnote({
+              agentId: msg.agentId,
+              conversationId: msg.conversationId,
+            })
+          : "";
+      const blocks = footnote
+        ? buildSlackReplyBlocksWithFootnote(msg.text, footnote)
+        : undefined;
       const response = await slackClient.chat.postMessage({
         channel: msg.chatId,
         text: msg.text,
+        ...(blocks ? { blocks } : {}),
         ...(threadTs ? { thread_ts: threadTs } : {}),
       });
 
