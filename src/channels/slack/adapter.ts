@@ -651,10 +651,12 @@ export function resolveSlackProgressUpdateThrottleMs(): number {
   return Math.min(parsed, 30_000);
 }
 
-// Slack hard-caps stream lifetime at ~5 minutes regardless of append
-// activity (live-measured 2026-07-08: death at 303s with 30s appends). Roll
-// status streams comfortably before the cap so the placeholder never freezes.
-const DEFAULT_SLACK_STATUS_STREAM_ROLL_MS = 240_000;
+// Slack hard-caps TOTAL stream lifetime regardless of append activity — an
+// undocumented server-side limit (slackapi/python-slack-sdk#1859). Measured
+// at 303s in our workspace (2026-07-08, 30s appends); other deployments
+// report ~3 minutes (AuraHQ-ai/aura#1121), so the cap is not a stable
+// constant. Roll status streams well inside the tightest observed value.
+const DEFAULT_SLACK_STATUS_STREAM_ROLL_MS = 150_000;
 
 export function resolveSlackStatusStreamRollMs(): number {
   const raw = process.env.LETTA_SLACK_STATUS_STREAM_ROLL_MS;
