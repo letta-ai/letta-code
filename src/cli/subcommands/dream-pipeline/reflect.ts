@@ -18,7 +18,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import { normalizeLettaMessages } from "@/agent/trajectories/letta-messages";
+import { createLettaSource } from "@/agent/trajectories/sources/letta";
 import { debugWarn } from "@/utils/debug";
 import type { DreamBatch } from "./batching";
 import { cloneMemoryTree } from "./clone";
@@ -61,58 +61,26 @@ export async function inspectMemoryTree(
   return { commitCount, dirty };
 }
 
-/** Write a normalized-v1 transcript file (same encoding everywhere). */
-export async function writeNormalizedRecords(
-  path: string,
-  records: unknown[],
-): Promise<void> {
-  await writeFile(path, JSON.stringify(records, null, 1), "utf-8");
-}
-
-const TRAJECTORY_PAGE_SIZE = 100;
-const TRAJECTORY_MAX_PAGES = 50;
-
 /**
- * Record a completed pass's trajectory by listing its conversation's messages
- * from the backend (they are complete and durably stored — reflection passes
- * run as fresh conversations on the reflector agent) and normalizing them into
- * a v1 transcript file. Returns the written path, or null when the
- * conversation is unknown or held no conversational content.
+ * Record a completed pass's trajectory from the worker's own locally recorded
+ * conversation transcript (headless runs append to the reflection transcript
+ * like any session), normalized via the same `letta` source used for
+ * ingestion. Returns the written path, or null when nothing was recorded.
  */
 export async function recordConversationTrajectory(
+  workerAgentId: string | undefined,
   conversationId: string | undefined,
   normalizedPath: string,
 ): Promise<string | null> {
-  if (!conversationId) return null;
+  if (!workerAgentId || !conversationId) return null;
   try {
-    const { getBackend } = await import("@/backend");
-    const backend = getBackend();
-    const messages: unknown[] = [];
-    let after: string | undefined;
-    for (let page = 0; page < TRAJECTORY_MAX_PAGES; page++) {
-      const result = await backend.listConversationMessages(conversationId, {
-        limit: TRAJECTORY_PAGE_SIZE,
-        order: "asc",
-        include_return_message_types: [
-          "user_message",
-          "reasoning_message",
-          "assistant_message",
-          "approval_request_message",
-          "tool_call_message",
-          "tool_return_message",
-        ],
-        ...(after ? { after } : {}),
-      });
-      const items = pageItems(result);
-      messages.push(...items);
-      if (items.length < TRAJECTORY_PAGE_SIZE) break;
-      const lastId = (items[items.length - 1] as { id?: string }).id;
-      if (!lastId) break;
-      after = lastId;
-    }
-    const records = normalizeLettaMessages(messages);
-    if (!records) return null;
-    await writeNormalizedRecords(normalizedPath, records);
+    const source = createLettaSource();
+    const [session] = await source.discover(
+      `${workerAgentId}/${conversationId}`,
+    );
+    if (!session) return null;
+    const { records } = await source.normalize(session);
+    await writeFile(normalizedPath, JSON.stringify(records, null, 1), "utf-8");
     return normalizedPath;
   } catch (error) {
     debugWarn(
@@ -123,20 +91,6 @@ export async function recordConversationTrajectory(
     );
     return null;
   }
-}
-
-function pageItems<T>(page: unknown): T[] {
-  if (Array.isArray(page)) return page as T[];
-  if (page && typeof page === "object") {
-    const maybePage = page as { getPaginatedItems?: () => T[]; items?: T[] };
-    if (typeof maybePage.getPaginatedItems === "function") {
-      return maybePage.getPaginatedItems();
-    }
-    if (Array.isArray(maybePage.items)) {
-      return maybePage.items;
-    }
-  }
-  return [];
 }
 
 export interface BatchReflectionResult {
@@ -259,6 +213,7 @@ async function runOneBatch(
   });
 
   const trajectoryPath = await recordConversationTrajectory(
+    completion.agentId ?? params.reflectorAgentId,
     completion.conversationId,
     trajectoryFilePath,
   );

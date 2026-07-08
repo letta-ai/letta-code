@@ -3438,6 +3438,24 @@ ${SYSTEM_REMINDER_CLOSE}
 
   // Extract final result from transcript, with sensible fallbacks
   const lines = toLines(buffers);
+
+  // Record the turn in the reflection transcript, mirroring bidirectional
+  // mode. This also gives subagent runs (e.g. dream batch reflections) a
+  // local transcript that downstream consumers can read like any other
+  // conversation.
+  try {
+    await appendTranscriptDeltaJsonl(agent.id, conversationId, lines);
+  } catch (transcriptError) {
+    debugWarn(
+      "memory",
+      `Failed to append transcript delta: ${
+        transcriptError instanceof Error
+          ? transcriptError.message
+          : String(transcriptError)
+      }`,
+    );
+  }
+
   const reversed = [...lines].reverse();
 
   const lastAssistant = reversed.find(

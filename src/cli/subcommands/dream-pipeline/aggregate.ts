@@ -174,6 +174,7 @@ export async function runDreamAggregation(
             aggregateDir,
           );
           await recordConversationTrajectory(
+            subagentAgentId ?? aggregatorAgentId,
             aggConversationId,
             join(aggregateDir, "trajectory.json"),
           );
