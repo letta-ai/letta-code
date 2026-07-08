@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { NormalizedRecord } from "@/agent/trajectories/types";
 import { isNormalizedRecordArray } from "@/agent/trajectories/types";
-import { createNormalizedFileSource } from "./normalized-file";
+import { createTranscriptFileSource } from "./transcript-file";
 
 const VALID_RECORDS: NormalizedRecord[] = [
   {
@@ -33,8 +33,8 @@ const VALID_RECORDS: NormalizedRecord[] = [
   },
 ];
 
-describe("createNormalizedFileSource", () => {
-  const source = createNormalizedFileSource();
+describe("createTranscriptFileSource", () => {
+  const source = createTranscriptFileSource();
   let dir: string;
   let validPath: string;
 

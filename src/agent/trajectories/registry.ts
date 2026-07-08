@@ -4,8 +4,8 @@
 import { createClaudeCodeSource } from "./sources/claude-code";
 import { createCodexSource } from "./sources/codex";
 import { createLettaSource } from "./sources/letta";
-import { createNormalizedFileSource } from "./sources/normalized-file";
 import { createOpenHandsSource } from "./sources/openhands";
+import { createTranscriptFileSource } from "./sources/transcript-file";
 import type { TrajectorySource } from "./types";
 
 const FACTORIES: Record<string, () => TrajectorySource> = {
@@ -13,7 +13,7 @@ const FACTORIES: Record<string, () => TrajectorySource> = {
   codex: () => createCodexSource(),
   letta: () => createLettaSource(),
   openhands: () => createOpenHandsSource(),
-  transcript: () => createNormalizedFileSource(),
+  transcript: () => createTranscriptFileSource(),
 };
 
 export function getTrajectorySource(type: string): TrajectorySource {

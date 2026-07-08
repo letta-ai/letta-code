@@ -74,7 +74,7 @@ function loadTranscriptFile(path: string): LoadedTranscript | null {
  * file, or a directory tree of them. There is no default store, so `discover`
  * requires a locator.
  */
-export function createNormalizedFileSource(): TrajectorySource {
+export function createTranscriptFileSource(): TrajectorySource {
   return {
     type: "transcript",
 
