@@ -73,6 +73,10 @@ type SlackWriteClient = {
       text: string;
       blocks?: SlackBlock[];
     }) => Promise<{ ts?: string }>;
+    delete?: (args: {
+      channel: string;
+      ts: string;
+    }) => Promise<{ ok?: boolean; error?: string }>;
     startStream?: (args: SlackStartStreamArgs) => Promise<SlackStreamResponse>;
     appendStream?: (
       args: SlackAppendStreamArgs,
@@ -628,6 +632,8 @@ type SlackProgressCardEntry = {
   lastSentAt: number;
   pendingTimer?: ReturnType<typeof setTimeout>;
   keepaliveTimer?: ReturnType<typeof setTimeout>;
+  /** Proactive status-stream roll timer (Slack hard-caps stream lifetime). */
+  streamRollTimer?: ReturnType<typeof setTimeout>;
   pendingFlush?: Promise<void>;
   requeuedFailedChunks?: boolean;
   updatedAt: number;
@@ -643,6 +649,23 @@ export function resolveSlackProgressUpdateThrottleMs(): number {
     return DEFAULT_SLACK_PROGRESS_UPDATE_THROTTLE_MS;
   }
   return Math.min(parsed, 30_000);
+}
+
+// Slack hard-caps stream lifetime at ~5 minutes regardless of append
+// activity (live-measured 2026-07-08: death at 303s with 30s appends). Roll
+// status streams comfortably before the cap so the placeholder never freezes.
+const DEFAULT_SLACK_STATUS_STREAM_ROLL_MS = 240_000;
+
+export function resolveSlackStatusStreamRollMs(): number {
+  const raw = process.env.LETTA_SLACK_STATUS_STREAM_ROLL_MS;
+  if (!raw) {
+    return DEFAULT_SLACK_STATUS_STREAM_ROLL_MS;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_SLACK_STATUS_STREAM_ROLL_MS;
+  }
+  return Math.min(parsed, 290_000);
 }
 
 export function resolveSlackProgressStreamKeepaliveMs(): number {
@@ -2267,6 +2290,7 @@ export function createSlackAdapter(
   const assistantStatusTextByReplyKey = new Map<string, string>();
   const progressUpdateThrottleMs = resolveSlackProgressUpdateThrottleMs();
   const progressStreamKeepaliveMs = resolveSlackProgressStreamKeepaliveMs();
+  const statusStreamRollMs = resolveSlackStatusStreamRollMs();
   const completionFinalizeGraceMs = resolveSlackCompletionFinalizeGraceMs();
   // Per-account progress rendering style. "rich" (default) uses streamed
   // progress cards; "text" posts one plain status message per turn and edits
@@ -2889,7 +2913,7 @@ export function createSlackAdapter(
       return;
     }
     entry.streamDead = true;
-    clearSlackProgressStreamKeepalive(entry);
+    clearSlackProgressStreamTimers(entry);
     console.warn(
       "[Slack] Progress stream left streaming state unexpectedly:",
       reason,
@@ -3080,6 +3104,92 @@ export function createSlackAdapter(
       clearTimeout(entry.keepaliveTimer);
       entry.keepaliveTimer = undefined;
     }
+  }
+
+  function clearSlackStatusStreamRoll(entry: SlackProgressCardEntry): void {
+    if (entry.streamRollTimer) {
+      clearTimeout(entry.streamRollTimer);
+      entry.streamRollTimer = undefined;
+    }
+  }
+
+  /** Turn-scoped teardown: keepalive AND the status-stream roll timer. */
+  function clearSlackProgressStreamTimers(entry: SlackProgressCardEntry): void {
+    clearSlackProgressStreamKeepalive(entry);
+    clearSlackStatusStreamRoll(entry);
+  }
+
+  /**
+   * Proactively roll a simple-view status stream before Slack's hard stream
+   * lifetime cap (~5 minutes, measured live 2026-07-08 — append activity does
+   * not extend it). A fresh stream re-renders the same dim title below, and
+   * the old message is deleted (an expired plan-only stream is an empty
+   * message, so even a failed delete leaves no visible artifact). This is how
+   * the placeholder survives arbitrarily long turns without ever freezing.
+   */
+  function scheduleSlackStatusStreamRoll(
+    key: string,
+    entry: SlackProgressCardEntry,
+  ): void {
+    if (
+      statusStreamRollMs <= 0 ||
+      entry.streamRollTimer ||
+      entry.status !== "processing" ||
+      entry.mode !== "status-stream" ||
+      entry.streamDead ||
+      !entry.streamTs
+    ) {
+      return;
+    }
+    entry.streamRollTimer = setTimeout(() => {
+      entry.streamRollTimer = undefined;
+      void (async () => {
+        if (
+          progressCardByReplyKey.get(key) !== entry ||
+          entry.status !== "processing" ||
+          entry.mode !== "status-stream" ||
+          entry.streamDead ||
+          !entry.streamTs
+        ) {
+          return;
+        }
+        const replyToMessageId = getSlackProgressReplyTs(entry.source);
+        if (!replyToMessageId) {
+          return;
+        }
+        const oldTs = entry.streamTs;
+        // Re-arm first, then delete the old placeholder: the swap reads as
+        // one continuous status line.
+        entry.mode = undefined;
+        entry.streamTs = undefined;
+        entry.lastPlanTitle = undefined;
+        const didStart = await startSlackStatusStream(entry, replyToMessageId);
+        if (!didStart) {
+          // Keep the old stream: it stays live until the cap, and death
+          // detection (keepalive/flush) degrades it to text edits.
+          entry.mode = "status-stream";
+          entry.streamTs = oldTs;
+          return;
+        }
+        try {
+          const slackClient = await ensureWriteClient();
+          await slackClient.chat.delete?.({
+            channel: entry.source.chatId,
+            ts: oldTs,
+          });
+        } catch {
+          // Best-effort: an abandoned plan-only stream expires to an empty
+          // message with no error artifact.
+        }
+        scheduleSlackStatusStreamRoll(key, entry);
+        resetSlackProgressStreamKeepalive(key, entry);
+      })().catch((error) => {
+        console.warn(
+          "[Slack] Failed to roll status stream:",
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }, statusStreamRollMs);
   }
 
   function clearSlackCompletionFinalizer(entry: SlackProgressCardEntry): void {
@@ -3402,7 +3512,7 @@ export function createSlackAdapter(
     if (!replyToMessageId) {
       return false;
     }
-    clearSlackProgressStreamKeepalive(entry);
+    clearSlackProgressStreamTimers(entry);
     entry.textTs = entry.streamTs;
     entry.mode = "text";
     entry.streamTs = undefined;
@@ -3594,8 +3704,9 @@ export function createSlackAdapter(
         entry.mode === "stream" || entry.mode === "status-stream";
       if (didSend && isLiveStream && entry.status === "processing") {
         resetSlackProgressStreamKeepalive(key, entry);
+        scheduleSlackStatusStreamRoll(key, entry);
       } else if (!isLiveStream || entry.status !== "processing") {
-        clearSlackProgressStreamKeepalive(entry);
+        clearSlackProgressStreamTimers(entry);
       }
     })()
       .catch((error) => {
@@ -3803,7 +3914,7 @@ export function createSlackAdapter(
           await clearSlackAssistantThreadStatus(source);
           return;
         }
-        clearSlackProgressStreamKeepalive(entry);
+        clearSlackProgressStreamTimers(entry);
         clearSlackCompletionFinalizer(entry);
         if (entry.pendingTimer) {
           clearTimeout(entry.pendingTimer);
@@ -3908,7 +4019,7 @@ export function createSlackAdapter(
           await clearSlackAssistantThreadStatus(source);
           return;
         }
-        clearSlackProgressStreamKeepalive(entry);
+        clearSlackProgressStreamTimers(entry);
         if (entry.pendingTimer) {
           clearTimeout(entry.pendingTimer);
           entry.pendingTimer = undefined;
@@ -3928,7 +4039,7 @@ export function createSlackAdapter(
     key: string,
     entry: SlackProgressCardEntry,
   ): void {
-    clearSlackProgressStreamKeepalive(entry);
+    clearSlackProgressStreamTimers(entry);
     clearSlackCompletionFinalizer(entry);
     if (entry.pendingTimer) {
       clearTimeout(entry.pendingTimer);
@@ -4619,7 +4730,7 @@ export function createSlackAdapter(
         if (entry.pendingTimer) {
           clearTimeout(entry.pendingTimer);
         }
-        clearSlackProgressStreamKeepalive(entry);
+        clearSlackProgressStreamTimers(entry);
       }
       progressCardByReplyKey.clear();
       activeProgressCardKeyByReplyKey.clear();

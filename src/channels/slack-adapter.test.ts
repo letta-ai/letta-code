@@ -149,15 +149,23 @@ class FakeSlackWriteClient {
   readonly options: Record<string, unknown> | undefined;
   /** Stream content mode per stream ts, mirroring the live API contract. */
   readonly streamModesByTs = new Map<string, "chunks" | "markdown_text">();
+  /** Opt-in: mint a distinct ts per started stream (for roll tests). */
+  static distinctStreamTs = false;
+  startStreamCount = 0;
   readonly chat = {
     postMessage: mock(async () => ({ ts: "1712800000.000100" })),
     update: mock(async () => ({ ts: "1712800000.000100" })),
+    delete: mock(async () => ({ ok: true })),
     startStream: mock(
       async (args?: {
         markdown_text?: string;
         chunks?: unknown[];
       }): Promise<{ ok: boolean; ts?: string; error?: string }> => {
-        const ts = "1712800000.000300";
+        this.startStreamCount += 1;
+        const ts =
+          FakeSlackWriteClient.distinctStreamTs && this.startStreamCount > 1
+            ? `1712800000.00030${this.startStreamCount - 1}`
+            : "1712800000.000300";
         this.streamModesByTs.set(
           ts,
           Array.isArray(args?.chunks) && args.chunks.length > 0
@@ -329,6 +337,8 @@ beforeEach(() => {
   FakeSlackApp.instances.length = 0;
   FakeSlackWriteClient.instances.length = 0;
   FakeSlackWriteClient.disableStartStream = false;
+  FakeSlackWriteClient.distinctStreamTs = false;
+  delete process.env.LETTA_SLACK_STATUS_STREAM_ROLL_MS;
   resolveSlackInboundAttachmentsMock.mockReset();
   resolveSlackInboundAttachmentsMock.mockImplementation(async () => []);
   resolveSlackThreadStarterMock.mockReset();
@@ -5469,6 +5479,86 @@ test("slack adapter simple view stops a reply-less turn with the activity summar
   expect(stopCalls.length).toBe(1);
   expect(stopCalls[0]?.[0]?.chunks).toEqual([
     { type: "plan_update", title: "Read a file" },
+  ]);
+});
+
+test("slack adapter simple view rolls the status stream before Slack's lifetime cap", async () => {
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
+  process.env.LETTA_SLACK_STATUS_STREAM_ROLL_MS = "40";
+  FakeSlackWriteClient.distinctStreamTs = true;
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    progressUi: "text",
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+
+  // Past the roll deadline the placeholder re-arms as a fresh stream (each
+  // generation deletes its predecessor) — one continuous status line from
+  // the user's perspective.
+  await sleep(90);
+  const generations = writeClient?.startStreamCount ?? 0;
+  expect(generations).toBeGreaterThanOrEqual(2);
+
+  // The reply stops the ROLLED stream (the live placeholder), not a corpse.
+  const result = await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Long turn done.",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  });
+  // Stopping the stream drops the entry, so rolling stops with it.
+  const finalGenerations = writeClient?.startStreamCount ?? 0;
+  const lastStreamTs = `1712800000.00030${finalGenerations - 1}`;
+  expect(result.messageId).toBe(lastStreamTs);
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  // Every superseded generation was deleted; the live one was not.
+  const deleteCalls = writeClient?.chat.delete.mock.calls as unknown as Array<
+    Array<{ channel: string; ts: string }>
+  >;
+  expect(deleteCalls.length).toBe(finalGenerations - 1);
+  expect(deleteCalls[0]?.[0]).toMatchObject({
+    channel: "C123",
+    ts: "1712800000.000300",
+  });
+  expect(deleteCalls.some((call) => call[0]?.ts === lastStreamTs)).toBe(false);
+  const stopCalls = writeClient?.chat.stopStream.mock.calls as unknown as Array<
+    Array<{ ts?: string; chunks?: Array<{ type: string; text?: string }> }>
+  >;
+  expect(stopCalls.length).toBe(1);
+  expect(stopCalls[0]?.[0]?.ts).toBe(lastStreamTs);
+  expect(stopCalls[0]?.[0]?.chunks).toEqual([
+    { type: "markdown_text", text: "Long turn done." },
   ]);
 });
 
