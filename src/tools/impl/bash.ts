@@ -29,6 +29,10 @@ import { validateRequiredParams } from "./validation.js";
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
 
+export function __resetCachedWorkingLauncherForTests(): void {
+  cachedWorkingLauncher = null;
+}
+
 function rebuildCachedLauncher(
   command: string,
   secretEnv?: Record<string, string>,
