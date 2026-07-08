@@ -1,3 +1,7 @@
+import {
+  BUILTIN_CONFIG_SECRET_KEYS,
+  isNonEmptyString,
+} from "./credential-utils";
 import { customAccountConfigAdapter } from "./custom/account-config";
 import { discordAccountConfigAdapter } from "./discord/account-config";
 import type {
@@ -35,10 +39,9 @@ const CHANNEL_ACCOUNT_CONFIG_ADAPTERS: Record<
 /**
  * Keys recognized as secrets across all user-installed plugins. These are
  * never sent back to the client; only their `has_<key>` presence flag is
- * exposed. Keep in sync with the secret-handling convention in
- * `customAccountConfigAdapter` (which uses `bot_token` / `auth`).
+ * exposed.
  */
-const KNOWN_SECRET_KEYS = new Set(["bot_token", "auth"]);
+const KNOWN_SECRET_KEYS = new Set<string>(BUILTIN_CONFIG_SECRET_KEYS);
 
 /**
  * Build a client-safe snapshot of a user-plugin account config when no
@@ -53,8 +56,7 @@ function redactSchemalessConfig(
   const result: ChannelProtocolConfig = {};
   for (const [key, value] of Object.entries(storedConfig)) {
     if (KNOWN_SECRET_KEYS.has(key)) {
-      result[`has_${key}`] =
-        typeof value === "string" && value.trim().length > 0;
+      result[`has_${key}`] = isNonEmptyString(value);
       continue;
     }
     result[key] = value;

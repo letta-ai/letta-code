@@ -44,6 +44,7 @@ import {
   tryHandleChannelSlashCommand,
 } from "./commands";
 import { getChannelAccountsPath, getChannelsRoot } from "./config";
+import { assertAccountHasRequiredCredentials } from "./credential-utils";
 import { isDiscordGuildChannelAllowed } from "./discord/channel-gating";
 import {
   formatChannelControlRequestPrompt,
@@ -131,28 +132,6 @@ type AccountAgentIdSource = {
 function normalizeAgentId(agentId: string | null | undefined): string | null {
   const normalized = agentId?.trim();
   return normalized ? normalized : null;
-}
-
-function assertAccountHasCredentialsForStart(account: ChannelAccount): void {
-  if (isTelegramChannelAccount(account) && account.token.trim().length === 0) {
-    throw new Error(
-      'Channel "telegram" account is missing a token. Configure it first.',
-    );
-  }
-  if (isDiscordChannelAccount(account) && account.token.trim().length === 0) {
-    throw new Error(
-      'Channel "discord" account is missing a token. Configure it first.',
-    );
-  }
-  if (
-    isSlackChannelAccount(account) &&
-    (account.botToken.trim().length === 0 ||
-      account.appToken.trim().length === 0)
-  ) {
-    throw new Error(
-      'Channel "slack" account is missing a bot token or app token. Configure it first.',
-    );
-  }
 }
 
 function normalizeSignalBaseUrlForConflictKey(baseUrl: string): string {
@@ -1093,7 +1072,7 @@ export class ChannelRegistry {
       return false;
     }
 
-    assertAccountHasCredentialsForStart(account);
+    assertAccountHasRequiredCredentials(account);
 
     if (isSignalChannelAccount(account)) {
       const conflict = findSignalBaseUrlConflictForStart(

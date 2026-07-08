@@ -17,6 +17,15 @@ import {
   upsertChannelAccount,
   upsertChannelAccountWithSecrets,
 } from "./accounts";
+import {
+  assertAccountHasRequiredCredentials,
+  assertEnabledAccountPatchHasRequiredCredentials,
+  getConfigSecretKeys,
+  getMissingRequiredCredentialMessageForAccount,
+  getPersistedSecretRefPaths,
+  isNonEmptyString,
+  mergeCredentialPatchValue,
+} from "./credential-utils";
 import { resolveDiscordAccountDisplayName } from "./discord/adapter";
 import {
   getApprovedUsers,
@@ -26,7 +35,6 @@ import {
 } from "./pairing";
 import {
   getChannelDisplayName,
-  getChannelPluginMetadata,
   getSupportedChannelIds,
   isSupportedChannelId,
 } from "./plugin-registry";
@@ -463,12 +471,12 @@ function toTargetSnapshot(
 }
 
 function isAccountConfigured(account: ChannelAccount): boolean {
-  if (isTelegramChannelAccount(account)) {
-    return account.token.trim().length > 0;
-  }
-
-  if (isDiscordChannelAccount(account)) {
-    return account.token.trim().length > 0;
+  if (
+    isTelegramChannelAccount(account) ||
+    isDiscordChannelAccount(account) ||
+    isSlackChannelAccount(account)
+  ) {
+    return getMissingRequiredCredentialMessageForAccount(account) === null;
   }
 
   if (isWhatsAppChannelAccount(account)) {
@@ -476,16 +484,10 @@ function isAccountConfigured(account: ChannelAccount): boolean {
   }
 
   if (isSignalChannelAccount(account)) {
-    return account.baseUrl.trim().length > 0;
+    return isNonEmptyString(account.baseUrl);
   }
 
-  if (!isSlackChannelAccount(account)) {
-    return Object.keys(account.config).length > 0;
-  }
-
-  return (
-    account.botToken.trim().length > 0 && account.appToken.trim().length > 0
-  );
+  return Object.keys(account.config).length > 0;
 }
 
 function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
@@ -656,59 +658,11 @@ function toAccountSnapshot(account: ChannelAccount): ChannelAccountSnapshot {
   };
 }
 
-function hasNonEmptyCredential(value: string | undefined): value is string {
-  return value !== undefined && value.trim().length > 0;
-}
-
-function assertEnabledAccountPatchHasCredentials(
-  channelId: SupportedChannelId,
-  patch: ChannelAccountPatch,
-): void {
-  if (patch.enabled !== true) {
-    return;
-  }
-
-  if (channelId === "telegram" && !hasNonEmptyCredential(patch.token)) {
-    throw new Error(
-      'Channel "telegram" account is missing a token. Configure it first.',
-    );
-  }
-  if (channelId === "discord" && !hasNonEmptyCredential(patch.token)) {
-    throw new Error(
-      'Channel "discord" account is missing a token. Configure it first.',
-    );
-  }
-  if (
-    channelId === "slack" &&
-    (!hasNonEmptyCredential(patch.botToken) ||
-      !hasNonEmptyCredential(patch.appToken))
-  ) {
-    throw new Error(
-      'Channel "slack" account is missing a bot token or app token. Configure it first.',
-    );
-  }
-}
-
 function assertEnabledAccountIsConfigured(account: ChannelAccount): void {
-  if (!account.enabled || isAccountConfigured(account)) {
+  if (!account.enabled) {
     return;
   }
-
-  if (isTelegramChannelAccount(account)) {
-    throw new Error(
-      'Channel "telegram" account is missing a token. Configure it first.',
-    );
-  }
-  if (isDiscordChannelAccount(account)) {
-    throw new Error(
-      'Channel "discord" account is missing a token. Configure it first.',
-    );
-  }
-  if (isSlackChannelAccount(account)) {
-    throw new Error(
-      'Channel "slack" account is missing a bot token or app token. Configure it first.',
-    );
-  }
+  assertAccountHasRequiredCredentials(account);
 }
 
 function createAccountFromPatch(
@@ -717,7 +671,7 @@ function createAccountFromPatch(
   patch: ChannelAccountPatch,
 ): ChannelAccount {
   const normalizedPatch = normalizeChannelAccountPatch(channelId, patch);
-  assertEnabledAccountPatchHasCredentials(channelId, normalizedPatch);
+  assertEnabledAccountPatchHasRequiredCredentials(channelId, normalizedPatch);
   const now = new Date().toISOString();
   if (channelId === "telegram") {
     return {
@@ -848,54 +802,26 @@ function createAccountFromPatch(
   };
 }
 
-const KNOWN_CONFIG_SECRET_KEYS = new Set(["bot_token", "auth"]);
-
-function mergeCredentialPatchValue(
-  existingValue: string,
-  patchValue: string | undefined,
-): string {
-  if (hasNonEmptyCredential(patchValue)) {
-    return patchValue;
-  }
-  return existingValue;
-}
-
-function getConfigSecretKeys(channelId: string): Set<string> {
-  const secretKeys = new Set(KNOWN_CONFIG_SECRET_KEYS);
-  try {
-    for (const field of getChannelPluginMetadata(channelId).configSchema
-      ?.fields ?? []) {
-      if (field.type === "secret") {
-        secretKeys.add(field.key);
-      }
-    }
-  } catch {
-    // Unsupported channels should have been rejected earlier. Keep config
-    // merging conservative instead of letting metadata lookup failures turn a
-    // harmless settings save into a credential wipe.
-  }
-  return secretKeys;
-}
-
 function mergePluginConfigPatch(
-  channelId: string,
-  existingConfig: ChannelProtocolConfig,
+  existing: CustomChannelAccount,
   patchConfig: ChannelProtocolConfig | undefined,
 ): ChannelProtocolConfig {
   if (patchConfig === undefined) {
-    return { ...existingConfig };
+    return { ...existing.config };
   }
 
-  const secretKeys = getConfigSecretKeys(channelId);
-  const nextConfig = { ...existingConfig };
+  const secretKeys = getConfigSecretKeys(
+    existing.channel,
+    getPersistedSecretRefPaths(existing),
+  );
+  const nextConfig = { ...existing.config };
   for (const [key, value] of Object.entries(patchConfig)) {
-    const existingValue = existingConfig[key];
+    const existingValue = existing.config[key];
     if (
       secretKeys.has(key) &&
       typeof value === "string" &&
       value.trim().length === 0 &&
-      typeof existingValue === "string" &&
-      existingValue.trim().length > 0
+      isNonEmptyString(existingValue)
     ) {
       continue;
     }
@@ -1056,11 +982,7 @@ function mergeAccountPatch(
       enabled: normalizedPatch.enabled ?? existing.enabled,
       dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
       allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
-      config: mergePluginConfigPatch(
-        existing.channel,
-        existing.config,
-        normalizedPatch.config,
-      ),
+      config: mergePluginConfigPatch(existing, normalizedPatch.config),
       updatedAt: nextUpdatedAt,
     };
   }
@@ -1420,23 +1342,11 @@ export async function startChannelLive(
     );
   }
   if (!isAccountConfigured(existing)) {
-    if (isTelegramChannelAccount(existing)) {
-      throw new Error(
-        'Channel "telegram" is missing a token. Configure it first.',
-      );
-    }
-    if (isDiscordChannelAccount(existing)) {
-      throw new Error(
-        'Channel "discord" is missing a token. Configure it first.',
-      );
-    }
-    if (!isSlackChannelAccount(existing)) {
-      throw new Error(
-        `Channel "${channelId}" account is not configured. Configure it first.`,
-      );
-    }
     throw new Error(
-      'Channel "slack" is missing a bot token or app token. Configure it first.',
+      getMissingRequiredCredentialMessageForAccount(existing, {
+        scope: "channel",
+      }) ??
+        `Channel "${channelId}" account is not configured. Configure it first.`,
     );
   }
 
@@ -1819,23 +1729,9 @@ export async function startChannelAccountLive(
     );
   }
   if (!isAccountConfigured(existing)) {
-    if (isTelegramChannelAccount(existing)) {
-      throw new Error(
-        'Channel "telegram" account is missing a token. Configure it first.',
-      );
-    }
-    if (isDiscordChannelAccount(existing)) {
-      throw new Error(
-        'Channel "discord" account is missing a token. Configure it first.',
-      );
-    }
-    if (!isSlackChannelAccount(existing)) {
-      throw new Error(
-        `Channel "${channelId}" account is not configured. Configure it first.`,
-      );
-    }
     throw new Error(
-      'Channel "slack" account is missing a bot token or app token. Configure it first.',
+      getMissingRequiredCredentialMessageForAccount(existing) ??
+        `Channel "${channelId}" account is not configured. Configure it first.`,
     );
   }
 

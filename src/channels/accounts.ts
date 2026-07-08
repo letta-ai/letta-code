@@ -13,7 +13,11 @@ import {
   getChannelSecret,
   setChannelSecret,
 } from "./credential-store";
-import { getChannelPluginMetadata } from "./plugin-registry";
+import {
+  CHANNEL_SECRET_REFS_KEY,
+  configSecretFieldPathToKey,
+  getAccountSecretFieldPaths,
+} from "./credential-utils";
 import type {
   ChannelAccount,
   ChannelDefaultPermissionMode,
@@ -72,7 +76,6 @@ interface ChannelAccountStore {
 export const LEGACY_CHANNEL_ACCOUNT_ID = "__legacy_migrated__";
 
 const stores = new Map<string, ChannelAccountStore>();
-const CHANNEL_SECRET_REFS_KEY = "__letta_secret_refs";
 const SECRET_PRESENT_PLACEHOLDER = "__letta_channel_secret_present__";
 const pendingSecretWrites: Promise<unknown>[] = [];
 
@@ -110,54 +113,13 @@ function isSecretPlaceholder(value: unknown): boolean {
   return value === SECRET_PRESENT_PLACEHOLDER;
 }
 
-const FALLBACK_CONFIG_SECRET_FIELD_PATHS = ["config.bot_token", "config.auth"];
-
-function getConfigSchemaSecretFieldPaths(channelId: string): string[] {
-  try {
-    return (
-      getChannelPluginMetadata(channelId)
-        .configSchema?.fields.filter((field) => field.type === "secret")
-        .map((field) => `config.${field.key}`) ?? []
-    );
-  } catch {
-    // Metadata lookup for user-installed plugins depends on local manifests.
-    // Account load/save must remain conservative if a plugin was removed or its
-    // manifest is temporarily unreadable: preserve the built-in fallback secret
-    // keys and do not make the account store unusable.
-    return [];
-  }
-}
-
-function getSecretFieldPaths(account: ChannelAccount): string[] {
-  const persistedRefPaths = Object.keys(getSecretRefs(account));
-  if (isSlackChannelAccount(account)) {
-    return [...new Set(["botToken", "appToken", ...persistedRefPaths])];
-  }
-  if (isTelegramChannelAccount(account) || isDiscordChannelAccount(account)) {
-    return [...new Set(["token", ...persistedRefPaths])];
-  }
-  if (
-    isCustomChannelAccount(account) ||
-    !isFirstPartyChannelId(account.channel)
-  ) {
-    return [
-      ...new Set([
-        ...FALLBACK_CONFIG_SECRET_FIELD_PATHS,
-        ...getConfigSchemaSecretFieldPaths(account.channel),
-        ...persistedRefPaths,
-      ]),
-    ];
-  }
-  return persistedRefPaths;
-}
-
 function getSecretValueFromAccount(
   account: ChannelAccount,
   fieldPath: string,
 ): unknown {
-  if (fieldPath.startsWith("config.")) {
-    const key = fieldPath.slice("config.".length);
-    return (account as CustomChannelAccount).config?.[key];
+  const configKey = configSecretFieldPathToKey(fieldPath);
+  if (configKey) {
+    return (account as CustomChannelAccount).config?.[configKey];
   }
   return (account as unknown as Record<string, unknown>)[fieldPath];
 }
@@ -167,10 +129,13 @@ function setSecretValueOnAccount(
   fieldPath: string,
   value: string,
 ): void {
-  if (fieldPath.startsWith("config.")) {
-    const key = fieldPath.slice("config.".length);
+  const configKey = configSecretFieldPathToKey(fieldPath);
+  if (configKey) {
     const customAccount = account as CustomChannelAccount;
-    customAccount.config = { ...(customAccount.config ?? {}), [key]: value };
+    customAccount.config = {
+      ...(customAccount.config ?? {}),
+      [configKey]: value,
+    };
     return;
   }
   (account as unknown as Record<string, unknown>)[fieldPath] = value;
@@ -180,9 +145,9 @@ function deleteSecretValueFromAccount(
   account: ChannelAccount,
   fieldPath: string,
 ): void {
-  if (fieldPath.startsWith("config.")) {
-    const key = fieldPath.slice("config.".length);
-    delete (account as CustomChannelAccount).config?.[key];
+  const configKey = configSecretFieldPathToKey(fieldPath);
+  if (configKey) {
+    delete (account as CustomChannelAccount).config?.[configKey];
     return;
   }
   delete (account as unknown as Record<string, unknown>)[fieldPath];
@@ -229,8 +194,9 @@ function prepareAccountForStorage(account: ChannelAccount): ChannelAccount {
     return cloned;
   }
 
+  const secretFieldPaths = getAccountSecretFieldPaths(cloned);
   delete cloned[CHANNEL_SECRET_REFS_KEY];
-  for (const fieldPath of getSecretFieldPaths(cloned)) {
+  for (const fieldPath of secretFieldPaths) {
     const value = getSecretValueFromAccount(cloned, fieldPath);
     if (typeof value === "string" && value.trim().length > 0) {
       markSecretRef(cloned, fieldPath);
@@ -632,7 +598,7 @@ export async function hydrateChannelAccountSecrets(
   let migratedPlaintextSecrets = false;
 
   for (const account of store.accounts) {
-    for (const fieldPath of getSecretFieldPaths(account)) {
+    for (const fieldPath of getAccountSecretFieldPaths(account)) {
       const currentValue = getSecretValueFromAccount(account, fieldPath);
       if (typeof currentValue === "string" && currentValue.trim().length > 0) {
         markSecretRef(account, fieldPath);
@@ -764,7 +730,7 @@ export async function removeChannelAccountWithSecrets(
   const account = getChannelAccount(channelId, accountId);
   if (account && getCachedChannelCredentialsStoreMode() === "keyring") {
     await Promise.all(
-      getSecretFieldPaths(account).map((fieldPath) =>
+      getAccountSecretFieldPaths(account).map((fieldPath) =>
         deleteChannelSecret(channelId, accountId, fieldPath),
       ),
     );

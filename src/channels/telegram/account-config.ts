@@ -1,3 +1,4 @@
+import { isNonEmptyString } from "@/channels/credential-utils";
 import type { ChannelAccountConfigAdapter } from "@/channels/plugin-types";
 import type {
   TelegramChannelAccount,
@@ -15,10 +16,6 @@ const TELEGRAM_CONFIG_KEYS = new Set([
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
 }
 
 function isBoolean(value: unknown): value is boolean {

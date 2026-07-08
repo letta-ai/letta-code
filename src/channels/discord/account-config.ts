@@ -1,3 +1,4 @@
+import { isNonEmptyString } from "@/channels/credential-utils";
 import type { ChannelAccountConfigAdapter } from "@/channels/plugin-types";
 import type {
   ChannelDefaultPermissionMode,
@@ -21,10 +22,6 @@ const DISCORD_CONFIG_KEYS = new Set([
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
 }
 
 function isNullableString(value: unknown): value is string | null {
