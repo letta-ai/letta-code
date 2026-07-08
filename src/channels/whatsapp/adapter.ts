@@ -408,18 +408,33 @@ export function createWhatsAppAdapter(
 
       // Mark inbound messages as read immediately (fire-and-forget, best-effort).
       // Skip fromMe — no need to mark our own sent messages.
+      // Baileys requires messageTimestamp in lastMessages; missing it throws
+      // synchronously inside chat-utils.js before the .catch can attach, so we
+      // wrap in try/catch defensively.
       if (msg.key?.fromMe !== true) {
-        void sock
-          ?.chatModify?.(
-            { markRead: true, lastMessages: [{ key: msg.key }] },
-            msg.key.remoteJid ?? remoteJid,
-          )
-          .catch((err) =>
-            console.warn(
-              `[WhatsApp:${account.accountId}] markRead failed:`,
-              err instanceof Error ? err.message : err,
-            ),
+        try {
+          void sock
+            ?.chatModify?.(
+              {
+                markRead: true,
+                lastMessages: [
+                  { key: msg.key, messageTimestamp: msg.messageTimestamp },
+                ],
+              },
+              msg.key.remoteJid ?? remoteJid,
+            )
+            .catch((err) =>
+              console.warn(
+                `[WhatsApp:${account.accountId}] markRead failed:`,
+                err instanceof Error ? err.message : err,
+              ),
+            );
+        } catch (err) {
+          console.warn(
+            `[WhatsApp:${account.accountId}] markRead sync throw:`,
+            err instanceof Error ? err.message : err,
           );
+        }
       }
 
       const selfChat = isSelfChat(remoteJid, selfPhoneJid, selfLid);
