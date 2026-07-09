@@ -306,6 +306,26 @@ describe("getReasoningTierOptionsForHandle", () => {
     ]);
   });
 
+  test("returns ChatGPT reasoning options for local ChatGPT OAuth gpt-5.6 named variants", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "openai-codex/gpt-5.6-sol",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "gpt-5.6-sol-plus-pro-none",
+      "gpt-5.6-sol-plus-pro-low",
+      "gpt-5.6-sol-plus-pro-medium",
+      "gpt-5.6-sol-plus-pro-high",
+      "gpt-5.6-sol-plus-pro-xhigh",
+    ]);
+  });
+
   test("returns byok reasoning options for chatgpt-plus-pro gpt-5.5-fast", () => {
     const options = getReasoningTierOptionsForHandle(
       "chatgpt-plus-pro/gpt-5.5-fast",

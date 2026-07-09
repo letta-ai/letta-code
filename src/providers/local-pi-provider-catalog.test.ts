@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModels, getProviders } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import {
   getOAuthProvider,
   getOAuthProviders,
@@ -133,6 +133,45 @@ describe("local pi provider catalog", () => {
       expect(
         models.some((model) => model.handle === "anthropic/claude-opus-4-8"),
       ).toBe(true);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("local ChatGPT OAuth catalog includes GPT-5.6 named models for custom provider names", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-chatgpt-56-"));
+    try {
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "chatgpt-personal",
+        providerType: "chatgpt_oauth",
+        auth: localOAuthAuthFromCredentials({
+          access: "chatgpt-access-token",
+          refresh: "chatgpt-refresh-token",
+          expires: Date.now() + 60_000,
+        }),
+      });
+
+      const models = await listLocalModels(storageDir);
+      expect(models).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            handle: "chatgpt-personal/gpt-5.6-sol",
+            model_endpoint_type: "chatgpt_oauth",
+          }),
+          expect.objectContaining({
+            handle: "chatgpt-personal/gpt-5.6-terra",
+            model_endpoint_type: "chatgpt_oauth",
+          }),
+          expect.objectContaining({
+            handle: "chatgpt-personal/gpt-5.6-luna",
+            model_endpoint_type: "chatgpt_oauth",
+          }),
+        ]),
+      );
+      expect(
+        models.some((model) => model.handle === "chatgpt-personal/gpt-5.6"),
+      ).toBe(false);
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

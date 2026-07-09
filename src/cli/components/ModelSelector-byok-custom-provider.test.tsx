@@ -67,6 +67,9 @@ describe("ModelSelector custom BYOK provider detection", () => {
     expect(
       registryHandleForByokAlias("chatgpt-personal/gpt-5.5", aliases),
     ).toBe("chatgpt-plus-pro/gpt-5.5");
+    expect(
+      registryHandleForByokAlias("chatgpt-personal/gpt-5.6-sol", aliases),
+    ).toBe("chatgpt-plus-pro/gpt-5.6-sol");
     expect(registryHandleForByokAlias("openai-sarah/gpt-5.5", aliases)).toBe(
       "openai/gpt-5.5",
     );

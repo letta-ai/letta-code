@@ -1,4 +1,5 @@
-import { type Api, getModels, type Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import {
   DEFAULT_PI_PROVIDER,
   isUnselectedLocalModelHandle,
@@ -190,18 +191,36 @@ async function discoverOllamaModelIds(input: {
   }
 }
 
-function localProviderNamesFromRecords(
+function localProviderIdentifiersFromRecords(
   records: readonly LocalProviderRecord[],
 ): Set<string> {
-  return new Set(records.map((record) => record.name));
+  return new Set(
+    records.flatMap((record) => [record.name, record.provider_type]),
+  );
 }
 
 function providerRecordFor(
   provider: PiProvider,
   records: readonly LocalProviderRecord[],
 ): LocalProviderRecord | undefined {
-  const names = getPiProviderSpec(provider).localProviderNames;
-  return records.find((record) => names.includes(record.name));
+  const spec = getPiProviderSpec(provider);
+  return records.find(
+    (record) =>
+      spec.localProviderNames.includes(record.name) ||
+      spec.providerTypes.includes(record.provider_type),
+  );
+}
+
+function catalogHandleProviderFor(
+  provider: PiProvider,
+  records: readonly LocalProviderRecord[],
+): PiProvider | string {
+  const spec = getPiProviderSpec(provider);
+  const record = providerRecordFor(provider, records);
+  if (record && !spec.localProviderNames.includes(record.name)) {
+    return record.name;
+  }
+  return provider;
 }
 
 function isDiscoverableLocalProvider(provider: PiProvider): boolean {
@@ -256,8 +275,9 @@ export function resolveLocalProvider(storageDir?: string): PiProvider {
   );
   if (registeredProvider) return registeredProvider.providerName as PiProvider;
   return (
-    listConfiguredPiProviders(localProviderNamesFromRecords(records))[0] ??
-    DEFAULT_PI_PROVIDER
+    listConfiguredPiProviders(
+      localProviderIdentifiersFromRecords(records),
+    )[0] ?? DEFAULT_PI_PROVIDER
   );
 }
 
@@ -406,7 +426,7 @@ export async function listLocalModels(
   options: ListLocalModelsOptions = {},
 ) {
   const records = listLocalProviderRecords(storageDir);
-  const providerNames = localProviderNamesFromRecords(records);
+  const providerNames = localProviderIdentifiersFromRecords(records);
   const configured = resolveLocalModelConfig(storageDir);
   const models: LocalModelListEntry[] = [];
   const registeredProviders = listRegisteredPiProviders();
@@ -484,7 +504,18 @@ export async function listLocalModels(
     !registeredProvidersWithModels.has(configured.provider) &&
     configuredProviderIsConfigured
   ) {
-    addModel(configured.provider, configured.model);
+    const handleProvider = catalogHandleProviderFor(
+      configured.provider,
+      records,
+    );
+    const model =
+      handleProvider === configured.provider
+        ? configured.model
+        : (stripProviderHandlePrefix(configured.model, configured.provider) ??
+          configured.model);
+    addModel(handleProvider, model, {
+      modelEndpointType: localProviderTypeForModelConfig(configured.provider),
+    });
   }
   const discoveryOptions: Required<ListLocalModelsOptions> = {
     fetch: options.fetch ?? fetch,
@@ -531,8 +562,15 @@ export async function listLocalModels(
   );
 
   for (const result of discoveryResults) {
+    const handleProvider = catalogHandleProviderFor(result.provider, records);
     for (const model of result.models) {
-      addModel(result.provider, model);
+      const modelId =
+        handleProvider === result.provider
+          ? model
+          : (stripProviderHandlePrefix(model, result.provider) ?? model);
+      addModel(handleProvider, modelId, {
+        modelEndpointType: localProviderTypeForModelConfig(result.provider),
+      });
     }
   }
   return models;

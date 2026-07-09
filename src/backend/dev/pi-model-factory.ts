@@ -1,5 +1,5 @@
 import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
-import { getModel, getModels } from "@earendil-works/pi-ai";
+import { getModel, getModels } from "@earendil-works/pi-ai/compat";
 import {
   getOAuthProvider,
   type OAuthCredentials,
@@ -7,6 +7,7 @@ import {
 import {
   getLocalOAuthApiKey,
   getLocalProviderRecordByName,
+  getLocalProviderRecordByType,
   type LocalProviderRecord,
   localProviderApiKeyFromRecord,
 } from "@/backend/local/local-provider-auth-store";
@@ -194,16 +195,35 @@ export function resolvePiProviderFromAgent(
 export function resolvePiModelFromAgent(
   model: string | undefined,
   provider: PiProvider,
+  providerType?: string,
 ): string | undefined {
-  return stripProviderHandlePrefix(model, provider);
+  const resolved = stripProviderHandlePrefix(model, provider);
+  if (resolved !== model) return resolved;
+
+  const slashIndex = model?.indexOf("/") ?? -1;
+  const spec = getPiProviderSpec(provider);
+  if (
+    slashIndex > 0 &&
+    providerType !== undefined &&
+    spec.providerTypes.includes(providerType)
+  ) {
+    return model?.slice(slashIndex + 1);
+  }
+
+  return resolved;
 }
 
 function localProviderRecord(
   providerNames: readonly string[],
   storageDir?: string,
+  providerTypes: readonly string[] = [],
 ): LocalProviderRecord | null {
   for (const providerName of providerNames) {
     const record = getLocalProviderRecordByName(providerName, storageDir);
+    if (record) return record;
+  }
+  for (const providerType of providerTypes) {
+    const record = getLocalProviderRecordByType(providerType, storageDir);
     if (record) return record;
   }
   return null;
@@ -213,6 +233,7 @@ function localProviderConnection(
   providerNames: readonly string[],
   envValue: string | undefined,
   storageDir?: string,
+  providerTypes: readonly string[] = [],
 ): {
   apiKey?: string;
   baseURL?: string;
@@ -220,7 +241,7 @@ function localProviderConnection(
   headers?: Record<string, string>;
   record?: LocalProviderRecord;
 } {
-  const record = localProviderRecord(providerNames, storageDir);
+  const record = localProviderRecord(providerNames, storageDir, providerTypes);
   return {
     apiKey: localProviderApiKeyFromRecord(record) ?? envValue,
     baseURL: record?.base_url,
@@ -497,13 +518,22 @@ export async function resolvePiModelForAgent(
     : resolvePiProviderFromAgent(concreteModelHandle, modelSettings);
   const registeredProvider = getRegisteredPiProvider(provider);
   const spec = isPiProvider(provider) ? getPiProviderSpec(provider) : undefined;
+  const storageDir = options.localProviderAuthStorageDir;
+  const preferredProviderType =
+    typeof modelSettings.provider_type === "string"
+      ? modelSettings.provider_type
+      : options.preferredProviderType;
   const modelId =
     options.model ??
     (registeredProvider
       ? stripRegisteredProviderHandlePrefix(concreteModelHandle, provider)
       : undefined) ??
     (spec
-      ? resolvePiModelFromAgent(concreteModelHandle, spec.id)
+      ? resolvePiModelFromAgent(
+          concreteModelHandle,
+          spec.id,
+          preferredProviderType,
+        )
       : undefined) ??
     registeredProvider?.config.models?.[0]?.id ??
     (spec?.defaultModel
@@ -511,12 +541,6 @@ export async function resolvePiModelForAgent(
       : undefined) ??
     process.env.LETTA_CODE_DEV_PI_MODEL ??
     "";
-  const storageDir = options.localProviderAuthStorageDir;
-  const preferredProviderType =
-    typeof modelSettings.provider_type === "string"
-      ? modelSettings.provider_type
-      : options.preferredProviderType;
-
   let connection = registeredProvider
     ? resolveRegisteredPiProviderRuntimeConnection(
         registeredProvider,
@@ -527,6 +551,7 @@ export async function resolvePiModelForAgent(
           spec.localProviderNames,
           spec.apiKeyEnv?.() ?? spec.fallbackApiKey,
           storageDir,
+          spec.providerTypes,
         )
       : {
           timeout: resolveLocalProviderTimeout({ providerIds: [provider] }),
@@ -559,6 +584,7 @@ export async function resolvePiModelForAgent(
     const oauth = await getLocalOAuthApiKey({
       providerId: spec.piProvider,
       providerNames: spec.localProviderNames,
+      providerTypes: spec.providerTypes,
       storageDir,
     });
     connection = {

@@ -396,9 +396,14 @@ export function localOAuthAuthFromCredentials(
 function localOAuthRecord(
   providerNames: readonly string[],
   storageDir?: string,
+  providerTypes: readonly string[] = [],
 ): LocalProviderRecord | undefined {
   for (const providerName of providerNames) {
     const record = getLocalProviderRecordByName(providerName, storageDir);
+    if (record?.auth.type === "oauth") return record;
+  }
+  for (const providerType of providerTypes) {
+    const record = getLocalProviderRecordByType(providerType, storageDir);
     if (record?.auth.type === "oauth") return record;
   }
   return undefined;
@@ -407,8 +412,9 @@ function localOAuthRecord(
 export function getLocalOAuthCredentials(
   providerNames: readonly string[],
   storageDir?: string,
+  providerTypes: readonly string[] = [],
 ): OAuthCredentials | undefined {
-  const record = localOAuthRecord(providerNames, storageDir);
+  const record = localOAuthRecord(providerNames, storageDir, providerTypes);
   return record
     ? toPiOAuthCredentials(record.auth as LocalProviderOAuthAuth)
     : undefined;
@@ -417,6 +423,7 @@ export function getLocalOAuthCredentials(
 export async function getLocalOAuthApiKey(input: {
   providerId: string;
   providerNames: readonly string[];
+  providerTypes?: readonly string[];
   storageDir?: string;
 }): Promise<
   | {
@@ -425,7 +432,11 @@ export async function getLocalOAuthApiKey(input: {
     }
   | undefined
 > {
-  const record = localOAuthRecord(input.providerNames, input.storageDir);
+  const record = localOAuthRecord(
+    input.providerNames,
+    input.storageDir,
+    input.providerTypes,
+  );
   if (!record || record.auth.type !== "oauth") return undefined;
 
   const result = await getOAuthApiKey(input.providerId, {
@@ -454,6 +465,7 @@ export async function getLocalChatGPTApiKey(
   const result = await getLocalOAuthApiKey({
     providerId: "openai-codex",
     providerNames: [LOCAL_CHATGPT_PROVIDER_NAME, "openai-codex"],
+    providerTypes: ["chatgpt_oauth", "openai-codex"],
     storageDir,
   });
   return result?.apiKey;

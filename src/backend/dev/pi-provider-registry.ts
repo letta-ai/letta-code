@@ -1,5 +1,9 @@
 import type { Api, KnownProvider, Model } from "@earendil-works/pi-ai";
-import { getEnvApiKey, getModels, getProviders } from "@earendil-works/pi-ai";
+import {
+  getEnvApiKey,
+  getModels,
+  getProviders,
+} from "@earendil-works/pi-ai/compat";
 
 export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
 export const LOCAL_OPENAI_PROVIDER_NAME = "lc-openai";
@@ -414,10 +418,15 @@ export function resolveLocalModel(provider: PiProvider): string | undefined {
 
 function isProviderConfigured(
   provider: PiProviderSpec,
-  localProviderNames: ReadonlySet<string>,
+  localProviderIdentifiers: ReadonlySet<string>,
 ): boolean {
   return (
-    provider.localProviderNames.some((name) => localProviderNames.has(name)) ||
+    provider.localProviderNames.some((name) =>
+      localProviderIdentifiers.has(name),
+    ) ||
+    provider.providerTypes.some((providerType) =>
+      localProviderIdentifiers.has(providerType),
+    ) ||
     provider.envConfigured?.() === true
   );
 }

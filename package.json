@@ -50,7 +50,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.79.6",
+    "@earendil-works/pi-ai": "^0.80.5",
     "@letta-ai/letta-client": "^1.10.2",
     "@pierre/diffs": "1.2.2",
     "@scarf/scarf": "^1.4.0",

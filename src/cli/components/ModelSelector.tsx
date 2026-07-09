@@ -384,10 +384,24 @@ export function ModelSelector({
   }, [forceRefreshOnMount]);
 
   useEffect(() => {
-    if (localModelCatalog) {
-      setByokProviderAliases(buildByokProviderAliases([]));
-      return;
-    }
+    if (!localModelCatalog) return;
+    const providers = Array.from(providerTypesByHandle.entries()).flatMap(
+      ([handle, providerType]) => {
+        const slashIndex = handle.indexOf("/");
+        if (slashIndex <= 0) return [];
+        return [
+          {
+            name: handle.slice(0, slashIndex),
+            provider_type: providerType,
+          },
+        ];
+      },
+    );
+    setByokProviderAliases(buildByokProviderAliases(providers, "local"));
+  }, [localModelCatalog, providerTypesByHandle]);
+
+  useEffect(() => {
+    if (localModelCatalog) return;
     (async () => {
       try {
         const providers = await listProviders();
@@ -472,7 +486,10 @@ export function ModelSelector({
 
   const modelsForBackendHandle = useCallback(
     (handle: string, includeUnknown: boolean): UiModel[] => {
-      const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+      const registryHandle = registryHandleForByokAlias(
+        handle,
+        byokProviderAliases,
+      );
       const baseStaticModel = pickPreferredStaticModel(registryHandle);
       const fastRegistryHandle =
         getChatGptFastRegistryHandleForModelHandle(handle);
@@ -526,7 +543,12 @@ export function ModelSelector({
 
       return result;
     },
-    [pickPreferredStaticModel, withActualHandle, withProviderTypeMetadata],
+    [
+      byokProviderAliases,
+      pickPreferredStaticModel,
+      withActualHandle,
+      withProviderTypeMetadata,
+    ],
   );
 
   // Supported models: models.json entries that are available
