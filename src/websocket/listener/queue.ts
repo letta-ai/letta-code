@@ -1,8 +1,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import { buildClientSkillsPayload } from "@/agent/client-skills";
-import { createChannelTurnProgressBuilder } from "@/channels/progress";
-import { getChannelRegistry } from "@/channels/registry";
-import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
+import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
+import type { ChannelTurnSource } from "@/channels/types";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -11,13 +10,18 @@ import type {
 import { isCoalescable } from "@/queue/queue-runtime";
 import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import type { StopReasonType } from "@/types/protocol_v2";
 import { resizeImageIfNeeded } from "@/utils/image-resize";
 import {
   type ImageNormalizationFailureMode,
   normalizeMessageContentImages as normalizeSharedMessageContentImages,
 } from "@/utils/message-image-normalization";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
+import {
+  activateChannelTurn,
+  clearActiveChannelTurn,
+  dispatchChannelTurnLifecycleEvent,
+  resolveTurnLifecycleTerminal,
+} from "./channel-turn-session";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
   emitListenerStatus,
@@ -154,69 +158,6 @@ function collectBatchChannelTurnSources(
   }
 
   return sources.length > 0 ? sources : undefined;
-}
-
-async function dispatchChannelTurnLifecycleEvent(
-  event:
-    | {
-        type: "processing";
-        batchId: string;
-        sources: ChannelTurnSource[];
-      }
-    | {
-        type: "finished";
-        batchId: string;
-        sources: ChannelTurnSource[];
-        outcome: ChannelTurnOutcome;
-        stopReason: StopReasonType;
-        error?: string;
-        runId?: string;
-      },
-): Promise<void> {
-  if (event.sources.length === 0) {
-    return;
-  }
-
-  const registry = getChannelRegistry();
-  if (!registry) {
-    return;
-  }
-
-  if (event.type === "processing") {
-    await registry.dispatchTurnLifecycleEvent(event);
-    return;
-  }
-
-  await registry.dispatchTurnLifecycleEvent({
-    type: "finished",
-    batchId: event.batchId,
-    sources: event.sources,
-    outcome: event.outcome,
-    stopReason: event.stopReason,
-    ...(event.error ? { error: event.error } : {}),
-    ...(event.runId ? { runId: event.runId } : {}),
-  });
-}
-
-export function resolveTurnLifecycleTerminal(
-  lastStopReason: string | null,
-  didThrow: boolean,
-): { outcome: ChannelTurnOutcome; stopReason: StopReasonType } {
-  const stopReason = (
-    didThrow &&
-    (!lastStopReason ||
-      lastStopReason === "end_turn" ||
-      lastStopReason === "requires_approval")
-      ? "error"
-      : (lastStopReason ?? "error")
-  ) as StopReasonType;
-  if (stopReason === "cancelled") {
-    return { outcome: "cancelled", stopReason };
-  }
-  if (stopReason === "end_turn" || stopReason === "tool_rule") {
-    return { outcome: "completed", stopReason };
-  }
-  return { outcome: "error", stopReason };
 }
 
 async function buildChannelTurnProgressBuilder(agentId?: string | null) {
@@ -583,13 +524,15 @@ async function drainQueuedMessages(
 
       let turnError: string | undefined;
       let didThrow = false;
-      runtime.activeChannelTurnSources = channelTurnSources;
-      runtime.activeChannelTurnBatchId = dequeuedBatch.batchId;
-      runtime.activeChannelTurnContextRecovered = false;
-      runtime.activeChannelTurnProgress =
-        channelTurnSources.length > 0
-          ? await buildChannelTurnProgressBuilder(queuedTurn.agentId)
-          : null;
+      activateChannelTurn(runtime, {
+        sources: channelTurnSources,
+        batchId: dequeuedBatch.batchId,
+        contextRecovered: false,
+        progress:
+          channelTurnSources.length > 0
+            ? await buildChannelTurnProgressBuilder(queuedTurn.agentId)
+            : null,
+      });
       try {
         await processQueuedTurn(queuedTurn, dequeuedBatch);
       } catch (error) {
@@ -597,10 +540,7 @@ async function drainQueuedMessages(
         turnError = error instanceof Error ? error.message : String(error);
         throw error;
       } finally {
-        runtime.activeChannelTurnSources = null;
-        runtime.activeChannelTurnBatchId = null;
-        runtime.activeChannelTurnContextRecovered = false;
-        runtime.activeChannelTurnProgress = null;
+        clearActiveChannelTurn(runtime);
         if (channelTurnSources.length > 0) {
           const terminal = resolveTurnLifecycleTerminal(
             runtime.lastStopReason,

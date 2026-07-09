@@ -8,7 +8,7 @@ import {
   resolveSlackThreadHistoryMock,
   resolveSlackThreadStarterMock,
   slackAccountDefaults,
-} from "./slack-adapter.test-harness";
+} from "./adapter-test-harness";
 
 installSlackAdapterTestHooks();
 

@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
-
-import { slackAccountConfigAdapter } from "@/channels/slack/account-config";
 import type { SlackChannelAccount } from "@/channels/types";
+import { slackAccountConfigAdapter } from "./account-config";
 
 const baseAccount: SlackChannelAccount = {
   channel: "slack",

@@ -51,7 +51,7 @@ import {
   removeRoutesForAccount,
   setRouteInMemory,
 } from "./routing";
-import { resolveSlackAccountDisplayName } from "./slack/adapter";
+import { resolveSlackAccountDisplayName } from "./slack/account-display";
 import {
   listChannelTargets,
   loadTargetStore,

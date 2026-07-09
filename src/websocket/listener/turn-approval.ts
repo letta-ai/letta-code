@@ -105,7 +105,7 @@ function getChannelApprovalSourceScopeKey(source: ChannelTurnSource): string {
 export function resolveChannelApprovalSource(
   runtime: ConversationRuntime,
 ): ChannelTurnSource | null {
-  const sources = runtime.activeChannelTurnSources ?? [];
+  const sources = runtime.activeChannelTurn?.sources ?? [];
   if (sources.length === 0) {
     return null;
   }
@@ -492,7 +492,7 @@ export async function handleApprovalStop(params: {
       workingDirectory: turnWorkingDirectory,
       parentScope:
         agentId && conversationId ? { agentId, conversationId } : undefined,
-      channelTurnSources: runtime.activeChannelTurnSources ?? undefined,
+      channelTurnSources: runtime.activeChannelTurn?.sources,
       onFileWrite,
     });
   } finally {

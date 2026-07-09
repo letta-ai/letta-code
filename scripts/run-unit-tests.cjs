@@ -34,10 +34,10 @@ const dirs = [
   "src/*.test.ts",
 ];
 
-// slack-media.test.ts imports the real ./slack/media module. slack-adapter.test.ts
-// calls mock.module("./slack/media") which in Bun 1.3.x poisons the shared module
-// registry across parallel workers. We run slack-media in an isolated process first,
-// then run src/channels with all OTHER test files (excluding slack-media).
+// slack/media.test.ts imports the real media module. The adapter test harness
+// mocks that module, which in Bun 1.3.x poisons the shared module registry
+// across parallel workers. Run media tests in an isolated process first, then
+// run src/channels with every other test file.
 function findTestFiles(dir, exclude) {
   const results = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -55,15 +55,15 @@ function findTestFiles(dir, exclude) {
 }
 
 const channelTestFiles = findTestFiles("src/channels", [
-  "src/channels/slack-media.test.ts",
+  "src/channels/slack/media.test.ts",
 ]);
 
 const opts = { stdio: "inherit", shell: process.platform === "win32" };
 let exitCode = 0;
 
-// Run slack-media in isolation first (clean module registry)
+// Run Slack media tests in isolation first (clean module registry)
 try {
-  execSync("bun test src/channels/slack-media.test.ts --timeout 15000", opts);
+  execSync("bun test src/channels/slack/media.test.ts --timeout 15000", opts);
 } catch (e) {
   exitCode = e.status ?? 1;
 }

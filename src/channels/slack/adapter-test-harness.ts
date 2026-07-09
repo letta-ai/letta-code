@@ -272,7 +272,7 @@ export const resolveSlackCurrentMessageAttachmentsMock = mock(
   async (): Promise<ChannelMessageAttachment[]> => [],
 );
 
-mock.module("./slack/runtime", () => ({
+mock.module("./runtime", () => ({
   ensureSlackRuntimeInstalled: async () => false,
   installSlackRuntime: async () => {},
   isSlackRuntimeInstalled: () => true,
@@ -286,7 +286,8 @@ mock.module("./slack/runtime", () => ({
   }),
 }));
 
-mock.module("./slack/media", () => ({
+mock.module("./media", () => ({
+  readSlackAttachmentFile: async () => Buffer.alloc(0),
   resolveSlackChannelHistory: resolveSlackChannelHistoryMock,
   resolveSlackCurrentMessageAttachments:
     resolveSlackCurrentMessageAttachmentsMock,
@@ -296,9 +297,10 @@ mock.module("./slack/media", () => ({
 }));
 
 const adapterModule = await import("@/channels/slack/adapter");
+const accountDisplayModule = await import("@/channels/slack/account-display");
 export const createSlackAdapter = adapterModule.createSlackAdapter;
 export const resolveSlackAccountDisplayName =
-  adapterModule.resolveSlackAccountDisplayName;
+  accountDisplayModule.resolveSlackAccountDisplayName;
 
 export const slackAccountDefaults = {
   accountId: "slack-test-account",

@@ -42,10 +42,6 @@ const COMPLETE_EXPORT_MOCK_MODULES = new Set([
 // add a file+module entry here in the same PR with a clear explanation.
 const ALLOWED_TOP_LEVEL_MOCKS = new Set([
   "src/channels/discord-registry.test.ts::../backend/api/client",
-  "src/channels/slack-adapter-interop.test.ts::./slack/media",
-  "src/channels/slack-adapter-interop.test.ts::./slack/runtime",
-  "src/channels/slack-adapter.test.ts::./slack/media",
-  "src/channels/slack-adapter.test.ts::./slack/runtime",
   "src/channels/telegram-adapter.test.ts::./telegram/runtime",
   "src/cli/message-search-cache-warm.test.ts::../backend/api/search",
   "src/hooks/prompt-executor.test.ts::../backend/api/generate",

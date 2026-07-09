@@ -23,7 +23,7 @@ import {
   shouldRetryPostStreamRunError,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
-import { createChannelTurnProgressBuilder } from "@/channels/progress";
+import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
 import { getChannelRegistry } from "@/channels/registry";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
@@ -39,6 +39,12 @@ import {
   applySuggestedPermissionsForApproval,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
+import {
+  activateChannelTurn,
+  clearActiveChannelTurn,
+  dispatchChannelTurnLifecycleEvent,
+  resolveTurnLifecycleTerminal,
+} from "./channel-turn-session";
 import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
@@ -58,7 +64,7 @@ import {
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
-import { consumeQueuedTurn, resolveTurnLifecycleTerminal } from "./queue";
+import { consumeQueuedTurn } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import {
   clearActiveRunState,
@@ -630,9 +636,9 @@ export async function resolveRecoveredApprovalResponse(
     (decision) => decision.approval.toolCallId,
   );
 
+  const activeChannelTurn = runtime.activeChannelTurn;
   if (
-    (!runtime.activeChannelTurnSources ||
-      runtime.activeChannelTurnSources.length === 0) &&
+    (!activeChannelTurn || activeChannelTurn.sources.length === 0) &&
     recovered.agentId
   ) {
     const recoveredSources =
@@ -641,14 +647,18 @@ export async function resolveRecoveredApprovalResponse(
         recovered.conversationId,
       ) ?? [];
     if (recoveredSources.length > 0) {
-      runtime.activeChannelTurnSources = recoveredSources;
-      runtime.activeChannelTurnBatchId ??= `recovered-${requestId || crypto.randomUUID()}`;
-      runtime.activeChannelTurnProgress = createChannelTurnProgressBuilder();
-      runtime.activeChannelTurnContextRecovered = true;
+      activateChannelTurn(runtime, {
+        sources: recoveredSources,
+        batchId:
+          activeChannelTurn?.batchId ??
+          `recovered-${requestId || crypto.randomUUID()}`,
+        progress: createChannelTurnProgressBuilder(),
+        contextRecovered: true,
+      });
     }
   }
   const shouldFinalizeRecoveredChannelTurn =
-    runtime.activeChannelTurnContextRecovered === true;
+    runtime.activeChannelTurn?.contextRecovered === true;
   let shouldClearRecoveredChannelContext = false;
 
   recovered.pendingRequestIds.clear();
@@ -711,7 +721,7 @@ export async function resolveRecoveredApprovalResponse(
                 conversationId: recovered.conversationId,
               }
             : undefined,
-        channelTurnSources: runtime.activeChannelTurnSources ?? undefined,
+        channelTurnSources: runtime.activeChannelTurn?.sources,
       });
     } finally {
       emitToolExecutionOutput.flush();
@@ -771,11 +781,12 @@ export async function resolveRecoveredApprovalResponse(
         false,
       );
       if (terminal.stopReason !== "requires_approval") {
-        const sources = runtime.activeChannelTurnSources ?? [];
+        const activeTurn = runtime.activeChannelTurn;
+        const sources = activeTurn?.sources ?? [];
         if (sources.length > 0) {
-          await getChannelRegistry()?.dispatchTurnLifecycleEvent({
+          await dispatchChannelTurnLifecycleEvent({
             type: "finished",
-            batchId: runtime.activeChannelTurnBatchId ?? continuationBatchId,
+            batchId: activeTurn?.batchId ?? continuationBatchId,
             sources,
             outcome: terminal.outcome,
             stopReason: terminal.stopReason,
@@ -799,12 +810,13 @@ export async function resolveRecoveredApprovalResponse(
         runtime.lastStopReason,
         true,
       );
-      const sources = runtime.activeChannelTurnSources ?? [];
+      const activeTurn = runtime.activeChannelTurn;
+      const sources = activeTurn?.sources ?? [];
       if (sources.length > 0) {
-        await getChannelRegistry()?.dispatchTurnLifecycleEvent({
+        await dispatchChannelTurnLifecycleEvent({
           type: "finished",
           batchId:
-            runtime.activeChannelTurnBatchId ??
+            activeTurn?.batchId ??
             `recovered-${requestId || crypto.randomUUID()}`,
           sources,
           outcome: terminal.outcome,
@@ -833,10 +845,7 @@ export async function resolveRecoveredApprovalResponse(
     throw error;
   } finally {
     if (shouldClearRecoveredChannelContext) {
-      runtime.activeChannelTurnSources = null;
-      runtime.activeChannelTurnBatchId = null;
-      runtime.activeChannelTurnProgress = null;
-      runtime.activeChannelTurnContextRecovered = false;
+      clearActiveChannelTurn(runtime);
     }
   }
 }

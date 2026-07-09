@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import {
-  listSlackChannels,
-  openSlackDirectMessage,
-  resolveSlackMessageTarget,
-} from "@/channels/slack/target-resolution";
-import {
   __testOverrideLoadTargetStore,
   __testOverrideSaveTargetStore,
   clearTargetStores,
@@ -12,6 +7,11 @@ import {
   upsertChannelTarget,
 } from "@/channels/targets";
 import type { SlackChannelAccount } from "@/channels/types";
+import {
+  listSlackChannels,
+  openSlackDirectMessage,
+  resolveSlackMessageTarget,
+} from "./target-resolution";
 
 function makeSlackAccount(accountId: string): SlackChannelAccount {
   return {

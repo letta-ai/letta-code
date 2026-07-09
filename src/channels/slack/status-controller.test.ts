@@ -6,7 +6,7 @@ import {
   FakeSlackWriteClient,
   getSlackWriteClient,
   installSlackAdapterTestHooks,
-} from "./slack-adapter.test-harness";
+} from "./adapter-test-harness";
 
 installSlackAdapterTestHooks();
 

@@ -1,6 +1,44 @@
 import { describe, expect, test } from "bun:test";
 
-import { resolveTurnLifecycleTerminal } from "./queue";
+import {
+  activateChannelTurn,
+  type ChannelTurnRuntimeCarrier,
+  clearActiveChannelTurn,
+  getActiveChannelTurnProgressContext,
+  resolveTurnLifecycleTerminal,
+} from "./channel-turn-session";
+
+test("channel turn session activates and clears all runtime state atomically", () => {
+  const runtime: ChannelTurnRuntimeCarrier = { activeChannelTurn: null };
+  const source = {
+    channel: "slack",
+    accountId: "acct-1",
+    chatId: "C123",
+    chatType: "channel" as const,
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+  const progress = { buildUpdates: () => [] };
+
+  const activeTurn = activateChannelTurn(runtime, {
+    sources: [source],
+    batchId: "batch-1",
+    progress,
+    contextRecovered: true,
+  });
+
+  expect(runtime.activeChannelTurn).toBe(activeTurn);
+  expect(getActiveChannelTurnProgressContext(runtime)).toEqual({
+    sources: [source],
+    batchId: "batch-1",
+    progressBuilder: progress,
+  });
+
+  clearActiveChannelTurn(runtime);
+  expect(runtime.activeChannelTurn).toBeNull();
+  expect(getActiveChannelTurnProgressContext(runtime)).toBeNull();
+});
 
 describe("channel turn terminal mapping", () => {
   test.each([

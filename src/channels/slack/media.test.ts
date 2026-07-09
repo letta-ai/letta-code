@@ -42,9 +42,7 @@ afterEach(async () => {
 });
 
 async function loadSlackMediaModule() {
-  return import(
-    `./slack/media.ts?slack-media-test=${Date.now()}-${Math.random()}`
-  );
+  return import(`./media.ts?slack-media-test=${Date.now()}-${Math.random()}`);
 }
 
 test("resolveSlackThreadStarter falls back to forwarded Slack attachment text", async () => {

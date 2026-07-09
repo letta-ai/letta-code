@@ -7,7 +7,7 @@ import {
   FakeSlackApp,
   installSlackAdapterTestHooks,
   slackAccountDefaults,
-} from "./slack-adapter.test-harness";
+} from "./adapter-test-harness";
 
 installSlackAdapterTestHooks();
 

@@ -14,7 +14,7 @@ import {
   buildChannelModelUpdatedMessage,
   buildChannelModelUpdateFailedMessage,
 } from "@/channels/commands";
-import { createChannelTurnProgressBuilder } from "@/channels/progress";
+import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
@@ -37,6 +37,10 @@ import { isDebugEnabled } from "@/utils/debug";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
+import {
+  activateChannelTurn,
+  uniqueChannelTurnSources,
+} from "./channel-turn-session";
 import { handleReloadCommand } from "./commands";
 import { handleChannelRegistryEvent } from "./commands/channels";
 import {
@@ -341,25 +345,18 @@ export async function recoverPendingChannelControlRequests(
     });
     if (
       stillPendingEntries.length > 0 &&
-      (!runtime.activeChannelTurnSources ||
-        runtime.activeChannelTurnSources.length === 0)
+      (!runtime.activeChannelTurn ||
+        runtime.activeChannelTurn.sources.length === 0)
     ) {
-      const sourcesByKey = new Map<string, ChannelTurnSource>();
-      for (const entry of stillPendingEntries) {
-        const source = entry.event.source;
-        const key = [
-          source.channel,
-          source.accountId ?? "",
-          source.chatId,
-          source.threadId ?? "",
-        ].join(":");
-        sourcesByKey.set(key, source);
-      }
-      const recoveredSources = Array.from(sourcesByKey.values());
-      runtime.activeChannelTurnSources = recoveredSources;
-      runtime.activeChannelTurnBatchId = `recovered-${stillPendingEntries[0]?.event.requestId ?? crypto.randomUUID()}`;
-      runtime.activeChannelTurnContextRecovered = true;
-      runtime.activeChannelTurnProgress = createChannelTurnProgressBuilder();
+      const recoveredSources = uniqueChannelTurnSources(
+        stillPendingEntries.map((entry) => entry.event.source),
+      );
+      activateChannelTurn(runtime, {
+        sources: recoveredSources,
+        batchId: `recovered-${stillPendingEntries[0]?.event.requestId ?? crypto.randomUUID()}`,
+        contextRecovered: true,
+        progress: createChannelTurnProgressBuilder(),
+      });
     }
 
     for (const entry of entries) {
