@@ -206,6 +206,9 @@ describe("isValidCron", () => {
     expect(isValidCron("0-59/0 * * * *")).toBe(false); // step must be > 0
     // out-of-range inside a comma list rejects the whole field
     expect(isValidCron("0,60 * * * *")).toBe(false);
+    // reversed ranges never match — reject at validation time
+    expect(isValidCron("59-0 * * * *")).toBe(false); // minute reversed
+    expect(isValidCron("0 0 31-1 * *")).toBe(false); // DOM reversed
   });
 
   test("accepts valid boundary values for each field", () => {
@@ -248,6 +251,19 @@ describe("cronMatchesTime", () => {
     const date = new Date("2026-03-26T14:30:00");
     expect(cronMatchesTime("30 14 * * 4", date)).toBe(true);
     expect(cronMatchesTime("30 14 * * 5", date)).toBe(false);
+  });
+
+  test("day of week 7 matches Sunday just like 0", () => {
+    // 2026-03-29 is a Sunday. Previously `0 0 * * 7` validated as Sunday but
+    // never matched (matcher compared against Date.getDay() 0-6), so it was a
+    // valid expression that silently never fired. With cron-parser as the
+    // source of truth, 7 and 0 both match Sunday.
+    const sunday = new Date("2026-03-29T00:00:00");
+    expect(cronMatchesTime("0 0 * * 7", sunday)).toBe(true);
+    expect(cronMatchesTime("0 0 * * 0", sunday)).toBe(true);
+    // And it does NOT match a non-Sunday.
+    const thursday = new Date("2026-03-26T00:00:00");
+    expect(cronMatchesTime("0 0 * * 7", thursday)).toBe(false);
   });
 
   test("full exact match", () => {
