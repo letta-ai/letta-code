@@ -2023,8 +2023,12 @@ test("slack adapter streams native task progress without assistant-status noise 
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
   // Established threads must not use assistant status for turn-start liveness:
   // Slack renders setStatus as inline generic filler ("Processing…",
-  // "Finding answers…") instead of footer-only status.
-  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
+  // "Finding answers…") instead of footer-only status. The only allowed call
+  // is the one-time stale-status clear (status: "").
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledWith(
+    expect.objectContaining({ status: "" }),
+  );
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
@@ -2110,7 +2114,8 @@ test("slack adapter streams native task progress without assistant-status noise 
   expect(appendCall?.chunks).toHaveLength(3);
   expect(JSON.stringify(appendCall?.chunks)).not.toContain("token=abc");
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
-  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
+  // Only the one-time stale-status clear — never a non-empty status.
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
 });
 
 test("slack adapter keeps shell error output out of task titles (LET-9509)", async () => {
@@ -2851,7 +2856,12 @@ test("slack adapter anchors direct message progress to the inbound message", asy
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
+  // DMs get the same one-time stale-status clear at turn start, never a
+  // non-empty status.
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledWith(
+    expect.objectContaining({ status: "" }),
+  );
   expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
     channel: "D123",
     thread_ts: "1712800000.000100",
@@ -4143,7 +4153,17 @@ test("slack adapter stays quiet for no-tool established-thread turns", async () 
     sources: [source],
   });
 
-  expect(FakeSlackWriteClient.instances).toHaveLength(0);
+  // Turn start in an established thread: the ONLY write is a single
+  // stale-status clear (status: "") — Slack keeps a sticky assistant status
+  // from previous processes server-side and re-renders inline filler off it
+  // until cleared. Never a non-empty status, never a stream/message.
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledWith(
+    expect.objectContaining({ status: "" }),
+  );
+  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
 
   await adapter.handleTurnLifecycleEvent?.({
     type: "finished",
@@ -4153,7 +4173,10 @@ test("slack adapter stays quiet for no-tool established-thread turns", async () 
   });
   await sleep(10);
 
-  expect(FakeSlackWriteClient.instances).toHaveLength(0);
+  // Turn end adds no further writes (the stale clear is once per thread).
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
 });
 
 test("slack adapter finishes an active progress card when MessageChannel sends", async () => {
@@ -4644,10 +4667,16 @@ test("slack adapter posts lifecycle errors in direct messages without threading"
     ],
   });
 
+  // The write client is shared: concurrent turn-boundary clears must not
+  // construct duplicate clients.
+  expect(FakeSlackWriteClient.instances).toHaveLength(1);
   const writeClient = FakeSlackWriteClient.instances[0];
-  expect(
-    writeClient?.assistant.threads.setStatus.mock.calls ?? [],
-  ).toHaveLength(0);
+  // Non-empty statuses never happen; a single stale-status clear may.
+  const setStatusCalls = (writeClient?.assistant.threads.setStatus.mock.calls ??
+    []) as unknown as Array<Array<{ status?: string }>>;
+  for (const call of setStatusCalls) {
+    expect(call[0]?.status ?? "").toBe("");
+  }
   expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
   expect(writeClient?.chat.postMessage).toHaveBeenCalledWith({
     channel: "D123",
@@ -5440,9 +5469,15 @@ test("slack adapter defers the status placeholder in established threads until c
     sources: [source],
   });
 
-  // Turn start spawns nothing in established threads: no Slack stream and no
-  // assistant-status call (which Slack renders as noisy inline filler).
-  expect(FakeSlackWriteClient.instances).toHaveLength(0);
+  // Turn start spawns no visible artifact in established threads: no Slack
+  // stream, and the only assistant-status call is the one-time stale-status
+  // clear (status: "") that removes sticky state left by previous processes.
+  const turnStartClient = FakeSlackWriteClient.instances[0];
+  expect(turnStartClient?.chat.startStream).not.toHaveBeenCalled();
+  expect(turnStartClient?.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
+  expect(turnStartClient?.assistant.threads.setStatus).toHaveBeenCalledWith(
+    expect.objectContaining({ status: "" }),
+  );
 
   // First concrete activity spawns the placeholder with the tool title.
   await adapter.handleTurnProgressEvent?.({
@@ -5457,7 +5492,8 @@ test("slack adapter defers the status placeholder in established threads until c
   });
   const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
-  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
+  // Still no non-empty assistant status: only the initial clear happened.
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
   const startCalls = writeClient?.chat.startStream.mock
     .calls as unknown as Array<
     Array<{ chunks?: Array<{ type: string; title?: string }> }>
@@ -5533,7 +5569,15 @@ test("slack adapter simple view never starts a stream without a concrete activit
   });
   await sleep(150);
 
-  expect(FakeSlackWriteClient.instances).toHaveLength(0);
+  // No stream/message exists — the only write so far is the one-time
+  // stale-assistant-status clear at turn start.
+  const preReplyClient = FakeSlackWriteClient.instances[0];
+  expect(preReplyClient?.chat.startStream).not.toHaveBeenCalled();
+  expect(preReplyClient?.chat.postMessage).not.toHaveBeenCalled();
+  expect(preReplyClient?.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
+  expect(preReplyClient?.assistant.threads.setStatus).toHaveBeenCalledWith(
+    expect.objectContaining({ status: "" }),
+  );
 
   // The reply posts normally (no stream existed to morph).
   await adapter.sendMessage({
@@ -5549,7 +5593,8 @@ test("slack adapter simple view never starts a stream without a concrete activit
   expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
   expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
-  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
+  // Still only the single clearing call — never a non-empty status.
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
 });
 
 test("slack adapter simple view starts the stream on first activity and the reply becomes the message", async () => {

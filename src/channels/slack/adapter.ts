@@ -2308,6 +2308,7 @@ export function createSlackAdapter(
 ): ChannelAdapter {
   let app: SlackApp | null = null;
   let writeClient: SlackWriteClient | null = null;
+  let writeClientPromise: Promise<SlackWriteClient> | null = null;
   let running = false;
   let botUserId: string | null = null;
   let botTeamId: string | null = null;
@@ -2328,6 +2329,14 @@ export function createSlackAdapter(
   const orphanedStreamsByReplyKey = new Map<string, Map<string, string>>();
   const assistantStatusReplyKeys = new Set<string>();
   const assistantStatusTextByReplyKey = new Map<string, string>();
+  /**
+   * Threads whose (possibly stale) assistant status was already cleared by
+   * this process. Slack assistant status is sticky server-side, so a status
+   * set by a previous process survives restarts and is invisible to the
+   * in-memory sets above — it must be cleared once even when this process
+   * never set it.
+   */
+  const clearedStaleAssistantStatusReplyKeys = new Set<string>();
   const progressUpdateThrottleMs = resolveSlackProgressUpdateThrottleMs();
   const progressStreamKeepaliveMs = resolveSlackProgressStreamKeepaliveMs();
   const statusStreamRollMs = resolveSlackStatusStreamRollMs();
@@ -2784,9 +2793,21 @@ export function createSlackAdapter(
     source: ChannelTurnSource,
   ): Promise<void> {
     const key = getLifecycleReplyKey(source);
-    if (!key || !assistantStatusReplyKeys.has(key)) {
+    if (!key) {
       return;
     }
+    // Clear even when this process never set a status: a previous process
+    // may have left a sticky status on the thread (Slack keeps rendering the
+    // footer AND re-spawns the inline default placeholder — "Processing…",
+    // "Organizing…" — on every new user message until it is cleared).
+    // Dedupe stale clears so quiet threads don't pay an API call per turn.
+    if (
+      !assistantStatusReplyKeys.has(key) &&
+      clearedStaleAssistantStatusReplyKeys.has(key)
+    ) {
+      return;
+    }
+    clearedStaleAssistantStatusReplyKeys.add(key);
     await setSlackAssistantThreadStatus(source, "");
   }
 
@@ -4821,16 +4842,26 @@ export function createSlackAdapter(
     if (writeClient) {
       return writeClient;
     }
-
-    writeClient = await createSlackWebApiClient<SlackWriteClient>(
+    // Memoize the in-flight creation: concurrent first callers (e.g. per-source
+    // Promise.all clears at turn boundaries) must share one client instead of
+    // racing past the null check and constructing duplicates.
+    writeClientPromise ??= createSlackWebApiClient<SlackWriteClient>(
       config.botToken,
       {
         retryConfig: {
           retries: 0,
         },
       },
-    );
-    return writeClient;
+    ).then((client) => {
+      writeClient = client;
+      return client;
+    });
+    try {
+      return await writeClientPromise;
+    } catch (error) {
+      writeClientPromise = null;
+      throw error;
+    }
   }
 
   const adapter: ChannelAdapter = {
@@ -4864,6 +4895,7 @@ export function createSlackAdapter(
       running = false;
       app = null;
       writeClient = null;
+      writeClientPromise = null;
       botUserId = null;
       botTeamId = null;
       seenIngressMessageKeys.clear();
@@ -4903,6 +4935,11 @@ export function createSlackAdapter(
         const status = getSlackAssistantThreadStatusForTurn(event.source);
         if (status) {
           await setSlackAssistantThreadStatus(event.source, status);
+        } else {
+          // Established thread: no status this turn — but clear any sticky
+          // status left behind by a previous process before Slack re-renders
+          // its default placeholder off it.
+          await clearSlackAssistantThreadStatus(event.source);
         }
         return;
       }
@@ -4922,6 +4959,8 @@ export function createSlackAdapter(
               (!replyKey || !assistantStatusReplyKeys.has(replyKey))
             ) {
               await setSlackAssistantThreadStatus(source, status);
+            } else if (!status) {
+              await clearSlackAssistantThreadStatus(source);
             }
           }),
         );
