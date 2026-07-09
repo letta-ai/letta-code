@@ -16,6 +16,7 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "media_max_bytes",
   "message_prefix",
   "audio_as_voice_memo",
+  "inbound_debounce_ms",
 ]);
 
 function isString(value: unknown): value is string {
@@ -44,6 +45,10 @@ function isPositiveNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function isNonNegativeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
 export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppChannelAccount> =
   {
     isValidConfig(config) {
@@ -70,7 +75,10 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         (config.message_prefix === undefined ||
           isString(config.message_prefix)) &&
         (config.audio_as_voice_memo === undefined ||
-          isBoolean(config.audio_as_voice_memo))
+          isBoolean(config.audio_as_voice_memo)) &&
+        (config.inbound_debounce_ms === undefined ||
+          (isNonNegativeNumber(config.inbound_debounce_ms) &&
+            config.inbound_debounce_ms <= 10000))
       );
     },
 
@@ -106,6 +114,11 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         audioAsVoiceMemo: isBoolean(config.audio_as_voice_memo)
           ? config.audio_as_voice_memo
           : undefined,
+        inboundDebounceMs:
+          isNonNegativeNumber(config.inbound_debounce_ms) &&
+          config.inbound_debounce_ms <= 10000
+            ? Math.trunc(config.inbound_debounce_ms)
+            : undefined,
       };
     },
 
@@ -121,6 +134,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         media_max_bytes: account.mediaMaxBytes,
         message_prefix: account.messagePrefix,
         audio_as_voice_memo: account.audioAsVoiceMemo === true,
+        inbound_debounce_ms: account.inboundDebounceMs,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -137,6 +151,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         media_max_bytes: account.mediaMaxBytes,
         message_prefix: account.messagePrefix,
         audio_as_voice_memo: account.audioAsVoiceMemo === true,
+        inbound_debounce_ms: account.inboundDebounceMs,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },

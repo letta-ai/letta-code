@@ -1,3 +1,7 @@
+import {
+  createInboundDebouncer,
+  type InboundDebouncer,
+} from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
 import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
@@ -212,6 +216,40 @@ export function createWhatsAppAdapter(
   const seenMessageIds = new Set<string>();
   const lidToJid = new Map<string, string>();
   const messageStore = new Map<string, unknown>();
+
+  // Inbound debouncer: batches back-to-back messages into a single dispatch.
+  // Voice notes, attachments, and reactions bypass the debounce (always
+  // dispatched immediately). Disabled when inboundDebounceMs is 0/undefined.
+  const debouncer: InboundDebouncer<{ inbound: InboundChannelMessage }> =
+    createInboundDebouncer<{ inbound: InboundChannelMessage }>({
+      debounceMs: Math.max(0, Math.min(account.inboundDebounceMs ?? 0, 10000)),
+      buildKey: ({ inbound }) => `${account.accountId}:${inbound.chatId ?? ""}`,
+      shouldDebounce: ({ inbound }) => {
+        if (inbound.attachments && inbound.attachments.length > 0) return false;
+        if (inbound.text && inbound.text.length > 0) return true;
+        return false;
+      },
+      onFlush: async (entries) => {
+        const last = entries[entries.length - 1];
+        if (!last || !adapter.onMessage) return;
+        const combinedText = entries
+          .map((e) => (e.inbound.text ?? "").trim())
+          .filter(Boolean)
+          .join("\n");
+        const merged: InboundChannelMessage = {
+          ...last.inbound,
+          text: combinedText,
+        };
+        try {
+          await adapter.onMessage(merged);
+        } catch (err) {
+          console.error(
+            `[WhatsApp:${account.accountId}] debounced dispatch failed:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
+      },
+    });
 
   function rememberSeen(id: string): boolean {
     if (seenMessageIds.has(id)) return true;
@@ -520,7 +558,7 @@ export function createWhatsAppAdapter(
       console.log(
         `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${preview(body)}"`,
       );
-      await adapter.onMessage?.(inbound);
+      await debouncer.enqueue({ inbound });
     }
   }
 

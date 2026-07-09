@@ -830,6 +830,14 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   messagePrefix?: string;
   /** When true, .ogg/.oga/.opus audio files are sent as voice memos (ptt). Default false: audio is always sent as a document. */
   audioAsVoiceMemo?: boolean;
+  /**
+   * Optional debounce window (ms) for inbound messages.
+   * When greater than 0, short back-to-back messages from the same sender
+   * in the same chat stack into a single combined dispatch (trailing edge).
+   * Default 0 (disabled). Voice notes, attachments, and reactions always bypass.
+   * Clamped to 0..10000.
+   */
+  inboundDebounceMs?: number;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {
