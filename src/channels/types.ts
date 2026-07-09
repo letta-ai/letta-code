@@ -505,6 +505,7 @@ export type SlackChannelMode = "socket";
 export type SlackAllowBotsMode = false | "mentions";
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
+export type WhatsAppWaitingBehavior = "off" | "typing_indicator" | "message";
 export type SignalGroupMode = "disabled" | "mention" | "open";
 
 export interface ChannelAccountBinding {
@@ -625,6 +626,13 @@ export interface DiscordChannelConfig {
    * Clamped to `0..10000`.
    */
   inboundDebounceMs?: number;
+  /**
+   * UX feedback while the agent is generating a response. Default "off".
+   * - "off": no presence update, no interim message
+   * - "typing_indicator": sends/refreshes the WhatsApp typing indicator
+   * - "message": sends an interim "waiting" message (NOT YET IMPLEMENTED
+   *   in upstream; reserved for future liveness integration)
+   */
 }
 
 export interface WhatsAppChannelConfig {
@@ -838,6 +846,16 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
    * Clamped to 0..10000.
    */
   inboundDebounceMs?: number;
+  /**
+   * UX feedback while the agent is generating a response. Default "off".
+   * - "off": no presence update, no interim message
+   * - "typing_indicator": sends/refreshes the WhatsApp typing indicator
+   * - "message": sends an interim "waiting" message (NOT YET IMPLEMENTED
+   *   in upstream; reserved for future liveness integration)
+   */
+  waitingBehavior?: WhatsAppWaitingBehavior;
+  /** Custom text for waitingBehavior="message". Default: "🤹‍♀️ Working on it..." */
+  waitingMessage?: string;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {

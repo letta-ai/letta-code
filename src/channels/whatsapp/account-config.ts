@@ -2,6 +2,7 @@ import type { ChannelAccountConfigAdapter } from "@/channels/plugin-types";
 import type {
   WhatsAppChannelAccount,
   WhatsAppGroupMode,
+  WhatsAppWaitingBehavior,
 } from "@/channels/types";
 import { toWhatsAppConnectionConfig } from "./state";
 
@@ -17,6 +18,8 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "message_prefix",
   "audio_as_voice_memo",
   "inbound_debounce_ms",
+  "waiting_behavior",
+  "waiting_message",
 ]);
 
 function isString(value: unknown): value is string {
@@ -49,6 +52,10 @@ function isNonNegativeNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
+function isWaitingBehavior(value: unknown): value is WhatsAppWaitingBehavior {
+  return value === "off" || value === "typing_indicator" || value === "message";
+}
+
 export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppChannelAccount> =
   {
     isValidConfig(config) {
@@ -78,7 +85,11 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
           isBoolean(config.audio_as_voice_memo)) &&
         (config.inbound_debounce_ms === undefined ||
           (isNonNegativeNumber(config.inbound_debounce_ms) &&
-            config.inbound_debounce_ms <= 10000))
+            config.inbound_debounce_ms <= 10000)) &&
+        (config.waiting_behavior === undefined ||
+          isWaitingBehavior(config.waiting_behavior)) &&
+        (config.waiting_message === undefined ||
+          isString(config.waiting_message))
       );
     },
 
@@ -119,6 +130,12 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
           config.inbound_debounce_ms <= 10000
             ? Math.trunc(config.inbound_debounce_ms)
             : undefined,
+        waitingBehavior: isWaitingBehavior(config.waiting_behavior)
+          ? config.waiting_behavior
+          : undefined,
+        waitingMessage: isString(config.waiting_message)
+          ? config.waiting_message
+          : undefined,
       };
     },
 
@@ -135,6 +152,8 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         message_prefix: account.messagePrefix,
         audio_as_voice_memo: account.audioAsVoiceMemo === true,
         inbound_debounce_ms: account.inboundDebounceMs,
+        waiting_behavior: account.waitingBehavior,
+        waiting_message: account.waitingMessage,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -152,6 +171,8 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         message_prefix: account.messagePrefix,
         audio_as_voice_memo: account.audioAsVoiceMemo === true,
         inbound_debounce_ms: account.inboundDebounceMs,
+        waiting_behavior: account.waitingBehavior,
+        waiting_message: account.waitingMessage,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },

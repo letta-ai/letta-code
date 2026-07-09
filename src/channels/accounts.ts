@@ -62,6 +62,8 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   rich_private_chat_default: "richPrivateChatDefault",
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
+  waiting_behavior: "waitingBehavior",
+  waiting_message: "waitingMessage",
   download_media: "downloadMedia",
   audio_as_voice_memo: "audioAsVoiceMemo",
 };

@@ -635,7 +635,11 @@ export function createWhatsAppAdapter(
         return { messageId: id };
       }
       try {
-        await sock?.sendPresenceUpdate?.("composing", targetJid);
+        if (account.waitingBehavior === "typing_indicator") {
+          await sock?.sendPresenceUpdate?.("composing", targetJid);
+        }
+        // "off" (default): no presence update
+        // "message": reserved for future liveness integration
       } catch {
         // Presence is best-effort.
       }
