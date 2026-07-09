@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from "node:crypto";
 import {
   type AssistantMessage,
   type AssistantMessageEvent,
@@ -382,6 +383,81 @@ function withAnthropicOutputEffort(
   };
 }
 
+const OPENROUTER_TRACE_FIELD_LIMIT = 128;
+let openRouterTraceHmacSecret: Buffer | undefined;
+
+function openRouterTraceValue(value: string): string {
+  return value.slice(0, OPENROUTER_TRACE_FIELD_LIMIT);
+}
+
+function openRouterTraceSecret(): Buffer {
+  openRouterTraceHmacSecret ??= randomBytes(32);
+  return openRouterTraceHmacSecret;
+}
+
+function openRouterTracePseudonym(purpose: string, value: string): string {
+  return openRouterTraceValue(
+    createHmac("sha256", openRouterTraceSecret())
+      .update(`openrouter-broadcast:${purpose}:`)
+      .update(value)
+      .digest("hex"),
+  );
+}
+
+function isTelemetryOptedOut(): boolean {
+  const telem = process.env.LETTA_CODE_TELEM;
+  return telem === "0" || telem === "false" || process.env.DO_NOT_TRACK === "1";
+}
+
+export function withOpenRouterSessionHeader(
+  headers: Record<string, string> | undefined,
+  pseudonymousSessionId: string,
+): Record<string, string> {
+  const safeHeaders = Object.fromEntries(
+    Object.entries(headers ?? {}).filter(
+      ([key]) => key.toLowerCase() !== "x-session-id",
+    ),
+  );
+  return {
+    ...safeHeaders,
+    "x-session-id": pseudonymousSessionId,
+  };
+}
+
+function withOpenRouterBroadcastTraceData(
+  existing: SimpleStreamOptions["onPayload"] | undefined,
+  input: ProviderTurnInput,
+  generationName: string,
+): SimpleStreamOptions["onPayload"] {
+  const pseudonymousSessionId = openRouterTracePseudonym(
+    "conversation",
+    input.conversationId,
+  );
+  return async (payload, model) => {
+    let next = payload;
+    let upstreamChanged = false;
+    const upstream = await existing?.(payload, model);
+    if (upstream !== undefined) {
+      next = upstream;
+      upstreamChanged = true;
+    }
+    if (!isRecord(next)) return upstreamChanged ? next : undefined;
+
+    const existingTrace = isRecord(next.trace) ? next.trace : {};
+    return {
+      ...next,
+      session_id: pseudonymousSessionId,
+      trace: {
+        ...existingTrace,
+        trace_id: pseudonymousSessionId,
+        trace_name: "letta-code",
+        span_name: "agent-turn",
+        generation_name: generationName,
+      },
+    };
+  };
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -698,14 +774,28 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       messages: toPiMessages(input.uiMessages),
       ...(tools ? { tools } : {}),
     };
+    const pseudonymousOpenRouterSessionId =
+      resolved.provider === "openrouter" && !isTelemetryOptedOut()
+        ? openRouterTracePseudonym("conversation", input.conversationId)
+        : undefined;
+    const sessionId =
+      resolved.provider === "openrouter"
+        ? pseudonymousOpenRouterSessionId
+        : input.conversationId;
+    const headers = pseudonymousOpenRouterSessionId
+      ? withOpenRouterSessionHeader(
+          resolved.headers,
+          pseudonymousOpenRouterSessionId,
+        )
+      : resolved.headers;
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
       ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
-      ...(resolved.headers ? { headers: resolved.headers } : {}),
+      ...(headers ? { headers } : {}),
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
-      sessionId: input.conversationId,
+      ...(sessionId ? { sessionId } : {}),
       ...(reasoningForSettings(input.agent.model_settings)
         ? { reasoning: reasoningForSettings(input.agent.model_settings) }
         : {}),
@@ -729,6 +819,13 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         : {}),
     };
+    if (pseudonymousOpenRouterSessionId) {
+      options.onPayload = withOpenRouterBroadcastTraceData(
+        options.onPayload,
+        input,
+        resolved.model.id,
+      );
+    }
     if (resolved.model.api === "openai-responses") {
       // pi-ai replays OpenAI Responses output items from transcript history.
       // Those upstream item IDs (rs_*, msg_*, fc_*) are not retrievable when the
