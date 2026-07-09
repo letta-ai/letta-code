@@ -1688,9 +1688,10 @@ class SettingsManager {
             ? (updates.systemPromptVersion ?? undefined)
             : existing.systemPromptVersion,
       };
-      // Clean up undefined/false values
+      // Clean up undefined/false values (explicit memfs:false is kept — it
+      // marks deliberately memfs-less worker agents; see isMemfsExplicitlyDisabled)
       if (!updated.pinned) delete updated.pinned;
-      if (!updated.memfs) delete updated.memfs;
+      if (updated.memfs === undefined) delete updated.memfs;
       if (!updated.toolset || updated.toolset === "auto")
         delete updated.toolset;
       if (!updated.systemPromptPreset) delete updated.systemPromptPreset;
@@ -1707,9 +1708,9 @@ class SettingsManager {
         systemPromptHash: updates.systemPromptHash ?? undefined,
         systemPromptVersion: updates.systemPromptVersion ?? undefined,
       };
-      // Clean up undefined/false values
+      // Clean up undefined/false values (explicit memfs:false is kept)
       if (!newAgent.pinned) delete newAgent.pinned;
-      if (!newAgent.memfs) delete newAgent.memfs;
+      if (newAgent.memfs === undefined) delete newAgent.memfs;
       if (!newAgent.toolset || newAgent.toolset === "auto")
         delete newAgent.toolset;
       if (!newAgent.systemPromptPreset) delete newAgent.systemPromptPreset;
@@ -1729,6 +1730,17 @@ class SettingsManager {
     const settings = this.getSettings();
     const memfsServerKey = getCurrentMemfsServerKey(settings);
     return this.getAgentSettings(agentId, memfsServerKey)?.memfs === true;
+  }
+
+  /**
+   * Whether memfs was EXPLICITLY disabled for this agent (memfs: false in
+   * settings) — distinct from "never configured". Worker-style agents
+   * created memfs-less record this so lazy repair paths don't re-enable.
+   */
+  isMemfsExplicitlyDisabled(agentId: string): boolean {
+    const settings = this.getSettings();
+    const memfsServerKey = getCurrentMemfsServerKey(settings);
+    return this.getAgentSettings(agentId, memfsServerKey)?.memfs === false;
   }
 
   /**

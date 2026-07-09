@@ -782,6 +782,12 @@ export interface RuntimeStartCreateAgentOptions {
   body: AgentCreateParams;
   /** Whether to pin the created agent globally. Defaults to true. */
   pin_global?: boolean;
+  /**
+   * Whether to set up the memory filesystem for the created agent (tag
+   * stamp + settings + repo clone). Defaults to true; false creates a
+   * worker-style agent whose memory scope is provided per session.
+   */
+  memfs?: boolean;
 }
 
 export interface RuntimeStartCreateConversationOptions {

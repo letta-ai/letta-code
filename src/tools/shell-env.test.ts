@@ -384,6 +384,71 @@ test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", ()
   });
 });
 
+test("getShellEnv honors an explicit MEMORY_DIR scope outside the memory store", () => {
+  withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
+    withTemporaryEnv(
+      {
+        MEMORY_DIR: "/tmp/dream-batch-clone/output",
+        LETTA_MEMORY_DIR: "/tmp/dream-batch-clone/output",
+        LETTA_MEMORY_DIR_EXPLICIT: "1",
+      },
+      () => {
+        const originalIsMemfsEnabled =
+          settingsManager.isMemfsEnabled.bind(settingsManager);
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = () => false;
+        try {
+          const env = getShellEnv();
+          expect(env.MEMORY_DIR).toBe("/tmp/dream-batch-clone/output");
+          expect(env.LETTA_MEMORY_DIR).toBe("/tmp/dream-batch-clone/output");
+        } finally {
+          (
+            settingsManager as unknown as {
+              isMemfsEnabled: (id: string) => boolean;
+            }
+          ).isMemfsEnabled = originalIsMemfsEnabled;
+        }
+      },
+    );
+  });
+});
+
+test("getShellEnv strips an explicit scope pointing into another agent's memory", () => {
+  const otherAgentMemory = getMemoryFilesystemRoot(`agent-other-${Date.now()}`);
+  withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
+    withTemporaryEnv(
+      {
+        MEMORY_DIR: otherAgentMemory,
+        LETTA_MEMORY_DIR: otherAgentMemory,
+        LETTA_MEMORY_DIR_EXPLICIT: "1",
+      },
+      () => {
+        const originalIsMemfsEnabled =
+          settingsManager.isMemfsEnabled.bind(settingsManager);
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = () => false;
+        try {
+          const env = getShellEnv();
+          expect(env.MEMORY_DIR).toBeUndefined();
+          expect(env.LETTA_MEMORY_DIR).toBeUndefined();
+        } finally {
+          (
+            settingsManager as unknown as {
+              isMemfsEnabled: (id: string) => boolean;
+            }
+          ).isMemfsEnabled = originalIsMemfsEnabled;
+        }
+      },
+    );
+  });
+});
+
 test("getShellEnv preserves inherited parent MEMORY_DIR for subagents", () => {
   const parentAgentId = `agent-parent-${Date.now()}`;
   const childAgentId = `agent-child-${Date.now()}`;
