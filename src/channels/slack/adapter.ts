@@ -839,7 +839,7 @@ function formatSlackTextProgressLiveText(
     inProgressTitle ?? latestTitle ?? "",
     SLACK_PROGRESS_CARD_TEXT_MAX,
   );
-  return detail ? `_Working: ${detail}_` : "_Working..._";
+  return detail ? `_${detail}_` : "_Working..._";
 }
 
 /**
@@ -3825,9 +3825,13 @@ export function createSlackAdapter(
             // liveness. The next flush after a concrete task lands starts
             // the stream with a real title.
             didSend = true;
-          } else if (canStream) {
-            didSend = await startSlackStatusStream(entry, replyToMessageId);
           } else {
+            // Never a native stream here: Slack silently drops plan_update
+            // chunks outside task-card streams (probed live: the in-progress
+            // message stays text:"" and renders Slack's own italic
+            // "Thinking..." shimmer until stopped, hiding every title swap).
+            // A plain message edited in place renders titles reliably, posts
+            // the reply instantly, and has no stream lifetime cap.
             didSend = await upsertSlackTextProgressMessage(
               entry,
               replyToMessageId,
@@ -4251,7 +4255,43 @@ export function createSlackAdapter(
     const replyKey = `${msg.chatId}:${rootTs}`;
     const cardKey = activeProgressCardKeyByReplyKey.get(replyKey) ?? replyKey;
     const entry = progressCardByReplyKey.get(cardKey);
-    if (!entry || entry.mode !== "status-stream") {
+    if (!entry) {
+      return undefined;
+    }
+    if (entry.mode === "text" && isNonEmptyString(entry.textTs)) {
+      // Simple view: the reply replaces the in-place progress message, so
+      // the turn ends with exactly one message — the reply itself.
+      const textTs = entry.textTs;
+      const slackClient = await ensureWriteClient();
+      const footnote =
+        isNonEmptyString(msg.agentId) && isNonEmptyString(msg.conversationId)
+          ? buildSlackChatFootnote({
+              agentId: msg.agentId,
+              conversationId: msg.conversationId,
+            })
+          : "";
+      const blocks = footnote
+        ? buildSlackReplyBlocksWithFootnote(msg.text, footnote)
+        : undefined;
+      try {
+        await slackClient.chat.update({
+          channel: entry.source.chatId,
+          ts: textTs,
+          text: msg.text,
+          ...(blocks ? { blocks } : {}),
+        });
+      } catch (error) {
+        console.warn(
+          "[Slack] Failed to deliver reply via text progress message:",
+          error instanceof Error ? error.message : error,
+        );
+        return undefined;
+      }
+      dropSlackProgressCardEntry(cardKey, entry);
+      await clearSlackAssistantThreadStatus(entry.source);
+      return textTs;
+    }
+    if (entry.mode !== "status-stream") {
       return undefined;
     }
     if (entry.pendingFlush) {
