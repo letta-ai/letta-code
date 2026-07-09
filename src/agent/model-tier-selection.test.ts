@@ -84,6 +84,48 @@ describe("getModelInfoForLlmConfig", () => {
     expect(xhigh?.id).toBe("gpt-5.4-xhigh");
   });
 
+  test("selects gpt-5.6 alias tiers by reasoning_effort", () => {
+    const handle = "openai/gpt-5.6";
+
+    const high = getModelInfoForLlmConfig(handle, { reasoning_effort: "high" });
+    expect(high?.id).toBe("gpt-5.6-high");
+    expect(high?.handle).toBe("openai/gpt-5.6");
+    expect(high?.isFeatured).toBe(true);
+    expect(high?.updateArgs).toMatchObject({
+      reasoning_effort: "high",
+      context_window: 1050000,
+      max_output_tokens: 128000,
+      parallel_tool_calls: true,
+    });
+
+    const max = getModelInfoForLlmConfig(handle, { reasoning_effort: "max" });
+    expect(max?.id).toBe("gpt-5.6-max");
+
+    const oldFeatured = getModelInfoForLlmConfig("openai/gpt-5.5", {
+      reasoning_effort: "high",
+    });
+    expect(oldFeatured?.id).toBe("gpt-5.5-high");
+    expect(oldFeatured?.isFeatured).toBeUndefined();
+  });
+
+  test("selects gpt-5.6 named variant tiers by reasoning_effort", () => {
+    expect(
+      getModelInfoForLlmConfig("openai/gpt-5.6-sol", {
+        reasoning_effort: "max",
+      })?.id,
+    ).toBe("gpt-5.6-sol-max");
+    expect(
+      getModelInfoForLlmConfig("openai/gpt-5.6-terra", {
+        reasoning_effort: "medium",
+      })?.id,
+    ).toBe("gpt-5.6-terra-medium");
+    expect(
+      getModelInfoForLlmConfig("openai/gpt-5.6-luna", {
+        reasoning_effort: "none",
+      })?.id,
+    ).toBe("gpt-5.6-luna-none");
+  });
+
   test("uses ChatGPT metadata for local ChatGPT OAuth handles", () => {
     const info = getModelInfoForLlmConfig("openai-codex/gpt-5.5", {
       reasoning_effort: "high",
@@ -179,6 +221,33 @@ describe("getReasoningTierOptionsForHandle", () => {
       "gpt-5.4-high",
       "gpt-5.4-xhigh",
     ]);
+  });
+
+  test("returns ordered reasoning options for gpt-5.6 models", () => {
+    const expectedEfforts = [
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ] as const;
+    const handles = [
+      ["openai/gpt-5.6", "gpt-5.6"],
+      ["openai/gpt-5.6-sol", "gpt-5.6-sol"],
+      ["openai/gpt-5.6-terra", "gpt-5.6-terra"],
+      ["openai/gpt-5.6-luna", "gpt-5.6-luna"],
+    ] as const;
+
+    for (const [handle, idPrefix] of handles) {
+      const options = getReasoningTierOptionsForHandle(handle);
+      expect(options.map((option) => option.effort)).toEqual([
+        ...expectedEfforts,
+      ]);
+      expect(options.map((option) => option.modelId)).toEqual(
+        expectedEfforts.map((effort) => `${idPrefix}-${effort}`),
+      );
+    }
   });
 
   test("returns ordered reasoning options for gpt-5.3-codex", () => {
