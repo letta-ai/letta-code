@@ -421,7 +421,7 @@ export function createWhatsAppAdapter(
                   { key: msg.key, messageTimestamp: msg.messageTimestamp },
                 ],
               },
-              msg.key.remoteJid ?? remoteJid,
+              msg.key?.remoteJid ?? remoteJid,
             )
             .catch((err) =>
               console.warn(

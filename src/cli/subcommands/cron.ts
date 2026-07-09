@@ -10,6 +10,18 @@
  *   letta cron runs --id <id>
  *   letta cron delete <id>
  *   letta cron delete --all [--agent <id>]
+ *
+ * Conversation routing guidance:
+ *   --conversation new     Use for autonomous tasks that don't need prior context.
+ *                          Safe choice when scheduling from a channel turn.
+ *   --conversation <id>    Use when scheduling a follow-up to a specific conversation.
+ *                          The agent must pass the conversation ID explicitly.
+ *   --conversation default Use for headless CLI sessions only. AVOID when scheduling
+ *                          from a routed channel turn -- the cron will share the
+ *                          channel's conversation queue and can wedge if it retries.
+ *
+ * Recommended rule: when scheduling from a channel turn, always pass an explicit
+ * conversation ID (or use `new` for autonomous tasks). Never use `default`.
  */
 
 import { parseArgs } from "node:util";
@@ -48,7 +60,8 @@ Add options:
   --once                 Fire once (with --at); default for --at
   --cron <expr>          Raw 5-field cron expression
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
-  --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID or "default")
+  --conversation <id>    Conversation ID ("default" | "new" | <id>).
+                          See guidance above. Avoid "default" from channel turns.
 
 List/filter options:
   --agent <id>           Filter by agent ID

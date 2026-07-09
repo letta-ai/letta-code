@@ -4,6 +4,7 @@
  */
 
 import type WebSocket from "ws";
+import { startRuntimeWatchdog } from "@/channels/runtime-watchdog";
 import {
   clearPendingApprovalBatchIds,
   rememberPendingApprovalBatchIds,
@@ -155,6 +156,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   lastEmittedStatus: ListenerRuntime["lastEmittedStatus"];
 } {
   const listener = createRuntime();
+  startRuntimeWatchdog(listener);
   const runtime = getOrCreateScopedRuntime(listener, null, "default");
   const bridge = runtime as ConversationRuntime & {
     activeAgentId: string | null;
