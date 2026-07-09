@@ -1796,6 +1796,18 @@
       "isFeatured": true
     },
     {
+      "id": "grok-4.5",
+      "handle": "xai/grok-4.5",
+      "label": "Grok 4.5",
+      "description": "xAI's Grok 4.5 model via the direct xAI API",
+      "updateArgs": {
+        "context_window": 500000,
+        "max_output_tokens": 16384,
+        "parallel_tool_calls": true
+      },
+      "isFeatured": true
+    },
+    {
       "id": "glm-5.2",
       "handle": "zai/glm-5.2",
       "label": "GLM-5.2",

@@ -33,6 +33,17 @@ describe("getModelInfo", () => {
     });
   });
 
+  test("resolves direct xAI Grok 4.5 registry metadata", () => {
+    const info = getModelInfo("grok-4.5");
+    expect(info?.handle).toBe("xai/grok-4.5");
+    expect(info?.label).toBe("Grok 4.5");
+    expect(info?.updateArgs).toMatchObject({
+      context_window: 500000,
+      max_output_tokens: 16384,
+      parallel_tool_calls: true,
+    });
+  });
+
   test("resolves Fable 5 1M registry metadata", () => {
     const info = getModelInfo("fable-1m");
     expect(info?.handle).toBe("anthropic/claude-fable-5");
