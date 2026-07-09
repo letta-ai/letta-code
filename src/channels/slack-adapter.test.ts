@@ -5597,6 +5597,66 @@ test("slack adapter simple view never starts a stream without a concrete activit
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
 });
 
+test("slack adapter suppresses the startup preview once the bot has replied in the thread", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  const rootTs = "1712790000.000050";
+  // Opener-shaped source: anchored to the thread root (messageId === threadId).
+  const openerSource = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: rootTs,
+    threadId: rootTs,
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  // The bot replies in the thread (tracker now knows it).
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Here now.",
+    threadId: rootTs,
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  });
+
+  // A later lifecycle event carrying an opener-shaped source (mid-turn
+  // continuation, recovery, re-mention of the root) must NOT re-arm the
+  // startup preview: Slack would render it as a bogus mid-conversation
+  // placeholder (LET-9538's mid-turn italic "Thinking...").
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "queued",
+    source: openerSource,
+  });
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-2",
+    sources: [openerSource],
+  });
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  const statusCalls = (writeClient?.assistant.threads.setStatus.mock.calls ??
+    []) as unknown as Array<Array<{ status?: string }>>;
+  for (const call of statusCalls) {
+    expect(call[0]?.status ?? "").toBe("");
+  }
+});
+
 test("slack adapter simple view starts the stream on first activity and the reply becomes the message", async () => {
   process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
   const adapter = createSlackAdapter({

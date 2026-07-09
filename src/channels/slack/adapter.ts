@@ -2725,6 +2725,17 @@ export function createSlackAdapter(
     if (!isSlackFlatChannelThreadOpener(source)) {
       return null;
     }
+    // The startup preview exists to signal liveness before the bot's FIRST
+    // reply in a thread. Mid-turn lifecycle events can carry opener-shaped
+    // sources (anchored to the thread root); once the bot has replied in the
+    // thread, a "preview" would render as a bogus mid-conversation
+    // placeholder (LET-9538's mid-turn italic "Thinking...").
+    if (
+      isNonEmptyString(source.messageId) &&
+      agentThreadTracker.has(source.chatId, source.messageId)
+    ) {
+      return null;
+    }
     const key = getLifecycleReplyKey(source);
     if (!key) {
       return null;
