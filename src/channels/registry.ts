@@ -84,6 +84,8 @@ import type {
   ChannelAccount,
   ChannelAdapter,
   ChannelControlRequestEvent,
+  ChannelControlResponseInput,
+  ChannelControlResponseResult,
   ChannelDefaultPermissionMode,
   ChannelModelPickerData,
   ChannelRoute,
@@ -686,6 +688,8 @@ export class ChannelRegistry {
     adapter.onMessage = async (msg: InboundChannelMessage) => {
       await this.handleInboundMessage(msg);
     };
+    adapter.onControlResponse = async (input: ChannelControlResponseInput) =>
+      await this.handleNativeControlResponse(input);
   }
 
   getAdapter(
@@ -699,6 +703,42 @@ export class ChannelRegistry {
     return Array.from(this.adapters.values())
       .filter((adapter) => adapter.isRunning())
       .map((adapter) => adapter.channelId ?? adapter.id);
+  }
+
+  resolveTurnSourcesForScope(
+    agentId: string,
+    conversationId: string,
+  ): ChannelTurnSource[] {
+    const sources: ChannelTurnSource[] = [];
+    const seen = new Set<string>();
+    for (const adapter of this.adapters.values()) {
+      const channel = adapter.channelId ?? adapter.id;
+      const accountId = adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+      for (const route of getRoutesForChannel(channel, accountId)) {
+        if (
+          route.enabled === false ||
+          route.agentId !== agentId ||
+          route.conversationId !== conversationId
+        ) {
+          continue;
+        }
+        const key = `${channel}:${accountId}:${route.chatId}:${route.threadId ?? ""}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        sources.push({
+          channel,
+          accountId,
+          chatId: route.chatId,
+          chatType: route.chatType,
+          threadId: route.threadId ?? null,
+          agentId,
+          conversationId,
+        });
+      }
+    }
+    return sources;
   }
 
   async dispatchTurnLifecycleEvent(
@@ -859,6 +899,42 @@ export class ChannelRegistry {
 
   hasPendingControlRequest(requestId: string): boolean {
     return this.pendingControlRequestsById.has(requestId);
+  }
+
+  private async handleNativeControlResponse(
+    input: ChannelControlResponseInput,
+  ): Promise<ChannelControlResponseResult> {
+    const pending = this.pendingControlRequestsById.get(input.requestId);
+    if (!pending) {
+      return "expired";
+    }
+
+    const source = pending.event.source;
+    const matchesTarget =
+      source.channel === input.channel &&
+      (source.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID) ===
+        (input.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID) &&
+      source.chatId === input.chatId &&
+      (source.threadId ?? null) === (input.threadId ?? null);
+    if (
+      !matchesTarget ||
+      (source.senderId && source.senderId !== input.senderId)
+    ) {
+      return "forbidden";
+    }
+    if (!this.approvalResponseHandler) {
+      return "unavailable";
+    }
+
+    const handled = await this.approvalResponseHandler({
+      runtime: {
+        agent_id: source.agentId,
+        conversation_id: source.conversationId,
+      },
+      response: input.response,
+    });
+    this.clearPendingControlRequest(input.requestId);
+    return handled ? "handled" : "expired";
   }
 
   getPendingControlRequests(): Array<PendingChannelControlRequest> {
@@ -1243,6 +1319,16 @@ export class ChannelRegistry {
     const pending = this.pendingControlRequestsById.get(requestId);
     if (!pending) {
       this.pendingControlRequestIdByScope.delete(scopeKey);
+      return false;
+    }
+
+    // Slack generic approvals use the native button as the decision surface.
+    // Thread messages remain normal steering input and wait in the listener's
+    // existing approval-gated queue until the button resolves the request.
+    if (
+      msg.channel === "slack" &&
+      pending.event.kind === "generic_tool_approval"
+    ) {
       return false;
     }
 

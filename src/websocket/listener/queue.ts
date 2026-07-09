@@ -11,6 +11,7 @@ import type {
 import { isCoalescable } from "@/queue/queue-runtime";
 import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import type { StopReasonType } from "@/types/protocol_v2";
 import { resizeImageIfNeeded } from "@/utils/image-resize";
 import {
   type ImageNormalizationFailureMode,
@@ -167,6 +168,7 @@ async function dispatchChannelTurnLifecycleEvent(
         batchId: string;
         sources: ChannelTurnSource[];
         outcome: ChannelTurnOutcome;
+        stopReason: StopReasonType;
         error?: string;
         runId?: string;
       },
@@ -190,25 +192,31 @@ async function dispatchChannelTurnLifecycleEvent(
     batchId: event.batchId,
     sources: event.sources,
     outcome: event.outcome,
+    stopReason: event.stopReason,
     ...(event.error ? { error: event.error } : {}),
     ...(event.runId ? { runId: event.runId } : {}),
   });
 }
 
-function mapTurnLifecycleOutcome(
+export function resolveTurnLifecycleTerminal(
   lastStopReason: string | null,
   didThrow: boolean,
-): ChannelTurnOutcome {
-  if (didThrow) {
-    return "error";
+): { outcome: ChannelTurnOutcome; stopReason: StopReasonType } {
+  const stopReason = (
+    didThrow &&
+    (!lastStopReason ||
+      lastStopReason === "end_turn" ||
+      lastStopReason === "requires_approval")
+      ? "error"
+      : (lastStopReason ?? "error")
+  ) as StopReasonType;
+  if (stopReason === "cancelled") {
+    return { outcome: "cancelled", stopReason };
   }
-  if (lastStopReason === "cancelled") {
-    return "cancelled";
+  if (stopReason === "end_turn" || stopReason === "tool_rule") {
+    return { outcome: "completed", stopReason };
   }
-  if (lastStopReason && lastStopReason !== "end_turn") {
-    return "error";
-  }
-  return "completed";
+  return { outcome: "error", stopReason };
 }
 
 async function buildChannelTurnProgressBuilder(agentId?: string | null) {
@@ -577,6 +585,7 @@ async function drainQueuedMessages(
       let didThrow = false;
       runtime.activeChannelTurnSources = channelTurnSources;
       runtime.activeChannelTurnBatchId = dequeuedBatch.batchId;
+      runtime.activeChannelTurnContextRecovered = false;
       runtime.activeChannelTurnProgress =
         channelTurnSources.length > 0
           ? await buildChannelTurnProgressBuilder(queuedTurn.agentId)
@@ -590,27 +599,31 @@ async function drainQueuedMessages(
       } finally {
         runtime.activeChannelTurnSources = null;
         runtime.activeChannelTurnBatchId = null;
+        runtime.activeChannelTurnContextRecovered = false;
         runtime.activeChannelTurnProgress = null;
         if (channelTurnSources.length > 0) {
-          const outcome = mapTurnLifecycleOutcome(
+          const terminal = resolveTurnLifecycleTerminal(
             runtime.lastStopReason,
             didThrow,
           );
           const lifecycleError =
             turnError ??
-            (outcome === "error"
+            (terminal.outcome === "error"
               ? (runtime.lastTerminalLoopErrorMessage ?? undefined)
               : undefined);
-          await dispatchChannelTurnLifecycleEvent({
-            type: "finished",
-            batchId: dequeuedBatch.batchId,
-            sources: channelTurnSources,
-            outcome,
-            ...(lifecycleError ? { error: lifecycleError } : {}),
-            ...(runtime.lastTerminalLoopErrorRunId
-              ? { runId: runtime.lastTerminalLoopErrorRunId }
-              : {}),
-          });
+          if (terminal.stopReason !== "requires_approval") {
+            await dispatchChannelTurnLifecycleEvent({
+              type: "finished",
+              batchId: dequeuedBatch.batchId,
+              sources: channelTurnSources,
+              outcome: terminal.outcome,
+              stopReason: terminal.stopReason,
+              ...(lifecycleError ? { error: lifecycleError } : {}),
+              ...(runtime.lastTerminalLoopErrorRunId
+                ? { runId: runtime.lastTerminalLoopErrorRunId }
+                : {}),
+            });
+          }
         }
       }
       emitListenerStatus(

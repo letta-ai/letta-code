@@ -509,6 +509,7 @@ describe("Discord adapter lifecycle feedback", () => {
       batchId: "batch-1",
       sources: [source],
       outcome: "completed",
+      stopReason: "end_turn",
     });
     await adapter.handleTurnLifecycleEvent?.({
       type: "processing",
@@ -581,6 +582,7 @@ describe("Discord adapter lifecycle feedback", () => {
       batchId: "batch-1",
       sources: [source],
       outcome: "completed",
+      stopReason: "end_turn",
     });
 
     expect(message.react).not.toHaveBeenCalled();
@@ -608,6 +610,7 @@ describe("Discord adapter lifecycle feedback", () => {
       batchId: "batch-1",
       sources: [source],
       outcome: "completed",
+      stopReason: "end_turn",
     });
 
     expect(message.react).toHaveBeenNthCalledWith(1, "👀");
