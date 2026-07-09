@@ -5597,8 +5597,8 @@ test("slack adapter simple view starts the stream on first activity and the repl
   >;
   expect(statusCalls[0]?.[0]).toMatchObject({
     status: "is thinking...",
-    loading_messages: ["is thinking..."],
   });
+  expect(statusCalls[0]?.[0]?.loading_messages).toBeUndefined();
 
   await adapter.handleTurnProgressEvent?.({
     type: "progress",

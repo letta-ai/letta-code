@@ -2729,21 +2729,6 @@ export function createSlackAdapter(
     return status;
   }
 
-  function getSlackAssistantLoadingMessageForTurn(
-    source: ChannelTurnSource,
-  ): string | null {
-    // Slack's assistant status has two surfaces:
-    // - `status` renders in the thread footer/typing area.
-    // - `loading_messages` renders an inline shimmering assistant message.
-    // Keep the inline preview only for a flat-channel mention opening a
-    // thread. Use the same "is …" phrase as the status so Slack renders the
-    // compact one-line preview instead of a separate body line.
-    if (!isSlackFlatChannelThreadOpener(source)) {
-      return null;
-    }
-    return getSlackAssistantThreadStatusForTurn(source);
-  }
-
   function isSlackProgressCardRendering(source: ChannelTurnSource): boolean {
     const activeKey = getActiveSlackProgressCardKey(source);
     const entry = activeKey ? progressCardByReplyKey.get(activeKey) : undefined;
@@ -4917,11 +4902,7 @@ export function createSlackAdapter(
         }
         const status = getSlackAssistantThreadStatusForTurn(event.source);
         if (status) {
-          await setSlackAssistantThreadStatus(event.source, status, {
-            loadingMessage: getSlackAssistantLoadingMessageForTurn(
-              event.source,
-            ),
-          });
+          await setSlackAssistantThreadStatus(event.source, status);
         }
         return;
       }
@@ -4940,9 +4921,7 @@ export function createSlackAdapter(
               status &&
               (!replyKey || !assistantStatusReplyKeys.has(replyKey))
             ) {
-              await setSlackAssistantThreadStatus(source, status, {
-                loadingMessage: getSlackAssistantLoadingMessageForTurn(source),
-              });
+              await setSlackAssistantThreadStatus(source, status);
             }
           }),
         );
