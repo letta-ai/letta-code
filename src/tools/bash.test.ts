@@ -1,9 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { bash, spawnCommand } from "@/tools/impl/bash";
+import {
+  __resetCachedWorkingLauncherForTests,
+  bash,
+  spawnCommand,
+} from "@/tools/impl/bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
 
 async function runBashInTemp(
@@ -25,11 +29,15 @@ async function runBashInTemp(
 }
 
 describe("Bash tool", () => {
+  beforeEach(() => {
+    __resetCachedWorkingLauncherForTests();
+  });
+
   test("executes simple command", async () => {
     const result = await bash({
       command:
         process.platform === "win32"
-          ? "node -e \"console.log('Hello, World!')\""
+          ? "Write-Output 'Hello, World!'"
           : "echo 'Hello, World!'",
       description: "Test echo",
     });
@@ -43,7 +51,7 @@ describe("Bash tool", () => {
     const result = await bash({
       command:
         process.platform === "win32"
-          ? "node -e \"console.error('error message')\""
+          ? "[Console]::Error.WriteLine('error message')"
           : "echo 'error message' >&2",
       description: "Test stderr",
     });
@@ -70,7 +78,10 @@ describe("Bash tool", () => {
         { workingDirectory: deletedDir },
         () =>
           bash({
-            command: 'node -e "console.log(process.cwd())"',
+            command:
+              process.platform === "win32"
+                ? "[Console]::WriteLine((Get-Location).Path)"
+                : 'node -e "console.log(process.cwd())"',
             description: "Test missing cwd recovery",
           }),
       );
@@ -97,7 +108,7 @@ describe("Bash tool", () => {
     );
 
     await expect(
-      spawnCommand("node -e \"console.log('unused')\"", {
+      spawnCommand("Write-Output 'unused'", {
         cwd: missingDir,
         env: process.env,
         timeout: 1000,

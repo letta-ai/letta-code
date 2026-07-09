@@ -677,7 +677,7 @@ export async function wireChannelIngress(
     } catch (error) {
       return {
         handled: true,
-        text: `Failed to reload listener settings: ${error instanceof Error ? error.message : String(error)}`,
+        text: `Failed to reload settings, local mods, and agent secrets: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
   });

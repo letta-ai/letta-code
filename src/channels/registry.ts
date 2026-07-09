@@ -526,6 +526,7 @@ export type ChannelModelHandler = (params: {
 }>;
 
 export type ChannelReloadHandler = (params: {
+  channelId: string;
   runtime: {
     agent_id: string;
     conversation_id: string;
@@ -1554,32 +1555,6 @@ export class ChannelRegistry {
     });
   }
 
-  private async handleReloadSlashCommand(
-    msg: InboundChannelMessage,
-  ): Promise<{ handled: boolean; text?: string }> {
-    const route = this.loadAndFindRawRouteForMessage(msg);
-    if (!route?.enabled) {
-      return {
-        handled: true,
-        text: buildChannelNoRouteMessage(msg.channel),
-      };
-    }
-
-    if (!this.reloadHandler) {
-      return {
-        handled: true,
-        text: buildChannelReloadUnavailableMessage(msg.channel),
-      };
-    }
-
-    return this.reloadHandler({
-      runtime: {
-        agent_id: route.agentId,
-        conversation_id: route.conversationId,
-      },
-    });
-  }
-
   private async handleModelSlashCommand(
     command: { args: string },
     msg: InboundChannelMessage,
@@ -1610,6 +1585,33 @@ export class ChannelRegistry {
         conversation_id: route.conversationId,
       },
       modelIdentifier: command.args || undefined,
+    });
+  }
+
+  private async handleReloadSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = this.loadAndFindRawRouteForMessage(msg);
+    if (!route?.enabled) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    if (!this.reloadHandler) {
+      return {
+        handled: true,
+        text: buildChannelReloadUnavailableMessage(msg.channel),
+      };
+    }
+
+    return this.reloadHandler({
+      channelId: msg.channel,
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
     });
   }
 

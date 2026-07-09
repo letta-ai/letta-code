@@ -128,6 +128,11 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     kind: "agent-scoped",
     summary: "Start a memory reflection pass for this conversation.",
   },
+  {
+    name: "reload",
+    kind: "agent-scoped",
+    summary: "Reload settings, local mods, and agent secrets.",
+  },
 ];
 
 const SLACK_MENTION_COMMAND_NAMES = [
@@ -776,7 +781,7 @@ export function buildChannelReloadUnavailableMessage(
   channelId: string,
 ): string {
   const displayName = channelDisplayName(channelId);
-  return `${displayName} cannot reload listener settings for this chat because the listener is not ready yet. Try again in a moment.`;
+  return `${displayName} cannot reload settings, local mods, and agent secrets for this chat because the listener is not ready yet. Try again in a moment.`;
 }
 
 async function handleScopedCommand(params: {
@@ -910,9 +915,6 @@ export async function tryHandleChannelSlashCommand(
             handler: options.handlers?.reflection,
           });
         case "reload":
-          if (!isSlackMentionControl) {
-            return buildUnsupportedChannelCommandMessage(msg.channel, command);
-          }
           return handleScopedCommand({
             msg,
             command,
