@@ -275,6 +275,7 @@ export function buildWhatsAppOutboundPayload(
     OutboundChannelMessage,
     "text" | "mediaPath" | "fileName" | "title"
   >,
+  account?: { audioAsVoiceMemo?: boolean },
 ): Record<string, unknown> {
   if (!msg.mediaPath) {
     return { text: msg.text };
@@ -284,7 +285,7 @@ export function buildWhatsAppOutboundPayload(
   const extension = getWhatsAppOutboundMediaExtension(msg);
   const caption = msg.text?.trim() || msg.title?.trim() || undefined;
 
-  const validationError = getWhatsAppOutboundMediaValidationError(msg);
+  const validationError = getWhatsAppOutboundMediaValidationError(msg, account);
   if (validationError) {
     throw new Error(validationError);
   }
@@ -295,7 +296,10 @@ export function buildWhatsAppOutboundPayload(
   if (WHATSAPP_VIDEO_EXTENSIONS.has(extension)) {
     return { video: { url: msg.mediaPath }, ...(caption ? { caption } : {}) };
   }
-  if (WHATSAPP_VOICE_MEMO_EXTENSIONS.has(extension)) {
+  if (
+    account?.audioAsVoiceMemo === true &&
+    WHATSAPP_VOICE_MEMO_EXTENSIONS.has(extension)
+  ) {
     return {
       audio: { url: msg.mediaPath },
       mimetype: "audio/ogg; codecs=opus",
@@ -339,9 +343,11 @@ function getWhatsAppOutboundMediaExtension(
 
 export function getWhatsAppOutboundMediaValidationError(
   msg: Pick<OutboundChannelMessage, "mediaPath" | "fileName">,
+  account?: { audioAsVoiceMemo?: boolean },
 ): string | null {
   const extension = getWhatsAppOutboundMediaExtension(msg);
   if (
+    account?.audioAsVoiceMemo === true &&
     WHATSAPP_AUDIO_EXTENSIONS.has(extension) &&
     !WHATSAPP_VOICE_MEMO_EXTENSIONS.has(extension)
   ) {

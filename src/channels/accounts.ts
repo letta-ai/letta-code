@@ -63,6 +63,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
+  audio_as_voice_memo: "audioAsVoiceMemo",
 };
 
 let warnedAboutDualKeys = false;

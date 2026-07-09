@@ -609,7 +609,9 @@ export function createWhatsAppAdapter(
       ) {
         msg = { ...msg, text: account.messagePrefix + msg.text };
       }
-      const payload = buildWhatsAppOutboundPayload(msg);
+      const payload = buildWhatsAppOutboundPayload(msg, {
+        audioAsVoiceMemo: account.audioAsVoiceMemo,
+      });
       const result = await sendToWhatsApp(
         targetJid,
         payload,

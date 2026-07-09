@@ -46,11 +46,28 @@ describe("WhatsApp media helpers", () => {
         mediaPath: "/tmp/photo.png",
       }),
     ).toEqual({ image: { url: "/tmp/photo.png" }, caption: "caption" });
+    // By default (audioAsVoiceMemo not set), .ogg falls through to document.
     expect(
       buildWhatsAppOutboundPayload({
         text: "",
         mediaPath: "/tmp/voice.ogg",
       }),
+    ).toEqual({
+      document: { url: "/tmp/voice.ogg" },
+      fileName: "voice.ogg",
+      mimetype: "application/octet-stream",
+    });
+  });
+
+  test("sends .ogg as voice memo when audioAsVoiceMemo is true", () => {
+    expect(
+      buildWhatsAppOutboundPayload(
+        {
+          text: "",
+          mediaPath: "/tmp/voice.ogg",
+        },
+        { audioAsVoiceMemo: true },
+      ),
     ).toEqual({
       audio: { url: "/tmp/voice.ogg" },
       mimetype: "audio/ogg; codecs=opus",
@@ -58,12 +75,28 @@ describe("WhatsApp media helpers", () => {
     });
   });
 
-  test("rejects non-Ogg/Opus audio for outbound voice memos", () => {
-    expect(() =>
+  test("sends .mp3 as document by default", () => {
+    expect(
       buildWhatsAppOutboundPayload({
         text: "",
-        mediaPath: "/tmp/voice.mp3",
+        mediaPath: "/tmp/audio.mp3",
       }),
+    ).toEqual({
+      document: { url: "/tmp/audio.mp3" },
+      fileName: "audio.mp3",
+      mimetype: "application/octet-stream",
+    });
+  });
+
+  test("rejects non-Ogg/Opus audio when audioAsVoiceMemo is true", () => {
+    expect(() =>
+      buildWhatsAppOutboundPayload(
+        {
+          text: "",
+          mediaPath: "/tmp/voice.mp3",
+        },
+        { audioAsVoiceMemo: true },
+      ),
     ).toThrow(/Ogg\/Opus/);
   });
 

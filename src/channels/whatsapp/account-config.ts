@@ -15,6 +15,7 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "download_media",
   "media_max_bytes",
   "message_prefix",
+  "audio_as_voice_memo",
 ]);
 
 function isString(value: unknown): value is string {
@@ -66,7 +67,10 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
           isBoolean(config.download_media)) &&
         (config.media_max_bytes === undefined ||
           isPositiveNumber(config.media_max_bytes)) &&
-        (config.message_prefix === undefined || isString(config.message_prefix))
+        (config.message_prefix === undefined ||
+          isString(config.message_prefix)) &&
+        (config.audio_as_voice_memo === undefined ||
+          isBoolean(config.audio_as_voice_memo))
       );
     },
 
@@ -99,6 +103,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         messagePrefix: isString(config.message_prefix)
           ? config.message_prefix
           : undefined,
+        audioAsVoiceMemo: isBoolean(config.audio_as_voice_memo)
+          ? config.audio_as_voice_memo
+          : undefined,
       };
     },
 
@@ -113,6 +120,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
         message_prefix: account.messagePrefix,
+        audio_as_voice_memo: account.audioAsVoiceMemo === true,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -128,6 +136,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
         message_prefix: account.messagePrefix,
+        audio_as_voice_memo: account.audioAsVoiceMemo === true,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
