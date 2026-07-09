@@ -57,14 +57,17 @@ function settingString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function thinkingLevelSetting(value: unknown): ThinkingLevel | undefined {
+function thinkingLevelSetting(
+  value: unknown,
+  preserveMax: boolean,
+): ThinkingLevel | undefined {
   const effort = settingString(value);
+  if (effort === "max") return preserveMax ? "max" : "xhigh";
   return effort === "minimal" ||
     effort === "low" ||
     effort === "medium" ||
     effort === "high" ||
-    effort === "xhigh" ||
-    effort === "max"
+    effort === "xhigh"
     ? effort
     : undefined;
 }
@@ -76,6 +79,7 @@ function thinkingLevelSetting(value: unknown): ThinkingLevel | undefined {
 // claude-fable-5) reject that with a 400 invalid_request_error.
 export function reasoningForSettings(
   modelSettings: Record<string, unknown>,
+  modelHandle?: string,
 ): ThinkingLevel | undefined {
   const thinking = isRecord(modelSettings.thinking)
     ? modelSettings.thinking
@@ -84,10 +88,12 @@ export function reasoningForSettings(
   const nestedReasoning = isRecord(modelSettings.reasoning)
     ? modelSettings.reasoning
     : undefined;
+  const modelId = modelHandle?.slice(modelHandle.indexOf("/") + 1);
+  const preserveMax = modelId?.startsWith("gpt-5.6") === true;
   return (
-    thinkingLevelSetting(nestedReasoning?.reasoning_effort) ??
-    thinkingLevelSetting(modelSettings.effort) ??
-    thinkingLevelSetting(modelSettings.reasoning_effort)
+    thinkingLevelSetting(nestedReasoning?.reasoning_effort, preserveMax) ??
+    thinkingLevelSetting(modelSettings.effort, preserveMax) ??
+    thinkingLevelSetting(modelSettings.reasoning_effort, preserveMax)
   );
 }
 

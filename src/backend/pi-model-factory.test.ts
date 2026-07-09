@@ -184,7 +184,12 @@ describe("pi model factory", () => {
       expect(resolved.model.id).toBe("gpt-5.6-sol");
       expect(resolved.model.contextWindow).toBe(372000);
       expect(getSupportedThinkingLevels(resolved.model)).toContain("max");
-      expect(reasoningForSettings({ reasoning_effort: "max" })).toBe("max");
+      expect(
+        reasoningForSettings(
+          { reasoning_effort: "max" },
+          "openai-codex/gpt-5.6-sol",
+        ),
+      ).toBe("max");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

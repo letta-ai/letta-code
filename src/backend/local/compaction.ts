@@ -440,7 +440,10 @@ async function runGenerateText(
     systemPrompt,
     messages: [{ role: "user", content: transcript, timestamp: Date.now() }],
   };
-  const reasoning = reasoningForSettings(localModel.modelSettings);
+  const reasoning = reasoningForSettings(
+    localModel.modelSettings,
+    localModel.model,
+  );
   const options: SimpleStreamOptions & Record<string, unknown> = {
     ...resolved.providerOptions,
     ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),

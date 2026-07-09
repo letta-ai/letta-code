@@ -700,6 +700,10 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       messages: toPiMessages(input.uiMessages),
       ...(tools ? { tools } : {}),
     };
+    const reasoning = reasoningForSettings(
+      input.agent.model_settings,
+      input.agent.model,
+    );
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
@@ -708,9 +712,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,
-      ...(reasoningForSettings(input.agent.model_settings)
-        ? { reasoning: reasoningForSettings(input.agent.model_settings) }
-        : {}),
+      ...(reasoning ? { reasoning } : {}),
       ...(maxTokensForSettings(input.agent.model_settings)
         ? { maxTokens: maxTokensForSettings(input.agent.model_settings) }
         : {}),
