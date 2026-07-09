@@ -66,6 +66,17 @@ describe("getModelInfo", () => {
       parallel_tool_calls: true,
     });
   });
+
+  test("resolves direct xAI Grok 4.5 registry metadata", () => {
+    const info = getModelInfo("grok-4.5");
+    expect(info?.handle).toBe("xai/grok-4.5");
+    expect(info?.label).toBe("Grok 4.5");
+    expect(info?.updateArgs).toMatchObject({
+      context_window: 500000,
+      max_output_tokens: 16384,
+      parallel_tool_calls: true,
+    });
+  });
 });
 
 describe("getModelInfoForLlmConfig", () => {
@@ -82,6 +93,21 @@ describe("getModelInfoForLlmConfig", () => {
       reasoning_effort: "xhigh",
     });
     expect(xhigh?.id).toBe("gpt-5.4-xhigh");
+  });
+
+  test("selects gpt-5.6 sol tier by reasoning_effort", () => {
+    const handle = "openai/gpt-5.6-sol";
+
+    const high = getModelInfoForLlmConfig(handle, { reasoning_effort: "high" });
+    expect(high?.id).toBe("gpt-5.6-sol");
+
+    const none = getModelInfoForLlmConfig(handle, { reasoning_effort: "none" });
+    expect(none?.id).toBe("gpt-5.6-sol-none");
+
+    const xhigh = getModelInfoForLlmConfig(handle, {
+      reasoning_effort: "xhigh",
+    });
+    expect(xhigh?.id).toBe("gpt-5.6-sol-xhigh");
   });
 
   test("uses ChatGPT metadata for local ChatGPT OAuth handles", () => {
@@ -178,6 +204,24 @@ describe("getReasoningTierOptionsForHandle", () => {
       "gpt-5.4-medium",
       "gpt-5.4-high",
       "gpt-5.4-xhigh",
+    ]);
+  });
+
+  test("returns ordered reasoning options for gpt-5.6 sol", () => {
+    const options = getReasoningTierOptionsForHandle("openai/gpt-5.6-sol");
+    expect(options.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "gpt-5.6-sol-none",
+      "gpt-5.6-sol-low",
+      "gpt-5.6-sol-medium",
+      "gpt-5.6-sol",
+      "gpt-5.6-sol-xhigh",
     ]);
   });
 

@@ -7,7 +7,11 @@ import { configureBackendMode, getBackend } from "@/backend/backend";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LOCAL_BACKEND_DIR_ENV } from "@/backend/local/paths";
 import { clearAvailableModelsCache } from "./available-models";
-import { updateAgentLLMConfig, updateConversationLLMConfig } from "./modify";
+import {
+  __modifyTestUtils,
+  updateAgentLLMConfig,
+  updateConversationLLMConfig,
+} from "./modify";
 
 async function withLocalBackendStorage<T>(
   storageDir: string,
@@ -30,6 +34,20 @@ async function withLocalBackendStorage<T>(
 }
 
 describe("local model updates", () => {
+  test("builds direct xAI model settings for xAI handles", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("xai/grok-4.5", {
+        context_window: 500000,
+        max_output_tokens: 16384,
+        parallel_tool_calls: true,
+      }),
+    ).toMatchObject({
+      provider_type: "xai",
+      parallel_tool_calls: true,
+      max_output_tokens: 16384,
+    });
+  });
+
   afterEach(() => {
     configureBackendMode("api");
     clearAvailableModelsCache();
