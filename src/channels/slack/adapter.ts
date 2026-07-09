@@ -269,16 +269,8 @@ function resolveSlackAppModule(value: unknown): SlackAppConstructor | null {
 }
 const INITIAL_SLACK_THREAD_HISTORY_LIMIT = 20;
 
-const SLACK_ASSISTANT_STATUS_VERBS = Object.freeze([
-  "cogitating",
-  "thinking",
-  "processing",
-] as const);
-
-function getRandomSlackAssistantStatusVerb(): string {
-  const index = Math.floor(Math.random() * SLACK_ASSISTANT_STATUS_VERBS.length);
-  return `is ${SLACK_ASSISTANT_STATUS_VERBS[index] ?? "thinking"}...`;
-}
+const SLACK_ASSISTANT_STATUS_TEXT = "is working...";
+const SLACK_ASSISTANT_STARTUP_MESSAGE = "Starting up...";
 
 function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
   const defaultExport =
@@ -2721,9 +2713,30 @@ export function createSlackAdapter(
     if (existing) {
       return existing;
     }
-    const status = getRandomSlackAssistantStatusVerb();
+    const status = SLACK_ASSISTANT_STATUS_TEXT;
     assistantStatusTextByReplyKey.set(key, status);
     return status;
+  }
+
+  function getSlackAssistantLoadingMessageForTurn(
+    source: ChannelTurnSource,
+  ): string | null {
+    // Slack's assistant status has two surfaces:
+    // - `status` renders in the thread footer/typing area.
+    // - `loading_messages` renders an inline shimmering assistant message.
+    // Keep that inline preview only for a flat-channel mention opening a
+    // thread; established threads use the footer only until a real reply or
+    // concrete progress stream exists.
+    if (source.chatType !== "channel" || !isNonEmptyString(source.messageId)) {
+      return null;
+    }
+    if (
+      isNonEmptyString(source.threadId) &&
+      source.threadId !== source.messageId
+    ) {
+      return null;
+    }
+    return SLACK_ASSISTANT_STARTUP_MESSAGE;
   }
 
   function isSlackProgressCardRendering(source: ChannelTurnSource): boolean {
@@ -2740,6 +2753,7 @@ export function createSlackAdapter(
   async function setSlackAssistantThreadStatus(
     source: ChannelTurnSource,
     status: string,
+    options: { loadingMessage?: string | null } = {},
   ): Promise<void> {
     const key = getLifecycleReplyKey(source);
     const threadTs = getSlackProgressReplyTs(source);
@@ -2757,7 +2771,9 @@ export function createSlackAdapter(
         channel_id: source.chatId,
         thread_ts: threadTs,
         status,
-        ...(status ? { loading_messages: [status] } : {}),
+        ...(status && isNonEmptyString(options.loadingMessage)
+          ? { loading_messages: [options.loadingMessage] }
+          : {}),
       });
       if (status) {
         assistantStatusReplyKeys.add(key);
@@ -4896,7 +4912,11 @@ export function createSlackAdapter(
         }
         const status = getSlackAssistantThreadStatusForTurn(event.source);
         if (status) {
-          await setSlackAssistantThreadStatus(event.source, status);
+          await setSlackAssistantThreadStatus(event.source, status, {
+            loadingMessage: getSlackAssistantLoadingMessageForTurn(
+              event.source,
+            ),
+          });
         }
         return;
       }
@@ -4916,7 +4936,9 @@ export function createSlackAdapter(
               status &&
               (!replyKey || !assistantStatusReplyKeys.has(replyKey))
             ) {
-              await setSlackAssistantThreadStatus(source, status);
+              await setSlackAssistantThreadStatus(source, status, {
+                loadingMessage: getSlackAssistantLoadingMessageForTurn(source),
+              });
             }
           }),
         );
