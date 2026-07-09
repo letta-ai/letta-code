@@ -269,8 +269,7 @@ function resolveSlackAppModule(value: unknown): SlackAppConstructor | null {
 }
 const INITIAL_SLACK_THREAD_HISTORY_LIMIT = 20;
 
-const SLACK_ASSISTANT_STATUS_TEXT = "is working...";
-const SLACK_ASSISTANT_STARTUP_MESSAGE = "Starting up...";
+const SLACK_ASSISTANT_STARTUP_STATUS = "is thinking...";
 
 function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
   const defaultExport =
@@ -2702,9 +2701,21 @@ export function createSlackAdapter(
     return unique;
   }
 
+  function isSlackFlatChannelThreadOpener(source: ChannelTurnSource): boolean {
+    return (
+      source.chatType === "channel" &&
+      isNonEmptyString(source.messageId) &&
+      (!isNonEmptyString(source.threadId) ||
+        source.threadId === source.messageId)
+    );
+  }
+
   function getSlackAssistantThreadStatusForTurn(
     source: ChannelTurnSource,
   ): string | null {
+    if (!isSlackFlatChannelThreadOpener(source)) {
+      return null;
+    }
     const key = getLifecycleReplyKey(source);
     if (!key) {
       return null;
@@ -2713,7 +2724,7 @@ export function createSlackAdapter(
     if (existing) {
       return existing;
     }
-    const status = SLACK_ASSISTANT_STATUS_TEXT;
+    const status = SLACK_ASSISTANT_STARTUP_STATUS;
     assistantStatusTextByReplyKey.set(key, status);
     return status;
   }
@@ -2724,19 +2735,13 @@ export function createSlackAdapter(
     // Slack's assistant status has two surfaces:
     // - `status` renders in the thread footer/typing area.
     // - `loading_messages` renders an inline shimmering assistant message.
-    // Keep that inline preview only for a flat-channel mention opening a
-    // thread; established threads use the footer only until a real reply or
-    // concrete progress stream exists.
-    if (source.chatType !== "channel" || !isNonEmptyString(source.messageId)) {
+    // Keep the inline preview only for a flat-channel mention opening a
+    // thread. Use the same "is …" phrase as the status so Slack renders the
+    // compact one-line preview instead of a separate body line.
+    if (!isSlackFlatChannelThreadOpener(source)) {
       return null;
     }
-    if (
-      isNonEmptyString(source.threadId) &&
-      source.threadId !== source.messageId
-    ) {
-      return null;
-    }
-    return SLACK_ASSISTANT_STARTUP_MESSAGE;
+    return getSlackAssistantThreadStatusForTurn(source);
   }
 
   function isSlackProgressCardRendering(source: ChannelTurnSource): boolean {
@@ -4924,12 +4929,11 @@ export function createSlackAdapter(
       if (event.type === "processing") {
         await Promise.all(
           getUniqueSlackProgressSources(event.sources).map(async (source) => {
-            // Turn start: the "is working…" footer is the ONLY liveness
-            // signal — no visual artifact spawns until concrete activity
-            // exists (first titled tool event). Reply-only turns, thread
-            // openers, and listen-mode agents following busy human threads
-            // never spawn stream messages just to think; the flat-channel
-            // case is covered by Slack's assistant-status preview.
+            // Turn start: only a flat-channel mention opening a new thread gets
+            // Slack's assistant-status preview. Established threads deliberately
+            // skip assistant status here: Slack turns setStatus into inline
+            // generic placeholders ("Processing…", "Finding answers…"), and the
+            // progress surface must stay quiet until concrete activity exists.
             const replyKey = getLifecycleReplyKey(source);
             const status = getSlackAssistantThreadStatusForTurn(source);
             if (

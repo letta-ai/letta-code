@@ -1975,7 +1975,7 @@ test("slack adapter does not add lifecycle reactions for rich progress turns", a
   expect(writeClient?.reactions.remove.mock.calls ?? []).toHaveLength(0);
 });
 
-test("slack adapter streams native task progress and keeps the thread status set", async () => {
+test("slack adapter streams native task progress without assistant-status noise in established threads", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -2021,14 +2021,10 @@ test("slack adapter streams native task progress and keeps the thread status set
   });
   const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
-  // The "is working…" footer stays set while the card streams — it is the
-  // turn-level liveness signal and coexists with the card.
-  const statusCalls = writeClient?.assistant.threads.setStatus.mock
-    .calls as unknown as Array<
-    Array<{ status: string; loading_messages?: string[] }>
-  >;
-  expect(statusCalls.some((call) => call[0]?.status === "")).toBe(false);
-  expect(statusCalls.some((call) => call[0]?.loading_messages)).toBe(false);
+  // Established threads must not use assistant status for turn-start liveness:
+  // Slack renders setStatus as inline generic filler ("Processing…",
+  // "Finding answers…") instead of footer-only status.
+  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
@@ -2114,13 +2110,7 @@ test("slack adapter streams native task progress and keeps the thread status set
   expect(appendCall?.chunks).toHaveLength(3);
   expect(JSON.stringify(appendCall?.chunks)).not.toContain("token=abc");
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
-  // After the turn finished, the footer clears (the mid-turn assertions
-  // above pinned that streaming did NOT clear it early).
-  expect(writeClient?.assistant.threads.setStatus).toHaveBeenLastCalledWith({
-    channel_id: "C123",
-    thread_ts: "1712790000.000050",
-    status: "",
-  });
+  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
 });
 
 test("slack adapter keeps shell error output out of task titles (LET-9509)", async () => {
@@ -2861,14 +2851,7 @@ test("slack adapter anchors direct message progress to the inbound message", asy
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  const statusCalls =
-    (writeClient?.assistant.threads.setStatus.mock.calls as Array<
-      Array<{ status: string; loading_messages?: string[] }>
-    >) ?? [];
-  expect(statusCalls).toHaveLength(2);
-  expect(statusCalls[0]?.[0]?.status).toBe("is working...");
-  expect(statusCalls[0]?.[0]?.loading_messages).toBeUndefined();
-  expect(statusCalls[1]?.[0]?.status).toBe("");
+  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
   expect(writeClient?.chat.startStream).toHaveBeenCalledWith({
     channel: "D123",
     thread_ts: "1712800000.000100",
@@ -4124,7 +4107,7 @@ test("slack adapter keeps failed tool titles without failing completed progress 
   );
 });
 
-test("slack adapter uses assistant status instead of a placeholder stream for no-tool turns", async () => {
+test("slack adapter stays quiet for no-tool established-thread turns", async () => {
   process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "0";
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -4160,9 +4143,7 @@ test("slack adapter uses assistant status instead of a placeholder stream for no
     sources: [source],
   });
 
-  const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
-  expect(writeClient?.chat.appendStream).not.toHaveBeenCalled();
+  expect(FakeSlackWriteClient.instances).toHaveLength(0);
 
   await adapter.handleTurnLifecycleEvent?.({
     type: "finished",
@@ -4172,17 +4153,7 @@ test("slack adapter uses assistant status instead of a placeholder stream for no
   });
   await sleep(10);
 
-  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
-  expect(writeClient?.chat.update).not.toHaveBeenCalled();
-  expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
-  const statusCalls =
-    (writeClient?.assistant.threads.setStatus.mock.calls as Array<
-      Array<{ status: string; loading_messages?: string[] }>
-    >) ?? [];
-  expect(statusCalls).toHaveLength(2);
-  expect(statusCalls[0]?.[0]?.status).toBe("is working...");
-  expect(statusCalls[0]?.[0]?.loading_messages).toBeUndefined();
-  expect(statusCalls[1]?.[0]?.status).toBe("");
+  expect(FakeSlackWriteClient.instances).toHaveLength(0);
 });
 
 test("slack adapter finishes an active progress card when MessageChannel sends", async () => {
@@ -5469,19 +5440,9 @@ test("slack adapter defers the status placeholder in established threads until c
     sources: [source],
   });
 
-  // Thinking alone spawns nothing: the footer carries turn liveness, so
-  // reply-only turns and listen-mode agents never emit stream messages.
-  const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
-  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalled();
-  const statusCalls = writeClient?.assistant.threads.setStatus.mock
-    .calls as unknown as Array<
-    Array<{ status: string; loading_messages?: string[] }>
-  >;
-  expect(statusCalls[statusCalls.length - 1]?.[0]?.status).not.toBe("");
-  expect(
-    statusCalls[statusCalls.length - 1]?.[0]?.loading_messages,
-  ).toBeUndefined();
+  // Turn start spawns nothing in established threads: no Slack stream and no
+  // assistant-status call (which Slack renders as noisy inline filler).
+  expect(FakeSlackWriteClient.instances).toHaveLength(0);
 
   // First concrete activity spawns the placeholder with the tool title.
   await adapter.handleTurnProgressEvent?.({
@@ -5494,7 +5455,9 @@ test("slack adapter defers the status placeholder in established threads until c
     toolCallId: "call-1",
     toolName: "exec_command",
   });
+  const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
   const startCalls = writeClient?.chat.startStream.mock
     .calls as unknown as Array<
     Array<{ chunks?: Array<{ type: string; title?: string }> }>
@@ -5570,12 +5533,7 @@ test("slack adapter simple view never starts a stream without a concrete activit
   });
   await sleep(150);
 
-  const writeClient = FakeSlackWriteClient.instances[0];
-  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
-  // No plain-text progress artifact spawns from fallback state either.
-  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
-  // The footer still signals liveness.
-  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalled();
+  expect(FakeSlackWriteClient.instances).toHaveLength(0);
 
   // The reply posts normally (no stream existed to morph).
   await adapter.sendMessage({
@@ -5587,8 +5545,11 @@ test("slack adapter simple view never starts a stream without a concrete activit
     agentId: "agent-1",
     conversationId: "conv-1",
   });
+  const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
+  expect(writeClient?.assistant.threads.setStatus).not.toHaveBeenCalled();
 });
 
 test("slack adapter simple view starts the stream on first activity and the reply becomes the message", async () => {
@@ -5635,8 +5596,8 @@ test("slack adapter simple view starts the stream on first activity and the repl
     Array<{ status: string; loading_messages?: string[] }>
   >;
   expect(statusCalls[0]?.[0]).toMatchObject({
-    status: "is working...",
-    loading_messages: ["Starting up..."],
+    status: "is thinking...",
+    loading_messages: ["is thinking..."],
   });
 
   await adapter.handleTurnProgressEvent?.({
