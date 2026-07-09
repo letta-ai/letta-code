@@ -162,6 +162,35 @@ export function registryHandleForByokAlias(
   return normalizeModelHandleForRegistry(baseHandle) ?? baseHandle;
 }
 
+export function registryHandleForBackendModel(
+  handle: string,
+  providerType?: string,
+): string {
+  const normalizedHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+  if (models.some((model) => model.handle === normalizedHandle)) {
+    return normalizedHandle;
+  }
+
+  if (providerType === "chatgpt_oauth") {
+    const slashIndex = handle.indexOf("/");
+    if (slashIndex > 0) {
+      const directHandle = `openai/${handle.slice(slashIndex + 1)}`;
+      if (models.some((model) => model.handle === directHandle)) {
+        return directHandle;
+      }
+    }
+  }
+
+  return normalizedHandle;
+}
+
+export function labelForBackendModel(
+  label: string,
+  providerType?: string,
+): string {
+  return providerType === "chatgpt_oauth" ? `${label} (ChatGPT)` : label;
+}
+
 export function toByokSelectorModel(
   staticModel: UiModel,
   handle: string,
@@ -472,7 +501,11 @@ export function ModelSelector({
 
   const modelsForBackendHandle = useCallback(
     (handle: string, includeUnknown: boolean): UiModel[] => {
-      const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
+      const providerType = providerTypesByHandle.get(handle);
+      const registryHandle = registryHandleForBackendModel(
+        handle,
+        providerType,
+      );
       const baseStaticModel = pickPreferredStaticModel(registryHandle);
       const fastRegistryHandle =
         getChatGptFastRegistryHandleForModelHandle(handle);
@@ -492,7 +525,10 @@ export function ModelSelector({
         : null;
       const baseModel = baseStaticModel
         ? withActualHandle(
-            baseStaticModel,
+            {
+              ...baseStaticModel,
+              label: labelForBackendModel(baseStaticModel.label, providerType),
+            },
             handle,
             registryHandle,
             baseUpdateArgsWithProviderType,
@@ -526,7 +562,12 @@ export function ModelSelector({
 
       return result;
     },
-    [pickPreferredStaticModel, withActualHandle, withProviderTypeMetadata],
+    [
+      pickPreferredStaticModel,
+      providerTypesByHandle,
+      withActualHandle,
+      withProviderTypeMetadata,
+    ],
   );
 
   // Supported models: models.json entries that are available

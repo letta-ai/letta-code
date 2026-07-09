@@ -3,7 +3,7 @@
  * Unified module for managing custom LLM provider connections
  */
 
-import { getProviders } from "@earendil-works/pi-ai";
+import { getProviders } from "@earendil-works/pi-ai/compat";
 import { getOAuthProviders } from "@earendil-works/pi-ai/oauth";
 import {
   checkProviderApiKey as checkProviderApiKeyRequest,

@@ -3,7 +3,9 @@ import { getReasoningTierOptionsForHandle } from "@/agent/model";
 import {
   buildByokProviderAliases,
   isByokHandleForSelector,
+  labelForBackendModel,
   labelForChatGPTByokAlias,
+  registryHandleForBackendModel,
   registryHandleForByokAlias,
   toByokSelectorModel,
 } from "@/cli/components/ModelSelector";
@@ -49,6 +51,18 @@ describe("ModelSelector custom BYOK provider detection", () => {
     expect(aliases["chatgpt-personal"]).toBe("openai-codex");
     expect(isByokHandleForSelector("chatgpt-personal/gpt-5.5", aliases)).toBe(
       true,
+    );
+  });
+
+  test("uses direct GPT-5.6 metadata for local ChatGPT OAuth handles", () => {
+    expect(
+      registryHandleForBackendModel(
+        "openai-codex/gpt-5.6-sol",
+        "chatgpt_oauth",
+      ),
+    ).toBe("openai/gpt-5.6-sol");
+    expect(labelForBackendModel("GPT-5.6 Sol", "chatgpt_oauth")).toBe(
+      "GPT-5.6 Sol (ChatGPT)",
     );
   });
 

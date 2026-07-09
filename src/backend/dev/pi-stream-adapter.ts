@@ -1,18 +1,20 @@
+import type {
+  AssistantMessage,
+  AssistantMessageEvent,
+  Context,
+  Message,
+  Model,
+  SimpleStreamOptions,
+  Tool,
+  TSchema,
+  Usage,
+} from "@earendil-works/pi-ai";
 import {
-  type AssistantMessage,
-  type AssistantMessageEvent,
-  type Context,
   isContextOverflow,
-  type Message,
-  type Model,
-  type SimpleStreamOptions,
   stream,
   streamSimple,
-  type Tool,
-  type TSchema,
   Type,
-  type Usage,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import type { LocalCompactionStats } from "@/backend/local/compaction";
 import {
   emptyLocalUsage,

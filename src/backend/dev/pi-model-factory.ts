@@ -1,5 +1,5 @@
 import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
-import { getModel, getModels } from "@earendil-works/pi-ai";
+import { getModel, getModels } from "@earendil-works/pi-ai/compat";
 import {
   getOAuthProvider,
   type OAuthCredentials,
@@ -59,12 +59,12 @@ function settingString(value: unknown): string | undefined {
 
 function thinkingLevelSetting(value: unknown): ThinkingLevel | undefined {
   const effort = settingString(value);
-  if (effort === "max") return "xhigh";
   return effort === "minimal" ||
     effort === "low" ||
     effort === "medium" ||
     effort === "high" ||
-    effort === "xhigh"
+    effort === "xhigh" ||
+    effort === "max"
     ? effort
     : undefined;
 }

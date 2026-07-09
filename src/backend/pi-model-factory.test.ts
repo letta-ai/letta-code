@@ -2,10 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModels } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import {
   applyPiEnvOverrides,
+  reasoningForSettings,
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
 import {
@@ -151,6 +153,38 @@ describe("pi model factory", () => {
       );
 
       expect(resolved.apiKey).toBe("chatgpt-access-token");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves local ChatGPT OAuth GPT-5.6 with max reasoning", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-chatgpt-56-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "chatgpt_oauth",
+        providerName: "chatgpt-plus-pro",
+        apiKey: JSON.stringify({
+          access_token: "chatgpt-access-token",
+          id_token: "chatgpt-id-token",
+          refresh_token: "chatgpt-refresh-token",
+          account_id: "account-123",
+          expires_at: Date.now() + 60_000,
+        }),
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "chatgpt-plus-pro/gpt-5.6-sol",
+        { provider_type: "chatgpt_oauth" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.provider).toBe("openai-codex");
+      expect(resolved.model.id).toBe("gpt-5.6-sol");
+      expect(resolved.model.contextWindow).toBe(372000);
+      expect(getSupportedThinkingLevels(resolved.model)).toContain("max");
+      expect(reasoningForSettings({ reasoning_effort: "max" })).toBe("max");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

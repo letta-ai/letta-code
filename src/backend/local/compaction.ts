@@ -1,12 +1,14 @@
+import type {
+  AssistantMessage,
+  Context,
+  Model,
+  SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
 import {
-  type AssistantMessage,
-  type Context,
   complete,
   completeSimple,
   isContextOverflow,
-  type Model,
-  type SimpleStreamOptions,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
 import {
   applyPiEnvOverrides,
