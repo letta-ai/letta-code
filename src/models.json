@@ -54,6 +54,402 @@
       "isFeatured": true
     },
     {
+      "id": "gpt-5.6-sol-none",
+      "handle": "openai/gpt-5.6-sol",
+      "label": "GPT-5.6 Sol",
+      "description": "OpenAI's most capable GPT-5.6 model (no reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-sol-low",
+      "handle": "openai/gpt-5.6-sol",
+      "label": "GPT-5.6 Sol",
+      "description": "OpenAI's most capable GPT-5.6 model (low reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-sol-medium",
+      "handle": "openai/gpt-5.6-sol",
+      "label": "GPT-5.6 Sol",
+      "description": "OpenAI's most capable GPT-5.6 model (med reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "handle": "openai/gpt-5.6-sol",
+      "label": "GPT-5.6 Sol",
+      "description": "OpenAI's most capable GPT-5.6 model (high reasoning)",
+      "isFeatured": true,
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-sol-xhigh",
+      "handle": "openai/gpt-5.6-sol",
+      "label": "GPT-5.6 Sol",
+      "description": "OpenAI's most capable GPT-5.6 model (max reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-terra-none",
+      "handle": "openai/gpt-5.6-terra",
+      "label": "GPT-5.6 Terra",
+      "description": "GPT-5.6 Terra (no reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-terra-low",
+      "handle": "openai/gpt-5.6-terra",
+      "label": "GPT-5.6 Terra",
+      "description": "GPT-5.6 Terra (low reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-terra-medium",
+      "handle": "openai/gpt-5.6-terra",
+      "label": "GPT-5.6 Terra",
+      "description": "GPT-5.6 Terra (med reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "handle": "openai/gpt-5.6-terra",
+      "label": "GPT-5.6 Terra",
+      "description": "GPT-5.6 Terra (high reasoning)",
+      "isFeatured": true,
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-terra-xhigh",
+      "handle": "openai/gpt-5.6-terra",
+      "label": "GPT-5.6 Terra",
+      "description": "GPT-5.6 Terra (max reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-luna-none",
+      "handle": "openai/gpt-5.6-luna",
+      "label": "GPT-5.6 Luna",
+      "description": "GPT-5.6 Luna (no reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-luna-low",
+      "handle": "openai/gpt-5.6-luna",
+      "label": "GPT-5.6 Luna",
+      "description": "GPT-5.6 Luna (low reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-luna-medium",
+      "handle": "openai/gpt-5.6-luna",
+      "label": "GPT-5.6 Luna",
+      "description": "GPT-5.6 Luna (med reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "handle": "openai/gpt-5.6-luna",
+      "label": "GPT-5.6 Luna",
+      "description": "GPT-5.6 Luna (high reasoning)",
+      "isFeatured": true,
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-luna-xhigh",
+      "handle": "openai/gpt-5.6-luna",
+      "label": "GPT-5.6 Luna",
+      "description": "GPT-5.6 Luna (max reasoning)",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "medium",
+        "context_window": 1050000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-sol-plus-pro-none",
+      "handle": "chatgpt-plus-pro/gpt-5.6-sol",
+      "label": "GPT-5.6 Sol (ChatGPT)",
+      "description": "GPT-5.6 Sol (no reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-sol-plus-pro-low",
+      "handle": "chatgpt-plus-pro/gpt-5.6-sol",
+      "label": "GPT-5.6 Sol (ChatGPT)",
+      "description": "GPT-5.6 Sol (low reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-sol-plus-pro-medium",
+      "handle": "chatgpt-plus-pro/gpt-5.6-sol",
+      "label": "GPT-5.6 Sol (ChatGPT)",
+      "description": "GPT-5.6 Sol (med reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-sol-plus-pro-high",
+      "handle": "chatgpt-plus-pro/gpt-5.6-sol",
+      "label": "GPT-5.6 Sol (ChatGPT)",
+      "description": "GPT-5.6 Sol (high reasoning) via ChatGPT Plus/Pro",
+      "isFeatured": true,
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-sol-plus-pro-xhigh",
+      "handle": "chatgpt-plus-pro/gpt-5.6-sol",
+      "label": "GPT-5.6 Sol (ChatGPT)",
+      "description": "GPT-5.6 Sol (max reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-terra-plus-pro-none",
+      "handle": "chatgpt-plus-pro/gpt-5.6-terra",
+      "label": "GPT-5.6 Terra (ChatGPT)",
+      "description": "GPT-5.6 Terra (no reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-terra-plus-pro-low",
+      "handle": "chatgpt-plus-pro/gpt-5.6-terra",
+      "label": "GPT-5.6 Terra (ChatGPT)",
+      "description": "GPT-5.6 Terra (low reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-terra-plus-pro-medium",
+      "handle": "chatgpt-plus-pro/gpt-5.6-terra",
+      "label": "GPT-5.6 Terra (ChatGPT)",
+      "description": "GPT-5.6 Terra (med reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-terra-plus-pro-high",
+      "handle": "chatgpt-plus-pro/gpt-5.6-terra",
+      "label": "GPT-5.6 Terra (ChatGPT)",
+      "description": "GPT-5.6 Terra (high reasoning) via ChatGPT Plus/Pro",
+      "isFeatured": true,
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-terra-plus-pro-xhigh",
+      "handle": "chatgpt-plus-pro/gpt-5.6-terra",
+      "label": "GPT-5.6 Terra (ChatGPT)",
+      "description": "GPT-5.6 Terra (max reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-luna-plus-pro-none",
+      "handle": "chatgpt-plus-pro/gpt-5.6-luna",
+      "label": "GPT-5.6 Luna (ChatGPT)",
+      "description": "GPT-5.6 Luna (no reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "none",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-luna-plus-pro-low",
+      "handle": "chatgpt-plus-pro/gpt-5.6-luna",
+      "label": "GPT-5.6 Luna (ChatGPT)",
+      "description": "GPT-5.6 Luna (low reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "low",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-luna-plus-pro-medium",
+      "handle": "chatgpt-plus-pro/gpt-5.6-luna",
+      "label": "GPT-5.6 Luna (ChatGPT)",
+      "description": "GPT-5.6 Luna (med reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "medium",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-luna-plus-pro-high",
+      "handle": "chatgpt-plus-pro/gpt-5.6-luna",
+      "label": "GPT-5.6 Luna (ChatGPT)",
+      "description": "GPT-5.6 Luna (high reasoning) via ChatGPT Plus/Pro",
+      "isFeatured": true,
+      "updateArgs": {
+        "reasoning_effort": "high",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gpt-5.6-luna-plus-pro-xhigh",
+      "handle": "chatgpt-plus-pro/gpt-5.6-luna",
+      "label": "GPT-5.6 Luna (ChatGPT)",
+      "description": "GPT-5.6 Luna (max reasoning) via ChatGPT Plus/Pro",
+      "updateArgs": {
+        "reasoning_effort": "xhigh",
+        "verbosity": "low",
+        "context_window": 272000,
+        "max_output_tokens": 128000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "fable",
       "handle": "anthropic/claude-fable-5",
       "label": "Fable 5",
@@ -915,7 +1311,6 @@
       "handle": "chatgpt-plus-pro/gpt-5.5",
       "label": "GPT-5.5 (ChatGPT)",
       "description": "OpenAI's most capable model (high reasoning) via ChatGPT Plus/Pro",
-      "isFeatured": true,
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "low",
@@ -1315,204 +1710,6 @@
       }
     },
     {
-      "id": "gpt-5.6-sol-none",
-      "handle": "openai/gpt-5.6-sol",
-      "label": "GPT-5.6 Sol",
-      "description": "OpenAI's most capable GPT-5.6 model (no reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "none",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-sol-low",
-      "handle": "openai/gpt-5.6-sol",
-      "label": "GPT-5.6 Sol",
-      "description": "OpenAI's most capable GPT-5.6 model (low reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "low",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-sol-medium",
-      "handle": "openai/gpt-5.6-sol",
-      "label": "GPT-5.6 Sol",
-      "description": "OpenAI's most capable GPT-5.6 model (med reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "medium",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-sol",
-      "handle": "openai/gpt-5.6-sol",
-      "label": "GPT-5.6 Sol",
-      "description": "OpenAI's most capable GPT-5.6 model (high reasoning)",
-      "isFeatured": true,
-      "updateArgs": {
-        "reasoning_effort": "high",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-sol-xhigh",
-      "handle": "openai/gpt-5.6-sol",
-      "label": "GPT-5.6 Sol",
-      "description": "OpenAI's most capable GPT-5.6 model (max reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "xhigh",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-terra-none",
-      "handle": "openai/gpt-5.6-terra",
-      "label": "GPT-5.6 Terra",
-      "description": "GPT-5.6 Terra (no reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "none",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-terra-low",
-      "handle": "openai/gpt-5.6-terra",
-      "label": "GPT-5.6 Terra",
-      "description": "GPT-5.6 Terra (low reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "low",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-terra-medium",
-      "handle": "openai/gpt-5.6-terra",
-      "label": "GPT-5.6 Terra",
-      "description": "GPT-5.6 Terra (med reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "medium",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-terra",
-      "handle": "openai/gpt-5.6-terra",
-      "label": "GPT-5.6 Terra",
-      "description": "GPT-5.6 Terra (high reasoning)",
-      "isFeatured": true,
-      "updateArgs": {
-        "reasoning_effort": "high",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-terra-xhigh",
-      "handle": "openai/gpt-5.6-terra",
-      "label": "GPT-5.6 Terra",
-      "description": "GPT-5.6 Terra (max reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "xhigh",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-luna-none",
-      "handle": "openai/gpt-5.6-luna",
-      "label": "GPT-5.6 Luna",
-      "description": "GPT-5.6 Luna (no reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "none",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-luna-low",
-      "handle": "openai/gpt-5.6-luna",
-      "label": "GPT-5.6 Luna",
-      "description": "GPT-5.6 Luna (low reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "low",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-luna-medium",
-      "handle": "openai/gpt-5.6-luna",
-      "label": "GPT-5.6 Luna",
-      "description": "GPT-5.6 Luna (med reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "medium",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-luna",
-      "handle": "openai/gpt-5.6-luna",
-      "label": "GPT-5.6 Luna",
-      "description": "GPT-5.6 Luna (high reasoning)",
-      "isFeatured": true,
-      "updateArgs": {
-        "reasoning_effort": "high",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
-      "id": "gpt-5.6-luna-xhigh",
-      "handle": "openai/gpt-5.6-luna",
-      "label": "GPT-5.6 Luna",
-      "description": "GPT-5.6 Luna (max reasoning)",
-      "updateArgs": {
-        "reasoning_effort": "xhigh",
-        "verbosity": "medium",
-        "context_window": 1050000,
-        "max_output_tokens": 128000,
-        "parallel_tool_calls": true
-      }
-    },
-    {
       "id": "gpt-5.5-none",
       "handle": "openai/gpt-5.5",
       "label": "GPT-5.5",
@@ -1556,7 +1753,6 @@
       "handle": "openai/gpt-5.5",
       "label": "GPT-5.5",
       "description": "OpenAI's most capable model (high reasoning)",
-      "isFeatured": true,
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "medium",

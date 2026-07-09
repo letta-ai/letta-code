@@ -77,6 +77,11 @@ describe("getModelInfo", () => {
       parallel_tool_calls: true,
     });
   });
+
+  test("does not feature GPT-5.5 presets", () => {
+    expect(getModelInfo("gpt-5.5-high")?.isFeatured).not.toBe(true);
+    expect(getModelInfo("gpt-5.5-plus-pro-high")?.isFeatured).not.toBe(true);
+  });
 });
 
 describe("getModelInfoForLlmConfig", () => {
@@ -109,6 +114,26 @@ describe("getModelInfoForLlmConfig", () => {
     });
     expect(xhigh?.id).toBe("gpt-5.6-sol-xhigh");
   });
+
+  for (const variant of ["sol", "terra", "luna"] as const) {
+    test(`uses ChatGPT metadata for GPT-5.6 ${variant}`, () => {
+      const info = getModelInfoForLlmConfig(`openai-codex/gpt-5.6-${variant}`, {
+        reasoning_effort: "high",
+      });
+      expect(info?.id).toBe(`gpt-5.6-${variant}-plus-pro-high`);
+      expect(info?.label).toBe(
+        `GPT-5.6 ${variant[0]?.toUpperCase()}${variant.slice(1)} (ChatGPT)`,
+      );
+      expect(info?.isFeatured).toBe(true);
+      expect(info?.updateArgs).toMatchObject({
+        context_window: 272000,
+        max_output_tokens: 128000,
+        reasoning_effort: "high",
+        verbosity: "low",
+        parallel_tool_calls: true,
+      });
+    });
+  }
 
   test("uses ChatGPT metadata for local ChatGPT OAuth handles", () => {
     const info = getModelInfoForLlmConfig("openai-codex/gpt-5.5", {
@@ -225,6 +250,31 @@ describe("getReasoningTierOptionsForHandle", () => {
     ]);
   });
 
+  for (const variant of ["sol", "terra", "luna"] as const) {
+    test(`returns ChatGPT reasoning options for gpt-5.6 ${variant}`, () => {
+      const options = getReasoningTierOptionsForHandle(
+        `chatgpt-plus-pro/gpt-5.6-${variant}`,
+      );
+      expect(options.map((option) => option.effort)).toEqual([
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+      ]);
+      expect(options.map((option) => option.modelId)).toEqual([
+        `gpt-5.6-${variant}-plus-pro-none`,
+        `gpt-5.6-${variant}-plus-pro-low`,
+        `gpt-5.6-${variant}-plus-pro-medium`,
+        `gpt-5.6-${variant}-plus-pro-high`,
+        `gpt-5.6-${variant}-plus-pro-xhigh`,
+      ]);
+      expect(
+        getReasoningTierOptionsForHandle(`openai-codex/gpt-5.6-${variant}`),
+      ).toEqual(options);
+    });
+  }
+
   test("returns ordered reasoning options for gpt-5.3-codex", () => {
     const options = getReasoningTierOptionsForHandle("openai/gpt-5.3-codex");
     expect(options.map((option) => option.effort)).toEqual([
@@ -320,6 +370,16 @@ describe("getReasoningTierOptionsForHandle", () => {
     expect(
       getReasoningTierOptionsForHandle("openai-codex/gpt-5.5-fast"),
     ).toEqual([]);
+  });
+
+  test("does not synthesize unlisted GPT-5.6 ChatGPT fast tiers", () => {
+    for (const variant of ["sol", "terra", "luna"] as const) {
+      expect(
+        getChatGptFastRegistryHandleForModelHandle(
+          `openai-codex/gpt-5.6-${variant}`,
+        ),
+      ).toBeNull();
+    }
   });
 
   test("returns reasoning options for anthropic sonnet 4.6", () => {
