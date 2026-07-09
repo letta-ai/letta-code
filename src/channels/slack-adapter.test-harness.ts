@@ -268,6 +268,9 @@ export const resolveSlackChannelHistoryMock = mock(
     }>
   > => [],
 );
+export const resolveSlackCurrentMessageAttachmentsMock = mock(
+  async (): Promise<ChannelMessageAttachment[]> => [],
+);
 
 mock.module("./slack/runtime", () => ({
   ensureSlackRuntimeInstalled: async () => false,
@@ -285,6 +288,8 @@ mock.module("./slack/runtime", () => ({
 
 mock.module("./slack/media", () => ({
   resolveSlackChannelHistory: resolveSlackChannelHistoryMock,
+  resolveSlackCurrentMessageAttachments:
+    resolveSlackCurrentMessageAttachmentsMock,
   resolveSlackInboundAttachments: resolveSlackInboundAttachmentsMock,
   resolveSlackThreadStarter: resolveSlackThreadStarterMock,
   resolveSlackThreadHistory: resolveSlackThreadHistoryMock,
@@ -322,6 +327,10 @@ export function installSlackAdapterTestHooks(): void {
     resolveSlackThreadStarterMock.mockImplementation(async () => null);
     resolveSlackThreadHistoryMock.mockReset();
     resolveSlackThreadHistoryMock.mockImplementation(async () => []);
+    resolveSlackCurrentMessageAttachmentsMock.mockReset();
+    resolveSlackCurrentMessageAttachmentsMock.mockImplementation(
+      async () => [],
+    );
     resolveSlackChannelHistoryMock.mockReset();
     resolveSlackChannelHistoryMock.mockImplementation(async () => []);
     fetchMock.mockClear();

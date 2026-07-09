@@ -5,12 +5,32 @@ import type {
 } from "@/channels/types";
 import {
   resolveSlackChannelHistory,
+  resolveSlackCurrentMessageAttachments,
   resolveSlackThreadHistory,
   resolveSlackThreadStarter,
 } from "./media";
-import { isNonEmptyString } from "./utils";
+import { asRecord, isNonEmptyString } from "./utils";
 
 const INITIAL_SLACK_THREAD_HISTORY_LIMIT = 20;
+
+/**
+ * Slack app_mention events and thread_broadcast messages deliver their file
+ * attachments inconsistently (or not at all) on the event payload, so the
+ * exact message must be re-fetched to hydrate attachments before prompt
+ * formatting.
+ */
+function shouldHydrateCurrentSlackMessageAttachments(
+  msg: InboundChannelMessage,
+): boolean {
+  if (msg.attachments?.length || msg.chatType !== "channel") {
+    return false;
+  }
+  const raw = asRecord(msg.raw);
+  if (!raw) {
+    return false;
+  }
+  return raw.type === "app_mention" || raw.subtype === "thread_broadcast";
+}
 
 function truncateThreadLabel(text: string, maxLength = 80): string | null {
   const normalized = text.replace(/\s+/g, " ").trim();
@@ -78,7 +98,15 @@ export async function prepareSlackInboundMessage(params: {
     isFirstRouteTurn &&
     msg.isMention === true &&
     msg.threadId === msg.messageId;
-  if (!isExistingThread && !isChannelBootstrap) return msg;
+  const shouldHydrateCurrentAttachments =
+    shouldHydrateCurrentSlackMessageAttachments(msg);
+  if (
+    !isExistingThread &&
+    !isChannelBootstrap &&
+    !shouldHydrateCurrentAttachments
+  ) {
+    return msg;
+  }
 
   const app = await params.ensureApp();
   const attachmentParams = {
@@ -86,6 +114,15 @@ export async function prepareSlackInboundMessage(params: {
     token: config.botToken,
     transcribeVoice: config.transcribeVoice === true,
   };
+  const currentAttachments = shouldHydrateCurrentAttachments
+    ? await resolveSlackCurrentMessageAttachments({
+        channelId: msg.chatId,
+        threadTs: msg.threadId,
+        messageTs: msg.messageId,
+        client: app.client,
+        ...attachmentParams,
+      })
+    : [];
   const starter =
     isExistingThread && isFirstRouteTurn
       ? await resolveSlackThreadStarter({
@@ -102,6 +139,7 @@ export async function prepareSlackInboundMessage(params: {
         client: app.client,
         currentMessageTs: msg.messageId,
         limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
+        include: !isFirstRouteTurn ? "bot" : "all",
         ...attachmentParams,
       })
     : await resolveSlackChannelHistory({
@@ -111,11 +149,10 @@ export async function prepareSlackInboundMessage(params: {
         limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
         ...attachmentParams,
       });
-  const history =
-    isExistingThread && !isFirstRouteTurn
-      ? resolvedHistory.filter((entry) => isNonEmptyString(entry.botId))
-      : resolvedHistory;
-  if (!starter && history.length === 0) return msg;
+  const history = resolvedHistory;
+  if (!starter && history.length === 0 && currentAttachments.length === 0) {
+    return msg;
+  }
 
   const userIds = new Set<string>();
   if (isNonEmptyString(starter?.userId)) userIds.add(starter.userId);
@@ -137,6 +174,9 @@ export async function prepareSlackInboundMessage(params: {
   };
   return {
     ...msg,
+    ...(currentAttachments.length > 0
+      ? { attachments: currentAttachments }
+      : {}),
     threadContext: {
       label: isExistingThread
         ? buildThreadLabel(msg, starter?.text)

@@ -244,6 +244,150 @@ test("resolveSlackThreadHistory retains bot-authored Slack replies", async () =>
   ]);
 });
 
+test("resolveSlackCurrentMessageAttachments hydrates files from the exact thread message", async () => {
+  const fetchMock = mock(async (input: unknown, init?: RequestInit) => {
+    expect(requestUrl(input)).toBe(
+      "https://files.slack.com/files-pri/T123-FZIP/source.zip",
+    );
+    expect(init).toMatchObject({
+      headers: { Authorization: "Bearer xoxb-test-token" },
+      redirect: "manual",
+    });
+    return new Response(new Uint8Array([1, 2, 3]), {
+      status: 200,
+      headers: { "content-type": "application/zip" },
+    });
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+  const { resolveSlackCurrentMessageAttachments } =
+    await loadSlackMediaModule();
+  const client = {
+    conversations: {
+      history: mock(async () => ({ messages: [] })),
+      replies: mock(async () => ({
+        messages: [
+          {
+            ts: "1712790000.000050",
+            user: "U111",
+            text: "Thread root",
+          },
+          {
+            ts: "1712800000.000100",
+            user: "U222",
+            text: "Here are the files",
+            subtype: "thread_broadcast",
+            files: [
+              {
+                id: "FZIP",
+                name: "source.zip",
+                mimetype: "application/zip",
+                url_private_download:
+                  "https://files.slack.com/files-pri/T123-FZIP/source.zip",
+              },
+            ],
+          },
+        ],
+      })),
+    },
+  };
+
+  const attachments = await resolveSlackCurrentMessageAttachments({
+    channelId: "C123",
+    threadTs: "1712790000.000050",
+    messageTs: "1712800000.000100",
+    client,
+    accountId: "slack-bot",
+    token: "xoxb-test-token",
+  });
+
+  expect(attachments).toEqual([
+    expect.objectContaining({
+      id: "FZIP",
+      name: "source.zip",
+      mimeType: "application/zip",
+      kind: "file",
+      sizeBytes: 3,
+      localPath: expect.stringContaining("source.zip"),
+    }),
+  ]);
+  expect(client.conversations.replies).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "C123",
+      ts: "1712790000.000050",
+      inclusive: true,
+    }),
+  );
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+test("resolveSlackThreadHistory bot-only mode skips human attachment downloads", async () => {
+  const fetchMock = mock(async () => {
+    throw new Error("human history attachment should not be downloaded");
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+  const { resolveSlackThreadHistory } = await loadSlackMediaModule();
+  const client = {
+    conversations: {
+      history: mock(async () => ({ messages: [] })),
+      replies: mock(async () => ({
+        messages: [
+          {
+            ts: "1712790000.000050",
+            user: "U111",
+            text: "Thread root",
+          },
+          {
+            ts: "1712795000.000060",
+            user: "U222",
+            text: "Human file context already delivered",
+            files: [
+              {
+                id: "FHUMAN",
+                name: "human.png",
+                mimetype: "image/png",
+                url_private_download:
+                  "https://files.slack.com/files-pri/T123-FHUMAN/human.png",
+              },
+            ],
+          },
+          {
+            ts: "1712796000.000070",
+            bot_id: "BDEPLOY",
+            text: "Bot status update",
+          },
+          {
+            ts: "1712800000.000100",
+            user: "U333",
+            text: "Current turn",
+          },
+        ],
+      })),
+    },
+  };
+
+  await expect(
+    resolveSlackThreadHistory({
+      channelId: "C123",
+      threadTs: "1712790000.000050",
+      currentMessageTs: "1712800000.000100",
+      client,
+      include: "bot",
+      accountId: "slack-bot",
+      token: "xoxb-test-token",
+    }),
+  ).resolves.toEqual([
+    {
+      text: "Bot status update",
+      userId: undefined,
+      botId: "BDEPLOY",
+      ts: "1712796000.000070",
+    },
+  ]);
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
 test("resolveSlackChannelHistory retains bot-authored Slack messages", async () => {
   const { resolveSlackChannelHistory } = await loadSlackMediaModule();
   const client = {

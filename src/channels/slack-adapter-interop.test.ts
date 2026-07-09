@@ -68,6 +68,7 @@ mock.module("./slack/runtime", () => ({
 
 mock.module("./slack/media", () => ({
   resolveSlackChannelHistory: async () => [],
+  resolveSlackCurrentMessageAttachments: async () => [],
   resolveSlackInboundAttachments: async () => [],
   resolveSlackThreadStarter: async () => null,
   resolveSlackThreadHistory: async () => [],
