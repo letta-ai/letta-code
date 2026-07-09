@@ -854,9 +854,14 @@ function formatSlackTextProgressLiveText(
 /**
  * Live status title for the simple view: the title of the task currently in
  * progress (same vocabulary as card rows), falling back to the most recent
- * task title, then a generic placeholder. Plan titles are plain text.
+ * task title. Returns null when the turn has no concrete visible activity
+ * yet (reasoning-only, transient MessageChannel state, nameless tool
+ * events) — a status stream must never exist in that state, so callers
+ * refuse to start or update one without a concrete title.
  */
-function formatSlackStatusStreamTitle(entry: SlackProgressCardEntry): string {
+function formatSlackStatusStreamTitle(
+  entry: SlackProgressCardEntry,
+): string | null {
   let inProgressTitle: string | undefined;
   let latestTitle: string | undefined;
   for (const task of entry.toolTasksById?.values() ?? []) {
@@ -872,7 +877,7 @@ function formatSlackStatusStreamTitle(entry: SlackProgressCardEntry): string {
     inProgressTitle ?? latestTitle ?? "",
     SLACK_PROGRESS_CARD_TEXT_MAX,
   );
-  return detail || "Thinking...";
+  return detail || null;
 }
 
 /**
@@ -3301,13 +3306,17 @@ export function createSlackAdapter(
           return;
         }
         // Status streams keep their current title on keepalive appends so the
-        // refresh causes no visible change.
+        // refresh causes no visible change. A status stream only ever starts
+        // with a concrete title, so lastPlanTitle is always set here; the
+        // trailing fallback exists for type safety only.
         const keepaliveChunk: SlackStreamChunk =
           entry.mode === "status-stream"
             ? {
                 type: "plan_update",
                 title:
-                  entry.lastPlanTitle ?? formatSlackStatusStreamTitle(entry),
+                  entry.lastPlanTitle ??
+                  formatSlackStatusStreamTitle(entry) ??
+                  "Working",
               }
             : buildSlackPlanUpdateChunk(entry);
         const didAppend = await appendSlackProgressStream(entry, [
@@ -3367,6 +3376,12 @@ export function createSlackAdapter(
     if (!canStartSlackStream(entry.source)) {
       return false;
     }
+    // Invariant: a status stream may only start with a concrete activity
+    // title. Fallback/transient state must never spawn a visible artifact.
+    const title = formatSlackStatusStreamTitle(entry);
+    if (title === null) {
+      return false;
+    }
     await ensureApp();
     const slackClient = await ensureWriteClient();
     const startStream = slackClient.chat.startStream;
@@ -3375,7 +3390,6 @@ export function createSlackAdapter(
     }
     await sweepOrphanedSlackProgressStreams(entry.source, slackClient);
     try {
-      const title = formatSlackStatusStreamTitle(entry);
       const args: SlackStartStreamArgs = {
         channel: entry.source.chatId,
         thread_ts: replyToMessageId,
@@ -3434,7 +3448,7 @@ export function createSlackAdapter(
           return true;
         }
         const title = formatSlackStatusStreamTitle(entry);
-        if (title === entry.lastPlanTitle) {
+        if (title === null || title === entry.lastPlanTitle) {
           return true;
         }
         const appendStream = slackClient.chat.appendStream;
@@ -3765,6 +3779,13 @@ export function createSlackAdapter(
           if (entry.status !== "processing") {
             // Turn already over with nothing on screen: the reply itself is
             // the outcome, a terminal-only status artifact would be noise.
+            didSend = true;
+          } else if (formatSlackStatusStreamTitle(entry) === null) {
+            // No concrete visible activity yet (reasoning-only, transient
+            // MessageChannel state, nameless tool events): defer any visual
+            // artifact — the assistant-thread footer already signals
+            // liveness. The next flush after a concrete task lands starts
+            // the stream with a real title.
             didSend = true;
           } else if (canStream) {
             didSend = await startSlackStatusStream(entry, replyToMessageId);
@@ -4883,15 +4904,12 @@ export function createSlackAdapter(
       if (event.type === "processing") {
         await Promise.all(
           getUniqueSlackProgressSources(event.sources).map(async (source) => {
-            // Turn start: the "is working…" footer is the default liveness
-            // signal for BOTH progress views. The visual placeholder is
-            // deferred until concrete activity exists (first tool event) so
-            // reply-only turns — and listen-mode agents following busy human
-            // threads — never spawn stream messages just to think. The one
-            // exception: a turn that OPENS a thread from a flat channel
-            // mention spawns the placeholder immediately, because the flat
-            // channel has no footer and would otherwise show zero feedback
-            // until the first event.
+            // Turn start: the "is working…" footer is the ONLY liveness
+            // signal — no visual artifact spawns until concrete activity
+            // exists (first titled tool event). Reply-only turns, thread
+            // openers, and listen-mode agents following busy human threads
+            // never spawn stream messages just to think; the flat-channel
+            // case is covered by Slack's assistant-status preview.
             const replyKey = getLifecycleReplyKey(source);
             const status = getSlackAssistantThreadStatusForTurn(source);
             if (
@@ -4899,16 +4917,6 @@ export function createSlackAdapter(
               (!replyKey || !assistantStatusReplyKeys.has(replyKey))
             ) {
               await setSlackAssistantThreadStatus(source, status);
-            }
-            const opensThread =
-              source.chatType === "channel" &&
-              isNonEmptyString(source.messageId) &&
-              (!isNonEmptyString(source.threadId) ||
-                source.threadId === source.messageId);
-            if (configuredProgressUi === "text" && opensThread) {
-              await upsertSlackProgressCard(source, "processing", "Thinking", {
-                force: true,
-              });
             }
           }),
         );

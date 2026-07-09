@@ -5412,9 +5412,21 @@ test("slack adapter defaults to the simple progress view when progress_ui is uns
     sources: [source],
   });
 
-  // Simple view signature: a plan-only status stream opens at turn start
-  // (the rich card would not stream anything before the first tool event).
+  // Turn start spawns nothing in any view. First concrete activity opens
+  // the simple view's plan-only status stream (the rich card would send
+  // task chunks).
   const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
+  });
   expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
   const startCalls = writeClient?.chat.startStream.mock
     .calls as unknown as Array<Array<{ chunks?: Array<{ type: string }> }>>;
@@ -5484,9 +5496,96 @@ test("slack adapter defers the status placeholder in established threads until c
   const chunks = startCalls[0]?.[0]?.chunks ?? [];
   expect(chunks[0]?.type).toBe("plan_update");
   expect(chunks[0]?.title).not.toBe("Thinking");
+  expect(chunks[0]?.title).not.toBe("Thinking...");
 });
 
-test("slack adapter simple view opens a status stream at turn start and the reply becomes the message", async () => {
+test("slack adapter simple view never starts a stream without a concrete activity title", async () => {
+  process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    progressUi: "text",
+  });
+  const source = {
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    chatType: "channel" as const,
+    senderId: "U123",
+    senderTeamId: "T123",
+    messageId: "1712800000.000100",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  };
+
+  await adapter.start();
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+  // Reasoning-only updates never start a stream.
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "thinking",
+    state: "updated",
+    message: "Thinking",
+  });
+  // Nameless tool events (fragmented deltas whose tool call could not be
+  // summarized) never start a stream — they carry nothing to title it with.
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Preparing tool call",
+  });
+  // Hidden MessageChannel (reply machinery) state is transient-only and
+  // never starts a stream either.
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Running tool",
+    toolCallId: "mc-1",
+    toolName: "MessageChannel",
+  });
+  await sleep(150);
+
+  const writeClient = FakeSlackWriteClient.instances[0];
+  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
+  // No plain-text progress artifact spawns from fallback state either.
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  // The footer still signals liveness.
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalled();
+
+  // The reply posts normally (no stream existed to morph).
+  await adapter.sendMessage({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    text: "Just an answer.",
+    threadId: "1712790000.000050",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  });
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
+});
+
+test("slack adapter simple view starts the stream on first activity and the reply becomes the message", async () => {
   process.env.LETTA_SLACK_COMPLETION_FINALIZE_GRACE_MS = "50";
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
@@ -5520,17 +5619,9 @@ test("slack adapter simple view opens a status stream at turn start and the repl
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  // The placeholder opens at turn start: a stream with a single plan_update
-  // and no task chunks (no card chrome).
-  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
-  const startCalls = writeClient?.chat.startStream.mock
-    .calls as unknown as Array<
-    Array<{ chunks?: Array<{ type: string; title?: string }> }>
-  >;
-  expect(startCalls[0]?.[0]?.chunks).toEqual([
-    { type: "plan_update", title: "Thinking..." },
-  ]);
-  // The "is working" footer is kept alongside the placeholder.
+  // Turn start never spawns a visible artifact — even for a thread-opening
+  // turn. The assistant-status footer is the only liveness signal.
+  expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
   expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalled();
 
   await adapter.handleTurnProgressEvent?.({
@@ -5543,12 +5634,23 @@ test("slack adapter simple view opens a status stream at turn start and the repl
     toolCallId: "call-1",
     toolName: "read_file",
   });
-  // Activity swaps the plan title via appendStream.
+  // First concrete activity starts the stream with a real title — never the
+  // generic fallback.
+  expect(writeClient?.chat.startStream).toHaveBeenCalledTimes(1);
+  const startCalls = writeClient?.chat.startStream.mock
+    .calls as unknown as Array<
+    Array<{ chunks?: Array<{ type: string; title?: string }> }>
+  >;
+  const startChunks = startCalls[0]?.[0]?.chunks ?? [];
+  expect(startChunks).toHaveLength(1);
+  expect(startChunks[0]?.type).toBe("plan_update");
+  expect(startChunks[0]?.title).not.toBe("Thinking...");
+  expect(startChunks[0]?.title).toBeTruthy();
+  // Later flushes only ever swap plan titles.
   const appendCalls = writeClient?.chat.appendStream.mock
     .calls as unknown as Array<
     Array<{ chunks?: Array<{ type: string; title?: string }> }>
   >;
-  expect(appendCalls.length).toBeGreaterThan(0);
   expect(
     appendCalls.every((call) =>
       (call[0]?.chunks ?? []).every((chunk) => chunk.type === "plan_update"),
@@ -5704,6 +5806,17 @@ test("slack adapter simple view rolls the status stream before Slack's lifetime 
     type: "processing",
     batchId: "batch-1",
     sources: [source],
+  });
+  // Concrete activity starts the stream (turn start alone spawns nothing).
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    batchId: "batch-1",
+    sources: [source],
+    kind: "tool",
+    state: "started",
+    message: "Reading files",
+    toolCallId: "call-1",
+    toolName: "read_file",
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
