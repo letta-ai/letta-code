@@ -629,6 +629,7 @@ describe("SignalChannelAdapter", () => {
       type: "finished",
       batchId: "batch-1",
       outcome: "completed",
+      stopReason: "end_turn",
       sources: [
         {
           channel: "signal",

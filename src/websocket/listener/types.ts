@@ -142,6 +142,7 @@ export type ConversationRuntime = {
   conversationId: string;
   activeChannelTurnSources: ChannelTurnSource[] | null;
   activeChannelTurnBatchId: string | null;
+  activeChannelTurnContextRecovered?: boolean;
   /** Per-turn progress builder; created when a channel turn starts and dropped when it ends. */
   activeChannelTurnProgress: ChannelTurnProgressBuilder | null;
   messageQueue: Promise<void>;

@@ -102,6 +102,43 @@ describe("ChannelRegistry", () => {
     expect(getChannelRegistry()).toBeNull();
   });
 
+  test("route-derived recovery sources do not invent an originating message", () => {
+    const registry = new ChannelRegistry();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-07-09T00:00:00.000Z",
+    });
+
+    expect(registry.resolveTurnSourcesForScope("agent-1", "conv-1")).toEqual([
+      {
+        channel: "slack",
+        accountId: "acct-slack",
+        chatId: "C123",
+        chatType: "channel",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ]);
+  });
+
   test("initializeChannels throws when requested channel startup fails", async () => {
     __testOverrideLoadChannelAccounts(() => []);
     const logs: string[] = [];
@@ -1533,6 +1570,117 @@ describe("pending channel control requests", () => {
         },
       },
     });
+  });
+
+  test("native approval controls resolve the exact request and enforce the initiating sender", async () => {
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter([]);
+    registry.registerAdapter(adapter);
+    const approvalResponses: unknown[] = [];
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+    const baseEvent = createPendingControlRequestEvent();
+    await registry.registerPendingControlRequest({
+      ...baseEvent,
+      kind: "generic_tool_approval",
+      source: { ...baseEvent.source, senderId: "U123" },
+      toolName: "Bash",
+      input: { command: "bun test" },
+    });
+
+    const baseInput = {
+      requestId: baseEvent.requestId,
+      channel: "slack",
+      accountId: "acct-slack",
+      chatId: "C123",
+      threadId: "1712790000.000050",
+      response: {
+        request_id: baseEvent.requestId,
+        decision: { behavior: "allow" as const },
+      },
+    };
+    expect(
+      await adapter.onControlResponse?.({
+        ...baseInput,
+        senderId: "U999",
+      }),
+    ).toBe("forbidden");
+    expect(approvalResponses).toHaveLength(0);
+    expect(registry.hasPendingControlRequest(baseEvent.requestId)).toBe(true);
+
+    expect(
+      await adapter.onControlResponse?.({
+        ...baseInput,
+        senderId: "U123",
+      }),
+    ).toBe("handled");
+    expect(approvalResponses).toEqual([
+      {
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+        response: baseInput.response,
+      },
+    ]);
+    expect(registry.hasPendingControlRequest(baseEvent.requestId)).toBe(false);
+  });
+
+  test("Slack thread text stays queued steering input while a native approval is pending", async () => {
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "slack",
+        accountId: "acct-slack",
+        enabled: true,
+        mode: "socket",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "unrestricted",
+        dmPolicy: "open",
+        allowedUsers: [],
+        createdAt: "2026-07-09T00:00:00.000Z",
+        updatedAt: "2026-07-09T00:00:00.000Z",
+      },
+    ]);
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter([]);
+    registry.registerAdapter(adapter);
+    const deliveries: unknown[] = [];
+    const approvalResponses: unknown[] = [];
+    registry.setMessageHandler((delivery) => deliveries.push(delivery));
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+    registry.setReady();
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-07-09T00:00:00.000Z",
+    });
+    const event = createPendingControlRequestEvent();
+    await registry.registerPendingControlRequest({
+      ...event,
+      kind: "generic_tool_approval",
+      toolName: "Bash",
+      input: { command: "bun test" },
+    });
+
+    await adapter.onMessage?.(
+      createInboundMessage("wait, do not run that yet"),
+    );
+
+    expect(approvalResponses).toHaveLength(0);
+    expect(deliveries).toHaveLength(1);
+    expect(registry.hasPendingControlRequest(event.requestId)).toBe(true);
   });
 
   test("/cancel bypasses pending channel control prompts", async () => {
