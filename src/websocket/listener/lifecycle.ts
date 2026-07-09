@@ -14,6 +14,7 @@ import {
   buildChannelModelUpdatedMessage,
   buildChannelModelUpdateFailedMessage,
 } from "@/channels/commands";
+import { createChannelTurnProgressBuilder } from "@/channels/progress";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
@@ -330,6 +331,36 @@ export async function recoverPendingChannelControlRequests(
     const recoveredPendingRequestIds =
       getRecoveredApprovalStateForScope(listener, scope)?.pendingRequestIds ??
       new Set<string>();
+
+    const stillPendingEntries = entries.filter((entry) => {
+      const requestId = entry.event.requestId;
+      return (
+        livePendingRequestIds.has(requestId) ||
+        recoveredPendingRequestIds.has(requestId)
+      );
+    });
+    if (
+      stillPendingEntries.length > 0 &&
+      (!runtime.activeChannelTurnSources ||
+        runtime.activeChannelTurnSources.length === 0)
+    ) {
+      const sourcesByKey = new Map<string, ChannelTurnSource>();
+      for (const entry of stillPendingEntries) {
+        const source = entry.event.source;
+        const key = [
+          source.channel,
+          source.accountId ?? "",
+          source.chatId,
+          source.threadId ?? "",
+        ].join(":");
+        sourcesByKey.set(key, source);
+      }
+      const recoveredSources = Array.from(sourcesByKey.values());
+      runtime.activeChannelTurnSources = recoveredSources;
+      runtime.activeChannelTurnBatchId = `recovered-${stillPendingEntries[0]?.event.requestId ?? crypto.randomUUID()}`;
+      runtime.activeChannelTurnContextRecovered = true;
+      runtime.activeChannelTurnProgress = createChannelTurnProgressBuilder();
+    }
 
     for (const entry of entries) {
       const requestId = entry.event.requestId;

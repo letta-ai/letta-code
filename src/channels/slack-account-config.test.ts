@@ -18,51 +18,13 @@ const baseAccount: SlackChannelAccount = {
   updatedAt: "2026-07-07T00:00:00.000Z",
 };
 
-describe("slackAccountConfigAdapter progress_ui", () => {
-  test("accepts rich, text, and undefined", () => {
+describe("slackAccountConfigAdapter removed settings", () => {
+  test("rejects the removed progress_ui setting", () => {
     expect(
       slackAccountConfigAdapter.isValidConfig({ progress_ui: "rich" }),
-    ).toBe(true);
-    expect(
-      slackAccountConfigAdapter.isValidConfig({ progress_ui: "text" }),
-    ).toBe(true);
-    expect(slackAccountConfigAdapter.isValidConfig({})).toBe(true);
-  });
-
-  test("rejects unknown progress_ui values", () => {
-    expect(
-      slackAccountConfigAdapter.isValidConfig({ progress_ui: "fancy" }),
     ).toBe(false);
-    expect(slackAccountConfigAdapter.isValidConfig({ progress_ui: 1 })).toBe(
-      false,
-    );
-  });
-
-  test("maps progress_ui into the account patch", () => {
-    expect(
-      slackAccountConfigAdapter.toAccountPatch({ progress_ui: "text" })
-        .progressUi,
-    ).toBe("text");
-    expect(
-      slackAccountConfigAdapter.toAccountPatch({}).progressUi,
-    ).toBeUndefined();
-  });
-
-  test("emits progress_ui in config views, defaulting to text", () => {
     expect(
       slackAccountConfigAdapter.toAccountConfig(baseAccount).progress_ui,
-    ).toBe("text");
-    expect(
-      slackAccountConfigAdapter.toAccountConfig({
-        ...baseAccount,
-        progressUi: "rich",
-      }).progress_ui,
-    ).toBe("rich");
-    expect(
-      slackAccountConfigAdapter.toConfigSnapshotConfig({
-        ...baseAccount,
-        progressUi: "rich",
-      }).progress_ui,
-    ).toBe("rich");
+    ).toBeUndefined();
   });
 });

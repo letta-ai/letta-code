@@ -9,7 +9,6 @@ import type {
   OutboundChannelMessage,
   SignalGroupMode,
   SlackChannelMode,
-  SlackProgressUiMode,
   TelegramGroupMode,
   WhatsAppGroupMode,
 } from "./types";
@@ -177,7 +176,6 @@ export interface ChannelPluginAccountPatch {
   /** Signal UUID/identity -> replyable recipient aliases, e.g. UUID to E.164 phone. */
   recipientAliases?: Record<string, string>;
   transcribeVoice?: boolean;
-  progressUi?: SlackProgressUiMode;
   richPrivateChatDefault?: boolean;
   richDraftStreaming?: boolean;
   downloadMedia?: boolean;

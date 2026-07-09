@@ -20,6 +20,7 @@ import type {
   ChannelControlRequestEvent,
 } from "@/channels/types";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
+import type { ConversationRuntime } from "@/websocket/listener/types";
 
 const {
   createRuntime,
@@ -270,9 +271,11 @@ describe("channel control request recovery", () => {
     const registry = new ChannelRegistry();
     registry.registerAdapter(createAdapter(replies));
     const listener = createListenerRuntime();
+    let recoveredRuntime: ConversationRuntime | undefined;
 
     await recoverPendingChannelControlRequests(listener, {
       recoverApprovalStateForSync: async (runtime) => {
+        recoveredRuntime = runtime;
         runtime.recoveredApprovalState = {
           agentId: "agent-1",
           conversationId: "conv-1",
@@ -315,6 +318,9 @@ describe("channel control request recovery", () => {
       },
     ]);
     expect(registry.hasPendingControlRequest(event.requestId)).toBe(true);
+    expect(recoveredRuntime?.activeChannelTurnSources).toEqual([event.source]);
+    expect(recoveredRuntime?.activeChannelTurnContextRecovered).toBe(true);
+    expect(recoveredRuntime?.activeChannelTurnProgress).not.toBeNull();
   });
 
   test("clears persisted channel prompts that are no longer pending", async () => {

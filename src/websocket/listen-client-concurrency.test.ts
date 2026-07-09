@@ -1215,6 +1215,7 @@ describe("listen-client multi-worker concurrency", () => {
       } as never,
       async (queuedTurn: IncomingMessage) => {
         processed.push(queuedTurn);
+        runtime.lastStopReason = "end_turn";
       },
     );
 
@@ -1231,7 +1232,82 @@ describe("listen-client multi-worker concurrency", () => {
       batchId: "batch-1",
       sources: channelTurnSources,
       outcome: "completed",
+      stopReason: "end_turn",
     });
+  });
+
+  test("channel queue does not emit a terminal event at an approval continuation boundary", async () => {
+    const lifecycleEvents: Array<Record<string, unknown>> = [];
+    const registry = new ChannelRegistry();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+      handleTurnLifecycleEvent: async (event) => {
+        lifecycleEvents.push(event as unknown as Record<string, unknown>);
+      },
+    } satisfies ChannelAdapter);
+
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-channel-approval",
+    );
+    const source = {
+      channel: "slack" as const,
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel" as const,
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-channel-approval",
+    };
+    __listenClientTestUtils.enqueueChannelTurn(
+      runtime,
+      {
+        agentId: "agent-1",
+        conversationId: "conv-channel-approval",
+      },
+      [
+        {
+          type: "text",
+          text: '<channel-notification source="slack" chat_id="C123">approve?</channel-notification>',
+        },
+      ],
+      [source],
+    );
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      new MockSocket() as unknown as WebSocket,
+      {
+        connectionId: "conn-1",
+        onStatusChange: undefined,
+      } as never,
+      async () => {
+        runtime.lastStopReason = "requires_approval";
+      },
+    );
+
+    await waitFor(
+      () => lifecycleEvents.length === 1 && !runtime.queuePumpActive,
+    );
+    expect(lifecycleEvents).toEqual([
+      {
+        type: "processing",
+        batchId: "batch-1",
+        sources: [source],
+      },
+    ]);
   });
 
   test("channel queue lifecycle includes terminal loop error text when the turn stops with error", async () => {
@@ -1312,6 +1388,7 @@ describe("listen-client multi-worker concurrency", () => {
       batchId: "batch-1",
       sources: channelTurnSources,
       outcome: "error",
+      stopReason: "error",
       error: "ChatGPT usage limit reached. Resets at 1:00 PM.",
       runId: "run-limit",
     });

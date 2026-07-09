@@ -1580,6 +1580,7 @@ test("telegram adapter replies with lifecycle errors", async () => {
     type: "finished",
     batchId: "batch-1",
     outcome: "error",
+    stopReason: "error",
     error: "ChatGPT usage limit reached. Resets at 1:00 PM.",
     sources: [
       {
@@ -1630,6 +1631,7 @@ test("telegram lifecycle errors omit stale thread ids for private chats", async 
     type: "finished",
     batchId: "batch-1",
     outcome: "error",
+    stopReason: "error",
     error: "Something failed.",
     sources: [
       {
@@ -1677,6 +1679,7 @@ test("telegram adapter hides raw generic lifecycle errors", async () => {
     type: "finished",
     batchId: "batch-1",
     outcome: "error",
+    stopReason: "error",
     error: "Unexpected stop reason: error",
     sources: [
       {
@@ -1738,6 +1741,7 @@ test("telegram adapter prettifies conversation-busy lifecycle errors", async () 
     type: "finished",
     batchId: "batch-1",
     outcome: "error",
+    stopReason: "error",
     error: rawError,
     sources: [
       {
@@ -1798,6 +1802,7 @@ test("telegram lifecycle report button submits sanitized error metadata", async 
     type: "finished",
     batchId: "batch-1",
     outcome: "error",
+    stopReason: "error",
     error: rawError,
     sources: [
       {
@@ -1870,6 +1875,7 @@ test("telegram adapter does not send lifecycle replies for completed turns", asy
     type: "finished",
     batchId: "batch-1",
     outcome: "completed",
+    stopReason: "end_turn",
     sources: [
       {
         channel: "telegram",
@@ -1902,6 +1908,7 @@ test("telegram adapter deduplicates lifecycle error replies", async () => {
     type: "finished" as const,
     batchId: "batch-1",
     outcome: "error" as const,
+    stopReason: "error" as const,
     error: "Usage limit reached.",
     sources: [
       {
@@ -2424,6 +2431,7 @@ test("telegram adapter sends typing chat action while a turn is processing", asy
     batchId: "batch-1",
     sources: [turnSource],
     outcome: "completed",
+    stopReason: "end_turn",
   });
 
   await adapter.handleTurnLifecycleEvent?.({
