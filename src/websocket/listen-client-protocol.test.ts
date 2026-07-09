@@ -605,6 +605,7 @@ describe("listen-client parseServerMessage", () => {
             },
             cwd: cwdDir,
             mode: "acceptEdits",
+            skill_sources: [],
             recover_approvals: false,
           },
           socket as unknown as WebSocket,
@@ -636,6 +637,12 @@ describe("listen-client parseServerMessage", () => {
             runtimeScope.conversation_id,
           ),
         ).toBe(cwdDir);
+        const scopedRuntime = [...listener.conversationRuntimes.values()].find(
+          (candidate) =>
+            candidate.agentId === runtimeScope.agent_id &&
+            candidate.conversationId === runtimeScope.conversation_id,
+        );
+        expect(scopedRuntime?.skillSources).toEqual([]);
         expect(messages).toEqual(
           expect.arrayContaining([
             expect.objectContaining({

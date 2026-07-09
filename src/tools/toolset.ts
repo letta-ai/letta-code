@@ -1,5 +1,6 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { resolveModel } from "@/agent/model";
+import type { SkillSource } from "@/agent/skill-sources";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { MessageChannelToolDiscoveryScope } from "@/channels/message-tool";
@@ -443,6 +444,7 @@ export async function prepareToolExecutionContextForScope(params: {
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   cachedAgent?: AgentState | null;
+  skillSources?: SkillSource[];
   channelTurnSources?: import("@/channels/types").ChannelTurnSource[];
   modContext?: ModContext;
   modEvents?: ModEvents;
@@ -459,6 +461,7 @@ export async function prepareToolExecutionContextForScope(params: {
     workingDirectory,
     permissionModeState,
     cachedAgent,
+    skillSources,
     channelTurnSources: explicitChannelTurnSources,
     modContext,
     modEvents,
@@ -541,6 +544,7 @@ export async function prepareToolExecutionContextForScope(params: {
       agentName: (agent as AgentState).name ?? null,
       conversationId: scopedConversationId,
       workingDirectory,
+      ...(skillSources !== undefined ? { skillSources } : {}),
       ...(channelToolScope.channels.length > 0 ? { channelToolScope } : {}),
       ...(inheritedChannelTurnSources.length > 0
         ? { channelTurnSources: inheritedChannelTurnSources }

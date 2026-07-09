@@ -159,6 +159,7 @@ export function createConversationRuntime(
     key: runtimeKey,
     agentId: normalizedAgentId,
     conversationId: normalizedConversationId,
+    skillSources: null,
     activeChannelTurnSources: null,
     activeChannelTurnBatchId: null,
     activeChannelTurnContextRecovered: false,

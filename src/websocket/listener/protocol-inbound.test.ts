@@ -29,6 +29,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
       create_conversation: { body: { summary: "New conversation" } },
       cwd: "/tmp/project",
       mode: "acceptEdits",
+      skill_sources: [],
       client_info: { name: "test", title: "Test", version: "1.0.0" },
       external_tools: [
         {
@@ -121,6 +122,12 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r0",
       agent_id: "agent-1",
       mode: "bad",
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      skill_sources: ["unknown"],
     },
     {
       type: "runtime_start",

@@ -142,10 +142,10 @@ async function resolveRuntimeStartAgent(
       : parsed.create_agent.body;
     const agent = await backend.createAgent(body);
     if (withMemfs) {
-      // Finish memfs setup (settings, repo clone, legacy tool detach) without
-      // blocking runtime start. The tag is already stamped at creation, so
-      // lazy sync paths can complete this even if the process dies here.
-      void enableMemfsIfCloud(agent.id);
+      // runtime_start is a readiness boundary for SDK callers. Do not return
+      // the created agent while its MemFS clone can still replace the working
+      // tree: callers may seed and commit files immediately after startup.
+      await enableMemfsIfCloud(agent.id);
     } else {
       // Worker-style agent: no memfs of its own; a memory scope may be
       // provided per session (MEMORY_DIR + LETTA_MEMORY_DIR_EXPLICIT).
@@ -197,6 +197,11 @@ async function applyRuntimeStartState(
   scope: RuntimeScope,
   scopedRuntime: ConversationRuntime,
 ): Promise<void> {
+  // runtime_start is authoritative for this app-server session. Reset to the
+  // harness defaults when omitted; preserve [] as an explicit no-skills scope.
+  scopedRuntime.skillSources =
+    parsed.skill_sources !== undefined ? [...parsed.skill_sources] : null;
+
   if (parsed.mode) {
     const mode = migratePermissionMode(parsed.mode);
     if (!mode) {

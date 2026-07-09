@@ -5,6 +5,7 @@ import type {
   ApprovalDecision,
   ApprovalResult,
 } from "@/agent/approval-execution";
+import type { SkillSource } from "@/agent/skill-sources";
 import type { ChannelTurnProgressBuilder } from "@/channels/progress";
 import type { ChannelTurnSource } from "@/channels/types";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
@@ -140,6 +141,8 @@ export type ConversationRuntime = {
   key: string;
   agentId: string | null;
   conversationId: string;
+  /** Runtime-start override; null means use the normal harness defaults. */
+  skillSources: SkillSource[] | null;
   activeChannelTurnSources: ChannelTurnSource[] | null;
   activeChannelTurnBatchId: string | null;
   activeChannelTurnContextRecovered?: boolean;

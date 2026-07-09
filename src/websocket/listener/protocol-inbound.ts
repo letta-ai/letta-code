@@ -461,6 +461,7 @@ export function isRuntimeStartCommand(
     create_conversation?: unknown;
     cwd?: unknown;
     mode?: unknown;
+    skill_sources?: unknown;
     client_info?: unknown;
     recover_approvals?: unknown;
     force_device_status?: unknown;
@@ -478,6 +479,15 @@ export function isRuntimeStartCommand(
       isRuntimeStartCreateConversationOptions(c.create_conversation)) &&
     (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
     (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
+    (c.skill_sources === undefined ||
+      (Array.isArray(c.skill_sources) &&
+        c.skill_sources.every(
+          (source) =>
+            source === "bundled" ||
+            source === "global" ||
+            source === "agent" ||
+            source === "project",
+        ))) &&
     (c.client_info === undefined || isRuntimeStartClientInfo(c.client_info)) &&
     (c.recover_approvals === undefined ||
       typeof c.recover_approvals === "boolean") &&
