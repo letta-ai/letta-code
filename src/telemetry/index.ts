@@ -132,6 +132,9 @@ export interface ReflectionArenaVoteData {
   lc_version: string;
   memory_base_commit: string | null;
   memory_candidate_commit: string | null;
+  transcript_payload: string | null;
+  transcript_payload_chars: number | null;
+  transcript_payload_truncated: boolean;
   version?: string;
   platform?: string;
 }

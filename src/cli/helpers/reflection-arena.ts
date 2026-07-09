@@ -37,6 +37,7 @@ import { telemetry } from "@/telemetry";
 import { debugWarn } from "@/utils/debug";
 
 const execFile = promisify(execFileCb);
+const REFLECTION_ARENA_TELEMETRY_TRANSCRIPT_MAX_CHARS = 1_000_000;
 
 export const REFLECTION_ARENA_MODEL_A_DEFAULT = "letta/auto-memory";
 
@@ -489,6 +490,35 @@ async function appendChoiceRecord(run: ReflectionArenaRun): Promise<void> {
   );
 }
 
+async function readTranscriptPayloadForTelemetry(payloadPath: string): Promise<{
+  transcriptPayload: string | null;
+  transcriptPayloadChars: number | null;
+  transcriptPayloadTruncated: boolean;
+}> {
+  try {
+    const transcript = await readFile(payloadPath, "utf-8");
+    return {
+      transcriptPayload: transcript.slice(
+        0,
+        REFLECTION_ARENA_TELEMETRY_TRANSCRIPT_MAX_CHARS,
+      ),
+      transcriptPayloadChars: transcript.length,
+      transcriptPayloadTruncated:
+        transcript.length > REFLECTION_ARENA_TELEMETRY_TRANSCRIPT_MAX_CHARS,
+    };
+  } catch (error) {
+    debugWarn(
+      "memory",
+      `Failed to read reflection arena transcript payload for telemetry: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return {
+      transcriptPayload: null,
+      transcriptPayloadChars: null,
+      transcriptPayloadTruncated: false,
+    };
+  }
+}
+
 async function uploadChoiceRecordToHf(params: {
   run: ReflectionArenaRun;
   memoryBaseCommit: string | null;
@@ -533,7 +563,16 @@ async function uploadChoiceRecordToHf(params: {
     memoryBaseCommit,
     memoryCandidateCommit,
   });
-  telemetry.trackReflectionArenaVote(row);
+  const transcriptTelemetry = await readTranscriptPayloadForTelemetry(
+    run.payloadPath,
+  );
+  telemetry.trackReflectionArenaVote({
+    ...row,
+    transcript_payload: transcriptTelemetry.transcriptPayload,
+    transcript_payload_chars: transcriptTelemetry.transcriptPayloadChars,
+    transcript_payload_truncated:
+      transcriptTelemetry.transcriptPayloadTruncated,
+  });
 
   const result = await maybeUploadReflectionArenaChoiceToHf(row);
   if (result.uploaded) {
