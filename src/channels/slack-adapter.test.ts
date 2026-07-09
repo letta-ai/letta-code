@@ -5413,10 +5413,9 @@ test("slack adapter defaults to the simple progress view when progress_ui is uns
     sources: [source],
   });
 
-  // Turn start spawns nothing in any view. First concrete activity posts
-  // the simple view's plain in-place progress message (the rich card would
-  // start a task stream). Never a native stream: Slack drops plan_update
-  // chunks outside task-card streams and renders "Thinking..." instead.
+  // Turn start spawns nothing in any view. First concrete activity sets the
+  // assistant status: footer "is working..." + the tool description on the
+  // inline dim line via loading_messages. No message artifact, no stream.
   const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
   expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
@@ -5431,11 +5430,19 @@ test("slack adapter defaults to the simple progress view when progress_ui is uns
     toolName: "read_file",
   });
   expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
-  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
-  const postCalls = writeClient?.chat.postMessage.mock
-    .calls as unknown as Array<Array<{ text?: string }>>;
-  expect(postCalls[0]?.[0]?.text).toMatch(/^_.+_$/);
-  expect(postCalls[0]?.[0]?.text).not.toContain("Thinking");
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  const statusCalls = writeClient?.assistant.threads.setStatus.mock
+    .calls as unknown as Array<
+    Array<{ status?: string; loading_messages?: string[] }>
+  >;
+  // Flat-channel opener: startup preview first, then the working status
+  // with the tool description once concrete activity lands.
+  const working = statusCalls.filter(
+    (call) => call[0]?.status === "is working...",
+  );
+  expect(working).toHaveLength(1);
+  expect(working[0]?.[0]?.loading_messages?.[0]).toBeTruthy();
+  expect(working[0]?.[0]?.loading_messages?.[0]).not.toContain("Thinking");
 });
 
 test("slack adapter defers the status placeholder in established threads until concrete activity", async () => {
@@ -5482,8 +5489,8 @@ test("slack adapter defers the status placeholder in established threads until c
     expect.objectContaining({ status: "" }),
   );
 
-  // First concrete activity posts the in-place progress message with the
-  // tool title (plain message, never a stream).
+  // First concrete activity sets the working status with the tool
+  // description on the inline line — no message artifact, no stream.
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
     batchId: "batch-1",
@@ -5496,14 +5503,17 @@ test("slack adapter defers the status placeholder in established threads until c
   });
   const writeClient = FakeSlackWriteClient.instances[0];
   expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
-  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
-  // Still no non-empty assistant status: only the initial clear happened.
-  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
-  const postCalls = writeClient?.chat.postMessage.mock
-    .calls as unknown as Array<Array<{ text?: string; thread_ts?: string }>>;
-  expect(postCalls[0]?.[0]?.thread_ts).toBe("1712790000.000050");
-  expect(postCalls[0]?.[0]?.text).toMatch(/^_.+_$/);
-  expect(postCalls[0]?.[0]?.text).not.toContain("Thinking");
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  // Initial stale clear plus exactly one working status.
+  expect(writeClient?.assistant.threads.setStatus).toHaveBeenCalledTimes(2);
+  const statusCalls = writeClient?.assistant.threads.setStatus.mock
+    .calls as unknown as Array<
+    Array<{ status?: string; loading_messages?: string[]; thread_ts?: string }>
+  >;
+  expect(statusCalls[1]?.[0]?.status).toBe("is working...");
+  expect(statusCalls[1]?.[0]?.thread_ts).toBe("1712790000.000050");
+  expect(statusCalls[1]?.[0]?.loading_messages?.[0]).toBeTruthy();
+  expect(statusCalls[1]?.[0]?.loading_messages?.[0]).not.toContain("Thinking");
 });
 
 test("slack adapter simple view never starts a stream without a concrete activity title", async () => {
@@ -5720,19 +5730,21 @@ test("slack adapter simple view starts the stream on first activity and the repl
     toolCallId: "call-1",
     toolName: "read_file",
   });
-  // First concrete activity posts the flat progress message with a real
-  // title — never a stream (Slack drops plan_update chunks outside task-card
-  // streams and renders its default "Thinking..." shimmer instead).
+  // First concrete activity sets the working status — no message artifact,
+  // no stream (task_update chunks always render card chrome; the status
+  // line is the only surface with the flat Devin-style presentation).
   expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
-  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
-  const postCalls = writeClient?.chat.postMessage.mock
-    .calls as unknown as Array<Array<{ text?: string; thread_ts?: string }>>;
-  // The fake chat.postMessage always returns this ts.
-  const progressTs = "1712800000.000100";
-  expect(postCalls[0]?.[0]?.text).toMatch(/^_.+_$/);
-  expect(postCalls[0]?.[0]?.text).not.toContain("Thinking");
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
+  const firstWorking = (
+    writeClient?.assistant.threads.setStatus.mock.calls as unknown as Array<
+      Array<{ status?: string; loading_messages?: string[] }>
+    >
+  ).filter((call) => call[0]?.status === "is working...");
+  expect(firstWorking).toHaveLength(1);
+  const firstTitle = firstWorking[0]?.[0]?.loading_messages?.[0];
+  expect(firstTitle).toBeTruthy();
 
-  // A later tool swaps the title in place via chat.update.
+  // A later tool swaps the inline line via a fresh setStatus call.
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
     batchId: "batch-1",
@@ -5754,17 +5766,18 @@ test("slack adapter simple view starts the stream on first activity and the repl
     toolDetails: "git status",
   });
   await sleep(250);
-  const liveUpdateCalls = writeClient?.chat.update.mock
-    .calls as unknown as Array<Array<{ ts?: string; text?: string }>>;
-  expect(liveUpdateCalls.length).toBeGreaterThanOrEqual(1);
-  expect(liveUpdateCalls.every((call) => call[0]?.ts === progressTs)).toBe(
-    true,
-  );
-  expect(liveUpdateCalls.at(-1)?.[0]?.text).toMatch(/^_.+_$/);
+  const workingCalls = (
+    writeClient?.assistant.threads.setStatus.mock.calls as unknown as Array<
+      Array<{ status?: string; loading_messages?: string[] }>
+    >
+  ).filter((call) => call[0]?.status === "is working...");
+  expect(workingCalls.length).toBeGreaterThanOrEqual(2);
+  const lastTitle = workingCalls.at(-1)?.[0]?.loading_messages?.[0];
+  expect(lastTitle).toBeTruthy();
+  expect(lastTitle).not.toBe(firstTitle);
 
-  // The agent reply arrives: it replaces the progress message in place
-  // (single final message), with the web footnote as a context block, and
-  // no separate chat.postMessage happens.
+  // The agent reply posts as a normal message with the web footnote —
+  // instantly, no stream, no in-place edit. Slack auto-clears the status.
   const result = await adapter.sendMessage({
     channel: "slack",
     accountId: "slack-test-account",
@@ -5774,13 +5787,13 @@ test("slack adapter simple view starts the stream on first activity and the repl
     agentId: "agent-1",
     conversationId: "conv-1",
   });
-  expect(result.messageId).toBe(progressTs);
+  expect(result.messageId).toBe("1712800000.000100");
   expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
-  const replyUpdate = (
-    writeClient?.chat.update.mock.calls as unknown as Array<
+  expect(writeClient?.chat.update).not.toHaveBeenCalled();
+  const replyPost = (
+    writeClient?.chat.postMessage.mock.calls as unknown as Array<
       Array<{
-        ts?: string;
         text?: string;
         blocks?: Array<{
           type: string;
@@ -5788,18 +5801,17 @@ test("slack adapter simple view starts the stream on first activity and the repl
         }>;
       }>
     >
-  ).at(-1)?.[0];
-  expect(replyUpdate?.ts).toBe(progressTs);
-  expect(replyUpdate?.text).toBe("Here is what I found.");
-  const contextBlock = replyUpdate?.blocks?.find(
+  )[0]?.[0];
+  expect(replyPost?.text).toBe("Here is what I found.");
+  const contextBlock = replyPost?.blocks?.find(
     (block) => block.type === "context",
   );
   expect(contextBlock?.elements?.[0]?.text).toBe(
     "<https://chat.letta.com/chat/agent-1?conversation=conv-1|View on web>",
   );
 
-  // The finish lifecycle must not touch the already-fulfilled message again.
-  const updateCountAfterReply = writeClient?.chat.update.mock.calls.length ?? 0;
+  // The finish lifecycle posts nothing extra: the reply dropped the entry,
+  // so no terminal summary appears on top of it.
   await adapter.handleTurnLifecycleEvent?.({
     type: "finished",
     batchId: "batch-1",
@@ -5807,9 +5819,7 @@ test("slack adapter simple view starts the stream on first activity and the repl
     sources: [source],
   });
   await sleep(200);
-  expect(writeClient?.chat.update.mock.calls.length).toBe(
-    updateCountAfterReply,
-  );
+  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
 });
 
 test("slack adapter simple view stops a reply-less turn with the activity summary title", async () => {
@@ -5872,18 +5882,24 @@ test("slack adapter simple view stops a reply-less turn with the activity summar
   await sleep(200);
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  // One progress message posted, then terminally collapsed in place to the
-  // activity summary (bold header + footnote) — never a stream.
+  // Live progress was the status line only; the reply-less terminal flush
+  // clears it and posts the activity summary (bold header + footnote) so
+  // silent turns leave a record — never a stream, never an edit.
   expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
+  expect(writeClient?.chat.update).not.toHaveBeenCalled();
   expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
-  const terminalUpdate = (
-    writeClient?.chat.update.mock.calls as unknown as Array<
+  const summaryPost = (
+    writeClient?.chat.postMessage.mock.calls as unknown as Array<
       Array<{ text?: string; blocks?: Array<{ type: string }> }>
     >
-  ).at(-1)?.[0];
-  expect(terminalUpdate?.text).toBe("Read a file");
-  expect(terminalUpdate?.blocks?.[0]?.type).toBe("section");
+  )[0]?.[0];
+  expect(summaryPost?.text).toBe("Read a file");
+  expect(summaryPost?.blocks?.[0]?.type).toBe("section");
+  // Terminal flush cleared the status line explicitly.
+  const statusCalls = (writeClient?.assistant.threads.setStatus.mock.calls ??
+    []) as unknown as Array<Array<{ status?: string }>>;
+  expect(statusCalls.at(-1)?.[0]?.status).toBe("");
 });
 
 test("slack adapter simple view never streams, so long turns have no lifetime cap to roll", async () => {
@@ -5933,19 +5949,20 @@ test("slack adapter simple view never streams, so long turns have no lifetime ca
   });
 
   const writeClient = FakeSlackWriteClient.instances[0];
-  // The flat progress message is a plain post — no native stream, so
+  // Live progress is the assistant status line — no message, no stream, so
   // Slack's undocumented stream lifetime cap (and the roll machinery it
   // forced) does not apply to the simple view at all.
   expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
-  expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
 
   // Well past the old roll deadline: still no streams, no generation swaps,
   // no deletes.
   await sleep(90);
   expect(writeClient?.chat.startStream).not.toHaveBeenCalled();
   expect(writeClient?.chat.delete).not.toHaveBeenCalled();
+  expect(writeClient?.chat.postMessage).not.toHaveBeenCalled();
 
-  // The reply replaces the same long-lived progress message in place.
+  // The reply posts as a plain message.
   const result = await adapter.sendMessage({
     channel: "slack",
     accountId: "slack-test-account",
@@ -5958,13 +5975,7 @@ test("slack adapter simple view never streams, so long turns have no lifetime ca
   expect(result.messageId).toBe("1712800000.000100");
   expect(writeClient?.chat.postMessage).toHaveBeenCalledTimes(1);
   expect(writeClient?.chat.stopStream).not.toHaveBeenCalled();
-  const replyUpdate = (
-    writeClient?.chat.update.mock.calls as unknown as Array<
-      Array<{ ts?: string; text?: string }>
-    >
-  ).at(-1)?.[0];
-  expect(replyUpdate?.ts).toBe("1712800000.000100");
-  expect(replyUpdate?.text).toBe("Long turn done.");
+  expect(writeClient?.chat.update).not.toHaveBeenCalled();
 });
 
 test("slack adapter degrades rich progress to text mode when chat.startStream is unavailable", async () => {

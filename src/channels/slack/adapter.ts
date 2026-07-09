@@ -270,6 +270,14 @@ function resolveSlackAppModule(value: unknown): SlackAppConstructor | null {
 const INITIAL_SLACK_THREAD_HISTORY_LIMIT = 20;
 
 const SLACK_ASSISTANT_STARTUP_STATUS = "is thinking...";
+// Footer text while the simple view is doing visible work. The inline dim
+// line carries the current tool description via loading_messages — the two
+// setStatus params render on different surfaces (footer vs inline line).
+const SLACK_ASSISTANT_WORKING_STATUS = "is working...";
+// Slack removes an assistant status ~2 minutes after the last call if no
+// message has been sent; re-issue it well inside that window so long tools
+// keep their status line.
+const SLACK_ASSISTANT_STATUS_KEEPALIVE_MS = 90_000;
 
 function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
   const defaultExport =
@@ -596,6 +604,10 @@ type SlackProgressCardEntry = {
    */
   mode?: "stream" | "status-stream" | "text";
   streamTs?: string;
+  /** Last tool description delivered via the assistant-status inline line. */
+  lastStatusTitle?: string;
+  /** Keepalive re-issuing the assistant status inside Slack's ~2min TTL. */
+  statusKeepalive?: ReturnType<typeof setTimeout>;
   /** Last plan title delivered to a status stream (dedupes appends). */
   lastPlanTitle?: string;
   /** Message ts of the plain text-mode progress message, edited in place. */
@@ -3203,6 +3215,61 @@ export function createSlackAdapter(
   function clearSlackProgressStreamTimers(entry: SlackProgressCardEntry): void {
     clearSlackProgressStreamKeepalive(entry);
     clearSlackStatusStreamRoll(entry);
+    clearSlackAssistantStatusKeepalive(entry);
+  }
+
+  function clearSlackAssistantStatusKeepalive(
+    entry: SlackProgressCardEntry,
+  ): void {
+    if (entry.statusKeepalive) {
+      clearTimeout(entry.statusKeepalive);
+      entry.statusKeepalive = undefined;
+    }
+  }
+
+  function scheduleSlackAssistantStatusKeepalive(
+    entry: SlackProgressCardEntry,
+  ): void {
+    clearSlackAssistantStatusKeepalive(entry);
+    const timer = setTimeout(() => {
+      entry.statusKeepalive = undefined;
+      if (entry.status !== "processing" || !entry.lastStatusTitle) {
+        return;
+      }
+      void setSlackAssistantThreadStatus(
+        entry.source,
+        SLACK_ASSISTANT_WORKING_STATUS,
+        { loadingMessage: entry.lastStatusTitle },
+      );
+      scheduleSlackAssistantStatusKeepalive(entry);
+    }, SLACK_ASSISTANT_STATUS_KEEPALIVE_MS);
+    timer.unref?.();
+    entry.statusKeepalive = timer;
+  }
+
+  /**
+   * Simple-view live progress (Devin-style, live-verified 2026-07-08): one
+   * assistant-status call renders BOTH surfaces — `status` is the footer
+   * ("<App> is working...") and `loading_messages` is the inline shimmering
+   * dim line, which swaps in place to the current tool description with no
+   * message artifact, no card chrome, and no "(edited)" mark. Slack clears
+   * it automatically when the reply posts and expires it ~2min after the
+   * last call, so a keepalive re-issues it during long tools.
+   */
+  async function upsertSlackAssistantProgressStatus(
+    entry: SlackProgressCardEntry,
+  ): Promise<void> {
+    const title = formatSlackStatusStreamTitle(entry);
+    if (title === null || title === entry.lastStatusTitle) {
+      return;
+    }
+    entry.lastStatusTitle = title;
+    await setSlackAssistantThreadStatus(
+      entry.source,
+      SLACK_ASSISTANT_WORKING_STATUS,
+      { loadingMessage: title },
+    );
+    scheduleSlackAssistantStatusKeepalive(entry);
   }
 
   /**
@@ -3815,27 +3882,59 @@ export function createSlackAdapter(
         const canStream = typeof slackClient.chat.startStream === "function";
         if (configuredProgressUi === "text") {
           if (entry.status !== "processing") {
-            // Turn already over with nothing on screen: the reply itself is
-            // the outcome, a terminal-only status artifact would be noise.
+            // Turn over without a reply having dropped the entry (replies
+            // drop it in sendMessage; the completed-lifecycle flush clears
+            // the status line right after this). If visible work happened,
+            // post the activity summary so silent turns leave a record
+            // instead of vanishing.
+            clearSlackAssistantStatusKeepalive(entry);
+            if ((entry.toolTasksById?.size ?? 0) > 0) {
+              const headerText = formatSlackTextProgressTerminalText(entry);
+              const blocks: SlackBlock[] = [
+                {
+                  type: "section",
+                  text: { type: "mrkdwn", text: `*${headerText}*` },
+                },
+              ];
+              const footnote = buildSlackChatFootnote(entry.source);
+              if (footnote) {
+                blocks.push({
+                  type: "context",
+                  elements: [{ type: "mrkdwn", text: footnote }],
+                });
+              }
+              try {
+                await slackClient.chat.postMessage({
+                  channel: entry.source.chatId,
+                  text: headerText,
+                  thread_ts: replyToMessageId,
+                  blocks,
+                });
+              } catch (error) {
+                console.warn(
+                  "[Slack] Failed to post terminal activity summary:",
+                  error instanceof Error ? error.message : error,
+                );
+              }
+            }
             didSend = true;
           } else if (formatSlackStatusStreamTitle(entry) === null) {
             // No concrete visible activity yet (reasoning-only, transient
             // MessageChannel state, nameless tool events): defer any visual
-            // artifact — the assistant-thread footer already signals
-            // liveness. The next flush after a concrete task lands starts
-            // the stream with a real title.
+            // artifact so no-op turns never flash. The next flush after a
+            // concrete task lands sets the status line with a real title.
             didSend = true;
           } else {
-            // Never a native stream here: Slack silently drops plan_update
-            // chunks outside task-card streams (probed live: the in-progress
-            // message stays text:"" and renders Slack's own italic
-            // "Thinking..." shimmer until stopped, hiding every title swap).
-            // A plain message edited in place renders titles reliably, posts
-            // the reply instantly, and has no stream lifetime cap.
-            didSend = await upsertSlackTextProgressMessage(
-              entry,
-              replyToMessageId,
-            );
+            // Devin-style progress: NO message artifact during the turn.
+            // assistant.threads.setStatus renders the footer ("is
+            // working...") plus the inline shimmering dim line carrying the
+            // verbatim tool description via loading_messages, swapping in
+            // place per tool (live-verified 2026-07-08). Native streams are
+            // wrong here: task_update chunks always render card chrome in
+            // every task_display_mode, and plan_update-only streams render
+            // nothing at all.
+            await upsertSlackAssistantProgressStatus(entry);
+            didSend = true;
           }
         } else if (!canStream) {
           didSend = await upsertSlackTextProgressMessage(
@@ -4204,7 +4303,14 @@ export function createSlackAdapter(
         entry.source = source;
         entry.updatedAt = Date.now();
         await flushSlackProgressCard(key, entry);
-        if (entry.mode) {
+        if (
+          entry.mode ||
+          (configuredProgressUi === "text" &&
+            (entry.toolTasksById?.size ?? 0) > 0)
+        ) {
+          // Mode-less simple-view entries (status-line progress) need the
+          // finalizer too: it is what moves the entry to terminal state so a
+          // reply-less turn posts its activity summary.
           scheduleSlackCompletionFinalizer(key, entry, batchId);
         }
         await clearSlackAssistantThreadStatus(source);
@@ -4256,6 +4362,16 @@ export function createSlackAdapter(
     const cardKey = activeProgressCardKeyByReplyKey.get(replyKey) ?? replyKey;
     const entry = progressCardByReplyKey.get(cardKey);
     if (!entry) {
+      return undefined;
+    }
+    if (!entry.mode && configuredProgressUi === "text") {
+      // Simple view: live progress is the assistant status line, not a
+      // message. Drop the entry so the terminal flush doesn't post an
+      // activity summary on top of the reply; Slack auto-clears the status
+      // when the reply posts (the explicit clear is belt and braces).
+      clearSlackProgressStreamTimers(entry);
+      dropSlackProgressCardEntry(cardKey, entry);
+      await clearSlackAssistantThreadStatus(entry.source);
       return undefined;
     }
     if (entry.mode === "text" && isNonEmptyString(entry.textTs)) {
