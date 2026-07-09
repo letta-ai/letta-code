@@ -60,6 +60,8 @@ function buildModelSettings(
     modelHandle.startsWith("minimax/");
   const isZai =
     explicitProviderType === "zai" || modelHandle.startsWith("zai/");
+  const isXai =
+    explicitProviderType === "xai" || modelHandle.startsWith("xai/");
   const isGoogleAI =
     explicitProviderType === "google_ai" ||
     modelHandle.startsWith("google_ai/");
@@ -148,6 +150,13 @@ function buildModelSettings(
     // Ensure parallel_tool_calls is enabled.
     settings = {
       provider_type: "zai",
+      parallel_tool_calls: true,
+    };
+  } else if (isXai) {
+    // xAI is OpenAI-compatible on the wire, but the backend must route through
+    // provider_type=xai so direct xAI handles do not fall back to OpenAI.
+    settings = {
+      provider_type: "xai",
       parallel_tool_calls: true,
     };
   } else if (isGoogleAI) {
@@ -260,6 +269,10 @@ function buildModelSettings(
 
   return settings;
 }
+
+export const __modifyTestUtils = {
+  buildModelSettings,
+};
 
 function updateArgsForModelSettings(
   updateArgs: Record<string, unknown> | undefined,
