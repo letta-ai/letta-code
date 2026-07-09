@@ -6086,9 +6086,11 @@ test("slack adapter sendMessage renders a View on web context footnote when iden
   const withIdentity = postCalls[0]?.[0];
   expect(withIdentity?.text).toBe("Reply with a footnote.");
   const blocks = withIdentity?.blocks ?? [];
+  // Body rides a markdown block: section blocks clamp long text with
+  // per-block "Show more" accordions; markdown blocks render in full.
   expect(blocks[0]).toMatchObject({
-    type: "section",
-    text: { type: "mrkdwn", text: "Reply with a footnote." },
+    type: "markdown",
+    text: "Reply with a footnote.",
   });
   const footnoteBlock = blocks[blocks.length - 1];
   expect(footnoteBlock?.type).toBe("context");

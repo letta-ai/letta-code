@@ -185,6 +185,13 @@ type SlackBlock =
       accessory?: SlackBlockElement;
     }
   | {
+      // Block Kit markdown block (built for AI responses): Slack translates
+      // standard markdown natively, and unlike section blocks the client
+      // renders it in full instead of clamping each block behind "Show more".
+      type: "markdown";
+      text: string;
+    }
+  | {
       type: "context";
       elements: SlackTextObject[];
     }
@@ -750,14 +757,19 @@ function buildSlackChatFootnote(identity: {
   return `<${chatUrl}|View on web>`;
 }
 
-// Slack section blocks cap mrkdwn text at 3000 characters.
-const SLACK_SECTION_TEXT_MAX = 3_000;
+// Slack markdown blocks cap standard-markdown text at 12,000 characters.
+const SLACK_MARKDOWN_BLOCK_TEXT_MAX = 12_000;
 
 /**
- * Render an outbound reply as mrkdwn section blocks with a small context
- * footnote (web deep link) below the text. Returns undefined
- * when the text cannot be represented within Slack's 50-block limit, in
- * which case the caller falls back to plain text without the footnote.
+ * Render an outbound reply as a markdown block (the Block Kit block built
+ * for AI responses — Slack translates standard markdown natively) with a
+ * small context footnote (web deep link) below it. Section blocks are wrong
+ * here: the client clamps EACH section at a few rendered lines with its own
+ * "Show more", so long replies split across sections collapsed into
+ * unreadable accordions (live-verified 2026-07-09; a single markdown block
+ * renders the same body in full). Returns undefined when the text cannot be
+ * represented within Slack's 50-block limit, in which case the caller falls
+ * back to plain text without the footnote.
  */
 function buildSlackReplyBlocksWithFootnote(
   text: string,
@@ -766,28 +778,28 @@ function buildSlackReplyBlocksWithFootnote(
   const chunks: string[] = [];
   let remaining = text;
   while (remaining.length > 0) {
-    if (remaining.length <= SLACK_SECTION_TEXT_MAX) {
+    if (remaining.length <= SLACK_MARKDOWN_BLOCK_TEXT_MAX) {
       chunks.push(remaining);
       break;
     }
-    let cut = remaining.lastIndexOf("\n", SLACK_SECTION_TEXT_MAX);
+    let cut = remaining.lastIndexOf("\n", SLACK_MARKDOWN_BLOCK_TEXT_MAX);
     if (cut <= 0) {
-      cut = remaining.lastIndexOf(" ", SLACK_SECTION_TEXT_MAX);
+      cut = remaining.lastIndexOf(" ", SLACK_MARKDOWN_BLOCK_TEXT_MAX);
     }
     if (cut <= 0) {
-      cut = SLACK_SECTION_TEXT_MAX;
+      cut = SLACK_MARKDOWN_BLOCK_TEXT_MAX;
     }
     chunks.push(remaining.slice(0, cut));
     remaining = remaining.slice(cut);
   }
-  const sections = chunks.filter((chunk) => chunk.trim().length > 0);
+  const markdownChunks = chunks.filter((chunk) => chunk.trim().length > 0);
   // Slack allows at most 50 blocks per message; leave room for the footnote.
-  if (sections.length === 0 || sections.length > 49) {
+  if (markdownChunks.length === 0 || markdownChunks.length > 49) {
     return undefined;
   }
-  const blocks: SlackBlock[] = sections.map((chunk) => ({
-    type: "section",
-    text: { type: "mrkdwn", text: chunk },
+  const blocks: SlackBlock[] = markdownChunks.map((chunk) => ({
+    type: "markdown",
+    text: chunk,
   }));
   blocks.push({
     type: "context",
