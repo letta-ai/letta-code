@@ -4934,7 +4934,12 @@ export function createSlackAdapter(
         }
         const status = getSlackAssistantThreadStatusForTurn(event.source);
         if (status) {
-          await setSlackAssistantThreadStatus(event.source, status);
+          // loading_messages MUST be pinned to the same text: without the
+          // override Slack fills the flat-channel preview with its own
+          // rotating defaults ("Generating response…", "Organizing…").
+          await setSlackAssistantThreadStatus(event.source, status, {
+            loadingMessage: status,
+          });
         } else {
           // Established thread: no status this turn — but clear any sticky
           // status left behind by a previous process before Slack re-renders
@@ -4958,7 +4963,9 @@ export function createSlackAdapter(
               status &&
               (!replyKey || !assistantStatusReplyKeys.has(replyKey))
             ) {
-              await setSlackAssistantThreadStatus(source, status);
+              await setSlackAssistantThreadStatus(source, status, {
+                loadingMessage: status,
+              });
             } else if (!status) {
               await clearSlackAssistantThreadStatus(source);
             }

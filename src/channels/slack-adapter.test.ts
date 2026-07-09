@@ -5643,7 +5643,10 @@ test("slack adapter simple view starts the stream on first activity and the repl
   expect(statusCalls[0]?.[0]).toMatchObject({
     status: "is thinking...",
   });
-  expect(statusCalls[0]?.[0]?.loading_messages).toBeUndefined();
+  // loading_messages pinned to the status text: without the override Slack
+  // fills the preview with its own rotating defaults ("Generating
+  // response…", "Organizing…") — live-confirmed regression (LET-9538).
+  expect(statusCalls[0]?.[0]?.loading_messages).toEqual(["is thinking..."]);
 
   await adapter.handleTurnProgressEvent?.({
     type: "progress",
