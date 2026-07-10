@@ -252,6 +252,93 @@ export function resolvePresenceJid(params: {
   return jidToLid.get(targetJid) ?? targetJid;
 }
 
+/**
+ * Minimal LidDesk-like interface for alias resolution.
+ * Avoids importing the full LidDesk class (keeps jid.ts cycle-free).
+ */
+export interface LidDeskLike {
+  resolvePn(phoneJid: string): string | null;
+  resolveLid(lidJid: string): string | null;
+}
+
+/**
+ * Resolve the alias of a WhatsApp chatId — if the chatId is a phone JID,
+ * return the LID (if known in the desk); if it's a LID, return the phone
+ * JID (if known). Returns null if no alias is known or the chatId is
+ * neither a phone JID nor a LID.
+ *
+ * Used by route lookup to check whether a route exists under the alternate
+ * form of the same contact's chatId.
+ */
+export function resolveWhatsAppAlias(
+  chatId: string,
+  desk: LidDeskLike | null | undefined,
+): string | null {
+  if (!desk || !chatId) return null;
+  const normalized = stripDeviceSuffix(chatId);
+
+  if (isPhoneJid(normalized)) {
+    const lid = desk.resolvePn(normalized);
+    return lid ?? null;
+  }
+
+  if (isLidJid(normalized)) {
+    const phone = desk.resolveLid(normalized);
+    return phone ?? null;
+  }
+
+  return null;
+}
+
+/**
+ * Check whether two WhatsApp JIDs refer to the same contact.
+ *
+ * - Both phone JIDs: compare digits.
+ * - Both LIDs: compare stripped form.
+ * - One phone, one LID: resolve via LidDesk and compare.
+ * - Groups, broadcast, etc.: false (not individual contacts).
+ */
+export function areSameWhatsAppContact(
+  a: string,
+  b: string,
+  desk: LidDeskLike | null | undefined,
+): boolean {
+  const na = stripDeviceSuffix(a);
+  const nb = stripDeviceSuffix(b);
+  if (!na || !nb) return false;
+
+  // Direct match.
+  if (na === nb) return true;
+
+  const aIsPhone = isPhoneJid(na);
+  const bIsPhone = isPhoneJid(nb);
+  const aIsLid = isLidJid(na);
+  const bIsLid = isLidJid(nb);
+
+  // Both phone: compare digits.
+  if (aIsPhone && bIsPhone) {
+    return jidToDigits(na) === jidToDigits(nb);
+  }
+
+  // Both LID: already compared above (na === nb).
+  if (aIsLid && bIsLid) return false; // different LIDs = different contacts
+
+  // Cross-form: resolve via desk.
+  if (!desk) return false;
+
+  if (aIsPhone && bIsLid) {
+    const aLid = desk.resolvePn(na);
+    return aLid === nb;
+  }
+
+  if (aIsLid && bIsPhone) {
+    const bLid = desk.resolvePn(nb);
+    return bLid === na;
+  }
+
+  return false;
+}
+
 export function sanitizePathSegment(input: string): string {
   const cleaned = input
     .replace(/[^A-Za-z0-9._-]/g, "_")
