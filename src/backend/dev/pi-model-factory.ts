@@ -31,6 +31,7 @@ import {
   type PiProvider,
   resolveProviderFromModelHandle,
   resolveProviderFromProviderType,
+  resolveProviderFromRawLocalModelHandle,
   stripProviderHandlePrefix,
 } from "./pi-provider-registry";
 import {
@@ -180,10 +181,17 @@ export function resolvePiProviderFromAgent(
   const handleProvider = resolveProviderFromModelHandle(model);
   if (handleProvider) return handleProvider;
 
+  const rawLocalProvider = resolveProviderFromRawLocalModelHandle(model);
   const settingsProvider = resolveProviderFromProviderType(
     modelSettings.provider_type,
   );
-  if (settingsProvider) return settingsProvider;
+  if (
+    settingsProvider &&
+    !(settingsProvider === "openai" && rawLocalProvider)
+  ) {
+    return settingsProvider;
+  }
+  if (rawLocalProvider) return rawLocalProvider;
 
   if (model && !isUnselectedLocalModelHandle(model)) {
     const slashIndex = model.indexOf("/");

@@ -380,6 +380,21 @@ export function resolveProviderFromModelHandle(
   )?.id;
 }
 
+export function resolveProviderFromRawLocalModelHandle(
+  model: string | undefined,
+): PiProvider | undefined {
+  if (!model || model !== model.trim() || model.includes("/")) {
+    return undefined;
+  }
+  if (!model.includes(":")) return undefined;
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)+$/.test(model)
+  ) {
+    return undefined;
+  }
+  return "ollama";
+}
+
 export function resolveProviderFromProviderType(
   providerType: unknown,
 ): PiProvider | undefined {

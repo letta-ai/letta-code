@@ -9,6 +9,7 @@ import {
   applyPiEnvOverrides,
   reasoningForSettings,
   resolvePiModelForAgent,
+  resolvePiProviderFromAgent,
 } from "@/backend/dev/pi-model-factory";
 import {
   clearRegisteredPiProviders,
@@ -42,6 +43,60 @@ async function withEnv<T>(
 describe("pi model factory", () => {
   afterEach(() => {
     clearRegisteredPiProviders();
+  });
+
+  test("resolves raw Ollama model IDs without falling back to OpenAI", () => {
+    expect(resolvePiProviderFromAgent("deepseek-r1:8b", {})).toBe("ollama");
+    expect(
+      resolvePiProviderFromAgent("deepseek-r1:8b", {
+        provider_type: "openai",
+      }),
+    ).toBe("ollama");
+    expect(
+      resolvePiProviderFromAgent("ollama/deepseek-r1:8b", {
+        provider_type: "openai",
+      }),
+    ).toBe("ollama");
+  });
+
+  test("honors explicit non-OpenAI local provider metadata before raw Ollama heuristics", () => {
+    expect(
+      resolvePiProviderFromAgent("deepseek-r1:8b", {
+        provider_type: "lmstudio_openai",
+      }),
+    ).toBe("lmstudio");
+  });
+
+  test("routes raw Ollama model IDs to a configured local Ollama endpoint", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-ollama-raw-id-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "ollama",
+        providerName: "lc-ollama",
+        apiKey: "not-needed",
+        baseURL: "http://localhost:11434/v1",
+      });
+
+      const raw = await resolvePiModelForAgent(
+        "deepseek-r1:8b",
+        { provider_type: "openai" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      const prefixed = await resolvePiModelForAgent(
+        "ollama/deepseek-r1:8b",
+        { provider_type: "openai" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      for (const resolved of [raw, prefixed]) {
+        expect(resolved.provider).toBe("ollama");
+        expect(resolved.model.id).toBe("deepseek-r1:8b");
+        expect(resolved.model.baseUrl).toBe("http://localhost:11434/v1");
+      }
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("notifies subscribers when mod provider registry changes", () => {
