@@ -111,6 +111,50 @@ describe("OAuth network errors", () => {
     ).rejects.toThrow("User denied authorization");
   });
 
+  test("pollForToken shares concurrent polls for the same device code", async () => {
+    const fetchMock = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const [first, second] = await Promise.all([
+      pollForToken("shared-device-code", 0, 60, "device-id"),
+      pollForToken("shared-device-code", 0, 60, "device-id"),
+    ]);
+
+    expect(first.access_token).toBe("access-token");
+    expect(second.access_token).toBe("access-token");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("pollForToken reports already-used device codes clearly", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "already_used" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    ) as unknown as typeof fetch;
+
+    await expect(
+      pollForToken("already-used-device-code", 0, 60, "device-id"),
+    ).rejects.toThrow("Device code was already used before Letta Code");
+  });
+
   test("pollForToken supports cancellation via AbortSignal", async () => {
     const controller = new AbortController();
     globalThis.fetch = mock(() =>
