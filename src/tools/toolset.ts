@@ -1,5 +1,6 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { resolveModel } from "@/agent/model";
+import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { MessageChannelToolDiscoveryScope } from "@/channels/message-tool";
@@ -108,22 +109,6 @@ export type PreparedScopeToolContext = {
   agent: AgentState | null;
 };
 
-function buildModelHandleFromLlmConfig(
-  llmConfig:
-    | {
-        model?: string | null;
-        model_endpoint_type?: string | null;
-      }
-    | null
-    | undefined,
-): string | null {
-  if (!llmConfig) return null;
-  if (llmConfig.model_endpoint_type && llmConfig.model) {
-    return `${llmConfig.model_endpoint_type}/${llmConfig.model}`;
-  }
-  return llmConfig.model ?? null;
-}
-
 function getPreferredAgentModelHandle(
   agent: ScopeModelCarrier | null | undefined,
 ): string | null {
@@ -131,7 +116,7 @@ function getPreferredAgentModelHandle(
   if (typeof agent.model === "string" && agent.model.length > 0) {
     return agent.model;
   }
-  return buildModelHandleFromLlmConfig(agent.llm_config);
+  return resolveModelHandleFromLlmConfig(agent.llm_config);
 }
 
 function getToolNamesForToolset(

@@ -74,4 +74,23 @@ describe("conversation model carryover", () => {
     expect(carryover?.modelHandle).toBe("openai/custom-model");
     expect(carryover?.updateArgs).toBeUndefined();
   });
+
+  test("does not carry over stale OpenAI provider for Anthropic Sonnet", () => {
+    const carryover = buildConversationModelCarryoverUpdate({
+      rawModelHandle: "openai/claude-sonnet-4-6",
+      currentLlmConfig: {
+        model: "claude-sonnet-4-6",
+        model_endpoint_type: "openai",
+      } as LlmConfig,
+      activeConversationContextWindowLimit: null,
+    });
+
+    expect(carryover?.modelHandle).toBe("anthropic/claude-sonnet-4-6");
+    expect(carryover?.updateArgs).toMatchObject({
+      context_window: 200000,
+      max_output_tokens: 128000,
+      reasoning_effort: "high",
+      enable_reasoner: true,
+    });
+  });
 });
