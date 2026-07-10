@@ -1,9 +1,3 @@
-import {
-  getConversationId,
-  getCurrentAgentId,
-  setConversationId,
-  setCurrentAgentId,
-} from "@/agent/context";
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import { enqueueMemoryGitSyncReminder } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
@@ -42,31 +36,5 @@ export async function runListenerTurnCleanup(params: {
         enqueueMemoryGitSyncReminder(runtime.reminderState, { text });
       },
     });
-  }
-
-  // A replacement turn may begin while post-turn memory sync is awaiting.
-  // Its process-global tool context now owns these identifiers.
-  if (runtime.turnLifecycle.kind !== "idle") {
-    return;
-  }
-
-  try {
-    const currentConversationId = getConversationId();
-    let currentAgentId: string | null = null;
-    try {
-      currentAgentId = getCurrentAgentId();
-    } catch {
-      currentAgentId = null;
-    }
-
-    if (
-      currentAgentId === (agentId ?? null) &&
-      currentConversationId === conversationId
-    ) {
-      setCurrentAgentId(null);
-      setConversationId(null);
-    }
-  } catch {
-    // Best-effort cleanup only. Never let teardown obscure the turn result.
   }
 }

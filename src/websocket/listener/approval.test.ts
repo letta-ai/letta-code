@@ -49,8 +49,8 @@ function createScopedRuntime(
   return getOrCreateScopedRuntime(createRuntime(), agentId, conversationId);
 }
 
-function beginApprovalWait(runtime: ConversationRuntime): void {
-  runtime.turnLifecycle.begin({
+function beginApprovalWait(runtime: ConversationRuntime) {
+  return runtime.turnLifecycle.begin({
     origin: "message",
     workingDirectory: process.cwd(),
     initialStatus: "WAITING_ON_APPROVAL",
@@ -83,10 +83,11 @@ describe("listener approval lifecycle", () => {
   test("resolving an approval does not falsely finalize its enclosing turn", async () => {
     const runtime = createScopedRuntime();
     const socket = new MockSocket();
-    beginApprovalWait(runtime);
+    const turnLease = beginApprovalWait(runtime);
     const pending = requestApprovalOverWS(
       runtime,
       socket,
+      turnLease,
       "perm-status",
       makeControlRequest("perm-status"),
     );
@@ -107,18 +108,20 @@ describe("listener approval lifecycle", () => {
     const runtimeA = getOrCreateScopedRuntime(listener, "agent-1", "conv-a");
     const runtimeB = getOrCreateScopedRuntime(listener, "agent-1", "conv-b");
     const socket = new MockSocket();
-    beginApprovalWait(runtimeA);
-    beginApprovalWait(runtimeB);
+    const turnLeaseA = beginApprovalWait(runtimeA);
+    const turnLeaseB = beginApprovalWait(runtimeB);
 
     const pendingA = requestApprovalOverWS(
       runtimeA,
       socket,
+      turnLeaseA,
       "perm-a",
       makeControlRequest("perm-a"),
     );
     const pendingB = requestApprovalOverWS(
       runtimeB,
       socket,
+      turnLeaseB,
       "perm-b",
       makeControlRequest("perm-b"),
     );
@@ -148,10 +151,11 @@ describe("listener approval lifecycle", () => {
   test("a non-matching response leaves the pending resolver intact", async () => {
     const runtime = createScopedRuntime();
     const socket = new MockSocket();
-    beginApprovalWait(runtime);
+    const turnLease = beginApprovalWait(runtime);
     const pending = requestApprovalOverWS(
       runtime,
       socket,
+      turnLease,
       "perm-1",
       makeControlRequest("perm-1"),
     );
@@ -168,10 +172,11 @@ describe("listener approval lifecycle", () => {
   test("conversation cleanup rejects approvals and resets ownership atomically", async () => {
     const runtime = createScopedRuntime();
     const socket = new MockSocket();
-    beginApprovalWait(runtime);
+    const turnLease = beginApprovalWait(runtime);
     const pending = requestApprovalOverWS(
       runtime,
       socket,
+      turnLease,
       "perm-cleanup",
       makeControlRequest("perm-cleanup"),
     );
@@ -191,10 +196,11 @@ describe("listener approval lifecycle", () => {
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "default");
     const socket = new MockSocket();
     listener.socket = socket as unknown as WebSocket;
-    beginApprovalWait(runtime);
+    const turnLease = beginApprovalWait(runtime);
     const pending = requestApprovalOverWS(
       runtime,
       socket,
+      turnLease,
       "perm-stop",
       makeControlRequest("perm-stop"),
     );
@@ -208,35 +214,65 @@ describe("listener approval lifecycle", () => {
 
   test("approval registration rejects closed and cancelling turns", async () => {
     const closedRuntime = createScopedRuntime();
+    const closedTurnLease = beginApprovalWait(closedRuntime);
     await expect(
       requestApprovalOverWS(
         closedRuntime,
         new MockSocket(WebSocket.CLOSED),
+        closedTurnLease,
         "perm-closed",
         makeControlRequest("perm-closed"),
       ),
     ).rejects.toThrow("WebSocket not open");
 
     const cancellingRuntime = createScopedRuntime();
-    beginApprovalWait(cancellingRuntime);
+    const turnLease = beginApprovalWait(cancellingRuntime);
     cancellingRuntime.turnLifecycle.requestCancellation();
     await expect(
       requestApprovalOverWS(
         cancellingRuntime,
         new MockSocket(),
+        turnLease,
         "perm-cancelled",
         makeControlRequest("perm-cancelled"),
       ),
     ).rejects.toThrow("Cancelled by user");
   });
 
+  test("a stale approval request cannot register against a replacement turn", async () => {
+    const runtime = createScopedRuntime();
+    const socket = new MockSocket();
+    const staleTurnLease = beginApprovalWait(runtime);
+    clearConversationRuntimeState(runtime);
+    const replacementTurnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+
+    await expect(
+      requestApprovalOverWS(
+        runtime,
+        socket,
+        staleTurnLease,
+        "perm-stale",
+        makeControlRequest("perm-stale"),
+      ),
+    ).rejects.toThrow("Cancelled by user");
+
+    expect(runtime.turnLifecycle.isCurrent(replacementTurnLease)).toBe(true);
+    expect(runtime.loopStatus).toBe("SENDING_API_REQUEST");
+    expect(runtime.pendingApprovalResolvers.size).toBe(0);
+    expect(socket.sentPayloads).toEqual([]);
+  });
+
   test("an abort after registration removes and rejects the resolver", async () => {
     const runtime = createScopedRuntime();
     const socket = new MockSocket();
-    beginApprovalWait(runtime);
+    const turnLease = beginApprovalWait(runtime);
     const pending = requestApprovalOverWS(
       runtime,
       socket,
+      turnLease,
       "perm-abort",
       makeControlRequest("perm-abort"),
     );

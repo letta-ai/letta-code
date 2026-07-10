@@ -7,6 +7,7 @@ import {
   resolveScopedAgentId,
   resolveScopedConversationId,
 } from "./scope";
+import { releaseListenerTurnContext } from "./turn-context";
 import { TurnLifecycle } from "./turn-lifecycle";
 import type {
   ConversationRuntime,
@@ -251,6 +252,11 @@ export function clearConversationRuntimeState(
   runtime: ConversationRuntime,
 ): void {
   runtime.turnLifecycle.reset("cancelled");
+  releaseListenerTurnContext({
+    runtime,
+    agentId: runtime.agentId,
+    conversationId: runtime.conversationId,
+  });
   runtime.pendingApprovalBatchByToolCallId.clear();
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;

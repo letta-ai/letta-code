@@ -475,6 +475,13 @@ export async function resolveRecoveredApprovalResponse(
       connectionId: string,
     ) => void;
     connectionId?: string;
+    dependencies?: {
+      applySuggestedPermissions?: typeof applySuggestedPermissionsForApproval;
+      classifyApprovals?: typeof classifyApprovalsWithSuggestions;
+      ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
+      prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
+      executeApprovalBatch?: typeof executeApprovalBatch;
+    };
   },
 ): Promise<boolean> {
   const requestId = response.request_id;
@@ -486,31 +493,56 @@ export async function resolveRecoveredApprovalResponse(
   if (!recovered?.approvalsByRequestId.has(requestId)) {
     return false;
   }
+  const dependencies = opts?.dependencies;
+  const applySuggestedPermissions =
+    dependencies?.applySuggestedPermissions ??
+    applySuggestedPermissionsForApproval;
+  const classifyApprovals =
+    dependencies?.classifyApprovals ?? classifyApprovalsWithSuggestions;
+  const ensureSecretsHydrated =
+    dependencies?.ensureSecretsHydrated ?? ensureSecretsHydratedForAgent;
+  const prepareToolExecutionContext =
+    dependencies?.prepareToolExecutionContext ??
+    prepareToolExecutionContextForScope;
+  const executeApprovals =
+    dependencies?.executeApprovalBatch ?? executeApprovalBatch;
 
-  recovered.responsesByRequestId.set(requestId, response);
-  recovered.pendingRequestIds.delete(requestId);
   const workingDirectory = getConversationWorkingDirectory(
     runtime.listener,
     recovered.agentId,
     recovered.conversationId,
   );
+  const scope = {
+    agent_id: recovered.agentId,
+    conversation_id: recovered.conversationId,
+  } as const;
   const respondedEntry = recovered.approvalsByRequestId.get(requestId);
+  let autoDecisionsToAppend: ApprovalDecision[] = [];
+  const reclassifiedRequestIds = new Set<string>();
   if (
     respondedEntry &&
     "decision" in response &&
     response.decision.behavior === "allow"
   ) {
-    const savedSuggestions = await applySuggestedPermissionsForApproval({
+    const savedSuggestions = await applySuggestedPermissions({
       decision: response.decision,
       context: respondedEntry.approvalContext,
       workingDirectory,
     });
 
-    if (savedSuggestions && recovered.pendingRequestIds.size > 0) {
+    if (
+      runtime.recoveredApprovalState !== recovered ||
+      !recovered.pendingRequestIds.has(requestId)
+    ) {
+      return true;
+    }
+
+    if (savedSuggestions && recovered.pendingRequestIds.size > 1) {
       const remainingRecoveredEntries = [...recovered.pendingRequestIds]
+        .filter((id) => id !== requestId)
         .map((id) => recovered.approvalsByRequestId.get(id))
         .filter((entry): entry is RecoveredPendingApproval => !!entry);
-      const reclassified = await classifyApprovalsWithSuggestions(
+      const reclassified = await classifyApprovals(
         remainingRecoveredEntries.map((entry) => entry.approval),
         {
           alwaysRequiresUserInput: isInteractiveApprovalTool,
@@ -530,134 +562,168 @@ export async function resolveRecoveredApprovalResponse(
         reclassified.autoAllowed.length > 0 ||
         reclassified.autoDenied.length > 0
       ) {
-        recovered.autoDecisions = [
-          ...(recovered.autoDecisions ?? []),
-          ...buildRecoveredAutoDecisions(
-            reclassified.autoAllowed,
-            reclassified.autoDenied,
-          ),
-        ];
-
+        autoDecisionsToAppend = buildRecoveredAutoDecisions(
+          reclassified.autoAllowed,
+          reclassified.autoDenied,
+        );
         const reclassifiedToolCallIds = new Set(
           [...reclassified.autoAllowed, ...reclassified.autoDenied].map(
             (entry) => entry.approval.toolCallId,
           ),
         );
-        for (const pendingId of [...recovered.pendingRequestIds]) {
+        for (const pendingId of recovered.pendingRequestIds) {
+          if (pendingId === requestId) {
+            continue;
+          }
           const pendingEntry = recovered.approvalsByRequestId.get(pendingId);
           if (
             pendingEntry &&
             reclassifiedToolCallIds.has(pendingEntry.approval.toolCallId)
           ) {
-            recovered.pendingRequestIds.delete(pendingId);
-            recovered.approvalsByRequestId.delete(pendingId);
-            recovered.responsesByRequestId.delete(pendingId);
+            reclassifiedRequestIds.add(pendingId);
           }
         }
       }
     }
   }
 
-  if (recovered.pendingRequestIds.size > 0) {
-    emitRuntimeStateUpdates(runtime, {
-      agent_id: recovered.agentId,
-      conversation_id: recovered.conversationId,
-    });
+  if (
+    runtime.recoveredApprovalState !== recovered ||
+    !recovered.pendingRequestIds.has(requestId)
+  ) {
     return true;
   }
-
-  const decisions: ApprovalDecision[] = [...(recovered.autoDecisions ?? [])];
-  for (const [id, entry] of recovered.approvalsByRequestId) {
-    const approvalResponse = recovered.responsesByRequestId.get(id);
-    if (!approvalResponse) {
-      continue;
-    }
-
-    if ("decision" in approvalResponse) {
-      const decision = approvalResponse.decision;
-      if (decision.behavior === "allow") {
-        decisions.push({
-          type: "approve",
-          approval: decision.updated_input
-            ? {
-                ...entry.approval,
-                toolArgs: JSON.stringify(decision.updated_input),
-              }
-            : entry.approval,
-          reason: decision.message,
-        });
-      } else {
-        decisions.push({
-          type: "deny",
-          approval: entry.approval,
-          reason: decision.message || "Denied via WebSocket",
-        });
-      }
-    } else {
-      decisions.push({
-        type: "deny",
-        approval: entry.approval,
-        reason: approvalResponse.error,
-      });
-    }
-  }
-
-  const scope = {
-    agent_id: recovered.agentId,
-    conversation_id: recovered.conversationId,
-  } as const;
   if (hasInterruptedCacheForScope(runtime.listener, scope)) {
     clearRecoveredApprovalState(runtime);
     emitRuntimeStateUpdates(runtime, scope);
     return true;
   }
-  const approvedDecisions = decisions.filter(
-    (decision): decision is Extract<ApprovalDecision, { type: "approve" }> =>
-      decision.type === "approve",
-  );
-  const approvedToolCallIds = approvedDecisions.map(
-    (decision) => decision.approval.toolCallId,
-  );
 
-  const activeChannelTurn = runtime.activeChannelTurn;
-  if (
-    (!activeChannelTurn || activeChannelTurn.sources.length === 0) &&
-    recovered.agentId
-  ) {
-    const recoveredSources =
-      getChannelRegistry()?.resolveTurnSourcesForScope(
-        recovered.agentId,
-        recovered.conversationId,
-      ) ?? [];
-    if (recoveredSources.length > 0) {
-      recoverActiveChannelTurn(runtime, {
-        sources: recoveredSources,
-        batchId:
-          activeChannelTurn?.batchId ??
-          `recovered-${requestId || crypto.randomUUID()}`,
-        progress: createChannelTurnProgressBuilder(),
-      });
-    }
-  }
-  const shouldFinalizeRecoveredChannelTurn =
-    runtime.activeChannelTurn?.contextRecovered === true;
+  const pendingRequestIdsAfterResponse = [
+    ...recovered.pendingRequestIds,
+  ].filter(
+    (pendingId) =>
+      pendingId !== requestId && !reclassifiedRequestIds.has(pendingId),
+  );
+  const recoveryLease =
+    pendingRequestIdsAfterResponse.length === 0
+      ? runtime.turnLifecycle.begin({
+          origin: "approval_recovery",
+          workingDirectory,
+          initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
+        })
+      : null;
+  let shouldFinalizeRecoveredChannelTurn = false;
+  let continuationFinalized = false;
 
-  const recoveryLease = runtime.turnLifecycle.begin({
-    origin: "approval_recovery",
-    workingDirectory,
-    initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
-    executingToolCallIds: approvedToolCallIds,
-  });
-  recovered.pendingRequestIds.clear();
-  emitRuntimeStateUpdates(runtime, scope);
   try {
+    recovered.responsesByRequestId.set(requestId, response);
+    recovered.pendingRequestIds.delete(requestId);
+    if (autoDecisionsToAppend.length > 0) {
+      recovered.autoDecisions = [
+        ...(recovered.autoDecisions ?? []),
+        ...autoDecisionsToAppend,
+      ];
+    }
+    for (const reclassifiedRequestId of reclassifiedRequestIds) {
+      recovered.pendingRequestIds.delete(reclassifiedRequestId);
+      recovered.approvalsByRequestId.delete(reclassifiedRequestId);
+      recovered.responsesByRequestId.delete(reclassifiedRequestId);
+    }
+
+    if (recovered.pendingRequestIds.size > 0) {
+      emitRuntimeStateUpdates(runtime, {
+        agent_id: recovered.agentId,
+        conversation_id: recovered.conversationId,
+      });
+      return true;
+    }
+
+    const decisions: ApprovalDecision[] = [...(recovered.autoDecisions ?? [])];
+    for (const [id, entry] of recovered.approvalsByRequestId) {
+      const approvalResponse = recovered.responsesByRequestId.get(id);
+      if (!approvalResponse) {
+        continue;
+      }
+
+      if ("decision" in approvalResponse) {
+        const decision = approvalResponse.decision;
+        if (decision.behavior === "allow") {
+          decisions.push({
+            type: "approve",
+            approval: decision.updated_input
+              ? {
+                  ...entry.approval,
+                  toolArgs: JSON.stringify(decision.updated_input),
+                }
+              : entry.approval,
+            reason: decision.message,
+          });
+        } else {
+          decisions.push({
+            type: "deny",
+            approval: entry.approval,
+            reason: decision.message || "Denied via WebSocket",
+          });
+        }
+      } else {
+        decisions.push({
+          type: "deny",
+          approval: entry.approval,
+          reason: approvalResponse.error,
+        });
+      }
+    }
+
+    if (!recoveryLease) {
+      throw new Error("Recovered approval continuation has no lifecycle lease");
+    }
+    const approvedDecisions = decisions.filter(
+      (decision): decision is Extract<ApprovalDecision, { type: "approve" }> =>
+        decision.type === "approve",
+    );
+    const approvedToolCallIds = approvedDecisions.map(
+      (decision) => decision.approval.toolCallId,
+    );
+
+    const activeChannelTurn = runtime.activeChannelTurn;
+    if (
+      (!activeChannelTurn || activeChannelTurn.sources.length === 0) &&
+      recovered.agentId
+    ) {
+      const recoveredSources =
+        getChannelRegistry()?.resolveTurnSourcesForScope(
+          recovered.agentId,
+          recovered.conversationId,
+        ) ?? [];
+      if (recoveredSources.length > 0) {
+        recoverActiveChannelTurn(runtime, {
+          sources: recoveredSources,
+          batchId:
+            activeChannelTurn?.batchId ??
+            `recovered-${requestId || crypto.randomUUID()}`,
+          progress: createChannelTurnProgressBuilder(),
+        });
+      }
+    }
+    shouldFinalizeRecoveredChannelTurn =
+      runtime.activeChannelTurn?.contextRecovered === true;
+
+    runtime.turnLifecycle.setExecutingToolCallIds(
+      recoveryLease,
+      approvedToolCallIds,
+    );
+    recovered.pendingRequestIds.clear();
+    emitRuntimeStateUpdates(runtime, scope);
+    const executionRunId = runtime.activeRunId ?? undefined;
+    const executionChannelTurnSources = runtime.activeChannelTurn?.sources;
     emitToolExecutionStartedEvents(socket, runtime, {
       toolCalls: approvedDecisions.map((decision) => ({
         toolCallId: decision.approval.toolCallId,
         toolName: decision.approval.toolName,
         toolArgs: decision.approval.toolArgs,
       })),
-      runId: runtime.activeRunId ?? undefined,
+      runId: executionRunId,
       agentId: recovered.agentId,
       conversationId: recovered.conversationId,
     });
@@ -665,13 +731,17 @@ export async function resolveRecoveredApprovalResponse(
       socket,
       runtime,
       {
-        runId: runtime.activeRunId ?? undefined,
+        runId: executionRunId,
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
+        shouldEmit: () => runtime.turnLifecycle.isCurrent(recoveryLease),
       },
     );
-    await ensureSecretsHydratedForAgent(runtime.listener, recovered.agentId);
-    const preparedToolContext = await prepareToolExecutionContextForScope({
+    await ensureSecretsHydrated(runtime.listener, recovered.agentId);
+    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      return true;
+    }
+    const preparedToolContext = await prepareToolExecutionContext({
       agentId: recovered.agentId,
       conversationId: recovered.conversationId,
       workingDirectory,
@@ -682,13 +752,16 @@ export async function resolveRecoveredApprovalResponse(
       ),
       modEvents: ensureListenerModAdapter(runtime.listener).events,
     });
+    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      return true;
+    }
     runtime.currentToolset = preparedToolContext.toolset;
     runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
     runtime.currentLoadedTools =
       preparedToolContext.preparedToolContext.loadedToolNames;
     let approvalResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
     try {
-      approvalResults = await executeApprovalBatch(decisions, undefined, {
+      approvalResults = await executeApprovals(decisions, undefined, {
         abortSignal: recoveryLease.signal,
         onStreamingOutput: emitToolExecutionOutput,
         toolContextId: preparedToolContext.preparedToolContext.contextId,
@@ -700,15 +773,18 @@ export async function resolveRecoveredApprovalResponse(
                 conversationId: recovered.conversationId,
               }
             : undefined,
-        channelTurnSources: runtime.activeChannelTurn?.sources,
+        channelTurnSources: executionChannelTurnSources,
       });
     } finally {
       emitToolExecutionOutput.flush();
     }
+    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      return true;
+    }
 
     emitToolExecutionFinishedEvents(socket, runtime, {
       approvals: approvalResults,
-      runId: runtime.activeRunId ?? undefined,
+      runId: executionRunId,
       agentId: recovered.agentId,
       conversationId: recovered.conversationId,
     });
@@ -716,12 +792,15 @@ export async function resolveRecoveredApprovalResponse(
       socket,
       runtime,
       approvalResults,
-      runtime.activeRunId ?? undefined,
+      executionRunId,
       "tool-return",
     );
 
     runtime.turnLifecycle.setExecutingToolCallIds(recoveryLease, []);
     setTurnLoopStatus(runtime, recoveryLease, "SENDING_API_REQUEST", scope);
+    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      return true;
+    }
     emitRuntimeStateUpdates(runtime, scope);
 
     const continuationMessages: Array<MessageCreate | ApprovalCreate> = [
@@ -740,6 +819,10 @@ export async function resolveRecoveredApprovalResponse(
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
     }
 
+    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      return true;
+    }
+
     await processTurn(
       {
         type: "message",
@@ -755,6 +838,14 @@ export async function resolveRecoveredApprovalResponse(
       recoveryLease,
     );
 
+    if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      throw new Error("Recovered continuation returned without finalizing");
+    }
+    if (runtime.turnLifecycle.kind !== "idle") {
+      return true;
+    }
+    continuationFinalized = true;
+
     if (shouldFinalizeRecoveredChannelTurn) {
       await finishActiveChannelTurn(runtime, {
         lastStopReason: runtime.lastStopReason,
@@ -765,9 +856,17 @@ export async function resolveRecoveredApprovalResponse(
       });
     }
 
-    clearRecoveredApprovalState(runtime);
+    if (runtime.recoveredApprovalState === recovered) {
+      clearRecoveredApprovalState(runtime);
+    }
     return true;
   } catch (error) {
+    if (!recoveryLease || continuationFinalized) {
+      throw error;
+    }
+    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+      return true;
+    }
     if (shouldFinalizeRecoveredChannelTurn) {
       await finishActiveChannelTurn(runtime, {
         lastStopReason: runtime.lastStopReason,
@@ -776,10 +875,12 @@ export async function resolveRecoveredApprovalResponse(
         runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
       });
     }
-    recovered.pendingRequestIds = new Set(
-      recovered.approvalsByRequestId.keys(),
-    );
-    recovered.responsesByRequestId.clear();
+    if (runtime.recoveredApprovalState === recovered) {
+      recovered.pendingRequestIds = new Set(
+        recovered.approvalsByRequestId.keys(),
+      );
+      recovered.responsesByRequestId.clear();
+    }
     finishListenerTurn(runtime, recoveryLease, {
       stopReason: recoveryLease.signal.aborted ? "cancelled" : "error",
       socket,

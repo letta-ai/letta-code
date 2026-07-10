@@ -28,9 +28,14 @@ The lifecycle states are complete and mutually exclusive:
 
 ## Lease Rule
 
-Every active turn has a `TurnLease`. Async state changes must carry that lease.
-Lifecycle methods ignore stale leases, so a completion from a reset/old turn
-cannot mutate a replacement turn.
+Every active turn has a `TurnLease`. Async state changes and side effects must
+carry that exact lease. Never look up `currentLease` after an await and assume
+it still belongs to the caller. Check `isCurrent(lease)` immediately after
+awaited execution boundaries, before mutating runtime state or emitting tool,
+protocol, file, or channel events. Capture run IDs and other turn-local context
+before the await; do not read them from a replacement runtime afterward. A
+current cancelling lease may emit normalized interrupt results. A stale lease
+must emit nothing.
 
 `clearConversationRuntimeState()` is an authoritative local reset. It aborts and
 invalidates the current lease, returns the lifecycle to `idle`, and clears
@@ -81,9 +86,12 @@ after the producer path has a regression test.
 - `turn-terminal.ts`: exact-once terminal projection.
 - `turn-status.ts`: loop-status transitions and emission.
 - `turn-cleanup.ts`: post-terminal persistence and memory sync.
+- `turn-context.ts`: guarded process-context ownership release.
 - `turn-transcript.ts`: pure inbound transcript/telemetry helpers.
 - `recovery.ts`: stale and process-restart approval recovery.
 - `queue.ts`: queue ingestion and lifecycle-snapshot gating.
+- `inbound-dispatch.ts`: serialized direct-message ownership handoff.
+- `inbound-queue.ts`: lossless inbound-message queue registration.
 
 ## Investigation Checklist
 
@@ -104,6 +112,8 @@ When logs show contradictory state:
 - `turn-lifecycle.test.ts`: pure transition table, exact-once, stale leases.
 - `turn-lifecycle-integration.test.ts`: cross-module producer regressions.
 - `approval.test.ts`: approval wait/resolution/cancellation ownership.
+- `recovery-lease.test.ts`: recovered approval await/lease boundaries.
+- `message-router.test.ts`: direct-message ownership handoff and queue drain.
 - `listener-queue-adapter.test.ts`: queue decisions from valid snapshots.
 - `channel-turn-session.test.ts`: channel progress lifecycle fan-out.
 

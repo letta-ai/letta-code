@@ -158,6 +158,11 @@ export async function handleApprovalStop(params: {
     typeof sendApprovalContinuationWithRetry
   >[2];
   providerFallback?: ProviderFallbackState;
+  dependencies?: {
+    classifyApprovals?: typeof classifyApprovalsWithSuggestions;
+    executeApprovalBatch?: typeof executeApprovalBatch;
+    ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
+  };
 }): Promise<ApprovalBranchResult> {
   const {
     approvals,
@@ -175,8 +180,15 @@ export async function handleApprovalStop(params: {
     turnLease,
     buildSendOptions,
     providerFallback,
+    dependencies,
   } = params;
   const abortSignal = turnLease.signal;
+  const classifyApprovals =
+    dependencies?.classifyApprovals ?? classifyApprovalsWithSuggestions;
+  const executeApprovals =
+    dependencies?.executeApprovalBatch ?? executeApprovalBatch;
+  const ensureSecretsHydrated =
+    dependencies?.ensureSecretsHydrated ?? ensureSecretsHydratedForAgent;
 
   if (approvals.length === 0) {
     return {
@@ -188,8 +200,9 @@ export async function handleApprovalStop(params: {
   clearPendingApprovalBatchIds(runtime, approvals);
   rememberPendingApprovalBatchIds(runtime, approvals, dequeuedBatchId);
 
-  const { autoAllowed, autoDenied, needsUserInput } =
-    await classifyApprovalsWithSuggestions(approvals, {
+  const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
+    approvals,
+    {
       alwaysRequiresUserInput: isInteractiveApprovalTool,
       treatAskAsDeny: false,
       requireArgsForAutoApprove: true,
@@ -198,7 +211,8 @@ export async function handleApprovalStop(params: {
       permissionModeState: turnPermissionModeState,
       agentId,
       toolContextId: turnToolContextId ?? undefined,
-    });
+    },
+  );
   const continuationWasFullyAutoHandled = needsUserInput.length === 0;
 
   let pendingNeedsUserInput = [...needsUserInput];
@@ -296,6 +310,10 @@ export async function handleApprovalStop(params: {
           toolName: ac.approval.toolName,
           input: ac.parsedArgs,
         });
+        if (shouldInterrupt()) {
+          registry.clearPendingControlRequest(requestId);
+          return interruptTermination();
+        }
       }
 
       let responseBody: ApprovalResponseBody;
@@ -303,6 +321,7 @@ export async function handleApprovalStop(params: {
         responseBody = await requestApprovalOverWS(
           runtime,
           socket,
+          turnLease,
           requestId,
           controlRequest,
         );
@@ -432,6 +451,7 @@ export async function handleApprovalStop(params: {
       runId: executionRunId,
       agentId,
       conversationId,
+      shouldEmit: () => runtime.turnLifecycle.isCurrent(turnLease),
     },
   );
 
@@ -442,7 +462,10 @@ export async function handleApprovalStop(params: {
   // Broadcast new file content to web clients when a file-mutating tool
   // (Edit, Write, MultiEdit) writes to disk, so all windows update immediately.
   const onFileWrite = (filePath: string, content: string) => {
-    if (isListenerTransportOpen(socket)) {
+    if (
+      runtime.turnLifecycle.isCurrent(turnLease) &&
+      isListenerTransportOpen(socket)
+    ) {
       socket.send(
         JSON.stringify({
           type: "file_ops",
@@ -459,9 +482,12 @@ export async function handleApprovalStop(params: {
   let executionResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
   try {
     if (agentId) {
-      await ensureSecretsHydratedForAgent(runtime.listener, agentId);
+      await ensureSecretsHydrated(runtime.listener, agentId);
     }
-    executionResults = await executeApprovalBatch(decisions, undefined, {
+    if (shouldInterrupt()) {
+      return interruptTermination();
+    }
+    executionResults = await executeApprovals(decisions, undefined, {
       toolContextId: turnToolContextId ?? undefined,
       abortSignal,
       onStreamingOutput: emitToolExecutionOutput,
@@ -473,6 +499,9 @@ export async function handleApprovalStop(params: {
     });
   } finally {
     emitToolExecutionOutput.flush();
+  }
+  if (!runtime.turnLifecycle.isCurrent(turnLease)) {
+    return interruptTermination();
   }
   const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
     runtime,
@@ -498,10 +527,7 @@ export async function handleApprovalStop(params: {
     socket,
     runtime,
     persistedExecutionResults,
-    runtime.activeRunId ||
-      runId ||
-      msgRunIds[msgRunIds.length - 1] ||
-      undefined,
+    executionRunId,
     "tool-return",
   );
 

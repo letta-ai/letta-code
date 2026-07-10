@@ -7,6 +7,7 @@ import {
 } from "./protocol-outbound";
 import { evictConversationRuntimeIfIdle } from "./runtime";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
+import type { TurnLease } from "./turn-lifecycle";
 import { setCommandLoopStatus, setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime } from "./types";
 
@@ -241,6 +242,7 @@ export function rejectPendingApprovalResolvers(
 export function requestApprovalOverWS(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
+  turnLease: TurnLease,
   requestId: string,
   controlRequest: ControlRequest,
 ): Promise<ApprovalResponseBody> {
@@ -248,10 +250,6 @@ export function requestApprovalOverWS(
     return Promise.reject(new Error("WebSocket not open"));
   }
 
-  const turnLease = runtime.turnLifecycle.currentLease;
-  if (!turnLease) {
-    return Promise.reject(new Error("No active turn for approval request"));
-  }
   const abortSignal = turnLease.signal;
   const isInterrupted = () =>
     !runtime.turnLifecycle.isCurrent(turnLease) || abortSignal.aborted;

@@ -73,6 +73,7 @@ import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { runListenerTurnCleanup } from "./turn-cleanup";
 import { completeSuccessfulListenerTurn } from "./turn-completion";
+import { releaseListenerTurnContext } from "./turn-context";
 import type { TurnLease } from "./turn-lifecycle";
 import { createTurnInputSender } from "./turn-send";
 import { prepareListenerTurn } from "./turn-setup";
@@ -911,13 +912,17 @@ export async function handleIncomingMessage(
 
     richDraftStreamer?.dispose();
 
-    if (finalizedByThisInvocation) {
-      await runListenerTurnCleanup({
-        runtime,
-        agentId,
-        normalizedAgentId,
-        conversationId,
-      });
+    try {
+      if (finalizedByThisInvocation) {
+        await runListenerTurnCleanup({
+          runtime,
+          agentId,
+          normalizedAgentId,
+          conversationId,
+        });
+      }
+    } finally {
+      releaseListenerTurnContext({ runtime, agentId, conversationId });
     }
 
     evictConversationRuntimeIfIdle(runtime);

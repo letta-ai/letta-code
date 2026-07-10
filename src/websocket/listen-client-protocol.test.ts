@@ -180,6 +180,21 @@ function makeControlRequest(requestId: string): ControlRequest {
   };
 }
 
+function requestTestApproval(
+  runtime: ConversationRuntime,
+  socket: MockSocket,
+  turnLease: ReturnType<typeof beginTestTurn>,
+  requestId: string,
+) {
+  return requestApprovalOverWS(
+    runtime,
+    socket as unknown as WebSocket,
+    turnLease,
+    requestId,
+    makeControlRequest(requestId),
+  );
+}
+
 describe("listen-client parseServerMessage", () => {
   test("parses valid input approval_response command", () => {
     const parsed = parseServerMessage(
@@ -4957,14 +4972,9 @@ describe("listen-client capability-gated approval flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-update-test";
-    beginTestTurn(runtime);
+    const turnLease = beginTestTurn(runtime);
 
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
+    const pending = requestTestApproval(runtime, socket, turnLease, requestId);
 
     // Simulate approval_response with updated_input
     resolvePendingApprovalResolver(runtime, {
@@ -4998,14 +5008,9 @@ describe("listen-client capability-gated approval flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-allow-comment-test";
-    beginTestTurn(runtime);
+    const turnLease = beginTestTurn(runtime);
 
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
+    const pending = requestTestApproval(runtime, socket, turnLease, requestId);
 
     resolvePendingApprovalResolver(runtime, {
       request_id: requestId,
@@ -5031,14 +5036,9 @@ describe("listen-client capability-gated approval flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-deny-test";
-    beginTestTurn(runtime);
+    const turnLease = beginTestTurn(runtime);
 
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
+    const pending = requestTestApproval(runtime, socket, turnLease, requestId);
 
     resolvePendingApprovalResolver(runtime, {
       request_id: requestId,
@@ -5061,14 +5061,9 @@ describe("listen-client capability-gated approval flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-error-test";
-    beginTestTurn(runtime);
+    const turnLease = beginTestTurn(runtime);
 
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
+    const pending = requestTestApproval(runtime, socket, turnLease, requestId);
 
     resolvePendingApprovalResolver(runtime, {
       request_id: requestId,
@@ -5092,14 +5087,11 @@ describe("listen-client capability-gated approval flow", () => {
     const socket = new MockSocket(WebSocket.OPEN);
     listener.socket = socket as unknown as WebSocket;
     const requestId = "perm-adapter-test";
-    beginTestTurn(runtime);
+    const turnLease = beginTestTurn(runtime);
 
-    void requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    ).catch(() => {});
+    void requestTestApproval(runtime, socket, turnLease, requestId).catch(
+      () => {},
+    );
 
     expect(socket.sentPayloads.length).toBeGreaterThanOrEqual(2);
     const outbound = socket.sentPayloads.map((payload) =>
@@ -5150,12 +5142,12 @@ describe("listen-client capability-gated approval flow", () => {
     );
     const socket = new MockSocket(WebSocket.OPEN);
 
-    beginTestTurn(runtime, { runId: "run-1" });
-    void requestApprovalOverWS(
+    const turnLease = beginTestTurn(runtime, { runId: "run-1" });
+    void requestTestApproval(
       runtime,
-      socket as unknown as WebSocket,
+      socket,
+      turnLease,
       "perm-interrupted",
-      makeControlRequest("perm-interrupted"),
     ).catch(() => {});
     runtime.pendingInterruptedContext = {
       agentId: "agent-1",
@@ -5375,7 +5367,7 @@ describe("listen-client capability-gated approval flow", () => {
       "default",
     );
 
-    beginTestTurn(runtime, {
+    const turnLease = beginTestTurn(runtime, {
       initialStatus: "PROCESSING_API_RESPONSE",
       runId: "run-active",
     });
@@ -5400,12 +5392,7 @@ describe("listen-client capability-gated approval flow", () => {
     expect(runtime.cancelRequested).toBe(true);
 
     await expect(
-      requestApprovalOverWS(
-        runtime,
-        socket as unknown as WebSocket,
-        "perm-late-after-abort",
-        makeControlRequest("perm-late-after-abort"),
-      ),
+      requestTestApproval(runtime, socket, turnLease, "perm-late-after-abort"),
     ).rejects.toThrow("Cancelled by user");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
     expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
@@ -5515,11 +5502,11 @@ describe("listen-client capability-gated approval flow", () => {
     const turnLease = beginTestTurn(runtime, {
       initialStatus: "WAITING_ON_APPROVAL",
     });
-    const pending = requestApprovalOverWS(
+    const pending = requestTestApproval(
       runtime,
-      socket as unknown as WebSocket,
+      socket,
+      turnLease,
       "perm-live",
-      makeControlRequest("perm-live"),
     );
 
     const handled = await __listenClientTestUtils.handleAbortMessageInput(
