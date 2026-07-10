@@ -31,11 +31,10 @@ import {
   isActiveMemfsEnabled,
   isLocalMemfsActive,
 } from "@/agent/memory-runtime";
+import { buildReflectionMemoryScope } from "@/agent/memory-worktree";
 import { sendMessageStreamWithBackend } from "@/agent/message";
-import {
-  detectPersonalityFromPersonaFile,
-  type PersonalityId,
-} from "@/agent/personality";
+import { detectPersonalityFromPersonaFile } from "@/agent/personality";
+import type { PersonalityId } from "@/agent/personality-presets";
 import { recordSessionEnd } from "@/agent/session-history";
 import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
@@ -65,27 +64,43 @@ import {
 } from "@/cli/helpers/init-command";
 import { buildLogoutSuccessMessage } from "@/cli/helpers/logout-message";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
-import { handleMemorySubagentCompletion } from "@/cli/helpers/memory-subagent-completion";
 import {
   buildMessageContentFromDisplay,
   clearPlaceholdersInText,
 } from "@/cli/helpers/paste-registry";
 import { resolveReasoningTabToggleCommand } from "@/cli/helpers/reasoning-tab-toggle";
 import {
+  buildReflectionArenaChoiceQuestions,
+  finalizeReflectionArenaChoice,
+  formatReflectionArenaAwaitingChoice,
+  launchReflectionArena,
+  loadReflectionArenaRun,
+  REFLECTION_ARENA_MODEL_A_DEFAULT,
+  type ReflectionArenaChoice,
+  type ReflectionArenaChoiceQuestion,
+  sampleReflectionArenaComparisonModel,
+  startReflectionArenaRun,
+} from "@/cli/helpers/reflection-arena";
+import {
   AUTO_REFLECTION_DESCRIPTION,
+  finalizeReflectionMemoryWorktreeLaunch,
   launchReflectionSubagent,
+  prepareReflectionMemoryWorktreeLaunch,
   releaseReflectionLaunch,
   tryReserveReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
 import {
+  buildAutoReflectionPayload,
   buildMultiReflectionPayload,
-  buildParentMemorySnapshot,
   buildReflectionAutoPayload,
   buildReflectionSelectorPrompt,
-  buildReflectionSubagentPrompt,
   finalizeMultiReflectionPayload,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
+import {
+  formatSkillNameFrontmatterRepairReport,
+  repairMissingSkillNameFrontmatter,
+} from "@/cli/helpers/skill-name-frontmatter-repair";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
@@ -292,6 +307,12 @@ type SubmitHandlerContext = {
   setProfileConfirmPending: Dispatch<
     SetStateAction<ProfileConfirmPending | null>
   >;
+  setReflectionArenaChoicePending: Dispatch<
+    SetStateAction<{
+      questions: ReflectionArenaChoiceQuestion[];
+      runId: string;
+    } | null>
+  >;
   setWorktreeDiffSelectorPending: Dispatch<
     SetStateAction<WorktreeDiffSelectorPending | null>
   >;
@@ -333,6 +354,21 @@ type ReflectCommandArgs =
   | { conversationIds: string[]; instruction?: string; kind: "conversations" }
   | { instruction?: string; kind: "auto" };
 
+type ReflectArenaCommandArgs =
+  | {
+      instruction?: string;
+      kind: "launch";
+      modelA?: string;
+      modelB?: string;
+    }
+  | {
+      choice: ReflectionArenaChoice;
+      kind: "choose";
+      notes?: string;
+      runId: string;
+    }
+  | { kind: "resume"; runId: string };
+
 function isReflectCommandFlag(value: string): boolean {
   return (
     value === "--" ||
@@ -344,6 +380,113 @@ function isReflectCommandFlag(value: string): boolean {
     value === "-i" ||
     value.startsWith("--instruction=")
   );
+}
+
+function parseReflectArenaCommandArgs(input: string): ReflectArenaCommandArgs {
+  const trimmed = input.trim();
+  const command = trimmed.split(/\s+/, 1)[0] ?? "/reflect-arena";
+  const parts = parseModCommandArgv(trimmed.slice(command.length).trim());
+  if (parts[0] === "choose") {
+    const runId = parts[1];
+    const rawChoice = parts[2];
+    if (!runId || !rawChoice) {
+      throw new Error(
+        "Usage: /reflect-arena choose <run-id> <1|2|tie> [notes]",
+      );
+    }
+    if (rawChoice !== "1" && rawChoice !== "2" && rawChoice !== "tie") {
+      throw new Error(
+        "Usage: /reflect-arena choose <run-id> <1|2|tie> [notes]",
+      );
+    }
+    return {
+      kind: "choose",
+      runId,
+      choice: rawChoice,
+      notes: parts.slice(3).join(" ").trim() || undefined,
+    };
+  }
+  if (parts[0] === "resume") {
+    const runId = parts[1];
+    if (!runId) {
+      throw new Error("Usage: /reflect-arena resume <run-id>");
+    }
+    return { kind: "resume", runId };
+  }
+
+  let modelA: string | undefined;
+  let modelB: string | undefined;
+  const instructions: string[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (!part) continue;
+    if (part === "--model-a") {
+      modelA = parts[index + 1];
+      if (!modelA) throw new Error("Usage: /reflect-arena --model-a <model>");
+      index += 1;
+      continue;
+    }
+    if (part.startsWith("--model-a=")) {
+      modelA = part.slice("--model-a=".length).trim();
+      if (!modelA) throw new Error("Usage: /reflect-arena --model-a <model>");
+      continue;
+    }
+    if (part === "--model-b") {
+      modelB = parts[index + 1];
+      if (!modelB) throw new Error("Usage: /reflect-arena --model-b <model>");
+      index += 1;
+      continue;
+    }
+    if (part.startsWith("--model-b=")) {
+      modelB = part.slice("--model-b=".length).trim();
+      if (!modelB) throw new Error("Usage: /reflect-arena --model-b <model>");
+      continue;
+    }
+    if (
+      part === "--instruction" ||
+      part === "--instructions" ||
+      part === "-i"
+    ) {
+      const instruction = parts
+        .slice(index + 1)
+        .join(" ")
+        .trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect-arena --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      break;
+    }
+    if (part.startsWith("--instruction=")) {
+      const instruction = part.slice("--instruction=".length).trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect-arena --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      continue;
+    }
+    if (part === "--") {
+      const instruction = parts
+        .slice(index + 1)
+        .join(" ")
+        .trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect-arena -- <instruction>");
+      }
+      instructions.push(instruction);
+      break;
+    }
+    throw new Error(
+      "Usage: /reflect-arena [--model-a <model>] [--model-b <model>] [--instruction <instruction>]",
+    );
+  }
+
+  return {
+    kind: "launch",
+    modelA,
+    modelB,
+    instruction: instructions.join("\n").trim() || undefined,
+  };
 }
 
 function parseReflectCommandArgs(input: string): ReflectCommandArgs {
@@ -536,6 +679,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setProfileConfirmPending,
+    setReflectionArenaChoicePending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled,
     setSearchQuery,
@@ -2134,27 +2278,63 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 getReflectionSettings(agentId).trigger === "compaction-event" &&
                 isActiveMemfsEnabled(agentId)
               ) {
-                void launchReflectionSubagent({
-                  agentId,
-                  conversationId: compactConversationId,
-                  memfsEnabled: isActiveMemfsEnabled(agentId),
-                  triggerSource: "compaction-event",
-                  description: AUTO_REFLECTION_DESCRIPTION,
-                  completionConversationId: () => conversationIdRef.current,
-                  recompileByConversation:
-                    systemPromptRecompileByConversationRef.current,
-                  recompileQueuedByConversation:
-                    queuedSystemPromptRecompileByConversationRef.current,
-                  onCompletionMessage: (completionMessage) => {
-                    appendTaskNotificationEvents([completionMessage]);
-                  },
-                  feedbackContext: {
-                    parentAgentName: agentName,
-                    parentAgentDescription: agentDescription,
-                    surface: "letta_code_tui",
-                    model: currentModelId,
-                  },
-                });
+                if (experimentManager.isEnabled("reflection_arena")) {
+                  void launchReflectionArena({
+                    agentId,
+                    conversationId: compactConversationId,
+                    triggerSource: "compaction-event",
+                    models: [
+                      REFLECTION_ARENA_MODEL_A_DEFAULT,
+                      sampleReflectionArenaComparisonModel(),
+                    ],
+                    feedbackContext: {
+                      parentAgentName: agentName,
+                      parentAgentDescription: agentDescription,
+                      surface: "letta_code_tui",
+                      model: currentModelId,
+                    },
+                    onReady: (message, readyRun) => {
+                      appendTaskNotificationEvents([message]);
+                      setReflectionArenaChoicePending({
+                        runId: readyRun.runId,
+                        questions: buildReflectionArenaChoiceQuestions(
+                          readyRun.runId,
+                        ),
+                      });
+                    },
+                  }).catch((reflectionError) => {
+                    debugLog(
+                      "memory",
+                      "Skipping post-compaction reflection arena:",
+                      reflectionError instanceof Error
+                        ? reflectionError.message
+                        : String(reflectionError),
+                    );
+                  });
+                } else {
+                  void launchReflectionSubagent({
+                    agentId,
+                    conversationId: compactConversationId,
+                    memfsEnabled: isActiveMemfsEnabled(agentId),
+                    triggerSource: "compaction-event",
+                    skipPendingWorktreeReminderScan: true,
+                    description: AUTO_REFLECTION_DESCRIPTION,
+                    completionConversationId: () => conversationIdRef.current,
+                    recompileByConversation:
+                      systemPromptRecompileByConversationRef.current,
+                    recompileQueuedByConversation:
+                      queuedSystemPromptRecompileByConversationRef.current,
+                    onCompletionMessage: (completionMessage) => {
+                      appendTaskNotificationEvents([completionMessage]);
+                    },
+                    feedbackContext: {
+                      parentAgentName: agentName,
+                      parentAgentDescription: agentDescription,
+                      surface: "letta_code_tui",
+                      model: currentModelId,
+                    },
+                  });
+                }
               }
             } catch (reflectionError) {
               debugLog(
@@ -2519,7 +2699,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               "USAGE",
               "  /memfs status    — show status",
               "  /memfs enable    — enable filesystem-backed memory",
-              "  /memfs disable   — disable filesystem-backed memory",
               "  /memfs sync      — sync blocks and files now",
               "  /memfs reset     — move local memfs to /tmp and recreate dirs",
               "  /memfs help      — show this help",
@@ -2557,7 +2736,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               const { applyMemfsFlags } = await import(
                 "@/agent/memory-filesystem"
               );
-              const result = await applyMemfsFlags(agentId, true, false);
+              const result = await applyMemfsFlags(agentId, true);
               updateMemorySyncCommand(
                 cmdId,
                 `Memory filesystem enabled (git-backed).\nPath: ${result.memoryDir}`,
@@ -2694,76 +2873,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               updateMemorySyncCommand(
                 cmdId,
                 `Failed to reset memfs: ${errorText}`,
-                false,
-                msg,
-              );
-            } finally {
-              setCommandRunning(false);
-            }
-
-            return { submitted: true };
-          }
-
-          if (subcommand === "disable") {
-            if (getBackend().capabilities.localMemfs) {
-              cmd.fail(
-                "Disabling MemFS is not supported by the local backend.",
-              );
-              return { submitted: true };
-            }
-
-            updateMemorySyncCommand(
-              cmdId,
-              "Disabling memory filesystem...",
-              true,
-              msg,
-              true,
-            );
-            setCommandRunning(true);
-
-            try {
-              // 1. Re-attach memory tool
-              const { reattachMemoryTool } = await import("@/tools/toolset");
-              const modelId = currentModelId || "anthropic/claude-sonnet-4";
-              await reattachMemoryTool(agentId, modelId);
-
-              // 2. Update system prompt to remove memfs section
-              const { updateAgentSystemPromptMemfs } = await import(
-                "@/agent/modify"
-              );
-              await updateAgentSystemPromptMemfs(agentId, false);
-
-              // 3. Update settings
-              settingsManager.setMemfsEnabled(agentId, false);
-
-              // 4. Remove git-memory-enabled tag from agent
-              const { removeGitMemoryTag } = await import("@/agent/memory-git");
-              await removeGitMemoryTag(agentId);
-
-              // 5. Move local memory dir to /tmp (backup, not delete)
-              let backupInfo = "";
-              const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-              if (existsSync(memoryDir)) {
-                const backupDir = join(
-                  tmpdir(),
-                  `letta-memfs-disable-${agentId}-${Date.now()}`,
-                );
-                renameSync(memoryDir, backupDir);
-                backupInfo = `\nLocal files backed up to ${backupDir}`;
-              }
-
-              updateMemorySyncCommand(
-                cmdId,
-                `Memory filesystem disabled. Memory tool re-attached.${backupInfo}`,
-                true,
-                msg,
-              );
-            } catch (error) {
-              const errorText =
-                error instanceof Error ? error.message : String(error);
-              updateMemorySyncCommand(
-                cmdId,
-                `Failed to disable memfs: ${errorText}`,
                 false,
                 msg,
               );
@@ -2919,6 +3028,123 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
+        // Experimental reflection arena - blind A/B reflection model comparison
+        if (
+          trimmed === "/reflect-arena" ||
+          trimmed.startsWith("/reflect-arena ")
+        ) {
+          const cmd = commandRunner.start(msg, "Preparing reflection arena...");
+
+          if (!experimentManager.isEnabled("reflection_arena")) {
+            cmd.fail(
+              "Reflection arena is experimental. Enable it with /experiments or LETTA_REFLECTION_ARENA=1.",
+            );
+            return { submitted: true };
+          }
+
+          if (!isActiveMemfsEnabled(agentId)) {
+            cmd.fail(
+              "Memory filesystem is not enabled. Reflection arena requires MemFS.",
+            );
+            return { submitted: true };
+          }
+
+          try {
+            const arenaArgs = parseReflectArenaCommandArgs(trimmed);
+            if (arenaArgs.kind === "choose") {
+              const { message } = await finalizeReflectionArenaChoice({
+                runId: arenaArgs.runId,
+                choice: arenaArgs.choice,
+                notes: arenaArgs.notes,
+                onHfUploadComplete: (message) => {
+                  appendTaskNotificationEvents([message]);
+                },
+                recompileByConversation:
+                  systemPromptRecompileByConversationRef.current,
+                recompileQueuedByConversation:
+                  queuedSystemPromptRecompileByConversationRef.current,
+              });
+              cmd.finish(message, true);
+              return { submitted: true };
+            }
+            if (arenaArgs.kind === "resume") {
+              const run = await loadReflectionArenaRun(arenaArgs.runId);
+              if (run.status !== "awaiting_choice") {
+                cmd.fail(
+                  `Reflection arena run ${arenaArgs.runId} is ${run.status}; expected awaiting_choice.`,
+                );
+                return { submitted: true };
+              }
+              setReflectionArenaChoicePending({
+                runId: run.runId,
+                questions: buildReflectionArenaChoiceQuestions(run.runId),
+              });
+              cmd.finish(
+                `${formatReflectionArenaAwaitingChoice(run)}\n\nResumed reflection arena choice prompt for run ${run.runId}.`,
+                true,
+              );
+              return { submitted: true };
+            }
+
+            let systemPrompt: string | undefined;
+            try {
+              const agent = await getBackend().retrieveAgent(agentId);
+              systemPrompt = agent.system ?? undefined;
+            } catch {
+              // Non-fatal — the arena payload will just omit the system prompt.
+            }
+
+            const reflectionConversationId =
+              conversationIdRef.current ?? "default";
+            const payload = await buildAutoReflectionPayload(
+              agentId,
+              reflectionConversationId,
+              systemPrompt,
+            );
+            if (!payload) {
+              cmd.fail("No new transcript content to reflect on.");
+              return { submitted: true };
+            }
+
+            const modelA = arenaArgs.modelA ?? REFLECTION_ARENA_MODEL_A_DEFAULT;
+            const modelB =
+              arenaArgs.modelB ?? sampleReflectionArenaComparisonModel();
+
+            const run = await startReflectionArenaRun({
+              agentId,
+              conversationId: reflectionConversationId,
+              triggerSource: "manual",
+              instruction: arenaArgs.instruction,
+              models: [modelA, modelB],
+              payload,
+              feedbackContext: {
+                parentAgentName: agentName,
+                parentAgentDescription: agentDescription,
+                surface: "letta_code_tui",
+                model: currentModelId,
+              },
+              onReady: (message, readyRun) => {
+                appendTaskNotificationEvents([message]);
+                setReflectionArenaChoicePending({
+                  runId: readyRun.runId,
+                  questions: buildReflectionArenaChoiceQuestions(
+                    readyRun.runId,
+                  ),
+                });
+              },
+            });
+            cmd.finish(
+              `Started reflection arena run ${run.runId}. View the transcript payload here: ${run.payloadPath}`,
+              true,
+            );
+          } catch (error) {
+            const errorDetails = formatErrorDetails(error, agentId);
+            cmd.fail(`Failed to start reflection arena: ${errorDetails}`);
+          }
+
+          return { submitted: true };
+        }
+
         // Special handling for /reflect command - manually launch reflection subagent
         if (trimmed === "/reflect" || trimmed.startsWith("/reflect ")) {
           const cmd = commandRunner.start(msg, "Launching reflection agent...");
@@ -2944,6 +3170,43 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               conversationIdRef.current ?? "default";
 
             if (reflectArgs.kind === "single") {
+              if (experimentManager.isEnabled("reflection_arena")) {
+                const arenaResult = await launchReflectionArena({
+                  agentId,
+                  conversationId: reflectionConversationId,
+                  triggerSource: "manual",
+                  instruction: reflectArgs.instruction,
+                  models: [
+                    REFLECTION_ARENA_MODEL_A_DEFAULT,
+                    sampleReflectionArenaComparisonModel(),
+                  ],
+                  feedbackContext: {
+                    parentAgentName: agentName,
+                    parentAgentDescription: agentDescription,
+                    surface: "letta_code_tui",
+                    model: currentModelId,
+                  },
+                  onReady: (message, readyRun) => {
+                    appendTaskNotificationEvents([message]);
+                    setReflectionArenaChoicePending({
+                      runId: readyRun.runId,
+                      questions: buildReflectionArenaChoiceQuestions(
+                        readyRun.runId,
+                      ),
+                    });
+                  },
+                });
+                if (!arenaResult.launched) {
+                  cmd.fail("No new transcript content to reflect on.");
+                  return { submitted: true };
+                }
+                cmd.finish(
+                  `Started reflection arena run ${arenaResult.run.runId}. View the transcript payload here: ${arenaResult.payloadPath}`,
+                  true,
+                );
+                return { submitted: true };
+              }
+
               const result = await launchReflectionSubagent({
                 agentId,
                 conversationId: reflectionConversationId,
@@ -3085,14 +3348,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                         return;
                       }
 
-                      const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-                      const parentMemory =
-                        await buildParentMemorySnapshot(memoryDir);
-                      const reflectionPrompt = buildReflectionSubagentPrompt({
-                        instruction: reflectArgs.instruction,
-                        memoryDir,
-                        parentMemory,
-                      });
+                      const { worktree, reflectionPrompt } =
+                        await prepareReflectionMemoryWorktreeLaunch({
+                          agentId,
+                          instruction: reflectArgs.instruction,
+                        });
 
                       spawnBackgroundSubagentTask({
                         subagentType: "reflection",
@@ -3100,6 +3360,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                         description: "Reflecting on auto-selected transcripts",
                         silentCompletion: true,
                         transcriptPath: autoReflectionPayload.payloadPath,
+                        memoryScope: buildReflectionMemoryScope(worktree),
                         parentScope: {
                           agentId,
                           conversationId: reflectionConversationId,
@@ -3119,30 +3380,27 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                                 error: reflectionError,
                               },
                             );
-                            await finalizeMultiReflectionPayload(
-                              agentId,
-                              autoReflectionPayload.manifest,
-                              reflectionSuccess,
-                            );
-                            const msg = await handleMemorySubagentCompletion(
-                              {
+                            const { completionSuccess, completionMessage } =
+                              await finalizeReflectionMemoryWorktreeLaunch({
+                                worktree,
+                                subagentSuccess: reflectionSuccess,
+                                subagentError: reflectionError,
                                 agentId,
                                 conversationId: conversationIdRef.current,
-                                subagentType: "reflection",
-                                success: reflectionSuccess,
-                                error: reflectionError,
                                 subagentAgentId: reflectionAgentId ?? undefined,
-                              },
-                              {
                                 recompileByConversation:
                                   systemPromptRecompileByConversationRef.current,
                                 recompileQueuedByConversation:
                                   queuedSystemPromptRecompileByConversationRef.current,
                                 logRecompileFailure: (message) =>
                                   debugWarn("memory", message),
-                              },
+                              });
+                            await finalizeMultiReflectionPayload(
+                              agentId,
+                              autoReflectionPayload.manifest,
+                              completionSuccess,
                             );
-                            appendTaskNotificationEvents([msg]);
+                            appendTaskNotificationEvents([completionMessage]);
                           } finally {
                             releaseReflectionReservation();
                           }
@@ -3207,13 +3465,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               return { submitted: true };
             }
 
-            const memoryDir = getScopedMemoryFilesystemRoot(agentId);
-            const parentMemory = await buildParentMemorySnapshot(memoryDir);
-            const reflectionPrompt = buildReflectionSubagentPrompt({
-              instruction: reflectArgs.instruction,
-              memoryDir,
-              parentMemory,
-            });
+            const { worktree, reflectionPrompt } =
+              await prepareReflectionMemoryWorktreeLaunch({
+                agentId,
+                instruction: reflectArgs.instruction,
+              });
 
             const {
               spawnBackgroundSubagentTask,
@@ -3225,6 +3481,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               description: "Reflecting on conversation",
               silentCompletion: true,
               transcriptPath: reflectionPayload.payloadPath,
+              memoryScope: buildReflectionMemoryScope(worktree),
               parentScope: {
                 agentId,
                 conversationId: reflectionConversationId,
@@ -3240,31 +3497,27 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     conversationId: reflectionConversationId,
                     error,
                   });
-                  await finalizeMultiReflectionPayload(
-                    agentId,
-                    reflectionPayload.manifest,
-                    success,
-                  );
-
-                  const msg = await handleMemorySubagentCompletion(
-                    {
+                  const { completionSuccess, completionMessage } =
+                    await finalizeReflectionMemoryWorktreeLaunch({
+                      worktree,
+                      subagentSuccess: success,
+                      subagentError: error,
                       agentId,
                       conversationId: conversationIdRef.current,
-                      subagentType: "reflection",
-                      success,
-                      error,
                       subagentAgentId: reflectionAgentId ?? undefined,
-                    },
-                    {
                       recompileByConversation:
                         systemPromptRecompileByConversationRef.current,
                       recompileQueuedByConversation:
                         queuedSystemPromptRecompileByConversationRef.current,
                       logRecompileFailure: (message) =>
                         debugWarn("memory", message),
-                    },
+                    });
+                  await finalizeMultiReflectionPayload(
+                    agentId,
+                    reflectionPayload.manifest,
+                    completionSuccess,
                   );
-                  appendTaskNotificationEvents([msg]);
+                  appendTaskNotificationEvents([completionMessage]);
                 } finally {
                   releaseReflectionReservation();
                 }
@@ -3364,10 +3617,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             const { context: gitContext } = gatherInitGitContext();
             const memoryDir = getActiveMemoryDirectory(agentId);
+            const skillNameFrontmatterRepair =
+              await repairMissingSkillNameFrontmatter(memoryDir);
+            const skillNameFrontmatterRepairReport =
+              formatSkillNameFrontmatterRepairReport(
+                skillNameFrontmatterRepair,
+              );
 
             const doctorMessage = buildDoctorMessage({
               gitContext,
               memoryDir,
+              skillNameFrontmatterRepairReport,
             });
 
             await processConversationWithQueuedApprovals([
@@ -3829,6 +4089,7 @@ ${SYSTEM_REMINDER_CLOSE}
       resetTrajectoryBases,
       systemInfoReminderEnabled,
       appendTaskNotificationEvents,
+      setReflectionArenaChoicePending,
       maybeCarryOverActiveConversationModel,
       setConversationAutoTitleEligibility,
       setConversationIdAndRef,

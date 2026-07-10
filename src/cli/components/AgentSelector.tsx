@@ -2,6 +2,11 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { isLocalAgentId } from "@/agent/agent-id";
+import {
+  getCurrentCloudFavoriteTag,
+  LOCAL_DESKTOP_FAVORITE_TAG,
+  unpinAgentForCurrentUser,
+} from "@/agent/favorites";
 import { getModelDisplayName } from "@/agent/model";
 import { getBackendForMode } from "@/backend/backend";
 import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
@@ -54,7 +59,6 @@ interface PinnedAgentData {
   agent: AgentState | null;
   error: string | null;
   backendMode: AgentBackendMode;
-  source: "settings" | "localFavorite";
 }
 
 const ALL_TABS: { id: TabId; label: string }[] = [
@@ -81,7 +85,6 @@ const TAB_EMPTY_STATES: Record<TabId, string> = {
 const DISPLAY_PAGE_SIZE = 5;
 const FETCH_PAGE_SIZE = 20;
 const NEW_AGENT_DEFAULT_BACKEND: AgentBackendMode = "api";
-const LOCAL_DESKTOP_FAVORITE_TAG = "favorite:user:local";
 
 export function getPinnedAgentBackendMode(agentId: string): AgentBackendMode {
   return isLocalAgentId(agentId) ? "local" : "api";
@@ -265,6 +268,27 @@ export function AgentSelector({
       const localFavoriteAgents = listLocalAgentsFromDisk().filter((agent) =>
         agent.tags.includes(LOCAL_DESKTOP_FAVORITE_TAG),
       );
+      let cloudFavoriteAgents: AgentState[] = [];
+
+      if (hasCloudCredentials()) {
+        try {
+          const favoriteTag = await getCurrentCloudFavoriteTag();
+          if (favoriteTag) {
+            const { getClient } = await import("@/backend/api/client");
+            const client = await getClient();
+            const agentList = await client.agents.list({
+              limit: FETCH_PAGE_SIZE,
+              include: ["agent.blocks"],
+              order: "desc",
+              order_by: "last_run_completion",
+              tags: [favoriteTag],
+            });
+            cloudFavoriteAgents = agentList.items;
+          }
+        } catch {
+          // Keep legacy settings pins available if cloud favorite lookup fails.
+        }
+      }
 
       let pinnedData: PinnedAgentData[] = [];
 
@@ -280,7 +304,6 @@ export function AgentSelector({
                   agent: null,
                   error: "Not signed in",
                   backendMode,
-                  source: "settings",
                 };
               }
               const agentBackend = getBackendForMode(backendMode);
@@ -292,7 +315,6 @@ export function AgentSelector({
                 agent,
                 error: null,
                 backendMode,
-                source: "settings",
               };
             } catch {
               return {
@@ -300,21 +322,33 @@ export function AgentSelector({
                 agent: null,
                 error: "Agent not found",
                 backendMode,
-                source: "settings",
               };
             }
           }),
         );
       }
 
-      const favoriteData: PinnedAgentData[] = localFavoriteAgents
-        .filter((agent) => !pinnedIdSet.has(agent.id))
-        .map((agent) => ({
-          agentId: agent.id,
+      const favoriteAgents: Array<{
+        agent: AgentState;
+        backendMode: AgentBackendMode;
+      }> = [
+        ...localFavoriteAgents.map((agent) => ({
           agent,
+          backendMode: "local" as const,
+        })),
+        ...cloudFavoriteAgents.map((agent) => ({
+          agent,
+          backendMode: "api" as const,
+        })),
+      ];
+
+      const favoriteData: PinnedAgentData[] = favoriteAgents
+        .filter(({ agent }) => !pinnedIdSet.has(agent.id))
+        .map((agent) => ({
+          agentId: agent.agent.id,
+          agent: agent.agent,
           error: null,
-          backendMode: "local",
-          source: "localFavorite",
+          backendMode: agent.backendMode,
         }));
       pinnedData = [...pinnedData, ...favoriteData];
 
@@ -759,9 +793,11 @@ export function AgentSelector({
     ) {
       // Unpin from current scope (pinned tab only)
       const selected = pinnedPageAgents[pinnedSelectedIndex];
-      if (selected?.source === "settings") {
-        settingsManager.unpinAgent(selected.agentId);
-        loadPinnedAgents();
+      if (selected) {
+        const backend = getBackendForMode(selected.backendMode);
+        void unpinAgentForCurrentUser(selected.agentId, backend).finally(() => {
+          loadPinnedAgents();
+        });
       }
     } else if (allowDelete && input === "D") {
       // Delete agent - open confirmation
@@ -1011,7 +1047,7 @@ export function AgentSelector({
               const pinnedHint =
                 allowPinActions &&
                 activeTab === "pinned" &&
-                selectedPinnedAgent?.source === "settings"
+                selectedPinnedAgent !== undefined
                   ? " · Shift+P unpin"
                   : "";
               const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch${deleteHint}${pinnedHint} · Esc cancel`;

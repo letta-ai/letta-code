@@ -27,6 +27,7 @@ import {
   buildListModelsEntries,
   buildListModelsResponse,
   buildModelUpdateStatusMessage,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import {
@@ -91,7 +92,6 @@ import {
   scheduleQueuePump,
 } from "./queue";
 import {
-  getApprovalContinuationRecoveryDisposition,
   getApprovalToolCallDesyncErrorText,
   recoverApprovalStateForSync,
   shouldAttemptPostStopApprovalRecovery,
@@ -446,6 +446,7 @@ export const __listenClientTestUtils = {
   buildListModelsEntries,
   buildListModelsResponse,
   buildModelUpdateStatusMessage,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
   applyModelUpdateForRuntime,
   stopRuntime: (
@@ -480,7 +481,6 @@ export const __listenClientTestUtils = {
   normalizeExecutionResultsForInterruptParity,
   getApprovalToolCallDesyncErrorText,
   shouldAttemptPostStopApprovalRecovery,
-  getApprovalContinuationRecoveryDisposition,
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
   normalizeMessageContentImages,

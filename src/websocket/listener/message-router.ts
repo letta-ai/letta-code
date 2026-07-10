@@ -1,4 +1,3 @@
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
 import {
@@ -36,6 +35,8 @@ import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
 import { handleExternalToolCallResponseCommand } from "./external-tools";
+import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
+import { enqueueInboundUserMessage } from "./inbound-queue";
 import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
@@ -51,11 +52,7 @@ import {
   shouldQueueInboundMessage,
 } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
-import {
-  emitListenerStatus,
-  getActiveRuntime,
-  safeEmitWsEvent,
-} from "./runtime";
+import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
 import type {
@@ -165,6 +162,7 @@ type MessageRouterParams = {
   runDetachedListenerTask: RunDetachedListenerTask;
   trackListenerError: TrackListenerError;
   wireChannelIngress: WireChannelIngress;
+  processIncomingMessage?: typeof handleIncomingMessage;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -373,6 +371,7 @@ export function createListenerMessageHandler(
     runDetachedListenerTask,
     trackListenerError,
     wireChannelIngress,
+    processIncomingMessage = handleIncomingMessage,
   } = params;
 
   return async (data: WebSocket.RawData): Promise<void> => {
@@ -570,60 +569,17 @@ export function createListenerMessageHandler(
         const processIncomingMessageDirectly = (
           directIncoming: IncomingMessage,
         ): void => {
-          scopedRuntime.messageQueue = scopedRuntime.messageQueue
-            .then(async () => {
-              if (
-                runtime !== getActiveRuntime() ||
-                runtime.intentionallyClosed
-              ) {
-                return;
-              }
-              emitListenerStatus(
-                runtime,
-                opts.onStatusChange,
-                opts.connectionId,
-              );
-              await handleIncomingMessage(
-                directIncoming,
-                socket,
-                scopedRuntime,
-                opts.onStatusChange,
-                opts.connectionId,
-              );
-              emitListenerStatus(
-                runtime,
-                opts.onStatusChange,
-                opts.connectionId,
-              );
-              if (
-                scopedRuntime.queueRuntime.length > 0 ||
-                scopedRuntime.queuePumpScheduled ||
-                scopedRuntime.queuePumpActive
-              ) {
-                scheduleQueuePump(
-                  scopedRuntime,
-                  socket,
-                  opts,
-                  processQueuedTurn,
-                );
-              }
-            })
-            .catch((error: unknown) => {
-              trackListenerError(
-                "listener_queued_input_failed",
-                error,
-                "listener_message_queue",
-              );
-              if (process.env.DEBUG) {
-                console.error("[Listen] Error handling queued input:", error);
-              }
-              emitListenerStatus(
-                runtime,
-                opts.onStatusChange,
-                opts.connectionId,
-              );
-              scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
-            });
+          dispatchInboundMessageWhenReady({
+            listener: runtime,
+            runtime: scopedRuntime,
+            incoming: directIncoming,
+            socket,
+            options: opts,
+            processQueuedTurn,
+            processIncomingMessage,
+            actingUserId: parsed.runtime.acting_user_id,
+            trackListenerError,
+          });
         };
 
         if (shouldQueueInboundMessage(incoming)) {
@@ -635,34 +591,11 @@ export function createListenerMessageHandler(
             return;
           }
 
-          const firstUserPayload = stampedIncoming.messages.find(
-            (
-              payload,
-            ): payload is MessageCreate & { client_message_id?: string } =>
-              "content" in payload,
+          enqueueInboundUserMessage(
+            scopedRuntime,
+            stampedIncoming,
+            parsed.runtime.acting_user_id,
           );
-          if (firstUserPayload) {
-            const enqueuedItem = scopedRuntime.queueRuntime.enqueue({
-              kind: "message",
-              source: "user",
-              content: firstUserPayload.content,
-              clientMessageId:
-                firstUserPayload.client_message_id ??
-                `cm-submit-${crypto.randomUUID()}`,
-              agentId: parsed.runtime.agent_id,
-              conversationId: parsed.runtime.conversation_id || "default",
-              // Forwarded by cloud-api so we can attribute the
-              // outbound createMessage to the actual sender on
-              // multi-user sandboxes. Absent on self-hosted flows.
-              actingUserId: parsed.runtime.acting_user_id,
-            } as Parameters<typeof scopedRuntime.queueRuntime.enqueue>[0]);
-            if (enqueuedItem) {
-              scopedRuntime.queuedMessagesByItemId.set(
-                enqueuedItem.id,
-                stampedIncoming,
-              );
-            }
-          }
           scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
           return;
         }

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import {
+  deriveListenerInstanceId,
   registerWithCloud,
   registerWithCloudRetry,
 } from "@/websocket/listen-register";
@@ -62,6 +63,34 @@ describe("registerWithCloud", () => {
         nodeVersion: expect.any(String),
       },
     });
+    // Not provided → omitted so legacy servers see an unchanged payload
+    expect(body).not.toHaveProperty("listenerInstanceId");
+  });
+
+  it("includes listenerInstanceId in the payload when provided", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ connectionId: "conn-1", wsUrl: "wss://example.com" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await registerWithCloud(
+      {
+        ...defaultOpts,
+        listenerInstanceId: deriveListenerInstanceId("server", "test-machine"),
+      },
+      mockFetch as unknown as typeof fetch,
+    );
+
+    const [, init] = mockFetch.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    const body = JSON.parse(init.body as string);
+    expect(body.listenerInstanceId).toBe(
+      deriveListenerInstanceId("server", "test-machine"),
+    );
   });
 
   it("returns advertised split-channel support when present", async () => {
@@ -269,5 +298,25 @@ describe("registerWithCloud", () => {
     });
 
     expect(slept).toEqual([1125]);
+  });
+});
+
+describe("deriveListenerInstanceId", () => {
+  it("is deterministic for the same surface and name", () => {
+    expect(deriveListenerInstanceId("server", "mac-mini")).toBe(
+      deriveListenerInstanceId("server", "mac-mini"),
+    );
+  });
+
+  it("differs across surfaces and across names", () => {
+    const server = deriveListenerInstanceId("server", "mac-mini");
+    expect(deriveListenerInstanceId("listen", "mac-mini")).not.toBe(server);
+    expect(deriveListenerInstanceId("server", "other-name")).not.toBe(server);
+  });
+
+  it("produces a compact prefixed id", () => {
+    expect(deriveListenerInstanceId("server", "mac-mini")).toMatch(
+      /^server-[0-9a-f]{16}$/,
+    );
   });
 });

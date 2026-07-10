@@ -5,6 +5,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
+import { getChannelRegistry } from "@/channels/registry";
 import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
@@ -22,7 +23,6 @@ import type {
   DeviceStatus,
   DeviceStatusUpdateMessage,
   LoopState,
-  LoopStatus,
   LoopStatusUpdateMessage,
   ModCommandInfo,
   QueueMessage,
@@ -38,6 +38,10 @@ import type {
   WsProtocolMessage,
 } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
+import {
+  type ChannelTurnRuntimeCarrier,
+  getActiveChannelTurnProgressContext,
+} from "./channel-turn-session";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
@@ -582,21 +586,6 @@ export function buildQueueSnapshot(
   }));
 }
 
-export function setLoopStatus(
-  runtime: ConversationRuntime,
-  status: LoopStatus,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
-): void {
-  if (runtime.loopStatus === status) {
-    return;
-  }
-  runtime.loopStatus = status;
-  emitLoopStatusIfOpen(runtime, scope);
-}
-
 /** Message types that belong on the stream channel.
  *  These are high-frequency runtime emissions that should be separated
  *  from control/command-response traffic on the control channel. */
@@ -1128,6 +1117,35 @@ export function createLifecycleMessageBase<TMessageType extends string>(
   };
 }
 
+function dispatchChannelTurnProgressFromDelta(
+  runtime: RuntimeCarrier,
+  delta: StreamDelta,
+): void {
+  if (!runtime || !("activeChannelTurn" in runtime)) return;
+  const context = getActiveChannelTurnProgressContext(
+    runtime as ChannelTurnRuntimeCarrier,
+  );
+  if (!context) {
+    return;
+  }
+  const updates = context.progressBuilder.buildUpdates(delta);
+  if (updates.length === 0) {
+    return;
+  }
+  const registry = getChannelRegistry();
+  if (!registry) {
+    return;
+  }
+  for (const update of updates) {
+    void registry.dispatchTurnProgressEvent({
+      type: "progress",
+      sources: context.sources,
+      ...update,
+      ...(context.batchId ? { batchId: context.batchId } : {}),
+    });
+  }
+}
+
 export function emitCanonicalMessageDelta(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -1138,6 +1156,7 @@ export function emitCanonicalMessageDelta(
   },
 ): void {
   emitStreamDelta(socket, runtime, delta, scope);
+  dispatchChannelTurnProgressFromDelta(runtime, delta);
 }
 
 export function emitLoopErrorDelta(

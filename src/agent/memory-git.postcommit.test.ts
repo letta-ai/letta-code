@@ -147,6 +147,20 @@ describe("post-commit memory-repository hook", () => {
     expect(log).toContain("exit=0");
   });
 
+  test("does not push temporary non-main worktree branches", async () => {
+    git(sourceDir, `config --local letta.memoryRepository.url ${remoteDir}`);
+    git(sourceDir, "checkout -b letta/reflection/test");
+
+    writeFileSync(join(sourceDir, "reflection.txt"), "temporary");
+    git(sourceDir, "add reflection.txt");
+    git(sourceDir, 'commit -m "reflection temp"');
+
+    await sleep(250);
+    const logPath = join(sourceDir, ".git", LOG_FILE);
+    expect(existsSync(logPath)).toBe(false);
+    expect(gitQuiet(remoteDir, "branch --list").trim()).toBe("");
+  });
+
   test("logs failures when push target is unreachable", async () => {
     git(
       sourceDir,
