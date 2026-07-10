@@ -61,6 +61,20 @@ export interface SubagentMemoryScope {
   readonlyRoots?: string[];
 }
 
+/**
+ * Subagent execution result
+ */
+export interface SubagentResult {
+  agentId: string;
+  conversationId?: string;
+  report: string;
+  success: boolean;
+  error?: string;
+  totalTokens?: number;
+  stepCount?: number;
+  durationMs?: number;
+}
+
 export interface SubagentConfig {
   /** Unique identifier for the subagent */
   name: string;
