@@ -10,6 +10,7 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
 import {
   type ClientTool,
@@ -196,6 +197,8 @@ export type SendMessageStreamOptions = {
   overrideModel?: string;
   /** Explicit turn-scoped tool snapshot. When present, bypasses the global registry. */
   preparedToolContext?: PreparedToolExecutionContext;
+  /** Turn-scoped skill roots. [] disables all client skill discovery. */
+  skillSources?: SkillSource[];
   /**
    * Allow sending a cached previous response id for this request. Callers should
    * set this only for approval continuations that were fully auto-handled by
@@ -321,7 +324,7 @@ export async function sendMessageStreamWithBackend(
   const { clientSkills, errors: clientSkillDiscoveryErrors } =
     await buildClientSkillsPayload({
       agentId: opts.agentId,
-      skillSources: getSkillSources(),
+      skillSources: opts.skillSources ?? getSkillSources(),
     });
 
   const resolvedConversationId = conversationId;

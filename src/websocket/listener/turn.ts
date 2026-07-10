@@ -720,6 +720,9 @@ export async function handleIncomingMessage(
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
       cachedAgent,
+      ...(runtime.skillSources !== null
+        ? { skillSources: runtime.skillSources }
+        : {}),
       channelTurnSources: msg.channelTurnSources,
       modEvents: ensureListenerModAdapter(runtime.listener).events,
     });
@@ -734,6 +737,9 @@ export async function handleIncomingMessage(
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
       preparedToolContext: preparedToolContext.preparedToolContext,
+      ...(runtime.skillSources !== null
+        ? { skillSources: runtime.skillSources }
+        : {}),
       skipImageNormalization: true,
       ...(providerFallback.overrideModel
         ? { overrideModel: providerFallback.overrideModel }

@@ -691,6 +691,9 @@ export async function resolveRecoveredApprovalResponse(
       recovered.conversationId,
     ),
     modEvents: ensureListenerModAdapter(runtime.listener).events,
+    ...(runtime.skillSources !== null
+      ? { skillSources: runtime.skillSources }
+      : {}),
   });
   runtime.currentToolset = preparedToolContext.toolset;
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;

@@ -123,12 +123,14 @@ describe("app-server client", () => {
     const responsePromise = client.runtimeStart({
       create_agent: { body: { name: "SDK test" } },
       create_conversation: { body: {} },
+      skill_sources: [],
     });
 
     expect(JSON.parse(control.sent[0] ?? "{}")).toMatchObject({
       type: "runtime_start",
       request_id: "runtime-start-1",
       create_agent: { body: { name: "SDK test" } },
+      skill_sources: [],
     });
 
     control.receive({

@@ -30,6 +30,7 @@ import type {
   MessageListParams,
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type { SkillSource } from "@/agent/skill-sources";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 
@@ -830,6 +831,8 @@ export interface RuntimeStartCommand {
   cwd?: string | null;
   /** Initial permission mode for this runtime scope. */
   mode?: DevicePermissionMode;
+  /** Skill roots enabled for this runtime. An empty array disables all skills. */
+  skill_sources?: readonly SkillSource[];
   /** Optional client metadata for diagnostics/future protocol negotiation. */
   client_info?: RuntimeStartClientInfo;
   /** Whether to probe backend state for stale pending approvals before replaying state. Defaults to true. */
