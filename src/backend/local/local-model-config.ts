@@ -402,6 +402,9 @@ export async function resolveAvailableLocalModelForTurn(input: {
   };
 }
 
+// Temporary entitlement guard: remove Luna from this set once OpenAI enables
+// it through ChatGPT OAuth and LET-9572 is resolved. Direct OpenAI Luna remains
+// available because this filter is scoped to the chatgpt_oauth provider type.
 const UNSUPPORTED_LOCAL_CHATGPT_OAUTH_MODELS = new Set(["gpt-5.6-luna"]);
 
 function shouldIncludeLocalModel(
