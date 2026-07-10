@@ -53,6 +53,19 @@ export function isUnselectedLocalModelHandle(model: unknown): boolean {
   );
 }
 
+function normalizeOpenAICompatibleLocalModelHandle(
+  model: string | undefined,
+): string | undefined {
+  if (!model?.startsWith("openai/")) return model;
+  const nestedHandle = model.slice("openai/".length);
+  const nestedProvider = resolveProviderFromModelHandle(nestedHandle);
+  if (!nestedProvider) return model;
+  return getPiProviderSpec(nestedProvider).localModelDiscovery ===
+    "openai-compatible"
+    ? nestedHandle
+    : model;
+}
+
 function settingString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
@@ -495,9 +508,9 @@ export async function resolvePiModelForAgent(
   modelSettings: PiModelSettings = {},
   options: PiModelFactoryOptions = {},
 ): Promise<ResolvedPiModel> {
-  const concreteModelHandle = isUnselectedLocalModelHandle(modelHandle)
-    ? undefined
-    : modelHandle;
+  const concreteModelHandle = normalizeOpenAICompatibleLocalModelHandle(
+    isUnselectedLocalModelHandle(modelHandle) ? undefined : modelHandle,
+  );
   const provider = options.provider
     ? resolvePiProvider(options.provider)
     : resolvePiProviderFromAgent(concreteModelHandle, modelSettings);

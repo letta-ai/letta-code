@@ -579,7 +579,7 @@ describe("pi model factory", () => {
     }
   });
 
-  test("normalizes local OpenAI-compatible provider base URLs for runtime", async () => {
+  test("normalizes wrapped llama.cpp handles and custom base URLs", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-llama-cpp-base-url-"));
     try {
       await createOrUpdateLocalProvider({
@@ -590,13 +590,35 @@ describe("pi model factory", () => {
         baseURL: "http://localhost:8088/",
       });
 
-      const resolved = await resolvePiModelForAgent(
+      const native = await resolvePiModelForAgent(
         "llama.cpp/local-model",
-        { provider_type: "llama_cpp" },
+        {
+          provider_type: "llama_cpp",
+          context_window_limit: 128000,
+          max_tokens: 32000,
+        },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      const wrapped = await resolvePiModelForAgent(
+        "openai/llama.cpp/local-model",
+        {
+          provider_type: "llama_cpp",
+          context_window_limit: 128000,
+          max_tokens: 32000,
+        },
         { localProviderAuthStorageDir: storageDir },
       );
 
-      expect(resolved.model.baseUrl).toBe("http://localhost:8088/v1");
+      expect(native.provider).toBe("llama-cpp");
+      expect(wrapped).toEqual(native);
+      expect(native.model).toMatchObject({
+        id: "local-model",
+        api: "openai-completions",
+        provider: "llama-cpp",
+        baseUrl: "http://localhost:8088/v1",
+        contextWindow: 128000,
+        maxTokens: 32000,
+      });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
