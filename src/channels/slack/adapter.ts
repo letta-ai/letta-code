@@ -49,17 +49,6 @@ import {
 } from "./utils";
 import { createSlackWebApiClient } from "./web-api-client";
 
-export { resolveSlackAccountDisplayName } from "./account-display";
-export {
-  type AgentThreadTracker,
-  createAgentThreadTracker,
-} from "./agent-thread-tracker";
-export {
-  buildSlackDebounceKey,
-  buildTopLevelSlackConversationKey,
-  resolveSlackInboundDebounceMs,
-} from "./inbound-debounce";
-
 export function createSlackAdapter(
   config: SlackChannelAccount,
 ): ChannelAdapter {

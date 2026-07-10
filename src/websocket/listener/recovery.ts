@@ -23,7 +23,7 @@ import {
   shouldRetryPostStreamRunError,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
-import { createChannelTurnProgressBuilder } from "@/channels/progress";
+import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
 import { getChannelRegistry } from "@/channels/registry";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
@@ -39,6 +39,10 @@ import {
   applySuggestedPermissionsForApproval,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
+import {
+  finishActiveChannelTurn,
+  recoverActiveChannelTurn,
+} from "./channel-turn-session";
 import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
@@ -58,7 +62,7 @@ import {
   emitRuntimeStateUpdates,
   setLoopStatus,
 } from "./protocol-outbound";
-import { consumeQueuedTurn, resolveTurnLifecycleTerminal } from "./queue";
+import { consumeQueuedTurn } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import {
   clearActiveRunState,
@@ -630,9 +634,9 @@ export async function resolveRecoveredApprovalResponse(
     (decision) => decision.approval.toolCallId,
   );
 
+  const activeChannelTurn = runtime.activeChannelTurn;
   if (
-    (!runtime.activeChannelTurnSources ||
-      runtime.activeChannelTurnSources.length === 0) &&
+    (!activeChannelTurn || activeChannelTurn.sources.length === 0) &&
     recovered.agentId
   ) {
     const recoveredSources =
@@ -641,15 +645,17 @@ export async function resolveRecoveredApprovalResponse(
         recovered.conversationId,
       ) ?? [];
     if (recoveredSources.length > 0) {
-      runtime.activeChannelTurnSources = recoveredSources;
-      runtime.activeChannelTurnBatchId ??= `recovered-${requestId || crypto.randomUUID()}`;
-      runtime.activeChannelTurnProgress = createChannelTurnProgressBuilder();
-      runtime.activeChannelTurnContextRecovered = true;
+      recoverActiveChannelTurn(runtime, {
+        sources: recoveredSources,
+        batchId:
+          activeChannelTurn?.batchId ??
+          `recovered-${requestId || crypto.randomUUID()}`,
+        progress: createChannelTurnProgressBuilder(),
+      });
     }
   }
   const shouldFinalizeRecoveredChannelTurn =
-    runtime.activeChannelTurnContextRecovered === true;
-  let shouldClearRecoveredChannelContext = false;
+    runtime.activeChannelTurn?.contextRecovered === true;
 
   recovered.pendingRequestIds.clear();
   emitRuntimeStateUpdates(runtime, scope);
@@ -711,7 +717,7 @@ export async function resolveRecoveredApprovalResponse(
                 conversationId: recovered.conversationId,
               }
             : undefined,
-        channelTurnSources: runtime.activeChannelTurnSources ?? undefined,
+        channelTurnSources: runtime.activeChannelTurn?.sources,
       });
     } finally {
       emitToolExecutionOutput.flush();
@@ -766,56 +772,25 @@ export async function resolveRecoveredApprovalResponse(
     );
 
     if (shouldFinalizeRecoveredChannelTurn) {
-      const terminal = resolveTurnLifecycleTerminal(
-        runtime.lastStopReason,
-        false,
-      );
-      if (terminal.stopReason !== "requires_approval") {
-        const sources = runtime.activeChannelTurnSources ?? [];
-        if (sources.length > 0) {
-          await getChannelRegistry()?.dispatchTurnLifecycleEvent({
-            type: "finished",
-            batchId: runtime.activeChannelTurnBatchId ?? continuationBatchId,
-            sources,
-            outcome: terminal.outcome,
-            stopReason: terminal.stopReason,
-            ...(runtime.lastTerminalLoopErrorMessage
-              ? { error: runtime.lastTerminalLoopErrorMessage }
-              : {}),
-            ...(runtime.lastTerminalLoopErrorRunId
-              ? { runId: runtime.lastTerminalLoopErrorRunId }
-              : {}),
-          });
-        }
-        shouldClearRecoveredChannelContext = true;
-      }
+      await finishActiveChannelTurn(runtime, {
+        lastStopReason: runtime.lastStopReason,
+        didThrow: false,
+        error: runtime.lastTerminalLoopErrorMessage ?? undefined,
+        runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
+        retainOnApproval: true,
+      });
     }
 
     clearRecoveredApprovalState(runtime);
     return true;
   } catch (error) {
     if (shouldFinalizeRecoveredChannelTurn) {
-      const terminal = resolveTurnLifecycleTerminal(
-        runtime.lastStopReason,
-        true,
-      );
-      const sources = runtime.activeChannelTurnSources ?? [];
-      if (sources.length > 0) {
-        await getChannelRegistry()?.dispatchTurnLifecycleEvent({
-          type: "finished",
-          batchId:
-            runtime.activeChannelTurnBatchId ??
-            `recovered-${requestId || crypto.randomUUID()}`,
-          sources,
-          outcome: terminal.outcome,
-          stopReason: terminal.stopReason,
-          error: error instanceof Error ? error.message : String(error),
-          ...(runtime.lastTerminalLoopErrorRunId
-            ? { runId: runtime.lastTerminalLoopErrorRunId }
-            : {}),
-        });
-      }
-      shouldClearRecoveredChannelContext = true;
+      await finishActiveChannelTurn(runtime, {
+        lastStopReason: runtime.lastStopReason,
+        didThrow: true,
+        error: error instanceof Error ? error.message : String(error),
+        runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
+      });
     }
     recovered.pendingRequestIds = new Set(
       recovered.approvalsByRequestId.keys(),
@@ -831,12 +806,5 @@ export async function resolveRecoveredApprovalResponse(
       conversation_id: recovered.conversationId,
     });
     throw error;
-  } finally {
-    if (shouldClearRecoveredChannelContext) {
-      runtime.activeChannelTurnSources = null;
-      runtime.activeChannelTurnBatchId = null;
-      runtime.activeChannelTurnProgress = null;
-      runtime.activeChannelTurnContextRecovered = false;
-    }
   }
 }

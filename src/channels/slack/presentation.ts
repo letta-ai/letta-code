@@ -3,7 +3,7 @@ import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-erro
 import {
   sanitizeChannelProgressCore,
   truncateChannelProgressText,
-} from "@/channels/progress";
+} from "@/channels/progress-formatting";
 import type {
   ChannelControlRequestEvent,
   ChannelTurnProgressEvent,

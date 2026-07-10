@@ -7,13 +7,13 @@ import {
   mock,
   test,
 } from "bun:test";
+import { createDiscordAdapter } from "@/channels/discord/adapter";
+import { __testOverrideLoadDiscordModule } from "@/channels/discord/runtime";
 import {
   buildDiscordIngressMessageKey,
   buildDiscordReplyOptions,
-  createDiscordAdapter,
   shouldAutoThreadOnDiscordMention,
-} from "@/channels/discord/adapter";
-import { __testOverrideLoadDiscordModule } from "@/channels/discord/runtime";
+} from "@/channels/discord/utils";
 import type {
   ChannelTurnSource,
   DiscordChannelAccount,

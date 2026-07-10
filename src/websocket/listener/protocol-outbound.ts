@@ -39,6 +39,10 @@ import type {
   WsProtocolMessage,
 } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
+import {
+  type ChannelTurnRuntimeCarrier,
+  getActiveChannelTurnProgressContext,
+} from "./channel-turn-session";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
@@ -1129,33 +1133,14 @@ export function createLifecycleMessageBase<TMessageType extends string>(
   };
 }
 
-function getActiveChannelTurnProgressContext(runtime: RuntimeCarrier): {
-  sources: NonNullable<ConversationRuntime["activeChannelTurnSources"]>;
-  batchId: string | null;
-  progressBuilder: NonNullable<
-    ConversationRuntime["activeChannelTurnProgress"]
-  >;
-} | null {
-  if (!runtime || !("activeChannelTurnSources" in runtime)) {
-    return null;
-  }
-  const sources = runtime.activeChannelTurnSources;
-  const progressBuilder = runtime.activeChannelTurnProgress;
-  if (!sources || sources.length === 0 || !progressBuilder) {
-    return null;
-  }
-  return {
-    sources,
-    batchId: runtime.activeChannelTurnBatchId,
-    progressBuilder,
-  };
-}
-
 function dispatchChannelTurnProgressFromDelta(
   runtime: RuntimeCarrier,
   delta: StreamDelta,
 ): void {
-  const context = getActiveChannelTurnProgressContext(runtime);
+  if (!runtime || !("activeChannelTurn" in runtime)) return;
+  const context = getActiveChannelTurnProgressContext(
+    runtime as ChannelTurnRuntimeCarrier,
+  );
   if (!context) {
     return;
   }

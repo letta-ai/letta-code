@@ -94,6 +94,9 @@ export function normalizeModelHandleForRegistry(
   ) {
     return `${OPENAI_CODEX_PROVIDER_NAME}/${model}`;
   }
+  if (provider === "lc-anthropic" && model.length > 0) {
+    return `anthropic/${model}`;
+  }
   return modelHandle;
 }
 

@@ -13,12 +13,10 @@ import { join } from "node:path";
 import { __testOverrideChannelsRoot } from "@/channels/config";
 import type { SignalChannelAccount } from "@/channels/types";
 import { formatChannelNotification } from "@/channels/xml";
-import {
-  __testOverrideSignalAttachmentSearchDirs,
-  createSignalAdapter,
-  type SignalClientLike,
-  signalInboundFromSseEvent,
-} from "./adapter";
+import { createSignalAdapter } from "./adapter";
+import { signalInboundFromSseEvent } from "./inbound";
+import type { SignalClientLike } from "./internal-types";
+import { __testOverrideSignalAttachmentSearchDirs } from "./media";
 
 function signalAccount(
   overrides: Partial<SignalChannelAccount> = {},
