@@ -410,7 +410,8 @@ function isRuntimeStartCreateAgentOptions(value: unknown): boolean {
   if (!isObjectRecord(value)) return false;
   return (
     isObjectRecord(value.body) &&
-    (value.pin_global === undefined || typeof value.pin_global === "boolean")
+    (value.pin_global === undefined || typeof value.pin_global === "boolean") &&
+    (value.memfs === undefined || typeof value.memfs === "boolean")
   );
 }
 

@@ -8,12 +8,16 @@ import {
 import {
   buildSubagentArgs,
   buildSubagentPrompt,
-  getModelHandleFromAgent,
   recallPromptForBackend,
-  resolveSubagentLauncher,
-  resolveSubagentModel,
-  resolveSubagentWorkingDirectory,
 } from "@/agent/subagents/manager";
+import {
+  resolveSubagentLauncher,
+  resolveSubagentWorkingDirectory,
+} from "@/agent/subagents/subagent-launcher";
+import {
+  getModelHandleFromAgent,
+  resolveSubagentModel,
+} from "@/agent/subagents/subagent-model";
 
 describe("recallPromptForBackend", () => {
   test("uses separate API and local recall prompts", () => {

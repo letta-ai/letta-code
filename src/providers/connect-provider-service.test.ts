@@ -232,9 +232,46 @@ describe("connect provider service", () => {
         label: "AWS Access Keys",
         description: "Enter access keys manually",
         fields: [
-          { key: "accessKey", label: "Access key" },
-          { key: "apiKey", label: "Secret key", secret: true },
+          { key: "accessKey", label: "Access key", required: true },
+          {
+            key: "apiKey",
+            label: "Secret key",
+            secret: true,
+            required: true,
+          },
         ],
+      },
+    ]);
+  });
+
+  test("serializes custom OpenAI-compatible fields", () => {
+    const providers: ByokProvider[] = [
+      {
+        id: "openai-compatible",
+        displayName: "OpenAI-compatible API",
+        description: "Connect an OpenAI-compatible endpoint",
+        providerType: "openai",
+        providerName: "lc-openai-compatible",
+        fields: [
+          { key: "apiKey", label: "API Key", secret: true },
+          {
+            key: "baseUrl",
+            label: "Base URL",
+            placeholder: "https://proxy.example.com/v1",
+          },
+        ],
+      },
+    ];
+
+    const entries = buildConnectProviderEntries(providers, new Map(), "api");
+
+    expect(entries[0]?.fields).toEqual([
+      { key: "apiKey", label: "API Key", secret: true, required: true },
+      {
+        key: "baseUrl",
+        label: "Base URL",
+        placeholder: "https://proxy.example.com/v1",
+        required: true,
       },
     ]);
   });

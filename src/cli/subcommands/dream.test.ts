@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { runDreamSubcommand } from "./dream";
+import { parseDreamArgs, runDreamSubcommand } from "./dream";
 
 function captureConsole(): {
   errors: string[];
@@ -37,6 +37,7 @@ describe("dream subcommand", () => {
       expect(output).toContain("letta dream");
       expect(output).toContain("--memory");
       expect(output).toContain("--from");
+      expect(output).toContain("--model");
       expect(output).toContain("--to");
       expect(output).toContain("--instruction");
     } finally {
@@ -75,5 +76,11 @@ describe("dream subcommand", () => {
     } finally {
       captured.restore();
     }
+  });
+
+  test("accepts an explicit reflection model", () => {
+    const parsed = parseDreamArgs(["--model", "zai/glm-5.2"]);
+
+    expect(parsed.values.model).toBe("zai/glm-5.2");
   });
 });

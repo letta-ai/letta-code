@@ -30,6 +30,8 @@ Options:
                               the agent's primary "default" history), or an
                               external source, e.g. openhands:<conversation-dir>
                               or transcript:./rows.jsonl
+  -m, --model <handle>        Model for the reflection subagent (default:
+                              letta/auto-memory)
   --to <path>                 Maintain a doc (e.g. ./AGENTS.md) from memory;
                               the agent edits it in place, using judgment
   --effort <level>            Reflection effort (reserved; not yet implemented)
@@ -51,6 +53,7 @@ const DREAM_OPTIONS = {
   help: { type: "boolean", short: "h" },
   memory: { type: "string" },
   from: { type: "string" },
+  model: { type: "string", short: "m" },
   to: { type: "string" },
   effort: { type: "string" },
   timeout: { type: "string" },
@@ -60,7 +63,7 @@ const DREAM_OPTIONS = {
 
 const DEFAULT_TIMEOUT_SECONDS = 1500;
 
-function parseDreamArgs(argv: string[]) {
+export function parseDreamArgs(argv: string[]) {
   return parseArgs({
     args: argv,
     options: DREAM_OPTIONS,
@@ -241,6 +244,7 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     memfsEnabled: true,
     triggerSource: "manual",
     description: "Reflect on recent conversations",
+    model: parsed.values.model,
     instruction,
     recompileByConversation: new Map(),
     recompileQueuedByConversation: new Set(),
@@ -253,6 +257,7 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     },
     feedbackContext: {
       surface: "letta_code_cli",
+      model: parsed.values.model,
     },
   });
 

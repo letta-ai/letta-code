@@ -1,5 +1,9 @@
 import type { Api, KnownProvider, Model } from "@earendil-works/pi-ai";
-import { getEnvApiKey, getModels, getProviders } from "@earendil-works/pi-ai";
+import {
+  getEnvApiKey,
+  getModels,
+  getProviders,
+} from "@earendil-works/pi-ai/compat";
 
 export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
 export const LOCAL_OPENAI_PROVIDER_NAME = "lc-openai";

@@ -217,7 +217,6 @@ SUBCOMMANDS
   letta skills delete <skill_name> --agent <id>
   letta backend [api|local]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
-
 BEHAVIOR
   On startup, Letta Code checks for saved profiles:
   - If profiles exist, you'll be prompted to select one or create a new agent
@@ -228,7 +227,6 @@ BEHAVIOR
 
   If no credentials are configured, you'll be prompted to authenticate via
   Letta Cloud OAuth on first run.
-
 EXAMPLES
   # when installed as an executable
   letta                    # Show profile selector or create new

@@ -7,6 +7,9 @@ import {
   formatChannelNotification,
 } from "@/channels/xml";
 
+const SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX =
+  "For Slack requests that require nontrivial work or several tool calls";
+
 function expectTextParts(
   content: MessageCreate["content"],
 ): [{ type: "text"; text: string }, { type: "text"; text: string }] {
@@ -75,6 +78,7 @@ describe("formatChannelNotification", () => {
     expect(reminder).toContain(
       "If the useful response belongs later, schedule the follow-up instead of sending a placeholder.",
     );
+    expect(reminder).not.toContain(SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX);
     expect(reminder).toContain(
       "Do not produce a plain text assistant response as the user-visible reply.",
     );
@@ -142,6 +146,10 @@ describe("formatChannelNotification", () => {
     const reminder = buildChannelReminderText(msg);
 
     expect(reminder).toContain("stay in the same Slack thread automatically");
+    expect(reminder).toContain(SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX);
+    expect(reminder).toContain(
+      'send a short MessageChannel action="send" acknowledgement before starting other tools',
+    );
     expect(reminder).not.toContain("reply_to_message_id");
   });
 

@@ -14,6 +14,7 @@ import {
   buildChannelModelUpdatedMessage,
   buildChannelModelUpdateFailedMessage,
 } from "@/channels/commands";
+import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
@@ -36,6 +37,10 @@ import { isDebugEnabled } from "@/utils/debug";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
+import {
+  recoverActiveChannelTurn,
+  uniqueChannelTurnSources,
+} from "./channel-turn-session";
 import { handleReloadCommand } from "./commands";
 import { handleChannelRegistryEvent } from "./commands/channels";
 import {
@@ -330,6 +335,28 @@ export async function recoverPendingChannelControlRequests(
     const recoveredPendingRequestIds =
       getRecoveredApprovalStateForScope(listener, scope)?.pendingRequestIds ??
       new Set<string>();
+
+    const stillPendingEntries = entries.filter((entry) => {
+      const requestId = entry.event.requestId;
+      return (
+        livePendingRequestIds.has(requestId) ||
+        recoveredPendingRequestIds.has(requestId)
+      );
+    });
+    if (
+      stillPendingEntries.length > 0 &&
+      (!runtime.activeChannelTurn ||
+        runtime.activeChannelTurn.sources.length === 0)
+    ) {
+      const recoveredSources = uniqueChannelTurnSources(
+        stillPendingEntries.map((entry) => entry.event.source),
+      );
+      recoverActiveChannelTurn(runtime, {
+        sources: recoveredSources,
+        batchId: `recovered-${stillPendingEntries[0]?.event.requestId ?? crypto.randomUUID()}`,
+        progress: createChannelTurnProgressBuilder(),
+      });
+    }
 
     for (const entry of entries) {
       const requestId = entry.event.requestId;
@@ -860,7 +887,6 @@ export function createRuntime(): ListenerRuntime {
     everConnected: false,
     sessionId: `listen-${crypto.randomUUID()}`,
     eventSeqCounter: 0,
-    lastStopReason: null,
     queueEmitScheduled: false,
     pendingQueueEmitScope: undefined,
     onWsEvent: undefined,

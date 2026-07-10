@@ -66,7 +66,7 @@ describe("ListenerRuntime interrupt queue fields", () => {
     expect(runtime.pendingInterruptedResults).toBeNull();
     expect(runtime.pendingInterruptedContext).toBeNull();
     expect(runtime.pendingInterruptedToolCallIds).toBeNull();
-    expect(runtime.activeExecutingToolCallIds).toEqual([]);
+    expect(runtime.turnLifecycle.kind).toBe("idle");
     expect(runtime.continuationEpoch).toBe(0);
   });
 });
@@ -90,7 +90,11 @@ describe("stopRuntime teardown", () => {
       continuationEpoch: 0,
     };
     runtime.pendingInterruptedToolCallIds = ["call-1"];
-    runtime.activeExecutingToolCallIds = ["call-1"];
+    runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/worktree",
+      executingToolCallIds: ["call-1"],
+    });
     runtime.pendingApprovalBatchByToolCallId.set("call-1", "batch-1");
 
     stopRuntime(runtime, true);
@@ -98,7 +102,7 @@ describe("stopRuntime teardown", () => {
     expect(runtime.pendingInterruptedResults).toBeNull();
     expect(runtime.pendingInterruptedContext).toBeNull();
     expect(runtime.pendingInterruptedToolCallIds).toBeNull();
-    expect(runtime.activeExecutingToolCallIds).toEqual([]);
+    expect(runtime.turnLifecycle.kind).toBe("idle");
     expect(runtime.pendingApprovalBatchByToolCallId.size).toBe(0);
   });
 
@@ -892,17 +896,12 @@ describe("cancel-induced stop reason reclassification", () => {
 
   test("runtime.lastStopReason tracks the effective value after cancel populate", () => {
     const runtime = createRuntime();
-    runtime.cancelRequested = true;
-
-    // After cancel, the production code sets:
-    //   runtime.lastStopReason = effectiveStopReason
-    // where effectiveStopReason = cancelRequested ? "cancelled" : rawStop
-    const rawFromBackend = "error";
-    const effective = computeEffectiveStopReason(
-      runtime.cancelRequested,
-      rawFromBackend,
-    );
-    runtime.lastStopReason = effective;
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/worktree",
+    });
+    runtime.turnLifecycle.requestCancellation();
+    runtime.turnLifecycle.finish(lease, "cancelled");
 
     expect(runtime.lastStopReason).toBe("cancelled");
   });

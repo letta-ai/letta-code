@@ -2,7 +2,7 @@ import WebSocket from "ws";
 import { getChannelPluginConfig } from "@/channels/account-config";
 import { removeUserPlugin } from "@/channels/custom/scaffolding";
 import { getChannelPluginMetadata } from "@/channels/plugin-registry";
-import type { ChannelRegistryEvent } from "@/channels/registry";
+import type { ChannelRegistryEvent } from "@/channels/registry-events";
 import { LEGACY_DEFAULT_CHANNEL_ID } from "@/channels/types";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import type {

@@ -161,6 +161,47 @@ function formatTextModels(models: ListedModel[]): string {
   ].join("\n");
 }
 
+function getModelProviderName(model: ListedModel): string | undefined {
+  if (model.provider_name) return model.provider_name;
+  const handlePrefix = model.handle?.split("/", 1)[0];
+  return handlePrefix && handlePrefix.length > 0 ? handlePrefix : undefined;
+}
+
+function getModelProviderType(model: ListedModel): string | undefined {
+  return model.provider_type ?? model.model_endpoint_type ?? undefined;
+}
+
+function filterModelsForQuery(
+  models: ListedModel[],
+  query: ModelListQuery | undefined,
+): ListedModel[] {
+  if (!query) return models;
+
+  return models.filter((model) => {
+    if (
+      query.provider_name &&
+      getModelProviderName(model) !== query.provider_name
+    ) {
+      return false;
+    }
+    if (
+      query.provider_type &&
+      getModelProviderType(model) !== query.provider_type
+    ) {
+      return false;
+    }
+    if (
+      query.provider_category &&
+      query.provider_category.length > 0 &&
+      (!model.provider_category ||
+        !query.provider_category.includes(model.provider_category))
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
 export async function runModelsSubcommand(
   argv: string[],
   deps: ModelsSubcommandDeps = {},
@@ -220,7 +261,7 @@ export async function runModelsSubcommand(
       await (deps.refreshByokProviders ?? refreshByokProviders)();
     }
 
-    const models = await backend.listModels(query);
+    const models = filterModelsForQuery(await backend.listModels(query), query);
     stdout(
       outputFormat === "json"
         ? JSON.stringify(models, null, 2)

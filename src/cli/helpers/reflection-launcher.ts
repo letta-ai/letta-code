@@ -53,12 +53,73 @@ export type ReflectionLaunchSkippedReason =
   | "no_payload"
   | "error";
 
-function drainReflectionTelemetry(): void {
+export function drainReflectionTelemetry(): void {
   telemetry.drain().catch((error) => {
     debugWarn(
       "telemetry",
       `Failed to flush reflection telemetry: ${error instanceof Error ? error.message : String(error)}`,
     );
+  });
+}
+
+export interface ReflectionFeedbackContext {
+  parentAgentName?: string | null;
+  parentAgentDescription?: string | null;
+  model?: string | null;
+  surface?: string;
+}
+
+export function emitReflectionRunStart(params: {
+  triggerSource: ReflectionLaunchTriggerSource;
+  subagentId?: string;
+  conversationId: string;
+  startMessageId?: string;
+  endMessageId?: string;
+  model?: string | null;
+}): void {
+  telemetry.trackReflectionStart(params.triggerSource, {
+    subagentId: params.subagentId,
+    conversationId: params.conversationId,
+    startMessageId: params.startMessageId,
+    endMessageId: params.endMessageId,
+    model: params.model,
+  });
+  drainReflectionTelemetry();
+}
+
+export function emitReflectionRunEnd(params: {
+  parentAgentId: string;
+  triggerSource: ReflectionLaunchTriggerSource;
+  success: boolean;
+  subagentId?: string;
+  conversationId: string;
+  error?: string;
+  stepCount?: number;
+  durationMs?: number;
+  feedbackContext?: ReflectionFeedbackContext;
+}): void {
+  telemetry.trackReflectionEnd(params.triggerSource, params.success, {
+    subagentId: params.subagentId,
+    conversationId: params.conversationId,
+    error: params.error,
+    stepCount: params.stepCount,
+    durationMs: params.durationMs,
+    model: params.feedbackContext?.model,
+  });
+  drainReflectionTelemetry();
+  maybeSendReflectionThresholdFeedback({
+    parentAgentId: params.parentAgentId,
+    parentAgentName: params.feedbackContext?.parentAgentName,
+    parentAgentDescription: params.feedbackContext?.parentAgentDescription,
+    reflectionSubagentId: params.subagentId,
+    conversationId: params.conversationId,
+    triggerSource: params.triggerSource,
+    success: params.success,
+    error: params.error,
+    stepCount: params.stepCount,
+    durationMs: params.durationMs,
+    surface: params.feedbackContext?.surface,
+    model: params.feedbackContext?.model,
   });
 }
 
@@ -84,6 +145,8 @@ export interface ReflectionLaunchOptions {
   triggerSource: ReflectionLaunchTriggerSource;
   reflectionSettings?: ReflectionSettings;
   description: string;
+  /** Explicit model for this reflection subagent, if requested by the caller. */
+  model?: string;
   instruction?: string;
   systemPrompt?: string;
   skipPendingWorktreeReminderScan?: boolean;
@@ -98,12 +161,7 @@ export interface ReflectionLaunchOptions {
       reflectionAgentId?: string;
     },
   ) => void | Promise<void>;
-  feedbackContext?: {
-    parentAgentName?: string | null;
-    parentAgentDescription?: string | null;
-    model?: string | null;
-    surface?: string;
-  };
+  feedbackContext?: ReflectionFeedbackContext;
 }
 
 function isReflectionSubagentActiveForAgent(agentId: string): boolean {
@@ -498,19 +556,21 @@ export async function launchReflectionSubagent(
 
     // Defer `reflection_start` until the agent ID resolves (background, bounded by REFLECTION_AGENT_ID_WAIT_MS).
     const emitReflectionStart = (resolvedAgentId: string | null) => {
-      telemetry.trackReflectionStart(triggerSource, {
+      emitReflectionRunStart({
+        triggerSource,
         subagentId: resolvedAgentId ?? undefined,
         conversationId,
         startMessageId: autoPayload.startMessageId,
         endMessageId: autoPayload.endMessageId,
+        model: options.feedbackContext?.model,
       });
-      drainReflectionTelemetry();
     };
 
     const { subagentId } = spawnBackgroundSubagentTask({
       subagentType: "reflection",
       prompt: reflectionPrompt,
       description,
+      model: options.model,
       silentCompletion: true,
       transcriptPath: autoPayload.payloadPath,
       memoryScope: buildReflectionMemoryScope(worktree),
@@ -523,28 +583,16 @@ export async function launchReflectionSubagent(
         durationMs,
       }) => {
         try {
-          telemetry.trackReflectionEnd(triggerSource, success, {
+          emitReflectionRunEnd({
+            parentAgentId: agentId,
+            triggerSource,
+            success,
             subagentId: reflectionAgentId ?? undefined,
             conversationId,
             error,
             stepCount,
             durationMs,
-          });
-          drainReflectionTelemetry();
-          maybeSendReflectionThresholdFeedback({
-            parentAgentId: agentId,
-            parentAgentName: options.feedbackContext?.parentAgentName,
-            parentAgentDescription:
-              options.feedbackContext?.parentAgentDescription,
-            reflectionSubagentId: reflectionAgentId ?? undefined,
-            conversationId,
-            triggerSource,
-            success,
-            error,
-            stepCount,
-            durationMs,
-            surface: options.feedbackContext?.surface,
-            model: options.feedbackContext?.model,
+            feedbackContext: options.feedbackContext,
           });
           const completionConversationId = resolveCompletionConversationId(
             options.completionConversationId,

@@ -54,6 +54,27 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
  */
 export type SubagentLaunchProfile = "default" | "memory-subagent";
 
+/** Exact memory scope handed to a harness-created memory worktree. */
+export interface SubagentMemoryScope {
+  primaryRoot: string | null;
+  writableRoots: string[];
+  readonlyRoots?: string[];
+}
+
+/**
+ * Subagent execution result
+ */
+export interface SubagentResult {
+  agentId: string;
+  conversationId?: string;
+  report: string;
+  success: boolean;
+  error?: string;
+  totalTokens?: number;
+  stepCount?: number;
+  durationMs?: number;
+}
+
 export interface SubagentConfig {
   /** Unique identifier for the subagent */
   name: string;

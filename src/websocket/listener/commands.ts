@@ -53,10 +53,8 @@ import {
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
 } from "./secrets-sync";
-import {
-  buildMaybeLaunchReflectionSubagent,
-  handleIncomingMessage,
-} from "./turn";
+import { handleIncomingMessage } from "./turn";
+import { buildMaybeLaunchReflectionSubagent } from "./turn-events";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
@@ -212,11 +210,6 @@ export async function handleExecuteCommand(
       output: `Failed: ${errorMessage}`,
       success: false,
     });
-  } finally {
-    // clearConversationRuntimeState sets cancelRequested = true which
-    // permanently blocks the queue pump (getListenerBlockedReason returns
-    // "interrupt_in_progress"). Reset it so subsequent user messages drain.
-    conversationRuntime.cancelRequested = false;
   }
 }
 

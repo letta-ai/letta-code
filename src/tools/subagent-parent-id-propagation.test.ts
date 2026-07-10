@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 import type { SubagentState } from "@/agent/subagent-state";
 import { clearAllSubagents } from "@/agent/subagent-state";
-import type { SubagentMemoryScope } from "@/agent/subagents/manager";
+import type { SubagentMemoryScope } from "@/agent/subagents";
 import {
   __resetBackgroundRetentionConfigForTests,
   backgroundTasks,

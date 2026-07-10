@@ -1,18 +1,20 @@
+import type {
+  AssistantMessage,
+  AssistantMessageEvent,
+  Context,
+  Message,
+  Model,
+  SimpleStreamOptions,
+  Tool,
+  TSchema,
+  Usage,
+} from "@earendil-works/pi-ai";
 import {
-  type AssistantMessage,
-  type AssistantMessageEvent,
-  type Context,
   isContextOverflow,
-  type Message,
-  type Model,
-  type SimpleStreamOptions,
   stream,
   streamSimple,
-  type Tool,
-  type TSchema,
   Type,
-  type Usage,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import type { LocalCompactionStats } from "@/backend/local/compaction";
 import {
   emptyLocalUsage,
@@ -698,6 +700,10 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       messages: toPiMessages(input.uiMessages),
       ...(tools ? { tools } : {}),
     };
+    const reasoning = reasoningForSettings(
+      input.agent.model_settings,
+      input.agent.model,
+    );
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
@@ -706,9 +712,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,
-      ...(reasoningForSettings(input.agent.model_settings)
-        ? { reasoning: reasoningForSettings(input.agent.model_settings) }
-        : {}),
+      ...(reasoning ? { reasoning } : {}),
       ...(maxTokensForSettings(input.agent.model_settings)
         ? { maxTokens: maxTokensForSettings(input.agent.model_settings) }
         : {}),

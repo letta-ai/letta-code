@@ -19,6 +19,10 @@ function makeModel(overrides: Partial<ListedModel> = {}): ListedModel {
   } as ListedModel;
 }
 
+function makeRuntimeModel(model: Record<string, unknown>): ListedModel {
+  return model as unknown as ListedModel;
+}
+
 function makeBackend(input: {
   models?: ListedModel[];
   onListModels?: (options: unknown) => void;
@@ -115,6 +119,49 @@ describe("models subcommand", () => {
       provider_type: "anthropic",
       provider_category: ["base", "byok"],
     });
+  });
+
+  test("filters returned models when the backend ignores filters", async () => {
+    const output = captureOutput();
+    let listedWith: unknown;
+
+    const exitCode = await runModelsSubcommand(
+      ["--provider-name", "ollama", "--provider-type", "ollama"],
+      {
+        ...output.deps,
+        getBackend: () =>
+          makeBackend({
+            models: [
+              makeRuntimeModel({
+                handle: "ollama/gemma4:latest",
+                model: "ollama/gemma4:latest",
+                model_endpoint_type: "ollama",
+              }),
+              makeModel({
+                handle: "anthropic/claude-sonnet-4-5",
+                provider_name: "anthropic",
+                provider_type: "anthropic",
+              }),
+            ],
+            onListModels: (options) => {
+              listedWith = options;
+            },
+          }),
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(listedWith).toEqual({
+      provider_name: "ollama",
+      provider_type: "ollama",
+    });
+    const parsed = JSON.parse(output.stdout.join("\n"));
+    expect(parsed).toEqual([
+      expect.objectContaining({
+        handle: "ollama/gemma4:latest",
+        model_endpoint_type: "ollama",
+      }),
+    ]);
   });
 
   test("supports text output", async () => {

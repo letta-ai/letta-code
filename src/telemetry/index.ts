@@ -34,7 +34,8 @@ export interface TelemetryEvent {
     | "error"
     | "user_input"
     | "reflection_start"
-    | "reflection_end";
+    | "reflection_end"
+    | "reflection_arena_vote";
   timestamp: string;
   data: Record<string, unknown>;
 }
@@ -103,6 +104,7 @@ export interface ReflectionStartData {
   conversation_id?: string;
   start_message_id?: string;
   end_message_id?: string;
+  model?: string;
   version?: string;
   platform?: string;
 }
@@ -115,6 +117,28 @@ export interface ReflectionEndData {
   error?: string;
   step_count?: number;
   duration_ms?: number;
+  model?: string;
+  version?: string;
+  platform?: string;
+}
+
+export interface ReflectionArenaVoteData {
+  run_id: string;
+  choice: "win_loss" | "tie";
+  winner: string | null;
+  loser: string | null;
+  winner_agent_id: string | null;
+  loser_agent_id: string | null;
+  parent_agent_id: string;
+  parent_convo_id: string;
+  timestamp: string;
+  feedbackstr: string | null;
+  lc_version: string;
+  memory_base_commit: string | null;
+  memory_candidate_commit: string | null;
+  transcript_payload: string | null;
+  transcript_payload_chars: number | null;
+  transcript_payload_truncated: boolean;
   version?: string;
   platform?: string;
 }
@@ -431,7 +455,8 @@ class TelemetryManager {
       | ErrorData
       | UserInputData
       | ReflectionStartData
-      | ReflectionEndData,
+      | ReflectionEndData
+      | ReflectionArenaVoteData,
   ) {
     if (!this.isTelemetryEnabled()) {
       return;
@@ -714,6 +739,7 @@ class TelemetryManager {
       conversationId?: string;
       startMessageId?: string;
       endMessageId?: string;
+      model?: string | null;
     },
   ) {
     const data: ReflectionStartData = {
@@ -722,6 +748,7 @@ class TelemetryManager {
       conversation_id: options?.conversationId,
       start_message_id: options?.startMessageId,
       end_message_id: options?.endMessageId,
+      model: options?.model ?? undefined,
       version: getVersion(),
       platform: process.platform,
     };
@@ -740,6 +767,7 @@ class TelemetryManager {
       error?: string;
       stepCount?: number;
       durationMs?: number;
+      model?: string | null;
     },
   ) {
     const data: ReflectionEndData = {
@@ -750,10 +778,21 @@ class TelemetryManager {
       error: options?.error,
       step_count: options?.stepCount,
       duration_ms: options?.durationMs,
+      model: options?.model ?? undefined,
       version: getVersion(),
       platform: process.platform,
     };
     this.track("reflection_end", data);
+  }
+
+  trackReflectionArenaVote(
+    vote: Omit<ReflectionArenaVoteData, "version" | "platform">,
+  ) {
+    this.track("reflection_arena_vote", {
+      ...vote,
+      version: getVersion(),
+      platform: process.platform,
+    });
   }
 
   /** Concurrent callers share one in-flight POST (prevents 429 double-flush race on shutdown). */

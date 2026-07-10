@@ -1,4 +1,5 @@
-import { type Api, getModels, type Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import {
   DEFAULT_PI_PROVIDER,
   isUnselectedLocalModelHandle,
