@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { SubagentConfig } from "@/agent/subagents";
 import {
@@ -12,8 +14,8 @@ import {
   recallPromptForBackend,
   resolveSubagentLauncher,
   resolveSubagentModel,
-  resolveSubagentWorkingDirectory,
 } from "@/agent/subagents/manager";
+import { resolveSubagentWorkingDirectory } from "@/agent/subagents/working-directory";
 
 describe("recallPromptForBackend", () => {
   test("uses separate API and local recall prompts", () => {
@@ -184,15 +186,37 @@ describe("resolveSubagentLauncher", () => {
 });
 
 describe("resolveSubagentWorkingDirectory", () => {
+  const liveDirs: string[] = [];
+
+  const makeLiveDir = (prefix: string): string => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
+    liveDirs.push(dir);
+    return dir;
+  };
+
+  // A path that existed once (e.g. a git worktree) and was deleted mid-session.
+  const makeDeletedDir = (prefix: string): string => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), prefix));
+    rmSync(dir, { recursive: true, force: true });
+    return dir;
+  };
+
+  afterAll(() => {
+    for (const dir of liveDirs) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("prefers USER_CWD when present", () => {
+    const userCwd = makeLiveDir("subagent-user-cwd-");
     const cwd = resolveSubagentWorkingDirectory(
       {
-        USER_CWD: "/tmp/fixture-dir",
+        USER_CWD: userCwd,
       } as NodeJS.ProcessEnv,
       "/tmp/repo-root",
     );
 
-    expect(cwd).toBe("/tmp/fixture-dir");
+    expect(cwd).toBe(userCwd);
   });
 
   test("falls back to process cwd when USER_CWD is absent", () => {
@@ -204,7 +228,20 @@ describe("resolveSubagentWorkingDirectory", () => {
     expect(cwd).toBe("/tmp/repo-root");
   });
 
+  test("falls back to process cwd when USER_CWD no longer exists", () => {
+    const staleCwd = makeDeletedDir("subagent-stale-cwd-");
+    const cwd = resolveSubagentWorkingDirectory(
+      {
+        USER_CWD: staleCwd,
+      } as NodeJS.ProcessEnv,
+      "/tmp/repo-root",
+    );
+
+    expect(cwd).toBe("/tmp/repo-root");
+  });
+
   test("reflection subagents with the memory-subagent profile run from the inherited parent memory root", () => {
+    const memoryRoot = makeLiveDir("subagent-memory-root-");
     const cwd = resolveSubagentWorkingDirectory(
       {
         USER_CWD: "/tmp/project-root",
@@ -213,17 +250,36 @@ describe("resolveSubagentWorkingDirectory", () => {
       {
         subagentType: "reflection",
         launchProfile: "memory-subagent",
-        inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
+        inheritedPrimaryRoot: memoryRoot,
       },
     );
 
-    expect(cwd).toBe("/Users/test/.letta/agents/agent-parent/memory");
+    expect(cwd).toBe(memoryRoot);
+  });
+
+  test("reflection subagents fall back past an inherited memory root that no longer exists", () => {
+    const staleMemoryRoot = makeDeletedDir("subagent-stale-memory-root-");
+    const userCwd = makeLiveDir("subagent-user-cwd-");
+    const cwd = resolveSubagentWorkingDirectory(
+      {
+        USER_CWD: userCwd,
+      } as NodeJS.ProcessEnv,
+      "/tmp/fallback-root",
+      {
+        subagentType: "reflection",
+        launchProfile: "memory-subagent",
+        inheritedPrimaryRoot: staleMemoryRoot,
+      },
+    );
+
+    expect(cwd).toBe(userCwd);
   });
 
   test("reflection subagents with memoryScope run from USER_CWD while MEMORY_DIR points at the worktree", () => {
+    const userCwd = makeLiveDir("subagent-project-root-");
     const cwd = resolveSubagentWorkingDirectory(
       {
-        USER_CWD: "/tmp/project-root",
+        USER_CWD: userCwd,
       } as NodeJS.ProcessEnv,
       "/tmp/fallback-root",
       {
@@ -240,13 +296,38 @@ describe("resolveSubagentWorkingDirectory", () => {
       },
     );
 
-    expect(cwd).toBe("/tmp/project-root");
+    expect(cwd).toBe(userCwd);
+  });
+
+  test("reflection subagents with memoryScope fall back when USER_CWD was deleted mid-session", () => {
+    const staleCwd = makeDeletedDir("subagent-stale-worktree-");
+    const cwd = resolveSubagentWorkingDirectory(
+      {
+        USER_CWD: staleCwd,
+      } as NodeJS.ProcessEnv,
+      "/tmp/fallback-root",
+      {
+        subagentType: "reflection",
+        launchProfile: "memory-subagent",
+        inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
+        memoryScope: {
+          primaryRoot:
+            "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123",
+          writableRoots: [
+            "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123",
+          ],
+        },
+      },
+    );
+
+    expect(cwd).toBe("/tmp/fallback-root");
   });
 
   test("non-reflection subagents still prefer USER_CWD", () => {
+    const userCwd = makeLiveDir("subagent-project-root-");
     const cwd = resolveSubagentWorkingDirectory(
       {
-        USER_CWD: "/tmp/project-root",
+        USER_CWD: userCwd,
       } as NodeJS.ProcessEnv,
       "/tmp/fallback-root",
       {
@@ -256,7 +337,7 @@ describe("resolveSubagentWorkingDirectory", () => {
       },
     );
 
-    expect(cwd).toBe("/tmp/project-root");
+    expect(cwd).toBe(userCwd);
   });
 });
 
