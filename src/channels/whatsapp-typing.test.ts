@@ -324,4 +324,60 @@ describe("WhatsApp typing indicator lifecycle", () => {
 
     await adapter.stop();
   });
+
+  test("sendMessage clears typing before reply to prevent post-answer blip", async () => {
+    resetPresence();
+    const adapter = createWhatsAppAdapter(makeAccount());
+    await adapter.start();
+
+    const chatId = "15551234567@s.whatsapp.net";
+    const source = makeSource(chatId);
+
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "processing",
+      batchId: "b1",
+      sources: [source],
+    });
+
+    // Initial composing presence
+    expect(presenceCalls.filter((c) => c.presence === "composing").length).toBe(
+      1,
+    );
+
+    // Simulate the agent sending the reply via sendMessage
+    await adapter.sendMessage({
+      channel: "whatsapp",
+      accountId: "test",
+      chatId,
+      text: "Here is the answer.",
+    });
+
+    // After sendMessage, a "paused" should have been sent to clear typing
+    const paused = presenceCalls.filter((c) => c.presence === "paused");
+    expect(paused.length).toBe(1);
+
+    // Wait beyond what would have been the next interval tick to confirm
+    // no further composing fires after the reply
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const composingAfter = presenceCalls.filter(
+      (c) => c.presence === "composing",
+    ).length;
+    expect(composingAfter).toBe(1); // still just the initial one
+
+    // Subsequent finished event should NOT send a second "paused"
+    await adapter.handleTurnLifecycleEvent?.({
+      type: "finished",
+      batchId: "b1",
+      sources: [source],
+      outcome: "completed",
+    });
+
+    const pausedAfter = presenceCalls.filter(
+      (c) => c.presence === "paused",
+    ).length;
+    expect(pausedAfter).toBe(1); // no duplicate paused
+
+    await adapter.stop();
+  });
 });

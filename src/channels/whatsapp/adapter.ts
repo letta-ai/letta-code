@@ -41,7 +41,7 @@ const DEDUPE_MAX_SIZE = 5000;
 const RECONNECT_MAX_MS = 30_000;
 const MAX_MENTION_PATTERN_LENGTH = 256;
 const MENTION_MATCH_TEXT_MAX_LENGTH = 2000;
-const WHATSAPP_TYPING_REFRESH_MS = 15_000;
+const WHATSAPP_TYPING_REFRESH_MS = 8_000;
 const WHATSAPP_TYPING_MAX_MS = 5 * 60 * 1000;
 
 type EventEmitterLike = {
@@ -741,6 +741,14 @@ export function createWhatsAppAdapter(
       if (!running) throw new Error("WhatsApp adapter is not running.");
       if (!msg.text?.trim() && !msg.mediaPath?.trim() && !msg.reaction) {
         throw new Error("WhatsApp send requires message or media.");
+      }
+      // Stop typing immediately before sending the reply. The refresh
+      // interval can otherwise fire a final "composing" presence between
+      // the reply landing and the "finished" lifecycle event arriving,
+      // causing a brief typing blip after the answer.
+      if (msg.chatId && typingByChatId.has(msg.chatId)) {
+        clearTypingForChat(msg.chatId);
+        void stopTypingPresence(msg.chatId);
       }
       const targetJid = resolveSendJid({
         chatId: msg.chatId,
