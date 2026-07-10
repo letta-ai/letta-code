@@ -5,6 +5,7 @@ import {
   getModelInfo,
   getModelInfoForLlmConfig,
   getReasoningTierOptionsForHandle,
+  models,
   shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
 
@@ -65,6 +66,28 @@ describe("getModelInfo", () => {
       context_window: 500000,
       parallel_tool_calls: true,
     });
+  });
+
+  test("features GPT-5.6 variants in capability order ahead of Anthropic", () => {
+    const featuredIds = models
+      .filter((model) => model.isFeatured)
+      .map((model) => model.id);
+    const promotedIds = [
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.6-sol-plus-pro-high",
+      "gpt-5.6-terra-plus-pro-high",
+      "fable",
+      "opus",
+    ];
+
+    expect(featuredIds.filter((id) => promotedIds.includes(id))).toEqual(
+      promotedIds,
+    );
+    expect(featuredIds).not.toContain("gpt-5.5-high");
+    expect(featuredIds).not.toContain("gpt-5.5-plus-pro-high");
+    expect(featuredIds).not.toContain("gpt-5.6-luna-plus-pro-high");
   });
 
   test("resolves direct xAI Grok 4.5 registry metadata", () => {
