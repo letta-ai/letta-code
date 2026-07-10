@@ -58,6 +58,7 @@ import {
   getRoutesForChannel,
   loadRoutes,
   removeRouteInMemory,
+  saveRoutes,
   setRouteInMemory,
 } from "./routing";
 import {
@@ -85,6 +86,7 @@ import {
 } from "./types";
 import {
   allowedUsersIncludes,
+  isLidJid,
   isPhoneJid,
   resolveWhatsAppAlias,
   stripDeviceSuffix,
@@ -563,11 +565,20 @@ export class ChannelRegistry {
         route.enabled,
     );
 
-    if (matches.length !== 1) {
+    if (matches.length === 0) {
       return null;
     }
 
-    return matches[0] ?? null;
+    if (matches.length === 1) {
+      return matches[0] ?? null;
+    }
+
+    // Multiple matches (both phone and LID forms exist for the same
+    // agent+conversation). Prefer the LID-keyed route as canonical —
+    // Baileys delivers inbound under LID, so LID-keyed routes are the
+    // long-term stable form.
+    const lidRoute = matches.find((r) => isLidJid(r.chatId));
+    return lidRoute ?? (matches[0] ?? null);
   }
 
   /**
@@ -648,6 +659,93 @@ export class ChannelRegistry {
       `[WhatsApp:${resolvedAccountId}] Bootstrapped outbound route for ${chatId} → keyed by LID ${lidChatId}`,
     );
     return true;
+  }
+
+  /**
+   * WhatsApp-only startup drain: migrate phone-keyed routes to LID-keyed
+   * routes when the LidDesk knows the LID for that phone.
+   *
+   * For each phone-keyed route, if the desk has a LID mapping:
+   * - If a LID-keyed route already exists for the same agent+conversation,
+   *   skip (the LID route is canonical; the phone route will eventually
+   *   be cleaned up by reconcile or manual operator action).
+   * - Otherwise, create a new LID-keyed route with the same agent/conversation,
+   *   and remove the phone-keyed route.
+   *
+   * Safe to call when the desk is empty (no-op). Only processes direct-chat
+   * phone JID routes for the specified account.
+   *
+   * @returns number of routes migrated.
+   */
+  migratePhoneRoutesToLid(accountId?: string): number {
+    const resolvedAccountId = accountId?.trim() || LEGACY_CHANNEL_ACCOUNT_ID;
+    const adapter = this.getAdapter("whatsapp", resolvedAccountId);
+    if (!adapter) return 0;
+
+    const waAdapter = adapter as ChannelAdapter & {
+      getLidDesk?: () => LidDesk;
+    };
+    const desk = waAdapter.getLidDesk?.();
+    if (!desk || desk.size === 0) return 0;
+
+    const phoneRoutes = getRoutesForChannel(
+      "whatsapp",
+      resolvedAccountId,
+    ).filter(
+      (route) =>
+        isPhoneJid(route.chatId) &&
+        route.chatType === "direct" &&
+        route.enabled,
+    );
+
+    let migrated = 0;
+    for (const route of phoneRoutes) {
+      const lid = desk.resolvePn(route.chatId);
+      if (!lid) continue;
+
+      const lidChatId = stripDeviceSuffix(lid);
+
+      // Skip if a LID-keyed route already exists for this contact.
+      const existingLidRoute = getRouteRaw(
+        "whatsapp",
+        lidChatId,
+        resolvedAccountId,
+      );
+      if (existingLidRoute) continue;
+
+      // Create the LID-keyed route, then remove the phone-keyed one.
+      const now = new Date().toISOString();
+      addRoute("whatsapp", {
+        accountId: resolvedAccountId,
+        chatId: lidChatId,
+        chatType: route.chatType,
+        threadId: route.threadId,
+        agentId: route.agentId,
+        conversationId: route.conversationId,
+        enabled: route.enabled,
+        outboundEnabled: route.outboundEnabled,
+        createdAt: route.createdAt,
+        updatedAt: now,
+      });
+
+      removeRouteInMemory(
+        "whatsapp",
+        route.chatId,
+        resolvedAccountId,
+        route.threadId,
+      );
+
+      console.log(
+        `[WhatsApp:${resolvedAccountId}] Migrated phone route ${route.chatId} → LID ${lidChatId}`,
+      );
+      migrated++;
+    }
+
+    if (migrated > 0) {
+      saveRoutes("whatsapp");
+    }
+
+    return migrated;
   }
 
   async startChannel(channelId: string): Promise<boolean> {

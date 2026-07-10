@@ -423,6 +423,359 @@ describe("tryBootstrapOutboundRoute — WhatsApp-only", () => {
   });
 });
 
+// ── Slice 9: alias lookup edge cases with real LidDesk mappings ─────
+
+describe("Slice 9 — alias lookup against real LidDesk mapping", () => {
+  test("LidDesk has mapping but no route-keyed-by-LID: returns existing phone-keyed route, no duplicate created", async () => {
+    const lidDesk = new LidDesk(tempDir);
+    lidDesk.load();
+    lidDesk.record("9876543210@lid", "34625815199@s.whatsapp.net");
+    lidDesk.save();
+
+    const registry = new ChannelRegistry();
+    const adapter = makeMockWhatsAppAdapter({ lidDesk });
+    registry.registerAdapter(adapter);
+
+    // Pre-create a phone-keyed route (legacy / pre-migration state).
+    const { addRoute, getRoutesForChannel } = await import(
+      "@/channels/routing"
+    );
+    const now = new Date().toISOString();
+    addRoute("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "34625815199@s.whatsapp.net",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // Query by LID — should find the phone-keyed route via alias.
+    const route = registry.getRouteForScope(
+      "whatsapp",
+      "9876543210@lid",
+      "agent-1",
+      "conv-1",
+      "signo-digi",
+    );
+    expect(route).not.toBeNull();
+    expect(route?.chatId).toBe("34625815199@s.whatsapp.net");
+
+    // Verify no duplicate was created.
+    const allRoutes = getRoutesForChannel("whatsapp", "signo-digi");
+    const contactRoutes = allRoutes.filter(
+      (r) =>
+        r.chatId === "9876543210@lid" ||
+        r.chatId === "34625815199@s.whatsapp.net",
+    );
+    expect(contactRoutes.length).toBe(1);
+
+    await registry.stopAll();
+  });
+
+  test("both phone and LID routes exist: returns LID-keyed (canonical) without duplication", async () => {
+    const lidDesk = new LidDesk(tempDir);
+    lidDesk.load();
+    lidDesk.record("9876543210@lid", "34625815199@s.whatsapp.net");
+    lidDesk.save();
+
+    const registry = new ChannelRegistry();
+    const adapter = makeMockWhatsAppAdapter({ lidDesk });
+    registry.registerAdapter(adapter);
+
+    // Pre-create both routes (the historic parallel-pair scenario).
+    const { addRoute, getRoutesForChannel } = await import(
+      "@/channels/routing"
+    );
+    const now = new Date().toISOString();
+    addRoute("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "34625815199@s.whatsapp.net",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    addRoute("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "9876543210@lid",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // Query by phone — should prefer the LID-keyed route.
+    const routeByPhone = registry.getRouteForScope(
+      "whatsapp",
+      "34625815199@s.whatsapp.net",
+      "agent-1",
+      "conv-1",
+      "signo-digi",
+    );
+    expect(routeByPhone).not.toBeNull();
+    expect(routeByPhone?.chatId).toBe("9876543210@lid");
+
+    // Query by LID — should also return the LID-keyed route.
+    const routeByLid = registry.getRouteForScope(
+      "whatsapp",
+      "9876543210@lid",
+      "agent-1",
+      "conv-1",
+      "signo-digi",
+    );
+    expect(routeByLid).not.toBeNull();
+    expect(routeByLid?.chatId).toBe("9876543210@lid");
+
+    // No new routes were created.
+    const allRoutes = getRoutesForChannel("whatsapp", "signo-digi");
+    const contactRoutes = allRoutes.filter(
+      (r) =>
+        r.chatId === "9876543210@lid" ||
+        r.chatId === "34625815199@s.whatsapp.net",
+    );
+    expect(contactRoutes.length).toBe(2); // still just the original pair
+
+    await registry.stopAll();
+  });
+
+  test("no LidDesk mapping: alias lookup is a no-op, direct match still works", async () => {
+    const lidDesk = new LidDesk(tempDir);
+    lidDesk.load();
+    // No mapping recorded.
+
+    const registry = new ChannelRegistry();
+    const adapter = makeMockWhatsAppAdapter({ lidDesk });
+    registry.registerAdapter(adapter);
+
+    const { addRoute } = await import("@/channels/routing");
+    const now = new Date().toISOString();
+    addRoute("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "34625815199@s.whatsapp.net",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // Direct match works.
+    const route = registry.getRouteForScope(
+      "whatsapp",
+      "34625815199@s.whatsapp.net",
+      "agent-1",
+      "conv-1",
+      "signo-digi",
+    );
+    expect(route).not.toBeNull();
+    expect(route?.chatId).toBe("34625815199@s.whatsapp.net");
+
+    // Query by an unknown LID — no alias, no match.
+    const noRoute = registry.getRouteForScope(
+      "whatsapp",
+      "unknown@lid",
+      "agent-1",
+      "conv-1",
+      "signo-digi",
+    );
+    expect(noRoute).toBeNull();
+
+    await registry.stopAll();
+  });
+});
+
+// ── Slice 9: optional startup drain migration ───────────────────────
+
+describe("Slice 9 — phone→LID route migration drain", () => {
+  test("migrates phone-keyed routes to LID-keyed when desk knows the LID", async () => {
+    const lidDesk = new LidDesk(tempDir);
+    lidDesk.load();
+    lidDesk.record("9876543210@lid", "34625815199@s.whatsapp.net");
+    lidDesk.save();
+
+    const registry = new ChannelRegistry();
+    const adapter = makeMockWhatsAppAdapter({ lidDesk });
+    registry.registerAdapter(adapter);
+
+    // Pre-create a phone-keyed route.
+    const { addRoute, getRouteRaw, getRoutesForChannel } = await import(
+      "@/channels/routing"
+    );
+    const now = new Date().toISOString();
+    addRoute("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "34625815199@s.whatsapp.net",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // Run migration.
+    const migrated = registry.migratePhoneRoutesToLid("signo-digi");
+    expect(migrated).toBe(1);
+
+    // Phone-keyed route should be gone.
+    expect(
+      getRouteRaw("whatsapp", "34625815199@s.whatsapp.net", "signo-digi"),
+    ).toBeUndefined();
+
+    // LID-keyed route should exist with same agent/conv.
+    const lidRoute = getRouteRaw("whatsapp", "9876543210@lid", "signo-digi");
+    expect(lidRoute).toBeDefined();
+    expect(lidRoute?.agentId).toBe("agent-1");
+    expect(lidRoute?.conversationId).toBe("conv-1");
+
+    // Only one route total for this contact.
+    const allRoutes = getRoutesForChannel("whatsapp", "signo-digi");
+    const contactRoutes = allRoutes.filter(
+      (r) =>
+        r.chatId === "9876543210@lid" ||
+        r.chatId === "34625815199@s.whatsapp.net",
+    );
+    expect(contactRoutes.length).toBe(1);
+
+    await registry.stopAll();
+  });
+
+  test("does NOT migrate when desk has no LID mapping for the phone", async () => {
+    const lidDesk = new LidDesk(tempDir);
+    lidDesk.load();
+    // No mapping recorded.
+
+    const registry = new ChannelRegistry();
+    const adapter = makeMockWhatsAppAdapter({ lidDesk });
+    registry.registerAdapter(adapter);
+
+    const { addRoute, getRouteRaw } = await import("@/channels/routing");
+    const now = new Date().toISOString();
+    addRoute("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "34625815199@s.whatsapp.net",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const migrated = registry.migratePhoneRoutesToLid("signo-digi");
+    expect(migrated).toBe(0);
+
+    // Phone-keyed route still exists.
+    expect(
+      getRouteRaw("whatsapp", "34625815199@s.whatsapp.net", "signo-digi"),
+    ).toBeDefined();
+
+    await registry.stopAll();
+  });
+
+  test("does NOT migrate when LID-keyed route already exists (no duplicate)", async () => {
+    const lidDesk = new LidDesk(tempDir);
+    lidDesk.load();
+    lidDesk.record("9876543210@lid", "34625815199@s.whatsapp.net");
+    lidDesk.save();
+
+    const registry = new ChannelRegistry();
+    const adapter = makeMockWhatsAppAdapter({ lidDesk });
+    registry.registerAdapter(adapter);
+
+    const { addRoute, getRoutesForChannel } = await import("@/channels/routing");
+    const now = new Date().toISOString();
+    // Both exist already.
+    addRoute("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "34625815199@s.whatsapp.net",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    addRoute("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "9876543210@lid",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const migrated = registry.migratePhoneRoutesToLid("signo-digi");
+    expect(migrated).toBe(0); // LID route already exists, phone route left alone
+
+    // Still 2 routes (migration is non-destructive when LID already exists).
+    const allRoutes = getRoutesForChannel("whatsapp", "signo-digi");
+    const contactRoutes = allRoutes.filter(
+      (r) =>
+        r.chatId === "9876543210@lid" ||
+        r.chatId === "34625815199@s.whatsapp.net",
+    );
+    expect(contactRoutes.length).toBe(2);
+
+    await registry.stopAll();
+  });
+
+  test("empty desk: migration is a no-op", async () => {
+    const lidDesk = new LidDesk(tempDir);
+    lidDesk.load();
+
+    const registry = new ChannelRegistry();
+    const adapter = makeMockWhatsAppAdapter({ lidDesk });
+    registry.registerAdapter(adapter);
+
+    const { addRoute } = await import("@/channels/routing");
+    const now = new Date().toISOString();
+    addRoute("whatsapp", {
+      accountId: "signo-digi",
+      chatId: "34625815199@s.whatsapp.net",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const migrated = registry.migratePhoneRoutesToLid("signo-digi");
+    expect(migrated).toBe(0);
+
+    await registry.stopAll();
+  });
+});
+
 // ── Slice 8: phone↔LID route alias normalization ───────────────────
 
 describe("route alias normalization — phone↔LID convergence", () => {
