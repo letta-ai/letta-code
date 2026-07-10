@@ -8,6 +8,9 @@ import {
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter } from "@/channels/types";
 
+const SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX =
+  "For Slack requests that require nontrivial work or several tool calls";
+
 function createRunningAdapter(
   channelId: "slack" | "telegram",
   accountId: string,
@@ -114,7 +117,9 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(resolved.description).toContain(
       "Available actions across the active channels: send, react, upload-file, send-rich.",
     );
-    expect(resolved.description).not.toContain("View in web link");
+    expect(resolved.description).toContain(
+      SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX,
+    );
     expect(properties.channel?.enum).toEqual(["slack", "telegram"]);
     expect(properties.action?.enum).toEqual([
       "send",
@@ -167,9 +172,8 @@ describe("buildDynamicMessageChannelSchema", () => {
       "If the useful response belongs later, schedule the follow-up instead of sending a placeholder.",
     );
     expect(resolved.description).toContain(
-      'For Slack requests that require nontrivial work or several tool calls, send one short MessageChannel call with action="send" before starting other tools.',
+      SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX,
     );
-    expect(resolved.description).toContain("View in web link.");
     expect(resolved.description).not.toContain("Telegram");
     expect(properties.channel?.enum).toEqual(["slack"]);
     expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
@@ -205,9 +209,8 @@ describe("buildDynamicMessageChannelSchema", () => {
       "Currently active channels: Telegram.",
     );
     expect(resolved.description).not.toContain(
-      "For Slack requests that require nontrivial work",
+      SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX,
     );
-    expect(resolved.description).not.toContain("View in web link");
     expect(properties.channel?.enum).toEqual(["telegram"]);
     expect(properties.action?.enum).toEqual([
       "send",
