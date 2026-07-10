@@ -35,6 +35,43 @@ describe("Slack app manifest", () => {
     expect(manifest.oauth_config.scopes.bot).toContain("commands");
   });
 
+  test("includes scopes required by current adapter behavior", () => {
+    const scopes = buildSlackAppManifest().oauth_config.scopes.bot;
+
+    // assistant:write — assistant.threads.setStatus (status-controller.ts)
+    expect(scopes).toContain("assistant:write");
+
+    // channels:read — conversations.list (target-resolution.ts)
+    expect(scopes).toContain("channels:read");
+
+    // im:write — conversations.open (target-resolution.ts)
+    expect(scopes).toContain("im:write");
+
+    // Existing scopes from the original manifest
+    expect(scopes).toContain("app_mentions:read");
+    expect(scopes).toContain("channels:history");
+    expect(scopes).toContain("chat:write");
+    expect(scopes).toContain("files:read");
+    expect(scopes).toContain("files:write");
+    expect(scopes).toContain("groups:history");
+    expect(scopes).toContain("im:history");
+    expect(scopes).toContain("reactions:read");
+    expect(scopes).toContain("reactions:write");
+    expect(scopes).toContain("users:read");
+  });
+
+  test("declares event subscriptions for inbound Slack messages and reactions", () => {
+    const events =
+      buildSlackAppManifest().settings.event_subscriptions.bot_events;
+
+    expect(events).toContain("app_mention");
+    expect(events).toContain("message.channels");
+    expect(events).toContain("message.groups");
+    expect(events).toContain("message.im");
+    expect(events).toContain("reaction_added");
+    expect(events).toContain("reaction_removed");
+  });
+
   test("generates native Slack slash commands from the channel command registry", () => {
     const manifest = buildSlackAppManifest();
     const manifestCommands = manifest.features.slash_commands.map(
@@ -49,6 +86,25 @@ describe("Slack app manifest", () => {
     expect(
       listSlackNativeSlashCommands().map((entry) => entry.command),
     ).toEqual(manifestCommands);
+  });
+
+  test("slash command descriptions match the channel command registry summaries", () => {
+    const commands = listSlackNativeSlashCommands();
+    const registryByName = new Map(
+      listChannelSlashCommands().flatMap((definition) =>
+        [definition.name, ...(definition.aliases ?? [])].map((name) => [
+          name,
+          definition,
+        ]),
+      ),
+    );
+
+    for (const spec of commands) {
+      const name = spec.command.slice(1);
+      const definition = registryByName.get(name);
+      expect(definition).toBeDefined();
+      expect(spec.description).toBe(definition?.summary ?? "");
+    }
   });
 
   test("uses Socket Mode slash command URLs required by Slack manifests", () => {
@@ -76,5 +132,13 @@ describe("Slack app manifest", () => {
         (entry) => entry.url === commandUrl,
       ),
     ).toBe(true);
+  });
+
+  test("does not expose credentials or tokens in the manifest", () => {
+    const manifest = buildSlackAppManifest();
+    const serialized = JSON.stringify(manifest);
+
+    expect(serialized).not.toContain("xoxb-");
+    expect(serialized).not.toContain("xapp-");
   });
 });

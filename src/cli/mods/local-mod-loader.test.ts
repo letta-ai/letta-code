@@ -10,10 +10,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
 import chalk from "chalk";
-import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
-import { columns, row } from "@/cli/display/statusline/formatting";
-import type { StatuslineRenderContext } from "@/cli/display/statusline/types";
-import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
+import { columns, link, row } from "@/cli/display/statusline/formatting";
+import { buildCliModContext } from "@/cli/helpers/cli-mod-context";
 import { runModCommandWithTimeout } from "@/cli/mods/command-runtime";
 import {
   disposeLocalMods,
@@ -22,41 +20,31 @@ import {
 } from "@/cli/mods/local-mod-loader";
 import { getModErrorDiagnostics } from "@/mods/mod-diagnostics";
 import { clearModTools } from "@/mods/tool-registry";
-import type { ModDiagnostic } from "@/mods/types";
+import type { ModContext, ModDiagnostic } from "@/mods/types";
 
 function createTempDir(): string {
   return mkdtempSync(path.join(tmpdir(), "letta-mods-"));
 }
 
-function createStatuslineContext(): StatuslineRenderContext {
-  return buildStatuslineRenderContext({
-    payload: buildStatusLinePayload({
-      agentName: "Letta Code",
-      currentDirectory: "/tmp/project",
-      modelDisplayName: "Sonnet 4.6",
-      projectDirectory: "/tmp/project",
-      toolset: "default",
-    }),
-    statuses: { mode: "fast" },
-    ui: {
-      currentModelProvider: "anthropic",
-      goalStatusText: null,
-      hasTemporaryModelOverride: false,
-      isByokProvider: false,
-      isLocalBackend: true,
-      isOpenAICodexProvider: false,
-      rightColumnWidth: 80,
-    },
+function createModContext(): ModContext {
+  return buildCliModContext({
+    agentName: "Letta Code",
+    currentDirectory: "/tmp/project",
+    modelDisplayName: "Sonnet 4.6",
+    modelProvider: "anthropic",
+    projectDirectory: "/tmp/project",
+    toolset: "default",
   });
 }
 
 function renderCtx(width: number) {
-  const context = createStatuslineContext();
+  const context = createModContext();
   return {
     ...context,
     width,
     row,
     columns,
+    link,
     chalk,
   };
 }
@@ -640,7 +628,7 @@ export default function(letta) {
       await expect(
         Promise.resolve(
           registry.commands["review-pr"]?.run({
-            ...createStatuslineContext(),
+            ...createModContext(),
             agent: { id: "agent-1", name: "Amelia" },
             args: "123",
             argv: ["123"],
@@ -698,7 +686,7 @@ export default function(letta) {
         Promise.resolve(
           command
             ? runModCommandWithTimeout(command, {
-                ...createStatuslineContext(),
+                ...createModContext(),
                 args: "",
                 argv: [],
                 command: "legacy-command",
@@ -754,7 +742,7 @@ export default function(letta) {
       await expect(
         Promise.resolve(
           registry.commands["client-check"]?.run({
-            ...createStatuslineContext(),
+            ...createModContext(),
             agent: { id: "agent-1", name: "Amelia" },
             args: "",
             argv: [],

@@ -1,8 +1,7 @@
 /**
- * Default agents (Letta Code & Incognito) creation and management.
+ * Default agent (Letta Code) creation and management.
  *
  * Letta Code: Stateful agent with full memory - learns and grows with the user.
- * Incognito: Stateless agent - fresh experience without accumulated memory.
  */
 
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
@@ -12,11 +11,20 @@ import { settingsManager } from "@/settings-manager";
 import { type CreateAgentOptions, createAgent } from "./create";
 import { parseMdxFrontmatter } from "./memory";
 import { getDefaultModel, resolveModel } from "./model";
+import { buildCreateAgentOptionsForPersonality } from "./personality";
 import { MEMORY_PROMPTS } from "./prompt-assets";
 
 // Tags used to identify default agents
 export const MEMO_TAG = "default:memo";
-export const INCOGNITO_TAG = "default:incognito";
+export const TUTOR_TAG = "default:tutorial";
+
+/**
+ * Personalities the startup bootstrap can create. Kept deliberately simple:
+ * a true fresh start (brand-new account, nothing to resume) gets the Tutor
+ * onboarding agent, while an explicit `--new-agent` (and headless runs) get
+ * the standard Letta Code (memo) agent.
+ */
+export type DefaultAgentPersonality = "memo" | "tutorial";
 
 // Letta Code's default memory blocks - loaded from Memo-specific prompts.
 const MEMO_PERSONA = parseMdxFrontmatter(
@@ -28,8 +36,6 @@ const MEMO_HUMAN = parseMdxFrontmatter(
 
 // Agent descriptions shown in /agents selector
 const MEMO_DESCRIPTION = "The default Letta Code agent with persistent memory";
-const INCOGNITO_DESCRIPTION =
-  "A stateless coding agent without memory (incognito mode)";
 
 /**
  * Default agent configurations.
@@ -44,13 +50,6 @@ export const DEFAULT_AGENT_CONFIGS: Record<string, CreateAgentOptions> = {
       persona: MEMO_PERSONA,
       human: MEMO_HUMAN,
     },
-  },
-  incognito: {
-    name: "Incognito",
-    description: INCOGNITO_DESCRIPTION,
-    memoryBlocks: [], // No personal memory blocks
-    baseTools: ["web_search", "fetch_webpage"], // No memory tool
-    enableMemfs: false,
   },
 };
 
@@ -164,17 +163,19 @@ export async function ensureDefaultAgents(
   backend: Backend,
   options?: {
     preferredModel?: string;
+    /** Which personality the created agent gets. Defaults to memo (Letta Code). */
+    personality?: DefaultAgentPersonality;
   },
 ): Promise<AgentState | null> {
   if (!settingsManager.shouldCreateDefaultAgents()) {
     return null;
   }
 
+  const personality = options?.personality ?? "memo";
+
   try {
     // Pre-determine memfs mode so the agent is created with the correct prompt.
-    const { isLettaCloud, enableMemfsIfCloud } = await import(
-      "@/agent/memory-filesystem"
-    );
+    const { isLettaCloud } = await import("@/agent/memory-filesystem");
     const willAutoEnableMemfs =
       backend.capabilities.remoteMemfs && (await isLettaCloud());
     const memoryPromptMode = backend.capabilities.localMemfs
@@ -183,19 +184,33 @@ export async function ensureDefaultAgents(
         ? "memfs"
         : undefined;
 
-    const { agent } = await createAgent({
-      ...DEFAULT_AGENT_CONFIGS.memo,
-      model: await resolveDefaultAgentModel(backend, options?.preferredModel),
-      memoryPromptMode,
-    });
-    await addTagToAgent(backend, agent.id, MEMO_TAG);
-    settingsManager.pinAgent(agent.id);
+    const model = await resolveDefaultAgentModel(
+      backend,
+      options?.preferredModel,
+    );
 
-    // Enable memfs on Letta Cloud (tags, repo clone, tool detach)
-    // without blocking startup on the initial clone.
-    if (backend.capabilities.remoteMemfs) {
-      void enableMemfsIfCloud(agent.id, backend);
-    }
+    const createOptions: CreateAgentOptions =
+      personality === "tutorial"
+        ? {
+            ...(await buildCreateAgentOptionsForPersonality({
+              personalityId: "tutorial",
+              model,
+            })),
+            memoryPromptMode,
+          }
+        : {
+            ...DEFAULT_AGENT_CONFIGS.memo,
+            model,
+            memoryPromptMode,
+          };
+
+    const { agent } = await createAgent(createOptions);
+    await addTagToAgent(
+      backend,
+      agent.id,
+      personality === "tutorial" ? TUTOR_TAG : MEMO_TAG,
+    );
+    settingsManager.pinAgent(agent.id);
 
     return agent;
   } catch (err) {

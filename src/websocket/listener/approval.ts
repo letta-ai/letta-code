@@ -3,10 +3,12 @@ import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
 import {
   emitDeviceStatusIfOpen,
   emitLoopStatusIfOpen,
-  setLoopStatus,
+  emitProtocolV2Message,
 } from "./protocol-outbound";
 import { evictConversationRuntimeIfIdle } from "./runtime";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
+import type { TurnLease } from "./turn-lifecycle";
+import { setCommandLoopStatus, setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime } from "./types";
 
 export function rememberPendingApprovalBatchIds(
@@ -194,7 +196,7 @@ export function resolvePendingApprovalResolver(
   runtime.pendingApprovalResolvers.delete(requestId);
   runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
   if (runtime.pendingApprovalResolvers.size === 0 && !runtime.isProcessing) {
-    setLoopStatus(runtime, "WAITING_ON_INPUT");
+    setCommandLoopStatus(runtime, "WAITING_ON_INPUT");
   }
   pending.resolve(response);
   emitLoopStatusIfOpen(runtime.listener, {
@@ -223,7 +225,9 @@ export function rejectPendingApprovalResolvers(
       runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
     }
   }
-  setLoopStatus(runtime, "WAITING_ON_INPUT");
+  if (!runtime.isProcessing && !runtime.cancelRequested) {
+    setCommandLoopStatus(runtime, "WAITING_ON_INPUT");
+  }
   emitLoopStatusIfOpen(runtime.listener, {
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
@@ -238,6 +242,7 @@ export function rejectPendingApprovalResolvers(
 export function requestApprovalOverWS(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
+  turnLease: TurnLease,
   requestId: string,
   controlRequest: ControlRequest,
 ): Promise<ApprovalResponseBody> {
@@ -245,9 +250,9 @@ export function requestApprovalOverWS(
     return Promise.reject(new Error("WebSocket not open"));
   }
 
-  const abortSignal = runtime.activeAbortController?.signal ?? null;
+  const abortSignal = turnLease.signal;
   const isInterrupted = () =>
-    runtime.cancelRequested || abortSignal?.aborted === true;
+    !runtime.turnLifecycle.isCurrent(turnLease) || abortSignal.aborted;
 
   if (isInterrupted()) {
     return Promise.reject(new Error("Cancelled by user"));
@@ -256,7 +261,7 @@ export function requestApprovalOverWS(
   return new Promise<ApprovalResponseBody>((resolve, reject) => {
     let settled = false;
     const cleanupAbortListener = () => {
-      abortSignal?.removeEventListener("abort", handleAbort);
+      abortSignal.removeEventListener("abort", handleAbort);
     };
     const wrappedResolve = (response: ApprovalResponseBody) => {
       if (settled) {
@@ -280,7 +285,7 @@ export function requestApprovalOverWS(
       wrappedReject(new Error("Cancelled by user"));
     };
 
-    abortSignal?.addEventListener("abort", handleAbort, { once: true });
+    abortSignal.addEventListener("abort", handleAbort, { once: true });
     if (isInterrupted()) {
       handleAbort();
       return;
@@ -296,8 +301,12 @@ export function requestApprovalOverWS(
       handleAbort();
       return;
     }
-    runtime.lastStopReason = "requires_approval";
-    setLoopStatus(runtime, "WAITING_ON_APPROVAL");
+    runtime.turnLifecycle.recordStopReason(turnLease, "requires_approval");
+    setTurnLoopStatus(runtime, turnLease, "WAITING_ON_APPROVAL");
+    emitProtocolV2Message(socket, runtime, controlRequest, {
+      agent_id: runtime.agentId,
+      conversation_id: runtime.conversationId,
+    });
     emitLoopStatusIfOpen(runtime.listener, {
       agent_id: runtime.agentId,
       conversation_id: runtime.conversationId,

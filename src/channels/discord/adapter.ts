@@ -1,5 +1,4 @@
 import { basename } from "node:path";
-import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelTurnLifecycleEvent,
@@ -12,145 +11,40 @@ import {
   isDiscordGuildChannelAllowed,
   resolveDiscordChannelMode,
 } from "./channel-gating";
-import { formatDiscordDeliveryError } from "./error-reply";
+import type {
+  DiscordAttachmentLike,
+  DiscordClient,
+  DiscordMessage,
+  DiscordReactionLike,
+  DiscordUserLike,
+} from "./internal-types";
 import {
   resolveDiscordInboundAttachments,
   resolveDiscordThreadHistory,
   resolveDiscordThreadStarter,
 } from "./media";
 import { type DiscordRuntimeModuleLike, loadDiscordModule } from "./runtime";
-
-type DiscordEventHandlerResult = void | Promise<void>;
-
-interface DiscordUserLike {
-  id: string;
-  username?: string | null;
-  globalName?: string | null;
-  tag?: string | null;
-  bot?: boolean;
-}
-
-interface DiscordGuildMemberLike {
-  displayName?: string | null;
-}
-
-interface DiscordAttachmentLike {
-  id: string;
-  name?: string | null;
-  contentType?: string | null;
-  size?: number;
-  url: string;
-}
-
-interface DiscordMentionsLike {
-  has: (user: DiscordUserLike | null | undefined) => boolean;
-}
-
-interface DiscordReactionResolutionLike {
-  me?: boolean;
-  remove?: () => Promise<unknown>;
-  users: {
-    remove: (userId: string) => Promise<unknown>;
-  };
-}
-
-interface DiscordReactionStoreLike {
-  cache: Map<string, DiscordReactionResolutionLike>;
-  resolve?: (emoji: string) => DiscordReactionResolutionLike | null;
-}
-
-interface DiscordFetchedMessageLike {
-  id: string;
-  content?: string | null;
-  author?: DiscordUserLike;
-  partial?: boolean;
-  fetch?: () => Promise<DiscordFetchedMessageLike>;
-  react: (emoji: string) => Promise<unknown>;
-  reactions: DiscordReactionStoreLike;
-}
-
-interface DiscordThreadLike {
-  id: string;
-  name?: string | null;
-}
-
-interface DiscordChannelLike {
-  name?: string | null;
-  parentId?: string | null;
-  isTextBased?: () => boolean;
-  isThread?: () => boolean;
-  send?: (options: string | Record<string, unknown>) => Promise<{ id: string }>;
-  sendTyping?: () => Promise<unknown>;
-  messages?: {
-    fetch: (id: string) => Promise<DiscordFetchedMessageLike>;
-  };
-}
-
-interface DiscordMessageLike extends DiscordFetchedMessageLike {
-  channelId: string;
-  guildId?: string | null;
-  author: DiscordUserLike;
-  member?: DiscordGuildMemberLike | null;
-  channel: DiscordChannelLike;
-  mentions: DiscordMentionsLike;
-  attachments: Map<string, DiscordAttachmentLike>;
-  createdTimestamp: number;
-  startThread: (options: {
-    name: string;
-    reason?: string;
-  }) => Promise<DiscordThreadLike>;
-}
-
-interface DiscordReactionLike {
-  partial?: boolean;
-  fetch: () => Promise<unknown>;
-  message: DiscordMessageLike;
-  emoji: {
-    id?: string | null;
-    name?: string | null;
-    toString: () => string;
-  };
-}
-
-interface DiscordEventHandlerMap {
-  ready: () => DiscordEventHandlerResult;
-  messageCreate: (message: DiscordMessageLike) => DiscordEventHandlerResult;
-  messageReactionAdd: (
-    reaction: DiscordReactionLike,
-    user: DiscordUserLike,
-  ) => DiscordEventHandlerResult;
-  messageReactionRemove: (
-    reaction: DiscordReactionLike,
-    user: DiscordUserLike,
-  ) => DiscordEventHandlerResult;
-  error: (error: unknown) => DiscordEventHandlerResult;
-}
-
-interface DiscordClient {
-  user?: DiscordUserLike | null;
-  channels: {
-    fetch: (id: string) => Promise<DiscordChannelLike | null>;
-  };
-  once<K extends keyof DiscordEventHandlerMap>(
-    event: K,
-    handler: DiscordEventHandlerMap[K],
-  ): DiscordClient;
-  on<K extends keyof DiscordEventHandlerMap>(
-    event: K,
-    handler: DiscordEventHandlerMap[K],
-  ): DiscordClient;
-  login: (token: string) => Promise<unknown>;
-  destroy: () => void;
-}
-
-type DiscordMessage = DiscordMessageLike;
+import {
+  buildDiscordIngressMessageKey,
+  buildDiscordReplyOptions,
+  formatDiscordLifecycleErrorMessage,
+  hasDiscordMessageFetcher,
+  isDiscordSendableChannel,
+  isDiscordTypingChannel,
+  isNonEmptyString,
+  normalizeDiscordMentionText,
+  notifyDiscordDeliveryError,
+  resolveDiscordChatType,
+  resolveDiscordReactionEmoji,
+  shouldAutoThreadOnDiscordMention,
+  splitMessageText,
+} from "./utils";
 
 const DISCORD_SPLIT_THRESHOLD = 1900;
 const INGRESS_DEDUPE_TTL_MS = 60_000;
 const INGRESS_DEDUPE_MAX = 2_000;
 const LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
 const LIFECYCLE_STATE_MAX = 2_000;
-const DISCORD_LIFECYCLE_ERROR_TEXT_MAX = 1500;
 const INITIAL_THREAD_HISTORY_LIMIT = 20;
 const DISCORD_TYPING_REFRESH_MS = 8_000;
 const DISCORD_TYPING_MAX_MS = 5 * 60 * 1000;
@@ -162,202 +56,6 @@ type DiscordTypingEntry = {
   timer: ReturnType<typeof setInterval>;
   timeout: ReturnType<typeof setTimeout>;
 };
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-function isDiscordTextChannel(
-  channel: DiscordChannelLike | null,
-): channel is DiscordChannelLike & {
-  isTextBased: () => boolean;
-} {
-  return typeof channel?.isTextBased === "function" && channel.isTextBased();
-}
-
-function hasDiscordMessageFetcher(
-  channel: DiscordChannelLike | null,
-): channel is DiscordChannelLike & {
-  isTextBased: () => boolean;
-  messages: {
-    fetch: (id: string) => Promise<DiscordFetchedMessageLike>;
-  };
-} {
-  return (
-    isDiscordTextChannel(channel) &&
-    !!channel.messages &&
-    typeof channel.messages.fetch === "function"
-  );
-}
-
-function isDiscordSendableChannel(
-  channel: DiscordChannelLike | null,
-): channel is DiscordChannelLike & {
-  isTextBased: () => boolean;
-  send: (options: string | Record<string, unknown>) => Promise<{ id: string }>;
-} {
-  return isDiscordTextChannel(channel) && typeof channel.send === "function";
-}
-
-function isDiscordTypingChannel(
-  channel: DiscordChannelLike | null,
-): channel is DiscordChannelLike & {
-  isTextBased: () => boolean;
-  sendTyping: () => Promise<unknown>;
-} {
-  return (
-    isDiscordTextChannel(channel) && typeof channel.sendTyping === "function"
-  );
-}
-
-function splitMessageText(text: string, maxLength: number): string[] {
-  if (text.length <= maxLength) {
-    return [text];
-  }
-  const chunks: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= maxLength) {
-      chunks.push(remaining);
-      break;
-    }
-    // Try to split at a newline boundary
-    let splitAt = remaining.lastIndexOf("\n", maxLength);
-    if (splitAt <= 0) {
-      splitAt = remaining.lastIndexOf(" ", maxLength);
-    }
-    if (splitAt <= 0) {
-      splitAt = maxLength;
-    }
-    chunks.push(remaining.slice(0, splitAt));
-    remaining = remaining.slice(splitAt).trimStart();
-  }
-  return chunks;
-}
-
-function normalizeDiscordMentionText(
-  text: string,
-  botUserId: string | null,
-): string {
-  if (!botUserId) return text;
-  return text.replace(new RegExp(`<@!?${botUserId}>\\s*`, "g"), "").trim();
-}
-
-function resolveDiscordChatType(
-  guildId: string | null | undefined,
-): "direct" | "channel" {
-  return guildId ? "channel" : "direct";
-}
-
-/**
- * Resolve native emoji for Discord reactions.
- * Discord uses native Unicode emoji directly (not names like Slack).
- * Strip colons for common named patterns.
- */
-function resolveDiscordReactionEmoji(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.startsWith("<:") || trimmed.startsWith("<a:")) {
-    return trimmed;
-  }
-  const normalized = trimmed.replace(/^:+|:+$/g, "");
-  // Common name-to-emoji mappings for parity with Slack lifecycle reactions
-  const nameMap: Record<string, string> = {
-    eyes: "👀",
-    white_check_mark: "✅",
-    x: "❌",
-  };
-  return nameMap[normalized] ?? normalized;
-}
-
-export function shouldAutoThreadOnDiscordMention(
-  account: Pick<
-    DiscordChannelAccount,
-    "autoThreadOnMention" | "threadPolicyByChannel"
-  >,
-  channelId: string,
-): boolean {
-  const override = account.threadPolicyByChannel?.[channelId];
-  if (typeof override === "boolean") return override;
-  return account.autoThreadOnMention ?? false;
-}
-
-export function buildDiscordIngressMessageKey(
-  accountId: string | undefined,
-  messageId: string | undefined,
-): string | null {
-  if (!isNonEmptyString(accountId) || !isNonEmptyString(messageId)) {
-    return null;
-  }
-  return `${accountId}:${messageId}`;
-}
-
-export function buildDiscordReplyOptions(
-  replyToMessageId: string | undefined,
-  channelId: string,
-): { reply: { messageReference: string; failIfNotExists: false } } | undefined {
-  const trimmed = replyToMessageId?.trim();
-  if (!trimmed || trimmed === channelId) {
-    return undefined;
-  }
-  return {
-    reply: {
-      messageReference: trimmed,
-      failIfNotExists: false,
-    },
-  };
-}
-
-function formatDiscordLifecycleErrorMessage(errorText: string): string {
-  return formatChannelLifecycleErrorMessage(errorText, {
-    codeBlock: true,
-    maxLength: DISCORD_LIFECYCLE_ERROR_TEXT_MAX,
-  });
-}
-
-/**
- * Best-effort: post a user-facing error reply when forwarding a Discord
- * message to the agent runtime fails. Swallows any send failure so the
- * notification path can never crash the listener.
- */
-async function notifyDiscordDeliveryError(
-  message: DiscordMessageLike,
-  error: unknown,
-): Promise<void> {
-  try {
-    if (typeof message.channel.send !== "function") return;
-    const reply = buildDiscordReplyOptions(message.id, message.channelId);
-    await message.channel.send({
-      allowedMentions: { parse: [] },
-      content: formatDiscordDeliveryError(error),
-      ...(reply ?? {}),
-    });
-  } catch (sendError) {
-    console.error(
-      "[Discord] Failed to forward delivery error to user:",
-      sendError,
-    );
-  }
-}
-
-export async function resolveDiscordAccountDisplayName(
-  token: string,
-): Promise<string | undefined> {
-  const discord = await loadDiscordModule();
-  const client = new discord.Client({
-    intents: [discord.GatewayIntentBits.Guilds],
-  }) as DiscordClient;
-  try {
-    await client.login(token);
-    const tag = client.user?.tag ?? client.user?.username;
-    client.destroy();
-    return tag ?? undefined;
-  } catch {
-    try {
-      client.destroy();
-    } catch {}
-    return undefined;
-  }
-}
 
 export function createDiscordAdapter(
   config: DiscordChannelAccount,
@@ -520,6 +218,7 @@ export function createDiscordAdapter(
   async function sendLifecycleErrorReply(
     source: ChannelTurnSource,
     errorText: string,
+    runId?: string | null,
   ): Promise<void> {
     if (!client) return;
     const key = getLifecycleReplyKey(source);
@@ -535,7 +234,7 @@ export function createDiscordAdapter(
     const reply = buildDiscordReplyOptions(source.messageId, targetChannelId);
     await channel.send({
       allowedMentions: { parse: [] },
-      content: formatDiscordLifecycleErrorMessage(errorText),
+      content: formatDiscordLifecycleErrorMessage(errorText, runId),
       ...(reply ?? {}),
     });
   }
@@ -1095,7 +794,7 @@ export function createDiscordAdapter(
       await Promise.all(
         Array.from(uniqueReplySources.values()).map(async (source) => {
           try {
-            await sendLifecycleErrorReply(source, errorText);
+            await sendLifecycleErrorReply(source, errorText, event.runId);
           } catch (error) {
             console.warn(
               `[Discord] Failed to post lifecycle error for ${source.chatId}:`,

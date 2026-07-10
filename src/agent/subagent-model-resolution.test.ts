@@ -8,12 +8,16 @@ import {
 import {
   buildSubagentArgs,
   buildSubagentPrompt,
-  getModelHandleFromAgent,
   recallPromptForBackend,
-  resolveSubagentLauncher,
-  resolveSubagentModel,
-  resolveSubagentWorkingDirectory,
 } from "@/agent/subagents/manager";
+import {
+  resolveSubagentLauncher,
+  resolveSubagentWorkingDirectory,
+} from "@/agent/subagents/subagent-launcher";
+import {
+  getModelHandleFromAgent,
+  resolveSubagentModel,
+} from "@/agent/subagents/subagent-model";
 
 describe("recallPromptForBackend", () => {
   test("uses separate API and local recall prompts", () => {
@@ -220,6 +224,29 @@ describe("resolveSubagentWorkingDirectory", () => {
     expect(cwd).toBe("/Users/test/.letta/agents/agent-parent/memory");
   });
 
+  test("reflection subagents with memoryScope run from USER_CWD while MEMORY_DIR points at the worktree", () => {
+    const cwd = resolveSubagentWorkingDirectory(
+      {
+        USER_CWD: "/tmp/project-root",
+      } as NodeJS.ProcessEnv,
+      "/tmp/fallback-root",
+      {
+        subagentType: "reflection",
+        launchProfile: "memory-subagent",
+        inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
+        memoryScope: {
+          primaryRoot:
+            "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123",
+          writableRoots: [
+            "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123",
+          ],
+        },
+      },
+    );
+
+    expect(cwd).toBe("/tmp/project-root");
+  });
+
   test("non-reflection subagents still prefer USER_CWD", () => {
     const cwd = resolveSubagentWorkingDirectory(
       {
@@ -250,10 +277,11 @@ describe("buildSubagentArgs", () => {
     launchProfile: "default",
   };
 
-  test("adds --no-memfs for newly spawned subagents by default", () => {
+  test("does not pass --no-memfs (statelessness derives from subagent role env)", () => {
     const args = buildSubagentArgs("test-subagent", baseConfig, null, "hello");
 
-    expect(args).toContain("--no-memfs");
+    expect(args).not.toContain("--no-memfs");
+    expect(args).toContain("--new-agent");
   });
 
   test("tags new subagents with type and combines parent into one --tags value", () => {
@@ -296,7 +324,7 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--tags");
   });
 
-  test("passes --backend local and --no-memfs for local backend subagents", () => {
+  test("passes --backend local for local backend subagents", () => {
     const args = buildSubagentArgs(
       "test-subagent",
       baseConfig,
@@ -310,10 +338,10 @@ describe("buildSubagentArgs", () => {
 
     expect(args).toContain("--backend");
     expect(args).toContain("local");
-    expect(args).toContain("--no-memfs");
+    expect(args).not.toContain("--no-memfs");
   });
 
-  test("does not force --no-memfs when deploying an existing subagent agent", () => {
+  test("deploys existing subagent agents without --new-agent (keeps memfs)", () => {
     const args = buildSubagentArgs(
       "test-subagent",
       baseConfig,

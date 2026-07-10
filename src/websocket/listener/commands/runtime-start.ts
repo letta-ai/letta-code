@@ -134,7 +134,23 @@ async function resolveRuntimeStartAgent(
 ): Promise<AgentState> {
   const backend = getBackend();
   if (parsed.create_agent) {
-    const agent = await backend.createAgent(parsed.create_agent.body);
+    const withMemfs = parsed.create_agent.memfs !== false;
+    const { prepareRawCreateAgentBodyForMemfs, enableMemfsIfCloud } =
+      await import("@/agent/memory-filesystem");
+    const body = withMemfs
+      ? await prepareRawCreateAgentBodyForMemfs(parsed.create_agent.body)
+      : parsed.create_agent.body;
+    const agent = await backend.createAgent(body);
+    if (withMemfs) {
+      // Finish memfs setup (settings, repo clone, legacy tool detach) without
+      // blocking runtime start. The tag is already stamped at creation, so
+      // lazy sync paths can complete this even if the process dies here.
+      void enableMemfsIfCloud(agent.id);
+    } else {
+      // Worker-style agent: no memfs of its own; a memory scope may be
+      // provided per session (MEMORY_DIR + LETTA_MEMORY_DIR_EXPLICIT).
+      settingsManager.setMemfsEnabled(agent.id, false);
+    }
     created.agent = true;
     if (parsed.create_agent.pin_global !== false) {
       settingsManager.pinAgent(agent.id);

@@ -577,9 +577,6 @@ const TOOL_PERMISSIONS: Record<
   grep_files: { requiresApproval: false },
   apply_patch: { requiresApproval: true },
   update_plan: { requiresApproval: false },
-  get_goal: { requiresApproval: false },
-  create_goal: { requiresApproval: false },
-  update_goal: { requiresApproval: false },
   // Gemini toolset
   glob_gemini: { requiresApproval: false },
   list_directory: { requiresApproval: false },
@@ -598,9 +595,6 @@ const TOOL_PERMISSIONS: Record<
   GrepFiles: { requiresApproval: false },
   ApplyPatch: { requiresApproval: true },
   UpdatePlan: { requiresApproval: false },
-  GetGoal: { requiresApproval: false },
-  CreateGoal: { requiresApproval: false },
-  UpdateGoal: { requiresApproval: false },
   // Gemini-2 toolset (PascalCase)
   RunShellCommand: { requiresApproval: true },
   ReadFileGemini: { requiresApproval: false },
@@ -3214,13 +3208,19 @@ export function getToolSchemas(): ToolSchema[] {
  * @param name - The tool name
  * @returns The tool schema or undefined if not found
  */
-export function getToolSchema(name: string): ToolSchema | undefined {
-  const internalName = resolveInternalToolName(name);
+export function getToolSchema(
+  name: string,
+  toolContextId?: string | null,
+): ToolSchema | undefined {
+  const context = toolContextId
+    ? getExecutionContextById(toolContextId)
+    : undefined;
+  const registry = context?.toolRegistry ?? toolRegistry;
+  const internalName = resolveInternalToolName(name, registry);
   if (internalName) {
-    return withDynamicMessageChannelCache(toolRegistry).get(internalName)
-      ?.schema;
+    return withDynamicMessageChannelCache(registry).get(internalName)?.schema;
   }
-  const modTool = getModToolDefinition(name);
+  const modTool = context?.modTools.get(name) ?? getModToolDefinition(name);
   if (modTool) {
     return {
       name: modTool.name,
@@ -3228,7 +3228,8 @@ export function getToolSchema(name: string): ToolSchema | undefined {
       input_schema: modTool.parameters as JsonSchema,
     };
   }
-  const externalTool = getExternalToolDefinition(name);
+  const externalTool =
+    context?.externalTools.get(name) ?? getExternalToolDefinition(name);
   if (externalTool) {
     return {
       name: externalTool.name,

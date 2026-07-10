@@ -6,13 +6,16 @@ export const SLACK_APP_MANIFEST_COMMAND_URL_PLACEHOLDER =
 
 export const SLACK_APP_MANIFEST_BOT_SCOPES = [
   "app_mentions:read",
+  "assistant:write",
   "channels:history",
+  "channels:read",
   "chat:write",
   "commands",
   "files:read",
   "files:write",
   "groups:history",
   "im:history",
+  "im:write",
   "reactions:read",
   "reactions:write",
   "users:read",

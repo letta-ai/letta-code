@@ -13,7 +13,6 @@ export {
 
 export const LOCAL_BACKEND_EXPERIMENTAL_ENV =
   "LETTA_LOCAL_BACKEND_EXPERIMENTAL";
-export const LOCAL_BACKEND_NO_MEMFS_ENV = "LETTA_LOCAL_BACKEND_NO_MEMFS";
 
 function isTruthyEnv(value: string | undefined): boolean {
   return value === "1" || value?.toLowerCase() === "true";
@@ -25,10 +24,25 @@ export function isLocalBackendEnvEnabled(
   return isTruthyEnv(env[LOCAL_BACKEND_EXPERIMENTAL_ENV]);
 }
 
-export function isLocalBackendNoMemfsEnvEnabled(
-  env: NodeJS.ProcessEnv = process.env,
-): boolean {
-  return isTruthyEnv(env[LOCAL_BACKEND_NO_MEMFS_ENV]);
+// Internal process-level memfs kill switch for the local backend.
+//
+// Only used for stateless subagent processes (LETTA_CODE_AGENT_ROLE=subagent
+// spawning a fresh agent): they skip local memfs setup entirely. This is NOT
+// user-configurable — there is no CLI flag or environment variable. All
+// user-facing agents are memfs-enabled unconditionally.
+let localBackendMemfsDisabledForProcess = false;
+
+export function disableLocalBackendMemfsForProcess(): void {
+  localBackendMemfsDisabledForProcess = true;
+}
+
+/** Test-only: restore the default (memfs enabled) after a test disabled it. */
+export function resetLocalBackendMemfsForProcess(): void {
+  localBackendMemfsDisabledForProcess = false;
+}
+
+export function isLocalBackendMemfsDisabledForProcess(): boolean {
+  return localBackendMemfsDisabledForProcess;
 }
 
 export function getLocalBackendMemoryFilesystemRoot(

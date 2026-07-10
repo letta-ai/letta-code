@@ -6,7 +6,7 @@ import {
   type DmPolicy,
   type SlackChannelAccount,
 } from "@/channels/types";
-import { resolveSlackAccountDisplayName } from "./adapter";
+import { resolveSlackAccountDisplayName } from "./account-display";
 import {
   listSlackNativeSlashCommands,
   SLACK_APP_MANIFEST_BOT_EVENTS,

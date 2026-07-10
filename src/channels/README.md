@@ -196,6 +196,19 @@ of hand-copying YAML. It declares bot scopes including `commands`, event
 subscriptions, Socket Mode settings, App Home messages, and native
 `features.slash_commands` entries derived from `listChannelSlashCommands()`.
 
+Bot scopes cover every Slack Web API call the adapter makes:
+
+- `assistant:write` — `assistant.threads.setStatus` for live progress status.
+- `channels:read` — `conversations.list` for proactive target resolution.
+- `im:write` — `conversations.open` for proactive DM target resolution.
+- `channels:history`, `groups:history`, `im:history` — message event subscriptions.
+- `chat:write` — `chat.postMessage` for outbound replies.
+- `commands` — native slash command interactivity.
+- `files:read`, `files:write` — inbound attachment download and outbound upload.
+- `reactions:read`, `reactions:write` — lifecycle reaction tracking.
+- `app_mentions:read` — `app_mention` event delivery.
+- `users:read` — sender display name resolution.
+
 Slack manifests still require a `features.slash_commands[].url` for each slash
 command. In Socket Mode this can stay as the generated placeholder because Bolt
 receives the payload over the app-level WebSocket.
