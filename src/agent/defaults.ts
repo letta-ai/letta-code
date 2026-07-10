@@ -217,6 +217,7 @@ export async function ensureDefaultAgents(
     // Re-throw so caller can handle/exit appropriately
     throw new Error(
       `Failed to create default agents: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
 }

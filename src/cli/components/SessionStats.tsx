@@ -1,5 +1,5 @@
 import type { SessionStatsSnapshot } from "@/agent/stats";
-import { buildAppUrl } from "@/cli/helpers/app-urls";
+import { LETTA_USAGE_URL } from "@/cli/helpers/app-urls";
 import { formatCompact } from "@/cli/helpers/format";
 
 export function formatDuration(ms: number): string {
@@ -67,7 +67,7 @@ export function formatUsageStats({
 
     outputLines.push(
       `Plan: [${balance.billing_tier}]`,
-      buildAppUrl("/settings/organization/usage"),
+      LETTA_USAGE_URL,
       "",
       `Available credits:     ◎${formatNumber(totalCredits)} ($${toDollars(totalCredits)})`,
       `Monthly credits:       ◎${formatNumber(monthlyCredits)} ($${toDollars(monthlyCredits)})`,
