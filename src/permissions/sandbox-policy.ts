@@ -153,10 +153,14 @@ export function deriveSelfAgentRootsForTrees(
       // A memory root nested inside a tree: carve back the whole agent dir so
       // the cwd's immediate parent stays traversable (Seatbelt empty-env bug).
       const leaf = basename(canon);
+      const parentLeaf = basename(dirname(canon));
       out.add(
         leaf === "memory" || leaf === "memory-worktrees"
           ? dirname(canon)
-          : canon,
+          : parentLeaf === "memory-worktrees" ||
+              (parentLeaf === "memory" && leaf === ".git")
+            ? dirname(dirname(canon))
+            : canon,
       );
       continue;
     }
@@ -186,12 +190,14 @@ function deriveWritableMemoryRootsForTrees(
   return [...out];
 }
 
-export interface MemoryModeSandboxInput {
+export interface MemorySubagentSandboxInput {
   /**
    * Memory roots the child may write to — typically the resolved
    * `MEMORY_DIR` plus its `memory-worktrees` sibling.
    */
   memoryRoots: string[];
+  /** Additional roots to carve back read-only after denying agents trees. */
+  readonlyRoots?: string[];
   /**
    * Harness state roots configured OUTSIDE `~/.letta` to also make writable —
    * `~/.letta` itself is always the base. The caller passes a custom
@@ -216,7 +222,7 @@ export interface MemoryModeSandboxInput {
 }
 
 /**
- * Policy for a memory-mode subagent: it may read the filesystem broadly to do
+ * Policy for the memory-subagent launch profile: it may read the filesystem broadly to do
  * its work, write only under the harness state dir (`~/.letta`), and not read or
  * write *other* agents' memory.
  *
@@ -246,8 +252,8 @@ export interface MemoryModeSandboxInput {
  * re-carved writable in `writableRoots` because it is nested inside a denied
  * tree (the base `~/.letta` carve is overridden there by the deny).
  */
-export function buildMemoryModeSandboxPolicy(
-  input: MemoryModeSandboxInput,
+export function buildMemorySubagentSandboxPolicy(
+  input: MemorySubagentSandboxInput,
 ): FsSandboxPolicy {
   const agentsTreeRoots = resolveAgentsTreeRootsInput(input.agentsTreeRoots);
 
@@ -264,10 +270,10 @@ export function buildMemoryModeSandboxPolicy(
   return buildFsSandboxPolicy({
     baseWritableRoots,
     deniedRoots: agentsTreeRoots,
-    readonlyRoots: deriveSelfAgentRootsForTrees(
-      input.memoryRoots,
-      agentsTreeRoots,
-    ),
+    readonlyRoots: [
+      ...deriveSelfAgentRootsForTrees(input.memoryRoots, agentsTreeRoots),
+      ...(input.readonlyRoots ?? []).map(canonicalizeRoot),
+    ],
     // Self memory is nested inside the denied tree; re-carve it writable so the
     // deny (which overrides the base ~/.letta carve there) is itself overridden.
     writableRoots: deriveWritableMemoryRootsForTrees(
@@ -298,7 +304,7 @@ export interface CrossAgentSandboxInput {
  * allowed (`restrictWrites: false`): the only thing this policy removes is
  * access to other agents' memory, exactly like the guard it replaces.
  *
- * Unlike the memory-mode policy, this one DOES deny reads of the agents tree.
+ * Unlike the memory-subagent policy, this one DOES deny reads of the agents tree.
  * That is only safe when the process cwd is outside the tree (the parent
  * agent's cwd is the repo); a cwd inside a read-denied subtree launches with an
  * empty environment under Seatbelt. Callers must enforce that precondition.

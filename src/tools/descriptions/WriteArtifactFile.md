@@ -1,0 +1,1 @@
+Write a file under the Letta Code Desktop artifacts directory (`~/.letta/artifacts`). Paths must be relative to the artifacts root, such as `todo-app/ui/index.html`. Use this to create or update artifact files. The tool creates parent directories as needed and rejects paths that escape the artifacts root.

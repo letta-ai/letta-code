@@ -7,7 +7,7 @@ import {
   mock,
   test,
 } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { APIError } from "@letta-ai/letta-client/error";
@@ -34,10 +34,16 @@ import {
   clearSecretsCache,
 } from "@/utils/secrets-store";
 import { handleSecretsCommand } from "@/websocket/listener/commands/secrets";
+import { enqueueInboundUserMessage } from "@/websocket/listener/inbound-queue";
 import { shouldProcessInboundMessageDirectly } from "@/websocket/listener/queue";
 import { resolveRecoveredApprovalResponse } from "@/websocket/listener/recovery";
+import { clearConversationRuntimeState } from "@/websocket/listener/runtime";
 import { injectQueuedSkillContent } from "@/websocket/listener/skill-injection";
-import type { IncomingMessage } from "@/websocket/listener/types";
+import type {
+  ConversationRuntime,
+  IncomingMessage,
+  RecoveredApprovalState,
+} from "@/websocket/listener/types";
 
 type MockStream = {
   conversationId: string;
@@ -62,6 +68,22 @@ const defaultDrainResult: DrainResult = {
 
 const TEST_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
+
+function beginTestTurn(
+  runtime: ConversationRuntime,
+  options: {
+    workingDirectory?: string;
+    initialStatus?: Parameters<
+      ConversationRuntime["turnLifecycle"]["begin"]
+    >[0]["initialStatus"];
+  } = {},
+) {
+  return runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: options.workingDirectory ?? "/tmp/test-worktree",
+    ...(options.initialStatus ? { initialStatus: options.initialStatus } : {}),
+  });
+}
 
 const sendMessageStreamCalls: Array<{
   conversationId: string;
@@ -274,13 +296,12 @@ mock.module("../agent/approval-recovery", () => ({
 }));
 
 const listenClientModule = await import("@/websocket/listen-client");
+const { createListenerModAdapter } = await import(
+  "@/websocket/listener/mod-adapter"
+);
 const { sendApprovalContinuationWithRetry, sendMessageStreamWithRetry } =
   await import("@/websocket/listener/send");
-const {
-  __listenClientTestUtils,
-  requestApprovalOverWS,
-  resolvePendingApprovalResolver,
-} = listenClientModule;
+const { __listenClientTestUtils } = listenClientModule;
 
 class MockSocket {
   readyState: number;
@@ -333,6 +354,55 @@ function makeIncomingMessage(
     agentId,
     conversationId,
     messages: [{ role: "user" as const, content: text }],
+  };
+}
+
+function makeRecoveredApprovalState(params: {
+  agentId: string;
+  conversationId: string;
+  requestId: string;
+  toolCallId: string;
+  toolName: string;
+  toolArgs: string;
+  overrides?: Partial<RecoveredApprovalState>;
+}): RecoveredApprovalState {
+  let input: Record<string, unknown> = {};
+  try {
+    input = JSON.parse(params.toolArgs) as Record<string, unknown>;
+  } catch {}
+  return {
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+    approvalsByRequestId: new Map([
+      [
+        params.requestId,
+        {
+          approval: {
+            toolCallId: params.toolCallId,
+            toolName: params.toolName,
+            toolArgs: params.toolArgs,
+          },
+          approvalContext: null,
+          controlRequest: {
+            type: "control_request",
+            request_id: params.requestId,
+            request: {
+              subtype: "can_use_tool",
+              tool_name: params.toolName,
+              input,
+              tool_call_id: params.toolCallId,
+              permission_suggestions: [],
+              blocked_path: null,
+            },
+            agent_id: params.agentId,
+            conversation_id: params.conversationId,
+          },
+        },
+      ],
+    ]),
+    pendingRequestIds: new Set([params.requestId]),
+    responsesByRequestId: new Map(),
+    ...params.overrides,
   };
 }
 
@@ -430,16 +500,8 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   afterAll(() => {
-    // Bun's `mock.module()` swaps are process-global and are NOT undone by
-    // `mock.restore()` (which only resets mock function call history /
-    // queued return values). Subsequent test files that statically import
-    // these module paths would otherwise receive the mocked version, with
-    // any leftover `mockResolvedValueOnce(...)` values bleeding into them.
-    //
-    // Mitigation: reset the underlying mock functions and re-point them at
-    // the real implementations captured before mocking. The `mock.module`
-    // factory always returns the same wrapper object, so swapping the
-    // function reference behind it propagates to all consumers.
+    // `mock.module()` is process-global, so restore the captured real
+    // implementations behind each wrapper before other test files run.
     classifyApprovalsMock.mockReset();
     // biome-ignore lint/suspicious/noExplicitAny: real implementations have wider signatures than the narrow zero-arg mocks
     (classifyApprovalsMock as any).mockImplementation(realClassifyApprovals);
@@ -518,6 +580,49 @@ describe("listen-client multi-worker concurrency", () => {
     await turnA;
     expect(runtimeA.isProcessing).toBe(false);
     expect(__listenClientTestUtils.getListenerStatus(listener)).toBe("idle");
+  });
+
+  test("turn_start cancel stops listener turn before sending", async () => {
+    const modsDir = await mkdtemp(join(tmpdir(), "letta-listener-mods-"));
+    const cacheDir = await mkdtemp(join(tmpdir(), "letta-listener-mod-cache-"));
+    try {
+      await writeFile(
+        join(modsDir, "cancel-turn.ts"),
+        `export default function activate(letta) {
+          letta.events.on("turn_start", () => ({
+            cancel: { reason: " Run /plan first. " },
+          }));
+        }`,
+      );
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      listener.modAdapter = createListenerModAdapter({
+        cacheDirectory: cacheDir,
+        globalModsDirectory: modsDir,
+        sessionId: "listener-cancel-test",
+        workingDirectory: modsDir,
+      });
+      await listener.modAdapter.reload();
+      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+        listener,
+        "agent-cancel",
+        "conv-cancel",
+      );
+      const socket = new MockSocket();
+
+      await __listenClientTestUtils.handleIncomingMessage(
+        makeIncomingMessage("agent-cancel", "conv-cancel", "hello"),
+        socket as unknown as WebSocket,
+        runtime,
+      );
+
+      expect(sendMessageStreamMock).not.toHaveBeenCalled();
+      expect(runtime.isProcessing).toBe(false);
+      expect(runtime.lastStopReason).toBe("cancelled");
+      expect(JSON.stringify(socket.sentPayloads)).toContain("Run /plan first.");
+    } finally {
+      await rm(modsDir, { recursive: true, force: true });
+      await rm(cacheDir, { recursive: true, force: true });
+    }
   });
 
   test("listener turns skip duplicate shared image normalization", async () => {
@@ -703,137 +808,13 @@ describe("listen-client multi-worker concurrency", () => {
       "conv-b",
     );
 
-    runtimeA.isProcessing = true;
-    runtimeA.activeAbortController = new AbortController();
-    runtimeB.isProcessing = true;
-    runtimeB.activeAbortController = new AbortController();
+    const leaseA = beginTestTurn(runtimeA);
+    const leaseB = beginTestTurn(runtimeB);
+    runtimeA.turnLifecycle.requestCancellation();
 
-    runtimeA.cancelRequested = true;
-    runtimeA.activeAbortController.abort();
-
-    expect(runtimeA.activeAbortController.signal.aborted).toBe(true);
-    expect(runtimeB.activeAbortController.signal.aborted).toBe(false);
+    expect(leaseA.signal.aborted).toBe(true);
+    expect(leaseB.signal.aborted).toBe(false);
     expect(runtimeB.cancelRequested).toBe(false);
-  });
-
-  test("approval waits and resolver routing stay isolated per conversation", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      "agent-1",
-      "conv-a",
-    );
-    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      "agent-1",
-      "conv-b",
-    );
-    const socket = new MockSocket();
-
-    const pendingA = requestApprovalOverWS(
-      runtimeA,
-      socket as unknown as WebSocket,
-      "perm-a",
-      {
-        type: "control_request",
-        request_id: "perm-a",
-        request: {
-          subtype: "can_use_tool",
-          tool_name: "Bash",
-          input: {},
-          tool_call_id: "call-a",
-          permission_suggestions: [],
-          blocked_path: null,
-        },
-      },
-    );
-    const pendingB = requestApprovalOverWS(
-      runtimeB,
-      socket as unknown as WebSocket,
-      "perm-b",
-      {
-        type: "control_request",
-        request_id: "perm-b",
-        request: {
-          subtype: "can_use_tool",
-          tool_name: "Bash",
-          input: {},
-          tool_call_id: "call-b",
-          permission_suggestions: [],
-          blocked_path: null,
-        },
-      },
-    );
-
-    expect(listener.approvalRuntimeKeyByRequestId.get("perm-a")).toBe(
-      runtimeA.key,
-    );
-    expect(listener.approvalRuntimeKeyByRequestId.get("perm-b")).toBe(
-      runtimeB.key,
-    );
-
-    const statusAWhilePending = __listenClientTestUtils.buildLoopStatus(
-      listener,
-      {
-        agent_id: "agent-1",
-        conversation_id: "conv-a",
-      },
-    );
-    const statusBWhilePending = __listenClientTestUtils.buildLoopStatus(
-      listener,
-      {
-        agent_id: "agent-1",
-        conversation_id: "conv-b",
-      },
-    );
-    expect(statusAWhilePending.status).toBe("WAITING_ON_APPROVAL");
-    expect(statusBWhilePending.status).toBe("WAITING_ON_APPROVAL");
-
-    expect(
-      resolvePendingApprovalResolver(runtimeA, {
-        request_id: "perm-a",
-        decision: { behavior: "allow" },
-      }),
-    ).toBe(true);
-
-    await expect(pendingA).resolves.toMatchObject({
-      request_id: "perm-a",
-      decision: { behavior: "allow" },
-    });
-    expect(runtimeA.pendingApprovalResolvers.size).toBe(0);
-    expect(runtimeB.pendingApprovalResolvers.size).toBe(1);
-    expect(listener.approvalRuntimeKeyByRequestId.has("perm-a")).toBe(false);
-    expect(listener.approvalRuntimeKeyByRequestId.get("perm-b")).toBe(
-      runtimeB.key,
-    );
-
-    const statusAAfterResolve = __listenClientTestUtils.buildLoopStatus(
-      listener,
-      {
-        agent_id: "agent-1",
-        conversation_id: "conv-a",
-      },
-    );
-    const statusBAfterResolve = __listenClientTestUtils.buildLoopStatus(
-      listener,
-      {
-        agent_id: "agent-1",
-        conversation_id: "conv-b",
-      },
-    );
-    expect(statusAAfterResolve.status).toBe("WAITING_ON_INPUT");
-    expect(statusBAfterResolve.status).toBe("WAITING_ON_APPROVAL");
-
-    expect(
-      resolvePendingApprovalResolver(runtimeB, {
-        request_id: "perm-b",
-        decision: { behavior: "allow" },
-      }),
-    ).toBe(true);
-    await expect(pendingB).resolves.toMatchObject({
-      request_id: "perm-b",
-      decision: { behavior: "allow" },
-    });
   });
 
   test("recovered approval state does not leak across conversation scopes", () => {
@@ -849,37 +830,14 @@ describe("listen-client multi-worker concurrency", () => {
       "conv-b",
     );
 
-    runtimeA.recoveredApprovalState = {
+    runtimeA.recoveredApprovalState = makeRecoveredApprovalState({
       agentId: "agent-1",
       conversationId: "conv-a",
-      approvalsByRequestId: new Map([
-        [
-          "perm-a",
-          {
-            approval: {
-              toolCallId: "call-a",
-              toolName: "Bash",
-              toolArgs: "{}",
-            },
-            approvalContext: null,
-            controlRequest: {
-              type: "control_request",
-              request_id: "perm-a",
-              request: {
-                subtype: "can_use_tool",
-                tool_name: "Bash",
-                input: {},
-                tool_call_id: "call-a",
-                permission_suggestions: [],
-                blocked_path: null,
-              },
-            },
-          },
-        ],
-      ]),
-      pendingRequestIds: new Set(["perm-a"]),
-      responsesByRequestId: new Map(),
-    };
+      requestId: "perm-a",
+      toolCallId: "call-a",
+      toolName: "Bash",
+      toolArgs: "{}",
+    });
 
     const loopStatusA = __listenClientTestUtils.buildLoopStatus(listener, {
       agent_id: "agent-1",
@@ -1169,6 +1127,8 @@ describe("listen-client multi-worker concurrency", () => {
       } as never,
       async (queuedTurn: IncomingMessage) => {
         processed.push(queuedTurn);
+        const lease = beginTestTurn(runtime);
+        runtime.turnLifecycle.finish(lease, "end_turn");
       },
     );
 
@@ -1185,7 +1145,83 @@ describe("listen-client multi-worker concurrency", () => {
       batchId: "batch-1",
       sources: channelTurnSources,
       outcome: "completed",
+      stopReason: "end_turn",
     });
+  });
+
+  test("channel queue does not emit a terminal event at an approval continuation boundary", async () => {
+    const lifecycleEvents: Array<Record<string, unknown>> = [];
+    const registry = new ChannelRegistry();
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+      handleTurnLifecycleEvent: async (event) => {
+        lifecycleEvents.push(event as unknown as Record<string, unknown>);
+      },
+    } satisfies ChannelAdapter);
+
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-channel-approval",
+    );
+    const source = {
+      channel: "slack" as const,
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel" as const,
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-channel-approval",
+    };
+    __listenClientTestUtils.enqueueChannelTurn(
+      runtime,
+      {
+        agentId: "agent-1",
+        conversationId: "conv-channel-approval",
+      },
+      [
+        {
+          type: "text",
+          text: '<channel-notification source="slack" chat_id="C123">approve?</channel-notification>',
+        },
+      ],
+      [source],
+    );
+
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      new MockSocket() as unknown as WebSocket,
+      {
+        connectionId: "conn-1",
+        onStatusChange: undefined,
+      } as never,
+      async () => {
+        const lease = beginTestTurn(runtime);
+        runtime.turnLifecycle.finish(lease, "requires_approval");
+      },
+    );
+
+    await waitFor(
+      () => lifecycleEvents.length === 1 && !runtime.queuePumpActive,
+    );
+    expect(lifecycleEvents).toEqual([
+      {
+        type: "processing",
+        batchId: "batch-1",
+        sources: [source],
+      },
+    ]);
   });
 
   test("channel queue lifecycle includes terminal loop error text when the turn stops with error", async () => {
@@ -1252,9 +1288,11 @@ describe("listen-client multi-worker concurrency", () => {
         onStatusChange: undefined,
       } as never,
       async () => {
-        runtime.lastStopReason = "error";
+        const lease = beginTestTurn(runtime);
+        runtime.turnLifecycle.finish(lease, "error");
         runtime.lastTerminalLoopErrorMessage =
           "ChatGPT usage limit reached. Resets at 1:00 PM.";
+        runtime.lastTerminalLoopErrorRunId = "run-limit";
       },
     );
 
@@ -1265,7 +1303,9 @@ describe("listen-client multi-worker concurrency", () => {
       batchId: "batch-1",
       sources: channelTurnSources,
       outcome: "error",
+      stopReason: "error",
       error: "ChatGPT usage limit reached. Resets at 1:00 PM.",
+      runId: "run-limit",
     });
   });
 
@@ -1448,8 +1488,10 @@ describe("listen-client multi-worker concurrency", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     runtime.agentId = "agent-1";
     runtime.conversationId = "conv-1";
-    runtime.activeWorkingDirectory = "/tmp/project";
-    runtime.loopStatus = "WAITING_FOR_API_RESPONSE";
+    const turnLease = beginTestTurn(runtime, {
+      workingDirectory: "/tmp/project",
+      initialStatus: "WAITING_FOR_API_RESPONSE",
+    });
     const socket = new MockSocket();
     const drain = createDeferredDrain();
     drainHandlers.set("conv-1", () => drain.promise);
@@ -1503,7 +1545,7 @@ describe("listen-client multi-worker concurrency", () => {
     const recoveryPromise = __listenClientTestUtils.resolveStaleApprovals(
       runtime,
       socket as unknown as WebSocket,
-      new AbortController().signal,
+      turnLease,
       { getResumeData: getResumeDataMock },
     );
 
@@ -1655,39 +1697,14 @@ describe("listen-client multi-worker concurrency", () => {
     );
     const socket = new MockSocket();
 
-    runtime.recoveredApprovalState = {
+    runtime.recoveredApprovalState = makeRecoveredApprovalState({
       agentId: "agent-1",
       conversationId: "conv-recovered",
-      approvalsByRequestId: new Map([
-        [
-          "perm-recovered-1",
-          {
-            approval: {
-              toolCallId: "tool-call-recovered-1",
-              toolName: "Write",
-              toolArgs: '{"file_path":"foo.ts"}',
-            },
-            approvalContext: null,
-            controlRequest: {
-              type: "control_request",
-              request_id: "perm-recovered-1",
-              request: {
-                subtype: "can_use_tool",
-                tool_name: "Write",
-                input: { file_path: "foo.ts" },
-                tool_call_id: "tool-call-recovered-1",
-                permission_suggestions: [],
-                blocked_path: null,
-              },
-              agent_id: "agent-1",
-              conversation_id: "conv-recovered",
-            },
-          },
-        ],
-      ]),
-      pendingRequestIds: new Set(["perm-recovered-1"]),
-      responsesByRequestId: new Map(),
-    };
+      requestId: "perm-recovered-1",
+      toolCallId: "tool-call-recovered-1",
+      toolName: "Write",
+      toolArgs: '{"file_path":"foo.ts"}',
+    });
 
     queueSkillContent(
       "tool-call-recovered-1",
@@ -1868,47 +1885,25 @@ describe("listen-client multi-worker concurrency", () => {
     ];
     executeApprovalBatchMock.mockResolvedValueOnce(approvalResults as never);
 
-    runtime.recoveredApprovalState = {
+    runtime.recoveredApprovalState = makeRecoveredApprovalState({
       agentId: "agent-1",
       conversationId: "conv-mixed-recovered",
-      approvalsByRequestId: new Map([
-        [
-          "perm-tool-manual",
+      requestId: "perm-tool-manual",
+      toolCallId: manualApproval.toolCallId,
+      toolName: manualApproval.toolName,
+      toolArgs: manualApproval.toolArgs,
+      overrides: {
+        autoDecisions: [
+          { type: "approve", approval: autoAllowedApproval },
           {
-            approval: manualApproval,
-            approvalContext: null,
-            controlRequest: {
-              type: "control_request",
-              request_id: "perm-tool-manual",
-              request: {
-                subtype: "can_use_tool",
-                tool_name: "Bash",
-                input: { command: "rm -rf tmp" },
-                tool_call_id: "tool-manual",
-                permission_suggestions: [],
-                blocked_path: null,
-              },
-              agent_id: "agent-1",
-              conversation_id: "conv-mixed-recovered",
-            },
+            type: "deny",
+            approval: autoDeniedApproval,
+            reason: "blocked by policy",
           },
         ],
-      ]),
-      pendingRequestIds: new Set(["perm-tool-manual"]),
-      responsesByRequestId: new Map(),
-      autoDecisions: [
-        {
-          type: "approve",
-          approval: autoAllowedApproval,
-        },
-        {
-          type: "deny",
-          approval: autoDeniedApproval,
-          reason: "blocked by policy",
-        },
-      ],
-      allApprovals: [autoAllowedApproval, manualApproval, autoDeniedApproval],
-    };
+        allApprovals: [autoAllowedApproval, manualApproval, autoDeniedApproval],
+      },
+    });
 
     const handled = await resolveRecoveredApprovalResponse(
       runtime,
@@ -1978,40 +1973,15 @@ describe("listen-client multi-worker concurrency", () => {
       continuationEpoch: runtime.continuationEpoch,
     };
     runtime.pendingInterruptedToolCallIds = null;
-    runtime.recoveredApprovalState = {
+    runtime.recoveredApprovalState = makeRecoveredApprovalState({
       agentId: "agent-1",
       conversationId: "conv-sync",
-      approvalsByRequestId: new Map([
-        [
-          "perm-sync",
-          {
-            approval: {
-              toolCallId: "call-sync",
-              toolName: "Bash",
-              toolArgs: '{"command":"sleep 300"}',
-            },
-            approvalContext: null,
-            controlRequest: {
-              type: "control_request",
-              request_id: "perm-sync",
-              request: {
-                subtype: "can_use_tool",
-                tool_name: "Bash",
-                input: { command: "sleep 300" },
-                tool_call_id: "call-sync",
-                permission_suggestions: [],
-                blocked_path: null,
-              },
-              agent_id: "agent-1",
-              conversation_id: "conv-sync",
-            },
-          },
-        ],
-      ]),
-      pendingRequestIds: new Set(["perm-sync"]),
-      responsesByRequestId: new Map(),
-    };
-    runtime.loopStatus = "WAITING_ON_APPROVAL";
+      requestId: "perm-sync",
+      toolCallId: "call-sync",
+      toolName: "Bash",
+      toolArgs: '{"command":"sleep 300"}',
+    });
+    beginTestTurn(runtime, { initialStatus: "WAITING_ON_APPROVAL" });
     getResumeDataMock.mockClear();
     retrieveAgentMock.mockClear();
 
@@ -2062,39 +2032,14 @@ describe("listen-client multi-worker concurrency", () => {
       continuationEpoch: runtime.continuationEpoch,
     };
     runtime.pendingInterruptedToolCallIds = null;
-    runtime.recoveredApprovalState = {
+    runtime.recoveredApprovalState = makeRecoveredApprovalState({
       agentId: "agent-1",
       conversationId: "conv-stale",
-      approvalsByRequestId: new Map([
-        [
-          "perm-stale",
-          {
-            approval: {
-              toolCallId: "tool-call-stale",
-              toolName: "Bash",
-              toolArgs: '{"command":"sleep 300"}',
-            },
-            approvalContext: null,
-            controlRequest: {
-              type: "control_request",
-              request_id: "perm-stale",
-              request: {
-                subtype: "can_use_tool",
-                tool_name: "Bash",
-                input: { command: "sleep 300" },
-                tool_call_id: "tool-call-stale",
-                permission_suggestions: [],
-                blocked_path: null,
-              },
-              agent_id: "agent-1",
-              conversation_id: "conv-stale",
-            },
-          },
-        ],
-      ]),
-      pendingRequestIds: new Set(["perm-stale"]),
-      responsesByRequestId: new Map(),
-    };
+      requestId: "perm-stale",
+      toolCallId: "tool-call-stale",
+      toolName: "Bash",
+      toolArgs: '{"command":"sleep 300"}',
+    });
 
     const handled = await resolveRecoveredApprovalResponse(
       runtime,
@@ -2129,8 +2074,7 @@ describe("listen-client multi-worker concurrency", () => {
     const socket = new MockSocket();
     const statuses: string[] = [];
 
-    runtimeA.isProcessing = true;
-    runtimeA.loopStatus = "PROCESSING_API_RESPONSE";
+    beginTestTurn(runtimeA, { initialStatus: "PROCESSING_API_RESPONSE" });
 
     const queueInput = {
       kind: "message",
@@ -2362,6 +2306,82 @@ describe("listen-client multi-worker concurrency", () => {
       type: "approval",
       otid: expect.any(String),
     });
+  });
+
+  test("disconnect cleanup lets an actual approval owner release and drain a follow-up", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    __listenClientTestUtils.setActiveRuntime(listener);
+    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-reset",
+    );
+    const socket = new MockSocket();
+    const resetApproval = {
+      toolCallId: "call-reset",
+      toolName: "AskUserQuestion",
+      toolArgs: "{}",
+    };
+    let drainCount = 0;
+    drainHandlers.set("conv-reset", async () => {
+      drainCount += 1;
+      return drainCount === 1
+        ? {
+            stopReason: "requires_approval",
+            approvals: [resetApproval],
+            apiDurationMs: 0,
+          }
+        : defaultDrainResult;
+    });
+    classifyApprovalsMock.mockResolvedValueOnce({
+      autoAllowed: [],
+      autoDenied: [],
+      needsUserInput: [
+        {
+          approval: resetApproval,
+          parsedArgs: {},
+          context: null,
+        },
+      ],
+    } as never);
+
+    const owner = __listenClientTestUtils.handleIncomingMessage(
+      makeIncomingMessage("agent-1", "conv-reset", "first"),
+      socket as unknown as WebSocket,
+      runtime,
+    );
+    await waitFor(() => runtime.pendingApprovalResolvers.size === 1);
+    clearConversationRuntimeState(runtime);
+    await owner;
+
+    enqueueInboundUserMessage(
+      runtime,
+      makeIncomingMessage("agent-1", "conv-reset", "follow up"),
+    );
+    __listenClientTestUtils.scheduleQueuePump(
+      runtime,
+      socket as unknown as WebSocket,
+      {} as never,
+      (queuedTurn, batch) =>
+        __listenClientTestUtils.handleIncomingMessage(
+          queuedTurn,
+          socket as unknown as WebSocket,
+          runtime,
+          undefined,
+          undefined,
+          batch.batchId,
+        ),
+    );
+    await waitFor(
+      () =>
+        runtime.queueRuntime.length === 0 &&
+        runtime.turnLifecycle.kind === "idle" &&
+        sendMessageStreamMock.mock.calls.length === 2,
+    );
+
+    expect(JSON.stringify(sendMessageStreamMock.mock.calls[1]?.[1])).toContain(
+      "follow up",
+    );
   });
 
   test("change_device_state does not prune default-state entry mid-turn", async () => {
@@ -2717,11 +2737,16 @@ describe("listen-client multi-worker concurrency", () => {
     });
 
     const parentAbortController = new AbortController();
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/test-worktree",
+      abortController: parentAbortController,
+    });
 
     const result = await __listenClientTestUtils.resolveStaleApprovals(
       runtime,
       socket as unknown as WebSocket,
-      parentAbortController.signal,
+      turnLease,
       {
         getResumeData: getResumeDataMock,
       },
@@ -2751,6 +2776,7 @@ describe("listen-client multi-worker concurrency", () => {
       "conv-approval-busy",
     );
     const socket = new MockSocket();
+    const turnLease = beginTestTurn(runtime);
 
     sendMessageStreamMock.mockRejectedValueOnce(
       new APIError(
@@ -2793,10 +2819,14 @@ describe("listen-client multi-worker concurrency", () => {
         },
         socket as unknown as WebSocket,
         runtime,
-        new AbortController().signal,
+        turnLease,
       );
 
-      expect(stream as unknown as MockStream).toEqual({
+      expect(stream.kind).toBe("stream");
+      if (stream.kind !== "stream") {
+        throw new Error("Expected approval continuation stream");
+      }
+      expect(stream.stream as unknown as MockStream).toEqual({
         conversationId: "conv-approval-busy",
         agentId: "agent-approval-busy",
       });
@@ -2837,6 +2867,7 @@ describe("listen-client multi-worker concurrency", () => {
       "conv-blocking-run",
     );
     const socket = new MockSocket();
+    const turnLease = beginTestTurn(runtime);
     const blockingRunId = "run-blocking-123";
 
     sendMessageStreamMock.mockRejectedValueOnce(
@@ -2888,10 +2919,14 @@ describe("listen-client multi-worker concurrency", () => {
         },
         socket as unknown as WebSocket,
         runtime,
-        new AbortController().signal,
+        turnLease,
       );
 
-      expect(stream as unknown as MockStream).toEqual({
+      expect(stream.kind).toBe("stream");
+      if (stream.kind !== "stream") {
+        throw new Error("Expected approval continuation stream");
+      }
+      expect(stream.stream as unknown as MockStream).toEqual({
         conversationId: "conv-blocking-run",
         agentId: "agent-blocking-run",
       });
@@ -2914,6 +2949,7 @@ describe("listen-client multi-worker concurrency", () => {
       "conv-message-blocking-run",
     );
     const socket = new MockSocket();
+    const turnLease = beginTestTurn(runtime);
     const blockingRunId = "run-message-blocking-123";
 
     sendMessageStreamMock.mockRejectedValueOnce(
@@ -2965,7 +3001,7 @@ describe("listen-client multi-worker concurrency", () => {
         },
         socket as unknown as WebSocket,
         runtime,
-        new AbortController().signal,
+        turnLease,
       );
 
       expect(stream as unknown as MockStream).toEqual({

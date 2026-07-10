@@ -19,7 +19,7 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
@@ -1186,10 +1186,12 @@ describe("local backend pi transcript", () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-unconfigured-local-"),
     );
+    const fetchImpl = (async () =>
+      new Response("not found", { status: 404 })) as unknown as typeof fetch;
 
-    const handles = (await listLocalModels(storageDir)).map(
-      (model) => model.handle,
-    );
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
     expect(handles.some((handle) => handle.startsWith("ollama/"))).toBe(false);
     expect(handles.some((handle) => handle.startsWith("lmstudio/"))).toBe(
       false,
@@ -1197,6 +1199,76 @@ describe("local backend pi transcript", () => {
     expect(handles.some((handle) => handle.startsWith("llama.cpp/"))).toBe(
       false,
     );
+  });
+
+  test("auto-detects reachable local model endpoints without saved providers", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-autodetect-local-"),
+    );
+    const calls: string[] = [];
+    const fetchImpl = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : String(input);
+      calls.push(url);
+      if (url === "http://localhost:11434/api/tags") {
+        return new Response(
+          JSON.stringify({ models: [{ name: "qwen2.5-coder:7b" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url === "http://127.0.0.1:1234/v1/models") {
+        return new Response(
+          JSON.stringify({ data: [{ id: "openai/gpt-oss-20b" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "http://localhost:11434/v1/models",
+        "http://localhost:11434/api/tags",
+        "http://127.0.0.1:1234/v1/models",
+        "http://localhost:8080/v1/models",
+      ]),
+    );
+    expect(handles).toContain("ollama/qwen2.5-coder:7b");
+    expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
+    expect(handles.some((handle) => handle.startsWith("llama.cpp/"))).toBe(
+      false,
+    );
+  });
+
+  test("auto-detects reachable local model endpoints alongside saved providers", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-backend-pi-autodetect-with-provider-"),
+    );
+    await createOrUpdateLocalProvider({
+      providerType: "anthropic",
+      providerName: "lc-anthropic",
+      apiKey: "dummy",
+      storageDir,
+    });
+    const fetchImpl = (async (input: unknown) => {
+      const url = typeof input === "string" ? input : String(input);
+      if (url === "http://127.0.0.1:1234/v1/models") {
+        return new Response(JSON.stringify({ data: [{ id: "local-model" }] }), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const handles = (
+      await listLocalModels(storageDir, { fetch: fetchImpl })
+    ).map((model) => model.handle);
+
+    expect(handles).toContain("anthropic/claude-opus-4-7");
+    expect(handles).toContain("lmstudio/local-model");
   });
 
   test("discovers configured LM Studio models from OpenAI-compatible catalog", async () => {
@@ -1214,17 +1286,22 @@ describe("local backend pi transcript", () => {
     const fetchImpl = (async (input: unknown) => {
       const url = typeof input === "string" ? input : String(input);
       calls.push(url);
-      return new Response(
-        JSON.stringify({ data: [{ id: "openai/gpt-oss-20b" }] }),
-        { headers: { "content-type": "application/json" } },
-      );
+      if (url === "http://127.0.0.1:1234/v1/models") {
+        return new Response(
+          JSON.stringify({ data: [{ id: "openai/gpt-oss-20b" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
 
     const handles = (
       await listLocalModels(storageDir, { fetch: fetchImpl })
     ).map((model) => model.handle);
 
-    expect(calls).toEqual(["http://127.0.0.1:1234/v1/models"]);
+    expect(calls).toEqual(
+      expect.arrayContaining(["http://127.0.0.1:1234/v1/models"]),
+    );
     expect(handles).toContain("lmstudio/openai/gpt-oss-20b");
     expect(handles).not.toContain("lmstudio/google/gemma-3n-e4b");
   });
@@ -1257,10 +1334,12 @@ describe("local backend pi transcript", () => {
       await listLocalModels(storageDir, { fetch: fetchImpl })
     ).map((model) => model.handle);
 
-    expect(calls).toEqual([
-      "http://localhost:11434/v1/models",
-      "http://localhost:11434/api/tags",
-    ]);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "http://localhost:11434/v1/models",
+        "http://localhost:11434/api/tags",
+      ]),
+    );
     expect(handles).toContain("ollama/qwen2.5-coder:7b");
     expect(handles).not.toContain("ollama/llama2");
   });
@@ -1303,7 +1382,12 @@ describe("local backend pi transcript", () => {
 
     const models = await listLocalModels(storageDir, { fetch: fetchImpl });
 
-    expect(calls).toEqual([]);
+    expect(calls).toEqual(
+      expect.arrayContaining([
+        "http://localhost:11434/v1/models",
+        "http://localhost:8080/v1/models",
+      ]),
+    );
     expect(models).toContainEqual({
       handle: "lmstudio/gemma-4-26B-A4B-it-oQ6",
       max_context_window: 256000,
@@ -1475,18 +1559,25 @@ describe("local backend pi transcript", () => {
     const fetchImpl = (async (input: unknown, init?: RequestInit) => {
       const url = typeof input === "string" ? input : String(input);
       calls.push(url);
-      captured.authorization = new Headers(init?.headers).get("Authorization");
-      return new Response(
-        JSON.stringify({ data: [{ id: "rnj-1:8b" }, { id: "glm-5.1" }] }),
-        { headers: { "content-type": "application/json" } },
-      );
+      if (url === "https://ollama.com/v1/models") {
+        captured.authorization = new Headers(init?.headers).get(
+          "Authorization",
+        );
+        return new Response(
+          JSON.stringify({ data: [{ id: "rnj-1:8b" }, { id: "glm-5.1" }] }),
+          { headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
 
     const handles = (
       await listLocalModels(storageDir, { fetch: fetchImpl })
     ).map((model) => model.handle);
 
-    expect(calls).toEqual(["https://ollama.com/v1/models"]);
+    expect(calls).toEqual(
+      expect.arrayContaining(["https://ollama.com/v1/models"]),
+    );
     expect(captured.authorization).toBe("Bearer ollama-key");
     expect(handles).toContain("ollama-cloud/rnj-1:8b");
     expect(handles).toContain("ollama-cloud/glm-5.1");
@@ -1506,11 +1597,20 @@ describe("local backend pi transcript", () => {
       storageDir,
     });
     const captured: { authorization?: string | null } = {};
-    const fetchImpl = (async (_input: unknown, init?: RequestInit) => {
-      captured.authorization = new Headers(init?.headers).get("Authorization");
-      return new Response(JSON.stringify({ data: [{ id: "secure-model" }] }), {
-        headers: { "content-type": "application/json" },
-      });
+    const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : String(input);
+      if (url === "http://localhost:8000/v1/models") {
+        captured.authorization = new Headers(init?.headers).get(
+          "Authorization",
+        );
+        return new Response(
+          JSON.stringify({ data: [{ id: "secure-model" }] }),
+          {
+            headers: { "content-type": "application/json" },
+          },
+        );
+      }
+      return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
 
     await withEnv({ LMSTUDIO_API_KEY: "1234" }, async () => {

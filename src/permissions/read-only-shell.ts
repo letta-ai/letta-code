@@ -1485,8 +1485,8 @@ function hasUnsafeRebaseOption(tokens: string[], startIndex: number): boolean {
 
 function isSafeMemoryGitConfig(tokens: string[], startIndex: number): boolean {
   const args = tokens.slice(startIndex);
-  // Preserve main's behavior: memory-mode git config is allowed except for
-  // scopes that write outside the memory repo.
+  // Memory git config is allowed except for scopes that write outside the
+  // memory repo.
   return !args.some((arg) => {
     const lower = arg.toLowerCase();
     return lower === "--global" || lower === "--system";
@@ -1510,7 +1510,7 @@ function isSafeMemoryGitFetch(tokens: string[], startIndex: number): boolean {
       return false;
     }
     // Remote names are local config aliases (usually "origin"). Disallow
-    // URL-like or path-like values so memory mode cannot fetch arbitrary URLs.
+    // URL-like or path-like values so memory commands cannot fetch arbitrary URLs.
     if (!/^[A-Za-z0-9._-]+$/.test(arg)) {
       return false;
     }

@@ -9,7 +9,7 @@ export const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
  * else `~/.letta/transcripts`.
  *
  * Shared (rather than private to `reflection-transcript.ts`) so the filesystem
- * sandbox can carve it writable as a harness-metadata path: a memory-mode
+ * sandbox can carve it writable as a harness-metadata path: a memory-subagent
  * subagent persists its OWN transcript here via the headless loop, and the
  * write policy governs the agent's non-deterministic work, not harness artifacts.
  */

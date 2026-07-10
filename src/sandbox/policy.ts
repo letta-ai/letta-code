@@ -3,7 +3,7 @@ import { posix, win32 } from "node:path";
 /**
  * A filesystem sandbox policy, expressed entirely in concrete absolute paths.
  *
- * This module is a pure leaf: it knows nothing about agents, memory modes, or
+ * This module is a pure leaf: it knows nothing about agents, launch profiles, or
  * how paths are derived. Callers resolve agent ids / memory roots into paths
  * (via `@/permissions/memory-paths`) and hand the finished policy here. That
  * keeps the OS-specific generators (`seatbelt.ts`, `bwrap.ts`) trivially
@@ -23,9 +23,9 @@ import { posix, win32 } from "node:path";
  *                       write-deny, AND `baseWritableRoots` — for a self carve
  *                       nested inside a denied root (self memory).
  *   - `restrictWrites`  when true, writes are denied *everywhere* except
- *                       `baseWritableRoots`/`writableRoots` (memory mode). When
+ *                       `baseWritableRoots`/`writableRoots` (write-scoped profile). When
  *                       false, writes are allowed by default except under
- *                       `deniedRoots` (cross-agent mode — the normal agent that
+ *                       `deniedRoots` (cross-agent profile — the normal agent that
  *                       simply may not touch other agents' memory).
  *
  * Reads are never globally restricted: an agent can read the whole filesystem

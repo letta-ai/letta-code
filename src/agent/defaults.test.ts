@@ -6,7 +6,7 @@ import {
 import {
   getPersonalityContent,
   getPersonalityHumanContent,
-} from "@/agent/personality";
+} from "@/agent/personality-presets";
 
 describe("selectDefaultAgentModel", () => {
   test("uses the caller's preferred model when it is available on self-hosted", () => {
@@ -69,7 +69,9 @@ describe("default agent configs", () => {
     );
   });
 
-  test("incognito explicitly opts out of MemFS", () => {
-    expect(DEFAULT_AGENT_CONFIGS.incognito?.enableMemfs).toBe(false);
+  test("no config can opt out of MemFS", () => {
+    for (const config of Object.values(DEFAULT_AGENT_CONFIGS)) {
+      expect(config).not.toHaveProperty("enableMemfs");
+    }
   });
 });

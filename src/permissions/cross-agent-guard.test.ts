@@ -50,6 +50,7 @@ const ENV_KEYS_TO_RESET = [
   "MEMORY_DIR",
   "LETTA_MEMORY_DIR",
   "LETTA_LOCAL_BACKEND_DIR",
+  SANDBOX_ENV_VAR,
 ] as const;
 
 function snapshotEnv(): Partial<
@@ -420,39 +421,8 @@ describe("checkPermission integration", () => {
     expect(result.matchedRule).toBe("cross-agent guard");
   });
 
-  test("memory mode does NOT let you write another agent's memory with guard enabled", () => {
-    permissionMode.setMode("memory");
-    process.env.MEMORY_DIR = selfMemory();
-    const result = checkPermission(
-      "Write",
-      { file_path: otherMemory("system/a.md") },
-      permissions,
-      selfMemory(),
-    );
-    expect(result.decision).toBe("deny");
-    expect(result.matchedRule).toBe("cross-agent guard");
-  });
-
-  test("memory mode allows writes to another agent's memory when guard is disabled", () => {
-    permissionMode.setMode("memory");
-    cliPermissions.setMemoryGuardDisabled(true);
-    process.env.MEMORY_DIR = otherMemory();
-    const result = checkPermission(
-      "Write",
-      { file_path: otherMemory("system/a.md") },
-      permissions,
-      otherMemory(),
-    );
-    expect(result.decision).toBe("allow");
-  });
-
   test("reads against another agent's memory are denied across all modes", () => {
-    const modes = [
-      "standard",
-      "acceptEdits",
-      "memory",
-      "unrestricted",
-    ] as const;
+    const modes = ["standard", "acceptEdits", "unrestricted"] as const;
     for (const mode of modes) {
       permissionMode.setMode(mode);
       const result = checkPermission(
@@ -468,12 +438,7 @@ describe("checkPermission integration", () => {
 
   test("own-memory access is unaffected by guard in every mode", () => {
     process.env.MEMORY_DIR = selfMemory();
-    const modes = [
-      "standard",
-      "acceptEdits",
-      "memory",
-      "unrestricted",
-    ] as const;
+    const modes = ["standard", "acceptEdits", "unrestricted"] as const;
     for (const mode of modes) {
       permissionMode.setMode(mode);
       const result = checkPermission(

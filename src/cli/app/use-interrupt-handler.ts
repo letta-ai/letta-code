@@ -7,11 +7,12 @@ import {
   useCallback,
 } from "react";
 import type { ApprovalResult } from "@/agent/approval-execution";
-import { interruptActiveSubagents } from "@/agent/subagent-state";
+import { getSubagents, interruptActiveSubagents } from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
 import type { Buffers } from "@/cli/helpers/accumulator";
 import { markIncompleteToolsAsCancelled } from "@/cli/helpers/accumulator";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
+import { releaseReflectionLaunch } from "@/cli/helpers/reflection-launcher";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import type { ApprovalContext } from "@/permissions/analyzer";
@@ -63,6 +64,22 @@ type InterruptHandlerContext = {
   userCancelledRef: MutableRefObject<boolean>;
   waitingForQueueCancelRef: MutableRefObject<boolean>;
 };
+
+function hasActiveReflectionSubagentForAgent(agentId: string): boolean {
+  return getSubagents().some((agent) => {
+    if (agent.type.toLowerCase() !== "reflection") return false;
+    if (agent.status !== "pending" && agent.status !== "running") return false;
+    return agent.parentAgentId === agentId;
+  });
+}
+
+function interruptSubagentsAndReleaseReflection(agentId: string): void {
+  const interruptedReflection = hasActiveReflectionSubagentForAgent(agentId);
+  interruptActiveSubagents(INTERRUPTED_BY_USER);
+  if (interruptedReflection) {
+    releaseReflectionLaunch(agentId);
+  }
+}
 
 export function useInterruptHandler(ctx: InterruptHandlerContext) {
   const {
@@ -154,8 +171,11 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         "user_interrupt",
       );
 
-      // Mark any running subagents as interrupted
-      interruptActiveSubagents(INTERRUPTED_BY_USER);
+      // Mark any running subagents as interrupted. If this interrupted a
+      // background reflection, also release its launch reservation so ESC does
+      // not leave future reflections blocked waiting for an onComplete callback
+      // that may never fire.
+      interruptSubagentsAndReleaseReflection(agentId);
 
       // Show interrupt feedback (yellow message if no tools were cancelled)
       if (!toolsCancelled) {
@@ -229,8 +249,11 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         "user_interrupt",
       );
 
-      // Mark any running subagents as interrupted
-      interruptActiveSubagents(INTERRUPTED_BY_USER);
+      // Mark any running subagents as interrupted. If this interrupted a
+      // background reflection, also release its launch reservation so ESC does
+      // not leave future reflections blocked waiting for an onComplete callback
+      // that may never fire.
+      interruptSubagentsAndReleaseReflection(agentId);
 
       // NOW abort the stream - interrupted flag is already set
       if (abortControllerRef.current) {

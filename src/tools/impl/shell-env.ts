@@ -9,13 +9,17 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import {
+  getConversationId,
+  getCurrentAgentId,
+  getCurrentAgentName,
+} from "@/agent/context";
 import {
   getScopedMemoryFilesystemRoot,
   resolveScopedMemoryDir,
 } from "@/agent/memory-filesystem";
 import { getServerUrl } from "@/backend/api/client";
-import { isLocalBackendNoMemfsEnvEnabled } from "@/backend/local/paths";
+import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
@@ -149,9 +153,9 @@ function shellEscape(arg: string): string {
 const SHELL_SHIM_DIR_NAME = "letta-code-shell-shim";
 
 export function getLettaShimDir(env: NodeJS.ProcessEnv = process.env): string {
-  // Memory-mode subagents run under a write-restricted filesystem sandbox. The
+  // Subagents with the memory-subagent profile run under a write-restricted filesystem sandbox. The
   // default OS temp dir is intentionally not writable there, so keep the shim in
-  // harness state when already sandboxed. `~/.letta` is writable in memory mode,
+  // harness state when already sandboxed. `~/.letta` is writable in that profile,
   // while the cross-agent memory subtrees inside it remain masked.
   if (env.LETTA_SANDBOX) {
     return path.join(homedir(), ".letta", SHELL_SHIM_DIR_NAME);
@@ -351,8 +355,13 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     env.LETTA_AGENT_ID = agentId;
     env.AGENT_ID = agentId;
 
+    const agentName = getCurrentAgentName()?.trim() || env.AGENT_NAME?.trim();
+    if (agentName) {
+      env.AGENT_NAME = agentName;
+    }
+
     try {
-      const localBackendNoMemfs = isLocalBackendNoMemfsEnvEnabled();
+      const localBackendNoMemfs = isLocalBackendMemfsDisabledForProcess();
       const localBackendEnabled =
         process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL === "1" ||
         process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL?.toLowerCase() === "true";
@@ -373,12 +382,46 @@ export function getShellEnv(): NodeJS.ProcessEnv {
         const inheritedParentMemoryDir = parentAgentId
           ? getScopedMemoryFilesystemRoot(parentAgentId)
           : null;
+        const inheritedParentAgentDir = inheritedParentMemoryDir
+          ? path.dirname(inheritedParentMemoryDir)
+          : null;
+        const inheritedMemoryPath = inheritedMemoryDir
+          ? path.resolve(inheritedMemoryDir)
+          : null;
+        const inheritedMemoryIsParentScoped =
+          inheritedMemoryPath && inheritedParentMemoryDir
+            ? inheritedMemoryPath === path.resolve(inheritedParentMemoryDir) ||
+              Boolean(
+                inheritedParentAgentDir &&
+                  inheritedMemoryPath.startsWith(
+                    `${path.resolve(inheritedParentAgentDir)}${path.sep}memory-worktrees${path.sep}`,
+                  ),
+              )
+            : false;
+        // An EXPLICIT memory scope (LETTA_MEMORY_DIR_EXPLICIT=1, set by a
+        // launcher that deliberately points this session's memory at an
+        // isolated copy — e.g. an SDK dream batch's memfs clone) is honored
+        // when it lies outside the agents' memory store: such a path cannot
+        // be another agent's memory, which is what this guard protects.
+        // Without the marker, a non-parent-scoped inherited value is treated
+        // as stale leakage and stripped, as before.
+        const inheritedMemoryExplicit =
+          process.env.LETTA_MEMORY_DIR_EXPLICIT === "1";
+        const memoryStoreDir = path.dirname(
+          path.dirname(getScopedMemoryFilesystemRoot(agentId)),
+        );
+        const inheritedMemoryOutsideStore = Boolean(
+          inheritedMemoryPath &&
+            !inheritedMemoryPath.startsWith(
+              `${path.resolve(memoryStoreDir)}${path.sep}`,
+            ) &&
+            inheritedMemoryPath !== path.resolve(memoryStoreDir),
+        );
 
         if (
           inheritedMemoryDir &&
-          inheritedParentMemoryDir &&
-          path.resolve(inheritedMemoryDir) ===
-            path.resolve(inheritedParentMemoryDir)
+          (inheritedMemoryIsParentScoped ||
+            (inheritedMemoryExplicit && inheritedMemoryOutsideStore))
         ) {
           env.MEMORY_DIR = inheritedMemoryDir;
           env.LETTA_MEMORY_DIR = inheritedLettaMemoryDir || inheritedMemoryDir;

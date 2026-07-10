@@ -12,6 +12,10 @@ type CacheEntry = {
 
 let cache: CacheEntry | null = null;
 let inflight: Promise<CacheEntry> | null = null;
+// Bumped on every cache clear so an in-flight fetch that started BEFORE the
+// clear (e.g. before a provider connect) can never commit its now-stale
+// result into the cache after the clear.
+let generation = 0;
 
 function isFresh(now = Date.now()) {
   return cache !== null && now - cache.fetchedAt < CACHE_TTL_MS;
@@ -26,6 +30,8 @@ export type AvailableModelHandlesResult = {
 
 export function clearAvailableModelsCache() {
   cache = null;
+  inflight = null;
+  generation++;
 }
 
 export function getAvailableModelsCacheInfo(): {
@@ -125,16 +131,26 @@ export async function getAvailableModelHandles(options?: {
     await refreshByokProviders();
   }
 
-  inflight = fetchFromNetwork()
+  const requestGeneration = generation;
+  const request: Promise<CacheEntry> = fetchFromNetwork()
     .then((entry) => {
-      cache = entry;
+      // Only commit if the cache wasn't cleared while we were fetching;
+      // otherwise this result predates a provider mutation and is stale.
+      if (generation === requestGeneration) {
+        cache = entry;
+      }
       return entry;
     })
     .finally(() => {
-      inflight = null;
+      // A forced or post-clear fetch may have replaced `inflight` already —
+      // never null out someone else's request.
+      if (inflight === request) {
+        inflight = null;
+      }
     });
+  inflight = request;
 
-  const entry = await inflight;
+  const entry = await request;
   return {
     handles: entry.handles,
     providerTypes: entry.providerTypes,

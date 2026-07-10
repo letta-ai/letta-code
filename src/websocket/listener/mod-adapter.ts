@@ -8,7 +8,7 @@ import type { ListenerRuntime } from "./types";
 
 export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
   tools: true,
-  commands: false,
+  commands: true,
   events: {
     lifecycle: false,
     tools: true,
@@ -16,7 +16,7 @@ export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
     compact: false,
     llm: false,
   },
-  permissions: false,
+  permissions: true,
   providers: true,
   ui: {
     panels: false,

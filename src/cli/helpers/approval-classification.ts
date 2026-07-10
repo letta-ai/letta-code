@@ -48,8 +48,9 @@ export type ClassifyApprovalsOptions<TContext = ApprovalContext | null> = {
 export async function getMissingRequiredArgs(
   toolName: string,
   parsedArgs: Record<string, unknown>,
+  toolContextId?: string | null,
 ): Promise<string[]> {
-  const schema = getToolSchema(toolName);
+  const schema = getToolSchema(toolName, toolContextId);
   const required =
     (schema?.input_schema?.required as string[] | undefined) || [];
   return required.filter(
@@ -103,6 +104,7 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
       const missingRequiredArgs = await getMissingRequiredArgs(
         toolName,
         parsedArgs,
+        opts.toolContextId,
       );
       if (missingRequiredArgs.length > 0) {
         const denyReason = opts.missingArgsReason

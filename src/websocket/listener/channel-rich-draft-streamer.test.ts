@@ -11,8 +11,8 @@ import { __testOverrideChannelsRoot } from "@/channels/config";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter, ChannelTurnSource } from "@/channels/types";
 import {
-  createTelegramRichDraftStreamer,
-  extractTelegramSendRichDraftIntent,
+  createChannelRichDraftStreamer,
+  extractChannelSendRichDraftIntent,
 } from "./channel-rich-draft-streamer";
 
 let channelRoot: string | null = null;
@@ -112,7 +112,7 @@ describe("Telegram rich draft streamer", () => {
     upsertTelegramAccount(false);
     registerTelegramAdapter();
 
-    const streamer = createTelegramRichDraftStreamer({
+    const streamer = createChannelRichDraftStreamer({
       batchId: "batch-1",
       sources: [telegramSource()],
       debounceMs: 0,
@@ -125,7 +125,7 @@ describe("Telegram rich draft streamer", () => {
     upsertTelegramAccount(true);
     const { sendRichMessageDraft } = registerTelegramAdapter();
 
-    const streamer = createTelegramRichDraftStreamer({
+    const streamer = createChannelRichDraftStreamer({
       batchId: "batch-1",
       sources: [telegramSource({ threadId: "42" })],
       debounceMs: 0,
@@ -160,7 +160,7 @@ describe("Telegram rich draft streamer", () => {
     upsertTelegramAccount(true);
     const { sendRichMessageDraft } = registerTelegramAdapter();
 
-    const streamer = createTelegramRichDraftStreamer({
+    const streamer = createChannelRichDraftStreamer({
       batchId: "batch-1",
       sources: [telegramSource()],
       debounceMs: 0,
@@ -194,7 +194,7 @@ describe("Telegram rich draft streamer", () => {
     upsertTelegramAccount(true, false);
     const { sendRichMessageDraft } = registerTelegramAdapter();
 
-    const streamer = createTelegramRichDraftStreamer({
+    const streamer = createChannelRichDraftStreamer({
       batchId: "batch-1",
       sources: [telegramSource()],
       debounceMs: 0,
@@ -220,7 +220,7 @@ describe("Telegram rich draft streamer", () => {
     upsertTelegramAccount(true);
     const { sendRichMessageDraft } = registerTelegramAdapter();
 
-    const streamer = createTelegramRichDraftStreamer({
+    const streamer = createChannelRichDraftStreamer({
       batchId: "batch-1",
       sources: [telegramSource({ chatType: "channel", threadId: "42" })],
       debounceMs: 0,
@@ -246,7 +246,7 @@ describe("Telegram rich draft streamer", () => {
     upsertTelegramAccount(true);
     const { sendRichMessageDraft } = registerTelegramAdapter();
 
-    const streamer = createTelegramRichDraftStreamer({
+    const streamer = createChannelRichDraftStreamer({
       batchId: "batch-1",
       sources: [telegramSource()],
       debounceMs: 750,
@@ -294,7 +294,7 @@ describe("Telegram rich draft streamer", () => {
     upsertTelegramAccount(true);
     const { sendRichMessageDraft } = registerTelegramAdapter();
 
-    const streamer = createTelegramRichDraftStreamer({
+    const streamer = createChannelRichDraftStreamer({
       batchId: "batch-1",
       sources: [telegramSource()],
       debounceMs: 30,
@@ -341,7 +341,7 @@ describe("Telegram rich draft streamer", () => {
     });
     registerTelegramAdapter(sendRichMessageDraft);
 
-    const streamer = createTelegramRichDraftStreamer({
+    const streamer = createChannelRichDraftStreamer({
       batchId: "batch-1",
       sources: [telegramSource()],
       debounceMs: 0,
@@ -384,7 +384,7 @@ describe("Telegram rich draft streamer", () => {
     upsertTelegramAccount(true);
     const { sendRichMessageDraft } = registerTelegramAdapter();
 
-    const streamer = createTelegramRichDraftStreamer({
+    const streamer = createChannelRichDraftStreamer({
       batchId: "batch-1",
       sources: [telegramSource()],
       debounceMs: 20,
@@ -439,7 +439,7 @@ describe("Telegram rich draft streamer", () => {
     });
     registerTelegramAdapter(sendRichMessageDraft);
 
-    const streamer = createTelegramRichDraftStreamer({
+    const streamer = createChannelRichDraftStreamer({
       batchId: "batch-1",
       sources: [telegramSource()],
       debounceMs: 0,
@@ -468,7 +468,7 @@ describe("Telegram rich draft streamer", () => {
   test("refuses drafts whose target route does not match the inbound source", async () => {
     upsertTelegramAccount(true);
     const { sendRichMessageDraft } = registerTelegramAdapter();
-    const streamer = createTelegramRichDraftStreamer({
+    const streamer = createChannelRichDraftStreamer({
       batchId: "batch-1",
       sources: [telegramSource()],
       debounceMs: 0,
@@ -496,7 +496,7 @@ describe("Telegram rich draft streamer", () => {
       throw new Error("draft endpoint unavailable");
     });
     registerTelegramAdapter(sendRichMessageDraft);
-    const streamer = createTelegramRichDraftStreamer({
+    const streamer = createChannelRichDraftStreamer({
       batchId: "batch-1",
       sources: [telegramSource()],
       debounceMs: 0,
@@ -519,7 +519,7 @@ describe("Telegram rich draft streamer", () => {
   });
 
   test("extracts partial JSON strings with real newlines", () => {
-    const intent = extractTelegramSendRichDraftIntent(
+    const intent = extractChannelSendRichDraftIntent(
       '{"action":"send-rich","channel":"telegram","chat_id":"chat-12345","message":"# Title\\n\\n- item',
       telegramSource() as ChannelTurnSource & {
         channel: "telegram";

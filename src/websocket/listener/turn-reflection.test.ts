@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createBuffers, toLines } from "@/cli/helpers/accumulator";
-import { __listenerTurnTestUtils } from "@/websocket/listener/turn";
+import { __listenerTurnTestUtils } from "./turn-transcript";
 
 describe("post-turn listener reflection", () => {
   test("seeds inbound websocket user rows into the reflection transcript buffer", () => {
@@ -31,26 +31,22 @@ describe("post-turn listener reflection", () => {
   });
 
   test("records listener transcript rows before evaluating post-turn reflection", () => {
-    const turnPath = fileURLToPath(new URL("./turn.ts", import.meta.url));
-    const source = readFileSync(turnPath, "utf-8");
-    const endTurnIndex = source.indexOf('if (stopReason === "end_turn")');
-    const appendIndex = source.indexOf(
-      "appendTranscriptDeltaJsonl(",
-      endTurnIndex,
+    const completionPath = fileURLToPath(
+      new URL("./turn-completion.ts", import.meta.url),
     );
-    const launchIndex = source.indexOf(
-      "maybeLaunchPostTurnReflection({",
-      endTurnIndex,
-    );
+    const source = readFileSync(completionPath, "utf-8");
+    const appendIndex = source.indexOf("appendTranscriptDeltaJsonl(");
+    const launchIndex = source.indexOf("maybeLaunchPostTurnReflection({");
 
-    expect(endTurnIndex).toBeGreaterThanOrEqual(0);
-    expect(appendIndex).toBeGreaterThan(endTurnIndex);
+    expect(appendIndex).toBeGreaterThanOrEqual(0);
     expect(launchIndex).toBeGreaterThan(appendIndex);
   });
 
   test("evaluates post-turn reflection for all turns, not just channel turns", () => {
-    const turnPath = fileURLToPath(new URL("./turn.ts", import.meta.url));
-    const source = readFileSync(turnPath, "utf-8");
+    const completionPath = fileURLToPath(
+      new URL("./turn-completion.ts", import.meta.url),
+    );
+    const source = readFileSync(completionPath, "utf-8");
 
     // The channel-only gate was removed: every end_turn evaluates reflection.
     expect(source).not.toContain("hasChannelTurnSources");

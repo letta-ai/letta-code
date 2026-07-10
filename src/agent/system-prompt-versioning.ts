@@ -4,6 +4,7 @@ import { getBackend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getVersion } from "@/version";
+import { LETTA_CODE_ORIGIN_TAG, LETTA_CODE_SUBAGENT_TAG } from "./agent-tags";
 import {
   buildSystemPrompt,
   isKnownPreset,
@@ -12,8 +13,6 @@ import {
 } from "./prompt-assets";
 
 const SYSTEM_PROMPT_HASH_PREFIX = "sha256:";
-export const LETTA_CODE_ORIGIN_TAG = "origin:letta-code";
-export const LETTA_CODE_SUBAGENT_TAG = "role:subagent";
 
 type ManagedPrompt = {
   preset: string;

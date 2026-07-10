@@ -46,7 +46,7 @@ describe("listener mod adapter", () => {
   test("uses provider and tool capabilities", () => {
     expect(LISTENER_MOD_CAPABILITIES).toEqual({
       tools: true,
-      commands: false,
+      commands: true,
       events: {
         lifecycle: false,
         tools: true,
@@ -54,7 +54,7 @@ describe("listener mod adapter", () => {
         compact: false,
         llm: false,
       },
-      permissions: false,
+      permissions: true,
       providers: true,
       ui: {
         panels: false,
@@ -113,7 +113,7 @@ describe("listener mod adapter", () => {
     expect(context.toolset).toBe("default");
   });
 
-  test("loads provider and tool registrations without exposing other listener capabilities", async () => {
+  test("loads provider, tool, and command registrations without exposing events or panels", async () => {
     const root = createTempDir();
     const modsDir = join(root, "mods");
     const cacheDir = join(root, "cache");
@@ -139,8 +139,9 @@ describe("listener mod adapter", () => {
           }],
         });
         letta.commands.register({
-          id: "ignored-command",
-          description: "Should not register on listener",
+          id: "listener-command",
+          description: "Should register on listener",
+          args: "<thing>",
           run() { return { type: "handled" }; },
         });
         letta.tools.register({
@@ -178,7 +179,11 @@ describe("listener mod adapter", () => {
     const snapshot = adapter.getSnapshot().registry;
     expect(snapshot.capabilities).toEqual(LISTENER_MOD_CAPABILITIES);
     expect(snapshot.loadedPaths).toEqual([modPath]);
-    expect(snapshot.commands).toEqual({});
+    expect(snapshot.commands["listener-command"]).toMatchObject({
+      id: "listener-command",
+      description: "Should register on listener",
+      path: modPath,
+    });
     expect(snapshot.tools.listener_tool).toMatchObject({
       name: "listener_tool",
       description: "Should register on listener",
@@ -484,6 +489,7 @@ describe("listener mod adapter", () => {
         letta.events.on("tool_end", (event) => {
           globalThis.__lettaToolEndSeen = {
             toolName: event.toolName,
+            args: event.args,
             status: event.status,
             output: event.output,
           };
@@ -511,6 +517,7 @@ describe("listener mod adapter", () => {
       conversationId: string;
       toolCallId: string;
       toolName: string;
+      args: Record<string, unknown>;
       status: "success" | "error";
       output: string;
       result?: { status: "success" | "error"; output: string };
@@ -519,6 +526,7 @@ describe("listener mod adapter", () => {
       conversationId: "conv-tool-end-test",
       toolCallId: "call-1",
       toolName: "Bash",
+      args: { command: "echo secret" },
       status: "success",
       output: "secret",
     };
@@ -529,6 +537,7 @@ describe("listener mod adapter", () => {
       (globalThis as { __lettaToolEndSeen?: unknown }).__lettaToolEndSeen,
     ).toEqual({
       toolName: "Bash",
+      args: { command: "echo secret" },
       status: "success",
       output: "secret",
     });

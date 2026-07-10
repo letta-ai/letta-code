@@ -2,12 +2,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { configureBackendMode, getBackend } from "@/backend/backend";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LOCAL_BACKEND_DIR_ENV } from "@/backend/local/paths";
 import { clearAvailableModelsCache } from "./available-models";
-import { updateAgentLLMConfig, updateConversationLLMConfig } from "./modify";
+import {
+  __modifyTestUtils,
+  updateAgentLLMConfig,
+  updateConversationLLMConfig,
+} from "./modify";
 
 async function withLocalBackendStorage<T>(
   storageDir: string,
@@ -30,6 +34,32 @@ async function withLocalBackendStorage<T>(
 }
 
 describe("local model updates", () => {
+  test("builds direct xAI model settings for xAI handles", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("xai/grok-4.5", {
+        context_window: 500000,
+        max_output_tokens: 16384,
+        parallel_tool_calls: true,
+      }),
+    ).toMatchObject({
+      provider_type: "xai",
+      parallel_tool_calls: true,
+      max_output_tokens: 16384,
+    });
+  });
+
+  test("stores GPT-5.6 max separately from xhigh for local providers", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("openai-codex/gpt-5.6-sol", {
+        provider_type: "chatgpt_oauth",
+        reasoning_effort: "max",
+      }),
+    ).toMatchObject({
+      provider_type: "chatgpt_oauth",
+      reasoning: { reasoning_effort: "max" },
+    });
+  });
+
   afterEach(() => {
     configureBackendMode("api");
     clearAvailableModelsCache();

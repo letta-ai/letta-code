@@ -1,6 +1,6 @@
 import type { Usage } from "@earendil-works/pi-ai";
+import { GIT_MEMORY_ENABLED_TAG } from "@/agent/agent-tags";
 import {
-  GIT_MEMORY_ENABLED_TAG,
   type InitializeLocalMemoryRepoFile,
   initializeLocalMemoryRepo,
 } from "@/agent/memory-git";
@@ -62,7 +62,7 @@ import type {
 } from "./local-store";
 import {
   getLocalBackendMemoryFilesystemRoot,
-  isLocalBackendNoMemfsEnvEnabled,
+  isLocalBackendMemfsDisabledForProcess,
 } from "./paths";
 import {
   appendAvailableSkillsBlock,
@@ -583,7 +583,9 @@ export class LocalBackend extends HeadlessBackend {
   }
 
   private isLocalMemfsEnabled(): boolean {
-    return this.memfsEnabledOverride ?? !isLocalBackendNoMemfsEnvEnabled();
+    return (
+      this.memfsEnabledOverride ?? !isLocalBackendMemfsDisabledForProcess()
+    );
   }
 
   private async ensureLocalMemoryRepo(

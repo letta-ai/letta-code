@@ -29,6 +29,7 @@ import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
+  deriveListenerInstanceId,
   type RegisterOptions,
   registerWithCloudRetry,
 } from "@/websocket/listen-register";
@@ -304,6 +305,7 @@ async function resolveListenerRegistrationOptions(
       apiKey: envApiKey,
       deviceId,
       connectionName,
+      listenerInstanceId: deriveListenerInstanceId("server", connectionName),
     };
   }
 
@@ -346,6 +348,7 @@ async function resolveListenerRegistrationOptions(
     apiKey,
     deviceId,
     connectionName,
+    listenerInstanceId: deriveListenerInstanceId("server", connectionName),
   };
 }
 

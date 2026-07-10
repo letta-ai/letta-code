@@ -58,7 +58,25 @@ test("writable and readonly carveouts are restored after the deny", () => {
   expect(readonlyIdx).toBeGreaterThan(denyIdx);
 });
 
-test("memory mode denies all writes but keeps /dev and restores writables", () => {
+test("denied roots allow metadata only for linked-worktree path resolution", () => {
+  const { profile } = buildSeatbeltProfile(CROSS_AGENT);
+  const denyIdx = profile.indexOf(
+    '(deny file-read* file-write* (subpath (param "DENIED_0")))',
+  );
+  const metadataIdx = profile.indexOf(
+    '(allow file-read-metadata (literal (param "DENIED_0")))',
+  );
+
+  expect(metadataIdx).toBeGreaterThan(denyIdx);
+  expect(profile).not.toContain(
+    '(allow file-read* (literal (param "DENIED_0")))',
+  );
+  expect(profile).not.toContain(
+    '(allow file-read* (subpath (param "DENIED_0")))',
+  );
+});
+
+test("write-scoped profile denies all writes but keeps /dev and restores writables", () => {
   const { profile } = buildSeatbeltProfile(MEMORY_MODE);
   const globalDenyIdx = profile.indexOf('(deny file-write* (subpath "/"))');
   const devIdx = profile.indexOf('(allow file-write* (subpath "/dev"))');

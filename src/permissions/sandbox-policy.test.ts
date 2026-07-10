@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 import {
   buildCrossAgentSandboxPolicy,
-  buildMemoryModeSandboxPolicy,
+  buildMemorySubagentSandboxPolicy,
   canonicalizeRoot,
   deriveSelfAgentRootsForTrees,
   getCrossBackendAgentsTreeRoots,
@@ -64,13 +64,13 @@ test("getDefaultAgentsTreeRoot ends with the agents tree path", () => {
   );
 });
 
-test("memory-mode policy: writes scoped to ~/.letta, agents tree read-denied with agent dir carved readonly", () => {
+test("memory-subagent policy: writes scoped to ~/.letta, agents tree read-denied with agent dir carved readonly", () => {
   // Use the real agents tree so deriveSelfAgentRootsForTrees resolves the agent
   // dir (the policy always denies getDefaultAgentsTreeRoot(), keyed to homedir()).
   const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-self");
   const memoryRoot = join(agentDir, "memory");
 
-  const policy = buildMemoryModeSandboxPolicy({
+  const policy = buildMemorySubagentSandboxPolicy({
     memoryRoots: [memoryRoot],
   });
 
@@ -89,12 +89,12 @@ test("memory-mode policy: writes scoped to ~/.letta, agents tree read-denied wit
   expect(policy.readonlyRoots).toEqual([canonicalizeRoot(agentDir)]);
 });
 
-test("memory-mode policy folds harness roots outside ~/.letta into the base", () => {
+test("memory-subagent policy folds harness roots outside ~/.letta into the base", () => {
   const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-self");
   const memoryRoot = join(agentDir, "memory");
   const extra = makeTempDir(); // a harness root relocated off the default tree
 
-  const policy = buildMemoryModeSandboxPolicy({
+  const policy = buildMemorySubagentSandboxPolicy({
     memoryRoots: [memoryRoot],
     harnessWritableRoots: [extra],
   });
@@ -106,7 +106,7 @@ test("memory-mode policy folds harness roots outside ~/.letta into the base", ()
   expect(policy.baseWritableRoots).not.toContain(canonicalizeRoot("/tmp"));
 });
 
-test("memory-mode policy (local backend): custom tree, ~/.letta base, self memory re-carved", () => {
+test("memory-subagent policy (local backend): custom tree, ~/.letta base, self memory re-carved", () => {
   // The local backend walls off `lc-local-backend/memfs` (not ~/.letta/agents)
   // and stays write-scoped. The storage dir is added to the base (BEFORE the
   // deny) so conversations/agents/providers under it are writable while memfs
@@ -118,7 +118,7 @@ test("memory-mode policy (local backend): custom tree, ~/.letta base, self memor
   const memoryRoot = join(selfAgentDir, "memory");
   mkdirSync(memoryRoot, { recursive: true });
 
-  const policy = buildMemoryModeSandboxPolicy({
+  const policy = buildMemorySubagentSandboxPolicy({
     memoryRoots: [memoryRoot],
     agentsTreeRoots: [memfsTree],
     harnessWritableRoots: [storage],
@@ -135,11 +135,13 @@ test("memory-mode policy (local backend): custom tree, ~/.letta base, self memor
   expect(policy.baseWritableRoots).toContain(canonicalizeRoot(storage));
 });
 
-test("memory-mode policy: defaults to both backend trees with write-scoping on", () => {
+test("memory-subagent policy: defaults to both backend trees with write-scoping on", () => {
   const agentDir = join(getDefaultAgentsTreeRoot(), "memmode-default");
   const memoryRoot = join(agentDir, "memory");
 
-  const policy = buildMemoryModeSandboxPolicy({ memoryRoots: [memoryRoot] });
+  const policy = buildMemorySubagentSandboxPolicy({
+    memoryRoots: [memoryRoot],
+  });
 
   expect(policy.restrictWrites).toBe(true);
   expect(policy.deniedRoots).toEqual(getCrossBackendAgentsTreeRoots());
@@ -179,6 +181,40 @@ test("deriveSelfAgentRootsForTrees collapses in-tree memory roots to the agent d
     [tree],
   );
   expect(roots).toEqual([canonicalizeRoot(agentDir)]);
+});
+
+test("deriveSelfAgentRootsForTrees collapses specific memory worktrees to the agent dir", () => {
+  const tree = getDefaultAgentsTreeRoot();
+  const agentDir = join(tree, "abc");
+  const roots = deriveSelfAgentRootsForTrees(
+    [join(agentDir, "memory-worktrees", "reflection-123")],
+    [tree],
+  );
+  expect(roots).toEqual([canonicalizeRoot(agentDir)]);
+});
+
+test("memory-subagent policy can write an exact reflection worktree and parent git metadata", () => {
+  const tree = getDefaultAgentsTreeRoot();
+  const agentDir = join(tree, "abc");
+  const reflectionWorktree = join(
+    agentDir,
+    "memory-worktrees",
+    "reflection-123",
+  );
+  const gitCommonDir = join(agentDir, "memory", ".git");
+
+  const policy = buildMemorySubagentSandboxPolicy({
+    memoryRoots: [reflectionWorktree, gitCommonDir],
+  });
+
+  expect(policy.writableRoots).toEqual([
+    canonicalizeRoot(reflectionWorktree),
+    canonicalizeRoot(gitCommonDir),
+  ]);
+  expect(policy.readonlyRoots).toEqual([canonicalizeRoot(agentDir)]);
+  expect(policy.writableRoots).not.toContain(
+    canonicalizeRoot(join(agentDir, "memory")),
+  );
 });
 
 test("deriveSelfAgentRootsForTrees keeps roots outside the tree as-is", () => {

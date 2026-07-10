@@ -6,8 +6,8 @@ import type { FsSandboxPolicy } from "./policy.js";
  * We shell out to `bwrap`, building a mount namespace that mirrors the same
  * policy model as Seatbelt:
  *
- *   - The root filesystem is bound `--ro-bind` (memory mode, default-deny
- *     writes) or `--bind` (cross-agent mode, default-allow writes). This single
+ *   - The root filesystem is bound `--ro-bind` (write-scoped profile,
+ *     default-deny writes) or `--bind` (cross-agent profile, default-allow writes). This single
  *     choice implements `restrictWrites` for free: under a read-only root, the
  *     only writable paths are the explicit `--bind` carveouts.
  *   - Each denied root is masked with `--tmpfs`, so other agents' directories
@@ -38,7 +38,7 @@ export const BWRAP_BIN = "bwrap";
 export function buildBwrapArgs(policy: FsSandboxPolicy): string[] {
   const args: string[] = [];
 
-  // Root view: read-only for memory mode, writable for cross-agent mode.
+  // Root view: read-only for write-scoped profiles, writable for cross-agent.
   args.push(policy.restrictWrites ? "--ro-bind" : "--bind", "/", "/");
 
   // Minimal writable /dev (gives us /dev/null, /dev/urandom, ptys) and a fresh
@@ -63,8 +63,8 @@ export function buildBwrapArgs(policy: FsSandboxPolicy): string[] {
   // an ancestor. An ancestor carve-out (e.g. binding `/tmp` writable when the
   // agents tree lives under `/tmp`) re-binds the whole subtree on top of the
   // mask and silently re-exposes the denied roots. Callers must not produce
-  // such roots; this is why memory mode scopes writes to the memory dir and
-  // does not carve a temp dir. (Seatbelt has no equivalent: it matches
+  // such roots; this is why the memory-subagent profile scopes writes to memory
+  // roots and does not carve a temp dir. (Seatbelt has no equivalent: it matches
   // most-specific deny rules, independent of order.)
   for (const root of policy.deniedRoots) {
     args.push("--tmpfs", root);

@@ -16,6 +16,7 @@ import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import { LETTA_CODE_SUBAGENT_TAG } from "@/agent/agent-tags";
 import type {
   AgentCreateBody,
   AgentListBody,
@@ -72,7 +73,6 @@ const LEGACY_LOCAL_CONTEXT_WINDOW_LIMIT = 128000;
 const DEFAULT_LOCAL_CONVERSATION_ID_PREFIX = "local-conv-";
 const DEFAULT_LOCAL_STORED_MESSAGE_ID_PREFIX = "letta-msg-";
 const DEFAULT_LOCAL_UI_MESSAGE_ID_PREFIX = "ui-msg-";
-const LETTA_CODE_SUBAGENT_TAG = "role:subagent";
 
 function isStringArray(value: unknown): value is string[] {
   return (

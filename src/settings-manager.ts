@@ -65,17 +65,6 @@ export interface AgentSettings {
   systemPromptVersion?: string; // Letta Code version that wrote systemPromptHash
 }
 
-export interface ConversationGoal {
-  objective: string;
-  status: "active" | "paused" | "complete" | "blocked" | "budget_limited";
-  createdAt: string;
-  updatedAt: string;
-  activeStartedAt?: string | null;
-  activeTimeSeconds: number;
-  tokensUsed: number;
-  tokenBudget?: number | null;
-}
-
 export interface Settings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
   lastSession?: SessionRef; // DEPRECATED: kept for backwards compat, use sessionsByServer
@@ -178,8 +167,6 @@ export interface LocalProjectSettings {
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   listenerEnvName?: string; // Saved environment name for listener connections (project-specific)
-  conversationGoalsByServer?: Record<string, Record<string, ConversationGoal>>;
-  conversationGoalToolsByServer?: Record<string, Record<string, boolean>>;
 }
 
 // Hard-deprecated keys: ignored on load and stripped from disk on persist.
@@ -1476,196 +1463,6 @@ class SettingsManager {
     this.setGlobalLastSession(session);
   }
 
-  areConversationGoalToolsEnabled(
-    conversationId: string,
-    workingDirectory: string = process.cwd(),
-  ): boolean {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    return (
-      localSettings.conversationGoalToolsByServer?.[serverKey]?.[
-        conversationId
-      ] === true
-    );
-  }
-
-  setConversationGoalToolsEnabled(
-    conversationId: string,
-    enabled: boolean,
-    workingDirectory: string = process.cwd(),
-  ): void {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const serverGoalTools = {
-      ...(localSettings.conversationGoalToolsByServer?.[serverKey] ?? {}),
-    };
-    if (enabled) {
-      serverGoalTools[conversationId] = true;
-    } else {
-      delete serverGoalTools[conversationId];
-    }
-    this.updateLocalProjectSettings(
-      {
-        conversationGoalToolsByServer: {
-          ...localSettings.conversationGoalToolsByServer,
-          [serverKey]: serverGoalTools,
-        },
-      },
-      workingDirectory,
-    );
-  }
-
-  getConversationGoal(
-    conversationId: string,
-    workingDirectory: string = process.cwd(),
-  ): ConversationGoal | null {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    return (
-      localSettings.conversationGoalsByServer?.[serverKey]?.[conversationId] ??
-      null
-    );
-  }
-
-  setConversationGoal(
-    conversationId: string,
-    objective: string,
-    workingDirectory: string = process.cwd(),
-    tokenBudget: number | null = null,
-    resetUsage: boolean = true,
-  ): ConversationGoal {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const now = new Date().toISOString();
-    const previous =
-      localSettings.conversationGoalsByServer?.[serverKey]?.[conversationId];
-    const goal: ConversationGoal = {
-      objective,
-      status: "active",
-      createdAt: previous?.createdAt ?? now,
-      updatedAt: now,
-      activeStartedAt: now,
-      activeTimeSeconds: resetUsage ? 0 : (previous?.activeTimeSeconds ?? 0),
-      tokensUsed: resetUsage ? 0 : (previous?.tokensUsed ?? 0),
-      tokenBudget,
-    };
-    this.updateLocalProjectSettings(
-      {
-        conversationGoalsByServer: {
-          ...localSettings.conversationGoalsByServer,
-          [serverKey]: {
-            ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
-            [conversationId]: goal,
-          },
-        },
-      },
-      workingDirectory,
-    );
-    return goal;
-  }
-
-  updateConversationGoalStatus(
-    conversationId: string,
-    status: ConversationGoal["status"],
-    workingDirectory: string = process.cwd(),
-  ): ConversationGoal | null {
-    const existing = this.getConversationGoal(conversationId, workingDirectory);
-    if (!existing) return null;
-
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const now = new Date().toISOString();
-    const accruedSeconds =
-      existing.status === "active" && existing.activeStartedAt
-        ? Math.max(
-            0,
-            Math.floor(
-              (Date.parse(now) - Date.parse(existing.activeStartedAt)) / 1000,
-            ),
-          )
-        : 0;
-    const goal: ConversationGoal = {
-      ...existing,
-      status,
-      activeTimeSeconds: existing.activeTimeSeconds + accruedSeconds,
-      activeStartedAt: status === "active" ? now : null,
-      updatedAt: now,
-    };
-    this.updateLocalProjectSettings(
-      {
-        conversationGoalsByServer: {
-          ...localSettings.conversationGoalsByServer,
-          [serverKey]: {
-            ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
-            [conversationId]: goal,
-          },
-        },
-      },
-      workingDirectory,
-    );
-    return goal;
-  }
-
-  accountConversationGoalUsage(
-    conversationId: string,
-    tokenDelta: number,
-    workingDirectory: string = process.cwd(),
-  ): ConversationGoal | null {
-    const existing = this.getConversationGoal(conversationId, workingDirectory);
-    if (!existing) return null;
-
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const goal: ConversationGoal = {
-      ...existing,
-      tokensUsed: Math.max(0, existing.tokensUsed + Math.max(0, tokenDelta)),
-      updatedAt: new Date().toISOString(),
-    };
-    this.updateLocalProjectSettings(
-      {
-        conversationGoalsByServer: {
-          ...localSettings.conversationGoalsByServer,
-          [serverKey]: {
-            ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
-            [conversationId]: goal,
-          },
-        },
-      },
-      workingDirectory,
-    );
-    return goal;
-  }
-
-  clearConversationGoal(
-    conversationId: string,
-    workingDirectory: string = process.cwd(),
-  ): boolean {
-    const globalSettings = this.getSettings();
-    const serverKey = getCurrentServerKey(globalSettings);
-    const localSettings = this.getLocalProjectSettings(workingDirectory);
-    const serverGoals = {
-      ...(localSettings.conversationGoalsByServer?.[serverKey] ?? {}),
-    };
-    const hadGoal = Object.hasOwn(serverGoals, conversationId);
-    delete serverGoals[conversationId];
-    this.updateLocalProjectSettings(
-      {
-        conversationGoalsByServer: {
-          ...localSettings.conversationGoalsByServer,
-          [serverKey]: serverGoals,
-        },
-      },
-      workingDirectory,
-    );
-    return hadGoal;
-  }
-
   // =====================================================================
   // Agent Pin Helpers (global-only, per-backend namespace)
   // =====================================================================
@@ -1891,9 +1688,10 @@ class SettingsManager {
             ? (updates.systemPromptVersion ?? undefined)
             : existing.systemPromptVersion,
       };
-      // Clean up undefined/false values
+      // Clean up undefined/false values (explicit memfs:false is kept — it
+      // marks deliberately memfs-less worker agents; see isMemfsExplicitlyDisabled)
       if (!updated.pinned) delete updated.pinned;
-      if (!updated.memfs) delete updated.memfs;
+      if (updated.memfs === undefined) delete updated.memfs;
       if (!updated.toolset || updated.toolset === "auto")
         delete updated.toolset;
       if (!updated.systemPromptPreset) delete updated.systemPromptPreset;
@@ -1910,9 +1708,9 @@ class SettingsManager {
         systemPromptHash: updates.systemPromptHash ?? undefined,
         systemPromptVersion: updates.systemPromptVersion ?? undefined,
       };
-      // Clean up undefined/false values
+      // Clean up undefined/false values (explicit memfs:false is kept)
       if (!newAgent.pinned) delete newAgent.pinned;
-      if (!newAgent.memfs) delete newAgent.memfs;
+      if (newAgent.memfs === undefined) delete newAgent.memfs;
       if (!newAgent.toolset || newAgent.toolset === "auto")
         delete newAgent.toolset;
       if (!newAgent.systemPromptPreset) delete newAgent.systemPromptPreset;
@@ -1932,6 +1730,17 @@ class SettingsManager {
     const settings = this.getSettings();
     const memfsServerKey = getCurrentMemfsServerKey(settings);
     return this.getAgentSettings(agentId, memfsServerKey)?.memfs === true;
+  }
+
+  /**
+   * Whether memfs was EXPLICITLY disabled for this agent (memfs: false in
+   * settings) — distinct from "never configured". Worker-style agents
+   * created memfs-less record this so lazy repair paths don't re-enable.
+   */
+  isMemfsExplicitlyDisabled(agentId: string): boolean {
+    const settings = this.getSettings();
+    const memfsServerKey = getCurrentMemfsServerKey(settings);
+    return this.getAgentSettings(agentId, memfsServerKey)?.memfs === false;
   }
 
   /**

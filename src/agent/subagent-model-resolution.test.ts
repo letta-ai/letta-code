@@ -8,12 +8,16 @@ import {
 import {
   buildSubagentArgs,
   buildSubagentPrompt,
-  getModelHandleFromAgent,
   recallPromptForBackend,
-  resolveSubagentLauncher,
-  resolveSubagentModel,
-  resolveSubagentWorkingDirectory,
 } from "@/agent/subagents/manager";
+import {
+  resolveSubagentLauncher,
+  resolveSubagentWorkingDirectory,
+} from "@/agent/subagents/subagent-launcher";
+import {
+  getModelHandleFromAgent,
+  resolveSubagentModel,
+} from "@/agent/subagents/subagent-model";
 
 describe("recallPromptForBackend", () => {
   test("uses separate API and local recall prompts", () => {
@@ -204,7 +208,7 @@ describe("resolveSubagentWorkingDirectory", () => {
     expect(cwd).toBe("/tmp/repo-root");
   });
 
-  test("reflection memory-mode subagents run from the inherited parent memory root", () => {
+  test("reflection subagents with the memory-subagent profile run from the inherited parent memory root", () => {
     const cwd = resolveSubagentWorkingDirectory(
       {
         USER_CWD: "/tmp/project-root",
@@ -212,12 +216,35 @@ describe("resolveSubagentWorkingDirectory", () => {
       "/tmp/fallback-root",
       {
         subagentType: "reflection",
-        permissionMode: "memory",
+        launchProfile: "memory-subagent",
         inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
       },
     );
 
     expect(cwd).toBe("/Users/test/.letta/agents/agent-parent/memory");
+  });
+
+  test("reflection subagents with memoryScope run from USER_CWD while MEMORY_DIR points at the worktree", () => {
+    const cwd = resolveSubagentWorkingDirectory(
+      {
+        USER_CWD: "/tmp/project-root",
+      } as NodeJS.ProcessEnv,
+      "/tmp/fallback-root",
+      {
+        subagentType: "reflection",
+        launchProfile: "memory-subagent",
+        inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
+        memoryScope: {
+          primaryRoot:
+            "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123",
+          writableRoots: [
+            "/Users/test/.letta/agents/agent-parent/memory-worktrees/reflection-123",
+          ],
+        },
+      },
+    );
+
+    expect(cwd).toBe("/tmp/project-root");
   });
 
   test("non-reflection subagents still prefer USER_CWD", () => {
@@ -228,7 +255,7 @@ describe("resolveSubagentWorkingDirectory", () => {
       "/tmp/fallback-root",
       {
         subagentType: "general-purpose",
-        permissionMode: "memory",
+        launchProfile: "memory-subagent",
         inheritedPrimaryRoot: "/Users/test/.letta/agents/agent-parent/memory",
       },
     );
@@ -247,12 +274,14 @@ describe("buildSubagentArgs", () => {
     skills: [],
     fork: false,
     background: false,
+    launchProfile: "default",
   };
 
-  test("adds --no-memfs for newly spawned subagents by default", () => {
+  test("does not pass --no-memfs (statelessness derives from subagent role env)", () => {
     const args = buildSubagentArgs("test-subagent", baseConfig, null, "hello");
 
-    expect(args).toContain("--no-memfs");
+    expect(args).not.toContain("--no-memfs");
+    expect(args).toContain("--new-agent");
   });
 
   test("tags new subagents with type and combines parent into one --tags value", () => {
@@ -295,7 +324,7 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--tags");
   });
 
-  test("passes --backend local and --no-memfs for local backend subagents", () => {
+  test("passes --backend local for local backend subagents", () => {
     const args = buildSubagentArgs(
       "test-subagent",
       baseConfig,
@@ -309,10 +338,10 @@ describe("buildSubagentArgs", () => {
 
     expect(args).toContain("--backend");
     expect(args).toContain("local");
-    expect(args).toContain("--no-memfs");
+    expect(args).not.toContain("--no-memfs");
   });
 
-  test("does not force --no-memfs when deploying an existing subagent agent", () => {
+  test("deploys existing subagent agents without --new-agent (keeps memfs)", () => {
     const args = buildSubagentArgs(
       "test-subagent",
       baseConfig,
@@ -326,19 +355,19 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--no-memfs");
   });
 
-  test("passes memory permission mode through when configured", () => {
+  test("subagents always use unrestricted permission mode", () => {
     const args = buildSubagentArgs(
       "test-subagent",
       {
         ...baseConfig,
-        permissionMode: "memory",
+        launchProfile: "memory-subagent",
       },
       null,
       "hello",
     );
 
     expect(args).toContain("--permission-mode");
-    expect(args).toContain("memory");
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe("unrestricted");
   });
 
   test("caps reflection system prompt plus initial message to startup budget", () => {

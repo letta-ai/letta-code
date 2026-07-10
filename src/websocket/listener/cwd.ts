@@ -1,4 +1,5 @@
 import path from "node:path";
+import { isUsableDirectory } from "@/helpers/usable-directory";
 import { loadRemoteSettings, saveRemoteSettings } from "./remote-settings";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerRuntime } from "./types";
@@ -22,10 +23,22 @@ export function getConversationWorkingDirectory(
   conversationId?: string | null,
 ): string {
   const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
-  return (
-    runtime.workingDirectoryByConversation.get(scopeKey) ??
-    runtime.bootWorkingDirectory
-  );
+  const stored = runtime.workingDirectoryByConversation.get(scopeKey);
+  if (stored === undefined) {
+    return runtime.bootWorkingDirectory;
+  }
+
+  // A persisted cwd can become stale if its directory was deleted (e.g. a
+  // worktree that was cleaned up). Serving it would throw ENOENT on realpath
+  // /process.chdir. Fall back to the boot dir and prune the dead entry so we
+  // don't repeatedly serve it.
+  if (!isUsableDirectory(stored)) {
+    runtime.workingDirectoryByConversation.delete(scopeKey);
+    persistCwdMap(runtime.workingDirectoryByConversation);
+    return runtime.bootWorkingDirectory;
+  }
+
+  return stored;
 }
 
 /**

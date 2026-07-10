@@ -56,10 +56,13 @@ function buildModelSettings(
   const isAnthropic =
     explicitProviderType === "anthropic" ||
     modelHandle.startsWith("anthropic/") ||
+    modelHandle.startsWith("lc-anthropic/") ||
     modelHandle.startsWith("claude-pro-max/") ||
     modelHandle.startsWith("minimax/");
   const isZai =
     explicitProviderType === "zai" || modelHandle.startsWith("zai/");
+  const isXai =
+    explicitProviderType === "xai" || modelHandle.startsWith("xai/");
   const isGoogleAI =
     explicitProviderType === "google_ai" ||
     modelHandle.startsWith("google_ai/");
@@ -148,6 +151,13 @@ function buildModelSettings(
     // Ensure parallel_tool_calls is enabled.
     settings = {
       provider_type: "zai",
+      parallel_tool_calls: true,
+    };
+  } else if (isXai) {
+    // xAI is OpenAI-compatible on the wire, but direct xAI handles must route
+    // through provider_type=xai instead of the generic OpenAI fallback.
+    settings = {
+      provider_type: "xai",
       parallel_tool_calls: true,
     };
   } else if (isGoogleAI) {
@@ -260,6 +270,10 @@ function buildModelSettings(
 
   return settings;
 }
+
+export const __modifyTestUtils = {
+  buildModelSettings,
+};
 
 function updateArgsForModelSettings(
   updateArgs: Record<string, unknown> | undefined,
@@ -633,8 +647,9 @@ export async function updateAgentSystemPrompt(
   systemPromptId: string,
 ): Promise<UpdateSystemPromptResult> {
   try {
-    const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
-      "@/agent/prompt-assets"
+    const { isKnownPreset } = await import("@/agent/prompt-assets");
+    const { resolveAndBuildSystemPrompt } = await import(
+      "@/agent/system-prompt-resolution"
     );
     const { recordManagedSystemPrompt } = await import(
       "@/agent/system-prompt-versioning"
@@ -702,17 +717,17 @@ export async function updateAgentSystemPrompt(
 }
 
 /**
- * Updates an agent's system prompt to swap between full prompt variants when
- * the stored managed prompt hash is known. Custom prompts are already complete and
- * are left unchanged.
+ * Updates an agent's system prompt to the memfs full-prompt variant when
+ * the stored managed prompt hash is known. Custom prompts are already complete
+ * and are left unchanged.
+ *
+ * MemFS cannot be disabled, so there is no path back to the standard variant.
  *
  * @param agentId - The agent ID to update
- * @param enableMemfs - Whether to use the memfs or standard full prompt variant
  * @returns Result with success status and message
  */
 export async function updateAgentSystemPromptMemfs(
   agentId: string,
-  enableMemfs: boolean,
 ): Promise<SystemPromptUpdateResult> {
   try {
     const { settingsManager } = await import("@/settings-manager");
@@ -723,11 +738,9 @@ export async function updateAgentSystemPromptMemfs(
       "@/agent/system-prompt-versioning"
     );
 
-    const newMode = enableMemfs
-      ? getBackend().capabilities.localMemfs
-        ? "local-memfs"
-        : "memfs"
-      : "standard";
+    const newMode = getBackend().capabilities.localMemfs
+      ? "local-memfs"
+      : "memfs";
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
       : undefined;
@@ -787,9 +800,7 @@ export async function updateAgentSystemPromptMemfs(
 
     return {
       success: true,
-      message: enableMemfs
-        ? "System prompt updated for memfs memory mode"
-        : "System prompt updated for standard memory mode",
+      message: "System prompt updated for memfs memory mode",
     };
   } catch (error) {
     return {

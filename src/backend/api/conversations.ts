@@ -3,6 +3,8 @@ import { apiRequest } from "./request";
 export interface ForkConversationOptions {
   agentId?: string;
   hidden?: boolean;
+  /** Extra headers forwarded on the request (e.g. acting-user echo). */
+  headers?: Record<string, string>;
 }
 
 export type ConversationDescriptionUpdateBody = Record<string, unknown> & {
@@ -31,7 +33,7 @@ export async function forkConversation(
     "POST",
     `/v1/conversations/${encodeURIComponent(conversationId)}/fork`,
     undefined,
-    { query },
+    { query, ...(options.headers ? { headers: options.headers } : {}) },
   );
 }
 
