@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
 /**
@@ -10,6 +11,10 @@ import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
  */
 
 const projectRoot = process.cwd();
+
+function readIndexSource(): string {
+  return readFileSync(new URL("./index.ts", import.meta.url), "utf-8");
+}
 
 async function runCli(
   args: string[],
@@ -230,5 +235,73 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).toContain("Missing LETTA_API_KEY");
     expect(result.stderr).not.toContain("Unknown option '--max-turns'");
     expect(result.stderr).not.toContain("Unknown option '--pre-load-skills'");
+  });
+});
+
+describe("Startup Flow - Default Agent Fallback Wiring", () => {
+  test("quota-limited default creation falls back to first existing agent in the active inline flow", () => {
+    const source = readIndexSource();
+    const createCaseStart = source.indexOf('case "create": {');
+    const createCaseEnd = source.indexOf("break;", createCaseStart);
+
+    expect(createCaseStart).toBeGreaterThan(-1);
+    expect(createCaseEnd).toBeGreaterThan(createCaseStart);
+
+    const createCase = source.slice(createCaseStart, createCaseEnd);
+
+    expect(source).toContain("function isDefaultAgentLimitCreateFailure");
+    expect(source).toContain(
+      "async function waitForStartupFallbackAcknowledgement",
+    );
+    expect(createCase).toContain("isDefaultAgentLimitCreateFailure(err)");
+    expect(createCase).toContain("backend.listAgents");
+    expect(createCase).toContain("limit: 1");
+    expect(createCase).toContain(
+      "paginatedItems<AgentState>(fallbackAgentsPage)[0]",
+    );
+    expect(createCase).toContain("Selected existing agent");
+    expect(createCase).toContain(
+      "await waitForStartupFallbackAcknowledgement()",
+    );
+    expect(createCase).toContain("setValidatedAgent(fallbackAgent)");
+    expect(createCase).toContain("setSelectedGlobalAgentId(fallbackAgent.id)");
+    expect(createCase).toContain('setLoadingState("assembling")');
+  });
+
+  test("default agent limit detection stays narrow and acknowledgement remains TTY-gated", () => {
+    const source = readIndexSource();
+    const classifierStart = source.indexOf(
+      "function isDefaultAgentLimitCreateFailure",
+    );
+    const classifierEnd = source.indexOf(
+      "function formatStartupFallbackAgent",
+      classifierStart,
+    );
+    const acknowledgementStart = source.indexOf(
+      "async function waitForStartupFallbackAcknowledgement",
+    );
+    const acknowledgementEnd = source.indexOf(
+      "function timestampMs",
+      acknowledgementStart,
+    );
+
+    expect(classifierStart).toBeGreaterThan(-1);
+    expect(classifierEnd).toBeGreaterThan(classifierStart);
+    expect(acknowledgementStart).toBeGreaterThan(-1);
+    expect(acknowledgementEnd).toBeGreaterThan(acknowledgementStart);
+
+    const classifier = source.slice(classifierStart, classifierEnd);
+    const acknowledgement = source.slice(
+      acknowledgementStart,
+      acknowledgementEnd,
+    );
+
+    expect(classifier).toContain("agents-limit-exceeded");
+    expect(classifier).toContain("you have reached your limit for agents");
+    expect(classifier).not.toContain('message.includes("429")');
+    expect(classifier).not.toContain("statusCode === 429");
+    expect(acknowledgement).toContain(
+      "if (!process.stdin.isTTY || !process.stdout.isTTY) return;",
+    );
   });
 });

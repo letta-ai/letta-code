@@ -535,6 +535,47 @@ function paginatedItems<T>(page: unknown): T[] {
   return [];
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isDefaultAgentLimitCreateFailure(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+  if (message.includes("agents-limit-exceeded")) return true;
+
+  return (
+    message.includes("you have reached your limit for agents") ||
+    message.includes("reached the agent limit") ||
+    message.includes("reached your agent limit") ||
+    message.includes("limit for agents")
+  );
+}
+
+function formatStartupFallbackAgent(agent: AgentState): string {
+  const name = agent.name?.trim();
+  return name ? `"${name}" (${agent.id})` : agent.id;
+}
+
+async function waitForStartupFallbackAcknowledgement(): Promise<void> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) return;
+
+  process.stdout.write("Press any key to continue...");
+  await new Promise<void>((resolve) => {
+    const wasRaw = process.stdin.isRaw;
+    const cleanup = () => {
+      process.stdin.off("data", onData);
+      process.stdin.setRawMode(wasRaw);
+      process.stdout.write("\n");
+      resolve();
+    };
+    const onData = () => cleanup();
+
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.once("data", onData);
+  });
+}
+
 function timestampMs(value: string | null | undefined): number {
   if (!value) return 0;
   const parsed = Date.parse(value);
@@ -2007,7 +2048,8 @@ async function main(): Promise<void> {
           case "create": {
             const { ensureDefaultAgents } = await import("@/agent/defaults");
             try {
-              const defaultAgent = await ensureDefaultAgents(getBackend(), {
+              const backend = getBackend();
+              const defaultAgent = await ensureDefaultAgents(backend, {
                 preferredModel: model,
                 // True fresh start (brand-new account, nothing to resume)
                 // gets the Tutor onboarding agent; an explicit --new-agent
@@ -2026,8 +2068,35 @@ async function main(): Promise<void> {
               // If null (createDefaultAgents disabled), fall through
             } catch (err) {
               console.error(
-                `Failed to create default agent: ${err instanceof Error ? err.message : String(err)}`,
+                `Failed to create default agent: ${errorMessage(err)}`,
               );
+              if (isDefaultAgentLimitCreateFailure(err)) {
+                try {
+                  const backend = getBackend();
+                  const fallbackAgentsPage = await backend.listAgents({
+                    limit: 1,
+                  } as never);
+                  const fallbackAgent =
+                    paginatedItems<AgentState>(fallbackAgentsPage)[0];
+                  if (fallbackAgent) {
+                    console.warn(
+                      `Selected existing agent ${formatStartupFallbackAgent(fallbackAgent)} by default.`,
+                    );
+                    await waitForStartupFallbackAcknowledgement();
+                    setValidatedAgent(fallbackAgent);
+                    setSelectedGlobalAgentId(fallbackAgent.id);
+                    setLoadingState("assembling");
+                    return;
+                  }
+                  console.error(
+                    "No existing agents were available after default agent creation failed.",
+                  );
+                } catch (fallbackErr) {
+                  console.error(
+                    `Failed to list existing agents after default agent creation failed: ${errorMessage(fallbackErr)}`,
+                  );
+                }
+              }
               process.exit(1);
             }
             break;
