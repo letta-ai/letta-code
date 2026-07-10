@@ -13,13 +13,11 @@ import type {
   OutboundChannelMessage,
   WhatsAppChannelAccount,
 } from "@/channels/types";
+import { resolveInboundChatId } from "./inbound-identity";
 import {
   isGroupJid,
-  isLidJid,
   isSelfChat,
   isStatusOrBroadcastJid,
-  phoneDigitsToJid,
-  resolveLidToPhoneJid,
   resolvePresenceJid,
   resolveSendJid,
   senderIdFromJid,
@@ -419,37 +417,6 @@ export function createWhatsAppAdapter(
     });
   }
 
-  function resolveInboundChatId(
-    remoteJid: string,
-    selfChat: boolean,
-    msg: WhatsAppMessage,
-  ): string {
-    const normalizedRemote = stripDeviceSuffix(remoteJid);
-    if (selfChat) {
-      if (selfPhoneJid) return selfPhoneJid;
-      const digits = senderIdFromJid(remoteJid);
-      return phoneDigitsToJid(digits) || normalizedRemote;
-    }
-    if (isLidJid(normalizedRemote)) {
-      // Check the desk first (includes persisted mappings from prior runs
-      // and any just mined in the inbound loop).
-      const deskResolved = lidDesk.resolveLid(normalizedRemote);
-      if (deskResolved) return deskResolved;
-      // Fall back to runtime resolution (senderPn, signalRepository).
-      const resolved = resolveLidToPhoneJid({
-        lidJid: normalizedRemote,
-        message: msg,
-        sock,
-      });
-      if (resolved) {
-        lidDesk.record(normalizedRemote, resolved);
-        lidDesk.save();
-        return resolved;
-      }
-    }
-    return normalizedRemote;
-  }
-
   async function getGroupLabel(groupJid: string): Promise<string | undefined> {
     try {
       return (await sock?.groupMetadata?.(groupJid))?.subject;
@@ -677,7 +644,12 @@ export function createWhatsAppAdapter(
       const group = isGroupJid(remoteJid);
       const chatId = group
         ? stripDeviceSuffix(remoteJid)
-        : resolveInboundChatId(remoteJid, selfChat, msg);
+        : resolveInboundChatId(
+            { sock, selfPhoneJid, lidDesk },
+            remoteJid,
+            selfChat,
+            msg,
+          );
       if (rememberSeen(`${chatId}:${messageId}`)) continue;
 
       const text = extractWhatsAppText(msg.message);
