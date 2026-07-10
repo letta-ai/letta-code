@@ -260,8 +260,19 @@ export function detectPackageManager(): PackageManager {
   return "npm";
 }
 
-function isAutoUpdateEnabled(): boolean {
-  return process.env.DISABLE_AUTOUPDATER !== "1";
+export function isStartupAutoUpdateSuppressedByRuntimeContext(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    env.LETTA_CODE_AGENT_ROLE === "subagent" || !!env.LETTA_PARENT_AGENT_ID
+  );
+}
+
+function isAutoUpdateEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (
+    env.DISABLE_AUTOUPDATER !== "1" &&
+    !isStartupAutoUpdateSuppressedByRuntimeContext(env)
+  );
 }
 
 function isRunningLocally(): boolean {
@@ -505,13 +516,18 @@ export async function checkAndAutoUpdate(): Promise<
 > {
   debugLog("Auto-update check starting...");
   debugLog("isAutoUpdateEnabled:", isAutoUpdateEnabled());
-  const runningLocally = isRunningLocally();
-  debugLog("isRunningLocally:", runningLocally);
 
   if (!isAutoUpdateEnabled()) {
-    debugLog("Auto-update disabled via DISABLE_AUTOUPDATER=1");
+    debugLog(
+      process.env.DISABLE_AUTOUPDATER === "1"
+        ? "Auto-update disabled via DISABLE_AUTOUPDATER=1"
+        : "Auto-update disabled for subagent/worker runtime",
+    );
     return;
   }
+
+  const runningLocally = isRunningLocally();
+  debugLog("isRunningLocally:", runningLocally);
 
   if (runningLocally) {
     debugLog("Running locally, skipping auto-update");

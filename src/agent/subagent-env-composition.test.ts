@@ -21,6 +21,7 @@ describe("composeSubagentChildEnv", () => {
 
     expect(env.LETTA_PARENT_AGENT_ID).toBe(PARENT_ID);
     expect(env.LETTA_CODE_AGENT_ROLE).toBe("subagent");
+    expect(env.DISABLE_AUTOUPDATER).toBe("1");
     // Default launch profile: MEMORY_DIR is NOT overridden to parent
     expect(env.MEMORY_DIR).toBeUndefined();
     expect(env.LETTA_MEMORY_DIR).toBeUndefined();
@@ -228,7 +229,21 @@ describe("composeSubagentChildEnv", () => {
         inheritedPrimaryRoot: PARENT_MEMORY_DIR,
       });
       expect(env.LETTA_CODE_AGENT_ROLE).toBe("subagent");
+      expect(env.DISABLE_AUTOUPDATER).toBe("1");
     }
+  });
+
+  test("subagent child env force-disables startup auto-update", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: {
+        DISABLE_AUTOUPDATER: "0",
+      },
+      parentAgentId: PARENT_ID,
+      launchProfile: "default",
+      inheritedPrimaryRoot: null,
+    });
+
+    expect(env.DISABLE_AUTOUPDATER).toBe("1");
   });
 
   test("parent process env is inherited (HOME, PATH, etc.)", () => {

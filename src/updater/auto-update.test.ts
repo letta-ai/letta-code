@@ -6,9 +6,11 @@ import {
   buildInstallCommand,
   buildLatestVersionUrl,
   buildUpdateExecOptions,
+  checkAndAutoUpdate,
   checkForUpdate,
   detectPackageManager,
   getSelfUpdateStatus,
+  isStartupAutoUpdateSuppressedByRuntimeContext,
   resolveUpdateInstallRegistryUrl,
   resolveUpdatePackageName,
   resolveUpdateRegistryBaseUrl,
@@ -222,6 +224,92 @@ describe("detectPackageManager", () => {
     process.argv[1] =
       "/usr/local/lib/node_modules/@letta-ai/letta-code/dist/index.js";
     expect(detectPackageManager()).toBe("npm");
+  });
+});
+
+describe("startup auto-update runtime suppression", () => {
+  let originalArgv1: string;
+  let originalDisableAutoupdater: string | undefined;
+  let originalAgentRole: string | undefined;
+  let originalParentAgentId: string | undefined;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalArgv1 = process.argv[1] || "";
+    originalDisableAutoupdater = process.env.DISABLE_AUTOUPDATER;
+    originalAgentRole = process.env.LETTA_CODE_AGENT_ROLE;
+    originalParentAgentId = process.env.LETTA_PARENT_AGENT_ID;
+    originalFetch = globalThis.fetch;
+
+    delete process.env.DISABLE_AUTOUPDATER;
+    delete process.env.LETTA_CODE_AGENT_ROLE;
+    delete process.env.LETTA_PARENT_AGENT_ID;
+  });
+
+  afterEach(() => {
+    process.argv[1] = originalArgv1;
+    globalThis.fetch = originalFetch;
+    if (originalDisableAutoupdater !== undefined) {
+      process.env.DISABLE_AUTOUPDATER = originalDisableAutoupdater;
+    } else {
+      delete process.env.DISABLE_AUTOUPDATER;
+    }
+    if (originalAgentRole !== undefined) {
+      process.env.LETTA_CODE_AGENT_ROLE = originalAgentRole;
+    } else {
+      delete process.env.LETTA_CODE_AGENT_ROLE;
+    }
+    if (originalParentAgentId !== undefined) {
+      process.env.LETTA_PARENT_AGENT_ID = originalParentAgentId;
+    } else {
+      delete process.env.LETTA_PARENT_AGENT_ID;
+    }
+  });
+
+  test("detects subagent runtime markers", () => {
+    expect(
+      isStartupAutoUpdateSuppressedByRuntimeContext({
+        LETTA_CODE_AGENT_ROLE: "subagent",
+      } as NodeJS.ProcessEnv),
+    ).toBe(true);
+    expect(
+      isStartupAutoUpdateSuppressedByRuntimeContext({
+        LETTA_PARENT_AGENT_ID: "agent-parent",
+      } as NodeJS.ProcessEnv),
+    ).toBe(true);
+    expect(
+      isStartupAutoUpdateSuppressedByRuntimeContext({
+        LETTA_CODE_AGENT_ROLE: "primary",
+      } as NodeJS.ProcessEnv),
+    ).toBe(false);
+  });
+
+  test("checkAndAutoUpdate skips before registry access in subagent runtime", async () => {
+    process.argv[1] =
+      "/usr/local/lib/node_modules/@letta-ai/letta-code/letta.js";
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    const fetchMock = mock(() => {
+      throw new Error("auto-update should not check the registry in subagents");
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchMock;
+
+    await expect(checkAndAutoUpdate()).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("checkAndAutoUpdate skips before registry access when parent agent marker is present", async () => {
+    process.argv[1] =
+      "/usr/local/lib/node_modules/@letta-ai/letta-code/letta.js";
+    process.env.LETTA_PARENT_AGENT_ID = "agent-parent";
+    const fetchMock = mock(() => {
+      throw new Error(
+        "auto-update should not check the registry in child workers",
+      );
+    }) as unknown as typeof fetch;
+    globalThis.fetch = fetchMock;
+
+    await expect(checkAndAutoUpdate()).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
