@@ -24,6 +24,7 @@ import {
   senderIdFromJid,
   stripDeviceSuffix,
 } from "./jid";
+import { LidDesk } from "./lid-desk";
 import {
   buildWhatsAppOutboundPayload,
   checkAttachmentPolicy,
@@ -223,15 +224,15 @@ export function createWhatsAppAdapter(
     | null = null;
   const sentMessageIds = new Set<string>();
   const seenMessageIds = new Set<string>();
-  const lidToJid = new Map<string, string>();
-  // Reverse map: phone JID → LID, used so sendPresenceUpdate can target the
-  // LID (the protocol-level chat identity) when the conversation is LID-routed.
-  // Baileys' sendPresenceUpdate checks `server === 'lid'` on the toJid to
-  // decide whether to set `from: me.lid` vs `from: me.id`.  If we pass a phone
-  // JID for a conversation that is actually LID-routed, WhatsApp silently drops
-  // the presence update.  sendMessage works either way because relayMessage
-  // re-encodes the JID internally.
-  const jidToLid = new Map<string, string>();
+
+  // ── LidDesk: persistent PN↔LID mapping store ─────────────────────
+  // Replaces the ephemeral lidToJid/jidToLid Maps. Persists to JSON in the
+  // account auth dir so mappings survive container restarts. The desk is
+  // mined from inbound messages (senderPn, participant) and from
+  // sock.signalRepository.lidMapping on connect.
+  const authDir = getWhatsAppAuthDir(account.accountId);
+  const lidDesk = new LidDesk(authDir);
+  lidDesk.load();
   const messageStore = new Map<string, unknown>();
   const typingByChatId = new Map<string, WhatsAppTypingEntry>();
 
@@ -354,6 +355,10 @@ export function createWhatsAppAdapter(
           reconnectAttempts = 0;
           selfPhoneJid = stripDeviceSuffix(sock?.user?.id ?? null) || null;
           selfLid = stripDeviceSuffix(sock?.user?.lid ?? null) || null;
+          // Mine PN↔LID mappings from the Baileys signal repository.
+          // This is a read-only operation on the socket.
+          const mined = lidDesk.mineFromSocket(sock);
+          if (mined > 0) lidDesk.save();
           const mode = account.selfChatMode
             ? "self-chat mode (only your own Message Yourself chat routes)"
             : "open identity mode (replies appear under the linked WhatsApp number)";
@@ -420,14 +425,19 @@ export function createWhatsAppAdapter(
       return phoneDigitsToJid(digits) || normalizedRemote;
     }
     if (isLidJid(normalizedRemote)) {
+      // Check the desk first (includes persisted mappings from prior runs
+      // and any just mined in the inbound loop).
+      const deskResolved = lidDesk.resolveLid(normalizedRemote);
+      if (deskResolved) return deskResolved;
+      // Fall back to runtime resolution (senderPn, signalRepository).
       const resolved = resolveLidToPhoneJid({
         lidJid: normalizedRemote,
         message: msg,
         sock,
       });
       if (resolved) {
-        lidToJid.set(normalizedRemote, resolved);
-        jidToLid.set(resolved, normalizedRemote);
+        lidDesk.record(normalizedRemote, resolved);
+        lidDesk.save();
         return resolved;
       }
     }
@@ -461,6 +471,8 @@ export function createWhatsAppAdapter(
   }
 
   function resolveTypingPresenceJid(chatId: string): string {
+    const lidToJid = lidDesk.getLidToJidMap();
+    const jidToLid = lidDesk.getJidToLidMap();
     const targetJid = resolveSendJid({
       chatId,
       selfPhoneJid,
@@ -602,6 +614,13 @@ export function createWhatsAppAdapter(
         }
       }
 
+      // Mine PN↔LID mappings from every inbound message (including groups
+      // and history) before any filtering. This ensures we capture mappings
+      // even from messages we don't ultimately route.
+      if (lidDesk.mineFromMessage(msg)) {
+        lidDesk.save();
+      }
+
       const selfChat = isSelfChat(remoteJid, selfPhoneJid, selfLid);
       const fromMe = msg.key?.fromMe === true;
       if (fromMe && !(account.selfChatMode && selfChat)) continue;
@@ -699,7 +718,7 @@ export function createWhatsAppAdapter(
       chatId,
       selfPhoneJid,
       selfLid,
-      lidToJid,
+      lidToJid: lidDesk.getLidToJidMap(),
       sock,
     });
     return await sock.sendMessage(targetJid, payload, options);
@@ -754,7 +773,7 @@ export function createWhatsAppAdapter(
         chatId: msg.chatId,
         selfPhoneJid,
         selfLid,
-        lidToJid,
+        lidToJid: lidDesk.getLidToJidMap(),
         sock,
       });
       if (msg.reaction || msg.removeReaction) {
@@ -813,7 +832,7 @@ export function createWhatsAppAdapter(
         chatId,
         selfPhoneJid,
         selfLid,
-        lidToJid,
+        lidToJid: lidDesk.getLidToJidMap(),
         sock,
       });
       const prefixed = account.messagePrefix
