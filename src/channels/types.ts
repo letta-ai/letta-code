@@ -856,6 +856,35 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   waitingBehavior?: WhatsAppWaitingBehavior;
   /** Custom text for waitingBehavior="message". Default: "🤹‍♀️ Working on it..." */
   waitingMessage?: string;
+  /**
+   * Default true. When true, outbound attachment sends are checked against the
+   * MIME-type, recipient, and source-path allowlists below. When false, all
+   * policy checks are skipped and current behavior is preserved.
+   */
+  attachmentFilter?: boolean;
+  /**
+   * MIME types allowed for outbound attachments. Default [] denies all.
+   * ["*"] allows all. Explicit entries are exact-match against the inferred
+   * MIME type (e.g. "image/png", "application/pdf").
+   */
+  attachmentMimeTypes?: string[];
+  /**
+   * Recipients allowed for outbound attachments. Default [] denies all.
+   * ["*"] allows all. Explicit entries use WhatsApp phone/JID normalization
+   * so both phone numbers and JIDs work.
+   */
+  attachmentAllowedRecipients?: string[];
+  /**
+   * Canonical real paths allowed as attachment sources. Default [] denies all.
+   * Entries should be absolute paths (e.g. "/data/downloads").
+   */
+  attachmentAllowedPaths?: string[];
+  /**
+   * When false (default), source path must exactly match one allowed path.
+   * When true, source may be the allowed path or any child under it.
+   * Symlink escape is prevented by comparing realpath() of source and roots.
+   */
+  attachmentPathRecursive?: boolean;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {

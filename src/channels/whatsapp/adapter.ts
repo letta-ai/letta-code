@@ -26,6 +26,7 @@ import {
 } from "./jid";
 import {
   buildWhatsAppOutboundPayload,
+  checkAttachmentPolicy,
   collectWhatsAppAttachments,
   extractMentionedJids,
   extractReplyParticipant,
@@ -654,6 +655,22 @@ export function createWhatsAppAdapter(
       const payload = buildWhatsAppOutboundPayload(msg, {
         audioAsVoiceMemo: account.audioAsVoiceMemo,
       });
+      // Enforce attachment policy for outbound media sends
+      if (msg.mediaPath) {
+        const policyError = checkAttachmentPolicy({
+          policy: {
+            attachmentFilter: account.attachmentFilter !== false,
+            attachmentMimeTypes: account.attachmentMimeTypes ?? [],
+            attachmentAllowedRecipients:
+              account.attachmentAllowedRecipients ?? [],
+            attachmentAllowedPaths: account.attachmentAllowedPaths ?? [],
+            attachmentPathRecursive: account.attachmentPathRecursive === true,
+          },
+          mediaPath: msg.mediaPath,
+          recipientChatId: msg.chatId,
+        });
+        if (policyError) throw new Error(policyError);
+      }
       const result = await sendToWhatsApp(
         targetJid,
         payload,

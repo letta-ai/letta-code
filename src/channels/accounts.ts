@@ -66,6 +66,11 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   waiting_message: "waitingMessage",
   download_media: "downloadMedia",
   audio_as_voice_memo: "audioAsVoiceMemo",
+  attachment_filter: "attachmentFilter",
+  attachment_mime_types: "attachmentMimeTypes",
+  attachment_allowed_recipients: "attachmentAllowedRecipients",
+  attachment_allowed_paths: "attachmentAllowedPaths",
+  attachment_path_recursive: "attachmentPathRecursive",
 };
 
 let warnedAboutDualKeys = false;
@@ -357,6 +362,13 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
     next.downloadMedia = next.downloadMedia === true;
     next.transcribeVoice = next.transcribeVoice === true;
+    next.attachmentFilter = next.attachmentFilter !== false;
+    next.attachmentMimeTypes = [...(next.attachmentMimeTypes ?? [])];
+    next.attachmentAllowedRecipients = [
+      ...(next.attachmentAllowedRecipients ?? []),
+    ];
+    next.attachmentAllowedPaths = [...(next.attachmentAllowedPaths ?? [])];
+    next.attachmentPathRecursive = next.attachmentPathRecursive === true;
   }
   if (isSignalChannelAccount(next)) {
     next.baseUrl = next.baseUrl ?? "";
@@ -442,6 +454,11 @@ function makeDefaultLegacyAccount(
       transcribeVoice: config.transcribeVoice === true,
       downloadMedia: config.downloadMedia === true,
       mediaMaxBytes: config.mediaMaxBytes,
+      attachmentFilter: true,
+      attachmentMimeTypes: [],
+      attachmentAllowedRecipients: [],
+      attachmentAllowedPaths: [],
+      attachmentPathRecursive: false,
       createdAt: now,
       updatedAt: now,
     };

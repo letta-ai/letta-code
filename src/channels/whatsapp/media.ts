@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
+import { realpathSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { getChannelDir } from "@/channels/config";
 import { transcribeAudioFile } from "@/channels/transcription";
 import type {
   ChannelMessageAttachment,
   OutboundChannelMessage,
 } from "@/channels/types";
-import { sanitizePathSegment } from "./jid";
+import { allowedUsersIncludes, sanitizePathSegment } from "./jid";
 
 export const DEFAULT_WHATSAPP_MEDIA_MAX_BYTES = 50 * 1024 * 1024;
 
@@ -104,6 +105,130 @@ export function extractReplyParticipant(message: unknown): string | null {
       return participant;
     }
   }
+  return null;
+}
+
+// ── Attachment policy helpers ─────────────────────────────────────
+
+const MIME_EXTENSION_MAP: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".m4v": "video/x-m4v",
+  ".webm": "video/webm",
+  ".ogg": "audio/ogg",
+  ".oga": "audio/ogg",
+  ".opus": "audio/opus",
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".wav": "audio/wav",
+  ".pdf": "application/pdf",
+  ".doc": "application/msword",
+  ".docx":
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".txt": "text/plain",
+  ".csv": "text/csv",
+  ".json": "application/json",
+  ".zip": "application/zip",
+};
+
+export function inferMimeType(filePath: string): string {
+  const ext = extname(filePath).toLowerCase();
+  return MIME_EXTENSION_MAP[ext] ?? "application/octet-stream";
+}
+
+export interface AttachmentPolicyParams {
+  attachmentFilter: boolean;
+  attachmentMimeTypes: string[];
+  attachmentAllowedRecipients: string[];
+  attachmentAllowedPaths: string[];
+  attachmentPathRecursive: boolean;
+}
+
+/**
+ * Check whether an outbound attachment send is allowed by the account's
+ * attachment policy. Returns null if allowed, or an error message string
+ * explaining why it was denied.
+ */
+export function checkAttachmentPolicy(params: {
+  policy: AttachmentPolicyParams;
+  mediaPath: string;
+  recipientChatId: string;
+}): string | null {
+  const { policy, mediaPath, recipientChatId } = params;
+
+  // Filter disabled → skip all checks
+  if (!policy.attachmentFilter) return null;
+
+  // ── MIME type check ──
+  const mimeTypes = policy.attachmentMimeTypes;
+  if (mimeTypes.length === 0) {
+    return `Attachment denied: no MIME types are allowed (attachment_mime_types is empty).`;
+  }
+  if (!mimeTypes.includes("*")) {
+    const inferred = inferMimeType(mediaPath);
+    if (!mimeTypes.includes(inferred)) {
+      return `Attachment denied: MIME type "${inferred}" is not in the allowed list.`;
+    }
+  }
+
+  // ── Recipient check ──
+  const recipients = policy.attachmentAllowedRecipients;
+  if (recipients.length === 0) {
+    return `Attachment denied: no recipients are allowed (attachment_allowed_recipients is empty).`;
+  }
+  if (!recipients.includes("*")) {
+    if (!allowedUsersIncludes(recipients, recipientChatId)) {
+      return `Attachment denied: recipient "${recipientChatId}" is not in the allowed list.`;
+    }
+  }
+
+  // ── Source path check ──
+  const allowedPaths = policy.attachmentAllowedPaths;
+  if (allowedPaths.length === 0) {
+    return `Attachment denied: no source paths are allowed (attachment_allowed_paths is empty).`;
+  }
+
+  let resolvedSource: string;
+  try {
+    resolvedSource = realpathSync(mediaPath);
+  } catch {
+    return `Attachment denied: source path "${mediaPath}" does not exist or cannot be resolved.`;
+  }
+
+  const matched = allowedPaths.some((allowedPath) => {
+    let resolvedAllowed: string;
+    try {
+      resolvedAllowed = realpathSync(allowedPath);
+      if (!statSync(resolvedAllowed).isDirectory()) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+
+    if (policy.attachmentPathRecursive) {
+      // Child-or-self match with path-boundary safety
+      if (resolvedSource === resolvedAllowed) return true;
+      const prefix = resolvedAllowed.endsWith("/")
+        ? resolvedAllowed
+        : `${resolvedAllowed}/`;
+      return resolvedSource.startsWith(prefix);
+    }
+    const sourceDir = realpathSync(dirname(resolvedSource));
+    return sourceDir === resolvedAllowed;
+  });
+
+  if (!matched) {
+    return policy.attachmentPathRecursive
+      ? `Attachment denied: source path is not within any allowed path.`
+      : `Attachment denied: source path is not directly inside any allowed path.`;
+  }
+
   return null;
 }
 
