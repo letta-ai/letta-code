@@ -1104,13 +1104,38 @@ export async function message_channel(
           scope,
           channelTurnSources: args.channelTurnSources,
         });
-      const route: ChannelRoute | null = registry.getRouteForScope(
+      let route: ChannelRoute | null = registry.getRouteForScope(
         input.channel,
         input.chatId,
         scope.agentId,
         scope.conversationId,
         resolvedAccountId,
       );
+
+      // WhatsApp-only outbound route auto-bootstrap:
+      // If no route exists and this is a WhatsApp phone chatId, attempt
+      // to resolve a LID via onWhatsApp and create a minimal route entry.
+      // On success, retry the route lookup. On failure, surface the
+      // original "no route" error.
+      if (!route && input.channel === "whatsapp") {
+        const bootstrapped = await registry.tryBootstrapOutboundRoute({
+          channel: input.channel,
+          chatId: input.chatId,
+          agentId: scope.agentId,
+          conversationId: scope.conversationId,
+          accountId: resolvedAccountId,
+        });
+        if (bootstrapped) {
+          route = registry.getRouteForScope(
+            input.channel,
+            input.chatId,
+            scope.agentId,
+            scope.conversationId,
+            resolvedAccountId,
+          );
+        }
+      }
+
       if (!route) {
         return resolvedAccountId
           ? `Error: No route for chat_id "${input.chatId}" on "${input.channel}" account "${resolvedAccountId}" for this agent/conversation.`

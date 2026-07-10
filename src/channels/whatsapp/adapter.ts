@@ -764,11 +764,20 @@ export function createWhatsAppAdapter(
     return await sock.sendMessage(targetJid, payload, options);
   }
 
-  const adapter: ChannelAdapter = {
+  const adapter: ChannelAdapter & {
+    getLidDesk?: () => LidDesk;
+    getSocket?: () => WhatsAppSocket | null;
+  } = {
     id: `${CHANNEL_ID}:${account.accountId}`,
     channelId: CHANNEL_ID,
     accountId: account.accountId,
     name: getDisplayName(account),
+
+    /** @internal Expose LidDesk for outbound route bootstrap. */
+    getLidDesk: () => lidDesk,
+
+    /** @internal Expose current socket for outbound route bootstrap. */
+    getSocket: () => sock,
 
     async start() {
       if (running) return;

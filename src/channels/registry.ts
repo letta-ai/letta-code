@@ -76,7 +76,15 @@ import type {
   ChannelTurnSource,
   InboundChannelMessage,
 } from "./types";
-import { isSignalChannelAccount } from "./types";
+import {
+  isDiscordChannelAccount,
+  isSignalChannelAccount,
+  isSlackChannelAccount,
+  isTelegramChannelAccount,
+  isWhatsAppChannelAccount,
+} from "./types";
+import { allowedUsersIncludes, isPhoneJid } from "./whatsapp/jid";
+import { LidDesk, type OnWhatsAppSocket } from "./whatsapp/lid-desk";
 import { subscribeWhatsAppConnectionState } from "./whatsapp/state";
 
 // ── Singleton ─────────────────────────────────────────────────────
@@ -536,6 +544,86 @@ export class ChannelRegistry {
     }
 
     return matches[0] ?? null;
+  }
+
+  /**
+   * WhatsApp-only outbound route auto-bootstrap.
+   *
+   * When an agent tries to proactively send to a phone chatId that has no
+   * inbound history (no route entry), this method:
+   * 1. Checks that the chatId is a phone JID (not a LID, not a group).
+   * 2. Gets the WhatsApp adapter and its LidDesk + socket.
+   * 3. Calls `lidDesk.lookupLidForPhone(phoneJid, sock)` (rate-limited internally).
+   * 4. If a LID is resolved, creates a minimal outbound route entry so the
+   *    caller's retry of `getRouteForScope` finds it.
+   *
+   * Returns true if a route was bootstrapped (caller should retry lookup).
+   * Returns false if no route could be created (caller should surface the
+   * original "no route" error).
+   *
+   * Safety:
+   * - WhatsApp-only. Other channels are never touched.
+   * - No behavior change for known routes (this is only called on miss).
+   * - Rate-limited via LidDesk's existing 10/min per-phone counter.
+   * - If onWhatsApp returns no LID, returns false (original error surfaces).
+   */
+  async tryBootstrapOutboundRoute(params: {
+    channel: string;
+    chatId: string;
+    agentId: string;
+    conversationId: string;
+    accountId?: string;
+  }): Promise<boolean> {
+    const { channel, chatId, agentId, conversationId, accountId } = params;
+
+    // WhatsApp-only — do not broaden.
+    if (channel !== "whatsapp") return false;
+
+    // Only attempt for phone JIDs (not LIDs, not groups, not broadcast).
+    if (!isPhoneJid(chatId)) return false;
+
+    const resolvedAccountId =
+      accountId?.trim() || LEGACY_CHANNEL_ACCOUNT_ID;
+
+    const adapter = this.getAdapter("whatsapp", resolvedAccountId);
+    if (!adapter?.isRunning()) return false;
+
+    // Access the WhatsApp-specific extensions.
+    const waAdapter = adapter as ChannelAdapter & {
+      getLidDesk?: () => LidDesk;
+      getSocket?: () => OnWhatsAppSocket | null;
+    };
+    const lidDesk = waAdapter.getLidDesk?.();
+    const sock = waAdapter.getSocket?.();
+    if (!lidDesk) return false;
+
+    // Attempt LID resolution via onWhatsApp (rate-limited inside LidDesk).
+    const lid = await lidDesk.lookupLidForPhone(chatId, sock);
+    if (!lid) return false;
+
+    // LID resolved — create a minimal outbound route entry.
+    // The chatId stays as the phone JID (that's what the agent passed),
+    // but the LidDesk now has the phone→LID mapping so send/presence
+    // paths can resolve correctly.
+    const now = new Date().toISOString();
+    const route: ChannelRoute = {
+      accountId: resolvedAccountId,
+      chatId,
+      chatType: "direct",
+      threadId: null,
+      agentId,
+      conversationId,
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    addRoute("whatsapp", route);
+
+    console.log(
+      `[WhatsApp:${resolvedAccountId}] Bootstrapped outbound route for ${chatId} (LID: ${lid})`,
+    );
+    return true;
   }
 
   async startChannel(channelId: string): Promise<boolean> {
