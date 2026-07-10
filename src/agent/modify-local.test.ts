@@ -2,12 +2,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { configureBackendMode, getBackend } from "@/backend/backend";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LOCAL_BACKEND_DIR_ENV } from "@/backend/local/paths";
 import { clearAvailableModelsCache } from "./available-models";
-import { updateAgentLLMConfig, updateConversationLLMConfig } from "./modify";
+import {
+  __modifyTestUtils,
+  updateAgentLLMConfig,
+  updateConversationLLMConfig,
+} from "./modify";
 
 async function withLocalBackendStorage<T>(
   storageDir: string,
@@ -30,42 +34,35 @@ async function withLocalBackendStorage<T>(
 }
 
 describe("local model updates", () => {
+  test("builds direct xAI model settings for xAI handles", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("xai/grok-4.5", {
+        context_window: 500000,
+        max_output_tokens: 16384,
+        parallel_tool_calls: true,
+      }),
+    ).toMatchObject({
+      provider_type: "xai",
+      parallel_tool_calls: true,
+      max_output_tokens: 16384,
+    });
+  });
+
+  test("stores GPT-5.6 max separately from xhigh for local providers", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("openai-codex/gpt-5.6-sol", {
+        provider_type: "chatgpt_oauth",
+        reasoning_effort: "max",
+      }),
+    ).toMatchObject({
+      provider_type: "chatgpt_oauth",
+      reasoning: { reasoning_effort: "max" },
+    });
+  });
+
   afterEach(() => {
     configureBackendMode("api");
     clearAvailableModelsCache();
-  });
-
-  test("keeps Ollama provider metadata when updating local model handles", async () => {
-    const storageDir = await mkdtemp(
-      join(tmpdir(), "local-model-update-ollama-provider-"),
-    );
-    try {
-      await createOrUpdateLocalProvider({
-        providerType: "ollama",
-        providerName: "lc-ollama",
-        apiKey: "not-needed",
-        baseURL: "http://localhost:11434/v1",
-        storageDir,
-      });
-
-      await withLocalBackendStorage(storageDir, async () => {
-        const backend = getBackend();
-        const agent = await backend.createAgent({ name: "Local" } as never);
-
-        const updated = await updateAgentLLMConfig(
-          agent.id,
-          "ollama/llama3.1:latest",
-          { parallel_tool_calls: true },
-        );
-
-        expect(updated.model).toBe("ollama/llama3.1:latest");
-        expect(
-          (updated.model_settings as Record<string, unknown>).provider_type,
-        ).toBe("ollama");
-      });
-    } finally {
-      await rm(storageDir, { recursive: true, force: true });
-    }
   });
 
   test("uses pi catalog token settings instead of static Letta model presets", async () => {

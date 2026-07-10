@@ -10,13 +10,6 @@ import type {
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type { Backend } from "@/backend";
 import { getBackend } from "@/backend";
-import {
-  getPiProviderSpec,
-  localProviderType,
-  type PiProvider,
-  resolveProviderFromModelHandle,
-  resolveProviderFromProviderType,
-} from "@/backend/dev/pi-provider-registry";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
@@ -37,15 +30,6 @@ function supportsDistinctAnthropicXHighEffort(modelHandle: string): boolean {
   );
 }
 
-function localEndpointProviderType(
-  provider: PiProvider | undefined,
-): string | undefined {
-  if (!provider) return undefined;
-  return getPiProviderSpec(provider).createCustomModel
-    ? localProviderType(provider)
-    : undefined;
-}
-
 /**
  * Builds model_settings from updateArgs based on provider type.
  * Always ensures parallel_tool_calls is enabled.
@@ -58,11 +42,6 @@ function buildModelSettings(
     typeof updateArgs?.provider_type === "string"
       ? updateArgs.provider_type
       : undefined;
-  const localEndpointType =
-    localEndpointProviderType(resolveProviderFromModelHandle(modelHandle)) ??
-    localEndpointProviderType(
-      resolveProviderFromProviderType(explicitProviderType),
-    );
   // Include ChatGPT OAuth/Codex providers, including user-defined aliases whose
   // provider_type is supplied by the server model catalog.
   const isOpenAICodex =
@@ -77,10 +56,13 @@ function buildModelSettings(
   const isAnthropic =
     explicitProviderType === "anthropic" ||
     modelHandle.startsWith("anthropic/") ||
+    modelHandle.startsWith("lc-anthropic/") ||
     modelHandle.startsWith("claude-pro-max/") ||
     modelHandle.startsWith("minimax/");
   const isZai =
     explicitProviderType === "zai" || modelHandle.startsWith("zai/");
+  const isXai =
+    explicitProviderType === "xai" || modelHandle.startsWith("xai/");
   const isGoogleAI =
     explicitProviderType === "google_ai" ||
     modelHandle.startsWith("google_ai/");
@@ -95,15 +77,7 @@ function buildModelSettings(
 
   let settings: ModelSettings;
 
-  if (localEndpointType) {
-    settings = {
-      provider_type: localEndpointType,
-      parallel_tool_calls:
-        typeof updateArgs?.parallel_tool_calls === "boolean"
-          ? updateArgs.parallel_tool_calls
-          : true,
-    };
-  } else if (isOpenAI || isOpenRouter) {
+  if (isOpenAI || isOpenRouter) {
     const openaiSettings: OpenAIModelSettings = {
       provider_type: "openai",
       parallel_tool_calls: true,
@@ -177,6 +151,13 @@ function buildModelSettings(
     // Ensure parallel_tool_calls is enabled.
     settings = {
       provider_type: "zai",
+      parallel_tool_calls: true,
+    };
+  } else if (isXai) {
+    // xAI is OpenAI-compatible on the wire, but direct xAI handles must route
+    // through provider_type=xai instead of the generic OpenAI fallback.
+    settings = {
+      provider_type: "xai",
       parallel_tool_calls: true,
     };
   } else if (isGoogleAI) {
@@ -289,6 +270,10 @@ function buildModelSettings(
 
   return settings;
 }
+
+export const __modifyTestUtils = {
+  buildModelSettings,
+};
 
 function updateArgsForModelSettings(
   updateArgs: Record<string, unknown> | undefined,
@@ -662,8 +647,9 @@ export async function updateAgentSystemPrompt(
   systemPromptId: string,
 ): Promise<UpdateSystemPromptResult> {
   try {
-    const { isKnownPreset, resolveAndBuildSystemPrompt } = await import(
-      "@/agent/prompt-assets"
+    const { isKnownPreset } = await import("@/agent/prompt-assets");
+    const { resolveAndBuildSystemPrompt } = await import(
+      "@/agent/system-prompt-resolution"
     );
     const { recordManagedSystemPrompt } = await import(
       "@/agent/system-prompt-versioning"
@@ -731,17 +717,17 @@ export async function updateAgentSystemPrompt(
 }
 
 /**
- * Updates an agent's system prompt to swap between full prompt variants when
- * the stored managed prompt hash is known. Custom prompts are already complete and
- * are left unchanged.
+ * Updates an agent's system prompt to the memfs full-prompt variant when
+ * the stored managed prompt hash is known. Custom prompts are already complete
+ * and are left unchanged.
+ *
+ * MemFS cannot be disabled, so there is no path back to the standard variant.
  *
  * @param agentId - The agent ID to update
- * @param enableMemfs - Whether to use the memfs or standard full prompt variant
  * @returns Result with success status and message
  */
 export async function updateAgentSystemPromptMemfs(
   agentId: string,
-  enableMemfs: boolean,
 ): Promise<SystemPromptUpdateResult> {
   try {
     const { settingsManager } = await import("@/settings-manager");
@@ -752,11 +738,9 @@ export async function updateAgentSystemPromptMemfs(
       "@/agent/system-prompt-versioning"
     );
 
-    const newMode = enableMemfs
-      ? getBackend().capabilities.localMemfs
-        ? "local-memfs"
-        : "memfs"
-      : "standard";
+    const newMode = getBackend().capabilities.localMemfs
+      ? "local-memfs"
+      : "memfs";
     const storedPreset = settingsManager.isReady
       ? settingsManager.getSystemPromptPreset(agentId)
       : undefined;
@@ -816,9 +800,7 @@ export async function updateAgentSystemPromptMemfs(
 
     return {
       success: true,
-      message: enableMemfs
-        ? "System prompt updated for memfs memory mode"
-        : "System prompt updated for standard memory mode",
+      message: "System prompt updated for memfs memory mode",
     };
   } catch (error) {
     return {

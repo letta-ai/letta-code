@@ -18,7 +18,8 @@ When using the Agent tool, you must specify a subagent_type parameter to select 
 - Always include a short description (3-5 words) summarizing what the agent will do
 - Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
 - When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
-- You can optionally run agents in the background using the run_in_background parameter. When an agent runs in the background, the tool result will include a task ID and an output_file path, and you will be notified automatically via a <task-notification> message when it completes — no need to poll. If you need interim progress before then, use the TaskOutput tool with the task ID. You can continue working while background agents run.
+- Agents run in the background by default. The tool result will include a task ID and an output_file path, and you will be notified automatically via a <task-notification> message when it completes — no need to poll. If you need interim progress before then, use the TaskOutput tool with the task ID. You can continue working while background agents run.
+- Set `run_in_background: false` only when you must block and wait for the final report inline.
 - Agents can be resumed using the `conversation_id` parameter by passing the conversation ID from a previous invocation. When resumed, the agent continues with its full previous context preserved.
 - When the agent is done, it will return a single message back to you along with its conversation ID. You can use this ID to resume the agent later if needed for follow-up work.
 - Provide clear, detailed prompts so the agent can work autonomously and return exactly the information you need.

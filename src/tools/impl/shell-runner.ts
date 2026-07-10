@@ -1,9 +1,13 @@
 import { spawn } from "node:child_process";
+import { isUsableDirectory } from "@/helpers/usable-directory";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 
 export class ShellExecutionError extends Error {
   code?: string;
   executable?: string;
+  cwd?: string;
+  /** Distinguishes which lookup failed when `code` is ENOENT. */
+  reason?: "executable_missing" | "cwd_missing";
 }
 
 export type ShellSpawnOptions = {
@@ -15,6 +19,31 @@ export type ShellSpawnOptions = {
 };
 
 const ABORT_KILL_TIMEOUT_MS = 2000;
+
+function buildSpawnError(
+  err: NodeJS.ErrnoException,
+  executable: string,
+  cwd: string,
+): ShellExecutionError {
+  let message = `Failed to execute command: ${err?.message || "unknown error"}`;
+  let reason: ShellExecutionError["reason"];
+  if (err?.code === "ENOENT") {
+    if (isUsableDirectory(cwd)) {
+      message = `Executable not found: ${executable}`;
+      reason = "executable_missing";
+    } else {
+      message = `Working directory not found: ${cwd}`;
+      reason = "cwd_missing";
+    }
+  }
+
+  const execError = new ShellExecutionError(message);
+  execError.code = err?.code;
+  execError.executable = executable;
+  execError.cwd = cwd;
+  execError.reason = reason;
+  return execError;
+}
 
 /**
  * Spawn a command with a specific launcher.
@@ -28,6 +57,17 @@ export function spawnWithLauncher(
     const [executable, ...args] = launcher;
     if (!executable) {
       reject(new ShellExecutionError("Executable is required"));
+      return;
+    }
+
+    if (!isUsableDirectory(options.cwd)) {
+      reject(
+        buildSpawnError(
+          { code: "ENOENT" } as NodeJS.ErrnoException,
+          executable,
+          options.cwd,
+        ),
+      );
       return;
     }
 
@@ -112,14 +152,7 @@ export function spawnWithLauncher(
         options.signal.removeEventListener("abort", abortHandler);
       }
 
-      const execError = new ShellExecutionError(
-        err?.code === "ENOENT"
-          ? `Executable not found: ${executable}`
-          : `Failed to execute command: ${err?.message || "unknown error"}`,
-      );
-      execError.code = err?.code;
-      execError.executable = executable;
-      reject(execError);
+      reject(buildSpawnError(err, executable, options.cwd));
     });
 
     childProcess.on("close", (code) => {

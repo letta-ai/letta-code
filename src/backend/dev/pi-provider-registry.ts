@@ -1,5 +1,9 @@
 import type { Api, KnownProvider, Model } from "@earendil-works/pi-ai";
-import { getEnvApiKey, getModels, getProviders } from "@earendil-works/pi-ai";
+import {
+  getEnvApiKey,
+  getModels,
+  getProviders,
+} from "@earendil-works/pi-ai/compat";
 
 export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
 export const LOCAL_OPENAI_PROVIDER_NAME = "lc-openai";
@@ -196,7 +200,7 @@ const PI_PROVIDER_OVERRIDES: Partial<
     localProviderNames: ["amazon-bedrock", LOCAL_BEDROCK_PROVIDER_NAME],
   },
   "openai-codex": {
-    providerTypes: ["openai-codex", "chatgpt_oauth"],
+    providerTypes: ["chatgpt_oauth", "openai-codex"],
     handlePrefixes: ["openai-codex/", "chatgpt-plus-pro/"],
     localProviderNames: ["openai-codex", LOCAL_CHATGPT_PROVIDER_NAME],
   },
@@ -367,7 +371,7 @@ export function expectedPiProviderList(): string {
   return PI_PROVIDER_SPECS.map((provider) => `"${provider.id}"`).join(", ");
 }
 
-export function resolveProviderFromPrefixedModelHandle(
+export function resolveProviderFromModelHandle(
   model: string | undefined,
 ): PiProvider | undefined {
   if (!model) return undefined;
@@ -376,25 +380,15 @@ export function resolveProviderFromPrefixedModelHandle(
   )?.id;
 }
 
-export function resolveProviderFromModelHandle(
-  model: string | undefined,
-): PiProvider | undefined {
-  const prefixedProvider = resolveProviderFromPrefixedModelHandle(model);
-  if (prefixedProvider) return prefixedProvider;
-
-  return resolveProviderFromRawLocalModelHandle(model);
-}
-
 export function resolveProviderFromRawLocalModelHandle(
   model: string | undefined,
 ): PiProvider | undefined {
-  if (!model || model.includes("/")) return undefined;
-  const trimmed = model.trim();
-  if (!trimmed.includes(":")) return undefined;
+  if (!model || model !== model.trim() || model.includes("/")) {
+    return undefined;
+  }
+  if (!model.includes(":")) return undefined;
   if (
-    !/^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)+$/.test(
-      trimmed,
-    )
+    !/^[A-Za-z0-9][A-Za-z0-9._-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)+$/.test(model)
   ) {
     return undefined;
   }

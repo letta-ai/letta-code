@@ -54,6 +54,27 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
  */
 export type SubagentLaunchProfile = "default" | "memory-subagent";
 
+/** Exact memory scope handed to a harness-created memory worktree. */
+export interface SubagentMemoryScope {
+  primaryRoot: string | null;
+  writableRoots: string[];
+  readonlyRoots?: string[];
+}
+
+/**
+ * Subagent execution result
+ */
+export interface SubagentResult {
+  agentId: string;
+  conversationId?: string;
+  report: string;
+  success: boolean;
+  error?: string;
+  totalTokens?: number;
+  stepCount?: number;
+  durationMs?: number;
+}
+
 export interface SubagentConfig {
   /** Unique identifier for the subagent */
   name: string;
@@ -159,6 +180,10 @@ function parseLaunchProfile(
   return launchProfile === "memory-subagent" ? "memory-subagent" : "default";
 }
 
+function parseBackgroundDefault(background: string | undefined): boolean {
+  return background?.toLowerCase() !== "false";
+}
+
 /**
  * Validate subagent frontmatter
  * Only validates required fields - optional fields are validated at runtime where needed
@@ -214,8 +239,9 @@ function parseSubagentContent(content: string): SubagentConfig {
     recommendedModel: getStringField(frontmatter, "model") || "inherit",
     skills: parseSkills(getStringField(frontmatter, "skills")),
     fork: getStringField(frontmatter, "fork")?.toLowerCase() === "true",
-    background:
-      getStringField(frontmatter, "background")?.toLowerCase() === "true",
+    background: parseBackgroundDefault(
+      getStringField(frontmatter, "background"),
+    ),
     launchProfile: parseLaunchProfile(
       getStringField(frontmatter, "launchProfile"),
     ),

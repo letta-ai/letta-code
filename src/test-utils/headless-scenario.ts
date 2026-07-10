@@ -213,10 +213,9 @@ async function runCLI(args: Args): Promise<RunResult> {
     "--new-agent",
   ];
   if (args.backend === "api") {
-    cliArgs.push("--no-memfs");
-  }
-  if (args.smoke) {
-    cliArgs.push("--tools", "none");
+    // Skip the memfs pull to keep CI startup fast; agents are still
+    // memfs-enabled (non-memfs agents are no longer supported).
+    cliArgs.push("--memfs-startup", "skip");
   }
   cliArgs.push(
     "--base-tools",

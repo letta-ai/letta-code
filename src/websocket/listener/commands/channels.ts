@@ -2,7 +2,8 @@ import WebSocket from "ws";
 import { getChannelPluginConfig } from "@/channels/account-config";
 import { removeUserPlugin } from "@/channels/custom/scaffolding";
 import { getChannelPluginMetadata } from "@/channels/plugin-registry";
-import type { ChannelRegistryEvent } from "@/channels/registry";
+import type { ChannelRegistryEvent } from "@/channels/registry-events";
+import { LEGACY_DEFAULT_CHANNEL_ID } from "@/channels/types";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import type {
   ChannelAccountBindCommand,
@@ -305,28 +306,6 @@ export async function handleChannelsProtocolCommand(
     if (!snapshot) {
       return null;
     }
-    if (snapshot.channelId === "telegram") {
-      return {
-        channel_id: snapshot.channelId,
-        account_id: snapshot.accountId,
-        display_name: snapshot.displayName,
-        enabled: snapshot.enabled,
-        dm_policy: snapshot.dmPolicy,
-        allowed_users: snapshot.allowedUsers,
-        config: snapshot.config ?? {},
-      };
-    }
-    if (snapshot.channelId === "discord") {
-      return {
-        channel_id: snapshot.channelId,
-        account_id: snapshot.accountId,
-        display_name: snapshot.displayName,
-        enabled: snapshot.enabled,
-        dm_policy: snapshot.dmPolicy,
-        allowed_users: snapshot.allowedUsers,
-        config: snapshot.config ?? {},
-      };
-    }
     return {
       channel_id: snapshot.channelId,
       account_id: snapshot.accountId,
@@ -341,38 +320,6 @@ export async function handleChannelsProtocolCommand(
   const mapChannelAccount = (
     snapshot: ReturnType<typeof listChannelAccountSnapshots>[number],
   ): ProtocolChannelAccountSnapshot => {
-    if (snapshot.channelId === "telegram") {
-      return {
-        channel_id: snapshot.channelId,
-        account_id: snapshot.accountId,
-        display_name: snapshot.displayName,
-        enabled: snapshot.enabled,
-        configured: snapshot.configured,
-        running: snapshot.running,
-        dm_policy: snapshot.dmPolicy,
-        allowed_users: snapshot.allowedUsers,
-        config: snapshot.config ?? {},
-        created_at: snapshot.createdAt,
-        updated_at: snapshot.updatedAt,
-      };
-    }
-
-    if (snapshot.channelId === "discord") {
-      return {
-        channel_id: snapshot.channelId,
-        account_id: snapshot.accountId,
-        display_name: snapshot.displayName,
-        enabled: snapshot.enabled,
-        configured: snapshot.configured,
-        running: snapshot.running,
-        dm_policy: snapshot.dmPolicy,
-        allowed_users: snapshot.allowedUsers,
-        config: snapshot.config ?? {},
-        created_at: snapshot.createdAt,
-        updated_at: snapshot.updatedAt,
-      };
-    }
-
     return {
       channel_id: snapshot.channelId,
       account_id: snapshot.accountId,
@@ -1153,7 +1100,7 @@ export async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_routes_list") {
     try {
-      const channelId = parsed.channel_id ?? "telegram";
+      const channelId = parsed.channel_id ?? LEGACY_DEFAULT_CHANNEL_ID;
       safeSocketSend(
         socket,
         {

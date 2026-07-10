@@ -153,10 +153,14 @@ export function deriveSelfAgentRootsForTrees(
       // A memory root nested inside a tree: carve back the whole agent dir so
       // the cwd's immediate parent stays traversable (Seatbelt empty-env bug).
       const leaf = basename(canon);
+      const parentLeaf = basename(dirname(canon));
       out.add(
         leaf === "memory" || leaf === "memory-worktrees"
           ? dirname(canon)
-          : canon,
+          : parentLeaf === "memory-worktrees" ||
+              (parentLeaf === "memory" && leaf === ".git")
+            ? dirname(dirname(canon))
+            : canon,
       );
       continue;
     }
@@ -192,6 +196,8 @@ export interface MemorySubagentSandboxInput {
    * `MEMORY_DIR` plus its `memory-worktrees` sibling.
    */
   memoryRoots: string[];
+  /** Additional roots to carve back read-only after denying agents trees. */
+  readonlyRoots?: string[];
   /**
    * Harness state roots configured OUTSIDE `~/.letta` to also make writable —
    * `~/.letta` itself is always the base. The caller passes a custom
@@ -264,10 +270,10 @@ export function buildMemorySubagentSandboxPolicy(
   return buildFsSandboxPolicy({
     baseWritableRoots,
     deniedRoots: agentsTreeRoots,
-    readonlyRoots: deriveSelfAgentRootsForTrees(
-      input.memoryRoots,
-      agentsTreeRoots,
-    ),
+    readonlyRoots: [
+      ...deriveSelfAgentRootsForTrees(input.memoryRoots, agentsTreeRoots),
+      ...(input.readonlyRoots ?? []).map(canonicalizeRoot),
+    ],
     // Self memory is nested inside the denied tree; re-carve it writable so the
     // deny (which overrides the base ~/.letta carve there) is itself overridden.
     writableRoots: deriveWritableMemoryRootsForTrees(

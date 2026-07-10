@@ -167,7 +167,6 @@ export interface ChannelPluginAccountPatch {
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
-  showCompletedReaction?: boolean;
   listenMode?: boolean;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
@@ -291,5 +290,8 @@ export interface ChannelPlugin {
     account: ChannelAccount,
   ): Promise<ChannelAdapter> | ChannelAdapter;
   runSetup?(): Promise<boolean>;
+  resolveAccountDisplayName?(
+    account: ChannelAccount,
+  ): Promise<string | undefined> | string | undefined;
   messageActions?: ChannelMessageActionAdapter;
 }

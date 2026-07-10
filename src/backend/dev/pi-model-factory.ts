@@ -1,5 +1,5 @@
 import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
-import { getModel, getModels } from "@earendil-works/pi-ai";
+import { getModel, getModels } from "@earendil-works/pi-ai/compat";
 import {
   getOAuthProvider,
   type OAuthCredentials,
@@ -29,7 +29,7 @@ import {
   LOCAL_ZAI_CODING_PROVIDER_NAME,
   LOCAL_ZAI_PROVIDER_NAME,
   type PiProvider,
-  resolveProviderFromPrefixedModelHandle,
+  resolveProviderFromModelHandle,
   resolveProviderFromProviderType,
   resolveProviderFromRawLocalModelHandle,
   stripProviderHandlePrefix,
@@ -42,10 +42,6 @@ import {
 
 export const DEFAULT_PI_PROVIDER = "openai" satisfies PiProvider;
 export const UNSELECTED_LOCAL_MODEL_HANDLE = "local/default";
-export const CUSTOM_OPENAI_COMPATIBLE_DEFAULT_CONTEXT_WINDOW = 128000;
-export const CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS = 32000;
-export const CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW = 32768;
-export const CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS = 2048;
 export type { PiProvider } from "./pi-provider-registry";
 
 export function isUnselectedLocalModelHandle(model: unknown): boolean {
@@ -62,9 +58,12 @@ function settingString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function thinkingLevelSetting(value: unknown): ThinkingLevel | undefined {
+function thinkingLevelSetting(
+  value: unknown,
+  preserveMax: boolean,
+): ThinkingLevel | undefined {
   const effort = settingString(value);
-  if (effort === "max") return "xhigh";
+  if (effort === "max") return preserveMax ? "max" : "xhigh";
   return effort === "minimal" ||
     effort === "low" ||
     effort === "medium" ||
@@ -81,6 +80,7 @@ function thinkingLevelSetting(value: unknown): ThinkingLevel | undefined {
 // claude-fable-5) reject that with a 400 invalid_request_error.
 export function reasoningForSettings(
   modelSettings: Record<string, unknown>,
+  modelHandle?: string,
 ): ThinkingLevel | undefined {
   const thinking = isRecord(modelSettings.thinking)
     ? modelSettings.thinking
@@ -89,10 +89,12 @@ export function reasoningForSettings(
   const nestedReasoning = isRecord(modelSettings.reasoning)
     ? modelSettings.reasoning
     : undefined;
+  const modelId = modelHandle?.slice(modelHandle.indexOf("/") + 1);
+  const preserveMax = modelId?.startsWith("gpt-5.6") === true;
   return (
-    thinkingLevelSetting(nestedReasoning?.reasoning_effort) ??
-    thinkingLevelSetting(modelSettings.effort) ??
-    thinkingLevelSetting(modelSettings.reasoning_effort)
+    thinkingLevelSetting(nestedReasoning?.reasoning_effort, preserveMax) ??
+    thinkingLevelSetting(modelSettings.effort, preserveMax) ??
+    thinkingLevelSetting(modelSettings.reasoning_effort, preserveMax)
   );
 }
 
@@ -176,7 +178,7 @@ export function resolvePiProviderFromAgent(
   ) as PiProvider | undefined;
   if (registeredProvider) return registeredProvider;
 
-  const handleProvider = resolveProviderFromPrefixedModelHandle(model);
+  const handleProvider = resolveProviderFromModelHandle(model);
   if (handleProvider) return handleProvider;
 
   const rawLocalProvider = resolveProviderFromRawLocalModelHandle(model);
@@ -343,14 +345,6 @@ function customOpenAICompatibleModel(input: {
   contextWindow?: number;
   maxTokens?: number;
 }): Model<"openai-completions"> {
-  const defaultContextWindow =
-    input.provider === "ollama"
-      ? CUSTOM_OLLAMA_DEFAULT_CONTEXT_WINDOW
-      : CUSTOM_OPENAI_COMPATIBLE_DEFAULT_CONTEXT_WINDOW;
-  const defaultMaxTokens =
-    input.provider === "ollama"
-      ? CUSTOM_OLLAMA_DEFAULT_MAX_TOKENS
-      : CUSTOM_OPENAI_COMPATIBLE_DEFAULT_MAX_TOKENS;
   return {
     id: input.modelId,
     name: input.modelId,
@@ -368,12 +362,11 @@ function customOpenAICompatibleModel(input: {
         ? ["text", "image"]
         : ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: input.contextWindow ?? defaultContextWindow,
-    maxTokens: input.maxTokens ?? defaultMaxTokens,
+    contextWindow: input.contextWindow ?? 128000,
+    maxTokens: input.maxTokens ?? 32000,
     compat: {
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
-      maxTokensField: "max_tokens",
     },
   };
 }

@@ -2,10 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModels } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import {
   applyPiEnvOverrides,
+  reasoningForSettings,
   resolvePiModelForAgent,
   resolvePiProviderFromAgent,
 } from "@/backend/dev/pi-model-factory";
@@ -44,17 +46,22 @@ describe("pi model factory", () => {
   });
 
   test("resolves raw Ollama model IDs without falling back to OpenAI", () => {
-    expect(resolvePiProviderFromAgent("llama3.1:latest", {})).toBe("ollama");
+    expect(resolvePiProviderFromAgent("deepseek-r1:8b", {})).toBe("ollama");
     expect(
-      resolvePiProviderFromAgent("llama3.1:latest", {
+      resolvePiProviderFromAgent("deepseek-r1:8b", {
+        provider_type: "openai",
+      }),
+    ).toBe("ollama");
+    expect(
+      resolvePiProviderFromAgent("ollama/deepseek-r1:8b", {
         provider_type: "openai",
       }),
     ).toBe("ollama");
   });
 
-  test("honors explicit local provider metadata before raw Ollama heuristics", () => {
+  test("honors explicit non-OpenAI local provider metadata before raw Ollama heuristics", () => {
     expect(
-      resolvePiProviderFromAgent("qwen2.5-coder:7b", {
+      resolvePiProviderFromAgent("deepseek-r1:8b", {
         provider_type: "lmstudio_openai",
       }),
     ).toBe("lmstudio");
@@ -71,15 +78,22 @@ describe("pi model factory", () => {
         baseURL: "http://localhost:11434/v1",
       });
 
-      const resolved = await resolvePiModelForAgent(
-        "llama3.1:latest",
-        {},
+      const raw = await resolvePiModelForAgent(
+        "deepseek-r1:8b",
+        { provider_type: "openai" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      const prefixed = await resolvePiModelForAgent(
+        "ollama/deepseek-r1:8b",
+        { provider_type: "openai" },
         { localProviderAuthStorageDir: storageDir },
       );
 
-      expect(resolved.provider).toBe("ollama");
-      expect(resolved.model.id).toBe("llama3.1:latest");
-      expect(resolved.model.baseUrl).toBe("http://localhost:11434/v1");
+      for (const resolved of [raw, prefixed]) {
+        expect(resolved.provider).toBe("ollama");
+        expect(resolved.model.id).toBe("deepseek-r1:8b");
+        expect(resolved.model.baseUrl).toBe("http://localhost:11434/v1");
+      }
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -194,6 +208,43 @@ describe("pi model factory", () => {
       );
 
       expect(resolved.apiKey).toBe("chatgpt-access-token");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves local ChatGPT OAuth GPT-5.6 with max reasoning", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-chatgpt-56-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "chatgpt_oauth",
+        providerName: "chatgpt-plus-pro",
+        apiKey: JSON.stringify({
+          access_token: "chatgpt-access-token",
+          id_token: "chatgpt-id-token",
+          refresh_token: "chatgpt-refresh-token",
+          account_id: "account-123",
+          expires_at: Date.now() + 60_000,
+        }),
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "chatgpt-plus-pro/gpt-5.6-sol",
+        { provider_type: "chatgpt_oauth" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.provider).toBe("openai-codex");
+      expect(resolved.model.id).toBe("gpt-5.6-sol");
+      expect(resolved.model.contextWindow).toBe(372000);
+      expect(getSupportedThinkingLevels(resolved.model)).toContain("max");
+      expect(
+        reasoningForSettings(
+          { reasoning_effort: "max" },
+          "openai-codex/gpt-5.6-sol",
+        ),
+      ).toBe("max");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

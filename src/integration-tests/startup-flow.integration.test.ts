@@ -29,10 +29,14 @@ async function runCli(
   const runOnce = () =>
     new Promise<{ stdout: string; stderr: string; exitCode: number | null }>(
       (resolve, reject) => {
-        const proc = spawn("bun", ["run", "dev", "--no-memfs", ...args], {
-          cwd: projectRoot,
-          env: createAuthenticatedCliTestEnv(),
-        });
+        const proc = spawn(
+          "bun",
+          ["run", "dev", "--memfs-startup", "skip", ...args],
+          {
+            cwd: projectRoot,
+            env: createAuthenticatedCliTestEnv(),
+          },
+        );
 
         let stdout = "";
         let stderr = "";

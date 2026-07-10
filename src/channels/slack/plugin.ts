@@ -1,5 +1,6 @@
 import type { ChannelPlugin } from "@/channels/plugin-types";
 import type { ChannelAccount, SlackChannelAccount } from "@/channels/types";
+import { resolveSlackAccountDisplayName } from "./account-display";
 import { createSlackAdapter } from "./adapter";
 import { slackMessageActions } from "./message-actions";
 import { runSlackSetup } from "./setup";
@@ -15,6 +16,11 @@ export const slackChannelPlugin: ChannelPlugin = {
   },
   createAdapter(account: ChannelAccount) {
     return createSlackAdapter(account as SlackChannelAccount);
+  },
+  resolveAccountDisplayName(account: ChannelAccount) {
+    const slack = account as SlackChannelAccount;
+    if (!slack.botToken.trim() || !slack.appToken.trim()) return undefined;
+    return resolveSlackAccountDisplayName(slack.botToken, slack.appToken);
   },
   messageActions: slackMessageActions,
   runSetup() {

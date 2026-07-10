@@ -1,5 +1,5 @@
-import { existsSync, statSync } from "node:fs";
 import path from "node:path";
+import { isUsableDirectory } from "@/helpers/usable-directory";
 import { loadRemoteSettings, saveRemoteSettings } from "./remote-settings";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerRuntime } from "./types";
@@ -15,15 +15,6 @@ export function getWorkingDirectoryScopeKey(
   }
 
   return `conversation:${normalizedConversationId}`;
-}
-
-/** True when the path exists and is a directory. */
-function isUsableDirectory(dirPath: string): boolean {
-  try {
-    return existsSync(dirPath) && statSync(dirPath).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 export function getConversationWorkingDirectory(
