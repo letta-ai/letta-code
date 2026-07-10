@@ -48,6 +48,18 @@ describe("local model updates", () => {
     });
   });
 
+  test("stores GPT-5.6 max separately from xhigh for local providers", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("openai-codex/gpt-5.6-sol", {
+        provider_type: "chatgpt_oauth",
+        reasoning_effort: "max",
+      }),
+    ).toMatchObject({
+      provider_type: "chatgpt_oauth",
+      reasoning: { reasoning_effort: "max" },
+    });
+  });
+
   afterEach(() => {
     configureBackendMode("api");
     clearAvailableModelsCache();

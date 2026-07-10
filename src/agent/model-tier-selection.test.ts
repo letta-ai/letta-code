@@ -108,6 +108,11 @@ describe("getModelInfoForLlmConfig", () => {
       reasoning_effort: "xhigh",
     });
     expect(xhigh?.id).toBe("gpt-5.6-sol-xhigh");
+
+    const max = getModelInfoForLlmConfig(handle, {
+      reasoning_effort: "max",
+    });
+    expect(max?.id).toBe("gpt-5.6-sol-max");
   });
 
   test("uses ChatGPT metadata for local ChatGPT OAuth handles", () => {
@@ -215,6 +220,7 @@ describe("getReasoningTierOptionsForHandle", () => {
       "medium",
       "high",
       "xhigh",
+      "max",
     ]);
     expect(options.map((option) => option.modelId)).toEqual([
       "gpt-5.6-sol-none",
@@ -222,6 +228,7 @@ describe("getReasoningTierOptionsForHandle", () => {
       "gpt-5.6-sol-medium",
       "gpt-5.6-sol",
       "gpt-5.6-sol-xhigh",
+      "gpt-5.6-sol-max",
     ]);
   });
 
@@ -278,6 +285,28 @@ describe("getReasoningTierOptionsForHandle", () => {
       "gpt-5.5-plus-pro-medium",
       "gpt-5.5-plus-pro-high",
       "gpt-5.5-plus-pro-xhigh",
+    ]);
+  });
+
+  test("returns distinct xhigh and max options for local ChatGPT OAuth GPT-5.6", () => {
+    const options = getReasoningTierOptionsForHandle(
+      "openai-codex/gpt-5.6-sol",
+    );
+    expect(options.map((option) => option.effort)).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "gpt-5.6-sol-plus-pro-none",
+      "gpt-5.6-sol-plus-pro-low",
+      "gpt-5.6-sol-plus-pro-medium",
+      "gpt-5.6-sol-plus-pro-high",
+      "gpt-5.6-sol-plus-pro-xhigh",
+      "gpt-5.6-sol-plus-pro-max",
     ]);
   });
 
