@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveSendJid } from "./jid";
-import { LidDesk } from "./lid-desk";
+import { LidDesk, type OnWhatsAppSocket } from "./lid-desk";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -289,5 +289,275 @@ describe("LidDesk — reverse map (jidToLid) for presence", () => {
     desk.record("ccc@lid", "3333333333@s.whatsapp.net");
     const jidToLid = desk.getJidToLidMap();
     expect(jidToLid.get("3333333333@s.whatsapp.net")).toBe("ccc@lid");
+  });
+});
+
+// ── lookupLidForPhone tests ─────────────────────────────────────────
+
+describe("LidDesk — lookupLidForPhone", () => {
+  function makeMockSocket(
+    responseMap: Record<
+      string,
+      { exists: boolean; jid?: string; lid?: string }
+    >,
+  ): OnWhatsAppSocket {
+    return {
+      onWhatsApp: async (phone: string) => {
+        const r = responseMap[phone];
+        return r ? [r] : [];
+      },
+    };
+  }
+
+  test("cache hit short-circuits — does not call onWhatsApp", async () => {
+    const desk = new LidDesk(tempDir);
+    desk.record("999111@lid", "5551112222@s.whatsapp.net");
+
+    let callCount = 0;
+    const sock: OnWhatsAppSocket = {
+      onWhatsApp: async () => {
+        callCount++;
+        return [
+          {
+            exists: true,
+            jid: "5551112222@s.whatsapp.net",
+            lid: "different@lid",
+          },
+        ];
+      },
+    };
+
+    const result = await desk.lookupLidForPhone(
+      "5551112222@s.whatsapp.net",
+      sock,
+    );
+    expect(result).toBe("999111@lid");
+    expect(callCount).toBe(0); // onWhatsApp was NOT called
+  });
+
+  test("cache miss + onWhatsApp success persists mapping", async () => {
+    const desk = new LidDesk(tempDir);
+    const sock = makeMockSocket({
+      "5552223333@s.whatsapp.net": {
+        exists: true,
+        jid: "5552223333@s.whatsapp.net",
+        lid: "777888@lid",
+      },
+    });
+
+    const result = await desk.lookupLidForPhone(
+      "5552223333@s.whatsapp.net",
+      sock,
+    );
+    expect(result).toBe("777888@lid");
+
+    // Mapping persisted
+    expect(desk.resolvePn("5552223333@s.whatsapp.net")).toBe("777888@lid");
+    expect(desk.resolveLid("777888@lid")).toBe("5552223333@s.whatsapp.net");
+
+    // File on disk
+    desk.save();
+    const raw = JSON.parse(
+      readFileSync(join(tempDir, "lid-mappings.json"), "utf8"),
+    );
+    expect(raw.jidToLid["5552223333@s.whatsapp.net"]).toBe("777888@lid");
+  });
+
+  test("cache miss + onWhatsApp returns exists:false does not persist", async () => {
+    const desk = new LidDesk(tempDir);
+    const sock = makeMockSocket({
+      "5553334444@s.whatsapp.net": { exists: false },
+    });
+
+    const result = await desk.lookupLidForPhone(
+      "5553334444@s.whatsapp.net",
+      sock,
+    );
+    expect(result).toBeNull();
+    expect(desk.resolvePn("5553334444@s.whatsapp.net")).toBeNull();
+    expect(desk.size).toBe(0);
+  });
+
+  test("cache miss + onWhatsApp returns empty array does not persist", async () => {
+    const desk = new LidDesk(tempDir);
+    const sock = makeMockSocket({});
+
+    const result = await desk.lookupLidForPhone(
+      "5554445555@s.whatsapp.net",
+      sock,
+    );
+    expect(result).toBeNull();
+    expect(desk.size).toBe(0);
+  });
+
+  test("cache miss + onWhatsApp throws does not persist (falls back gracefully)", async () => {
+    const desk = new LidDesk(tempDir);
+    const sock: OnWhatsAppSocket = {
+      onWhatsApp: async () => {
+        throw new Error("network error");
+      },
+    };
+
+    const result = await desk.lookupLidForPhone(
+      "5555556666@s.whatsapp.net",
+      sock,
+    );
+    expect(result).toBeNull();
+    expect(desk.size).toBe(0);
+  });
+
+  test("no socket provided returns null (cache miss, no lookup)", async () => {
+    const desk = new LidDesk(tempDir);
+    const result = await desk.lookupLidForPhone("5556667777@s.whatsapp.net");
+    expect(result).toBeNull();
+    expect(desk.size).toBe(0);
+  });
+
+  test("no onWhatsApp method on socket returns null", async () => {
+    const desk = new LidDesk(tempDir);
+    const result = await desk.lookupLidForPhone(
+      "5557778888@s.whatsapp.net",
+      {},
+    );
+    expect(result).toBeNull();
+  });
+
+  test("onWhatsApp returns exists:true but no lid does not persist", async () => {
+    const desk = new LidDesk(tempDir);
+    const sock = makeMockSocket({
+      "5558889999@s.whatsapp.net": {
+        exists: true,
+        jid: "5558889999@s.whatsapp.net",
+      },
+    });
+
+    const result = await desk.lookupLidForPhone(
+      "5558889999@s.whatsapp.net",
+      sock,
+    );
+    expect(result).toBeNull();
+    expect(desk.size).toBe(0);
+  });
+});
+
+// ── Rate-limit tests ────────────────────────────────────────────────
+
+describe("LidDesk — lookupLidForPhone rate-limit", () => {
+  test("prevents more than N lookups per minute per phone", async () => {
+    const desk = new LidDesk(tempDir, { onWhatsAppMaxPerMinute: 3 });
+    const sock: OnWhatsAppSocket = {
+      onWhatsApp: async () => [{ exists: false }],
+    };
+
+    // First 3 calls should go through (return null, no mapping)
+    for (let i = 0; i < 3; i++) {
+      const result = await desk.lookupLidForPhone(
+        "1111111111@s.whatsapp.net",
+        sock,
+      );
+      expect(result).toBeNull();
+    }
+
+    // 4th call should be rate-limited
+    const result = await desk.lookupLidForPhone(
+      "1111111111@s.whatsapp.net",
+      sock,
+    );
+    expect(result).toBeNull();
+    // No mapping should have been persisted (all returned exists:false)
+    expect(desk.size).toBe(0);
+  });
+
+  test("rate-limit is per-phone — different phones are not affected", async () => {
+    const desk = new LidDesk(tempDir, { onWhatsAppMaxPerMinute: 2 });
+    let callCount = 0;
+    const sock: OnWhatsAppSocket = {
+      onWhatsApp: async (_phone) => {
+        callCount++;
+        // Return exists:false so mappings are NOT cached — each call hits onWhatsApp
+        return [{ exists: false }];
+      },
+    };
+
+    // 2 calls for phone A — both go through (no caching since exists:false)
+    await desk.lookupLidForPhone("1111111111@s.whatsapp.net", sock);
+    await desk.lookupLidForPhone("1111111111@s.whatsapp.net", sock);
+
+    // 3rd call for phone A — rate limited
+    await desk.lookupLidForPhone("1111111111@s.whatsapp.net", sock);
+
+    // 2 calls for phone B — should still go through (different phone)
+    await desk.lookupLidForPhone("2222222222@s.whatsapp.net", sock);
+    await desk.lookupLidForPhone("2222222222@s.whatsapp.net", sock);
+
+    // 3rd call for phone B — rate limited
+    await desk.lookupLidForPhone("2222222222@s.whatsapp.net", sock);
+
+    // 4 onWhatsApp calls total (2 for A + 2 for B; 3rd for each was rate-limited)
+    expect(callCount).toBe(4);
+  });
+
+  test("cache hit does not count toward rate-limit", async () => {
+    const desk = new LidDesk(tempDir, { onWhatsAppMaxPerMinute: 1 });
+    desk.record("cached@lid", "3333333333@s.whatsapp.net");
+
+    let callCount = 0;
+    const sock: OnWhatsAppSocket = {
+      onWhatsApp: async () => {
+        callCount++;
+        return [{ exists: true, lid: "other@lid" }];
+      },
+    };
+
+    // First call — cache hit, should not call onWhatsApp
+    const result1 = await desk.lookupLidForPhone(
+      "3333333333@s.whatsapp.net",
+      sock,
+    );
+    expect(result1).toBe("cached@lid");
+    expect(callCount).toBe(0);
+
+    // Second call — still cache hit, still no call
+    const result2 = await desk.lookupLidForPhone(
+      "3333333333@s.whatsapp.net",
+      sock,
+    );
+    expect(result2).toBe("cached@lid");
+    expect(callCount).toBe(0);
+  });
+});
+
+// ── resolveSendJid + lookupLidForPhone integration ──────────────────
+
+describe("LidDesk — resolveSendJid with lookupLidForPhone", () => {
+  test("resolveSendJid succeeds on phone chatId when desk finds a LID via onWhatsApp", async () => {
+    const desk = new LidDesk(tempDir);
+    const sock: OnWhatsAppSocket = {
+      onWhatsApp: async () => [
+        {
+          exists: true,
+          jid: "584149145006@s.whatsapp.net",
+          lid: "42424242@lid",
+        },
+      ],
+    };
+
+    // Phone chatId — not a LID, resolveSendJid passes through.
+    // But we can look up the LID for presence.
+    const lid = await desk.lookupLidForPhone(
+      "584149145006@s.whatsapp.net",
+      sock,
+    );
+    expect(lid).toBe("42424242@lid");
+
+    // Now the desk has the mapping. resolveSendJid can resolve the LID→phone.
+    const lidToJid = desk.getLidToJidMap();
+    const phoneJid = resolveSendJid({
+      chatId: "42424242@lid",
+      selfPhoneJid: null,
+      selfLid: null,
+      lidToJid,
+    });
+    expect(phoneJid).toBe("584149145006@s.whatsapp.net");
   });
 });

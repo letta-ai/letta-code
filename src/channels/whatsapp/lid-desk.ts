@@ -41,6 +41,30 @@ export type LidDeskSocketSource = {
 };
 
 /**
+ * Result entry from Baileys' `sock.onWhatsApp(phone)`.
+ */
+type OnWhatsAppResult = {
+  exists?: boolean;
+  jid?: string;
+  lid?: string;
+};
+
+/**
+ * Socket accessor for on-demand LID lookup via `sock.onWhatsApp`.
+ * Only the methods we call.
+ */
+export type OnWhatsAppSocket = {
+  onWhatsApp?: (
+    phoneNumber: string,
+  ) => Promise<OnWhatsAppResult[] | undefined | null>;
+};
+
+// ── Rate-limit config ────────────────────────────────────────────────
+
+const DEFAULT_ON_WHATSAPP_MAX_PER_MINUTE = 10;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+
+/**
  * Serializable mapping record persisted to disk.
  */
 type LidDeskData = {
@@ -60,8 +84,13 @@ export class LidDesk {
   private readonly filePath: string;
   private dirty = false;
 
-  constructor(authDir: string) {
+  constructor(
+    authDir: string,
+    options?: { onWhatsAppMaxPerMinute?: number },
+  ) {
     this.filePath = join(authDir, DESK_FILENAME);
+    this.lookupMaxPerMinute =
+      options?.onWhatsAppMaxPerMinute ?? DEFAULT_ON_WHATSAPP_MAX_PER_MINUTE;
   }
 
   // ── Persistence ────────────────────────────────────────────────────
@@ -221,6 +250,96 @@ export class LidDesk {
       if (this.record(lid, pn)) count += 1;
     }
     return count;
+  }
+
+  // ── On-demand LID lookup ──────────────────────────────────────────
+
+  /**
+   * Rate-limit state for `lookupLidForPhone`.
+   * Tracks timestamps of recent calls per normalized phone JID.
+   */
+  private lookupTimestamps = new Map<string, number[]>();
+  private readonly lookupMaxPerMinute: number;
+
+  /**
+   * Look up a LID for a phone JID on demand via Baileys' `sock.onWhatsApp`.
+   *
+   * Flow:
+   * 1. Cache check — return known LID from `jidToLid` if present.
+   * 2. If unknown and a socket accessor is provided, call `sock.onWhatsApp(phoneJid)`.
+   * 3. If the response has `exists: true` and a `lid`, persist `{ lid, phoneJid }` to the desk.
+   * 4. If lookup fails (no socket, throttle, exception, number not on WhatsApp),
+   *    return null — caller falls back to current behavior.
+   *
+   * Rate-limited to at most `lookupMaxPerMinute` calls per phone per minute.
+   */
+  async lookupLidForPhone(
+    phoneJid: string,
+    sock?: OnWhatsAppSocket | null,
+  ): Promise<string | null> {
+    // 1. Cache check
+    const normalized = stripDeviceSuffix(phoneJid);
+    const cached = this.jidToLid.get(normalized);
+    if (cached) return cached;
+
+    // 2. No socket → cannot look up
+    if (!sock?.onWhatsApp) return null;
+
+    // 3. Rate-limit check — at most N calls per phone per minute
+    if (!this.canLookup(normalized)) {
+      console.warn(
+        `[LidDesk] Rate-limit: skipping onWhatsApp for ${normalized} (max ${this.lookupMaxPerMinute}/min)`,
+      );
+      return null;
+    }
+
+    // 4. Call onWhatsApp
+    try {
+      const results = await sock.onWhatsApp(normalized);
+      const entry = Array.isArray(results) ? results[0] : undefined;
+      if (!entry?.exists || !entry.lid) {
+        // Number not on WhatsApp, or no LID available — do NOT write a mapping.
+        return null;
+      }
+
+      const lidJid = stripDeviceSuffix(entry.lid);
+      if (!lidJid || !isLidJid(lidJid)) return null;
+
+      // 5. Persist mapping (same shape as record())
+      this.record(lidJid, normalized);
+      this.save();
+      return lidJid;
+    } catch (err) {
+      console.warn(
+        `[LidDesk] onWhatsApp lookup failed for ${normalized}:`,
+        err instanceof Error ? err.message : err,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Check if a phone JID can be looked up right now without exceeding
+   * the rate limit. Prunes stale entries as a side effect.
+   */
+  private canLookup(normalizedPhone: string): boolean {
+    const now = Date.now();
+    const cutoff = now - RATE_LIMIT_WINDOW_MS;
+    const timestamps = this.lookupTimestamps.get(normalizedPhone);
+
+    if (timestamps) {
+      // Prune entries older than the window
+      const recent = timestamps.filter((t) => t > cutoff);
+      if (recent.length >= this.lookupMaxPerMinute) {
+        this.lookupTimestamps.set(normalizedPhone, recent);
+        return false;
+      }
+      recent.push(now);
+      this.lookupTimestamps.set(normalizedPhone, recent);
+    } else {
+      this.lookupTimestamps.set(normalizedPhone, [now]);
+    }
+    return true;
   }
 
   // ── Misc ───────────────────────────────────────────────────────────

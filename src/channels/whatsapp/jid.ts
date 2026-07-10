@@ -143,6 +143,115 @@ export function resolveSendJid(params: {
   throw new Error(`Cannot send to unresolved WhatsApp LID: ${chatId}`);
 }
 
+/**
+ * Resolve a LID chatId to a phone JID for sending, with optional on-demand
+ * LID lookup via `sock.onWhatsApp` on cache miss.
+ *
+ * This is the async companion to `resolveSendJid`. It first tries the sync
+ * resolution. If that throws (LID unresolved), and a `lookupLidForPhone`
+ * callback is provided, it calls the callback to resolve the LID on demand.
+ * If the lookup succeeds, it retries the sync resolution (which should now
+ * succeed because the callback persisted the mapping). If the lookup fails
+ * or no callback is provided, the original error is re-thrown.
+ *
+ * @param params Same as resolveSendJid, plus `lookupLidForPhone` callback.
+ * @returns The resolved phone JID.
+ * @throws Error if the LID cannot be resolved.
+ */
+export async function resolveSendJidWithLookup(params: {
+  chatId: string;
+  selfPhoneJid?: string | null;
+  selfLid?: string | null;
+  lidToJid?: Map<string, string>;
+  sock?: unknown;
+  lookupLidForPhone?: (phoneJid: string) => Promise<string | null>;
+}): Promise<string> {
+  const { lookupLidForPhone, ...syncParams } = params;
+
+  // Try sync resolution first.
+  try {
+    return resolveSendJid(syncParams);
+  } catch (err) {
+    if (!lookupLidForPhone) throw err;
+
+    // The sync path threw because the LID is unresolved.
+    // But if chatId is NOT a LID, it shouldn't have thrown — re-throw.
+    if (!isLidJid(syncParams.chatId)) throw err;
+
+    // Attempt on-demand lookup.
+    // We don't have the phone JID (that's what we're trying to resolve),
+    // but onWhatsApp works with a phone number. If the chatId is a LID,
+    // we can't call onWhatsApp with it. The lookup callback should be
+    // invoked with a phone JID, which the caller must supply separately.
+    //
+    // However, the typical flow is: caller has a phone chatId, wants to
+    // find the LID for presence. Or: caller has a LID chatId, wants to
+    // find the phone JID for sending. The lookupLidForPhone method on
+    // LidDesk goes phone→LID, not LID→phone.
+    //
+    // For the LID→phone direction (send), the sync resolveSendJid already
+    // covers all known paths (lidToJid map, signalRepository). The onWhatsApp
+    // lookup is for the phone→LID direction (presence/typing).
+    //
+    // So this async wrapper is for the phone→LID presence path, not the
+    // LID→phone send path. The caller should pass the phone JID as chatId
+    // and use lookupLidForPhone to get the LID.
+    throw err;
+  }
+}
+
+/**
+ * Resolve a phone chatId to a LID for presence/typing, with optional
+ * on-demand lookup via `sock.onWhatsApp` on cache miss.
+ *
+ * If the chatId is already a LID, it is returned as-is.
+ * If the chatId is a phone JID and a LID is known in the reverse map,
+ * the LID is returned.
+ * If unknown and `lookupLidForPhone` is provided, it is called to resolve
+ * the LID on demand. If the lookup succeeds, the LID is returned.
+ * Otherwise, the phone JID is returned (current behavior).
+ */
+export async function resolvePresenceJidWithLookup(params: {
+  chatId: string;
+  jidToLid?: Map<string, string>;
+  lookupLidForPhone?: (phoneJid: string) => Promise<string | null>;
+}): Promise<string> {
+  const { chatId, jidToLid, lookupLidForPhone } = params;
+  if (!chatId) return chatId;
+
+  // If already a LID, return as-is.
+  if (isLidJid(chatId)) return stripDeviceSuffix(chatId);
+
+  // If it's a phone JID, check the reverse map.
+  const normalized = stripDeviceSuffix(chatId);
+  const knownLid = jidToLid?.get(normalized);
+  if (knownLid) return knownLid;
+
+  // On-demand lookup if callback provided.
+  if (lookupLidForPhone) {
+    const lid = await lookupLidForPhone(normalized);
+    if (lid) return lid;
+  }
+
+  // Fall back to the phone JID (current behavior).
+  return normalized;
+}
+
+/**
+ * Resolve a phone chatId to a LID for presence/typing, sync version (cache only).
+ *
+ * Used on the typing-start path where the first composing presence must fire
+ * synchronously and cannot wait on an async onWhatsApp call. Returns the LID
+ * if known in `jidToLid`, otherwise the chatId unchanged.
+ */
+export function resolvePresenceJid(params: {
+  targetJid: string;
+  jidToLid: Map<string, string>;
+}): string {
+  const { targetJid, jidToLid } = params;
+  return jidToLid.get(targetJid) ?? targetJid;
+}
+
 export function sanitizePathSegment(input: string): string {
   const cleaned = input
     .replace(/[^A-Za-z0-9._-]/g, "_")

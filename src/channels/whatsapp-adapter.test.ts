@@ -76,20 +76,22 @@ describe("resolvePresenceJid", () => {
     const jidToLid = new Map([
       ["15551234567@s.whatsapp.net", "abc123456789@lid"],
     ]);
-    expect(resolvePresenceJid("15551234567@s.whatsapp.net", jidToLid)).toBe(
-      "abc123456789@lid",
-    );
+    expect(
+      resolvePresenceJid({ targetJid: "15551234567@s.whatsapp.net", jidToLid }),
+    ).toBe("abc123456789@lid");
   });
 
   test("falls back to the phone JID when no LID mapping exists", () => {
     const jidToLid = new Map<string, string>();
-    expect(resolvePresenceJid("15551234567@s.whatsapp.net", jidToLid)).toBe(
-      "15551234567@s.whatsapp.net",
-    );
+    expect(
+      resolvePresenceJid({ targetJid: "15551234567@s.whatsapp.net", jidToLid }),
+    ).toBe("15551234567@s.whatsapp.net");
   });
 
   test("passes through group JIDs unchanged (no LID mapping)", () => {
     const jidToLid = new Map<string, string>();
-    expect(resolvePresenceJid("120363@g.us", jidToLid)).toBe("120363@g.us");
+    expect(resolvePresenceJid({ targetJid: "120363@g.us", jidToLid })).toBe(
+      "120363@g.us",
+    );
   });
 });

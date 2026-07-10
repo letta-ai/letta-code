@@ -20,6 +20,7 @@ import {
   isStatusOrBroadcastJid,
   phoneDigitsToJid,
   resolveLidToPhoneJid,
+  resolvePresenceJid,
   resolveSendJid,
   senderIdFromJid,
   stripDeviceSuffix,
@@ -60,6 +61,11 @@ type WhatsAppSocket = {
   ws?: { close?: () => void };
   user?: { id?: string; lid?: string };
   signalRepository?: { lidMapping?: Map<string, string> };
+  onWhatsApp?: (
+    phoneNumber: string,
+  ) => Promise<
+    { exists?: boolean; jid?: string; lid?: string }[] | undefined | null
+  >;
   sendMessage?: (
     jid: string,
     payload: Record<string, unknown>,
@@ -470,7 +476,12 @@ export function createWhatsAppAdapter(
     ].join(":");
   }
 
-  function resolveTypingPresenceJid(chatId: string): string {
+  /**
+   * Sync, cache-only presence JID resolution. Used for the initial composing
+   * presence so it fires synchronously within the lifecycle event handler.
+   * Never calls onWhatsApp — that's the async refresh path's job.
+   */
+  function resolveTypingPresenceJidSync(chatId: string): string {
     const lidToJid = lidDesk.getLidToJidMap();
     const jidToLid = lidDesk.getJidToLidMap();
     const targetJid = resolveSendJid({
@@ -480,13 +491,42 @@ export function createWhatsAppAdapter(
       lidToJid,
       sock,
     });
-    return resolvePresenceJid(targetJid, jidToLid);
+    return resolvePresenceJid({ targetJid, jidToLid });
   }
 
-  async function sendTypingPresence(chatId: string): Promise<void> {
+  /**
+   * Async presence JID resolution with on-demand LID lookup via onWhatsApp.
+   * Used by the interval refresh path: the lookup result updates the cached
+   * LID so the *next* tick uses it. Does NOT delay the initial composing.
+   */
+  async function resolveTypingPresenceJidWithLookup(
+    chatId: string,
+  ): Promise<string> {
+    const jidToLid = lidDesk.getJidToLidMap();
+    // Sync resolution first (same as resolveTypingPresenceJidSync).
+    const syncJid = resolveTypingPresenceJidSync(chatId);
+    // If we already have a LID in the cache, no need for onWhatsApp.
+    if (jidToLid.has(syncJid)) return syncJid;
+    // Otherwise, try on-demand lookup (rate-limited inside LidDesk).
+    const lid = await lidDesk.lookupLidForPhone(syncJid, sock);
+    if (lid) return lid;
+    return syncJid;
+  }
+
+  function sendTypingPresenceSync(chatId: string): void {
     if (!running) return;
     try {
-      const presenceJid = resolveTypingPresenceJid(chatId);
+      const presenceJid = resolveTypingPresenceJidSync(chatId);
+      void sock?.sendPresenceUpdate?.("composing", presenceJid);
+    } catch {
+      // Best-effort; presence failures are non-fatal.
+    }
+  }
+
+  async function sendTypingPresenceAsync(chatId: string): Promise<void> {
+    if (!running) return;
+    try {
+      const presenceJid = await resolveTypingPresenceJidWithLookup(chatId);
       await sock?.sendPresenceUpdate?.("composing", presenceJid);
     } catch {
       // Best-effort; presence failures are non-fatal.
@@ -504,9 +544,9 @@ export function createWhatsAppAdapter(
       return;
     }
 
-    void sendTypingPresence(chatId);
+    sendTypingPresenceSync(chatId);
     const timer = setInterval(() => {
-      void sendTypingPresence(chatId);
+      void sendTypingPresenceAsync(chatId);
     }, WHATSAPP_TYPING_REFRESH_MS);
     const timeout = setTimeout(() => {
       clearTypingForChat(chatId);
@@ -553,10 +593,10 @@ export function createWhatsAppAdapter(
     typingByChatId.clear();
   }
 
-  async function stopTypingPresence(chatId: string): Promise<void> {
+  function stopTypingPresence(chatId: string): void {
     try {
-      const presenceJid = resolveTypingPresenceJid(chatId);
-      await sock?.sendPresenceUpdate?.("paused", presenceJid);
+      const presenceJid = resolveTypingPresenceJidSync(chatId);
+      void sock?.sendPresenceUpdate?.("paused", presenceJid);
     } catch {
       // Best-effort.
     }
@@ -767,7 +807,7 @@ export function createWhatsAppAdapter(
       // causing a brief typing blip after the answer.
       if (msg.chatId && typingByChatId.has(msg.chatId)) {
         clearTypingForChat(msg.chatId);
-        void stopTypingPresence(msg.chatId);
+        stopTypingPresence(msg.chatId);
       }
       const targetJid = resolveSendJid({
         chatId: msg.chatId,
@@ -885,11 +925,9 @@ export function createWhatsAppAdapter(
         }
       }
       // Best-effort: send "paused" presence to clear the typing indicator.
-      await Promise.all(
-        Array.from(chatsToStopPresence).map((chatId) =>
-          stopTypingPresence(chatId),
-        ),
-      );
+      for (const chatId of chatsToStopPresence) {
+        stopTypingPresence(chatId);
+      }
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
       if (!errorText) return;
@@ -940,19 +978,7 @@ export function getWhatsAppAuthPath(accountId: string): string {
 
 /**
  * Given a resolved (phone) target JID and a reverse LID map, return the JID
- * to use for sendPresenceUpdate.
- *
- * For LID-routed conversations, the chat-state subscription lives on the LID.
- * Passing the phone JID to Baileys' sendPresenceUpdate causes WhatsApp to
- * silently drop the presence update because it sets `from: me.id` (phone)
- * instead of `from: me.lid`, and the server can't match the chat state.
- *
- * If a LID exists in the reverse map for this phone JID, prefer it.
- * Otherwise fall back to the phone JID (non-LID conversations work fine).
+ * to use for sendPresenceUpdate. See ./jid.ts for the canonical implementation;
+ * this is re-exported here only for backward compatibility with prior callers.
  */
-export function resolvePresenceJid(
-  targetJid: string,
-  jidToLid: Map<string, string>,
-): string {
-  return jidToLid.get(targetJid) ?? targetJid;
-}
+export { resolvePresenceJid } from "./jid";
