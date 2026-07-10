@@ -77,6 +77,98 @@ export function senderIdFromJid(jid: string | null | undefined): string {
   return jidToDigits(jid);
 }
 
+// ── Structured sender description (Slice 3) ──────────────────────────
+
+/**
+ * Structured description of a WhatsApp sender JID.
+ *
+ * Unlike {@link senderIdFromJid} (which returns phone digits only and empty
+ * string for LIDs), this gives callers enough information to handle both
+ * PN and LID identities without losing data.
+ *
+ * Designed for incremental migration — callers that need LID awareness can
+ * switch to this helper without changing existing `senderIdFromJid` callers.
+ */
+export type SenderIdDescription = {
+  /** The original JID string, or empty string for null/undefined input. */
+  raw: string;
+  /**
+   * Classification of the JID.
+   * - `"pn"`: phone-number JID (`@s.whatsapp.net`)
+   * - `"lid"`: linked-device identity JID (`@lid`)
+   * - `"group"`: group JID (`@g.us`)
+   * - `"broadcast"`: broadcast or newsletter JID (`@broadcast`, `@newsletter`)
+   * - `"status"`: the special `status@broadcast` JID
+   * - `"unknown"`: does not match any known suffix
+   */
+  type: "pn" | "lid" | "group" | "broadcast" | "status" | "unknown";
+  /** Normalized phone digits (device suffix stripped). Empty if not a PN JID. */
+  phoneDigits: string;
+  /** Normalized LID JID (device suffix stripped). `null` if not a LID JID. */
+  lidJid: string | null;
+};
+
+/**
+ * Describe a WhatsApp sender JID as a structured object.
+ *
+ * Returns a {@link SenderIdDescription} with the JID classified and its
+ * relevant identifier extracted. For null/undefined/empty input, returns
+ * `{ raw: "", type: "unknown", phoneDigits: "", lidJid: null }`.
+ *
+ * @example
+ * describeSenderId("1234567890@s.whatsapp.net")
+ * // { raw: "1234567890@s.whatsapp.net", type: "pn", phoneDigits: "1234567890", lidJid: null }
+ *
+ * describeSenderId("abc:def@lid")
+ * // { raw: "abc:def@lid", type: "lid", phoneDigits: "", lidJid: "abc@lid" }
+ *
+ * describeSenderId(null)
+ * // { raw: "", type: "unknown", phoneDigits: "", lidJid: null }
+ */
+export function describeSenderId(
+  jid: string | null | undefined,
+): SenderIdDescription {
+  if (!jid) {
+    return { raw: "", type: "unknown", phoneDigits: "", lidJid: null };
+  }
+
+  const normalized = stripDeviceSuffix(jid);
+
+  // Check status@broadcast first (before the general broadcast check).
+  if (normalized === "status@broadcast") {
+    return { raw: jid, type: "status", phoneDigits: "", lidJid: null };
+  }
+
+  if (isGroupJid(normalized)) {
+    return { raw: jid, type: "group", phoneDigits: "", lidJid: null };
+  }
+
+  // isStatusOrBroadcastJid covers @broadcast (non-status) and @newsletter.
+  if (normalized.endsWith("@broadcast") || normalized.endsWith("@newsletter")) {
+    return { raw: jid, type: "broadcast", phoneDigits: "", lidJid: null };
+  }
+
+  if (isPhoneJid(normalized)) {
+    return {
+      raw: jid,
+      type: "pn",
+      phoneDigits: jidToDigits(normalized),
+      lidJid: null,
+    };
+  }
+
+  if (isLidJid(normalized)) {
+    return {
+      raw: jid,
+      type: "lid",
+      phoneDigits: "",
+      lidJid: normalized,
+    };
+  }
+
+  return { raw: jid, type: "unknown", phoneDigits: "", lidJid: null };
+}
+
 export function allowedUsersIncludes(
   allowedUsers: string[],
   senderId: string,
