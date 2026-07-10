@@ -113,6 +113,7 @@ When logs show contradictory state:
 - `turn-lifecycle-integration.test.ts`: cross-module producer regressions.
 - `approval.test.ts`: approval wait/resolution/cancellation ownership.
 - `recovery-lease.test.ts`: recovered approval await/lease boundaries.
+- `send-lease.test.ts`: pre-stream recovery await/queue boundaries.
 - `message-router.test.ts`: direct-message ownership handoff and queue drain.
 - `listener-queue-adapter.test.ts`: queue decisions from valid snapshots.
 - `channel-turn-session.test.ts`: channel progress lifecycle fan-out.

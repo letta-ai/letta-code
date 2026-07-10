@@ -58,6 +58,7 @@ type MessageStreamResult = Awaited<ReturnType<typeof sendMessageStream>>;
 type RecoveryDrainResult = Awaited<
   ReturnType<typeof drainRecoveryStreamWithEmission>
 >;
+type RetrieveAgent = ReturnType<typeof getBackend>["retrieveAgent"];
 export type ApprovalContinuationSendResult =
   | { kind: "stream"; stream: NonNullable<MessageStreamResult> }
   | { kind: "terminal"; drainResult: RecoveryDrainResult };
@@ -281,22 +282,39 @@ export async function resolveStaleApprovals(
   turnLease: TurnLease,
   deps: {
     getResumeData?: typeof getResumeDataFromBackend;
+    retrieveAgent?: RetrieveAgent;
+    prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
   } = {},
 ): Promise<Awaited<ReturnType<typeof drainRecoveryStreamWithEmission>> | null> {
   if (!runtime.agentId) return null;
 
   const getResumeDataImpl = deps.getResumeData ?? getResumeDataFromBackend;
+  const prepareToolExecutionContext =
+    deps.prepareToolExecutionContext ?? prepareToolExecutionContextForScope;
+  const assertCurrentTurnLease = () => {
+    if (
+      turnLease.signal.aborted ||
+      !runtime.turnLifecycle.isCurrent(turnLease)
+    ) {
+      throw new Error("Cancelled by user");
+    }
+  };
 
+  assertCurrentTurnLease();
   const backend = getBackend();
   let agent: Awaited<ReturnType<typeof backend.retrieveAgent>>;
   try {
-    agent = await backend.retrieveAgent(runtime.agentId);
+    agent = await (deps.retrieveAgent
+      ? deps.retrieveAgent(runtime.agentId)
+      : backend.retrieveAgent(runtime.agentId));
   } catch (err) {
+    assertCurrentTurnLease();
     if (isBackendNotFoundError(err)) {
       return null;
     }
     throw err;
   }
+  assertCurrentTurnLease();
   const requestedConversationId =
     runtime.conversationId !== "default" ? runtime.conversationId : undefined;
 
@@ -306,15 +324,16 @@ export async function resolveStaleApprovals(
       includeMessageHistory: false,
     });
   } catch (err) {
+    assertCurrentTurnLease();
     if (isBackendNotFoundError(err)) {
       return null;
     }
     throw err;
   }
+  assertCurrentTurnLease();
 
   let pendingApprovals = resumeData.pendingApprovals || [];
   if (pendingApprovals.length === 0) return null;
-  if (turnLease.signal.aborted) throw new Error("Cancelled");
 
   const recoveryConversationId = runtime.conversationId;
   const recoveryWorkingDirectory =
@@ -328,7 +347,7 @@ export async function resolveStaleApprovals(
     agent_id: runtime.agentId,
     conversation_id: recoveryConversationId,
   } as const;
-  const preparedToolContext = await prepareToolExecutionContextForScope({
+  const preparedToolContext = await prepareToolExecutionContext({
     agentId: runtime.agentId,
     conversationId: recoveryConversationId,
     workingDirectory: recoveryWorkingDirectory,
@@ -339,12 +358,14 @@ export async function resolveStaleApprovals(
     ),
     modEvents: ensureListenerModAdapter(runtime.listener).events,
   });
+  assertCurrentTurnLease();
   runtime.currentToolset = preparedToolContext.toolset;
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
 
   while (pendingApprovals.length > 0) {
+    assertCurrentTurnLease();
     const recoveryBatchId = resolveRecoveryBatchId(runtime, pendingApprovals);
     if (!recoveryBatchId) {
       throw new Error(
@@ -393,6 +414,7 @@ export async function resolveStaleApprovals(
         turnLease,
         { allowApprovalRecovery: false },
       );
+      assertCurrentTurnLease();
       if (recoverySendResult.kind !== "stream") {
         throw new Error(
           "Approval recovery send resolved without a continuation stream",
@@ -412,6 +434,7 @@ export async function resolveStaleApprovals(
           turnLease,
         },
       );
+      assertCurrentTurnLease();
 
       if (drainResult.stopReason === "error") {
         throw new Error("Pre-stream approval recovery drain ended with error");
