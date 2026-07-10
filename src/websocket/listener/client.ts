@@ -92,7 +92,6 @@ import {
   scheduleQueuePump,
 } from "./queue";
 import {
-  getApprovalContinuationRecoveryDisposition,
   getApprovalToolCallDesyncErrorText,
   recoverApprovalStateForSync,
   shouldAttemptPostStopApprovalRecovery,
@@ -482,7 +481,6 @@ export const __listenClientTestUtils = {
   normalizeExecutionResultsForInterruptParity,
   getApprovalToolCallDesyncErrorText,
   shouldAttemptPostStopApprovalRecovery,
-  getApprovalContinuationRecoveryDisposition,
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
   normalizeMessageContentImages,

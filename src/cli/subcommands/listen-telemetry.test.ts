@@ -6,6 +6,13 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 
+type TelemetryTestState = {
+  events: unknown[];
+  sessionEndTracked: boolean;
+};
+
+const telemetryState = telemetry as unknown as TelemetryTestState;
+
 describe("listen subcommand telemetry", () => {
   const originalLoadLocalProjectSettings =
     settingsManager.loadLocalProjectSettings;
@@ -31,6 +38,8 @@ describe("listen subcommand telemetry", () => {
 
   beforeEach(() => {
     telemetry.cleanup();
+    telemetryState.events = [];
+    telemetryState.sessionEndTracked = false;
     delete process.env.LETTA_API_KEY;
     delete process.env.LETTA_BASE_URL;
     delete process.env.LETTA_DESKTOP_MODE;

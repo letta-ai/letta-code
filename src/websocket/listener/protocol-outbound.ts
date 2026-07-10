@@ -23,7 +23,6 @@ import type {
   DeviceStatus,
   DeviceStatusUpdateMessage,
   LoopState,
-  LoopStatus,
   LoopStatusUpdateMessage,
   ModCommandInfo,
   QueueMessage,
@@ -585,21 +584,6 @@ export function buildQueueSnapshot(
     content: item.kind === "message" ? item.content : item.text,
     enqueued_at: new Date(item.enqueuedAt).toISOString(),
   }));
-}
-
-export function setLoopStatus(
-  runtime: ConversationRuntime,
-  status: LoopStatus,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
-): void {
-  if (runtime.loopStatus === status) {
-    return;
-  }
-  runtime.loopStatus = status;
-  emitLoopStatusIfOpen(runtime, scope);
 }
 
 /** Message types that belong on the stream channel.

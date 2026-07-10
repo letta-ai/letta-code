@@ -887,7 +887,6 @@ export function createRuntime(): ListenerRuntime {
     everConnected: false,
     sessionId: `listen-${crypto.randomUUID()}`,
     eventSeqCounter: 0,
-    lastStopReason: null,
     queueEmitScheduled: false,
     pendingQueueEmitScope: undefined,
     onWsEvent: undefined,

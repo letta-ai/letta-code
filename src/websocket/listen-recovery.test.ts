@@ -6,7 +6,6 @@
  * 2. Warm recovery: existing batch map entries → resolved to single batch ID.
  * 3. Ambiguous mapping: conflicting batch IDs → fail-closed (null).
  * 4. Idempotency: repeated resolve calls with same state → same behavior.
- * 5. isRecoveringApprovals guard prevents concurrent recovery.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import {
@@ -188,27 +187,6 @@ describe("resolveRecoveryBatchId warm path", () => {
     ]);
 
     expect(batchId).toBeNull();
-  });
-});
-
-describe("isRecoveringApprovals guard", () => {
-  test("runtime starts with isRecoveringApprovals = false", () => {
-    const runtime = createRuntime();
-    expect(runtime.isRecoveringApprovals).toBe(false);
-  });
-
-  test("guard flag prevents concurrent recovery (production pattern)", () => {
-    const runtime = createRuntime();
-
-    // Simulate first recovery in progress
-    runtime.isRecoveringApprovals = true;
-
-    // Second recovery attempt should observe guard and bail
-    expect(runtime.isRecoveringApprovals).toBe(true);
-
-    // Simulate completion
-    runtime.isRecoveringApprovals = false;
-    expect(runtime.isRecoveringApprovals).toBe(false);
   });
 });
 

@@ -24,10 +24,12 @@ import type {
   ExternalToolCallResult,
   LoopStatus,
   RuntimeScope,
+  StopReasonType,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
 import type { ActiveChannelTurn } from "./channel-turn-session";
 import type { ListenerTransport } from "./transport";
+import type { TurnLifecycle } from "./turn-lifecycle";
 
 export interface StartListenerOptions {
   connectionId: string;
@@ -141,27 +143,25 @@ export type ConversationRuntime = {
   agentId: string | null;
   conversationId: string;
   activeChannelTurn: ActiveChannelTurn | null;
+  turnLifecycle: TurnLifecycle;
   messageQueue: Promise<void>;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
-  lastStopReason: string | null;
+  readonly lastStopReason: StopReasonType | null;
   lastTerminalLoopErrorMessage: string | null;
   lastTerminalLoopErrorRunId: string | null;
-  isProcessing: boolean;
-  activeWorkingDirectory: string | null;
+  readonly isProcessing: boolean;
+  readonly activeWorkingDirectory: string | null;
   expectedWorktreePath: string | null;
   expectedWorktreeExpiresAt: number | null;
-  activeRunId: string | null;
-  activeRunStartedAt: string | null;
-  activeAbortController: AbortController | null;
-  cancelRequested: boolean;
+  readonly activeRunId: string | null;
+  readonly cancelRequested: boolean;
   queueRuntime: QueueRuntime;
   queuedMessagesByItemId: Map<string, IncomingMessage>;
   queuePumpActive: boolean;
   queuePumpScheduled: boolean;
   pendingTurns: number;
-  isRecoveringApprovals: boolean;
-  loopStatus: LoopStatus;
+  readonly loopStatus: LoopStatus;
   currentToolset: ToolsetName | null;
   currentToolsetPreference: ToolsetPreference;
   currentLoadedTools: string[];
@@ -173,7 +173,6 @@ export type ConversationRuntime = {
     continuationEpoch: number;
   } | null;
   continuationEpoch: number;
-  activeExecutingToolCallIds: string[];
   pendingInterruptedToolCallIds: string[] | null;
   /** Per-conversation reminder state (session-context, agent-info, etc.). */
   reminderState: SharedReminderState;
@@ -202,7 +201,6 @@ export type ListenerRuntime = {
   modAdapter?: ModAdapter | undefined;
   sessionId: string;
   eventSeqCounter: number;
-  lastStopReason: string | null;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
     agent_id?: string | null;
