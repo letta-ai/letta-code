@@ -17,11 +17,9 @@ import {
   clearSubagentConfigCache,
   discoverSubagents,
   getAllSubagentConfigs,
-} from "@/agent/subagents";
-import {
   type SubagentMemoryScope,
-  spawnSubagent,
-} from "@/agent/subagents/manager";
+} from "@/agent/subagents";
+import { spawnSubagent } from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import { getCurrentWorkingDirectory } from "@/runtime-context";

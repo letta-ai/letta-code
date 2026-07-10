@@ -4,7 +4,7 @@ import { join } from "node:path";
 import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
-} from "@/agent/subagents/manager";
+} from "@/agent/subagents/subagent-launcher";
 import { LETTA_INHERITED_CHANNEL_CONTEXT_ENV } from "@/runtime-context";
 
 const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
