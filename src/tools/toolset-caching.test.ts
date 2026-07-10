@@ -20,14 +20,19 @@ describe("listener tool prep metadata reuse", () => {
   });
 
   test("listener turn passes cached agent metadata into reflection and tool prep", () => {
-    const source = readSource("../websocket/listener/turn.ts");
+    const turnSource = readSource("../websocket/listener/turn.ts");
+    const setupSource = readSource("../websocket/listener/turn-setup.ts");
+    const completionSource = readSource(
+      "../websocket/listener/turn-completion.ts",
+    );
 
-    expect(source).toContain("cachedAgent: AgentState | null = null;");
-    expect(source).toContain(
+    expect(setupSource).toContain("cachedAgent: AgentState | null = null;");
+    expect(setupSource).toContain(
       "cachedAgent = (await getBackend().retrieveAgent(",
     );
-    expect(source).toContain("buildMaybeLaunchReflectionSubagent({");
-    expect(source).toContain("cachedAgent,");
-    expect(source).toContain("prepareToolExecutionContextForScope({");
+    expect(setupSource).toContain("prepareToolExecutionContextForScope({");
+    expect(turnSource).toContain("getCachedAgent: setup.getCachedAgent,");
+    expect(completionSource).toContain("buildMaybeLaunchReflectionSubagent({");
+    expect(completionSource).toContain("cachedAgent: params.getCachedAgent(),");
   });
 });

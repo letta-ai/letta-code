@@ -57,20 +57,20 @@ import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode
 import {
   emitCanonicalMessageDelta,
   emitDequeuedUserMessage,
-  emitInterruptedStatusDelta,
   emitLoopStatusUpdate,
   emitRuntimeStateUpdates,
-  setLoopStatus,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import {
-  clearActiveRunState,
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
 } from "./runtime";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import type { ListenerTransport } from "./transport";
+import type { TurnLease } from "./turn-lifecycle";
+import { setTurnLoopStatus } from "./turn-status";
+import { finishListenerTurn } from "./turn-terminal";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -189,7 +189,7 @@ export async function drainRecoveryStreamWithEmission(
   params: {
     agentId?: string | null;
     conversationId: string;
-    abortSignal: AbortSignal;
+    turnLease: TurnLease;
   },
 ): Promise<Awaited<ReturnType<typeof drainStreamWithResume>>> {
   let recoveryRunIdSent = false;
@@ -198,14 +198,12 @@ export async function drainRecoveryStreamWithEmission(
     recoveryStream,
     createBuffers(params.agentId || ""),
     () => {},
-    params.abortSignal,
+    params.turnLease.signal,
     undefined,
     ({ chunk, shouldOutput, errorInfo }) => {
       const maybeRunId = (chunk as { run_id?: unknown }).run_id;
       if (typeof maybeRunId === "string") {
-        if (runtime.activeRunId !== maybeRunId) {
-          runtime.activeRunId = maybeRunId;
-        }
+        runtime.turnLifecycle.setRunId(params.turnLease, maybeRunId);
         if (!recoveryRunIdSent) {
           recoveryRunIdSent = true;
           emitLoopStatusUpdate(socket, runtime, {
@@ -226,7 +224,7 @@ export async function drainRecoveryStreamWithEmission(
           agentId: params.agentId ?? undefined,
           conversationId: params.conversationId,
           errorInfo,
-          abortSignal: params.abortSignal,
+          abortSignal: params.turnLease.signal,
         });
       }
 
@@ -258,48 +256,42 @@ export async function drainRecoveryStreamWithEmission(
 export function finalizeHandledRecoveryTurn(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
+  turnLease: TurnLease,
   params: {
     drainResult: Awaited<ReturnType<typeof drainStreamWithResume>>;
     agentId?: string | null;
     conversationId: string;
   },
-): void {
-  const scope = {
-    agent_id: params.agentId ?? null,
-    conversation_id: params.conversationId,
-  };
-
+): ReturnType<typeof finishListenerTurn> {
   if (params.drainResult.stopReason === "end_turn") {
-    runtime.lastStopReason = "end_turn";
-    runtime.isProcessing = false;
-    setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
-    clearActiveRunState(runtime);
-    emitRuntimeStateUpdates(runtime, scope);
-    return;
+    return finishListenerTurn(runtime, turnLease, {
+      stopReason: "end_turn",
+      agentId: params.agentId,
+      conversationId: params.conversationId,
+    });
   }
 
   if (params.drainResult.stopReason === "cancelled") {
-    runtime.lastStopReason = "cancelled";
-    runtime.isProcessing = false;
-    emitInterruptedStatusDelta(socket, runtime, {
+    return finishListenerTurn(runtime, turnLease, {
+      stopReason: "cancelled",
+      socket,
       runId: runtime.activeRunId,
       agentId: params.agentId ?? undefined,
       conversationId: params.conversationId,
     });
-    setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
-    clearActiveRunState(runtime);
-    emitRuntimeStateUpdates(runtime, scope);
-    return;
   }
 
   const terminalStopReason =
     (params.drainResult.stopReason as StopReasonType) || "error";
-  runtime.lastStopReason = terminalStopReason;
-  runtime.isProcessing = false;
-  setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
   const runId = runtime.activeRunId;
-  clearActiveRunState(runtime);
-  emitRuntimeStateUpdates(runtime, scope);
+  const transition = finishListenerTurn(runtime, turnLease, {
+    stopReason: terminalStopReason,
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+  });
+  if (!transition.finished) {
+    return transition;
+  }
   emitLoopErrorNotice(socket, runtime, {
     message: `Recovery continuation ended unexpectedly: ${terminalStopReason}`,
     stopReason: terminalStopReason,
@@ -308,12 +300,7 @@ export function finalizeHandledRecoveryTurn(
     agentId: params.agentId ?? undefined,
     conversationId: params.conversationId,
   });
-}
-
-export function getApprovalContinuationRecoveryDisposition(
-  drainResult: Awaited<ReturnType<typeof drainStreamWithResume>> | null,
-): "handled" | "retry" {
-  return drainResult ? "handled" : "retry";
+  return transition;
 }
 
 export async function debugLogApprovalResumeState(
@@ -412,10 +399,7 @@ export async function recoverApprovalStateForSync(
     runtime.agentId === scope.agent_id &&
     runtime.conversationId === scope.conversation_id;
 
-  if (
-    sameActiveScope &&
-    (runtime.isProcessing || runtime.loopStatus !== "WAITING_ON_INPUT")
-  ) {
+  if (sameActiveScope && runtime.turnLifecycle.kind !== "idle") {
     clearRecoveredApprovalState(runtime);
     return;
   }
@@ -483,6 +467,7 @@ export async function resolveRecoveredApprovalResponse(
     ) => void,
     connectionId?: string,
     dequeuedBatchId?: string,
+    existingTurnLease?: TurnLease,
   ) => Promise<void>,
   opts?: {
     onStatusChange?: (
@@ -657,56 +642,54 @@ export async function resolveRecoveredApprovalResponse(
   const shouldFinalizeRecoveredChannelTurn =
     runtime.activeChannelTurn?.contextRecovered === true;
 
+  const recoveryLease = runtime.turnLifecycle.begin({
+    origin: "approval_recovery",
+    workingDirectory,
+    initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
+    executingToolCallIds: approvedToolCallIds,
+  });
   recovered.pendingRequestIds.clear();
   emitRuntimeStateUpdates(runtime, scope);
-
-  runtime.isProcessing = true;
-  runtime.activeWorkingDirectory = workingDirectory;
-  runtime.activeExecutingToolCallIds = [...approvedToolCallIds];
-  setLoopStatus(runtime, "EXECUTING_CLIENT_SIDE_TOOL", scope);
-  emitRuntimeStateUpdates(runtime, scope);
-  emitToolExecutionStartedEvents(socket, runtime, {
-    toolCalls: approvedDecisions.map((decision) => ({
-      toolCallId: decision.approval.toolCallId,
-      toolName: decision.approval.toolName,
-      toolArgs: decision.approval.toolArgs,
-    })),
-    runId: runtime.activeRunId ?? undefined,
-    agentId: recovered.agentId,
-    conversationId: recovered.conversationId,
-  });
-  const emitToolExecutionOutput = createToolExecutionOutputEmitter(
-    socket,
-    runtime,
-    {
+  try {
+    emitToolExecutionStartedEvents(socket, runtime, {
+      toolCalls: approvedDecisions.map((decision) => ({
+        toolCallId: decision.approval.toolCallId,
+        toolName: decision.approval.toolName,
+        toolArgs: decision.approval.toolArgs,
+      })),
       runId: runtime.activeRunId ?? undefined,
       agentId: recovered.agentId,
       conversationId: recovered.conversationId,
-    },
-  );
-  const recoveryAbortController = new AbortController();
-  runtime.activeAbortController = recoveryAbortController;
-  await ensureSecretsHydratedForAgent(runtime.listener, recovered.agentId);
-  const preparedToolContext = await prepareToolExecutionContextForScope({
-    agentId: recovered.agentId,
-    conversationId: recovered.conversationId,
-    workingDirectory: runtime.activeWorkingDirectory,
-    permissionModeState: getOrCreateConversationPermissionModeStateRef(
-      runtime.listener,
-      recovered.agentId,
-      recovered.conversationId,
-    ),
-    modEvents: ensureListenerModAdapter(runtime.listener).events,
-  });
-  runtime.currentToolset = preparedToolContext.toolset;
-  runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
-  runtime.currentLoadedTools =
-    preparedToolContext.preparedToolContext.loadedToolNames;
-  try {
+    });
+    const emitToolExecutionOutput = createToolExecutionOutputEmitter(
+      socket,
+      runtime,
+      {
+        runId: runtime.activeRunId ?? undefined,
+        agentId: recovered.agentId,
+        conversationId: recovered.conversationId,
+      },
+    );
+    await ensureSecretsHydratedForAgent(runtime.listener, recovered.agentId);
+    const preparedToolContext = await prepareToolExecutionContextForScope({
+      agentId: recovered.agentId,
+      conversationId: recovered.conversationId,
+      workingDirectory,
+      permissionModeState: getOrCreateConversationPermissionModeStateRef(
+        runtime.listener,
+        recovered.agentId,
+        recovered.conversationId,
+      ),
+      modEvents: ensureListenerModAdapter(runtime.listener).events,
+    });
+    runtime.currentToolset = preparedToolContext.toolset;
+    runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
+    runtime.currentLoadedTools =
+      preparedToolContext.preparedToolContext.loadedToolNames;
     let approvalResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
     try {
       approvalResults = await executeApprovalBatch(decisions, undefined, {
-        abortSignal: recoveryAbortController.signal,
+        abortSignal: recoveryLease.signal,
         onStreamingOutput: emitToolExecutionOutput,
         toolContextId: preparedToolContext.preparedToolContext.contextId,
         workingDirectory,
@@ -737,8 +720,8 @@ export async function resolveRecoveredApprovalResponse(
       "tool-return",
     );
 
-    runtime.activeAbortController = null;
-    setLoopStatus(runtime, "SENDING_API_REQUEST", scope);
+    runtime.turnLifecycle.setExecutingToolCallIds(recoveryLease, []);
+    setTurnLoopStatus(runtime, recoveryLease, "SENDING_API_REQUEST", scope);
     emitRuntimeStateUpdates(runtime, scope);
 
     const continuationMessages: Array<MessageCreate | ApprovalCreate> = [
@@ -769,6 +752,7 @@ export async function resolveRecoveredApprovalResponse(
       opts?.onStatusChange,
       opts?.connectionId,
       continuationBatchId,
+      recoveryLease,
     );
 
     if (shouldFinalizeRecoveredChannelTurn) {
@@ -796,14 +780,11 @@ export async function resolveRecoveredApprovalResponse(
       recovered.approvalsByRequestId.keys(),
     );
     recovered.responsesByRequestId.clear();
-    runtime.activeAbortController = null;
-    runtime.isProcessing = false;
-    runtime.activeExecutingToolCallIds = [];
-    setLoopStatus(runtime, "WAITING_ON_INPUT", scope);
-    clearActiveRunState(runtime);
-    emitRuntimeStateUpdates(runtime, {
-      agent_id: recovered.agentId,
-      conversation_id: recovered.conversationId,
+    finishListenerTurn(runtime, recoveryLease, {
+      stopReason: recoveryLease.signal.aborted ? "cancelled" : "error",
+      socket,
+      agentId: recovered.agentId,
+      conversationId: recovered.conversationId,
     });
     throw error;
   }

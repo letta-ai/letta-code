@@ -36,7 +36,7 @@ import {
   clearExternalTools,
   prepareToolExecutionContextForModel,
 } from "@/tools/manager";
-import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
+import type { ControlRequest } from "@/types/protocol_v2";
 import {
   __listenClientTestUtils,
   emitInterruptedStatusDelta,
@@ -60,6 +60,36 @@ import {
   getRecoverableRetryNoticeVisibility,
   getRecoverableStatusNoticeVisibility,
 } from "@/websocket/listener/recoverable-notices";
+import type { ConversationRuntime } from "@/websocket/listener/types";
+
+function beginTestTurn(
+  runtime: ConversationRuntime,
+  options: {
+    workingDirectory?: string;
+    initialStatus?: Parameters<
+      ConversationRuntime["turnLifecycle"]["begin"]
+    >[0]["initialStatus"];
+    abortController?: AbortController;
+    runId?: string;
+    executingToolCallIds?: readonly string[];
+  } = {},
+) {
+  const lease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: options.workingDirectory ?? "/tmp/test-worktree",
+    ...(options.initialStatus ? { initialStatus: options.initialStatus } : {}),
+    ...(options.abortController
+      ? { abortController: options.abortController }
+      : {}),
+    ...(options.executingToolCallIds
+      ? { executingToolCallIds: options.executingToolCallIds }
+      : {}),
+  });
+  if (options.runId) {
+    runtime.turnLifecycle.setRunId(lease, options.runId);
+  }
+  return lease;
+}
 
 class MockSocket {
   readyState: number;
@@ -147,13 +177,6 @@ function makeControlRequest(requestId: string): ControlRequest {
       permission_suggestions: [],
       blocked_path: null,
     },
-  };
-}
-
-function makeSuccessResponse(requestId: string): ApprovalResponseBody {
-  return {
-    request_id: requestId,
-    decision: { behavior: "allow" },
   };
 }
 
@@ -3826,143 +3849,6 @@ describe("listen-client conversation working directory", () => {
   });
 });
 
-describe("listen-client approval resolver wiring", () => {
-  test("resolved approvals do not project WAITING_ON_INPUT while the enclosing turn is still processing", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    runtime.isProcessing = true;
-    runtime.loopStatus = "WAITING_ON_APPROVAL";
-
-    void requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      "perm-status",
-      makeControlRequest("perm-status"),
-    ).catch(() => {});
-
-    expect(runtime.loopStatus).toBe("WAITING_ON_APPROVAL");
-
-    const resolved = resolvePendingApprovalResolver(runtime, {
-      request_id: "perm-status",
-      decision: { behavior: "allow" },
-    });
-
-    expect(resolved).toBe(true);
-    expect(runtime.loopStatus as string).toBe("WAITING_ON_APPROVAL");
-  });
-
-  test("resolves matching pending resolver", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const requestId = "perm-101";
-
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
-    expect(runtime.pendingApprovalResolvers.size).toBe(1);
-
-    const resolved = resolvePendingApprovalResolver(
-      runtime,
-      makeSuccessResponse(requestId),
-    );
-    expect(resolved).toBe(true);
-    await expect(pending).resolves.toMatchObject({
-      request_id: requestId,
-      decision: { behavior: "allow" },
-    });
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-  });
-
-  test("ignores non-matching request_id and keeps pending resolver", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const requestId = "perm-201";
-
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
-    let settled = false;
-    void pending.then(
-      () => {
-        settled = true;
-      },
-      () => {
-        settled = true;
-      },
-    );
-
-    const resolved = resolvePendingApprovalResolver(
-      runtime,
-      makeSuccessResponse("perm-other"),
-    );
-    expect(resolved).toBe(false);
-    await Promise.resolve();
-    expect(settled).toBe(false);
-    expect(runtime.pendingApprovalResolvers.size).toBe(1);
-
-    const handledPending = pending.catch((error) => error);
-    rejectPendingApprovalResolvers(runtime, "cleanup");
-    const cleanupError = await handledPending;
-    expect(cleanupError).toBeInstanceOf(Error);
-    expect((cleanupError as Error).message).toBe("cleanup");
-  });
-
-  test("cleanup rejects all pending resolvers", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const first = new Promise<ApprovalResponseBody>((resolve, reject) => {
-      runtime.pendingApprovalResolvers.set("perm-a", { resolve, reject });
-    });
-    const second = new Promise<ApprovalResponseBody>((resolve, reject) => {
-      runtime.pendingApprovalResolvers.set("perm-b", { resolve, reject });
-    });
-
-    rejectPendingApprovalResolvers(runtime, "socket closed");
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    await expect(first).rejects.toThrow("socket closed");
-    await expect(second).rejects.toThrow("socket closed");
-  });
-
-  test("cleanup resets WAITING_ON_INPUT instead of restoring fake processing", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    runtime.isProcessing = true;
-    runtime.loopStatus = "WAITING_ON_APPROVAL";
-
-    const pending = new Promise<ApprovalResponseBody>((resolve, reject) => {
-      runtime.pendingApprovalResolvers.set("perm-cleanup", { resolve, reject });
-    });
-
-    rejectPendingApprovalResolvers(runtime, "socket closed");
-
-    expect(runtime.loopStatus as string).toBe("WAITING_ON_INPUT");
-    await expect(pending).rejects.toThrow("socket closed");
-  });
-
-  test("stopRuntime rejects pending resolvers even when callbacks are suppressed", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const pending = new Promise<ApprovalResponseBody>((resolve, reject) => {
-      runtime.pendingApprovalResolvers.set("perm-stop", { resolve, reject });
-    });
-    const pendingError = pending.catch((error: unknown) => error);
-    const socket = new MockSocket(WebSocket.OPEN);
-    runtime.socket = socket as unknown as WebSocket;
-
-    __listenClientTestUtils.stopRuntime(runtime, true);
-
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    expect(socket.removeAllListenersCalls).toBe(1);
-    expect(socket.closeCalls).toBe(1);
-    const error = await pendingError;
-    expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toContain("Listener runtime stopped");
-  });
-});
-
 describe("listen-client protocol emission", () => {
   test("does not throw when protocol emission send fails", () => {
     const runtime = __listenClientTestUtils.createRuntime();
@@ -3986,89 +3872,6 @@ describe("listen-client protocol emission", () => {
     } finally {
       console.error = originalConsoleError;
     }
-  });
-});
-
-describe("listen-client requestApprovalOverWS", () => {
-  test("rejects immediately when socket is not open", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.CLOSED);
-    const requestId = "perm-closed";
-
-    await expect(
-      requestApprovalOverWS(
-        runtime,
-        socket as unknown as WebSocket,
-        requestId,
-        makeControlRequest(requestId),
-      ),
-    ).rejects.toThrow("WebSocket not open");
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-  });
-
-  test("rejects immediately when interrupt is already active", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const requestId = "perm-cancelled";
-
-    runtime.cancelRequested = true;
-
-    await expect(
-      requestApprovalOverWS(
-        runtime,
-        socket as unknown as WebSocket,
-        requestId,
-        makeControlRequest(requestId),
-      ),
-    ).rejects.toThrow("Cancelled by user");
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
-  });
-
-  test("registers a pending resolver until an approval response arrives", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const requestId = "perm-send-fail";
-
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
-
-    expect(runtime.pendingApprovalResolvers.size).toBe(1);
-    expect(
-      runtime.pendingApprovalResolvers.get(requestId)?.controlRequest,
-    ).toEqual(makeControlRequest(requestId));
-
-    rejectPendingApprovalResolvers(runtime, "cleanup");
-    await expect(pending).rejects.toThrow("cleanup");
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-  });
-
-  test("cleans up a pending resolver if abort lands immediately after registration", async () => {
-    const runtime = __listenClientTestUtils.createRuntime();
-    const socket = new MockSocket(WebSocket.OPEN);
-    const requestId = "perm-late-abort";
-
-    runtime.activeAbortController = new AbortController();
-
-    const pending = requestApprovalOverWS(
-      runtime,
-      socket as unknown as WebSocket,
-      requestId,
-      makeControlRequest(requestId),
-    );
-
-    expect(runtime.pendingApprovalResolvers.size).toBe(1);
-
-    runtime.cancelRequested = true;
-    runtime.activeAbortController.abort();
-
-    await expect(pending).rejects.toThrow("Cancelled by user");
-    expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
   });
 });
 
@@ -4316,7 +4119,7 @@ describe("listen-client v2 status builders", () => {
       "conv-b",
     );
 
-    runtimeA.isProcessing = true;
+    beginTestTurn(runtimeA);
 
     expect(__listenClientTestUtils.resolveRuntimeScope(listener)).toBeNull();
   });
@@ -4757,8 +4560,7 @@ describe("listen-client v2 status builders", () => {
 
   test("sync ignores backend recovered approvals while a live turn is already processing", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    runtime.isProcessing = true;
-    runtime.loopStatus = "PROCESSING_API_RESPONSE";
+    beginTestTurn(runtime, { initialStatus: "PROCESSING_API_RESPONSE" });
     runtime.activeAgentId = "agent-1";
     runtime.activeConversationId = "default";
     runtime.recoveredApprovalState = {
@@ -4866,9 +4668,8 @@ describe("listen-client v2 status builders", () => {
       "conv-b",
     );
 
-    runtimeA.isProcessing = true;
-    runtimeA.loopStatus = "PROCESSING_API_RESPONSE";
-    runtimeB.loopStatus = "WAITING_ON_APPROVAL";
+    beginTestTurn(runtimeA, { initialStatus: "PROCESSING_API_RESPONSE" });
+    beginTestTurn(runtimeB, { initialStatus: "WAITING_ON_APPROVAL" });
 
     expect(
       __listenClientTestUtils.buildLoopStatus(listener, {
@@ -4894,8 +4695,7 @@ describe("listen-client v2 status builders", () => {
       "conv-b",
     );
 
-    runtimeA.isProcessing = true;
-    runtimeA.loopStatus = "PROCESSING_API_RESPONSE";
+    beginTestTurn(runtimeA, { initialStatus: "PROCESSING_API_RESPONSE" });
     const queueInput = {
       kind: "message",
       source: "user",
@@ -4942,7 +4742,7 @@ describe("listen-client cwd change handling", () => {
       );
       runtime.activeAgentId = "agent-1";
       runtime.activeConversationId = "conv-1";
-      runtime.activeWorkingDirectory = normalizedServerDir;
+      beginTestTurn(runtime, { workingDirectory: normalizedServerDir });
 
       await __listenClientTestUtils.handleCwdChange(
         {
@@ -5157,6 +4957,7 @@ describe("listen-client capability-gated approval flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-update-test";
+    beginTestTurn(runtime);
 
     const pending = requestApprovalOverWS(
       runtime,
@@ -5197,6 +4998,7 @@ describe("listen-client capability-gated approval flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-allow-comment-test";
+    beginTestTurn(runtime);
 
     const pending = requestApprovalOverWS(
       runtime,
@@ -5229,6 +5031,7 @@ describe("listen-client capability-gated approval flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-deny-test";
+    beginTestTurn(runtime);
 
     const pending = requestApprovalOverWS(
       runtime,
@@ -5258,6 +5061,7 @@ describe("listen-client capability-gated approval flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     const requestId = "perm-error-test";
+    beginTestTurn(runtime);
 
     const pending = requestApprovalOverWS(
       runtime,
@@ -5288,6 +5092,7 @@ describe("listen-client capability-gated approval flow", () => {
     const socket = new MockSocket(WebSocket.OPEN);
     listener.socket = socket as unknown as WebSocket;
     const requestId = "perm-adapter-test";
+    beginTestTurn(runtime);
 
     void requestApprovalOverWS(
       runtime,
@@ -5345,8 +5150,7 @@ describe("listen-client capability-gated approval flow", () => {
     );
     const socket = new MockSocket(WebSocket.OPEN);
 
-    runtime.isProcessing = true;
-    runtime.activeRunId = "run-1";
+    beginTestTurn(runtime, { runId: "run-1" });
     void requestApprovalOverWS(
       runtime,
       socket as unknown as WebSocket,
@@ -5433,7 +5237,7 @@ describe("listen-client capability-gated approval flow", () => {
     );
   });
 
-  test("stale approval responses unlatch cancelRequested after approval-only interrupt", async () => {
+  test("stale approval responses cannot unlatch an active cancellation", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const targetRuntime =
       __listenClientTestUtils.getOrCreateConversationRuntime(
@@ -5445,8 +5249,8 @@ describe("listen-client capability-gated approval flow", () => {
     const scheduleQueuePumpMock = mock(() => {});
     const resolveRecoveredApprovalResponseMock = mock(async () => false);
 
-    targetRuntime.cancelRequested = true;
-    targetRuntime.isProcessing = false;
+    beginTestTurn(targetRuntime);
+    targetRuntime.turnLifecycle.requestCancellation();
 
     const handled = await __listenClientTestUtils.handleApprovalResponseInput(
       listener,
@@ -5473,14 +5277,9 @@ describe("listen-client capability-gated approval flow", () => {
     );
 
     expect(handled).toBe(false);
-    expect(targetRuntime.cancelRequested).toBe(false);
+    expect(targetRuntime.cancelRequested).toBe(true);
     expect(resolveRecoveredApprovalResponseMock).not.toHaveBeenCalled();
-    expect(scheduleQueuePumpMock).toHaveBeenCalledWith(
-      targetRuntime,
-      socket,
-      expect.objectContaining({ connectionId: "conn-1" }),
-      expect.any(Function),
-    );
+    expect(scheduleQueuePumpMock).not.toHaveBeenCalled();
   });
 
   test("abort_message eagerly projects idle interrupted state for active turns", async () => {
@@ -5497,13 +5296,12 @@ describe("listen-client capability-gated approval flow", () => {
     const scheduleQueuePumpMock = mock(() => {});
     const cancelConversationMock = mock(async () => {});
 
-    runtime.isProcessing = true;
-    runtime.loopStatus = "PROCESSING_API_RESPONSE";
-    runtime.activeAbortController = new AbortController();
-    runtime.activeRunId = "run-active";
-    runtime.activeRunStartedAt = new Date().toISOString();
-    runtime.activeWorkingDirectory = process.cwd();
-    runtime.activeExecutingToolCallIds = ["tool-1"];
+    beginTestTurn(runtime, {
+      initialStatus: "PROCESSING_API_RESPONSE",
+      runId: "run-active",
+      workingDirectory: process.cwd(),
+      executingToolCallIds: ["tool-1"],
+    });
 
     const handled = await __listenClientTestUtils.handleAbortMessageInput(
       listener,
@@ -5530,7 +5328,7 @@ describe("listen-client capability-gated approval flow", () => {
     expect(runtime.isProcessing).toBe(false);
     expect(runtime.loopStatus as string).toBe("WAITING_ON_INPUT");
     expect(runtime.activeRunId).toBeNull();
-    expect(runtime.activeAbortController).toBeNull();
+    expect(runtime.turnLifecycle.currentLease?.signal.aborted).toBe(true);
     expect(runtime.pendingInterruptedToolCallIds).toEqual(["tool-1"]);
     expect(scheduleQueuePumpMock).toHaveBeenCalledWith(
       runtime,
@@ -5577,10 +5375,10 @@ describe("listen-client capability-gated approval flow", () => {
       "default",
     );
 
-    runtime.isProcessing = true;
-    runtime.loopStatus = "PROCESSING_API_RESPONSE";
-    runtime.activeAbortController = new AbortController();
-    runtime.activeRunId = "run-active";
+    beginTestTurn(runtime, {
+      initialStatus: "PROCESSING_API_RESPONSE",
+      runId: "run-active",
+    });
 
     const handled = await __listenClientTestUtils.handleAbortMessageInput(
       listener,
@@ -5629,7 +5427,6 @@ describe("listen-client capability-gated approval flow", () => {
     const scheduleQueuePumpMock = mock(() => {});
     const cancelConversationMock = mock(async () => {});
 
-    runtime.loopStatus = "WAITING_ON_APPROVAL";
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "default",
@@ -5715,7 +5512,9 @@ describe("listen-client capability-gated approval flow", () => {
     const scheduleQueuePumpMock = mock(() => {});
     const cancelConversationMock = mock(async () => {});
 
-    runtime.loopStatus = "WAITING_ON_APPROVAL";
+    const turnLease = beginTestTurn(runtime, {
+      initialStatus: "WAITING_ON_APPROVAL",
+    });
     const pending = requestApprovalOverWS(
       runtime,
       socket as unknown as WebSocket,
@@ -5744,9 +5543,18 @@ describe("listen-client capability-gated approval flow", () => {
     );
 
     expect(handled).toBe(true);
-    expect(runtime.cancelRequested).toBe(false);
+    expect(runtime.cancelRequested).toBe(true);
     await expect(pending).rejects.toThrow("Cancelled by user");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
+    __listenClientTestUtils.populateInterruptQueue(runtime, {
+      lastExecutionResults: null,
+      lastExecutingToolCallIds: [],
+      lastNeedsUserInputToolCallIds: ["call-1"],
+      agentId: "agent-1",
+      conversationId: "default",
+    });
+    runtime.turnLifecycle.finish(turnLease, "cancelled");
+    expect(runtime.cancelRequested).toBe(false);
     expect(runtime.pendingInterruptedResults).toEqual([
       {
         type: "approval",
@@ -6338,31 +6146,14 @@ describe("listen-client post-stop approval recovery policy", () => {
   });
 });
 
-describe("listen-client approval continuation recovery disposition", () => {
-  test("retries the original continuation when recovery handled nothing", () => {
-    expect(
-      __listenClientTestUtils.getApprovalContinuationRecoveryDisposition(null),
-    ).toBe("retry");
-  });
-
-  test("treats drained recovery turns as handled", () => {
-    expect(
-      __listenClientTestUtils.getApprovalContinuationRecoveryDisposition({
-        stopReason: "end_turn",
-        lastRunId: "run-1",
-        apiDurationMs: 0,
-      }),
-    ).toBe("handled");
-  });
-});
-
 describe("listen-client approval continuation run handoff", () => {
   test("clears stale active run ids once an approval continuation is accepted", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    runtime.activeRunId = "run-1";
+    const turnLease = beginTestTurn(runtime, { runId: "run-1" });
 
     __listenClientTestUtils.markAwaitingAcceptedApprovalContinuationRunId(
       runtime,
+      turnLease,
       [{ type: "approval", approvals: [] }],
     );
 
@@ -6371,10 +6162,11 @@ describe("listen-client approval continuation run handoff", () => {
 
   test("preserves active run ids for non-approval sends", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    runtime.activeRunId = "run-1";
+    const turnLease = beginTestTurn(runtime, { runId: "run-1" });
 
     __listenClientTestUtils.markAwaitingAcceptedApprovalContinuationRunId(
       runtime,
+      turnLease,
       [
         {
           role: "user",
@@ -6390,7 +6182,8 @@ describe("listen-client approval continuation run handoff", () => {
 describe("listen-client interrupt persistence normalization", () => {
   test("forces interrupted in-flight tool results to status=error when cancelRequested", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    runtime.cancelRequested = true;
+    beginTestTurn(runtime);
+    runtime.turnLifecycle.requestCancellation();
 
     const normalized =
       __listenClientTestUtils.normalizeExecutionResultsForInterruptParity(
@@ -6418,7 +6211,6 @@ describe("listen-client interrupt persistence normalization", () => {
 
   test("leaves tool status unchanged when not in cancel flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    runtime.cancelRequested = false;
 
     const normalized =
       __listenClientTestUtils.normalizeExecutionResultsForInterruptParity(

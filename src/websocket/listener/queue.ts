@@ -347,19 +347,13 @@ export function shouldProcessInboundMessageDirectly(
     runtime.queuePumpScheduled ||
     runtime.pendingTurns > 0 ||
     runtime.queuedMessagesByItemId.size > 0 ||
-    runtime.isProcessing ||
-    runtime.isRecoveringApprovals ||
-    runtime.cancelRequested ||
+    runtime.turnLifecycle.kind !== "idle" ||
     runtime.pendingApprovalResolvers.size > 0 ||
     runtime.pendingApprovalBatchByToolCallId.size > 0 ||
     runtime.recoveredApprovalState !== null ||
     runtime.pendingInterruptedResults !== null ||
     runtime.pendingInterruptedContext !== null ||
-    runtime.activeExecutingToolCallIds.length > 0 ||
-    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
-    runtime.activeRunId !== null ||
-    runtime.activeRunStartedAt !== null ||
-    runtime.activeAbortController !== null
+    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0
   ) {
     return false;
   }
@@ -369,15 +363,12 @@ export function shouldProcessInboundMessageDirectly(
     conversation_id: runtime.conversationId,
   });
   return (
-    getListenerBlockedReason({
-      loopStatus: runtime.loopStatus,
-      isProcessing: runtime.isProcessing,
-      pendingApprovalsLen: activeScope
+    getListenerBlockedReason(
+      runtime.turnLifecycle.snapshot(),
+      activeScope
         ? getPendingControlRequestCount(runtime.listener, activeScope)
         : 0,
-      cancelRequested: runtime.cancelRequested,
-      isRecoveringApprovals: runtime.isRecoveringApprovals,
-    }) === null
+    ) === null
   );
 }
 
@@ -452,15 +443,12 @@ function computeListenerQueueBlockedReason(
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
   });
-  return getListenerBlockedReason({
-    loopStatus: runtime.loopStatus,
-    isProcessing: runtime.isProcessing,
-    pendingApprovalsLen: activeScope
+  return getListenerBlockedReason(
+    runtime.turnLifecycle.snapshot(),
+    activeScope
       ? getPendingControlRequestCount(runtime.listener, activeScope)
       : 0,
-    cancelRequested: runtime.cancelRequested,
-    isRecoveringApprovals: runtime.isRecoveringApprovals,
-  });
+  );
 }
 
 async function drainQueuedMessages(

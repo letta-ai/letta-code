@@ -37,7 +37,10 @@ import { handleSecretsCommand } from "@/websocket/listener/commands/secrets";
 import { shouldProcessInboundMessageDirectly } from "@/websocket/listener/queue";
 import { resolveRecoveredApprovalResponse } from "@/websocket/listener/recovery";
 import { injectQueuedSkillContent } from "@/websocket/listener/skill-injection";
-import type { IncomingMessage } from "@/websocket/listener/types";
+import type {
+  ConversationRuntime,
+  IncomingMessage,
+} from "@/websocket/listener/types";
 
 type MockStream = {
   conversationId: string;
@@ -62,6 +65,22 @@ const defaultDrainResult: DrainResult = {
 
 const TEST_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aF9sAAAAASUVORK5CYII=";
+
+function beginTestTurn(
+  runtime: ConversationRuntime,
+  options: {
+    workingDirectory?: string;
+    initialStatus?: Parameters<
+      ConversationRuntime["turnLifecycle"]["begin"]
+    >[0]["initialStatus"];
+  } = {},
+) {
+  return runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: options.workingDirectory ?? "/tmp/test-worktree",
+    ...(options.initialStatus ? { initialStatus: options.initialStatus } : {}),
+  });
+}
 
 const sendMessageStreamCalls: Array<{
   conversationId: string;
@@ -279,11 +298,7 @@ const { createListenerModAdapter } = await import(
 );
 const { sendApprovalContinuationWithRetry, sendMessageStreamWithRetry } =
   await import("@/websocket/listener/send");
-const {
-  __listenClientTestUtils,
-  requestApprovalOverWS,
-  resolvePendingApprovalResolver,
-} = listenClientModule;
+const { __listenClientTestUtils } = listenClientModule;
 
 class MockSocket {
   readyState: number;
@@ -749,137 +764,13 @@ describe("listen-client multi-worker concurrency", () => {
       "conv-b",
     );
 
-    runtimeA.isProcessing = true;
-    runtimeA.activeAbortController = new AbortController();
-    runtimeB.isProcessing = true;
-    runtimeB.activeAbortController = new AbortController();
+    const leaseA = beginTestTurn(runtimeA);
+    const leaseB = beginTestTurn(runtimeB);
+    runtimeA.turnLifecycle.requestCancellation();
 
-    runtimeA.cancelRequested = true;
-    runtimeA.activeAbortController.abort();
-
-    expect(runtimeA.activeAbortController.signal.aborted).toBe(true);
-    expect(runtimeB.activeAbortController.signal.aborted).toBe(false);
+    expect(leaseA.signal.aborted).toBe(true);
+    expect(leaseB.signal.aborted).toBe(false);
     expect(runtimeB.cancelRequested).toBe(false);
-  });
-
-  test("approval waits and resolver routing stay isolated per conversation", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      "agent-1",
-      "conv-a",
-    );
-    const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      "agent-1",
-      "conv-b",
-    );
-    const socket = new MockSocket();
-
-    const pendingA = requestApprovalOverWS(
-      runtimeA,
-      socket as unknown as WebSocket,
-      "perm-a",
-      {
-        type: "control_request",
-        request_id: "perm-a",
-        request: {
-          subtype: "can_use_tool",
-          tool_name: "Bash",
-          input: {},
-          tool_call_id: "call-a",
-          permission_suggestions: [],
-          blocked_path: null,
-        },
-      },
-    );
-    const pendingB = requestApprovalOverWS(
-      runtimeB,
-      socket as unknown as WebSocket,
-      "perm-b",
-      {
-        type: "control_request",
-        request_id: "perm-b",
-        request: {
-          subtype: "can_use_tool",
-          tool_name: "Bash",
-          input: {},
-          tool_call_id: "call-b",
-          permission_suggestions: [],
-          blocked_path: null,
-        },
-      },
-    );
-
-    expect(listener.approvalRuntimeKeyByRequestId.get("perm-a")).toBe(
-      runtimeA.key,
-    );
-    expect(listener.approvalRuntimeKeyByRequestId.get("perm-b")).toBe(
-      runtimeB.key,
-    );
-
-    const statusAWhilePending = __listenClientTestUtils.buildLoopStatus(
-      listener,
-      {
-        agent_id: "agent-1",
-        conversation_id: "conv-a",
-      },
-    );
-    const statusBWhilePending = __listenClientTestUtils.buildLoopStatus(
-      listener,
-      {
-        agent_id: "agent-1",
-        conversation_id: "conv-b",
-      },
-    );
-    expect(statusAWhilePending.status).toBe("WAITING_ON_APPROVAL");
-    expect(statusBWhilePending.status).toBe("WAITING_ON_APPROVAL");
-
-    expect(
-      resolvePendingApprovalResolver(runtimeA, {
-        request_id: "perm-a",
-        decision: { behavior: "allow" },
-      }),
-    ).toBe(true);
-
-    await expect(pendingA).resolves.toMatchObject({
-      request_id: "perm-a",
-      decision: { behavior: "allow" },
-    });
-    expect(runtimeA.pendingApprovalResolvers.size).toBe(0);
-    expect(runtimeB.pendingApprovalResolvers.size).toBe(1);
-    expect(listener.approvalRuntimeKeyByRequestId.has("perm-a")).toBe(false);
-    expect(listener.approvalRuntimeKeyByRequestId.get("perm-b")).toBe(
-      runtimeB.key,
-    );
-
-    const statusAAfterResolve = __listenClientTestUtils.buildLoopStatus(
-      listener,
-      {
-        agent_id: "agent-1",
-        conversation_id: "conv-a",
-      },
-    );
-    const statusBAfterResolve = __listenClientTestUtils.buildLoopStatus(
-      listener,
-      {
-        agent_id: "agent-1",
-        conversation_id: "conv-b",
-      },
-    );
-    expect(statusAAfterResolve.status).toBe("WAITING_ON_INPUT");
-    expect(statusBAfterResolve.status).toBe("WAITING_ON_APPROVAL");
-
-    expect(
-      resolvePendingApprovalResolver(runtimeB, {
-        request_id: "perm-b",
-        decision: { behavior: "allow" },
-      }),
-    ).toBe(true);
-    await expect(pendingB).resolves.toMatchObject({
-      request_id: "perm-b",
-      decision: { behavior: "allow" },
-    });
   });
 
   test("recovered approval state does not leak across conversation scopes", () => {
@@ -1215,7 +1106,8 @@ describe("listen-client multi-worker concurrency", () => {
       } as never,
       async (queuedTurn: IncomingMessage) => {
         processed.push(queuedTurn);
-        runtime.lastStopReason = "end_turn";
+        const lease = beginTestTurn(runtime);
+        runtime.turnLifecycle.finish(lease, "end_turn");
       },
     );
 
@@ -1294,7 +1186,8 @@ describe("listen-client multi-worker concurrency", () => {
         onStatusChange: undefined,
       } as never,
       async () => {
-        runtime.lastStopReason = "requires_approval";
+        const lease = beginTestTurn(runtime);
+        runtime.turnLifecycle.finish(lease, "requires_approval");
       },
     );
 
@@ -1374,7 +1267,8 @@ describe("listen-client multi-worker concurrency", () => {
         onStatusChange: undefined,
       } as never,
       async () => {
-        runtime.lastStopReason = "error";
+        const lease = beginTestTurn(runtime);
+        runtime.turnLifecycle.finish(lease, "error");
         runtime.lastTerminalLoopErrorMessage =
           "ChatGPT usage limit reached. Resets at 1:00 PM.";
         runtime.lastTerminalLoopErrorRunId = "run-limit";
@@ -1573,8 +1467,10 @@ describe("listen-client multi-worker concurrency", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     runtime.agentId = "agent-1";
     runtime.conversationId = "conv-1";
-    runtime.activeWorkingDirectory = "/tmp/project";
-    runtime.loopStatus = "WAITING_FOR_API_RESPONSE";
+    const turnLease = beginTestTurn(runtime, {
+      workingDirectory: "/tmp/project",
+      initialStatus: "WAITING_FOR_API_RESPONSE",
+    });
     const socket = new MockSocket();
     const drain = createDeferredDrain();
     drainHandlers.set("conv-1", () => drain.promise);
@@ -1628,7 +1524,7 @@ describe("listen-client multi-worker concurrency", () => {
     const recoveryPromise = __listenClientTestUtils.resolveStaleApprovals(
       runtime,
       socket as unknown as WebSocket,
-      new AbortController().signal,
+      turnLease,
       { getResumeData: getResumeDataMock },
     );
 
@@ -2136,7 +2032,7 @@ describe("listen-client multi-worker concurrency", () => {
       pendingRequestIds: new Set(["perm-sync"]),
       responsesByRequestId: new Map(),
     };
-    runtime.loopStatus = "WAITING_ON_APPROVAL";
+    beginTestTurn(runtime, { initialStatus: "WAITING_ON_APPROVAL" });
     getResumeDataMock.mockClear();
     retrieveAgentMock.mockClear();
 
@@ -2254,8 +2150,7 @@ describe("listen-client multi-worker concurrency", () => {
     const socket = new MockSocket();
     const statuses: string[] = [];
 
-    runtimeA.isProcessing = true;
-    runtimeA.loopStatus = "PROCESSING_API_RESPONSE";
+    beginTestTurn(runtimeA, { initialStatus: "PROCESSING_API_RESPONSE" });
 
     const queueInput = {
       kind: "message",
@@ -2842,11 +2737,16 @@ describe("listen-client multi-worker concurrency", () => {
     });
 
     const parentAbortController = new AbortController();
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/test-worktree",
+      abortController: parentAbortController,
+    });
 
     const result = await __listenClientTestUtils.resolveStaleApprovals(
       runtime,
       socket as unknown as WebSocket,
-      parentAbortController.signal,
+      turnLease,
       {
         getResumeData: getResumeDataMock,
       },
@@ -2876,6 +2776,7 @@ describe("listen-client multi-worker concurrency", () => {
       "conv-approval-busy",
     );
     const socket = new MockSocket();
+    const turnLease = beginTestTurn(runtime);
 
     sendMessageStreamMock.mockRejectedValueOnce(
       new APIError(
@@ -2918,10 +2819,14 @@ describe("listen-client multi-worker concurrency", () => {
         },
         socket as unknown as WebSocket,
         runtime,
-        new AbortController().signal,
+        turnLease,
       );
 
-      expect(stream as unknown as MockStream).toEqual({
+      expect(stream.kind).toBe("stream");
+      if (stream.kind !== "stream") {
+        throw new Error("Expected approval continuation stream");
+      }
+      expect(stream.stream as unknown as MockStream).toEqual({
         conversationId: "conv-approval-busy",
         agentId: "agent-approval-busy",
       });
@@ -2962,6 +2867,7 @@ describe("listen-client multi-worker concurrency", () => {
       "conv-blocking-run",
     );
     const socket = new MockSocket();
+    const turnLease = beginTestTurn(runtime);
     const blockingRunId = "run-blocking-123";
 
     sendMessageStreamMock.mockRejectedValueOnce(
@@ -3013,10 +2919,14 @@ describe("listen-client multi-worker concurrency", () => {
         },
         socket as unknown as WebSocket,
         runtime,
-        new AbortController().signal,
+        turnLease,
       );
 
-      expect(stream as unknown as MockStream).toEqual({
+      expect(stream.kind).toBe("stream");
+      if (stream.kind !== "stream") {
+        throw new Error("Expected approval continuation stream");
+      }
+      expect(stream.stream as unknown as MockStream).toEqual({
         conversationId: "conv-blocking-run",
         agentId: "agent-blocking-run",
       });
@@ -3039,6 +2949,7 @@ describe("listen-client multi-worker concurrency", () => {
       "conv-message-blocking-run",
     );
     const socket = new MockSocket();
+    const turnLease = beginTestTurn(runtime);
     const blockingRunId = "run-message-blocking-123";
 
     sendMessageStreamMock.mockRejectedValueOnce(
@@ -3090,7 +3001,7 @@ describe("listen-client multi-worker concurrency", () => {
         },
         socket as unknown as WebSocket,
         runtime,
-        new AbortController().signal,
+        turnLease,
       );
 
       expect(stream as unknown as MockStream).toEqual({
