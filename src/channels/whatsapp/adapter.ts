@@ -216,6 +216,14 @@ export function createWhatsAppAdapter(
   const sentMessageIds = new Set<string>();
   const seenMessageIds = new Set<string>();
   const lidToJid = new Map<string, string>();
+  // Reverse map: phone JID → LID, used so sendPresenceUpdate can target the
+  // LID (the protocol-level chat identity) when the conversation is LID-routed.
+  // Baileys' sendPresenceUpdate checks `server === 'lid'` on the toJid to
+  // decide whether to set `from: me.lid` vs `from: me.id`.  If we pass a phone
+  // JID for a conversation that is actually LID-routed, WhatsApp silently drops
+  // the presence update.  sendMessage works either way because relayMessage
+  // re-encodes the JID internally.
+  const jidToLid = new Map<string, string>();
   const messageStore = new Map<string, unknown>();
 
   // Inbound debouncer: batches back-to-back messages into a single dispatch.
@@ -410,6 +418,7 @@ export function createWhatsAppAdapter(
       });
       if (resolved) {
         lidToJid.set(normalizedRemote, resolved);
+        jidToLid.set(resolved, normalizedRemote);
         return resolved;
       }
     }
@@ -637,7 +646,8 @@ export function createWhatsAppAdapter(
       }
       try {
         if (account.waitingBehavior === "typing_indicator") {
-          await sock?.sendPresenceUpdate?.("composing", targetJid);
+          const presenceJid = resolvePresenceJid(targetJid, jidToLid);
+          await sock?.sendPresenceUpdate?.("composing", presenceJid);
         }
         // "off" (default): no presence update
         // "message": reserved for future liveness integration
@@ -762,4 +772,23 @@ export function resolveWhatsAppAccountDisplayName(
 
 export function getWhatsAppAuthPath(accountId: string): string {
   return getWhatsAppAuthDir(accountId);
+}
+
+/**
+ * Given a resolved (phone) target JID and a reverse LID map, return the JID
+ * to use for sendPresenceUpdate.
+ *
+ * For LID-routed conversations, the chat-state subscription lives on the LID.
+ * Passing the phone JID to Baileys' sendPresenceUpdate causes WhatsApp to
+ * silently drop the presence update because it sets `from: me.id` (phone)
+ * instead of `from: me.lid`, and the server can't match the chat state.
+ *
+ * If a LID exists in the reverse map for this phone JID, prefer it.
+ * Otherwise fall back to the phone JID (non-LID conversations work fine).
+ */
+export function resolvePresenceJid(
+  targetJid: string,
+  jidToLid: Map<string, string>,
+): string {
+  return jidToLid.get(targetJid) ?? targetJid;
 }
