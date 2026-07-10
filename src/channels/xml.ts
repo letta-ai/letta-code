@@ -79,6 +79,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
       lines.length - 2,
       0,
       'On Slack, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media.',
+      'For Slack requests that require nontrivial work or several tool calls, send a short MessageChannel action="send" acknowledgement before starting other tools. This gives the Slack user verbal acknowledgement and a View in web link. Do not do this for no-ops, reaction-only responses, or simple no-tool answers.',
     );
   }
   if (msg.channel === "telegram") {
