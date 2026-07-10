@@ -9,9 +9,11 @@ import {
   buildSubagentArgs,
   buildSubagentPrompt,
   recallPromptForBackend,
+} from "@/agent/subagents/manager";
+import {
   resolveSubagentLauncher,
   resolveSubagentWorkingDirectory,
-} from "@/agent/subagents/manager";
+} from "@/agent/subagents/subagent-launcher";
 import {
   getModelHandleFromAgent,
   resolveSubagentModel,
