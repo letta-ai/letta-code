@@ -16,10 +16,7 @@ import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
-import {
-  mapModelHandleToLlmConfigPatch,
-  resolveModelHandleFromLlmConfig,
-} from "@/agent/model";
+import { LETTA_CODE_SUBAGENT_TAG } from "@/agent/agent-tags";
 import type {
   AgentCreateBody,
   AgentListBody,
@@ -56,6 +53,14 @@ import {
   withProjectedMessageDates,
 } from "./local-message-projection";
 import {
+  localLlmConfigModelPatch,
+  modelHandleFromLegacyLlmConfig,
+  normalizeLocalModelHandle,
+  normalizeStoredLocalModelRecord,
+  supportedConversationModelSettingsFromBody,
+  supportedModelSettingsFromBody,
+} from "./local-model-normalization";
+import {
   getAttachedLocalMessage,
   isLocalStateChunkOnly,
 } from "./local-stream-chunks";
@@ -76,7 +81,6 @@ const LEGACY_LOCAL_CONTEXT_WINDOW_LIMIT = 128000;
 const DEFAULT_LOCAL_CONVERSATION_ID_PREFIX = "local-conv-";
 const DEFAULT_LOCAL_STORED_MESSAGE_ID_PREFIX = "letta-msg-";
 const DEFAULT_LOCAL_UI_MESSAGE_ID_PREFIX = "ui-msg-";
-const LETTA_CODE_SUBAGENT_TAG = "role:subagent";
 
 function isStringArray(value: unknown): value is string[] {
   return (
@@ -127,68 +131,6 @@ function optionalString(value: unknown): string | undefined {
 
 function optionalStringOrNull(value: unknown): string | null | undefined {
   return typeof value === "string" || value === null ? value : undefined;
-}
-
-function supportedModelSettingsFromBody(
-  bodyRecord: Record<string, unknown>,
-): Record<string, unknown> {
-  const modelSettings = isRecord(bodyRecord.model_settings)
-    ? { ...bodyRecord.model_settings }
-    : {};
-
-  if (typeof bodyRecord.context_window_limit === "number") {
-    modelSettings.context_window_limit = bodyRecord.context_window_limit;
-  }
-  if (typeof bodyRecord.parallel_tool_calls === "boolean") {
-    modelSettings.parallel_tool_calls = bodyRecord.parallel_tool_calls;
-  }
-  if (
-    typeof bodyRecord.max_tokens === "number" ||
-    bodyRecord.max_tokens === null
-  ) {
-    modelSettings.max_tokens = bodyRecord.max_tokens;
-  }
-
-  return modelSettings;
-}
-
-function providerTypeFromModelSettings(
-  modelSettings: Record<string, unknown> | undefined,
-): string | null {
-  const providerType = modelSettings?.provider_type;
-  return typeof providerType === "string" && providerType.length > 0
-    ? providerType
-    : null;
-}
-
-function normalizeLocalModelHandle(
-  model: string,
-  modelSettings?: Record<string, unknown>,
-  legacyLlmConfig?: Record<string, unknown>,
-): string {
-  const providerType = providerTypeFromModelSettings(modelSettings);
-  const legacyEndpointType = legacyLlmConfig?.model_endpoint_type;
-  return (
-    resolveModelHandleFromLlmConfig({
-      model,
-      model_endpoint_type:
-        providerType ??
-        (typeof legacyEndpointType === "string" ? legacyEndpointType : null),
-    }) ?? model
-  );
-}
-
-function modelHandleFromLegacyLlmConfig(
-  legacyLlmConfig: Record<string, unknown>,
-): string | null {
-  const model = legacyLlmConfig.model;
-  if (typeof model !== "string") return null;
-  const modelEndpointType = legacyLlmConfig.model_endpoint_type;
-  return resolveModelHandleFromLlmConfig({
-    model,
-    model_endpoint_type:
-      typeof modelEndpointType === "string" ? modelEndpointType : null,
-  });
 }
 
 function createDefaultAgentRecord(
@@ -262,29 +204,6 @@ function optionalRecordOrNull(
 ): Record<string, unknown> | null | undefined {
   if (value === null) return null;
   return isRecord(value) ? { ...value } : undefined;
-}
-
-function conversationModelSettings(
-  value: unknown,
-): Record<string, unknown> | null | undefined {
-  return optionalRecordOrNull(value);
-}
-
-function supportedConversationModelSettingsFromBody(
-  bodyRecord: Record<string, unknown>,
-): Record<string, unknown> | null | undefined {
-  const modelSettings = conversationModelSettings(bodyRecord.model_settings);
-  if (modelSettings === null) return null;
-
-  const next = modelSettings ?? {};
-  if (
-    typeof bodyRecord.max_tokens === "number" ||
-    bodyRecord.max_tokens === null
-  ) {
-    next.max_tokens = bodyRecord.max_tokens;
-  }
-
-  return Object.keys(next).length > 0 ? next : modelSettings;
 }
 
 function createLocalConversationRecord(
@@ -376,22 +295,6 @@ function updateLocalConversationRecord(
   return next;
 }
 
-function normalizeStoredConversationRecord(
-  conversation: StoredConversation,
-): StoredConversation {
-  if (typeof conversation.model !== "string") return conversation;
-  const modelSettings = isRecord(conversation.model_settings)
-    ? conversation.model_settings
-    : {};
-  const normalizedModel = normalizeLocalModelHandle(
-    conversation.model,
-    modelSettings,
-  );
-  return normalizedModel === conversation.model
-    ? conversation
-    : { ...conversation, model: normalizedModel };
-}
-
 function normalizeAgentRecord(
   value: unknown,
   defaultAgentModel: string,
@@ -463,9 +366,9 @@ export function projectLocalAgentState(
       : typeof record.model_settings.enable_reasoner === "boolean"
         ? record.model_settings.enable_reasoner
         : undefined;
-  const llmConfigModelPatch = mapModelHandleToLlmConfigPatch(
+  const llmConfigModelPatch = localLlmConfigModelPatch(
     record.model,
-    providerTypeFromModelSettings(record.model_settings),
+    record.model_settings,
   );
   return {
     id: record.id,
@@ -3102,7 +3005,7 @@ export class LocalStore {
     const existing = this.conversations.get(key);
     if (existing && options.forceRefresh !== true) return existing;
 
-    const normalizedInput = normalizeStoredConversationRecord(input);
+    const normalizedInput = normalizeStoredLocalModelRecord(input);
     const timing = transcriptTimingForConversationDir(conversationDir);
     const requiresFullTimestampRepair =
       isSyntheticLocalTimestamp(normalizedInput.created_at) ||

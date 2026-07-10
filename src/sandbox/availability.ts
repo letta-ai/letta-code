@@ -51,14 +51,16 @@ export function resetSandboxAvailabilityCache(): void {
 }
 
 /**
- * Whether filesystem sandboxing is enabled. It is **on by default** now that the
- * kernel backends (Seatbelt + bwrap) are validated; set `LETTA_FS_SANDBOX=0`
- * (or `false`) to opt out. When no backend is available on the host,
- * {@link detectSandboxBackend} returns `{backend:null}` and every sandbox entry
- * point no-ops regardless of this flag.
+ * Whether the memory-subagent filesystem sandbox is enabled. It is **on by
+ * default**: memory subagents (reflection, memory, init, history-analyzer) run
+ * as whole confined processes with a scoped write surface, and there is no
+ * interactive approve/deny flow that could stand in for it. Set
+ * `LETTA_FS_SANDBOX=0` (or `false`) to opt out entirely. When no backend is
+ * available on the host, {@link detectSandboxBackend} returns `{backend:null}`
+ * and every sandbox entry point no-ops regardless of this flag.
  *
  * Lives in this leaf so both subagent spawning (agent layer) and parent Bash
- * wrapping (tools layer) gate on the same check without importing each other.
+ * wrapping (tools layer) gate on the same env var without importing each other.
  */
 export function isFsSandboxEnabled(
   env: NodeJS.ProcessEnv = process.env,
@@ -66,6 +68,29 @@ export function isFsSandboxEnabled(
   const value = env.LETTA_FS_SANDBOX?.trim().toLowerCase();
   // Default on: only an explicit off-switch disables it.
   return value !== "0" && value !== "false";
+}
+
+/**
+ * Whether the cross-agent shell sandbox (per-shell-command confinement of the
+ * agent process's spawned shells) is enabled. It is **off by default**: an
+ * interactive agent's own shells walling off other agents' memory broke
+ * legitimate workflows (agents inspecting `~/.letta/agents`) with kernel
+ * `Operation not permitted` errors that no permission mode could approve
+ * through. Set `LETTA_FS_SANDBOX=1` (or `true`) to opt in — recommended for
+ * multi-tenant deployments (app server, experiment runners) where one host
+ * runs many agents that must not read each other's memory.
+ *
+ * `LETTA_FS_SANDBOX` semantics across both checks:
+ *   - unset  → memory subagents sandboxed; agent shells unconfined
+ *   - `1`/`true`  → both sandboxed
+ *   - `0`/`false` → nothing sandboxed
+ */
+export function isShellSandboxEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const value = env.LETTA_FS_SANDBOX?.trim().toLowerCase();
+  // Opt-in only: an explicit on-switch enables it.
+  return value === "1" || value === "true";
 }
 
 /**

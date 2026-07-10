@@ -1,8 +1,6 @@
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import {
-  getModelInfoForLlmConfig,
-  normalizeKnownModelHandle,
-} from "@/agent/model";
+import { getModelInfoForLlmConfig } from "@/agent/model";
+import { normalizeKnownModelHandle } from "@/agent/model-handles";
 
 type CarryoverLlmConfig = LlmConfig & {
   enable_reasoner?: boolean | null;

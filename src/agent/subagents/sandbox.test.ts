@@ -11,6 +11,7 @@ import {
 } from "@/permissions/sandbox-policy";
 import {
   isFsSandboxEnabled,
+  isShellSandboxEnabled,
   type SandboxAvailability,
 } from "@/sandbox/availability";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
@@ -56,6 +57,19 @@ test("isFsSandboxEnabled is on by default and only an explicit off-switch disabl
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "0" })).toBe(false);
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "false" })).toBe(false);
   expect(isFsSandboxEnabled({ LETTA_FS_SANDBOX: "FALSE" })).toBe(false);
+});
+
+test("isShellSandboxEnabled is off by default and only an explicit on-switch enables it", () => {
+  // Default off (unset / empty): only memory subagents are sandboxed.
+  expect(isShellSandboxEnabled({})).toBe(false);
+  expect(isShellSandboxEnabled({ LETTA_FS_SANDBOX: "" })).toBe(false);
+  // Explicit off values stay off.
+  expect(isShellSandboxEnabled({ LETTA_FS_SANDBOX: "0" })).toBe(false);
+  expect(isShellSandboxEnabled({ LETTA_FS_SANDBOX: "false" })).toBe(false);
+  // Only the on-switch turns it on.
+  expect(isShellSandboxEnabled({ LETTA_FS_SANDBOX: "1" })).toBe(true);
+  expect(isShellSandboxEnabled({ LETTA_FS_SANDBOX: "true" })).toBe(true);
+  expect(isShellSandboxEnabled({ LETTA_FS_SANDBOX: "TRUE" })).toBe(true);
 });
 
 test("wraps an API subagent with the memory-subagent profile under the backend", () => {
@@ -132,4 +146,29 @@ test("returns null when there are no memory roots to scope to", () => {
       inheritedPrimaryRoot: null,
     }),
   ).toBeNull();
+});
+
+test("memoryScope confines a reflection subagent to an exact worktree plus git metadata", () => {
+  const result = wrapSubagentLauncher({
+    ...baseInput(),
+    memoryScope: {
+      primaryRoot: "/home/u/.letta/agents/parent/memory-worktrees/reflection-1",
+      writableRoots: [
+        "/home/u/.letta/agents/parent/memory-worktrees/reflection-1",
+        "/home/u/.letta/agents/parent/memory/.git",
+      ],
+      readonlyRoots: ["/home/u/.letta/agents/parent"],
+    },
+  });
+
+  expect(result).not.toBeNull();
+  expect(defineValues(result?.args ?? [], "-DWRITABLE_")).toEqual([
+    `0=${canonicalizeRoot("/home/u/.letta/agents/parent/memory-worktrees/reflection-1")}`,
+    `1=${canonicalizeRoot("/home/u/.letta/agents/parent/memory/.git")}`,
+  ]);
+  expect(
+    defineValues(result?.args ?? [], "-DREADONLY_").map((value) =>
+      value.replace(/^\d+=/, ""),
+    ),
+  ).toContain(canonicalizeRoot("/home/u/.letta/agents/parent"));
 });

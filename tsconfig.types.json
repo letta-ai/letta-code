@@ -10,6 +10,10 @@
   "include": [
     "src/types/protocol.ts",
     "src/types/app-server-protocol.ts",
-    "src/app-server-client.ts"
+    "src/app-server-client.ts",
+    "src/agent-presets.ts",
+    "src/types/md.d.ts",
+    "src/types/mdx.d.ts",
+    "src/types/txt.d.ts"
   ]
 }

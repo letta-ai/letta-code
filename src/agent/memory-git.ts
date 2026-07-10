@@ -29,13 +29,13 @@ import {
   getMemfsGitProxyRewriteConfig,
   getMemfsServerUrl,
 } from "@/backend/api/memfs-git-proxy";
+import { apiRequest } from "@/backend/api/request";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getUtf16Bom } from "@/utils/text-files";
+import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 
 const execFile = promisify(execFileCb);
-
-export const GIT_MEMORY_ENABLED_TAG = "git-memory-enabled";
 
 const RETRYABLE_GIT_HTTP_ERROR_RE =
   /(?:\bHTTP\s+(?:520|521|522|523|524)\b|The requested URL returned error:\s*(?:520|521|522|523|524))/i;
@@ -232,6 +232,128 @@ export function getGitRemoteUrl(agentId: string, baseUrl?: string): string {
     .trim()
     .replace(/\/+$/, "");
   return `${resolvedBaseUrl}/v1/git/${agentId}/state.git`;
+}
+
+export function getRepositoryRemoteUrl(
+  agentId: string,
+  repositoryName: string,
+  baseUrl?: string,
+): string {
+  const resolvedBaseUrl = (baseUrl ?? getMemfsServerUrl())
+    .trim()
+    .replace(/\/+$/, "");
+  return `${resolvedBaseUrl}/v1/git/${agentId}/repositories/${encodeURIComponent(repositoryName)}.git`;
+}
+
+export function getRepositoryMountDir(
+  agentId: string,
+  repositoryName: string,
+): string {
+  return join(dirname(getMemoryRepoDir(agentId)), repositoryName);
+}
+
+function validateAgentRepositoryName(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    throw new Error("repository name is required");
+  }
+  if (trimmed !== name) {
+    throw new Error(
+      "repository name cannot have leading or trailing whitespace",
+    );
+  }
+  if (trimmed === "." || trimmed === "..") {
+    throw new Error("invalid repository name");
+  }
+  if (trimmed.toLowerCase() === "memory") {
+    throw new Error("'memory' is reserved");
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(trimmed)) {
+    throw new Error(
+      "repository name can only contain letters, numbers, dots, underscores, and hyphens",
+    );
+  }
+  if (trimmed.length > 64) {
+    throw new Error("repository name is too long");
+  }
+  return trimmed;
+}
+
+async function maybeUpdateRepositoryRemoteOrigin(args: {
+  directory: string;
+  remoteUrl: string;
+}): Promise<void> {
+  const expectedOrigin = normalizeRemoteUrl(args.remoteUrl);
+  let currentOrigin = "";
+  try {
+    const { stdout } = await runGit(args.directory, [
+      "remote",
+      "get-url",
+      "origin",
+    ]);
+    currentOrigin = stdout.trim();
+  } catch {
+    await runGit(args.directory, ["remote", "add", "origin", expectedOrigin]);
+    return;
+  }
+
+  if (normalizeRemoteUrl(currentOrigin) !== expectedOrigin) {
+    await runGit(args.directory, [
+      "remote",
+      "set-url",
+      "origin",
+      expectedOrigin,
+    ]);
+  }
+}
+
+async function prepareAttachedRepositoryForGitOps(args: {
+  agentId: string;
+  repositoryName: string;
+  directory: string;
+  remoteUrl: string;
+  token: string;
+}): Promise<void> {
+  await maybeUpdateRepositoryRemoteOrigin(args);
+  await configureLocalCredentialHelper(args.directory, args.token);
+  await ensureLocalMemfsGitConfig(args.directory, args.agentId);
+}
+
+async function cloneRepositoryMount(args: {
+  agentId: string;
+  repositoryName: string;
+  directory: string;
+  remoteUrl: string;
+  token: string;
+}): Promise<void> {
+  if (!existsSync(args.directory)) {
+    mkdirSync(args.directory, { recursive: true });
+    try {
+      await runGitWithRetry(
+        args.directory,
+        ["clone", args.remoteUrl, "."],
+        args.token,
+        {
+          operation: `clone repository ${args.repositoryName}`,
+          timeoutMs: GIT_CLONE_TIMEOUT_MS,
+        },
+      );
+    } catch (err) {
+      rmSync(args.directory, { recursive: true, force: true });
+      throw err;
+    }
+  } else if (!existsSync(join(args.directory, ".git"))) {
+    throw new Error(
+      `repository mount path already exists and is not a git repository: ${args.directory}`,
+    );
+  } else {
+    await prepareAttachedRepositoryForGitOps(args);
+    await runGitWithRetry(args.directory, ["pull", "--ff-only"], args.token, {
+      operation: `pull repository ${args.repositoryName}`,
+    });
+  }
+
+  await prepareAttachedRepositoryForGitOps(args);
 }
 
 /**
@@ -842,6 +964,9 @@ url=$(git config --local --get letta.memoryRepository.url 2>/dev/null)
 [ -z "$url" ] && exit 0
 branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null) || exit 0
 [ -z "$branch" ] && exit 0
+# Reflection and other harness worktrees commit on temporary branches; only the
+# main MemFS checkout should push to the optional memory repository remote.
+[ "$branch" != "main" ] && exit 0
 log="$(git rev-parse --git-dir)/memory-repository-push.log"
 (
   {
@@ -1562,6 +1687,126 @@ export async function initializeLocalMemoryRepo(
   ]);
 }
 
+interface AgentRepositoryResponse {
+  repositories: Array<{
+    id: string;
+    name: string;
+    is_primary: boolean;
+  }>;
+}
+
+export interface AttachedAgentRepository {
+  id: string;
+  name: string;
+}
+
+export interface SyncAgentRepositoriesResult {
+  mounted: number;
+  skipped: number;
+  failed: number;
+  summaries: string[];
+}
+
+async function listAttachedAgentRepositories(
+  agentId: string,
+): Promise<AttachedAgentRepository[]> {
+  const response = await apiRequest<AgentRepositoryResponse>(
+    "GET",
+    `/v1/agents/${encodeURIComponent(agentId)}/repositories`,
+  );
+  return response.repositories
+    .filter(
+      (repository) => !repository.is_primary && repository.name !== "memory",
+    )
+    .map((repository) => ({
+      id: repository.id,
+      name: repository.name,
+    }));
+}
+
+async function syncAttachedRepository(args: {
+  agentId: string;
+  repositoryName: string;
+  token: string;
+}): Promise<string> {
+  const repositoryName = validateAgentRepositoryName(args.repositoryName);
+  const directory = getRepositoryMountDir(args.agentId, repositoryName);
+  const remoteUrl = getRepositoryRemoteUrl(args.agentId, repositoryName);
+
+  await cloneRepositoryMount({
+    agentId: args.agentId,
+    repositoryName,
+    directory,
+    remoteUrl,
+    token: args.token,
+  });
+  return `${repositoryName}: ${directory}`;
+}
+
+export async function syncAttachedAgentRepositories(
+  agentId: string,
+): Promise<SyncAgentRepositoriesResult> {
+  let repositories: Awaited<ReturnType<typeof listAttachedAgentRepositories>>;
+  try {
+    repositories = await listAttachedAgentRepositories(agentId);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    debugWarn(
+      "memfs-git",
+      `Failed to list attached repositories for ${agentId}: ${message}`,
+    );
+    return {
+      mounted: 0,
+      skipped: 0,
+      failed: 1,
+      summaries: [`Failed to list attached repositories: ${message}`],
+    };
+  }
+
+  if (repositories.length === 0) {
+    return { mounted: 0, skipped: 0, failed: 0, summaries: [] };
+  }
+
+  const token = await getAuthToken();
+  const results = await Promise.allSettled(
+    repositories.map((repository) =>
+      syncAttachedRepository({
+        agentId,
+        repositoryName: repository.name,
+        token,
+      }),
+    ),
+  );
+
+  const summaries: string[] = [];
+  let mounted = 0;
+  let failed = 0;
+
+  for (let index = 0; index < results.length; index += 1) {
+    const repository = repositories[index];
+    if (!repository) continue;
+    const result = results[index];
+    if (!result) continue;
+    if (result.status === "fulfilled") {
+      mounted += 1;
+      summaries.push(result.value);
+    } else {
+      failed += 1;
+      const message =
+        result.reason instanceof Error
+          ? result.reason.message
+          : String(result.reason);
+      summaries.push(`${repository.name}: failed: ${message}`);
+      debugWarn(
+        "memfs-git",
+        `Failed to sync attached repository ${repository.name}: ${message}`,
+      );
+    }
+  }
+
+  return { mounted, skipped: 0, failed, summaries };
+}
+
 /**
  * Clone the agent's state repo into the memory directory.
  *
@@ -1636,6 +1881,8 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
 
   // Set canonical local git identity (letta.agentId, user.email, user.name)
   await ensureLocalMemfsGitConfig(dir, agentId);
+
+  await syncAttachedAgentRepositories(agentId);
 }
 
 /**
@@ -1670,6 +1917,7 @@ export async function pullMemory(
     );
     const output = stdout + stderr;
     const updated = !output.includes("Already up to date");
+    await syncAttachedAgentRepositories(agentId);
     return {
       updated,
       summary: updated ? output.trim() : "Already up to date",
@@ -1677,9 +1925,11 @@ export async function pullMemory(
   } catch {
     if (!(await hasMergeBaseWithUpstream(dir))) {
       try {
+        const summary = await recoverMemoryPullByResettingToRemote(dir, token);
+        await syncAttachedAgentRepositories(agentId);
         return {
           updated: true,
-          summary: await recoverMemoryPullByResettingToRemote(dir, token),
+          summary,
         };
       } catch (recoverErr) {
         const recoverMsg =
@@ -1700,13 +1950,19 @@ export async function pullMemory(
         token,
         { operation: "pull --rebase" },
       );
+      await syncAttachedAgentRepositories(agentId);
       return { updated: true, summary: (stdout + stderr).trim() };
     } catch (rebaseErr) {
       if (isRecoverableMemoryPullHistoryError(rebaseErr)) {
         try {
+          const summary = await recoverMemoryPullByResettingToRemote(
+            dir,
+            token,
+          );
+          await syncAttachedAgentRepositories(agentId);
           return {
             updated: true,
-            summary: await recoverMemoryPullByResettingToRemote(dir, token),
+            summary,
           };
         } catch (recoverErr) {
           const recoverMsg =
@@ -1780,11 +2036,9 @@ export async function getMemoryGitStatus(
 ): Promise<MemoryGitStatus> {
   const dir = getScopedMemoryFilesystemRoot(agentId);
 
-  // Check for uncommitted changes
   const { stdout: statusOut } = await runGit(dir, ["status", "--porcelain"]);
   const dirty = statusOut.trim().length > 0;
 
-  // Check if local is ahead of remote
   let aheadOfRemote = false;
   try {
     const { stdout: revListOut } = await runGit(dir, [
@@ -1792,20 +2046,18 @@ export async function getMemoryGitStatus(
       "--count",
       "@{u}..HEAD",
     ]);
-    const aheadCount = parseInt(revListOut.trim(), 10);
-    aheadOfRemote = aheadCount > 0;
+    aheadOfRemote = (Number.parseInt(revListOut.trim(), 10) || 0) > 0;
   } catch {
-    // No upstream configured or other error - ignore
+    aheadOfRemote = false;
   }
 
-  // Build summary
   const parts: string[] = [];
   if (dirty) {
     const changedFiles = statusOut
       .trim()
       .split("\n")
-      .filter((l) => l.trim())
-      .map((l) => l.trim());
+      .filter((line) => line.trim())
+      .map((line) => line.trim());
     parts.push(`${changedFiles.length} uncommitted change(s)`);
   }
   if (aheadOfRemote) {
@@ -2050,7 +2302,12 @@ export async function addGitMemoryTag(
   try {
     const { getBackend } = await import("@/backend");
     const backend = getBackend();
-    const agent = prefetchedAgent ?? (await backend.retrieveAgent(agentId));
+    // Always request tags explicitly: without `include: ["agent.tags"]` the
+    // API can omit tags, and writing back an incomplete list would wipe the
+    // agent's other tags.
+    const agent =
+      prefetchedAgent ??
+      (await backend.retrieveAgent(agentId, { include: ["agent.tags"] }));
     const tags = agent.tags || [];
     if (!tags.includes(GIT_MEMORY_ENABLED_TAG)) {
       await backend.updateAgent(agentId, {
@@ -2062,29 +2319,6 @@ export async function addGitMemoryTag(
     debugWarn(
       "memfs-git",
       `Failed to add git-memory tag: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-}
-
-/**
- * Remove the git-memory-enabled tag from an agent.
- */
-export async function removeGitMemoryTag(agentId: string): Promise<void> {
-  try {
-    const { getBackend } = await import("@/backend");
-    const backend = getBackend();
-    const agent = await backend.retrieveAgent(agentId);
-    const tags = agent.tags || [];
-    if (tags.includes(GIT_MEMORY_ENABLED_TAG)) {
-      await backend.updateAgent(agentId, {
-        tags: tags.filter((t) => t !== GIT_MEMORY_ENABLED_TAG),
-      });
-      debugLog("memfs-git", `Removed ${GIT_MEMORY_ENABLED_TAG} tag`);
-    }
-  } catch (err) {
-    debugWarn(
-      "memfs-git",
-      `Failed to remove git-memory tag: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 }

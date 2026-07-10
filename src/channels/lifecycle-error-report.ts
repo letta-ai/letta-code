@@ -41,8 +41,11 @@ function withDefinedValues(
 export function buildChannelLifecycleErrorReport(
   source: ChannelTurnSource,
   errorText: string | null | undefined,
+  options: { runId?: string | null } = {},
 ): ChannelLifecycleErrorReport {
-  const display = getChannelLifecycleErrorDisplay(errorText);
+  const display = getChannelLifecycleErrorDisplay(errorText, {
+    runId: options.runId,
+  });
   return {
     channel: source.channel,
     accountId: source.accountId,

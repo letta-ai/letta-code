@@ -1,3 +1,5 @@
+import { SYSTEM_REMINDER_OPEN } from "@/constants";
+
 /**
  * Task Notification Formatting
  *
@@ -89,6 +91,13 @@ export function extractTaskNotificationsForDisplay(message: string): {
     const xml = match[0];
     const summaryMatch = xml.match(/<summary>([\s\S]*?)<\/summary>/);
     const statusMatch = xml.match(/<status>([\s\S]*?)<\/status>/);
+    const resultMatch = xml.match(/<result>([\s\S]*?)<\/result>/);
+    const result = resultMatch?.[1]?.trim() || "";
+    const isAgentOnlyReminder = result.includes(SYSTEM_REMINDER_OPEN);
+    if (isAgentOnlyReminder) {
+      match = notificationRegex.exec(message);
+      continue;
+    }
     const status = statusMatch?.[1]?.trim();
     let summary = summaryMatch?.[1]?.trim() || "";
     summary = unescapeXml(summary);

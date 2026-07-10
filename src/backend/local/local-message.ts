@@ -3,7 +3,7 @@ import type {
   AssistantMessage,
   ImageContent,
   Message as PiMessage,
-  Provider,
+  ProviderId,
   TextContent,
   ThinkingContent,
   ToolCall,
@@ -63,7 +63,7 @@ export interface LocalAssistantMessage
   role: "assistant";
   content: (LocalTextContent | LocalThinkingContent | LocalToolCall)[];
   api: Api;
-  provider: Provider;
+  provider: ProviderId;
   model: string;
   usage: Usage;
   timestamp: number;

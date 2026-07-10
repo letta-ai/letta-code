@@ -1,12 +1,11 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import { getModelInfo, type ModelReasoningEffort } from "@/agent/model";
 import {
-  getModelInfo,
-  type ModelReasoningEffort,
   mapModelHandleToLlmConfigPatch,
   resolveModelHandleFromLlmConfig,
-} from "@/agent/model";
+} from "@/agent/model-handles";
 import { ERROR_FEEDBACK_HINT, PROVIDER_STATUS_PAGES } from "./constants";
 
 /**
@@ -35,7 +34,8 @@ export function deriveReasoningEffort(
         re === "low" ||
         re === "medium" ||
         re === "high" ||
-        re === "xhigh"
+        re === "xhigh" ||
+        re === "max"
       )
         return re;
     }

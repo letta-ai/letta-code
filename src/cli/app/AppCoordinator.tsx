@@ -31,7 +31,7 @@ import {
   getModelShortName,
   type ModelReasoningEffort,
 } from "@/agent/model";
-import type { PersonalityId } from "@/agent/personality";
+import type { PersonalityId } from "@/agent/personality-presets";
 import { shouldRecommendDefaultPrompt } from "@/agent/prompt-assets";
 import { reconcileExistingAgentState } from "@/agent/reconcile-existing-agent-state";
 import { recordSessionEnd } from "@/agent/session-history";
@@ -60,7 +60,6 @@ import {
 import type { BtwState } from "@/cli/components/BtwPane";
 import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
 import { TerminalTitleWriter } from "@/cli/components/TerminalTitleWriter";
-import { buildStatuslineRenderContext } from "@/cli/display/statusline/context";
 import {
   appendStreamingOutput,
   type Buffers,
@@ -71,6 +70,7 @@ import {
 import { isLocalAgentId } from "@/cli/helpers/app-urls";
 import { backfillBuffers } from "@/cli/helpers/backfill";
 import { chunkLog } from "@/cli/helpers/chunk-log";
+import { buildCliModContext } from "@/cli/helpers/cli-mod-context";
 import {
   createContextTracker,
   resetContextHistory,
@@ -83,6 +83,7 @@ import {
 } from "@/cli/helpers/conversation-title";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { setErrorContext } from "@/cli/helpers/error-context";
+import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { parsePatchOperations } from "@/cli/helpers/format-args-display";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -93,12 +94,22 @@ import {
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
 import {
+  buildReflectionArenaChoiceQuestions,
+  finalizeReflectionArenaChoice,
+  formatReflectionArenaDeferredMessage,
+  launchReflectionArena,
+  parseReflectionArenaChoiceAnswers,
+  REFLECTION_ARENA_MODEL_A_DEFAULT,
+  type ReflectionArenaChoiceQuestion,
+  sampleReflectionArenaComparisonModel,
+} from "@/cli/helpers/reflection-arena";
+import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
+  queuePendingReflectionWorktreeReminders,
 } from "@/cli/helpers/reflection-launcher";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
-import { buildStatusLinePayload } from "@/cli/helpers/status-line-payload";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   collectFinishedTaskToolCalls,
@@ -139,7 +150,6 @@ import {
   updateTask,
 } from "@/cron";
 import { experimentManager } from "@/experiments/manager";
-import { goalLoopMode } from "@/goal-loop-mode";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { type PermissionMode, permissionMode } from "@/permissions/mode";
@@ -148,7 +158,6 @@ import {
   isByokHandleForSelector,
   listProviders,
 } from "@/providers/byok-providers";
-import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import {
   type MessageQueueItem,
   QueueRuntime,
@@ -524,6 +533,11 @@ export function App({
     useState<{
       worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
     } | null>(null);
+  const [reflectionArenaChoicePending, setReflectionArenaChoicePending] =
+    useState<{
+      questions: ReflectionArenaChoiceQuestion[];
+      runId: string;
+    } | null>(null);
 
   // If we have approval requests, we should show the approval dialog instead of the input area
   const [pendingApprovals, setPendingApprovals] = useState<ApprovalRequest[]>(
@@ -620,11 +634,6 @@ export function App({
   // Use ref instead of state to avoid stale closure issues in onSubmit
   const bashCommandCacheRef = useRef<Array<{ input: string; output: string }>>(
     [],
-  );
-
-  // Track goal loop state for UI updates (singleton state does not trigger re-renders)
-  const [uiGoalLoopActive, setUiGoalLoopActive] = useState(
-    goalLoopMode.getState().isActive,
   );
 
   // Derive current approval from pending approvals and results
@@ -2294,15 +2303,17 @@ export function App({
 
   const sessionStatsSnapshot = sessionStatsRef.current.getSnapshot();
   const reflectionSettings = getReflectionSettings(agentId);
-  const statusLinePayload = buildStatusLinePayload({
+  const modContext = buildCliModContext({
     modelId: llmConfigRef.current?.model ?? null,
     modelDisplayName: currentModelDisplay,
+    modelProvider: currentModelProvider ?? null,
     reasoningEffort: currentReasoningEffort,
     systemPromptId: currentSystemPromptId,
     toolset: currentToolset,
     currentDirectory: process.cwd(),
     projectDirectory,
     sessionId: conversationId,
+    conversationSummary,
     agentId,
     agentName,
     lastRunId: lastRunIdRef.current,
@@ -2312,8 +2323,6 @@ export function App({
     totalOutputTokens: sessionStatsSnapshot.usage.completionTokens,
     contextWindowSize: effectiveContextWindowSize,
     usedContextTokens: contextTrackerRef.current.lastContextTokens,
-    stepCount: sessionStatsSnapshot.usage.stepCount,
-    turnCount: sharedReminderStateRef.current.turnCount,
     reflectionMode: reflectionSettings.trigger,
     reflectionStepCount: reflectionSettings.stepCount,
     memfsEnabled:
@@ -2328,41 +2337,13 @@ export function App({
     backgroundAgents: getActiveBackgroundAgents().map((a) => ({
       type: a.type,
       status: a.status,
-      duration_ms: Date.now() - a.startTime,
+      durationMs: Date.now() - a.startTime,
+      agentId: a.agentId ?? null,
     })),
   });
-  const modContext = useMemo(
-    () =>
-      buildStatuslineRenderContext({
-        payload: statusLinePayload,
-        ui: {
-          currentModelProvider: currentModelProvider ?? null,
-          goalStatusText: null,
-          hasTemporaryModelOverride: Boolean(hasTemporaryModelOverride),
-          isByokProvider: Boolean(
-            currentModelProvider?.startsWith("lc-") ||
-              currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
-          ),
-          isLocalBackend,
-          isOpenAICodexProvider:
-            currentModelProvider === OPENAI_CODEX_PROVIDER_NAME,
-          rightColumnWidth: Math.max(
-            28,
-            Math.min(72, Math.floor(chromeColumns * 0.45)),
-          ),
-        },
-      }),
-    [
-      chromeColumns,
-      currentModelProvider,
-      hasTemporaryModelOverride,
-      isLocalBackend,
-      statusLinePayload,
-    ],
-  );
   const agentModsDirectory =
-    statusLinePayload.memfs.enabled && statusLinePayload.memfs.memory_dir
-      ? join(statusLinePayload.memfs.memory_dir, "mods")
+    modContext.memfs.enabled && modContext.memfs.memoryDir
+      ? join(modContext.memfs.memoryDir, "mods")
       : null;
   const modAdapter = useLocalModAdapter(modContext, {
     agentModsDirectory,
@@ -2436,6 +2417,8 @@ export function App({
 
         if (t === "exec_command") {
           command = typeof args.cmd === "string" ? args.cmd : "(no command)";
+          description =
+            typeof args.description === "string" ? args.description : "";
         } else if (t === "write_stdin") {
           const sessionId =
             typeof args.session_id === "string" ||
@@ -3468,9 +3451,7 @@ export function App({
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
   const maybeCarryOverActiveConversationModel = useCallback(
     async (targetConversationId: string) => {
-      if (!hasConversationModelOverrideRef.current) {
-        return;
-      }
+      if (!hasConversationModelOverrideRef.current) return;
 
       const currentLlmConfig = llmConfigRef.current;
       const rawModelHandle =
@@ -3703,19 +3684,56 @@ export function App({
       return;
     }
     try {
+      const reflectionSettings = getReflectionSettings(reflectionAgentId);
       await maybeLaunchPostTurnReflection({
         agentId: reflectionAgentId,
         conversationId: conversationIdRef.current ?? "default",
         memfsEnabled: isActiveMemfsEnabled(reflectionAgentId),
-        reflectionSettings: getReflectionSettings(reflectionAgentId),
+        reflectionSettings,
         reminderState: sharedReminderStateRef.current,
         contextTracker: contextTrackerRef.current,
+        onCompaction: () =>
+          queuePendingReflectionWorktreeReminders({
+            agentId: reflectionAgentId,
+            conversationId: conversationIdRef.current ?? "default",
+          }),
         launch: async (triggerSource) => {
+          if (experimentManager.isEnabled("reflection_arena")) {
+            const arenaResult = await launchReflectionArena({
+              agentId: reflectionAgentId,
+              conversationId: conversationIdRef.current ?? "default",
+              triggerSource,
+              models: [
+                REFLECTION_ARENA_MODEL_A_DEFAULT,
+                sampleReflectionArenaComparisonModel(),
+              ],
+              feedbackContext: {
+                parentAgentName: agentName,
+                parentAgentDescription: agentDescription,
+                surface: "letta_code_tui",
+                model: currentModelId,
+              },
+              onReady: (message, readyRun) => {
+                appendTaskNotificationEvents([message]);
+                setReflectionArenaChoicePending({
+                  runId: readyRun.runId,
+                  questions: buildReflectionArenaChoiceQuestions(
+                    readyRun.runId,
+                  ),
+                });
+              },
+            });
+            return arenaResult.launched;
+          }
+
           const result = await launchReflectionSubagent({
             agentId: reflectionAgentId,
             conversationId: conversationIdRef.current ?? "default",
             memfsEnabled: isActiveMemfsEnabled(reflectionAgentId),
             triggerSource,
+            skipPendingWorktreeReminderScan:
+              triggerSource === "compaction-event",
+            reflectionSettings,
             description: AUTO_REFLECTION_DESCRIPTION,
             completionConversationId: () => conversationIdRef.current,
             recompileByConversation:
@@ -3823,7 +3841,6 @@ export function App({
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiGoalLoopActive,
     shouldAutoGenerateConversationTitleRef,
     syncTrajectoryElapsedBase,
     syncTrajectoryTokenBase,
@@ -4155,6 +4172,53 @@ export function App({
     setNeedsEagerApprovalCheck,
   });
 
+  const handleReflectionArenaChoiceSubmit = useCallback(
+    async (answers: Record<string, string>) => {
+      const pending = reflectionArenaChoicePending;
+      if (!pending) return;
+      setReflectionArenaChoicePending(null);
+      setCommandRunning(true);
+      try {
+        const answer = parseReflectionArenaChoiceAnswers(answers);
+        const { message } = await finalizeReflectionArenaChoice({
+          runId: pending.runId,
+          choice: answer.choice,
+          notes: answer.notes,
+          onHfUploadComplete: (message) => {
+            appendTaskNotificationEvents([message]);
+          },
+          recompileByConversation:
+            _systemPromptRecompileByConversationRef.current,
+          recompileQueuedByConversation:
+            _queuedSystemPromptRecompileByConversationRef.current,
+        });
+        appendTaskNotificationEvents([message]);
+      } catch (error) {
+        appendTaskNotificationEvents([
+          `Failed to record reflection arena choice: ${formatErrorDetails(error, agentId)}`,
+        ]);
+      } finally {
+        setCommandRunning(false);
+      }
+    },
+    [
+      reflectionArenaChoicePending,
+      setCommandRunning,
+      appendTaskNotificationEvents,
+      agentId,
+    ],
+  );
+
+  const handleReflectionArenaChoiceCancel = useCallback(() => {
+    const pending = reflectionArenaChoicePending;
+    setReflectionArenaChoicePending(null);
+    if (pending) {
+      appendTaskNotificationEvents([
+        formatReflectionArenaDeferredMessage(pending.runId),
+      ]);
+    }
+  }, [reflectionArenaChoicePending, appendTaskNotificationEvents]);
+
   const onSubmit = useSubmitHandler({
     abortControllerRef,
     agentDescription,
@@ -4237,6 +4301,7 @@ export function App({
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setProfileConfirmPending,
+    setReflectionArenaChoicePending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
     setSearchQuery,
@@ -4246,8 +4311,6 @@ export function App({
     setThinkingMessage,
     setTokenStreamingEnabled,
     setTrajectoryTokenBase,
-    setUiPermissionMode,
-    setUiGoalLoopActive,
     sharedReminderStateRef,
     shouldAutoGenerateConversationTitleRef,
     streaming,
@@ -4287,6 +4350,7 @@ export function App({
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
+      !reflectionArenaChoicePending &&
       !anySelectorOpen && // Don't dequeue while a selector/overlay is open
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
       !userCancelledRef.current && // Don't dequeue if user just cancelled
@@ -4366,6 +4430,7 @@ export function App({
     pendingApprovals,
     commandRunning,
     isExecutingTool,
+    reflectionArenaChoicePending,
     anySelectorOpen,
     dequeueEpoch,
     queuedOverlayAction,
@@ -4576,21 +4641,6 @@ export function App({
       setProfileConfirmPending(null);
     }
   }, [commandRunner, profileConfirmPending]);
-
-  // Handle goal loop exit from Input component (Shift+Tab).
-  const handleGoalLoopExit = useCallback(() => {
-    if (!goalLoopMode.getState().isActive) {
-      return;
-    }
-    goalLoopMode.deactivate();
-    setUiGoalLoopActive(false);
-    settingsManager.updateConversationGoalStatus(
-      conversationIdRef.current,
-      "paused",
-    );
-    permissionMode.setMode("standard");
-    setUiPermissionMode("standard");
-  }, [setUiPermissionMode]);
 
   // Toggle expand/collapse for a specific tool call ID
   const handleToggleExpandedToolCall = useCallback((id: string) => {
@@ -4804,15 +4854,14 @@ export function App({
       conversationSummary,
       conversationId,
       projectDirectory,
-      currentDirectory: statusLinePayload.workspace.current_dir,
+      currentDirectory: modContext.workspace.currentDir,
       runState: terminalTitleRunState,
       modelDisplayName: currentModelDisplay,
       reasoningEffort: currentReasoningEffort,
-      contextUsedPercentage: statusLinePayload.context_window.used_percentage,
-      contextRemainingPercentage:
-        statusLinePayload.context_window.remaining_percentage,
-      totalInputTokens: statusLinePayload.context_window.total_input_tokens,
-      totalOutputTokens: statusLinePayload.context_window.total_output_tokens,
+      contextUsedPercentage: modContext.contextWindow.usedPercentage,
+      contextRemainingPercentage: modContext.contextWindow.remainingPercentage,
+      totalInputTokens: modContext.contextWindow.totalInputTokens,
+      totalOutputTokens: modContext.contextWindow.totalOutputTokens,
       fastMode: currentModelServiceTier === CHATGPT_FAST_SERVICE_TIER,
     }),
     [
@@ -4822,12 +4871,12 @@ export function App({
       currentModelDisplay,
       currentModelServiceTier,
       currentReasoningEffort,
+      modContext.contextWindow.remainingPercentage,
+      modContext.contextWindow.totalInputTokens,
+      modContext.contextWindow.totalOutputTokens,
+      modContext.contextWindow.usedPercentage,
+      modContext.workspace.currentDir,
       projectDirectory,
-      statusLinePayload.context_window.remaining_percentage,
-      statusLinePayload.context_window.total_input_tokens,
-      statusLinePayload.context_window.total_output_tokens,
-      statusLinePayload.context_window.used_percentage,
-      statusLinePayload.workspace.current_dir,
       terminalTitleRunState,
     ],
   );
@@ -4942,8 +4991,20 @@ export function App({
     trajectoryTokenDisplayRef.current,
   );
   const inputVisible = !showExitStats;
+  const reflectionArenaChoiceVisible = Boolean(
+    reflectionArenaChoicePending &&
+      !showExitStats &&
+      !streaming &&
+      !commandRunning &&
+      !isExecutingTool &&
+      pendingApprovals.length === 0 &&
+      !anySelectorOpen,
+  );
   const inputEnabled =
-    !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
+    !showExitStats &&
+    pendingApprovals.length === 0 &&
+    !reflectionArenaChoiceVisible &&
+    !anySelectorOpen;
   const onEscapeCommandCancel = useCallback(() => {
     if (isActiveConnectOperationCancellable()) {
       cancelActiveConnectOperation();
@@ -4976,7 +5037,9 @@ export function App({
         titleData={terminalTitleData}
         shouldAnimate={shouldAnimate}
         hasActiveProgress={terminalTitleTaskRunning}
-        requiresAction={pendingApprovals.length > 0}
+        requiresAction={
+          pendingApprovals.length > 0 || reflectionArenaChoiceVisible
+        }
         previewTitle={terminalTitlePreviewOverride}
       />
       <AppView
@@ -5007,7 +5070,6 @@ export function App({
         currentModelId={currentModelId}
         currentModelServiceTier={currentModelServiceTier}
         currentModelProvider={currentModelProvider}
-        isLocalBackend={isLocalBackend}
         currentPersonalityId={currentPersonalityId}
         currentReasoningEffort={currentReasoningEffort}
         currentSystemPromptId={currentSystemPromptId}
@@ -5046,7 +5108,8 @@ export function App({
         handlePersonalitySelect={handlePersonalitySelect}
         handleProfileEscapeCancel={handleProfileEscapeCancel}
         handleQuestionSubmit={handleQuestionSubmit}
-        handleGoalLoopExit={handleGoalLoopExit}
+        handleReflectionArenaChoiceCancel={handleReflectionArenaChoiceCancel}
+        handleReflectionArenaChoiceSubmit={handleReflectionArenaChoiceSubmit}
         handleSleeptimeModeSelect={handleSleeptimeModeSelect}
         handleSystemPromptSelect={handleSystemPromptSelect}
         handleToolsetSelect={handleToolsetSelect}
@@ -5072,6 +5135,9 @@ export function App({
         onSubmit={onSubmit}
         pendingApprovals={pendingApprovals}
         pendingConversationSwitchRef={pendingConversationSwitchRef}
+        reflectionArenaChoicePending={
+          reflectionArenaChoiceVisible ? reflectionArenaChoicePending : null
+        }
         pendingIds={pendingIds}
         precomputedDiffsRef={precomputedDiffsRef}
         profileConfirmPending={profileConfirmPending}
@@ -5112,7 +5178,7 @@ export function App({
         openOverlay={openOverlay}
         staticItems={staticItems}
         staticRenderEpoch={staticRenderEpoch}
-        statusLinePayload={statusLinePayload}
+        modContext={modContext}
         statusLinePrompt={CLI_GLYPHS.prompt}
         terminalTitleData={terminalTitleData}
         onTitlePreview={setTerminalTitlePreviewOverride}
@@ -5125,7 +5191,6 @@ export function App({
         usedContextTokens={usedContextTokens}
         contextWindowSize={effectiveContextWindowSize}
         uiPermissionMode={uiPermissionMode}
-        uiGoalLoopActive={uiGoalLoopActive}
         updateAgentName={updateAgentName}
       />
     </>

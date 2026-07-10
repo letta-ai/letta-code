@@ -1,63 +1,57 @@
 import { describe, expect, test } from "bun:test";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
+import { TurnLifecycle } from "@/websocket/listener/turn-lifecycle";
 
-const allClear = {
-  loopStatus: "WAITING_ON_INPUT",
-  isProcessing: false,
-  pendingApprovalsLen: 0,
-  cancelRequested: false,
-  isRecoveringApprovals: false,
-} as const;
+function createLifecycle(): TurnLifecycle {
+  return new TurnLifecycle(() => "lease-1");
+}
 
 describe("getListenerBlockedReason", () => {
-  test("returns null when unblocked", () => {
-    expect(getListenerBlockedReason(allClear)).toBeNull();
+  test("returns null when idle", () => {
+    const lifecycle = createLifecycle();
+    expect(getListenerBlockedReason(lifecycle.snapshot(), 0)).toBeNull();
   });
 
-  test("prioritizes pending approvals", () => {
-    expect(
-      getListenerBlockedReason({ ...allClear, pendingApprovalsLen: 2 }),
-    ).toBe("pending_approvals");
+  test("maps pending approvals while otherwise idle", () => {
+    const lifecycle = createLifecycle();
+    expect(getListenerBlockedReason(lifecycle.snapshot(), 2)).toBe(
+      "pending_approvals",
+    );
   });
 
-  test("prioritizes interrupt over approval and streaming phases", () => {
-    expect(
-      getListenerBlockedReason({
-        ...allClear,
-        cancelRequested: true,
-        pendingApprovalsLen: 2,
-        loopStatus: "PROCESSING_API_RESPONSE",
-        isProcessing: true,
-      }),
-    ).toBe("interrupt_in_progress");
-  });
+  test("prioritizes cancellation over pending approvals", () => {
+    const lifecycle = createLifecycle();
+    lifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/worktree",
+    });
+    lifecycle.requestCancellation();
 
-  test("maps recoveries to runtime busy", () => {
-    expect(
-      getListenerBlockedReason({
-        ...allClear,
-        isRecoveringApprovals: true,
-        loopStatus: "EXECUTING_COMMAND",
-      }),
-    ).toBe("runtime_busy");
+    expect(getListenerBlockedReason(lifecycle.snapshot(), 2)).toBe(
+      "interrupt_in_progress",
+    );
   });
 
   test("maps waiting-on-approval phase to pending approvals", () => {
-    expect(
-      getListenerBlockedReason({
-        ...allClear,
-        loopStatus: "WAITING_ON_APPROVAL",
-      }),
-    ).toBe("pending_approvals");
+    const lifecycle = createLifecycle();
+    const lease = lifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/worktree",
+    });
+    lifecycle.setStatus(lease, "WAITING_ON_APPROVAL");
+
+    expect(getListenerBlockedReason(lifecycle.snapshot(), 0)).toBe(
+      "pending_approvals",
+    );
   });
 
   test("maps command execution to command_running", () => {
-    expect(
-      getListenerBlockedReason({
-        ...allClear,
-        loopStatus: "EXECUTING_COMMAND",
-      }),
-    ).toBe("command_running");
+    const lifecycle = createLifecycle();
+    lifecycle.startCommand();
+
+    expect(getListenerBlockedReason(lifecycle.snapshot(), 0)).toBe(
+      "command_running",
+    );
   });
 
   test.each([
@@ -66,21 +60,14 @@ describe("getListenerBlockedReason", () => {
     "WAITING_FOR_API_RESPONSE",
     "PROCESSING_API_RESPONSE",
     "EXECUTING_CLIENT_SIDE_TOOL",
-  ] as const)("maps %s to streaming", (loopStatus) => {
-    expect(
-      getListenerBlockedReason({
-        ...allClear,
-        loopStatus,
-      }),
-    ).toBe("streaming");
-  });
+  ] as const)("maps active %s to streaming", (loopStatus) => {
+    const lifecycle = createLifecycle();
+    lifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/worktree",
+      initialStatus: loopStatus,
+    });
 
-  test("falls back to runtime busy when processing without a specific phase", () => {
-    expect(
-      getListenerBlockedReason({
-        ...allClear,
-        isProcessing: true,
-      }),
-    ).toBe("runtime_busy");
+    expect(getListenerBlockedReason(lifecycle.snapshot(), 0)).toBe("streaming");
   });
 });

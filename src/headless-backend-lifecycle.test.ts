@@ -111,10 +111,10 @@ describe("headless backend lifecycle wiring", () => {
       "!backend.capabilities.remoteMemfs",
     );
     const promptUpdateIndex = source.indexOf("updateAgentSystemPromptMemfs");
-    const tagRemovalIndex = source.indexOf("removeGitMemoryTag");
+    const tagAddIndex = source.indexOf("addGitMemoryTag");
 
     expect(capabilityGuardIndex).toBeGreaterThan(-1);
     expect(promptUpdateIndex).toBeGreaterThan(capabilityGuardIndex);
-    expect(tagRemovalIndex).toBeGreaterThan(capabilityGuardIndex);
+    expect(tagAddIndex).toBeGreaterThan(capabilityGuardIndex);
   });
 });

@@ -706,7 +706,8 @@ Check if they're satisfied or want further refinement. Then commit and push memo
 cd $MEMORY_DIR
 git status                # Review what changed before staging
 git add <specific files>  # Stage targeted paths — avoid blind `git add -A`
-git commit --author="<AGENT_NAME> <<ACTUAL_AGENT_ID>@letta.com>" -m "feat(init): <summary> ✨
+author_name="${AGENT_NAME:-$AGENT_ID}"
+git commit --author="$author_name <$AGENT_ID@letta.com>" -m "feat(init): <summary> ✨
 
 <what was initialized and key decisions made>"
 

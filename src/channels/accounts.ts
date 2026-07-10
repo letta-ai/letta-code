@@ -57,7 +57,6 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   remove_stale_routes: "removeStaleRoutes",
   rich_draft_streaming: "richDraftStreaming",
   rich_private_chat_default: "richPrivateChatDefault",
-  show_completed_reaction: "showCompletedReaction",
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
@@ -321,8 +320,10 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
       DEFAULT_SLACK_PERMISSION_MODE;
     (next as SlackChannelAccount).transcribeVoice =
       (next as SlackChannelAccount).transcribeVoice === true;
-    (next as SlackChannelAccount).showCompletedReaction =
-      (next as SlackChannelAccount).showCompletedReaction !== false;
+    delete (next as unknown as Record<string, unknown>).show_completed_reaction;
+    delete (next as unknown as Record<string, unknown>).showCompletedReaction;
+    delete (next as unknown as Record<string, unknown>).progress_ui;
+    delete (next as unknown as Record<string, unknown>).progressUi;
     (next as SlackChannelAccount).listenMode =
       (next as SlackChannelAccount).listenMode === true;
   }
@@ -474,7 +475,6 @@ function makeDefaultLegacyAccount(
     agentId: null,
     defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: config.transcribeVoice === true,
-    showCompletedReaction: config.showCompletedReaction !== false,
     listenMode: config.listenMode === true,
     createdAt: now,
     updatedAt: now,

@@ -63,7 +63,6 @@ import {
   isProviderStreamDisconnectErrorText,
 } from "@/cli/helpers/error-formatter";
 import { parsePatchOperations } from "@/cli/helpers/format-args-display";
-import { buildGoalBudgetLimitPrompt } from "@/cli/helpers/goal-command";
 import {
   buildLocalNoModelResponse,
   splitSyntheticAssistantResponse,
@@ -95,8 +94,8 @@ import {
 import { alwaysRequiresUserInput } from "@/cli/helpers/tool-name-mapping.js";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
-import { goalLoopMode } from "@/goal-loop-mode";
 import { runStopHooks } from "@/hooks";
+import { getTurnStartCancel } from "@/mods/turn-start-cancel";
 import type { ApprovalContext } from "@/permissions/analyzer";
 import { formatPermissionDenial } from "@/permissions/format-denial";
 import type { PermissionMode } from "@/permissions/mode";
@@ -120,7 +119,6 @@ import {
   TEMP_QUOTA_OVERRIDE_MODEL,
 } from "./constants";
 import { extractErrorMeta } from "./errors";
-import { buildGoalPrompt } from "./goal-loop";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
 import {
   getErrorHintForStopReason,
@@ -258,7 +256,6 @@ type ConversationLoopContext = {
   setTrajectoryElapsedBaseMs: Dispatch<SetStateAction<number>>;
   setTrajectoryTokenBase: Dispatch<SetStateAction<number>>;
   setUiPermissionMode: (mode: PermissionMode) => void;
-  setUiGoalLoopActive: Dispatch<SetStateAction<boolean>>;
   shouldAutoGenerateConversationTitleRef: MutableRefObject<boolean>;
   syncTrajectoryElapsedBase: () => void;
   syncTrajectoryTokenBase: () => void;
@@ -353,7 +350,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
     setUiPermissionMode,
-    setUiGoalLoopActive,
     shouldAutoGenerateConversationTitleRef,
     syncTrajectoryElapsedBase,
     syncTrajectoryTokenBase,
@@ -530,84 +526,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           refreshDerived();
         }
       }
-      // Helper for goal loop continuation. Defined here to access buffersRef
-      // and processConversation via closure.
-      const handleGoalContinuation = () => {
-        const goalState = goalLoopMode.getState();
-
-        // Extract LAST assistant message from buffers to check for a legacy
-        // <goal_status>complete</goal_status> completion marker.
-        const lines = toLines(buffersRef.current);
-        const assistantLines = lines.filter(
-          (l): l is Line & { kind: "assistant" } => l.kind === "assistant",
-        );
-        const lastAssistantText =
-          assistantLines.length > 0
-            ? (assistantLines[assistantLines.length - 1]?.text ?? "")
-            : "";
-
-        const goalStatusAfterTool = settingsManager.getConversationGoal(
-          conversationIdRef.current,
-        )?.status;
-        const goalStoppedByTool =
-          goalStatusAfterTool === "complete" ||
-          goalStatusAfterTool === "blocked";
-        if (
-          goalStoppedByTool ||
-          goalLoopMode.checkForGoalComplete(lastAssistantText)
-        ) {
-          const finalGoalStatus =
-            goalStatusAfterTool === "blocked" ? "blocked" : "complete";
-          goalLoopMode.deactivate();
-          setUiGoalLoopActive(false);
-          settingsManager.updateConversationGoalStatus(
-            conversationIdRef.current,
-            finalGoalStatus,
-          );
-          permissionMode.setMode("standard");
-          setUiPermissionMode("standard");
-
-          const statusId = uid("status");
-          buffersRef.current.byId.set(statusId, {
-            kind: "status",
-            id: statusId,
-            lines: [
-              finalGoalStatus === "blocked"
-                ? `⚠️ Goal blocked after ${goalState.currentIteration} iteration(s)`
-                : `✅ Goal complete after ${goalState.currentIteration} iteration(s)`,
-            ],
-          });
-          buffersRef.current.order.push(statusId);
-          refreshDerived();
-          return;
-        }
-
-        if (!goalLoopMode.shouldContinue()) {
-          return;
-        }
-
-        goalLoopMode.incrementIteration();
-        const nextGoalState = goalLoopMode.getState();
-        const systemMsg = buildGoalPrompt(
-          nextGoalState,
-          conversationIdRef.current,
-        );
-
-        setTimeout(() => {
-          processConversation(
-            [
-              {
-                type: "message",
-                role: "user",
-                content: [{ type: "text", text: systemMsg }],
-                otid: randomUUID(),
-              },
-            ],
-            { allowReentry: true },
-          );
-        }, 0);
-      };
-
       // Copy so we can safely mutate for retry recovery flows
       const inputList = Array.isArray(initialInput) ? initialInput : [];
       let currentInput = [...inputList];
@@ -632,6 +550,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         return;
       }
       processingConversationRef.current += 1;
+      let turnStartCancelReason: string | null = null;
 
       if (hasUserMessageInput(currentInput)) {
         const originalInput = currentInput;
@@ -649,9 +568,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           currentInput = isTurnInputArray(turnStartEvent.input)
             ? turnStartEvent.input
             : originalInput;
+          turnStartCancelReason =
+            getTurnStartCancel(turnStartEvent)?.reason ?? null;
         } catch {
           // Mod turn_start handlers should not block sending the turn.
           currentInput = originalInput;
+          turnStartCancelReason = null;
         }
       }
 
@@ -685,6 +607,19 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       let preserveTranscriptStartForApproval = false;
 
       try {
+        if (turnStartCancelReason) {
+          const statusId = uid("status");
+          buffersRef.current.byId.set(statusId, {
+            kind: "status",
+            id: statusId,
+            lines: [turnStartCancelReason],
+          });
+          buffersRef.current.order.push(statusId);
+          refreshDerived();
+          userCancelledRef.current = false;
+          return;
+        }
+
         // Check if user hit escape before we started
         if (userCancelledRef.current) {
           userCancelledRef.current = false; // Reset for next time
@@ -1441,43 +1376,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             0,
             buffersRef.current.tokenCount - runTokenStart,
           );
-          if (goalLoopMode.getState().isActive) {
-            const updatedGoal = settingsManager.accountConversationGoalUsage(
-              conversationIdRef.current,
-              tokenDelta,
-            );
-            if (
-              updatedGoal?.tokenBudget != null &&
-              updatedGoal.tokensUsed >= updatedGoal.tokenBudget &&
-              updatedGoal.status === "active"
-            ) {
-              const budgetLimitedGoal =
-                settingsManager.updateConversationGoalStatus(
-                  conversationIdRef.current,
-                  "budget_limited",
-                );
-              goalLoopMode.deactivate();
-              setUiGoalLoopActive(false);
-              permissionMode.setMode("standard");
-              setUiPermissionMode("standard");
-              if (budgetLimitedGoal) {
-                const systemMsg = buildGoalBudgetLimitPrompt(budgetLimitedGoal);
-                setTimeout(() => {
-                  processConversation(
-                    [
-                      {
-                        type: "message",
-                        role: "user",
-                        content: [{ type: "text", text: systemMsg }],
-                        otid: randomUUID(),
-                      },
-                    ],
-                    { allowReentry: true },
-                  );
-                }, 0);
-              }
-            }
-          }
           sessionStatsRef.current.accumulateTrajectory({
             apiDurationMs,
             usageDelta,
@@ -1811,12 +1709,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               queueSnapshotRef.current = [];
             }
 
-            // Continue active goals at the very end, right before releasing input.
-            if (goalLoopMode.getState().isActive) {
-              handleGoalContinuation();
-              return;
-            }
-
             return;
           }
 
@@ -1848,24 +1740,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               // Regular user cancellation - show error
               if (!EAGER_CANCEL) {
                 appendError(INTERRUPT_MESSAGE, true);
-              }
-
-              // ESC interrupts an active goal loop but keeps it resumable.
-              if (goalLoopMode.getState().isActive) {
-                settingsManager.updateConversationGoalStatus(
-                  conversationIdRef.current,
-                  "paused",
-                );
-                const statusId = uid("status");
-                buffersRef.current.byId.set(statusId, {
-                  kind: "status",
-                  id: statusId,
-                  lines: [
-                    `⏸️ Goal loop paused - type to continue or Shift+Tab to exit`,
-                  ],
-                });
-                buffersRef.current.order.push(statusId);
-                refreshDerived();
               }
             }
 
@@ -1974,6 +1848,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               await classifyApprovals(approvalsToProcess, {
                 getContext: analyzeToolApproval,
                 alwaysRequiresUserInput,
+                requireArgsForAutoApprove: true,
                 missingNameReason:
                   "Tool call incomplete - missing name or arguments",
                 toolContextId: approvalToolContextIdRef.current,

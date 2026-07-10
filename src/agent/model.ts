@@ -1,10 +1,27 @@
 /**
  * Model resolution and handling utilities
  */
-import modelsData from "@/models.json";
-import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-constants";
+import { getDefaultModel, models, resolveModel } from "./model-catalog";
+import {
+  CHATGPT_OAUTH_LLM_CONFIG_PROVIDER,
+  LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX,
+  LOCAL_MODEL_HANDLE_PREFIXES,
+  type ModelConfigSnapshot,
+  modelPortionFromHandle as modelPortion,
+  normalizeModelHandleForRegistry,
+} from "./model-handles";
 
-export const models = modelsData.models;
+// Pure catalog lookups live in model-catalog.ts (bundled into the
+// agent-presets package export); re-exported here so CLI code keeps a single
+// import surface for model utilities.
+export { getDefaultModel, models, resolveModel };
+export {
+  mapModelHandleToLlmConfigPatch,
+  normalizeKnownModelHandle,
+  normalizeModelHandleForRegistry,
+  resolveModelHandleFromLlmConfig,
+} from "./model-handles";
 
 export type ModelReasoningEffort =
   | "none"
@@ -14,15 +31,6 @@ export type ModelReasoningEffort =
   | "high"
   | "xhigh"
   | "max";
-
-type ModelConfigSnapshot = {
-  model?: string | null;
-  model_endpoint_type?: string | null;
-  reasoning_effort?: string | null;
-  enable_reasoner?: boolean | null;
-  context_window?: number | null;
-  service_tier?: string | null;
-};
 
 const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "none",
@@ -41,40 +49,7 @@ const LOCAL_REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "high",
 ];
 
-const LOCAL_MODEL_HANDLE_PREFIXES = [
-  "ollama/",
-  "ollama-cloud/",
-  "lmstudio/",
-  "llama.cpp/",
-  "llama-cpp/",
-];
-
-const LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX = "openai-codex/";
-const CHATGPT_OAUTH_LLM_CONFIG_PROVIDER = "chatgpt_oauth";
 export const CHATGPT_FAST_SERVICE_TIER = "priority";
-
-const KNOWN_LLM_CONFIG_ENDPOINT_TYPES = new Set([
-  "anthropic",
-  "bedrock",
-  "chatgpt_oauth",
-  "google_ai",
-  "google_vertex",
-  "minimax",
-  "moonshot",
-  "moonshot_coding",
-  "openai",
-  "openrouter",
-  "zai",
-  "zai_coding",
-]);
-
-const LLM_CONFIG_ENDPOINT_TYPE_MODEL_HANDLE_PROVIDERS = new Map([
-  [CHATGPT_OAUTH_LLM_CONFIG_PROVIDER, OPENAI_CODEX_PROVIDER_NAME],
-  ["lmstudio_openai", "lmstudio"],
-  ["llama_cpp", "llama.cpp"],
-  ["llama.cpp", "llama.cpp"],
-  ["ollama_cloud", "ollama-cloud"],
-]);
 
 export function isLocalModelHandle(modelHandle: string): boolean {
   return LOCAL_MODEL_HANDLE_PREFIXES.some((prefix) =>
@@ -96,186 +71,6 @@ function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
     typeof value === "string" &&
     REASONING_EFFORT_ORDER.includes(value as ModelReasoningEffort)
   );
-}
-
-export function normalizeModelHandleForRegistry(
-  modelHandle: string | null | undefined,
-): string | null {
-  if (!modelHandle) return null;
-  const [provider, ...modelParts] = modelHandle.split("/");
-  const model = modelParts.join("/");
-  if (provider === CHATGPT_OAUTH_LLM_CONFIG_PROVIDER && model.length > 0) {
-    return `${OPENAI_CODEX_PROVIDER_NAME}/${model}`;
-  }
-  if (
-    provider === LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1) &&
-    model.length > 0 &&
-    !model.endsWith("-fast")
-  ) {
-    return `${OPENAI_CODEX_PROVIDER_NAME}/${model}`;
-  }
-  return modelHandle;
-}
-
-function modelPortion(modelHandle: string): string | null {
-  const slashIndex = modelHandle.indexOf("/");
-  if (slashIndex === -1) return null;
-  return modelHandle.slice(slashIndex + 1);
-}
-
-function providerPrefix(modelHandle: string): string | null {
-  const slashIndex = modelHandle.indexOf("/");
-  if (slashIndex <= 0) return null;
-  return modelHandle.slice(0, slashIndex);
-}
-
-function modelHandleProviderPrefixes(): Set<string> {
-  return new Set(
-    models
-      .map((model) => providerPrefix(model.handle))
-      .filter((provider): provider is string => provider !== null),
-  );
-}
-
-function localModelProviderPrefixes(): Set<string> {
-  return new Set(
-    LOCAL_MODEL_HANDLE_PREFIXES.map((prefix) => prefix.slice(0, -1)),
-  );
-}
-
-function isKnownModelProviderPrefix(provider: string): boolean {
-  return (
-    KNOWN_LLM_CONFIG_ENDPOINT_TYPES.has(provider) ||
-    modelHandleProviderPrefixes().has(provider) ||
-    localModelProviderPrefixes().has(provider)
-  );
-}
-
-function isKnownProviderPrefixedHandle(modelHandle: string): boolean {
-  const provider = providerPrefix(modelHandle);
-  return provider !== null && isKnownModelProviderPrefix(provider);
-}
-
-function modelHandleProviderForEndpointType(endpointType: string): string {
-  return (
-    LLM_CONFIG_ENDPOINT_TYPE_MODEL_HANDLE_PROVIDERS.get(endpointType) ??
-    endpointType
-  );
-}
-
-function endpointTypeMatchesModelProvider(
-  endpointType: string,
-  modelProvider: string,
-): boolean {
-  return (
-    endpointType === modelProvider ||
-    modelHandleProviderForEndpointType(endpointType) === modelProvider ||
-    (endpointType === CHATGPT_OAUTH_LLM_CONFIG_PROVIDER &&
-      modelProvider === "openai-codex") ||
-    endpointType === "openai"
-  );
-}
-
-function exactRegistryModelHandle(modelHandle: string): string | null {
-  const registryHandle =
-    normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
-  return models.some((model) => model.handle === registryHandle)
-    ? registryHandle
-    : null;
-}
-
-function uniqueRegistryHandleForModelName(modelName: string): string | null {
-  const matches = new Set(
-    models
-      .filter((model) => modelPortion(model.handle) === modelName)
-      .map((model) => model.handle),
-  );
-  return matches.size === 1 ? ([...matches][0] ?? null) : null;
-}
-
-export function normalizeKnownModelHandle(modelHandle: string): string {
-  const registryHandle =
-    normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
-  const exact = exactRegistryModelHandle(registryHandle);
-  if (exact) return exact;
-
-  const model = modelPortion(registryHandle);
-  if (!model) {
-    return uniqueRegistryHandleForModelName(registryHandle) ?? registryHandle;
-  }
-
-  const provider = providerPrefix(registryHandle);
-  if (provider && !isKnownModelProviderPrefix(provider)) {
-    return registryHandle;
-  }
-
-  return uniqueRegistryHandleForModelName(model) ?? registryHandle;
-}
-
-export function resolveModelHandleFromLlmConfig(
-  llmConfig: ModelConfigSnapshot | null | undefined,
-): string | null {
-  if (!llmConfig?.model) return null;
-
-  const model = llmConfig.model;
-  const endpointType = llmConfig.model_endpoint_type;
-  if (endpointType) {
-    const normalizedModel = normalizeModelHandleForRegistry(model) ?? model;
-    const modelProvider = providerPrefix(normalizedModel);
-    if (
-      modelProvider &&
-      isKnownModelProviderPrefix(modelProvider) &&
-      endpointTypeMatchesModelProvider(endpointType, modelProvider)
-    ) {
-      return normalizeKnownModelHandle(normalizedModel);
-    }
-
-    return normalizeKnownModelHandle(
-      `${modelHandleProviderForEndpointType(endpointType)}/${model}`,
-    );
-  }
-
-  const normalizedModel = normalizeKnownModelHandle(model);
-  if (
-    normalizedModel !== model ||
-    exactRegistryModelHandle(normalizedModel) ||
-    isKnownProviderPrefixedHandle(normalizedModel)
-  ) {
-    return normalizedModel;
-  }
-
-  return model;
-}
-
-function endpointTypeForModelHandleProvider(provider: string): string | null {
-  if (provider === OPENAI_CODEX_PROVIDER_NAME || provider === "openai-codex") {
-    return CHATGPT_OAUTH_LLM_CONFIG_PROVIDER;
-  }
-  if (KNOWN_LLM_CONFIG_ENDPOINT_TYPES.has(provider)) return provider;
-  if (localModelProviderPrefixes().has(provider)) return provider;
-  return null;
-}
-
-export function mapModelHandleToLlmConfigPatch(
-  modelHandle: string,
-  providerType?: string | null,
-): Pick<ModelConfigSnapshot, "model" | "model_endpoint_type"> {
-  const normalizedHandle = normalizeKnownModelHandle(modelHandle);
-  const provider = providerPrefix(normalizedHandle);
-  const model = modelPortion(normalizedHandle);
-  if (!provider || !model) {
-    return { model: normalizedHandle };
-  }
-
-  const endpointType =
-    typeof providerType === "string" && providerType.length > 0
-      ? providerType
-      : endpointTypeForModelHandleProvider(provider);
-  if (!endpointType) {
-    return { model: normalizedHandle };
-  }
-
-  return { model, model_endpoint_type: endpointType };
 }
 
 export function isLocalChatGptOAuthModelHandle(modelHandle: string): boolean {
@@ -368,45 +163,6 @@ export function getReasoningTierOptionsForHandle(
     const modelId = byEffort.get(effort);
     return modelId ? [{ effort, modelId }] : [];
   });
-}
-
-/**
- * Resolve a model by ID or handle
- * @param modelIdentifier - Can be either a model ID (e.g., "opus-4.5") or a full handle (e.g., "anthropic/claude-opus-4-5")
- * @returns The model handle if found, null otherwise
- */
-export function resolveModel(modelIdentifier: string): string | null {
-  const byId = models.find((m) => m.id === modelIdentifier);
-  if (byId) return byId.handle;
-
-  const byHandle = models.find((m) => m.handle === modelIdentifier);
-  if (byHandle) return byHandle.handle;
-
-  // For self-hosted servers: if it looks like a handle (contains /), pass it through
-  // This allows using models not in models.json (e.g., from server's /v1/models)
-  if (modelIdentifier.includes("/")) {
-    return modelIdentifier;
-  }
-
-  return null;
-}
-
-/**
- * Get the default model handle
- */
-export function getDefaultModel(): string {
-  // Prefer Auto when available in models.json.
-  const autoModel = resolveModel("auto");
-  if (autoModel) return autoModel;
-
-  const defaultModel = models.find((m) => m.isDefault);
-  if (defaultModel) return defaultModel.handle;
-
-  const firstModel = models[0];
-  if (!firstModel) {
-    throw new Error("No models available in models.json");
-  }
-  return firstModel.handle;
 }
 
 /**

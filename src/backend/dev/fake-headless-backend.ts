@@ -5,7 +5,7 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
-import { mapModelHandleToLlmConfigPatch } from "@/agent/model";
+import { mapModelHandleToLlmConfigPatch } from "@/agent/model-handles";
 import type {
   Backend,
   ConversationCreateBody,

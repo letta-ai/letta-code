@@ -120,14 +120,6 @@ export async function handleNavigationCommand(
 
       setCommandRunning(true);
 
-      // Pause any active goal for the current conversation before switching
-      const resumePrevGoal = conversationId
-        ? settingsManager.getConversationGoal(conversationId)
-        : null;
-      if (resumePrevGoal?.status === "active") {
-        settingsManager.updateConversationGoalStatus(conversationId, "paused");
-      }
-
       try {
         if (agentState) {
           const resumeData = await getResumeDataFromBackend(

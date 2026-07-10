@@ -221,6 +221,36 @@ describe("app-server client", () => {
     expect(sent).toEqual(["sync", "abort_message", "input"]);
   });
 
+  test("wraps conversation list requests", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const responsePromise = client.conversationList({
+      query: { agent_id: "agent-1", limit: 10 },
+    });
+
+    expect(JSON.parse(control.sent[0] ?? "{}")).toMatchObject({
+      type: "conversation_list",
+      request_id: "conversation-list-1",
+      query: { agent_id: "agent-1", limit: 10 },
+    });
+
+    control.receive({
+      type: "conversation_list_response",
+      request_id: "conversation-list-1",
+      success: true,
+      conversations: [{ id: "conv-1", agent_id: "agent-1" }],
+    });
+
+    const response = await responsePromise;
+    expect(response.success).toBe(true);
+    expect(response.conversations).toEqual([
+      { id: "conv-1", agent_id: "agent-1" },
+    ]);
+  });
+
   test("starts runtimes with external tools and responds to external tool calls", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();

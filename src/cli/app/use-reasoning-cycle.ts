@@ -523,7 +523,8 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
                     | "low"
                     | "medium"
                     | "high"
-                    | "xhigh",
+                    | "xhigh"
+                    | "max",
                 },
               },
             } as AgentState;
