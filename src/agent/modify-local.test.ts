@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@earendil-works/pi-ai";
+import { getModel } from "@earendil-works/pi-ai/compat";
 import { configureBackendMode, getBackend } from "@/backend/backend";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LOCAL_BACKEND_DIR_ENV } from "@/backend/local/paths";
@@ -45,6 +45,18 @@ describe("local model updates", () => {
       provider_type: "xai",
       parallel_tool_calls: true,
       max_output_tokens: 16384,
+    });
+  });
+
+  test("stores GPT-5.6 max separately from xhigh for local providers", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("openai-codex/gpt-5.6-sol", {
+        provider_type: "chatgpt_oauth",
+        reasoning_effort: "max",
+      }),
+    ).toMatchObject({
+      provider_type: "chatgpt_oauth",
+      reasoning: { reasoning_effort: "max" },
     });
   });
 
