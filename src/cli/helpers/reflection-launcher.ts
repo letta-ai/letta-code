@@ -145,6 +145,8 @@ export interface ReflectionLaunchOptions {
   triggerSource: ReflectionLaunchTriggerSource;
   reflectionSettings?: ReflectionSettings;
   description: string;
+  /** Explicit model for this reflection subagent, if requested by the caller. */
+  model?: string;
   instruction?: string;
   systemPrompt?: string;
   skipPendingWorktreeReminderScan?: boolean;
@@ -568,6 +570,7 @@ export async function launchReflectionSubagent(
       subagentType: "reflection",
       prompt: reflectionPrompt,
       description,
+      model: options.model,
       silentCompletion: true,
       transcriptPath: autoPayload.payloadPath,
       memoryScope: buildReflectionMemoryScope(worktree),
