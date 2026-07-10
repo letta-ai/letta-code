@@ -18,10 +18,8 @@ import {
   discoverSubagents,
   getAllSubagentConfigs,
 } from "@/agent/subagents";
-import {
-  type SubagentMemoryScope,
-  spawnSubagent,
-} from "@/agent/subagents/manager";
+import { spawnSubagent } from "@/agent/subagents/manager";
+import type { SubagentMemoryScope } from "@/agent/subagents/working-directory";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import { getCurrentWorkingDirectory } from "@/runtime-context";

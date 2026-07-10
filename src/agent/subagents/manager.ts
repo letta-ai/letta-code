@@ -20,6 +20,10 @@ import {
 } from "@/agent/subagent-state.js";
 import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
 import {
+  resolveSubagentWorkingDirectory,
+  type SubagentMemoryScope,
+} from "@/agent/subagents/working-directory";
+import {
   type BackendMode,
   getBackend,
   getLocalBackendStorageDir,
@@ -96,12 +100,6 @@ export interface SubagentResult {
   totalTokens?: number;
   stepCount?: number;
   durationMs?: number;
-}
-
-export interface SubagentMemoryScope {
-  primaryRoot: string | null;
-  writableRoots: string[];
-  readonlyRoots?: string[];
 }
 
 /**
@@ -580,37 +578,6 @@ interface ResolveSubagentLauncherOptions {
 interface SubagentLauncher {
   command: string;
   args: string[];
-}
-
-export function resolveSubagentWorkingDirectory(
-  env: NodeJS.ProcessEnv = process.env,
-  fallbackCwd: string = getCurrentWorkingDirectory(),
-  options: {
-    subagentType?: string;
-    launchProfile?: SubagentLaunchProfile;
-    inheritedPrimaryRoot?: string | null;
-    memoryScope?: SubagentMemoryScope;
-  } = {},
-): string {
-  if (
-    options.subagentType === "reflection" &&
-    options.launchProfile === "memory-subagent" &&
-    options.memoryScope
-  ) {
-    return env.USER_CWD || fallbackCwd;
-  }
-
-  const primaryRoot =
-    options.memoryScope?.primaryRoot ?? options.inheritedPrimaryRoot;
-  if (
-    options.subagentType === "reflection" &&
-    options.launchProfile === "memory-subagent" &&
-    primaryRoot
-  ) {
-    return primaryRoot;
-  }
-
-  return env.USER_CWD || fallbackCwd;
 }
 
 export function resolveSubagentLauncher(
@@ -1221,10 +1188,15 @@ async function executeSubagent(
       stderrChunks.push(data);
     });
 
-    // Wait for process to complete
+    // Wait for process to complete. Spawn failures (e.g. deleted cwd) emit
+    // "error" without "close" and land here as a null exit code.
+    let spawnError: Error | null = null;
     const exitCode = await new Promise<number | null>((resolve) => {
       proc.on("close", resolve);
-      proc.on("error", () => resolve(null));
+      proc.on("error", (error) => {
+        spawnError = error;
+        resolve(null);
+      });
     });
 
     // Ensure the trailing partial line is processed before completing.
@@ -1277,7 +1249,14 @@ async function executeSubagent(
       }
 
       const propagatedError = state.finalError?.trim();
-      const fallbackError = stderr || `Subagent exited with code ${exitCode}`;
+      const fallbackError = spawnError
+        ? `Subagent process failed to start: ${getErrorMessage(spawnError)} (cwd: ${subagentWorkingDirectory})`
+        : stderr || `Subagent exited with code ${exitCode}`;
+      debugWarn(
+        "subagent",
+        `Subagent ${subagentId} (agentId=${state.agentId}) failed: ${propagatedError || fallbackError}. ` +
+          `exitCode=${exitCode}, stderr=${stderr.length} bytes`,
+      );
 
       return {
         agentId: state.agentId || "",
