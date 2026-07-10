@@ -45,6 +45,16 @@ export function activateChannelTurn(
   return activeTurn;
 }
 
+export function recoverActiveChannelTurn(
+  runtime: ChannelTurnRuntimeCarrier,
+  turn: Omit<ActiveChannelTurn, "contextRecovered">,
+): ActiveChannelTurn {
+  return activateChannelTurn(runtime, {
+    ...turn,
+    contextRecovered: true,
+  });
+}
+
 export function clearActiveChannelTurn(
   runtime: ChannelTurnRuntimeCarrier,
 ): void {
@@ -126,4 +136,49 @@ export function resolveTurnLifecycleTerminal(
     return { outcome: "completed", stopReason };
   }
   return { outcome: "error", stopReason };
+}
+
+export async function finishActiveChannelTurn(
+  runtime: ChannelTurnRuntimeCarrier,
+  options: {
+    lastStopReason: string | null;
+    didThrow: boolean;
+    error?: string;
+    runId?: string;
+    retainOnApproval?: boolean;
+  },
+): Promise<{
+  terminal: ReturnType<typeof resolveTurnLifecycleTerminal>;
+  dispatched: boolean;
+}> {
+  const terminal = resolveTurnLifecycleTerminal(
+    options.lastStopReason,
+    options.didThrow,
+  );
+  const activeTurn = runtime.activeChannelTurn;
+
+  if (terminal.stopReason === "requires_approval") {
+    if (!options.retainOnApproval) clearActiveChannelTurn(runtime);
+    return { terminal, dispatched: false };
+  }
+
+  // Clear before the async dispatch so re-entrant cleanup cannot emit a
+  // second terminal event for the same turn.
+  clearActiveChannelTurn(runtime);
+  if (!activeTurn || activeTurn.sources.length === 0) {
+    return { terminal, dispatched: false };
+  }
+
+  await dispatchChannelTurnLifecycleEvent({
+    type: "finished",
+    batchId: activeTurn.batchId,
+    sources: activeTurn.sources,
+    outcome: terminal.outcome,
+    stopReason: terminal.stopReason,
+    ...(terminal.outcome === "error" && options.error
+      ? { error: options.error }
+      : {}),
+    ...(options.runId ? { runId: options.runId } : {}),
+  });
+  return { terminal, dispatched: true };
 }

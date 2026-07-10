@@ -18,9 +18,8 @@ import {
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
 import {
   activateChannelTurn,
-  clearActiveChannelTurn,
   dispatchChannelTurnLifecycleEvent,
-  resolveTurnLifecycleTerminal,
+  finishActiveChannelTurn,
 } from "./channel-turn-session";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
@@ -540,31 +539,12 @@ async function drainQueuedMessages(
         turnError = error instanceof Error ? error.message : String(error);
         throw error;
       } finally {
-        clearActiveChannelTurn(runtime);
-        if (channelTurnSources.length > 0) {
-          const terminal = resolveTurnLifecycleTerminal(
-            runtime.lastStopReason,
-            didThrow,
-          );
-          const lifecycleError =
-            turnError ??
-            (terminal.outcome === "error"
-              ? (runtime.lastTerminalLoopErrorMessage ?? undefined)
-              : undefined);
-          if (terminal.stopReason !== "requires_approval") {
-            await dispatchChannelTurnLifecycleEvent({
-              type: "finished",
-              batchId: dequeuedBatch.batchId,
-              sources: channelTurnSources,
-              outcome: terminal.outcome,
-              stopReason: terminal.stopReason,
-              ...(lifecycleError ? { error: lifecycleError } : {}),
-              ...(runtime.lastTerminalLoopErrorRunId
-                ? { runId: runtime.lastTerminalLoopErrorRunId }
-                : {}),
-            });
-          }
-        }
+        await finishActiveChannelTurn(runtime, {
+          lastStopReason: runtime.lastStopReason,
+          didThrow,
+          error: turnError ?? runtime.lastTerminalLoopErrorMessage ?? undefined,
+          runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
+        });
       }
       emitListenerStatus(
         runtime.listener,

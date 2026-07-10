@@ -16,6 +16,10 @@ export const signalChannelPlugin: ChannelPlugin = {
   createAdapter(account: ChannelAccount) {
     return createSignalAdapter(account as SignalChannelAccount);
   },
+  resolveAccountDisplayName(account: ChannelAccount) {
+    const signal = account as SignalChannelAccount;
+    return signal.account ?? signal.baseUrl;
+  },
   messageActions: signalMessageActions,
   runSetup() {
     return runSignalSetup();

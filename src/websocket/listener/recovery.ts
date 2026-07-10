@@ -40,10 +40,8 @@ import {
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
 import {
-  activateChannelTurn,
-  clearActiveChannelTurn,
-  dispatchChannelTurnLifecycleEvent,
-  resolveTurnLifecycleTerminal,
+  finishActiveChannelTurn,
+  recoverActiveChannelTurn,
 } from "./channel-turn-session";
 import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
@@ -647,19 +645,17 @@ export async function resolveRecoveredApprovalResponse(
         recovered.conversationId,
       ) ?? [];
     if (recoveredSources.length > 0) {
-      activateChannelTurn(runtime, {
+      recoverActiveChannelTurn(runtime, {
         sources: recoveredSources,
         batchId:
           activeChannelTurn?.batchId ??
           `recovered-${requestId || crypto.randomUUID()}`,
         progress: createChannelTurnProgressBuilder(),
-        contextRecovered: true,
       });
     }
   }
   const shouldFinalizeRecoveredChannelTurn =
     runtime.activeChannelTurn?.contextRecovered === true;
-  let shouldClearRecoveredChannelContext = false;
 
   recovered.pendingRequestIds.clear();
   emitRuntimeStateUpdates(runtime, scope);
@@ -776,58 +772,25 @@ export async function resolveRecoveredApprovalResponse(
     );
 
     if (shouldFinalizeRecoveredChannelTurn) {
-      const terminal = resolveTurnLifecycleTerminal(
-        runtime.lastStopReason,
-        false,
-      );
-      if (terminal.stopReason !== "requires_approval") {
-        const activeTurn = runtime.activeChannelTurn;
-        const sources = activeTurn?.sources ?? [];
-        if (sources.length > 0) {
-          await dispatchChannelTurnLifecycleEvent({
-            type: "finished",
-            batchId: activeTurn?.batchId ?? continuationBatchId,
-            sources,
-            outcome: terminal.outcome,
-            stopReason: terminal.stopReason,
-            ...(runtime.lastTerminalLoopErrorMessage
-              ? { error: runtime.lastTerminalLoopErrorMessage }
-              : {}),
-            ...(runtime.lastTerminalLoopErrorRunId
-              ? { runId: runtime.lastTerminalLoopErrorRunId }
-              : {}),
-          });
-        }
-        shouldClearRecoveredChannelContext = true;
-      }
+      await finishActiveChannelTurn(runtime, {
+        lastStopReason: runtime.lastStopReason,
+        didThrow: false,
+        error: runtime.lastTerminalLoopErrorMessage ?? undefined,
+        runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
+        retainOnApproval: true,
+      });
     }
 
     clearRecoveredApprovalState(runtime);
     return true;
   } catch (error) {
     if (shouldFinalizeRecoveredChannelTurn) {
-      const terminal = resolveTurnLifecycleTerminal(
-        runtime.lastStopReason,
-        true,
-      );
-      const activeTurn = runtime.activeChannelTurn;
-      const sources = activeTurn?.sources ?? [];
-      if (sources.length > 0) {
-        await dispatchChannelTurnLifecycleEvent({
-          type: "finished",
-          batchId:
-            activeTurn?.batchId ??
-            `recovered-${requestId || crypto.randomUUID()}`,
-          sources,
-          outcome: terminal.outcome,
-          stopReason: terminal.stopReason,
-          error: error instanceof Error ? error.message : String(error),
-          ...(runtime.lastTerminalLoopErrorRunId
-            ? { runId: runtime.lastTerminalLoopErrorRunId }
-            : {}),
-        });
-      }
-      shouldClearRecoveredChannelContext = true;
+      await finishActiveChannelTurn(runtime, {
+        lastStopReason: runtime.lastStopReason,
+        didThrow: true,
+        error: error instanceof Error ? error.message : String(error),
+        runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
+      });
     }
     recovered.pendingRequestIds = new Set(
       recovered.approvalsByRequestId.keys(),
@@ -843,9 +806,5 @@ export async function resolveRecoveredApprovalResponse(
       conversation_id: recovered.conversationId,
     });
     throw error;
-  } finally {
-    if (shouldClearRecoveredChannelContext) {
-      clearActiveChannelTurn(runtime);
-    }
   }
 }

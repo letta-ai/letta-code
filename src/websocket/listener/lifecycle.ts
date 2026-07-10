@@ -38,7 +38,7 @@ import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
 import {
-  activateChannelTurn,
+  recoverActiveChannelTurn,
   uniqueChannelTurnSources,
 } from "./channel-turn-session";
 import { handleReloadCommand } from "./commands";
@@ -351,10 +351,9 @@ export async function recoverPendingChannelControlRequests(
       const recoveredSources = uniqueChannelTurnSources(
         stillPendingEntries.map((entry) => entry.event.source),
       );
-      activateChannelTurn(runtime, {
+      recoverActiveChannelTurn(runtime, {
         sources: recoveredSources,
         batchId: `recovered-${stillPendingEntries[0]?.event.requestId ?? crypto.randomUUID()}`,
-        contextRecovered: true,
         progress: createChannelTurnProgressBuilder(),
       });
     }
