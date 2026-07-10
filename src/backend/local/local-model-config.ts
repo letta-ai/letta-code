@@ -402,6 +402,21 @@ export async function resolveAvailableLocalModelForTurn(input: {
   };
 }
 
+const UNSUPPORTED_LOCAL_CHATGPT_OAUTH_MODELS = new Set(["gpt-5.6-luna"]);
+
+function shouldIncludeLocalModel(
+  provider: PiProvider | string,
+  model: string,
+): boolean {
+  const modelId = isPiProvider(provider)
+    ? (stripProviderHandlePrefix(model, provider) ?? model)
+    : model;
+  return !(
+    localProviderTypeForModelConfig(provider) === "chatgpt_oauth" &&
+    UNSUPPORTED_LOCAL_CHATGPT_OAUTH_MODELS.has(modelId)
+  );
+}
+
 export async function listLocalModels(
   storageDir?: string,
   options: ListLocalModelsOptions = {},
@@ -425,6 +440,7 @@ export async function listLocalModels(
       modelEndpointType?: string;
     } = {},
   ) => {
+    if (!shouldIncludeLocalModel(provider, model)) return;
     const handle =
       options.handle ??
       (typeof provider === "string" &&
