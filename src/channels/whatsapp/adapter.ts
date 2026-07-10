@@ -32,6 +32,7 @@ import {
   extractReplyParticipant,
   extractWhatsAppText,
 } from "./media";
+import { normalizeMessageKey } from "./message-key";
 import { loadWhatsAppModule } from "./runtime";
 import { createWhatsAppSocket, getWhatsAppAuthDir } from "./session";
 import { setWhatsAppConnectionState } from "./state";
@@ -577,8 +578,9 @@ export function createWhatsAppAdapter(
       : [];
     const isHistory = record.type === "append";
     for (const msg of messages) {
-      const remoteJid = msg.key?.remoteJid ?? "";
-      const messageId = msg.key?.id ?? "";
+      const key = normalizeMessageKey(msg.key);
+      const remoteJid = key.remoteJid ?? "";
+      const messageId = key.id ?? "";
       if (!remoteJid || !messageId || !msg.message) continue;
       if (isStatusOrBroadcastJid(remoteJid)) continue;
       if (sentMessageIds.has(messageId)) {
@@ -595,17 +597,17 @@ export function createWhatsAppAdapter(
       // Baileys requires messageTimestamp in lastMessages; missing it throws
       // synchronously inside chat-utils.js before the .catch can attach, so we
       // wrap in try/catch defensively.
-      if (msg.key?.fromMe !== true) {
+      if (key.fromMe !== true) {
         try {
           void sock
             ?.chatModify?.(
               {
                 markRead: true,
                 lastMessages: [
-                  { key: msg.key, messageTimestamp: msg.messageTimestamp },
+                  { key: key.raw, messageTimestamp: msg.messageTimestamp },
                 ],
               },
-              msg.key?.remoteJid ?? remoteJid,
+              key.remoteJid ?? remoteJid,
             )
             .catch((err) =>
               console.warn(
@@ -629,7 +631,7 @@ export function createWhatsAppAdapter(
       }
 
       const selfChat = isSelfChat(remoteJid, selfPhoneJid, selfLid);
-      const fromMe = msg.key?.fromMe === true;
+      const fromMe = key.fromMe === true;
       if (fromMe && !(account.selfChatMode && selfChat)) continue;
       if (account.selfChatMode && !selfChat) {
         console.log(
@@ -667,7 +669,7 @@ export function createWhatsAppAdapter(
       if (!body.trim() && attachmentResult.attachments.length === 0) continue;
 
       const senderJid = group
-        ? (msg.key?.participant ?? msg.key?.senderPn ?? remoteJid)
+        ? (key.participant ?? key.senderPn ?? remoteJid)
         : chatId;
       const senderId = selfChat
         ? senderIdFromJid(selfPhoneJid ?? chatId)
