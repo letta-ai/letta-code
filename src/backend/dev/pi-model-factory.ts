@@ -10,6 +10,8 @@ import {
   type LocalProviderRecord,
   localProviderApiKeyFromRecord,
 } from "@/backend/local/local-provider-auth-store";
+// Ensure xAI Grok OAuth is registered before runtime token refresh.
+import "@/providers/xai-oauth";
 import {
   type LocalProviderTimeout,
   resolveLocalProviderTimeout,

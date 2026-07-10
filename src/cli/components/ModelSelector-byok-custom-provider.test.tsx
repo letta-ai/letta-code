@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { getReasoningTierOptionsForHandle } from "@/agent/model";
 import {
+  applyProviderAuthPresentation,
   buildByokProviderAliases,
   isByokHandleForSelector,
   labelForBackendModel,
@@ -51,6 +52,34 @@ describe("ModelSelector custom BYOK provider detection", () => {
     expect(aliases["chatgpt-personal"]).toBe("openai-codex");
     expect(isByokHandleForSelector("chatgpt-personal/gpt-5.5", aliases)).toBe(
       true,
+    );
+  });
+
+  test("labels xAI SuperGrok OAuth models distinctly from API-key xAI", () => {
+    const base = {
+      id: "xai/grok-4.5",
+      handle: "xai/grok-4.5",
+      label: "Grok 4.5",
+      description: "xAI Grok 4.5",
+    };
+
+    const oauth = applyProviderAuthPresentation(
+      base,
+      new Map([["xai", "oauth"]]),
+    );
+    expect(oauth.label).toBe("Grok 4.5 (SuperGrok)");
+    expect(oauth.description).toContain("OAuth");
+    expect(oauth.description.toLowerCase()).toContain("subscription");
+
+    const apiKey = applyProviderAuthPresentation(
+      base,
+      new Map([["xai", "api"]]),
+    );
+    expect(apiKey.label).toBe("Grok 4.5 (API key)");
+    expect(apiKey.description).toContain("API key");
+
+    expect(applyProviderAuthPresentation(base, new Map()).label).toBe(
+      "Grok 4.5",
     );
   });
 

@@ -110,6 +110,17 @@ describe("getModelCategories", () => {
       includeUnknownBackendHandleInRecommended("custom-provider/model"),
     ).toBe(false);
   });
+
+  test("xAI SuperGrok catalog handles are not local-endpoint prefixes", () => {
+    // Local OAuth catalogs still surface these via localModelCatalog in
+    // ModelSelector recommended; the helper itself stays endpoint-specific.
+    expect(includeUnknownBackendHandleInRecommended("xai/grok-4.3")).toBe(
+      false,
+    );
+    expect(includeUnknownBackendHandleInRecommended("xai/grok-build-0.1")).toBe(
+      false,
+    );
+  });
 });
 
 describe("toSelectorModelForHandle", () => {

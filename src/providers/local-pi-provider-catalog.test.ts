@@ -67,6 +67,29 @@ describe("local pi provider catalog", () => {
     }
   });
 
+  test("local /connect exposes both xAI OAuth and xAI API-key entries", () => {
+    const local = getProviderConfigs("local");
+    const xaiOAuth = local.find(
+      (provider) =>
+        provider.isOAuth === true && provider.oauthProviderId === "xai",
+    );
+    const xaiApi = local.find(
+      (provider) =>
+        provider.isOAuth !== true &&
+        (provider.id === "xai" || provider.providerType === "xai"),
+    );
+
+    expect(xaiOAuth).toBeDefined();
+    expect(xaiOAuth?.id).toBe("xai-oauth");
+    expect(xaiOAuth?.providerType).toBe("xai");
+    expect(xaiOAuth?.providerName).toBe("xai");
+    expect(xaiOAuth?.displayName).toContain("Grok OAuth");
+
+    expect(xaiApi).toBeDefined();
+    expect(xaiApi?.providerType).toBe("xai");
+    expect(getOAuthProvider("xai")?.name).toContain("Grok OAuth");
+  });
+
   test("local provider defaults point at current pi-ai catalog models", () => {
     for (const spec of PI_PROVIDER_SPECS) {
       if (!spec.piProvider) continue;

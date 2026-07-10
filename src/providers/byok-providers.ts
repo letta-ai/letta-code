@@ -36,6 +36,8 @@ import {
   updateLocalProvider,
 } from "@/backend/local/local-provider-auth-store";
 import type { LocalProviderTimeout } from "@/backend/local/local-provider-timeout";
+// Registers xAI Grok OAuth into pi-ai so local /connect and token refresh work.
+import "@/providers/xai-oauth";
 
 export type { ProviderResponse } from "@/backend/api/providers";
 
@@ -327,8 +329,9 @@ function byokProviderFromPiSpec(provider: string): ByokProvider | undefined {
 }
 
 // Pi TUI exposes Anthropic in both subscription and API-key login flows.
+// xAI is dual-auth as well: SuperGrok OAuth + console API key.
 // Other OAuth providers are subscription-only in the Pi TUI.
-const PI_TUI_API_KEY_OAUTH_PROVIDER_IDS = new Set(["anthropic"]);
+const PI_TUI_API_KEY_OAUTH_PROVIDER_IDS = new Set(["anthropic", "xai"]);
 
 function localOAuthConfigId(providerId: string): string {
   if (providerId === "openai-codex") return "openai-codex-oauth";

@@ -31,6 +31,7 @@ import {
   resolveRegisteredPiProviderListModelsConnection,
 } from "@/backend/dev/registered-pi-provider-runtime";
 import {
+  getLocalOAuthApiKey,
   type LocalProviderRecord,
   listLocalProviderRecords,
   localProviderApiKeyFromRecord,
@@ -219,10 +220,48 @@ function isPiProviderForLocalModelHandle(
   return isPiProvider(provider);
 }
 
+/** Non-chat xAI surfaces (image/video) — omit from the agent model picker. */
+function isAgentSelectableDiscoveredModel(
+  provider: PiProvider,
+  modelId: string,
+): boolean {
+  if (provider !== "xai") return true;
+  const id = modelId.toLowerCase();
+  return !(
+    id.includes("imagine") ||
+    id.includes("image") ||
+    id.includes("video") ||
+    id.includes("tts") ||
+    id.includes("speech") ||
+    id.includes("audio")
+  );
+}
+
+async function resolveDiscoveryApiKey(
+  provider: PiProvider,
+  record: LocalProviderRecord | undefined,
+  storageDir: string | undefined,
+): Promise<string | undefined> {
+  const apiKey = localProviderApiKeyFromRecord(record);
+  if (apiKey) return apiKey;
+
+  if (record?.auth.type === "oauth") {
+    const spec = getPiProviderSpec(provider);
+    const oauth = await getLocalOAuthApiKey({
+      providerId: spec.piProvider ?? provider,
+      providerNames: spec.localProviderNames,
+      storageDir,
+    });
+    if (oauth?.apiKey) return oauth.apiKey;
+  }
+
+  return getPiProviderSpec(provider).apiKeyEnv?.();
+}
+
 async function discoverModelIdsForProvider(
   provider: PiProvider,
   records: readonly LocalProviderRecord[],
-  options: Required<ListLocalModelsOptions>,
+  options: Required<ListLocalModelsOptions> & { storageDir?: string },
 ): Promise<string[]> {
   const spec = getPiProviderSpec(provider);
   const discovery = spec.localModelDiscovery;
@@ -232,7 +271,11 @@ async function discoverModelIdsForProvider(
   const baseURL =
     record?.base_url ?? spec.baseUrlEnv?.() ?? spec.defaultBaseURL;
   if (!baseURL) return [];
-  const apiKey = localProviderApiKeyFromRecord(record) ?? spec.apiKeyEnv?.();
+  const apiKey = await resolveDiscoveryApiKey(
+    provider,
+    record,
+    options.storageDir,
+  );
   const input = {
     baseURL,
     apiKey,
@@ -240,12 +283,19 @@ async function discoverModelIdsForProvider(
     timeoutMs: options.discoveryTimeoutMs,
   };
 
+  let ids: string[];
   switch (discovery) {
     case "ollama":
-      return discoverOllamaModelIds(input);
+      ids = await discoverOllamaModelIds(input);
+      break;
     case "openai-compatible":
-      return discoverOpenAICompatibleModelIds(input);
+      ids = await discoverOpenAICompatibleModelIds(input);
+      break;
+    default:
+      return [];
   }
+
+  return ids.filter((id) => isAgentSelectableDiscoveredModel(provider, id));
 }
 
 export function resolveLocalProvider(storageDir?: string): PiProvider {
@@ -520,13 +570,36 @@ export async function listLocalModels(
         const discoveredModels = await discoverModelIdsForProvider(
           provider,
           records,
-          { ...discoveryOptions, discoveryTimeoutMs: timeoutMs },
+          {
+            ...discoveryOptions,
+            discoveryTimeoutMs: timeoutMs,
+            storageDir,
+          },
         );
+        // Remote catalogs (xAI SuperGrok) should still surface the static
+        // pi-ai defaults when the live list is partial or reordered.
+        if (
+          !isAutoDetectableLocalEndpointProvider(provider) &&
+          discoveredModels.length > 0
+        ) {
+          const catalog = listCatalogModelsForProvider(provider).map((handle) =>
+            stripProviderHandlePrefix(handle, provider),
+          );
+          const merged = [...discoveredModels];
+          for (const model of catalog) {
+            if (model && !merged.includes(model)) merged.push(model);
+          }
+          return { provider, models: merged };
+        }
         return { provider, models: discoveredModels };
       } catch {
-        // Do not surface stale guessed models when a local provider is not
-        // reachable; simply omit that provider's catalog from /model.
-        return { provider, models: [] };
+        // Local endpoints (Ollama / LM Studio): omit when unreachable.
+        // Remote API catalogs (xAI): fall back to the static pi-ai list so
+        // SuperGrok OAuth still shows models offline / on transient errors.
+        if (isAutoDetectableLocalEndpointProvider(provider)) {
+          return { provider, models: [] };
+        }
+        return { provider, models: listCatalogModelsForProvider(provider) };
       }
     }),
   );
