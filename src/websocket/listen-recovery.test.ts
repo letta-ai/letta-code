@@ -318,9 +318,11 @@ describe("channel control request recovery", () => {
       },
     ]);
     expect(registry.hasPendingControlRequest(event.requestId)).toBe(true);
-    expect(recoveredRuntime?.activeChannelTurnSources).toEqual([event.source]);
-    expect(recoveredRuntime?.activeChannelTurnContextRecovered).toBe(true);
-    expect(recoveredRuntime?.activeChannelTurnProgress).not.toBeNull();
+    expect(recoveredRuntime?.activeChannelTurn?.sources).toEqual([
+      event.source,
+    ]);
+    expect(recoveredRuntime?.activeChannelTurn?.contextRecovered).toBe(true);
+    expect(recoveredRuntime?.activeChannelTurn?.progress).not.toBeNull();
   });
 
   test("clears persisted channel prompts that are no longer pending", async () => {

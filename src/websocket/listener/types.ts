@@ -5,7 +5,6 @@ import type {
   ApprovalDecision,
   ApprovalResult,
 } from "@/agent/approval-execution";
-import type { ChannelTurnProgressBuilder } from "@/channels/progress";
 import type { ChannelTurnSource } from "@/channels/types";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
@@ -27,6 +26,7 @@ import type {
   RuntimeScope,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
+import type { ActiveChannelTurn } from "./channel-turn-session";
 import type { ListenerTransport } from "./transport";
 
 export interface StartListenerOptions {
@@ -140,11 +140,7 @@ export type ConversationRuntime = {
   key: string;
   agentId: string | null;
   conversationId: string;
-  activeChannelTurnSources: ChannelTurnSource[] | null;
-  activeChannelTurnBatchId: string | null;
-  activeChannelTurnContextRecovered?: boolean;
-  /** Per-turn progress builder; created when a channel turn starts and dropped when it ends. */
-  activeChannelTurnProgress: ChannelTurnProgressBuilder | null;
+  activeChannelTurn: ActiveChannelTurn | null;
   messageQueue: Promise<void>;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
