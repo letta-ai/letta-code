@@ -203,6 +203,8 @@ const PI_PROVIDER_OVERRIDES: Partial<
     providerTypes: ["chatgpt_oauth", "openai-codex"],
     handlePrefixes: ["openai-codex/", "chatgpt-plus-pro/"],
     localProviderNames: ["openai-codex", LOCAL_CHATGPT_PROVIDER_NAME],
+    catalogModelHandle: (model) =>
+      model.id === "gpt-5.6-luna" ? undefined : `openai-codex/${model.id}`,
   },
 };
 
