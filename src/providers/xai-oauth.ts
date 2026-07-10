@@ -408,11 +408,6 @@ export async function loginXaiOAuth(
     intervalSeconds: device.interval,
     expiresInSeconds: device.expires_in,
   });
-  // Also emit onAuth so UIs that only handle PKCE-style callbacks still show a URL.
-  callbacks.onAuth({
-    url: verificationUri,
-    instructions: `Enter code: ${device.user_code}`,
-  });
 
   callbacks.onProgress?.("Waiting for browser authorization...");
   return pollXaiDeviceToken({

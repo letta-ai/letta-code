@@ -1,5 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { getLocalProviderRecordByName } from "@/backend/local/local-provider-auth-store";
+import { runLocalOAuthConnectFlow } from "@/cli/commands/connect-local-oauth";
 import {
   assertTrustedXaiOAuthUrl,
   ensureXaiOAuthProviderRegistered,
@@ -242,7 +247,79 @@ describe("xai-oauth", () => {
         verificationUri: "https://accounts.x.ai/device",
       },
     ]);
-    expect(authUrls[0]).toBe("https://accounts.x.ai/device");
+    expect(authUrls).toEqual([]);
+  });
+
+  test("runLocalOAuthConnectFlow opens the xAI device authorization URL once", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "xai-local-oauth-flow-"));
+    const originalFetch = globalThis.fetch;
+    const originalStorageDir = process.env.LETTA_LOCAL_BACKEND_DIR;
+    try {
+      const fetchImpl = mock(async (input: string | URL) => {
+        const url = String(input);
+        if (url.includes("openid-configuration")) {
+          return jsonResponse(200, {
+            authorization_endpoint: "https://auth.x.ai/oauth2/authorize",
+            token_endpoint: "https://auth.x.ai/oauth2/token",
+          });
+        }
+        if (url.includes("/device/code")) {
+          return jsonResponse(200, {
+            device_code: "dc",
+            user_code: "CODE-1",
+            verification_uri: "https://accounts.x.ai/device",
+            verification_uri_complete:
+              "https://accounts.x.ai/device?user_code=CODE-1",
+            expires_in: 60,
+            interval: 0,
+          });
+        }
+        return jsonResponse(200, {
+          access_token: "login-access",
+          refresh_token: "login-refresh",
+          expires_in: 3600,
+        });
+      }) as unknown as typeof fetch;
+      globalThis.fetch = fetchImpl;
+      process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+
+      const opened: string[] = [];
+      const statuses: string[] = [];
+      const result = await runLocalOAuthConnectFlow(
+        {
+          id: "xai-oauth",
+          displayName: "xAI Grok OAuth (SuperGrok)",
+          description: "Connect a subscription account",
+          providerType: "xai",
+          providerName: "xai",
+          isOAuth: true,
+          oauthProviderId: "xai",
+        },
+        {
+          onStatus: (message) => {
+            statuses.push(message);
+          },
+          openBrowser: async (url) => {
+            opened.push(url);
+          },
+        },
+      );
+
+      expect(result.providerName).toBe("xai");
+      expect(opened).toEqual(["https://accounts.x.ai/device?user_code=CODE-1"]);
+      expect(statuses.join("\n")).toContain("Enter code: CODE-1");
+      const record = getLocalProviderRecordByName("xai", storageDir);
+      expect(record?.auth.type).toBe("oauth");
+      expect(record?.provider_type).toBe("xai");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalStorageDir === undefined) {
+        delete process.env.LETTA_LOCAL_BACKEND_DIR;
+      } else {
+        process.env.LETTA_LOCAL_BACKEND_DIR = originalStorageDir;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("getApiKey returns access token", () => {

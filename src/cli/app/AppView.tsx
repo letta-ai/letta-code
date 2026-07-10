@@ -978,7 +978,7 @@ export function AppView(props: AppViewProps) {
                         refreshDerived,
                         setCommandRunning,
                         target,
-                        onCodexConnected: (providerName) => {
+                        onLocalModelsChanged: (providerName) => {
                           markLocalModelsAvailable();
                           setModelSelectorOptions({
                             filterProvider: providerName,

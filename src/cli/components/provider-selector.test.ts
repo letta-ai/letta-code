@@ -20,6 +20,7 @@ import {
   getProviderConfigs,
   type ProviderResponse,
 } from "@/providers/byok-providers";
+import { connectedRecordsForProvider } from "@/providers/provider-connections";
 
 function withEnv<T>(
   updates: Record<string, string | undefined>,
@@ -174,7 +175,12 @@ describe("ProviderSelector provider filtering", () => {
     ).toEqual(["github-copilot"]);
     expect(
       filterProviderConfigs(providers, "subscription").map((p) => p.id),
-    ).toEqual(["anthropic-oauth", "openai-codex-oauth", "github-copilot"]);
+    ).toEqual([
+      "anthropic-oauth",
+      "openai-codex-oauth",
+      "github-copilot",
+      "xai-oauth",
+    ]);
   });
 
   test("matches provider aliases and restores all providers for blank query", () => {
@@ -186,6 +192,18 @@ describe("ProviderSelector provider filtering", () => {
     expect(filterProviderConfigs(providers, "   ").length).toBe(
       providers.length,
     );
+  });
+
+  test("matches xAI API-key and OAuth provider entries separately", () => {
+    const providers = getProviderConfigs("local");
+
+    expect(filterProviderConfigs(providers, "xai").map((p) => p.id)).toEqual([
+      "xai",
+      "xai-oauth",
+    ]);
+    expect(
+      filterProviderConfigs(providers, "xai-oauth").map((p) => p.id),
+    ).toEqual(["xai-oauth"]);
   });
 });
 
@@ -284,6 +302,51 @@ describe("ProviderSelector connected provider actions", () => {
         chatgptWorkProvider,
       ]),
     ).toBe("2 connected");
+  });
+
+  test("disambiguates local xAI API-key and OAuth records by auth type", () => {
+    const xaiApi = providerById("xai");
+    const xaiOAuth = providerById("xai-oauth");
+    const apiRecord: ProviderResponse = {
+      id: "local-provider-xai",
+      name: "xai",
+      provider_type: "xai",
+      provider_category: "byok",
+      auth_type: "api",
+    };
+    const oauthRecord: ProviderResponse = {
+      ...apiRecord,
+      auth_type: "oauth",
+    };
+
+    expect(
+      connectedRecordsForProvider(
+        xaiApi,
+        new Map([["xai", apiRecord]]),
+        "local",
+      ),
+    ).toEqual([apiRecord]);
+    expect(
+      connectedRecordsForProvider(
+        xaiOAuth,
+        new Map([["xai", apiRecord]]),
+        "local",
+      ),
+    ).toEqual([]);
+    expect(
+      connectedRecordsForProvider(
+        xaiApi,
+        new Map([["xai", oauthRecord]]),
+        "local",
+      ),
+    ).toEqual([]);
+    expect(
+      connectedRecordsForProvider(
+        xaiOAuth,
+        new Map([["xai", oauthRecord]]),
+        "local",
+      ),
+    ).toEqual([oauthRecord]);
   });
 
   test("surfaces connect-another only for API ChatGPT OAuth providers", () => {

@@ -58,6 +58,13 @@ export interface ConnectCommandContext {
   setCommandRunning: (running: boolean) => void;
   target?: ProviderStorageTarget;
   onCodexConnected?: (providerName: string) => void;
+  onLocalModelsChanged?: (providerName: string) => void;
+}
+
+export function localModelsChangedCallback(
+  ctx: Pick<ConnectCommandContext, "onCodexConnected" | "onLocalModelsChanged">,
+): ((providerName: string) => void) | undefined {
+  return ctx.onLocalModelsChanged ?? ctx.onCodexConnected;
 }
 
 function addCommandResult(
@@ -450,8 +457,9 @@ async function handleConnectChatGPT(
       "finished",
     );
 
-    if (ctx.onCodexConnected) {
-      setTimeout(() => ctx.onCodexConnected?.(providerName), 500);
+    const onModelsChanged = localModelsChangedCallback(ctx);
+    if (onModelsChanged) {
+      setTimeout(() => onModelsChanged(providerName), 500);
     }
   } catch (error) {
     const isCancelled = error instanceof Error && error.name === "AbortError";
@@ -530,9 +538,10 @@ async function handleConnectLocalOAuthProvider(
       "finished",
     );
 
-    if (provider.byokProvider.oauthProviderId === "openai-codex") {
+    const onModelsChanged = localModelsChangedCallback(ctx);
+    if (onModelsChanged) {
       setTimeout(
-        () => ctx.onCodexConnected?.(provider.byokProvider.providerName),
+        () => onModelsChanged(provider.byokProvider.providerName),
         500,
       );
     }

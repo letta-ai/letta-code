@@ -243,6 +243,43 @@ describe("pi model factory", () => {
 
       expect(resolved.apiKey).toBe("xai-oauth-access");
       expect(resolved.model.provider).toBe("xai");
+      expect(resolved.model.contextWindow).toBe(1000000);
+      expect(resolved.model.maxTokens).toBe(30000);
+      expect(resolved.model.reasoning).toBe(true);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves live-discovered xAI Grok OAuth model handles at turn time", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-xai-dynamic-oauth-"));
+    try {
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "xai",
+        providerType: "xai",
+        auth: localOAuthAuthFromCredentials({
+          access: "xai-oauth-access",
+          refresh: "xai-oauth-refresh",
+          expires: Date.now() + 60_000,
+        }),
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "xai/__letta_dynamic_smoke_model__",
+        { provider_type: "xai" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.apiKey).toBe("xai-oauth-access");
+      expect(resolved.model).toMatchObject({
+        id: "__letta_dynamic_smoke_model__",
+        provider: "xai",
+        api: "openai-completions",
+        baseUrl: "https://api.x.ai/v1",
+        contextWindow: 128000,
+        maxTokens: 32000,
+      });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
