@@ -210,6 +210,7 @@ export function projectLocalMessageToStoredMessages(
         message_type: "user_message",
         role: "user",
         content: userContentToStoredContent(message.content),
+        ...(message.otid ? { otid: message.otid } : {}),
       } as StoredMessage,
     ];
   }

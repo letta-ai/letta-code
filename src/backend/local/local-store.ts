@@ -1946,11 +1946,11 @@ export class LocalStore {
     message: Record<string, unknown>,
   ): LocalMessage {
     const conversation = this.ensureConversation(conversationId, agentId);
-    const id = this.nextLocalMessageId();
     const date = this.currentLocalMessageDate();
     const localMessage: LocalMessage = {
-      id,
+      id: this.nextLocalMessageId(),
       role: "user",
+      otid: optionalString(message.otid ?? message.client_message_id),
       metadata: {
         created_at: date,
         updated_at: date,
