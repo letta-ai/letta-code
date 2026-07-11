@@ -1,8 +1,6 @@
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import {
-  getModelInfoForLlmConfig,
-  normalizeModelHandleForRegistry,
-} from "@/agent/model";
+import { getModelInfoForLlmConfig } from "@/agent/model";
+import { normalizeKnownModelHandle } from "@/agent/model-handles";
 
 type CarryoverLlmConfig = LlmConfig & {
   enable_reasoner?: boolean | null;
@@ -12,7 +10,7 @@ type CarryoverLlmConfig = LlmConfig & {
 export function normalizeConversationModelCarryoverHandle(
   rawModelHandle: string,
 ): string {
-  return normalizeModelHandleForRegistry(rawModelHandle) ?? rawModelHandle;
+  return normalizeKnownModelHandle(rawModelHandle);
 }
 
 export function buildConversationModelCarryoverUpdate(params: {

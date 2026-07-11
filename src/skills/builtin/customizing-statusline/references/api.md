@@ -52,7 +52,8 @@ letta.ui.closePanel(id: string): void
 
 `order` is a signed coordinate around the input:
 
-- `order > 0` — above the input. Higher numbers render nearer the top. Default when omitted is `100`.
+- `order > 1` — additive panels above the input. Higher numbers render nearer the top. Default when omitted is `100`.
+- `order === 1` — replaces the default product-status row (currently dreaming/reflection status). Use this only when intentionally overriding that row; otherwise use `order > 1`.
 - `order === 0` — the primary line just below the input. Overrides the built-in `agent · model`. Use this for the statusline.
 - `order < 0` — stacks below the primary line. `-1` sits closest to it, more-negative lower.
 
@@ -65,13 +66,15 @@ render(ctx: {
   width: number;            // visible columns available to the panel
   agent: { id, name };      // live at render time
   model: { id, displayName, provider, reasoningEffort };
+  subagents: { list(): SubagentLifecycleItem[] };
   row(left, right, width): string;     // left + right, right-aligned, ANSI-aware
   columns(parts: string[], width): string; // spread parts evenly, ANSI-aware
+  link(label: string, url: string): string; // compact OSC-8 hyperlink helper
   chalk: ChalkInstance;     // color helper
 }): string | string[]
 ```
 
-- `row`/`columns` measure visible width with ANSI stripped, so chalk-colored segments align correctly.
+- `row`/`columns` measure visible width with ANSI stripped, so chalk-colored segments and links align correctly.
 - The host clips each line to `width` and caps total height; the mod owns layout within that.
 
 ## Render rules

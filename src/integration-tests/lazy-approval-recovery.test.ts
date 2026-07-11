@@ -193,12 +193,13 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
           return;
         }
 
-        // Step 2: When we see approval request, send another user message instead,
-        // then explicitly deny the pending approval so the flow can complete in
-        // headless stream-json mode (which waits for approval responses).
+        // Step 2: A tool_call_message signals a tool was invoked. Approval-flow
+        // chunks are no longer emitted, so this is the canonical point to inject
+        // the concurrent user message. A real pending approval (control_request)
+        // is handled separately above.
         if (
           msg.type === "message" &&
-          msg.message_type === "approval_request_message" &&
+          msg.message_type === "tool_call_message" &&
           !approvalSeen
         ) {
           approvalSeen = true;
@@ -211,8 +212,7 @@ async function runLazyRecoveryTest(timeoutMs = 300000): Promise<{
               ? (toolCall as { tool_call_id?: string }).tool_call_id
               : undefined;
 
-          // If approval stream chunks arrive before can_use_tool callback,
-          // still send the concurrent user message now.
+          // Send the concurrent user message now (mid-turn).
           if (!interruptSent) {
             interruptSent = true;
             const userMsg = JSON.stringify({
@@ -332,10 +332,11 @@ describe("lazy approval recovery", () => {
       }
     }
 
-    // We should have seen at least one approval signal (message stream or control callback)
+    // We should have seen at least one tool invocation (tool_call_message) or a
+    // real approval prompt (control_request) — i.e. the tool flow was entered.
     const approvalSignal = result.messages.find(
       (m) =>
-        m.message_type === "approval_request_message" ||
+        (m.type === "message" && m.message_type === "tool_call_message") ||
         (m.type === "control_request" && m.request?.subtype === "can_use_tool"),
     );
     expect(approvalSignal).toBeDefined();

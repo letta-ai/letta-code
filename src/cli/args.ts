@@ -183,6 +183,16 @@ export const CLI_FLAG_CATALOG = {
       description: "Inject agent-to-agent system reminder (headless mode)",
     },
   },
+  environment: {
+    parser: { type: "string" },
+    mode: "headless",
+    help: {
+      argLabel: "<selector>",
+      description:
+        "Route headless message through 'cloud' sandbox or an environment by name, device ID, or connection ID",
+    },
+  },
+  env: { parser: { type: "string" }, mode: "headless" },
   skills: {
     parser: { type: "string" },
     mode: "both",
@@ -219,6 +229,17 @@ export const CLI_FLAG_CATALOG = {
     parser: { type: "boolean" },
     mode: "both",
     help: { description: "Enable memory filesystem for this agent" },
+  },
+  // DEPRECATED no-op, intentionally hidden from help. Accepted for backward
+  // compatibility: older parent processes (pre-mandatory-memfs) spawn
+  // subagents with --no-memfs, and after an auto-update the child binary on
+  // disk is newer than the still-running parent. Rejecting the flag broke
+  // reflection subagents during that version skew (LET-9436). Subagent
+  // statelessness now derives from LETTA_CODE_AGENT_ROLE=subagent, so the
+  // flag is simply ignored.
+  "no-memfs": {
+    parser: { type: "boolean" },
+    mode: "both",
   },
   "memfs-startup": {
     parser: { type: "string" },

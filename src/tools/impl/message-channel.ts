@@ -1004,8 +1004,8 @@ function inferAccountIdFromChannelTurnSources(params: {
       continue;
     }
     if (
-      params.input.threadId !== undefined &&
-      (source.threadId ?? null) !== (params.input.threadId ?? null)
+      params.input.threadId?.trim() &&
+      (source.threadId ?? null) !== params.input.threadId.trim()
     ) {
       continue;
     }
@@ -1041,11 +1041,12 @@ function inferThreadIdFromChannelTurnSources(params: {
       continue;
     }
 
-    threadIds.add(
-      source.threadId ??
-        (params.input.channel === "slack" ? source.messageId : null) ??
-        null,
-    );
+    const sourceThreadId = source.threadId ?? null;
+    const fallbackThreadId =
+      params.input.channel === "slack" && source.chatType !== "direct"
+        ? source.messageId
+        : null;
+    threadIds.add(sourceThreadId ?? fallbackThreadId ?? null);
   }
 
   return threadIds.size === 1 ? [...threadIds][0] : undefined;
@@ -1161,7 +1162,9 @@ export async function message_channel(
         request: buildMessageChannelRequest(
           input,
           input.chatId,
-          inferredThreadId ?? input.threadId,
+          inferredThreadId ??
+            (route.chatType === "direct" ? null : route.threadId) ??
+            input.threadId,
         ),
         route,
         adapter,

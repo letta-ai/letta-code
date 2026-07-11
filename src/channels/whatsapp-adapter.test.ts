@@ -53,6 +53,7 @@ describe("WhatsApp adapter helpers", () => {
         type: "finished",
         batchId: "batch-1",
         outcome: "error",
+        stopReason: "error",
         error: "Turn failed",
         sources: [
           {

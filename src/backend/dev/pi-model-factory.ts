@@ -1,5 +1,5 @@
 import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
-import { getModel, getModels } from "@earendil-works/pi-ai";
+import { getModel, getModels } from "@earendil-works/pi-ai/compat";
 import {
   getOAuthProvider,
   type OAuthCredentials,
@@ -53,13 +53,29 @@ export function isUnselectedLocalModelHandle(model: unknown): boolean {
   );
 }
 
+function normalizeOpenAICompatibleLocalModelHandle(
+  model: string | undefined,
+): string | undefined {
+  if (!model?.startsWith("openai/")) return model;
+  const nestedHandle = model.slice("openai/".length);
+  const nestedProvider = resolveProviderFromModelHandle(nestedHandle);
+  if (!nestedProvider) return model;
+  return getPiProviderSpec(nestedProvider).localModelDiscovery ===
+    "openai-compatible"
+    ? nestedHandle
+    : model;
+}
+
 function settingString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function thinkingLevelSetting(value: unknown): ThinkingLevel | undefined {
+function thinkingLevelSetting(
+  value: unknown,
+  preserveMax: boolean,
+): ThinkingLevel | undefined {
   const effort = settingString(value);
-  if (effort === "max") return "xhigh";
+  if (effort === "max") return preserveMax ? "max" : "xhigh";
   return effort === "minimal" ||
     effort === "low" ||
     effort === "medium" ||
@@ -76,6 +92,7 @@ function thinkingLevelSetting(value: unknown): ThinkingLevel | undefined {
 // claude-fable-5) reject that with a 400 invalid_request_error.
 export function reasoningForSettings(
   modelSettings: Record<string, unknown>,
+  modelHandle?: string,
 ): ThinkingLevel | undefined {
   const thinking = isRecord(modelSettings.thinking)
     ? modelSettings.thinking
@@ -84,10 +101,12 @@ export function reasoningForSettings(
   const nestedReasoning = isRecord(modelSettings.reasoning)
     ? modelSettings.reasoning
     : undefined;
+  const modelId = modelHandle?.slice(modelHandle.indexOf("/") + 1);
+  const preserveMax = modelId?.startsWith("gpt-5.6") === true;
   return (
-    thinkingLevelSetting(nestedReasoning?.reasoning_effort) ??
-    thinkingLevelSetting(modelSettings.effort) ??
-    thinkingLevelSetting(modelSettings.reasoning_effort)
+    thinkingLevelSetting(nestedReasoning?.reasoning_effort, preserveMax) ??
+    thinkingLevelSetting(modelSettings.effort, preserveMax) ??
+    thinkingLevelSetting(modelSettings.reasoning_effort, preserveMax)
   );
 }
 
@@ -489,9 +508,9 @@ export async function resolvePiModelForAgent(
   modelSettings: PiModelSettings = {},
   options: PiModelFactoryOptions = {},
 ): Promise<ResolvedPiModel> {
-  const concreteModelHandle = isUnselectedLocalModelHandle(modelHandle)
-    ? undefined
-    : modelHandle;
+  const concreteModelHandle = normalizeOpenAICompatibleLocalModelHandle(
+    isUnselectedLocalModelHandle(modelHandle) ? undefined : modelHandle,
+  );
   const provider = options.provider
     ? resolvePiProvider(options.provider)
     : resolvePiProviderFromAgent(concreteModelHandle, modelSettings);

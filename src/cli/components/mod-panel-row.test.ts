@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ModContext, ModPanel } from "@/cli/mods/types";
-import { renderModPanelLines } from "./ModPanelRow";
+import { getPlacedModPanels, renderModPanelLines } from "./ModPanelRow";
 
 const CONTEXT: ModContext = {
   app: { version: "0.0.0-test" },
@@ -43,6 +43,7 @@ const CONTEXT: ModContext = {
   reflection: { mode: null, stepCount: 0 },
   memfs: { enabled: false, memoryDir: null },
   backgroundAgents: [],
+  subagents: { list: () => [] },
 };
 
 function createPanel(render: ModPanel["render"]): ModPanel {
@@ -66,6 +67,7 @@ describe("renderModPanelLines", () => {
       expect(ctx.width).toBe(40);
       expect(typeof ctx.row).toBe("function");
       expect(typeof ctx.columns).toBe("function");
+      expect(typeof ctx.link).toBe("function");
       expect(typeof ctx.chalk.dim).toBe("function");
       return ctx.row(ctx.cwd, ctx.model.displayName ?? "", ctx.width);
     });
@@ -73,5 +75,44 @@ describe("renderModPanelLines", () => {
     expect(renderModPanelLines(panel, 40, CONTEXT)).toEqual([
       "/tmp/project                     GPT-5.5",
     ]);
+  });
+});
+
+describe("getPlacedModPanels", () => {
+  test("treats order 1 as a singleton product-status replacement", () => {
+    const panels: Record<string, ModPanel> = {
+      olderProduct: {
+        id: "olderProduct",
+        order: 1,
+        path: "/tmp/older-product.ts",
+        render: () => "older",
+        updatedAt: 1,
+      },
+      newerProduct: {
+        id: "newerProduct",
+        order: 1,
+        path: "/tmp/newer-product.ts",
+        render: () => "newer",
+        updatedAt: 2,
+      },
+      top: {
+        id: "top",
+        order: 10,
+        path: "/tmp/top.ts",
+        render: () => "top",
+        updatedAt: 1,
+      },
+      middle: {
+        id: "middle",
+        order: 2,
+        path: "/tmp/middle.ts",
+        render: () => "middle",
+        updatedAt: 1,
+      },
+    };
+
+    expect(
+      getPlacedModPanels(panels, "above").map((panel) => panel.id),
+    ).toEqual(["top", "middle", "newerProduct"]);
   });
 });

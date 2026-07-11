@@ -1,6 +1,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getChannelRegistry } from "@/channels/registry";
-import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
+import { buildClientSkillsPayload } from "@/agent/client-skills";
+import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
+import type { ChannelTurnSource } from "@/channels/types";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -15,6 +16,11 @@ import {
   normalizeMessageContentImages as normalizeSharedMessageContentImages,
 } from "@/utils/message-image-normalization";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
+import {
+  activateChannelTurn,
+  dispatchChannelTurnLifecycleEvent,
+  finishActiveChannelTurn,
+} from "./channel-turn-session";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
   emitListenerStatus,
@@ -153,58 +159,26 @@ function collectBatchChannelTurnSources(
   return sources.length > 0 ? sources : undefined;
 }
 
-async function dispatchChannelTurnLifecycleEvent(
-  event:
-    | {
-        type: "processing";
-        batchId: string;
-        sources: ChannelTurnSource[];
+async function buildChannelTurnProgressBuilder(agentId?: string | null) {
+  try {
+    const { clientSkills } = await buildClientSkillsPayload({
+      agentId: agentId ?? undefined,
+    });
+    const skillDescriptionsByName = new Map<string, string>();
+    for (const skill of clientSkills) {
+      if (skill.name && skill.description) {
+        skillDescriptionsByName.set(skill.name, skill.description);
       }
-    | {
-        type: "finished";
-        batchId: string;
-        sources: ChannelTurnSource[];
-        outcome: ChannelTurnOutcome;
-        error?: string;
-      },
-): Promise<void> {
-  if (event.sources.length === 0) {
-    return;
+    }
+    return createChannelTurnProgressBuilder({ skillDescriptionsByName });
+  } catch (error) {
+    trackBoundaryError({
+      context: "websocket-listener channel progress skill descriptions",
+      errorType: "channel_progress_skill_description_discovery_failed",
+      error,
+    });
+    return createChannelTurnProgressBuilder();
   }
-
-  const registry = getChannelRegistry();
-  if (!registry) {
-    return;
-  }
-
-  if (event.type === "processing") {
-    await registry.dispatchTurnLifecycleEvent(event);
-    return;
-  }
-
-  await registry.dispatchTurnLifecycleEvent({
-    type: "finished",
-    batchId: event.batchId,
-    sources: event.sources,
-    outcome: event.outcome,
-    ...(event.error ? { error: event.error } : {}),
-  });
-}
-
-function mapTurnLifecycleOutcome(
-  lastStopReason: string | null,
-  didThrow: boolean,
-): ChannelTurnOutcome {
-  if (didThrow) {
-    return "error";
-  }
-  if (lastStopReason === "cancelled") {
-    return "cancelled";
-  }
-  if (lastStopReason && lastStopReason !== "end_turn") {
-    return "error";
-  }
-  return "completed";
 }
 
 export async function normalizeMessageContentImages(
@@ -373,19 +347,13 @@ export function shouldProcessInboundMessageDirectly(
     runtime.queuePumpScheduled ||
     runtime.pendingTurns > 0 ||
     runtime.queuedMessagesByItemId.size > 0 ||
-    runtime.isProcessing ||
-    runtime.isRecoveringApprovals ||
-    runtime.cancelRequested ||
+    runtime.turnLifecycle.kind !== "idle" ||
     runtime.pendingApprovalResolvers.size > 0 ||
     runtime.pendingApprovalBatchByToolCallId.size > 0 ||
     runtime.recoveredApprovalState !== null ||
     runtime.pendingInterruptedResults !== null ||
     runtime.pendingInterruptedContext !== null ||
-    runtime.activeExecutingToolCallIds.length > 0 ||
-    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
-    runtime.activeRunId !== null ||
-    runtime.activeRunStartedAt !== null ||
-    runtime.activeAbortController !== null
+    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0
   ) {
     return false;
   }
@@ -395,15 +363,12 @@ export function shouldProcessInboundMessageDirectly(
     conversation_id: runtime.conversationId,
   });
   return (
-    getListenerBlockedReason({
-      loopStatus: runtime.loopStatus,
-      isProcessing: runtime.isProcessing,
-      pendingApprovalsLen: activeScope
+    getListenerBlockedReason(
+      runtime.turnLifecycle.snapshot(),
+      activeScope
         ? getPendingControlRequestCount(runtime.listener, activeScope)
         : 0,
-      cancelRequested: runtime.cancelRequested,
-      isRecoveringApprovals: runtime.isRecoveringApprovals,
-    }) === null
+    ) === null
   );
 }
 
@@ -478,15 +443,12 @@ function computeListenerQueueBlockedReason(
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
   });
-  return getListenerBlockedReason({
-    loopStatus: runtime.loopStatus,
-    isProcessing: runtime.isProcessing,
-    pendingApprovalsLen: activeScope
+  return getListenerBlockedReason(
+    runtime.turnLifecycle.snapshot(),
+    activeScope
       ? getPendingControlRequestCount(runtime.listener, activeScope)
       : 0,
-    cancelRequested: runtime.cancelRequested,
-    isRecoveringApprovals: runtime.isRecoveringApprovals,
-  });
+  );
 }
 
 async function drainQueuedMessages(
@@ -549,7 +511,15 @@ async function drainQueuedMessages(
 
       let turnError: string | undefined;
       let didThrow = false;
-      runtime.activeChannelTurnSources = channelTurnSources;
+      activateChannelTurn(runtime, {
+        sources: channelTurnSources,
+        batchId: dequeuedBatch.batchId,
+        contextRecovered: false,
+        progress:
+          channelTurnSources.length > 0
+            ? await buildChannelTurnProgressBuilder(queuedTurn.agentId)
+            : null,
+      });
       try {
         await processQueuedTurn(queuedTurn, dequeuedBatch);
       } catch (error) {
@@ -557,25 +527,12 @@ async function drainQueuedMessages(
         turnError = error instanceof Error ? error.message : String(error);
         throw error;
       } finally {
-        runtime.activeChannelTurnSources = null;
-        if (channelTurnSources.length > 0) {
-          const outcome = mapTurnLifecycleOutcome(
-            runtime.lastStopReason,
-            didThrow,
-          );
-          const lifecycleError =
-            turnError ??
-            (outcome === "error"
-              ? (runtime.lastTerminalLoopErrorMessage ?? undefined)
-              : undefined);
-          await dispatchChannelTurnLifecycleEvent({
-            type: "finished",
-            batchId: dequeuedBatch.batchId,
-            sources: channelTurnSources,
-            outcome,
-            ...(lifecycleError ? { error: lifecycleError } : {}),
-          });
-        }
+        await finishActiveChannelTurn(runtime, {
+          lastStopReason: runtime.lastStopReason,
+          didThrow,
+          error: turnError ?? runtime.lastTerminalLoopErrorMessage ?? undefined,
+          runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
+        });
       }
       emitListenerStatus(
         runtime.listener,

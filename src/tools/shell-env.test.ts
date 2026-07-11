@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { configureBackendMode } from "@/backend";
@@ -273,60 +275,75 @@ test("getShellEnv injects AGENT_ID aliases", () => {
 });
 
 test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
-  const env = runWithRuntimeContext(
-    {
-      agentId: "agent-runtime-scope",
-      conversationId: "conv-runtime-scope",
-      workingDirectory: "/tmp/runtime-scope-cwd",
-    },
-    () => getShellEnv(),
-  );
+  const runtimeCwd = mkdtempSync(path.join(tmpdir(), "runtime-scope-cwd-"));
 
-  expect(env.AGENT_ID).toBe("agent-runtime-scope");
-  expect(env.LETTA_AGENT_ID).toBe("agent-runtime-scope");
-  expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
-  expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
-  expect(env.USER_CWD).toBe("/tmp/runtime-scope-cwd");
+  try {
+    const env = runWithRuntimeContext(
+      {
+        agentId: "agent-runtime-scope",
+        agentName: "Runtime Scope Agent",
+        conversationId: "conv-runtime-scope",
+        workingDirectory: runtimeCwd,
+      },
+      () => getShellEnv(),
+    );
+
+    expect(env.AGENT_ID).toBe("agent-runtime-scope");
+    expect(env.LETTA_AGENT_ID).toBe("agent-runtime-scope");
+    expect(env.AGENT_NAME).toBe("Runtime Scope Agent");
+    expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
+    expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
+    expect(env.USER_CWD).toBe(runtimeCwd);
+  } finally {
+    rmSync(runtimeCwd, { recursive: true, force: true });
+  }
 });
 
 test("getShellEnv isolates overlapping runtime scopes", async () => {
+  const cwdA = mkdtempSync(path.join(tmpdir(), "agent-a-"));
+  const cwdB = mkdtempSync(path.join(tmpdir(), "agent-b-"));
   let releaseAgentA!: () => void;
   const waitForAgentA = new Promise<void>((resolve) => {
     releaseAgentA = resolve;
   });
 
-  const taskA = runWithRuntimeContext(
-    {
-      agentId: "agent-a",
-      conversationId: "conv-a",
-      workingDirectory: "/tmp/agent-a",
-    },
-    async () => {
-      await waitForAgentA;
-      return getShellEnv();
-    },
-  );
+  try {
+    const taskA = runWithRuntimeContext(
+      {
+        agentId: "agent-a",
+        conversationId: "conv-a",
+        workingDirectory: cwdA,
+      },
+      async () => {
+        await waitForAgentA;
+        return getShellEnv();
+      },
+    );
 
-  const taskB = runWithRuntimeContext(
-    {
-      agentId: "agent-b",
-      conversationId: "conv-b",
-      workingDirectory: "/tmp/agent-b",
-    },
-    async () => {
-      releaseAgentA();
-      return getShellEnv();
-    },
-  );
+    const taskB = runWithRuntimeContext(
+      {
+        agentId: "agent-b",
+        conversationId: "conv-b",
+        workingDirectory: cwdB,
+      },
+      async () => {
+        releaseAgentA();
+        return getShellEnv();
+      },
+    );
 
-  const [envA, envB] = await Promise.all([taskA, taskB]);
+    const [envA, envB] = await Promise.all([taskA, taskB]);
 
-  expect(envA.AGENT_ID).toBe("agent-a");
-  expect(envA.CONVERSATION_ID).toBe("conv-a");
-  expect(envA.USER_CWD).toBe("/tmp/agent-a");
-  expect(envB.AGENT_ID).toBe("agent-b");
-  expect(envB.CONVERSATION_ID).toBe("conv-b");
-  expect(envB.USER_CWD).toBe("/tmp/agent-b");
+    expect(envA.AGENT_ID).toBe("agent-a");
+    expect(envA.CONVERSATION_ID).toBe("conv-a");
+    expect(envA.USER_CWD).toBe(cwdA);
+    expect(envB.AGENT_ID).toBe("agent-b");
+    expect(envB.CONVERSATION_ID).toBe("conv-b");
+    expect(envB.USER_CWD).toBe(cwdB);
+  } finally {
+    rmSync(cwdA, { recursive: true, force: true });
+    rmSync(cwdB, { recursive: true, force: true });
+  }
 });
 
 test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", () => {
@@ -367,6 +384,71 @@ test("getShellEnv does not inject MEMORY_DIR aliases when memfs is disabled", ()
   });
 });
 
+test("getShellEnv honors an explicit MEMORY_DIR scope outside the memory store", () => {
+  withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
+    withTemporaryEnv(
+      {
+        MEMORY_DIR: "/tmp/dream-batch-clone/output",
+        LETTA_MEMORY_DIR: "/tmp/dream-batch-clone/output",
+        LETTA_MEMORY_DIR_EXPLICIT: "1",
+      },
+      () => {
+        const originalIsMemfsEnabled =
+          settingsManager.isMemfsEnabled.bind(settingsManager);
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = () => false;
+        try {
+          const env = getShellEnv();
+          expect(env.MEMORY_DIR).toBe("/tmp/dream-batch-clone/output");
+          expect(env.LETTA_MEMORY_DIR).toBe("/tmp/dream-batch-clone/output");
+        } finally {
+          (
+            settingsManager as unknown as {
+              isMemfsEnabled: (id: string) => boolean;
+            }
+          ).isMemfsEnabled = originalIsMemfsEnabled;
+        }
+      },
+    );
+  });
+});
+
+test("getShellEnv strips an explicit scope pointing into another agent's memory", () => {
+  const otherAgentMemory = getMemoryFilesystemRoot(`agent-other-${Date.now()}`);
+  withTemporaryAgentEnv(`agent-test-${Date.now()}`, () => {
+    withTemporaryEnv(
+      {
+        MEMORY_DIR: otherAgentMemory,
+        LETTA_MEMORY_DIR: otherAgentMemory,
+        LETTA_MEMORY_DIR_EXPLICIT: "1",
+      },
+      () => {
+        const originalIsMemfsEnabled =
+          settingsManager.isMemfsEnabled.bind(settingsManager);
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = () => false;
+        try {
+          const env = getShellEnv();
+          expect(env.MEMORY_DIR).toBeUndefined();
+          expect(env.LETTA_MEMORY_DIR).toBeUndefined();
+        } finally {
+          (
+            settingsManager as unknown as {
+              isMemfsEnabled: (id: string) => boolean;
+            }
+          ).isMemfsEnabled = originalIsMemfsEnabled;
+        }
+      },
+    );
+  });
+});
+
 test("getShellEnv preserves inherited parent MEMORY_DIR for subagents", () => {
   const parentAgentId = `agent-parent-${Date.now()}`;
   const childAgentId = `agent-child-${Date.now()}`;
@@ -393,6 +475,49 @@ test("getShellEnv preserves inherited parent MEMORY_DIR for subagents", () => {
           const env = getShellEnv();
           expect(env.MEMORY_DIR).toBe(parentMemoryDir);
           expect(env.LETTA_MEMORY_DIR).toBe(parentMemoryDir);
+        } finally {
+          (
+            settingsManager as unknown as {
+              isMemfsEnabled: (id: string) => boolean;
+            }
+          ).isMemfsEnabled = originalIsMemfsEnabled;
+        }
+      },
+    );
+  });
+});
+
+test("getShellEnv preserves inherited parent memory worktree dir for subagents", () => {
+  const parentAgentId = `agent-parent-${Date.now()}`;
+  const childAgentId = `agent-child-${Date.now()}`;
+  const parentMemoryDir = getMemoryFilesystemRoot(parentAgentId);
+  const worktreeMemoryDir = path.join(
+    path.dirname(parentMemoryDir),
+    "memory-worktrees",
+    "reflection-test",
+  );
+
+  withTemporaryAgentEnv(childAgentId, () => {
+    withTemporaryEnv(
+      {
+        LETTA_CODE_AGENT_ROLE: "subagent",
+        LETTA_PARENT_AGENT_ID: parentAgentId,
+        MEMORY_DIR: worktreeMemoryDir,
+        LETTA_MEMORY_DIR: worktreeMemoryDir,
+      },
+      () => {
+        const originalIsMemfsEnabled =
+          settingsManager.isMemfsEnabled.bind(settingsManager);
+        (
+          settingsManager as unknown as {
+            isMemfsEnabled: (id: string) => boolean;
+          }
+        ).isMemfsEnabled = () => false;
+
+        try {
+          const env = getShellEnv();
+          expect(env.MEMORY_DIR).toBe(worktreeMemoryDir);
+          expect(env.LETTA_MEMORY_DIR).toBe(worktreeMemoryDir);
         } finally {
           (
             settingsManager as unknown as {

@@ -175,9 +175,9 @@ describe("shell secret execution", () => {
     try {
       const calls = [
         ["Bash", { command, description: "Test shell secrets" }],
-        ["shell_command", { command }],
-        ["ShellCommand", { command }],
-        ["run_shell_command", { command }],
+        ["shell_command", { command, description: "Test shell secrets" }],
+        ["ShellCommand", { command, description: "Test shell secrets" }],
+        ["run_shell_command", { command, description: "Test shell secrets" }],
       ] as const;
 
       for (const [toolName, args] of calls) {
