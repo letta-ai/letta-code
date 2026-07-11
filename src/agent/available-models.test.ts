@@ -19,8 +19,12 @@ import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
  */
 
 type FakeModel = {
+  display_name?: string;
   handle: string;
   max_context_window?: number;
+  max_tokens?: number;
+  model?: string;
+  name?: string;
   provider_type?: string;
 };
 
@@ -35,6 +39,7 @@ class AvailableModelsTestBackend extends FakeHeadlessBackend {
 const {
   clearAvailableModelsCache,
   getAvailableModelHandles,
+  getCachedAvailableModels,
   getCachedModelHandles,
 } = await import("@/agent/available-models");
 
@@ -115,6 +120,31 @@ describe("available-models cache semantics", () => {
     const forced = await getAvailableModelHandles({ forceRefresh: true });
     expect(forced.source).toBe("network");
     expect([...forced.handles]).toEqual(["openai/gpt-4o", "zai/glm-4.6"]);
+  });
+
+  test("carries backend model descriptors for catalog rendering", async () => {
+    listModelsImpl = async () => [
+      {
+        handle: "opencode/deepseek-v4-flash-free",
+        display_name: "DeepSeek V4 Flash Free",
+        max_context_window: 200000,
+        max_tokens: 32000,
+        provider_type: "opencode",
+      },
+    ];
+
+    const result = await getAvailableModelHandles();
+
+    expect(result.models).toEqual([
+      {
+        handle: "opencode/deepseek-v4-flash-free",
+        label: "DeepSeek V4 Flash Free",
+        maxContextWindow: 200000,
+        maxOutputTokens: 32000,
+        providerType: "opencode",
+      },
+    ]);
+    expect(getCachedAvailableModels()).toEqual(result.models);
   });
 
   test("clearAvailableModelsCache drops the inflight fetch so the next call refetches", async () => {

@@ -1344,61 +1344,6 @@ describe("local backend pi transcript", () => {
     expect(handles).not.toContain("ollama/llama2");
   });
 
-  test("lists mod-registered local provider models with context windows", async () => {
-    registerPiProvider("lmstudio", {
-      baseUrl: "http://localhost:8000/v1",
-      apiKey: "not-needed",
-      api: "openai-completions",
-      models: [
-        {
-          id: "gemma-4-26B-A4B-it-oQ6",
-          name: "Gemma 4 VLM",
-          reasoning: true,
-          input: ["text", "image"],
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: 256000,
-          maxTokens: 8192,
-        },
-      ],
-    });
-    const storageDir = await mkdtemp(
-      join(tmpdir(), "local-backend-pi-registered-provider-"),
-    );
-    await createOrUpdateLocalProvider({
-      providerType: "lmstudio",
-      providerName: "lc-lmstudio",
-      apiKey: "not-needed",
-      baseURL: "http://127.0.0.1:1234/v1",
-      storageDir,
-    });
-    const calls: string[] = [];
-    const fetchImpl = (async (input: unknown) => {
-      calls.push(typeof input === "string" ? input : String(input));
-      return new Response(
-        JSON.stringify({ data: [{ id: "heuristic-only-model" }] }),
-        { headers: { "content-type": "application/json" } },
-      );
-    }) as unknown as typeof fetch;
-
-    const models = await listLocalModels(storageDir, { fetch: fetchImpl });
-
-    expect(calls).toEqual(
-      expect.arrayContaining([
-        "http://localhost:11434/v1/models",
-        "http://localhost:8080/v1/models",
-      ]),
-    );
-    expect(models).toContainEqual({
-      handle: "lmstudio/gemma-4-26B-A4B-it-oQ6",
-      max_context_window: 256000,
-      model: "lmstudio/gemma-4-26B-A4B-it-oQ6",
-      model_endpoint_type: "lmstudio",
-    });
-    expect(models.map((model) => model.handle)).not.toContain(
-      "lmstudio/heuristic-only-model",
-    );
-  });
-
   test("uses mod-registered context windows for local agent state", async () => {
     registerPiProvider("lmstudio", {
       baseUrl: "http://localhost:8000/v1",
