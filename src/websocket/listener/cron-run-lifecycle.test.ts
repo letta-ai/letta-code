@@ -20,8 +20,9 @@ import { sharedReminderProviders } from "@/reminders/engine";
 import { settingsManager } from "@/settings-manager";
 import { clearTools } from "@/tools/manager";
 import { injectQueuedSkillContent } from "@/websocket/listener/skill-injection";
+import { __listenerTurnIoTestUtils as aliasTurnIoTestUtils } from "@/websocket/listener/turn-io";
 import type { ConversationRuntime } from "@/websocket/listener/types";
-import { __listenerTurnIoTestUtils } from "./turn-io";
+import { __listenerTurnIoTestUtils as relativeTurnIoTestUtils } from "./turn-io";
 
 type MockStream = { conversationId: string; agentId?: string };
 type DrainResult = {
@@ -139,12 +140,17 @@ describe("cron listener run lifecycle", () => {
     retrieveAgentMock.mockClear();
     retrieveConversationMock.mockClear();
     getClientMock.mockClear();
-    __listenerTurnIoTestUtils.setSendMessageStreamForTests(
-      sendMessageStreamForTest as unknown as typeof sendMessageStream,
-    );
-    __listenerTurnIoTestUtils.setDrainStreamWithResumeForTests(
-      drainStreamWithResumeForTest as unknown as typeof drainStreamWithResume,
-    );
+    for (const turnIoTestUtils of [
+      aliasTurnIoTestUtils,
+      relativeTurnIoTestUtils,
+    ]) {
+      turnIoTestUtils.setSendMessageStreamForTests(
+        sendMessageStreamForTest as unknown as typeof sendMessageStream,
+      );
+      turnIoTestUtils.setDrainStreamWithResumeForTests(
+        drainStreamWithResumeForTest as unknown as typeof drainStreamWithResume,
+      );
+    }
     __listenClientTestUtils.setActiveRuntime(null);
   });
 
@@ -157,12 +163,22 @@ describe("cron listener run lifecycle", () => {
       originalGetLocalProjectSettings;
     clearTools();
     permissionMode.reset();
-    __listenerTurnIoTestUtils.resetForTests();
+    for (const turnIoTestUtils of [
+      aliasTurnIoTestUtils,
+      relativeTurnIoTestUtils,
+    ]) {
+      turnIoTestUtils.resetForTests();
+    }
     __listenClientTestUtils.setActiveRuntime(null);
   });
 
   afterAll(() => {
-    __listenerTurnIoTestUtils.resetForTests();
+    for (const turnIoTestUtils of [
+      aliasTurnIoTestUtils,
+      relativeTurnIoTestUtils,
+    ]) {
+      turnIoTestUtils.resetForTests();
+    }
     mock.restore();
   });
 
