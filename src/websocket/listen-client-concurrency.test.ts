@@ -334,13 +334,16 @@ function createDeferredDrain() {
 
 async function waitFor(
   predicate: () => boolean,
-  attempts: number = 20,
+  timeoutMs: number = 5_000,
 ): Promise<void> {
-  for (let i = 0; i < attempts; i += 1) {
-    if (predicate()) {
-      return;
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Timed out waiting for test condition after ${timeoutMs}ms`,
+      );
     }
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 1));
   }
 }
 
@@ -940,7 +943,7 @@ describe("listen-client multi-worker concurrency", () => {
       processQueuedTurn,
     );
 
-    await waitFor(() => processed.length === 2);
+    await Promise.all([runtimeA.messageQueue, runtimeB.messageQueue]);
 
     expect(processed.sort()).toEqual(["conv-a", "conv-b"]);
     expect(runtimeA.queueRuntime.length).toBe(0);
@@ -1023,7 +1026,7 @@ describe("listen-client multi-worker concurrency", () => {
       },
     );
 
-    await waitFor(() => processed.length === 1);
+    await runtime.messageQueue;
 
     const queuedPayload = processed[0]?.messages[0];
     if (!queuedPayload || !("content" in queuedPayload)) {
@@ -1132,7 +1135,7 @@ describe("listen-client multi-worker concurrency", () => {
       },
     );
 
-    await waitFor(() => processed.length === 1 && lifecycleEvents.length === 2);
+    await runtime.messageQueue;
 
     expect(processed[0]?.channelTurnSources).toEqual(channelTurnSources);
     expect(lifecycleEvents[0]).toEqual({
@@ -1212,9 +1215,7 @@ describe("listen-client multi-worker concurrency", () => {
       },
     );
 
-    await waitFor(
-      () => lifecycleEvents.length === 1 && !runtime.queuePumpActive,
-    );
+    await runtime.messageQueue;
     expect(lifecycleEvents).toEqual([
       {
         type: "processing",
@@ -1296,7 +1297,7 @@ describe("listen-client multi-worker concurrency", () => {
       },
     );
 
-    await waitFor(() => lifecycleEvents.length === 2);
+    await runtime.messageQueue;
 
     expect(lifecycleEvents[1]).toEqual({
       type: "finished",
@@ -1346,7 +1347,7 @@ describe("listen-client multi-worker concurrency", () => {
       },
     );
 
-    await waitFor(() => processed.length === 1);
+    await runtime.messageQueue;
 
     expect(processed[0]).toEqual(
       expect.objectContaining({
@@ -2105,7 +2106,7 @@ describe("listen-client multi-worker concurrency", () => {
       async () => {},
     );
 
-    await waitFor(() => runtimeB.queueRuntime.length === 0);
+    await runtimeB.messageQueue;
 
     expect(statuses).not.toContain("idle");
     expect(statuses.every((status) => status === "processing")).toBe(true);
@@ -2372,12 +2373,7 @@ describe("listen-client multi-worker concurrency", () => {
           batch.batchId,
         ),
     );
-    await waitFor(
-      () =>
-        runtime.queueRuntime.length === 0 &&
-        runtime.turnLifecycle.kind === "idle" &&
-        sendMessageStreamMock.mock.calls.length === 2,
-    );
+    await runtime.messageQueue;
 
     expect(JSON.stringify(sendMessageStreamMock.mock.calls[1]?.[1])).toContain(
       "follow up",
