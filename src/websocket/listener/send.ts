@@ -7,7 +7,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { fetchRunErrorInfo } from "@/agent/approval-recovery";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
-import { sendMessageStream } from "@/agent/message";
+import type { sendMessageStream } from "@/agent/message";
 import {
   buildFreshDenialApprovals,
   extractConflictDetail,
@@ -46,6 +46,7 @@ import {
 } from "./recovery";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
+import { listenerSendMessageStream } from "./turn-io";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime } from "./types";
@@ -485,7 +486,7 @@ export async function sendMessageStreamWithRetry(
     });
 
     try {
-      return await sendMessageStream(
+      return await listenerSendMessageStream(
         conversationId,
         messages,
         currentOpts,
@@ -703,7 +704,7 @@ export async function sendApprovalContinuationWithRetry(
     });
 
     try {
-      const stream = await sendMessageStream(
+      const stream = await listenerSendMessageStream(
         conversationId,
         messages,
         currentOpts,

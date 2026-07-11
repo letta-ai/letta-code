@@ -21,7 +21,6 @@ import {
   toLines,
 } from "@/cli/helpers/accumulator";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
-import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
@@ -75,6 +74,7 @@ import { handleApprovalStop } from "./turn-approval";
 import { runListenerTurnCleanup } from "./turn-cleanup";
 import { completeSuccessfulListenerTurn } from "./turn-completion";
 import { releaseListenerTurnContext } from "./turn-context";
+import { listenerDrainStreamWithResume } from "./turn-io";
 import type { TurnLease } from "./turn-lifecycle";
 import { createTurnInputSender } from "./turn-send";
 import { prepareListenerTurn } from "./turn-setup";
@@ -316,7 +316,7 @@ export async function handleIncomingMessage(
     while (true) {
       runIdSent = false;
       let latestErrorText: string | null = null;
-      const result = await drainStreamWithResume(
+      const result = await listenerDrainStreamWithResume(
         stream as Stream<LettaStreamingResponse>,
         buffers,
         () => {},

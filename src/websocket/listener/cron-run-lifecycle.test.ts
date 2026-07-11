@@ -11,6 +11,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
+import type { sendMessageStream } from "@/agent/message";
+import type { drainStreamWithResume } from "@/cli/helpers/stream";
 import { getCronRunLogPath, readCronRunLogEntries } from "@/cron/run-log";
 import { permissionMode } from "@/permissions/mode";
 import type { CronPromptQueueItem } from "@/queue/queue-runtime";
@@ -18,6 +20,7 @@ import { sharedReminderProviders } from "@/reminders/engine";
 import { settingsManager } from "@/settings-manager";
 import { clearTools } from "@/tools/manager";
 import { injectQueuedSkillContent } from "@/websocket/listener/skill-injection";
+import { __listenerTurnIoTestUtils } from "@/websocket/listener/turn-io";
 import type { ConversationRuntime } from "@/websocket/listener/types";
 
 type MockStream = { conversationId: string; agentId?: string };
@@ -44,7 +47,6 @@ const sendMessageStreamMock = mock(
     opts?: { agentId?: string },
   ): Promise<MockStream> => ({ conversationId, agentId: opts?.agentId }),
 );
-const getStreamToolContextIdMock = mock(() => null);
 const drainRunIdsByConversation = new Map<string, string[]>();
 const drainStreamWithResumeMock = mock(
   async (
@@ -99,40 +101,6 @@ const getClientMock = mock(async () => ({
     })),
   },
 }));
-const realStreamModule = await import("@/cli/helpers/stream");
-const realDrainStreamWithResume = realStreamModule.drainStreamWithResume;
-const realAgentMessageModule = await import("@/agent/message");
-const realSendMessageStream = realAgentMessageModule.sendMessageStream;
-const realGetStreamToolContextId =
-  realAgentMessageModule.getStreamToolContextId;
-
-mock.module("@/agent/message", () => ({
-  sendMessageStream: sendMessageStreamMock,
-  getStreamToolContextId: getStreamToolContextIdMock,
-  getStreamRequestContext: () => undefined,
-  getStreamRequestStartTime: () => undefined,
-  buildConversationMessagesCreateRequestBody: (
-    conversationId: string,
-    messages: unknown[],
-    opts?: { agentId?: string; streamTokens?: boolean; background?: boolean },
-  ) => ({
-    messages,
-    streaming: true,
-    stream_tokens: opts?.streamTokens ?? true,
-    include_pings: true,
-    background: opts?.background ?? true,
-    client_skills: [],
-    client_tools: [],
-    include_compaction_messages: true,
-    ...(conversationId === "default" && opts?.agentId
-      ? { agent_id: opts.agentId }
-      : {}),
-  }),
-}));
-mock.module("@/cli/helpers/stream", () => ({
-  ...realStreamModule,
-  drainStreamWithResume: drainStreamWithResumeMock,
-}));
 mock.module("@/backend/api/client", () => ({
   getClient: getClientMock,
   getServerUrl: () => "https://example.test",
@@ -174,6 +142,12 @@ describe("cron listener run lifecycle", () => {
     retrieveAgentMock.mockClear();
     retrieveConversationMock.mockClear();
     getClientMock.mockClear();
+    __listenerTurnIoTestUtils.setSendMessageStreamForTests(
+      sendMessageStreamMock as unknown as typeof sendMessageStream,
+    );
+    __listenerTurnIoTestUtils.setDrainStreamWithResumeForTests(
+      drainStreamWithResumeMock as unknown as typeof drainStreamWithResume,
+    );
     __listenClientTestUtils.setActiveRuntime(null);
   });
 
@@ -186,23 +160,14 @@ describe("cron listener run lifecycle", () => {
       originalGetLocalProjectSettings;
     clearTools();
     permissionMode.reset();
+    __listenerTurnIoTestUtils.resetForTests();
     __listenClientTestUtils.setActiveRuntime(null);
   });
 
   afterAll(() => {
     sendMessageStreamMock.mockReset();
-    // biome-ignore lint/suspicious/noExplicitAny: restoring captured implementation behind mock.module
-    (sendMessageStreamMock as any).mockImplementation(realSendMessageStream);
-    getStreamToolContextIdMock.mockReset();
-    // biome-ignore lint/suspicious/noExplicitAny: restoring captured implementation behind mock.module
-    (getStreamToolContextIdMock as any).mockImplementation(
-      realGetStreamToolContextId,
-    );
     drainStreamWithResumeMock.mockReset();
-    // biome-ignore lint/suspicious/noExplicitAny: restoring captured implementation behind mock.module
-    (drainStreamWithResumeMock as any).mockImplementation(
-      realDrainStreamWithResume,
-    );
+    __listenerTurnIoTestUtils.resetForTests();
     mock.restore();
   });
 
