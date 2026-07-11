@@ -989,9 +989,7 @@ function inferAccountIdFromChannelTurnSources(params: {
   channelTurnSources?: ChannelTurnSource[];
 }): string | undefined {
   const chatId = params.input.chatId;
-  if (!chatId) {
-    return undefined;
-  }
+  if (!chatId) return undefined;
 
   const accountIds = new Set<string>();
   for (const source of params.channelTurnSources ?? []) {
