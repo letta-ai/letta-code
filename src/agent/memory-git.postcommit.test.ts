@@ -27,7 +27,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { POST_COMMIT_HOOK_SCRIPT } from "@/agent/memory-git";
+import { POST_COMMIT_HOOK_SCRIPT } from "@/agent/memory-git-hooks";
 
 let sourceDir: string;
 let remoteDir: string;
