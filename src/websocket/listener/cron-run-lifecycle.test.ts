@@ -40,34 +40,33 @@ const defaultDrainResult: DrainResult = {
   approvals: [],
   apiDurationMs: 0,
 };
-const sendMessageStreamMock = mock(
-  async (
-    conversationId: string,
-    _messages: unknown[],
-    opts?: { agentId?: string },
-  ): Promise<MockStream> => ({ conversationId, agentId: opts?.agentId }),
-);
+async function sendMessageStreamForTest(
+  conversationId: string,
+  _messages: unknown[],
+  opts?: { agentId?: string },
+): Promise<MockStream> {
+  return { conversationId, agentId: opts?.agentId };
+}
+
 const drainRunIdsByConversation = new Map<string, string[]>();
-const drainStreamWithResumeMock = mock(
-  async (
-    stream: MockStream,
-    _buffers: unknown,
-    _refresh: () => void,
-    _abortSignal?: AbortSignal,
-    _resumeCursor?: unknown,
-    onChunk?: DrainChunkCallback,
-  ) => {
-    for (const runId of drainRunIdsByConversation.get(stream.conversationId) ??
-      []) {
-      onChunk?.({
-        chunk: { run_id: runId },
-        shouldOutput: false,
-        errorInfo: null,
-      });
-    }
-    return defaultDrainResult;
-  },
-);
+async function drainStreamWithResumeForTest(
+  stream: MockStream,
+  _buffers: unknown,
+  _refresh: () => void,
+  _abortSignal?: AbortSignal,
+  _resumeCursor?: unknown,
+  onChunk?: DrainChunkCallback,
+): Promise<DrainResult> {
+  for (const runId of drainRunIdsByConversation.get(stream.conversationId) ??
+    []) {
+    onChunk?.({
+      chunk: { run_id: runId },
+      shouldOutput: false,
+      errorInfo: null,
+    });
+  }
+  return defaultDrainResult;
+}
 const retrieveAgentMock = mock(async (agentId: string) => ({
   id: agentId,
   model: "anthropic/claude-sonnet-4",
@@ -137,16 +136,14 @@ describe("cron listener run lifecycle", () => {
     clearTools();
     permissionMode.reset();
     drainRunIdsByConversation.clear();
-    sendMessageStreamMock.mockClear();
-    drainStreamWithResumeMock.mockClear();
     retrieveAgentMock.mockClear();
     retrieveConversationMock.mockClear();
     getClientMock.mockClear();
     __listenerTurnIoTestUtils.setSendMessageStreamForTests(
-      sendMessageStreamMock as unknown as typeof sendMessageStream,
+      sendMessageStreamForTest as unknown as typeof sendMessageStream,
     );
     __listenerTurnIoTestUtils.setDrainStreamWithResumeForTests(
-      drainStreamWithResumeMock as unknown as typeof drainStreamWithResume,
+      drainStreamWithResumeForTest as unknown as typeof drainStreamWithResume,
     );
     __listenClientTestUtils.setActiveRuntime(null);
   });
@@ -165,8 +162,6 @@ describe("cron listener run lifecycle", () => {
   });
 
   afterAll(() => {
-    sendMessageStreamMock.mockReset();
-    drainStreamWithResumeMock.mockReset();
     __listenerTurnIoTestUtils.resetForTests();
     mock.restore();
   });
