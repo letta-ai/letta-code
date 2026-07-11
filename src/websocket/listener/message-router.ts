@@ -34,6 +34,7 @@ import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
+import { getExportedCwdMap } from "./cwd";
 import { handleExternalToolCallResponseCommand } from "./external-tools";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import { enqueueInboundUserMessage } from "./inbound-queue";
@@ -811,7 +812,7 @@ export function createListenerMessageHandler(
             type: "get_cwd_map_response",
             request_id: parsed.request_id,
             success: true,
-            cwd_map: Object.fromEntries(runtime.workingDirectoryByConversation),
+            cwd_map: getExportedCwdMap(runtime),
             boot_working_directory: runtime.bootWorkingDirectory,
           },
           "get_cwd_map_response",

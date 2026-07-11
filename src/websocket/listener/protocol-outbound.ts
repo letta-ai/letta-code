@@ -43,7 +43,7 @@ import {
   getActiveChannelTurnProgressContext,
 } from "./channel-turn-session";
 import { SYSTEM_REMINDER_RE } from "./constants";
-import { getConversationWorkingDirectory } from "./cwd";
+import { getConversationWorkingDirectory, getExportedCwdMap } from "./cwd";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { listListenerModCommands } from "./mod-commands";
 import { getConversationPermissionModeState } from "./permission-mode";
@@ -496,7 +496,7 @@ export function buildDeviceStatus(
       : null,
     ...(params === undefined
       ? {
-          cwd_map: Object.fromEntries(listener.workingDirectoryByConversation),
+          cwd_map: getExportedCwdMap(listener),
           boot_working_directory: listener.bootWorkingDirectory,
         }
       : {}),

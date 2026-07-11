@@ -24,8 +24,12 @@ export interface RemoteSettings {
 // Module-level cache to avoid repeated disk reads and enable cheap merges.
 let _cache: RemoteSettings | null = null;
 
+function getRemoteSettingsHome(): string {
+  return process.env.HOME || homedir();
+}
+
 export function getRemoteSettingsPath(): string {
-  return path.join(homedir(), ".letta", "remote-settings.json");
+  return path.join(getRemoteSettingsHome(), ".letta", "remote-settings.json");
 }
 
 /**
@@ -108,7 +112,11 @@ export function resetRemoteSettingsCache(): void {
  */
 function loadLegacyCwdCache(): Record<string, string> {
   try {
-    const legacyPath = path.join(homedir(), ".letta", "cwd-cache.json");
+    const legacyPath = path.join(
+      getRemoteSettingsHome(),
+      ".letta",
+      "cwd-cache.json",
+    );
     if (!existsSync(legacyPath)) return {};
     const raw = readFileSync(legacyPath, "utf-8");
     const parsed = JSON.parse(raw) as Record<string, unknown>;

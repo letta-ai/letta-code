@@ -41,6 +41,37 @@ export function getConversationWorkingDirectory(
   return stored;
 }
 
+export function pruneStaleConversationWorkingDirectories(
+  runtime: ListenerRuntime,
+): boolean {
+  const staleScopeKeys: string[] = [];
+  for (const [
+    scopeKey,
+    workingDirectory,
+  ] of runtime.workingDirectoryByConversation) {
+    if (!isUsableDirectory(workingDirectory)) {
+      staleScopeKeys.push(scopeKey);
+    }
+  }
+
+  if (staleScopeKeys.length === 0) {
+    return false;
+  }
+
+  for (const scopeKey of staleScopeKeys) {
+    runtime.workingDirectoryByConversation.delete(scopeKey);
+  }
+  persistCwdMap(runtime.workingDirectoryByConversation);
+  return true;
+}
+
+export function getExportedCwdMap(
+  runtime: ListenerRuntime,
+): Record<string, string> {
+  pruneStaleConversationWorkingDirectories(runtime);
+  return Object.fromEntries(runtime.workingDirectoryByConversation);
+}
+
 /**
  * @deprecated - the legacy path is only read for one-time migration in remote-settings.ts
  */
