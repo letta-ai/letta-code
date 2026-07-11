@@ -3451,12 +3451,12 @@ export function App({
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
   const maybeCarryOverActiveConversationModel = useCallback(
     async (targetConversationId: string) => {
-      if (!hasConversationModelOverrideRef.current) {
-        return;
-      }
+      if (!hasConversationModelOverrideRef.current) return;
 
       const currentLlmConfig = llmConfigRef.current;
-      const rawModelHandle = buildModelHandleFromLlmConfig(currentLlmConfig);
+      const rawModelHandle =
+        currentModelHandleRef.current ??
+        buildModelHandleFromLlmConfig(currentLlmConfig);
       if (!rawModelHandle) {
         return;
       }

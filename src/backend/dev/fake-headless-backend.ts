@@ -5,6 +5,7 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import { mapModelHandleToLlmConfigPatch } from "@/agent/model-handles";
 import type {
   Backend,
   ConversationCreateBody,
@@ -340,11 +341,12 @@ export class HeadlessBackend implements Backend {
   }
 
   async listModels(): ReturnType<Backend["listModels"]> {
+    const llmConfigPatch = mapModelHandleToLlmConfigPatch(this.modelHandle);
     return [
       {
         handle: this.modelHandle,
-        model: this.modelHandle,
-        model_endpoint_type: "openai",
+        model: llmConfigPatch.model ?? this.modelHandle,
+        model_endpoint_type: llmConfigPatch.model_endpoint_type ?? "openai",
       },
     ] as never;
   }

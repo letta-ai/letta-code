@@ -2,7 +2,10 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getModelInfo, type ModelReasoningEffort } from "@/agent/model";
-import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import {
+  mapModelHandleToLlmConfigPatch,
+  resolveModelHandleFromLlmConfig,
+} from "@/agent/model-handles";
 import { ERROR_FEEDBACK_HINT, PROVIDER_STATUS_PAGES } from "./constants";
 
 /**
@@ -95,11 +98,7 @@ export function inferReasoningEffortFromModelPreset(
 export function buildModelHandleFromLlmConfig(
   llmConfig: LlmConfig | null | undefined,
 ): string | null {
-  if (!llmConfig) return null;
-  if (llmConfig.model_endpoint_type && llmConfig.model) {
-    return `${llmConfig.model_endpoint_type}/${llmConfig.model}`;
-  }
-  return llmConfig.model ?? null;
+  return resolveModelHandleFromLlmConfig(llmConfig);
 }
 
 export function getPreferredAgentModelHandle(
@@ -142,42 +141,10 @@ export function mapHandleToLlmConfigPatch(
   modelHandle: string,
   providerType?: string | null,
 ): Partial<LlmConfig> {
-  const [provider, ...modelParts] = modelHandle.split("/");
-  const modelName = modelParts.join("/");
-  if (!provider || !modelName) {
-    return {
-      model: modelHandle,
-    };
-  }
-  const knownEndpointTypes = new Set([
-    "anthropic",
-    "bedrock",
-    "chatgpt_oauth",
-    "google_ai",
-    "google_vertex",
-    "minimax",
-    "moonshot",
-    "moonshot_coding",
-    "openai",
-    "openrouter",
-    "zai",
-    "zai_coding",
-  ]);
-  const endpointType =
-    typeof providerType === "string" && providerType.length > 0
-      ? providerType
-      : provider === OPENAI_CODEX_PROVIDER_NAME || provider === "openai-codex"
-        ? "chatgpt_oauth"
-        : knownEndpointTypes.has(provider)
-          ? provider
-          : null;
-  if (!endpointType) {
-    return { model: modelHandle };
-  }
-  return {
-    model: modelName,
-    model_endpoint_type: endpointType as LlmConfig["model_endpoint_type"],
-  };
+  return mapModelHandleToLlmConfigPatch(
+    modelHandle,
+    providerType,
+  ) as Partial<LlmConfig>;
 }
 
 // Helper to get appropriate error hint based on stop reason and current model
