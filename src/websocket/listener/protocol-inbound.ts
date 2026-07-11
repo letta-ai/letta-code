@@ -1084,16 +1084,7 @@ export function isCronGetCommand(value: unknown): value is CronGetCommand {
 
 export function isCronRunsCommand(value: unknown): value is CronRunsCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    task_id?: unknown;
-    limit?: unknown;
-    offset?: unknown;
-    run_id?: unknown;
-    backend_run_id?: unknown;
-    cron_run_id?: unknown;
-  };
+  const c = value as Record<string, unknown>;
   return (
     c.type === "cron_runs" &&
     typeof c.request_id === "string" &&
