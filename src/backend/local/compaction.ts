@@ -1,12 +1,14 @@
+import type {
+  AssistantMessage,
+  Context,
+  Model,
+  SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
 import {
-  type AssistantMessage,
-  type Context,
   complete,
   completeSimple,
   isContextOverflow,
-  type Model,
-  type SimpleStreamOptions,
-} from "@earendil-works/pi-ai";
+} from "@earendil-works/pi-ai/compat";
 import { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
 import {
   applyPiEnvOverrides,
@@ -438,7 +440,10 @@ async function runGenerateText(
     systemPrompt,
     messages: [{ role: "user", content: transcript, timestamp: Date.now() }],
   };
-  const reasoning = reasoningForSettings(localModel.modelSettings);
+  const reasoning = reasoningForSettings(
+    localModel.modelSettings,
+    localModel.model,
+  );
   const options: SimpleStreamOptions & Record<string, unknown> = {
     ...resolved.providerOptions,
     ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),

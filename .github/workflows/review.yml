@@ -109,6 +109,7 @@ jobs:
             - New state in App.tsx or approval components (flicker risk — see review-knowledge.md)
             - Redundant blocking API calls, performance footguns
             - Shell tool parity gaps, streaming code assuming one provider's behavior
+            - RED ZONE: PRs duplicating pi-ai's provider runtime in LC (image stripping, capability checks like `model.input.includes("image")`, provider format fixups past the toPiMessage boundary) — pi-ai owns this domain, require root cause artifact + upstream check before approving. See review-knowledge.md for the full checklist
 
             ## What NOT to flag
 

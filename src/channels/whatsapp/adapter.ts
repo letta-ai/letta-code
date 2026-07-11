@@ -1,4 +1,5 @@
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
+import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -622,9 +623,13 @@ export function createWhatsAppAdapter(
       await Promise.all(
         Array.from(uniqueSources.values()).map(async (source) => {
           try {
-            await adapter.sendDirectReply(source.chatId, errorText, {
-              replyToMessageId: source.messageId,
-            });
+            await adapter.sendDirectReply(
+              source.chatId,
+              formatChannelLifecycleErrorMessage(errorText, {
+                runId: event.runId,
+              }),
+              { replyToMessageId: source.messageId },
+            );
           } catch (error) {
             console.warn(
               `[WhatsApp:${account.accountId}] Failed to send lifecycle error reply for ${source.chatId}:`,

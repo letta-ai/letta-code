@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type WebSocket from "ws";
+import { actingUserRequestOptions } from "@/agent/acting-user";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
   applySetMaxContext,
@@ -12,27 +12,21 @@ import { getBackend } from "@/backend";
 import { refreshCustomCommands } from "@/cli/commands/custom";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
-  buildGoalContinuationPrompt,
-  formatGoalSummary,
-  GOAL_USAGE,
-  GOAL_USAGE_HINT,
-  goalStatusLabel,
-  parseGoalArgs,
-  validateGoalObjective,
-} from "@/cli/helpers/goal-command";
-import {
   buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
+import {
+  formatSkillNameFrontmatterRepairReport,
+  repairMissingSkillNameFrontmatter,
+} from "@/cli/helpers/skill-name-frontmatter-repair";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
 import {
   DEFAULT_SUMMARIZATION_MODEL,
   SYSTEM_REMINDER_CLOSE,
   SYSTEM_REMINDER_OPEN,
 } from "@/constants";
-import { goalLoopMode } from "@/goal-loop-mode";
 import { runPreCompactHooks } from "@/hooks";
 import type { ModCommand } from "@/mods/types";
 import { settingsManager } from "@/settings-manager";
@@ -49,10 +43,6 @@ import { getConversationWorkingDirectory } from "./cwd";
 import { reloadListenerModAdapter } from "./mod-adapter";
 import { getListenerModCommand, runListenerModCommand } from "./mod-commands";
 import {
-  getOrCreateConversationPermissionModeStateRef,
-  persistPermissionModeMapForRuntime,
-} from "./permission-mode";
-import {
   createLifecycleMessageBase,
   emitCanonicalMessageDelta,
   emitDeviceStatusUpdate,
@@ -62,10 +52,9 @@ import {
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
 } from "./secrets-sync";
-import {
-  buildMaybeLaunchReflectionSubagent,
-  handleIncomingMessage,
-} from "./turn";
+import type { ListenerTransport } from "./transport";
+import { handleIncomingMessage } from "./turn";
+import { buildMaybeLaunchReflectionSubagent } from "./turn-events";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
@@ -79,7 +68,7 @@ export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
  */
 export async function handleExecuteCommand(
   command: ExecuteCommandCommand,
-  socket: WebSocket,
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -116,7 +105,10 @@ export async function handleExecuteCommand(
 
     switch (command.command_id) {
       case "clear":
-        output = await handleClearCommand(socket, conversationRuntime, opts);
+        output = await handleClearCommand(socket, conversationRuntime, {
+          ...opts,
+          actingUserId: command.runtime.acting_user_id,
+        });
         break;
 
       case "doctor":
@@ -129,15 +121,6 @@ export async function handleExecuteCommand(
 
       case "remember":
         output = await handleRememberCommand(
-          socket,
-          conversationRuntime,
-          trimmedArgs,
-          opts,
-        );
-        break;
-
-      case "goal":
-        output = await handleGoalCommand(
           socket,
           conversationRuntime,
           trimmedArgs,
@@ -194,7 +177,7 @@ export async function handleExecuteCommand(
           });
           return `Unknown command: ${command.command_id}`;
         }
-        await handleModCommand(
+        return handleModCommand(
           modCommand,
           command,
           input,
@@ -204,7 +187,6 @@ export async function handleExecuteCommand(
           scope,
           opts,
         );
-        return "";
       }
     }
 
@@ -229,11 +211,6 @@ export async function handleExecuteCommand(
       success: false,
     });
     return `Failed: ${errorMessage}`;
-  } finally {
-    // clearConversationRuntimeState sets cancelRequested = true which
-    // permanently blocks the queue pump (getListenerBlockedReason returns
-    // "interrupt_in_progress"). Reset it so subsequent user messages drain.
-    conversationRuntime.cancelRequested = false;
   }
 }
 
@@ -247,14 +224,14 @@ async function handleModCommand(
   command: ExecuteCommandCommand,
   input: string,
   trimmedArgs: string | undefined,
-  socket: WebSocket,
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   scope: { agent_id: string | null; conversation_id: string },
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
     connectionId?: string;
   },
-): Promise<void> {
+): Promise<string> {
   const result = await runListenerModCommand(conversationRuntime, modCommand, {
     commandId: command.command_id,
     args: trimmedArgs ?? "",
@@ -269,7 +246,7 @@ async function handleModCommand(
         output: `/${modCommand.id} returned a prompt with showInTranscript: false. Hidden mod commands must return output or handled.`,
         success: false,
       });
-      return;
+      return `/${modCommand.id} returned a prompt with showInTranscript: false. Hidden mod commands must return output or handled.`;
     }
 
     const agentId = conversationRuntime.agentId;
@@ -280,13 +257,14 @@ async function handleModCommand(
         output: `No agent available to run /${modCommand.id}.`,
         success: false,
       });
-      return;
+      return `No agent available to run /${modCommand.id}.`;
     }
 
+    const output = `Running /${modCommand.id}...`;
     emitSlashCommandEnd(socket, conversationRuntime, scope, {
       command_id: command.command_id,
       input,
-      output: `Running /${modCommand.id}...`,
+      output,
       success: true,
     });
 
@@ -308,18 +286,20 @@ async function handleModCommand(
       opts.onStatusChange,
       opts.connectionId,
     );
-    return;
+    return output;
   }
 
+  const output = result.type === "output" ? result.output : "";
   emitSlashCommandEnd(socket, conversationRuntime, scope, {
     command_id: command.command_id,
     input,
-    output: result.type === "output" ? result.output : "",
+    output,
     success: result.type === "output" ? (result.success ?? true) : true,
   });
+  return output;
 }
 
-async function handleReloadCommand(
+export async function handleReloadCommand(
   conversationRuntime: ConversationRuntime,
 ): Promise<string> {
   const { listener } = conversationRuntime;
@@ -421,7 +401,7 @@ function scheduleRemoteRestart(
 }
 
 function emitSlashCommandEnd(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   scope: { agent_id: string | null; conversation_id: string },
   fields: Pick<
@@ -467,7 +447,7 @@ function compactHelpOutput(): string {
 
 /** /compact — Summarize conversation history through the active Backend. */
 async function handleCompactCommand(
-  socket: WebSocket,
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
 ): Promise<string> {
@@ -592,11 +572,13 @@ async function handleCompactCommand(
  * Returns a human-readable success message.
  */
 async function handleClearCommand(
-  _socket: WebSocket,
+  _socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
     connectionId?: string;
+    /** Cloud user id stamped on the relayed frame; echoed on the create call. */
+    actingUserId?: string;
   },
 ): Promise<string> {
   const backend = getBackend();
@@ -619,10 +601,14 @@ async function handleClearCommand(
     });
   }
 
-  // Create a new conversation
-  const conversation = await backend.createConversation({
-    agent_id: agentId,
-  });
+  // Create a new conversation, attributing it to the human who ran
+  // /clear when the frame was relayed by cloud with an acting user.
+  const conversation = await backend.createConversation(
+    {
+      agent_id: agentId,
+    },
+    actingUserRequestOptions(opts.actingUserId),
+  );
 
   // Clear runtime state for the current conversation
   clearConversationRuntimeState(conversationRuntime);
@@ -645,10 +631,10 @@ async function handleClearCommand(
  *
  * Builds the doctor system-reminder message (same as the CLI /doctor)
  * and feeds it through `handleIncomingMessage` so the agent runs a full
- * turn executing the `context_doctor` skill.
+ * turn executing the `context-doctor` skill.
  */
 async function handleDoctorCommand(
-  socket: WebSocket,
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -665,8 +651,16 @@ async function handleDoctorCommand(
   const memoryDir = settingsManager.isMemfsEnabled(agentId)
     ? getScopedMemoryFilesystemRoot(agentId)
     : undefined;
+  const skillNameFrontmatterRepair =
+    await repairMissingSkillNameFrontmatter(memoryDir);
+  const skillNameFrontmatterRepairReport =
+    formatSkillNameFrontmatterRepairReport(skillNameFrontmatterRepair);
 
-  const doctorMessage = buildDoctorMessage({ gitContext, memoryDir });
+  const doctorMessage = buildDoctorMessage({
+    gitContext,
+    memoryDir,
+    skillNameFrontmatterRepairReport,
+  });
 
   // Feed the doctor prompt as a user message through the normal turn pipeline.
   // This triggers a full agent turn whose deltas stream back to the web UI.
@@ -700,7 +694,7 @@ async function handleDoctorCommand(
  * turn executing the `initializing-memory` skill.
  */
 async function handleInitCommand(
-  socket: WebSocket,
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -751,7 +745,7 @@ async function handleInitCommand(
  * and optional user-provided text through the normal turn pipeline.
  */
 async function handleRememberCommand(
-  socket: WebSocket,
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
   opts: {
@@ -799,235 +793,6 @@ async function handleRememberCommand(
   return "Memory request submitted";
 }
 
-/**
- * /goal — Manage conversation goals with auto-continuation.
- *
- * Subcommands:
- *   /goal status              — Show current goal status
- *   /goal clear               — Clear the current goal
- *   /goal disable             — Clear goal + remove goal tools
- *   /goal pause               — Pause the active goal
- *   /goal resume              — Resume a paused goal
- *   /goal complete            — Mark the goal as complete
- *   /goal [--token-budget N] [--replace] <objective>
- *                             — Set a new goal (or replace existing)
- *
- * Mirrors the CLI /goal logic from useSubmitHandler, but uses the
- * listener's per-conversation permission mode state instead of React
- * state setters.
- */
-async function handleGoalCommand(
-  socket: WebSocket,
-  conversationRuntime: ConversationRuntime,
-  args: string | undefined,
-  opts: {
-    onStatusChange?: StartListenerOptions["onStatusChange"];
-    connectionId?: string;
-  },
-): Promise<string> {
-  const agentId = conversationRuntime.agentId;
-  const conversationId = conversationRuntime.conversationId;
-
-  if (!agentId) {
-    throw new Error("No agent ID available for /goal command");
-  }
-
-  const objective = (args ?? "").trim();
-  const lowerGoalArg = objective.toLowerCase();
-
-  // /goal, /goal status, /goal show — display current goal
-  if (!objective || lowerGoalArg === "show" || lowerGoalArg === "status") {
-    const goal = settingsManager.getConversationGoal(conversationId);
-    if (!goal) {
-      return `${GOAL_USAGE}\n${GOAL_USAGE_HINT}\nNo goal is currently set.`;
-    }
-    return `Goal ${goalStatusLabel(goal.status)}\n${formatGoalSummary(goal)}`;
-  }
-
-  // /goal clear or /goal disable
-  if (lowerGoalArg === "clear" || lowerGoalArg === "disable") {
-    const cleared = settingsManager.clearConversationGoal(conversationId);
-    if (lowerGoalArg === "disable") {
-      settingsManager.setConversationGoalToolsEnabled(conversationId, false);
-    }
-    if (goalLoopMode.getState().isActive) {
-      goalLoopMode.deactivate();
-    }
-    const permState = getOrCreateConversationPermissionModeStateRef(
-      conversationRuntime.listener,
-      agentId,
-      conversationId,
-    );
-    if (permState.mode === "unrestricted") {
-      permState.mode = "standard";
-      persistPermissionModeMapForRuntime(conversationRuntime.listener);
-    }
-    if (cleared || lowerGoalArg === "disable") {
-      return lowerGoalArg === "disable"
-        ? "Goal disabled; goal tools removed for this conversation."
-        : "Goal cleared";
-    }
-    return "No goal to clear. This conversation does not currently have a goal.";
-  }
-
-  // /goal pause, /goal resume, /goal complete
-  if (
-    lowerGoalArg === "pause" ||
-    lowerGoalArg === "resume" ||
-    lowerGoalArg === "complete"
-  ) {
-    const status = lowerGoalArg === "resume" ? "active" : lowerGoalArg;
-    const goal = settingsManager.updateConversationGoalStatus(
-      conversationId,
-      status as "active" | "paused" | "complete",
-    );
-    if (!goal) {
-      return `${GOAL_USAGE}\nThe session must have a goal before you can ${lowerGoalArg} it.`;
-    }
-
-    const permState = getOrCreateConversationPermissionModeStateRef(
-      conversationRuntime.listener,
-      agentId,
-      conversationId,
-    );
-
-    if (lowerGoalArg === "pause" || lowerGoalArg === "complete") {
-      if (goalLoopMode.getState().isActive) {
-        goalLoopMode.deactivate();
-      }
-      if (permState.mode === "unrestricted") {
-        permState.mode = "standard";
-        persistPermissionModeMapForRuntime(conversationRuntime.listener);
-      }
-    } else if (lowerGoalArg === "resume") {
-      settingsManager.setConversationGoalToolsEnabled(conversationId, true);
-      goalLoopMode.activateGoal(goal.objective, goal.tokenBudget);
-      permState.mode = "unrestricted";
-      persistPermissionModeMapForRuntime(conversationRuntime.listener);
-
-      // Send continuation prompt through the turn pipeline
-      const goalState = goalLoopMode.getState();
-      const storedGoal = settingsManager.getConversationGoal(conversationId);
-      const liveActiveSeconds =
-        storedGoal?.activeStartedAt && storedGoal.status === "active"
-          ? Math.max(
-              0,
-              Math.floor(
-                (Date.now() - Date.parse(storedGoal.activeStartedAt)) / 1000,
-              ),
-            )
-          : 0;
-      const systemMsg = buildGoalContinuationPrompt({
-        objective: goalState.originalPrompt,
-        status: "active",
-        tokensUsed: storedGoal?.tokensUsed ?? 0,
-        tokenBudget: storedGoal?.tokenBudget ?? goalState.tokenBudget,
-        timeUsedSeconds:
-          (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
-      });
-
-      await handleIncomingMessage(
-        {
-          type: "message",
-          agentId,
-          conversationId,
-          messages: [
-            {
-              type: "message",
-              role: "user",
-              content: [{ type: "text", text: systemMsg }],
-            },
-          ],
-        },
-        socket,
-        conversationRuntime,
-        opts.onStatusChange,
-        opts.connectionId,
-      );
-    }
-
-    return `Goal ${goalStatusLabel(goal.status)}\n${formatGoalSummary(goal)}`;
-  }
-
-  // /goal <objective> — set a new goal
-  const parsedGoal = parseGoalArgs(objective);
-  if (parsedGoal.error) {
-    return `${parsedGoal.error}\n${GOAL_USAGE}\n${GOAL_USAGE_HINT}`;
-  }
-
-  const validationError = validateGoalObjective(parsedGoal.objective);
-  if (validationError) {
-    return `${validationError}\n${GOAL_USAGE}\n${GOAL_USAGE_HINT}`;
-  }
-
-  const previousGoal = settingsManager.getConversationGoal(conversationId);
-  if (previousGoal && !parsedGoal.replace) {
-    return `A goal already exists. Run /goal --replace ${parsedGoal.objective} to replace it, or /goal clear first.`;
-  }
-
-  settingsManager.setConversationGoalToolsEnabled(conversationId, true);
-  const goal = settingsManager.setConversationGoal(
-    conversationId,
-    parsedGoal.objective,
-    conversationRuntime.activeWorkingDirectory ?? process.cwd(),
-    parsedGoal.tokenBudget,
-    true,
-  );
-  goalLoopMode.activateGoal(parsedGoal.objective, parsedGoal.tokenBudget);
-
-  const permState = getOrCreateConversationPermissionModeStateRef(
-    conversationRuntime.listener,
-    agentId,
-    conversationId,
-  );
-  permState.mode = "unrestricted";
-  persistPermissionModeMapForRuntime(conversationRuntime.listener);
-
-  const replaced = previousGoal ? " replaced" : " active";
-  const resultPrefix = `Goal${replaced} (iter 1/∞)\n${formatGoalSummary(goal)}`;
-
-  // Send initial goal continuation prompt through the turn pipeline
-  const goalState = goalLoopMode.getState();
-  const storedGoal = settingsManager.getConversationGoal(conversationId);
-  const liveActiveSeconds =
-    storedGoal?.activeStartedAt && storedGoal.status === "active"
-      ? Math.max(
-          0,
-          Math.floor(
-            (Date.now() - Date.parse(storedGoal.activeStartedAt)) / 1000,
-          ),
-        )
-      : 0;
-  const systemMsg = buildGoalContinuationPrompt({
-    objective: goalState.originalPrompt,
-    status: "active",
-    tokensUsed: storedGoal?.tokensUsed ?? 0,
-    tokenBudget: storedGoal?.tokenBudget ?? goalState.tokenBudget,
-    timeUsedSeconds: (storedGoal?.activeTimeSeconds ?? 0) + liveActiveSeconds,
-  });
-
-  await handleIncomingMessage(
-    {
-      type: "message",
-      agentId,
-      conversationId,
-      messages: [
-        {
-          type: "message",
-          role: "user",
-          content: [{ type: "text", text: systemMsg }],
-        },
-      ],
-    },
-    socket,
-    conversationRuntime,
-    opts.onStatusChange,
-    opts.connectionId,
-  );
-
-  return resultPrefix;
-}
-
 /** /context-limit — Set or reset the active scope's max context window. */
 async function handleSetMaxContextCommand(
   conversationRuntime: ConversationRuntime,
@@ -1049,14 +814,14 @@ async function handleSetMaxContextCommand(
 /**
  * /channels — Manage external channel integrations.
  *
- * Subcommands (via WS):
- *   /channels telegram pair <code>    — Approve pairing + bind chat to this agent/conversation
- *   /channels telegram enable --chat-id <id> — Bind a known chat to this agent/conversation
- *   /channels telegram disable        — Unbind this agent/conversation
- *   /channels status                  — Show channel status
+ * Subcommands (via WS), generic across all supported channels:
+ *   /channels <channel> pair <code>    — Approve pairing + bind chat to this agent/conversation
+ *   /channels <channel> enable --chat-id <id> — Bind a known chat to this agent/conversation
+ *   /channels <channel> disable        — Unbind this agent/conversation
+ *   /channels status                   — Show channel status
  */
 async function handleChannelsCommand(
-  _socket: WebSocket,
+  _socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
   _opts: {
@@ -1082,10 +847,12 @@ async function handleChannelsCommand(
     const { getPendingPairings, getApprovedUsers, loadPairingStore } =
       await import("@/channels/pairing");
 
-    const channels = ["telegram"];
+    const { getSupportedChannelIds } = await import(
+      "@/channels/plugin-registry"
+    );
     const lines: string[] = [];
 
-    for (const ch of channels) {
+    for (const ch of getSupportedChannelIds()) {
       const accounts = listChannelAccountSnapshots(ch);
       if (accounts.length === 0) {
         lines.push(`${ch}: not configured`);
@@ -1105,7 +872,15 @@ async function handleChannelsCommand(
     return lines.join("\n") || "No channels configured.";
   }
 
-  if (subCmd === "telegram") {
+  const {
+    getSupportedChannelIds,
+    isSupportedChannelId,
+    getChannelDisplayName,
+  } = await import("@/channels/plugin-registry");
+
+  if (subCmd && isSupportedChannelId(subCmd)) {
+    const ch = subCmd;
+    const displayName = getChannelDisplayName(ch);
     const accountIdFlag = rest.indexOf("--account-id");
     const accountId =
       accountIdFlag >= 0 ? (rest[accountIdFlag + 1] ?? undefined) : undefined;
@@ -1113,18 +888,18 @@ async function handleChannelsCommand(
     if (action === "pair") {
       const code = rest[0];
       if (!code) {
-        return "Usage: /channels telegram pair <code>";
+        return `Usage: /channels ${ch} pair <code>`;
       }
 
       const { completePairing } = await import("@/channels/registry");
       const { loadRoutes } = await import("@/channels/routing");
       const { loadPairingStore } = await import("@/channels/pairing");
 
-      loadRoutes("telegram");
-      loadPairingStore("telegram");
+      loadRoutes(ch);
+      loadPairingStore(ch);
 
       const result = completePairing(
-        "telegram",
+        ch,
         code,
         agentId,
         conversationId,
@@ -1142,7 +917,7 @@ async function handleChannelsCommand(
       const chatId = chatIdFlag >= 0 ? rest[chatIdFlag + 1] : undefined;
 
       if (!chatId) {
-        return "Usage: /channels telegram enable --chat-id <id> [--account-id <id>]";
+        return `Usage: /channels ${ch} enable --chat-id <id> [--account-id <id>]`;
       }
 
       const { getChannelAccount, listChannelAccounts } = await import(
@@ -1152,26 +927,26 @@ async function handleChannelsCommand(
 
       let resolvedAccountId = accountId?.trim();
       if (resolvedAccountId) {
-        if (!getChannelAccount("telegram", resolvedAccountId)) {
-          return `Unknown Telegram account: ${resolvedAccountId}`;
+        if (!getChannelAccount(ch, resolvedAccountId)) {
+          return `Unknown ${displayName} account: ${resolvedAccountId}`;
         }
       } else {
-        const accounts = listChannelAccounts("telegram");
+        const accounts = listChannelAccounts(ch);
         if (accounts.length === 0) {
-          return "Telegram is not configured yet.";
+          return `${displayName} is not configured yet.`;
         }
         if (accounts.length > 1) {
-          return "Telegram has multiple accounts. Re-run with --account-id <id>.";
+          return `${displayName} has multiple accounts. Re-run with --account-id <id>.`;
         }
         resolvedAccountId = accounts[0]?.accountId;
       }
 
       if (!resolvedAccountId) {
-        return "Could not resolve a Telegram account for this route.";
+        return `Could not resolve a ${displayName} account for this route.`;
       }
 
-      loadRoutes("telegram");
-      addRoute("telegram", {
+      loadRoutes(ch);
+      addRoute(ch, {
         accountId: resolvedAccountId,
         chatId,
         agentId,
@@ -1180,7 +955,7 @@ async function handleChannelsCommand(
         createdAt: new Date().toISOString(),
       });
 
-      return `Route created: telegram:${chatId} → ${agentId}/${conversationId}`;
+      return `Route created: ${ch}:${chatId} → ${agentId}/${conversationId}`;
     }
 
     if (action === "disable") {
@@ -1188,15 +963,15 @@ async function handleChannelsCommand(
         "@/channels/routing"
       );
 
-      loadRoutes("telegram");
-      const removed = removeRoutesForScope("telegram", agentId, conversationId);
+      loadRoutes(ch);
+      const removed = removeRoutesForScope(ch, agentId, conversationId);
       return removed > 0
         ? `Removed ${removed} route(s) for this agent/conversation.`
         : "No routes found for this agent/conversation.";
     }
 
-    return "Usage: /channels telegram <pair|enable|disable>";
+    return `Usage: /channels ${ch} <pair|enable|disable>`;
   }
 
-  return "Usage: /channels <telegram|status>";
+  return `Usage: /channels <status|${getSupportedChannelIds().join("|")}> ...`;
 }

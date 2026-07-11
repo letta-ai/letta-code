@@ -6,11 +6,15 @@ import {
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "@/agent/subagent-state";
 import {
+  buildChannelCurrentModelMessage,
+  buildChannelCurrentModelUnavailableMessage,
   buildChannelModelListMessage,
   buildChannelModelListUnavailableMessage,
+  buildChannelModelNotFoundText,
   buildChannelModelUpdatedMessage,
   buildChannelModelUpdateFailedMessage,
 } from "@/channels/commands";
+import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
@@ -33,15 +37,24 @@ import { isDebugEnabled } from "@/utils/debug";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
-import { handleExecuteCommand } from "./commands";
+import { wireChannelExecuteCommand } from "./channel-command-execution";
+import {
+  recoverActiveChannelTurn,
+  uniqueChannelTurnSources,
+} from "./channel-turn-session";
+import { handleReloadCommand } from "./commands";
 import { handleChannelRegistryEvent } from "./commands/channels";
 import {
   applyModelUpdateForRuntime,
   buildListModelsResponse,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import {
   INITIAL_RETRY_DELAY_MS,
+  isListenerPongStale,
+  LISTENER_HEARTBEAT_INTERVAL_MS,
+  LISTENER_PONG_TIMEOUT_MS,
   MAX_RETRY_DELAY_MS,
   MAX_RETRY_DURATION_MS,
 } from "./constants";
@@ -324,6 +337,28 @@ export async function recoverPendingChannelControlRequests(
       getRecoveredApprovalStateForScope(listener, scope)?.pendingRequestIds ??
       new Set<string>();
 
+    const stillPendingEntries = entries.filter((entry) => {
+      const requestId = entry.event.requestId;
+      return (
+        livePendingRequestIds.has(requestId) ||
+        recoveredPendingRequestIds.has(requestId)
+      );
+    });
+    if (
+      stillPendingEntries.length > 0 &&
+      (!runtime.activeChannelTurn ||
+        runtime.activeChannelTurn.sources.length === 0)
+    ) {
+      const recoveredSources = uniqueChannelTurnSources(
+        stillPendingEntries.map((entry) => entry.event.source),
+      );
+      recoverActiveChannelTurn(runtime, {
+        sources: recoveredSources,
+        batchId: `recovered-${stillPendingEntries[0]?.event.requestId ?? crypto.randomUUID()}`,
+        progress: createChannelTurnProgressBuilder(),
+      });
+    }
+
     for (const entry of entries) {
       const requestId = entry.event.requestId;
       const stillPending =
@@ -517,6 +552,52 @@ export async function wireChannelIngress(
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
     if (!modelIdentifier) {
       try {
+        const status = await getCurrentModelStatusForRuntime({
+          agentId: runtime.agent_id,
+          conversationId: runtime.conversation_id,
+        });
+        const text = buildChannelCurrentModelMessage(channelId, status);
+        try {
+          const response = await buildListModelsResponse(
+            `channel-model-picker-${crypto.randomUUID()}`,
+          );
+          if (!response.success) {
+            return {
+              handled: true,
+              text,
+            };
+          }
+          return {
+            handled: true,
+            text,
+            modelPicker: {
+              current: status,
+              entries: response.entries,
+              availableHandles: response.available_handles,
+              recentHandles: settingsManager.getRecentModels(),
+            },
+          };
+        } catch {
+          return {
+            handled: true,
+            text,
+          };
+        }
+      } catch (error) {
+        return {
+          handled: true,
+          text: buildChannelCurrentModelUnavailableMessage(
+            channelId,
+            error instanceof Error
+              ? error.message
+              : "Failed to load current model",
+          ),
+        };
+      }
+    }
+
+    if (modelIdentifier.toLowerCase() === "list") {
+      try {
         const response = await buildListModelsResponse(
           `channel-model-list-${crypto.randomUUID()}`,
         );
@@ -558,7 +639,7 @@ export async function wireChannelIngress(
         text: buildChannelModelUpdateFailedMessage(
           channelId,
           modelIdentifier,
-          "Model not found. Use /model to see available models.",
+          buildChannelModelNotFoundText(channelId),
         ),
       };
     }
@@ -608,10 +689,30 @@ export async function wireChannelIngress(
     }
   });
 
+  registry.setReloadHandler(async ({ runtime }) => {
+    const scopedRuntime = getOrCreateScopedRuntime(
+      listener,
+      runtime.agent_id,
+      runtime.conversation_id,
+    );
+    try {
+      const output = await handleReloadCommand(scopedRuntime);
+      emitDeviceStatusUpdate(socket, scopedRuntime, runtime);
+      return {
+        handled: true,
+        text: output,
+      };
+    } catch (error) {
+      return {
+        handled: true,
+        text: `Failed to reload listener settings: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  });
+  wireChannelExecuteCommand(registry, listener, socket, opts);
   registry.setReflectionHandler(async ({ runtime }) => {
     const agentId = runtime.agent_id;
     const conversationId = runtime.conversation_id;
-
     const result = await launchReflectionSubagent({
       agentId,
       conversationId,
@@ -690,53 +791,6 @@ export async function wireChannelIngress(
       handled: true,
       text: "Started a reflection pass for this conversation.",
     };
-  });
-
-  // /letta escape hatch: forwards slash commands from channels to the
-  // listener's execute_command dispatch, as if typed in the TUI.
-  registry.setExecuteCommandHandler(async ({ text, runtime }) => {
-    const trimmed = text.trim();
-    const match = trimmed.match(/^\/([A-Za-z][\w-]*)(?:\s+(.*))?$/);
-    if (!match) {
-      return { handled: true, text: `Unknown command: ${trimmed}` };
-    }
-    const [, commandId, args] = match;
-    if (!commandId) {
-      return { handled: true, text: `Unknown command: ${trimmed}` };
-    }
-
-    const scopedRuntime = getOrCreateScopedRuntime(
-      listener,
-      runtime.agent_id,
-      runtime.conversation_id,
-    );
-
-    try {
-      const output = await handleExecuteCommand(
-        {
-          type: "execute_command",
-          command_id: commandId,
-          request_id: `letta-escape-hatch-${crypto.randomUUID()}`,
-          runtime: {
-            agent_id: runtime.agent_id,
-            conversation_id: runtime.conversation_id,
-          },
-          args: args?.trim() || undefined,
-        },
-        socket as WebSocket,
-        scopedRuntime,
-        {
-          onStatusChange: opts.onStatusChange,
-          onLog: opts.onLog,
-          connectionId: opts.connectionId,
-          connectionName: opts.connectionName,
-        },
-      );
-      return { handled: true, text: output };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { handled: true, text: `Failed: ${message}` };
-    }
   });
 
   registry.setReady();
@@ -827,12 +881,12 @@ export function createRuntime(): ListenerRuntime {
     streamTransport: null,
     heartbeatInterval: null,
     reconnectTimeout: null,
+    lastPongAt: null,
     intentionallyClosed: false,
     hasSuccessfulConnection: false,
     everConnected: false,
     sessionId: `listen-${crypto.randomUUID()}`,
     eventSeqCounter: 0,
-    lastStopReason: null,
     queueEmitScheduled: false,
     pendingQueueEmitScope: undefined,
     onWsEvent: undefined,
@@ -1077,14 +1131,45 @@ export async function startConnectedListenerRuntime(
   });
 
   if (shouldStartHeartbeat) {
+    // Seed the pong clock so the watchdog tolerates the first ping/pong
+    // round-trip before considering the peer dead.
+    runtime.lastPongAt = Date.now();
     runtime.heartbeatInterval = setInterval(() => {
+      // Dead-peer detection. The relay replies to every `ping` with a `pong`
+      // (recorded as runtime.lastPongAt in the message router). If pongs stop
+      // arriving, the underlying TCP is likely half-open (laptop sleep,
+      // network switch, NAT/idle timeout) and will never emit a `close`
+      // event — leaving a zombie listener that the relay marks offline after
+      // ~120s while client-side tool execution silently breaks. Force a
+      // terminate so the socket's `close` handler fires and reconnects.
+      // Gated on websocket transports: the local app-server path does not run
+      // a heartbeat, and only websockets carry the relay pong round-trip.
+      if (
+        getListenerTransportKind(transport) === "websocket" &&
+        isListenerPongStale(
+          runtime.lastPongAt,
+          Date.now(),
+          LISTENER_PONG_TIMEOUT_MS,
+        )
+      ) {
+        trackListenerError(
+          "listener_pong_timeout",
+          new Error(
+            `No relay pong within ${LISTENER_PONG_TIMEOUT_MS}ms; terminating half-open socket to force reconnect`,
+          ),
+          "listener_heartbeat",
+        );
+        runtime.socket?.terminate();
+        return;
+      }
+
       safeTransportSend(
         transport,
         { type: "ping" },
         "listener_ping_send_failed",
         "listener_heartbeat",
       );
-    }, 30000);
+    }, LISTENER_HEARTBEAT_INTERVAL_MS);
   }
 
   if (shouldStartCronScheduler) {

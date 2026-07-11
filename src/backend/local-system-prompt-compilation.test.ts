@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { resolveAndBuildSystemPrompt } from "@/agent/prompt-assets";
+import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 import type { LocalAgentRecord } from "@/backend/local/local-store";
 import {
   appendAvailableSkillsBlock,

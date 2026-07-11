@@ -5,8 +5,8 @@ import {
   buildCreateAgentOptionsForPersonality,
   createAgentForPersonality,
   enableMemfsForCreatedAgent,
-  resolvePersonalityId,
 } from "@/agent/personality";
+import { resolvePersonalityId } from "@/agent/personality-presets";
 import { getBackend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
 

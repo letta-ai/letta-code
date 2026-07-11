@@ -107,6 +107,8 @@ export function wrapCronPrompt(task: CronTask): string {
       ? `This is fire #${task.fire_count + 1} (cron: ${task.cron}).`
       : `This is a one-off scheduled task.`,
     "",
+    "You are running autonomously: no user is watching this turn and questions will not be answered. Deliver results through your available channels or record them in memory, and work until the task is done or genuinely blocked.",
+    "",
     `Prompt: ${task.prompt}`,
   ];
   return lines.join("\n");

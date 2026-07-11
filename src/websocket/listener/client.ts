@@ -27,6 +27,7 @@ import {
   buildListModelsEntries,
   buildListModelsResponse,
   buildModelUpdateStatusMessage,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import {
@@ -91,7 +92,6 @@ import {
   scheduleQueuePump,
 } from "./queue";
 import {
-  getApprovalContinuationRecoveryDisposition,
   getApprovalToolCallDesyncErrorText,
   recoverApprovalStateForSync,
   shouldAttemptPostStopApprovalRecovery,
@@ -144,6 +144,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   reminderState: ListenerRuntime["reminderState"];
   reconnectTimeout: NodeJS.Timeout | null;
   heartbeatInterval: NodeJS.Timeout | null;
+  lastPongAt: number | null;
   intentionallyClosed: boolean;
   hasSuccessfulConnection: boolean;
   everConnected: boolean;
@@ -183,6 +184,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     reminderState: ListenerRuntime["reminderState"];
     reconnectTimeout: NodeJS.Timeout | null;
     heartbeatInterval: NodeJS.Timeout | null;
+    lastPongAt: number | null;
     intentionallyClosed: boolean;
     hasSuccessfulConnection: boolean;
     everConnected: boolean;
@@ -314,6 +316,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
         listener.heartbeatInterval = value;
       },
     },
+    lastPongAt: {
+      get: () => listener.lastPongAt,
+      set: (value: number | null) => {
+        listener.lastPongAt = value;
+      },
+    },
     intentionallyClosed: {
       get: () => listener.intentionallyClosed,
       set: (value: boolean) => {
@@ -438,6 +446,7 @@ export const __listenClientTestUtils = {
   buildListModelsEntries,
   buildListModelsResponse,
   buildModelUpdateStatusMessage,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
   applyModelUpdateForRuntime,
   stopRuntime: (
@@ -472,7 +481,6 @@ export const __listenClientTestUtils = {
   normalizeExecutionResultsForInterruptParity,
   getApprovalToolCallDesyncErrorText,
   shouldAttemptPostStopApprovalRecovery,
-  getApprovalContinuationRecoveryDisposition,
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
   normalizeMessageContentImages,

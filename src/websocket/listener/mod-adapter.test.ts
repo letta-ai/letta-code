@@ -54,7 +54,7 @@ describe("listener mod adapter", () => {
         compact: false,
         llm: false,
       },
-      permissions: false,
+      permissions: true,
       providers: true,
       ui: {
         panels: false,
@@ -489,6 +489,7 @@ describe("listener mod adapter", () => {
         letta.events.on("tool_end", (event) => {
           globalThis.__lettaToolEndSeen = {
             toolName: event.toolName,
+            args: event.args,
             status: event.status,
             output: event.output,
           };
@@ -516,6 +517,7 @@ describe("listener mod adapter", () => {
       conversationId: string;
       toolCallId: string;
       toolName: string;
+      args: Record<string, unknown>;
       status: "success" | "error";
       output: string;
       result?: { status: "success" | "error"; output: string };
@@ -524,6 +526,7 @@ describe("listener mod adapter", () => {
       conversationId: "conv-tool-end-test",
       toolCallId: "call-1",
       toolName: "Bash",
+      args: { command: "echo secret" },
       status: "success",
       output: "secret",
     };
@@ -534,6 +537,7 @@ describe("listener mod adapter", () => {
       (globalThis as { __lettaToolEndSeen?: unknown }).__lettaToolEndSeen,
     ).toEqual({
       toolName: "Bash",
+      args: { command: "echo secret" },
       status: "success",
       output: "secret",
     });

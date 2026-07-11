@@ -580,7 +580,7 @@ async function handleConnectApiKeyProvider(
       undefined,
       undefined,
       undefined,
-      { target: ctx.target },
+      { target: ctx.target, connection: options },
     );
 
     updateCommandResult(

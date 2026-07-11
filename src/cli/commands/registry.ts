@@ -69,15 +69,6 @@ export const commands: Record<string, Command> = {
       return "Processing memory request...";
     },
   },
-  "/goal": {
-    desc: "Manage goal: /goal [status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
-    args: "[status|pause|resume|complete|clear|disable|--replace|--token-budget N <objective>]",
-    order: 14,
-    handler: () => {
-      // Handled specially in App.tsx
-      return "Managing conversation goal...";
-    },
-  },
   "/reflect": {
     desc: "Launch reflection (/reflect [--recent N | --conversation ID ... | --auto] [--instruction TEXT])",
     args: "[--recent N | --conversation ID ... | --auto] [--instruction TEXT]",
@@ -94,6 +85,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in App.tsx
       return "Launching reflection agent...";
+    },
+  },
+  "/reflect-arena": {
+    desc: "Experimental blind A/B reflection model comparison",
+    args: "[--model-a MODEL] [--model-b MODEL] | resume <run-id> | choose <run-id> <1|2|tie> [notes]",
+    order: 50.1,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Preparing reflection arena...";
     },
   },
   "/skills": {
@@ -159,7 +159,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/memfs": {
-    desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
+    desc: "Manage filesystem-backed memory (/memfs [enable|sync|reset])",
     args: "[enable|disable|sync|reset]",
     order: 27.5, // Advanced feature, near /toolset
     handler: () => {
@@ -304,6 +304,15 @@ export const commands: Record<string, Command> = {
     handler: () => {
       // Handled specially in AppCoordinator to reload runtime surfaces in-place
       return "Reloading...";
+    },
+  },
+  "/mods": {
+    desc: "Run mod learning targets",
+    order: 27.3,
+    args: "learn [memory-citations] [options] | generate-env [request]",
+    handler: () => {
+      // Handled specially in use-submit-handler.ts to stream mod learning progress
+      return "Starting mod learning...";
     },
   },
   "/ade": {

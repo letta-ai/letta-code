@@ -91,6 +91,25 @@ await Bun.build({
   },
 });
 
+// Browser-safe agent creation presets (personalities, prompts, tags) for
+// surfaces that create Letta Code agents through Core (e.g. the chat web app).
+await Bun.build({
+  entrypoints: ["./src/agent-presets.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "agent-presets.js",
+  },
+  loader: {
+    ".md": "text",
+    ".mdx": "text",
+    ".txt": "text",
+  },
+});
+
 // Copy bundled skills to skills/ directory for shipping
 const bundledSkillsSrc = join(__dirname, "src/skills/builtin");
 const bundledSkillsDst = join(__dirname, "skills");

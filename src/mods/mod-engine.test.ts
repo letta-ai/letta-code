@@ -51,6 +51,7 @@ function createModContext(): ModContext {
   return {
     app: { version: "test" },
     backgroundAgents: [],
+    subagents: { list: () => [] },
     contextWindow: {
       currentUsage: null,
       remainingPercentage: null,
@@ -79,6 +80,7 @@ function createModContext(): ModContext {
     permissionMode: "standard",
     reflection: { mode: null, stepCount: 0 },
     sessionId: "conversation-1",
+    conversationSummary: null,
     systemPromptId: null,
     terminalWidth: 80,
     toolset: "default",
@@ -1014,7 +1016,7 @@ describe("mod engine", () => {
           });
           letta.events.on("llm_end", (event) => {
             globalThis.__lettaModEvents.push(
-              "end:" + event.stopReason + ":" + event.usage.totalTokens + ":" + event.durationMs + "ms",
+              "end:" + event.stopReason + ":" + (event.usage?.totalTokens ?? "no-usage") + ":" + (event.error?.message ?? "no-error") + ":" + event.durationMs + "ms",
             );
           });
         }`,
@@ -1048,10 +1050,29 @@ describe("mod engine", () => {
         },
         createModContext(),
       );
+      await engine.emitEvent(
+        "llm_end",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          model: "anthropic/claude-fable-5",
+          stopReason: "llm_api_error",
+          usage: null,
+          error: {
+            message: "provider failed",
+            detail: "provider failed\nretry-after-ms: 0",
+            errorType: "llm_error" as const,
+            retryable: true,
+          },
+          durationMs: 42,
+        },
+        createModContext(),
+      );
 
       expect(testGlobal.__lettaModEvents).toEqual([
         "start:anthropic/claude-fable-5:8/200000",
-        "end:stop:120:1234ms",
+        "end:stop:120:no-error:1234ms",
+        "end:llm_api_error:no-usage:provider failed:42ms",
       ]);
 
       engine.dispose();
@@ -1122,6 +1143,99 @@ describe("mod engine", () => {
       expect(result.diagnostics).toHaveLength(1);
       expect(result.results).toHaveLength(1);
       expect(event.input).toEqual([{ role: "user", content: "hello final" }]);
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("lets turn_start handlers cancel with first valid reason", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "turn-start-cancel.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_start", () => ({
+            cancel: { reason: "   " },
+          }));
+          letta.events.on("turn_start", () => ({
+            cancel: { reason: " Run /plan first. " },
+          }));
+          letta.events.on("turn_start", (event) => {
+            event.cancel = { reason: "mutated event should not win" };
+            return { cancel: { reason: "second reason should not win" } };
+          });
+          letta.events.on("turn_start", () => {
+            throw new Error("turn_start failed after cancel");
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event: {
+        agentId: string;
+        cancel?: { reason: string };
+        conversationId: string;
+        input: Array<{ role: "user"; content: string }>;
+      } = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        input: [{ role: "user", content: "hello" }],
+      };
+
+      const result = await engine.emitEvent(
+        "turn_start",
+        event,
+        createModContext(),
+      );
+
+      expect(result).toMatchObject({
+        handlerCount: 4,
+        name: "turn_start",
+      });
+      expect(result.diagnostics).toHaveLength(1);
+      expect(event.cancel).toEqual({ reason: "Run /plan first." });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("ignores turn_start cancel set directly on the event", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "turn-start-cancel-mutation.ts"),
+        `export default function(letta) {
+          letta.events.on("turn_start", (event) => {
+            event.cancel = { reason: "direct mutation should not cancel" };
+          });
+        }`,
+      );
+
+      const engine = createEngine(root);
+      await engine.reload();
+      const event: {
+        agentId: string;
+        cancel?: { reason: string };
+        conversationId: string;
+        input: Array<{ role: "user"; content: string }>;
+      } = {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+        input: [{ role: "user", content: "hello" }],
+      };
+
+      await engine.emitEvent("turn_start", event, createModContext());
+
+      expect(event.cancel).toBeUndefined();
 
       engine.dispose();
     } finally {
@@ -1336,7 +1450,7 @@ describe("mod engine", () => {
         path.join(modDir, "tool-end.ts"),
         `export default function(letta) {
           letta.events.on("tool_end", (event) => {
-            if (event.toolName === "Bash" && event.status === "success") {
+            if (event.toolName === "Bash" && event.args.command === "secret") {
               return { result: { status: "success", output: "redacted" } };
             }
           });
@@ -1355,6 +1469,7 @@ describe("mod engine", () => {
         conversationId: "conversation-1",
         toolCallId: "toolu-1",
         toolName: "Bash",
+        args: { command: "secret" },
         status: "success" as const,
         output: "secret token abc123",
       };
@@ -1402,6 +1517,7 @@ describe("mod engine", () => {
         conversationId: "conversation-1",
         toolCallId: "toolu-1",
         toolName: "Bash",
+        args: { command: "echo untouched" },
         status: "success" as const,
         output: "untouched",
       };

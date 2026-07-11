@@ -67,6 +67,7 @@ const NON_RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "invalid api key",
   "incorrect api key",
   "authentication error",
+  "authentication failed",
   "unauthorized",
   "permission denied",
   "forbidden",
@@ -75,6 +76,14 @@ const NON_RETRYABLE_PROVIDER_DETAIL_PATTERNS = [
   "model_not_found",
   "context_length_exceeded",
   "invalid_encrypted_content",
+];
+const NON_RETRYABLE_RUN_ERROR_TYPES = [
+  "llm_authentication",
+  "llm_bad_request",
+  "llm_insufficient_credits",
+  "llm_permission_denied",
+  "llm_not_found",
+  "llm_unprocessable_entity",
 ];
 const NON_RETRYABLE_429_REASONS = [
   "agents-limit-exceeded",
@@ -118,6 +127,13 @@ function hasNonRetryableQuotaDetail(detail: unknown): boolean {
     NON_RETRYABLE_QUOTA_DETAIL_PATTERNS.some((pattern) =>
       normalized.includes(pattern),
     )
+  );
+}
+
+function isNonRetryableRunErrorType(errorType: unknown): boolean {
+  return (
+    typeof errorType === "string" &&
+    NON_RETRYABLE_RUN_ERROR_TYPES.includes(errorType)
   );
 }
 
@@ -189,16 +205,37 @@ export function shouldRetryRunMetadataError(
   detail: unknown,
 ): boolean {
   const explicitLlmError = errorType === "llm_error";
+  const nonRetryableErrorType = isNonRetryableRunErrorType(errorType);
   const nonRetryableQuotaDetail = hasNonRetryableQuotaDetail(detail);
   const retryable429Detail =
     typeof detail === "string" && RETRYABLE_429_PATTERN.test(detail);
   const retryableDetail = isRetryableProviderErrorDetail(detail);
   const nonRetryableDetail = isNonRetryableProviderErrorDetail(detail);
 
+  if (nonRetryableErrorType) return false;
   if (nonRetryableQuotaDetail) return false;
   if (nonRetryableDetail && !retryable429Detail) return false;
   if (explicitLlmError) return true;
   return retryable429Detail || retryableDetail;
+}
+
+export function shouldRetryPostStreamRunError(opts: {
+  stopReason: StopReasonType;
+  errorType?: unknown;
+  detail?: unknown;
+  retryable?: boolean;
+}): boolean {
+  if (opts.retryable === false) return false;
+  if (opts.retryable === true) return true;
+  if (shouldRetryRunMetadataError(opts.errorType, opts.detail)) return true;
+  if (opts.stopReason !== "llm_api_error") return false;
+  if (isNonRetryableRunErrorType(opts.errorType)) return false;
+  if (hasNonRetryableQuotaDetail(opts.detail)) return false;
+  if (isNonRetryableProviderErrorDetail(opts.detail)) return false;
+
+  // The backend uses llm_api_error for provider failures. If it did not attach
+  // a recognized non-retryable signal, preserve the legacy transient retry.
+  return true;
 }
 
 export function normalizeStreamErrorTypeToStopReason(

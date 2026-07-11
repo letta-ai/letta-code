@@ -12,12 +12,12 @@ import {
   type ModelReasoningEffort,
   shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
+import { applyPersonalityToMemory } from "@/agent/personality";
 import {
-  applyPersonalityToMemory,
   getPersonalityBlockValues,
   getPersonalityOption,
   type PersonalityId,
-} from "@/agent/personality";
+} from "@/agent/personality-presets";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { ModelSelectorSelection } from "@/cli/components/ModelSelector";
@@ -330,10 +330,9 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             }
           | undefined;
         const rawReasoningEffort = modelUpdateArgs?.reasoning_effort;
-        const usesDistinctXHighLabel =
-          model.label.includes("Fable 5") ||
-          model.label.includes("Opus 4.7") ||
-          model.label.includes("Opus 4.8");
+        const usesDistinctXHighLabel = /Fable 5|Opus 4\.[78]|GPT-5\.6/.test(
+          model.label,
+        );
         const reasoningLevel =
           typeof rawReasoningEffort === "string"
             ? rawReasoningEffort === "none"

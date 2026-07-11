@@ -137,6 +137,8 @@ describe("task lifecycle", () => {
         "Description: A test cron task",
         "This is fire #1 (cron: */5 * * * *).",
         "",
+        "You are running autonomously: no user is watching this turn and questions will not be answered. Deliver results through your available channels or record them in memory, and work until the task is done or genuinely blocked.",
+        "",
         "Prompt: echo hello",
       ].join("\n"),
     );

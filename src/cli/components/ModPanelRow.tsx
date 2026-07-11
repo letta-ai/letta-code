@@ -1,7 +1,9 @@
 import chalk from "chalk";
 import { Box } from "ink";
+import { DEFAULT_PRODUCT_STATUS_ORDER } from "@/cli/display/product-status/order";
 import {
   columns,
+  link,
   row,
   truncateToWidth,
 } from "@/cli/display/statusline/formatting";
@@ -16,15 +18,31 @@ const MAX_MOD_PANEL_LINES = 8;
 
 export type ModPanelPlacement = "above" | "below";
 
-function placedPanels(
+function newestPanel(panels: ModPanel[]): ModPanel | null {
+  return [...panels].sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null;
+}
+
+export function getPlacedModPanels(
   panels: Record<string, ModPanel>,
   placement: ModPanelPlacement,
 ): ModPanel[] {
-  return Object.values(panels)
-    .filter((panel) =>
-      placement === "above" ? panel.order > 0 : panel.order < 0,
-    )
+  const panelList = Object.values(panels);
+  if (placement === "below") {
+    return panelList
+      .filter((panel) => panel.order < 0)
+      .sort((a, b) => b.order - a.order || b.updatedAt - a.updatedAt);
+  }
+
+  const additivePanels = panelList
+    .filter((panel) => panel.order > DEFAULT_PRODUCT_STATUS_ORDER)
     .sort((a, b) => b.order - a.order || b.updatedAt - a.updatedAt);
+  const productStatusPanel = newestPanel(
+    panelList.filter((panel) => panel.order === DEFAULT_PRODUCT_STATUS_ORDER),
+  );
+
+  return productStatusPanel
+    ? [...additivePanels, productStatusPanel]
+    : additivePanels;
 }
 
 export function renderModPanelLines(
@@ -39,6 +57,7 @@ export function renderModPanelLines(
       width,
       row,
       columns,
+      link,
       chalk,
     };
     result = panel.render(renderContext);
@@ -66,7 +85,7 @@ export function ModPanelRow({
   const rowWidth = Math.max(0, terminalWidth - 1);
   if (rowWidth === 0) return null;
 
-  const lines = placedPanels(panels ?? {}, placement)
+  const lines = getPlacedModPanels(panels ?? {}, placement)
     .flatMap((panel) => renderModPanelLines(panel, rowWidth, context))
     .slice(0, MAX_MOD_PANEL_LINES);
   if (lines.length === 0) return null;

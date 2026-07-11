@@ -4,13 +4,15 @@
 /src/agent/memoryGit.ts @letta-ai/system-prompt-owners
 
 # WebSocket listener and protocol code
-/src/websocket/ @cpacker @4shub @kl2806 @carenthomas @christinatong01
+/src/websocket/ @cpacker @4shub @kl2806 @carenthomas @christinatong01 @jnjpng
 
 # Headless mode runtime
 /src/headless.ts @cpacker @4shub @kl2806 @devanshrj @sarahwooders @jnjpng @carenthomas
 
 # Codex release watcher and source prompt provenance
 /.github/workflows/codex-release-watch.yml @kl2806
+/.github/workflows/codex-agent-watch.yml @kl2806
+/.github/agent-prompts/codex-agent-watch.md @kl2806
 /scripts/codex-watch/ @kl2806
 /src/agent/prompts/source_codex.md @kl2806
 

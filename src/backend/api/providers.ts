@@ -35,6 +35,7 @@ export async function checkProviderApiKey(
   accessKey?: string,
   region?: string,
   profile?: string,
+  baseURL?: string,
 ): Promise<void> {
   await apiRequest<{ message: string }>("POST", "/v1/providers/check", {
     provider_type: providerType,
@@ -42,6 +43,7 @@ export async function checkProviderApiKey(
     ...(accessKey && { access_key: accessKey }),
     ...(region && { region }),
     ...(profile && { profile }),
+    ...(baseURL && { base_url: baseURL }),
   });
 }
 
@@ -52,6 +54,7 @@ export async function createProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  baseURL?: string,
 ): Promise<ProviderResponse> {
   return apiRequest<ProviderResponse>("POST", "/v1/providers", {
     name: providerName,
@@ -60,6 +63,7 @@ export async function createProvider(
     ...(accessKey && { access_key: accessKey }),
     ...(region && { region }),
     ...(profile && { profile }),
+    ...(baseURL && { base_url: baseURL }),
   });
 }
 
@@ -69,12 +73,14 @@ export async function updateProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  baseURL?: string,
 ): Promise<ProviderResponse> {
   return apiRequest<ProviderResponse>("PATCH", `/v1/providers/${providerId}`, {
     api_key: apiKey,
     ...(accessKey && { access_key: accessKey }),
     ...(region && { region }),
     ...(profile && { profile }),
+    ...(baseURL && { base_url: baseURL }),
   });
 }
 
@@ -89,10 +95,18 @@ export async function createOrUpdateProvider(
   accessKey?: string,
   region?: string,
   profile?: string,
+  baseURL?: string,
 ): Promise<ProviderResponse> {
   const existing = await getProviderByName(providerName);
   if (existing) {
-    return updateProvider(existing.id, apiKey, accessKey, region, profile);
+    return updateProvider(
+      existing.id,
+      apiKey,
+      accessKey,
+      region,
+      profile,
+      baseURL,
+    );
   }
   return createProvider(
     providerType,
@@ -101,6 +115,7 @@ export async function createOrUpdateProvider(
     accessKey,
     region,
     profile,
+    baseURL,
   );
 }
 

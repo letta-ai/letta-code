@@ -116,6 +116,54 @@ function waitForJsonMessage(
   });
 }
 
+function waitForClientPing(socket: WebSocket): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for server ping"));
+    }, TEST_TIMEOUT_MS);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off("ping", handlePing);
+      socket.off("error", handleError);
+    };
+    const handlePing = () => {
+      cleanup();
+      resolve();
+    };
+    const handleError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    socket.once("ping", handlePing);
+    socket.once("error", handleError);
+  });
+}
+
+function waitForClientClose(socket: WebSocket): Promise<void> {
+  if (
+    socket.readyState === WebSocket.CLOSED ||
+    socket.readyState === WebSocket.CLOSING
+  ) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for websocket close"));
+    }, TEST_TIMEOUT_MS);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off("close", handleClose);
+    };
+    const handleClose = () => {
+      cleanup();
+      resolve();
+    };
+    socket.once("close", handleClose);
+  });
+}
+
 function closeClient(socket: WebSocket | null): void {
   if (!socket) return;
   if (
@@ -410,6 +458,53 @@ describe("app-server native websocket", () => {
       terminateClient(control);
       await handle?.close();
       await rm(authDir, { recursive: true, force: true });
+    }
+  });
+
+  test("pings connected clients and keeps healthy sockets open", async () => {
+    let handle: AppServerHandle | null = null;
+    let stream: WebSocket | null = null;
+    try {
+      handle = await startAppServer({
+        listen: "ws://127.0.0.1:0",
+        heartbeatIntervalMs: 25,
+        pongTimeoutMs: 5000,
+      });
+      stream = new WebSocket(handle.streamUrl);
+      await waitForOpen(stream);
+
+      // The watchdog should ping connected clients on its cadence.
+      await waitForClientPing(stream);
+
+      // The `ws` client auto-pongs, so a healthy socket survives multiple
+      // intervals without being reaped.
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      expect(stream.readyState).toBe(WebSocket.OPEN);
+    } finally {
+      closeClient(stream);
+      await handle?.close();
+    }
+  });
+
+  test("terminates sockets that exceed the pong timeout", async () => {
+    let handle: AppServerHandle | null = null;
+    let stream: WebSocket | null = null;
+    try {
+      // A 1ms pong timeout means the seeded connect timestamp is already stale
+      // by the first interval tick, so the watchdog reaps the socket.
+      handle = await startAppServer({
+        listen: "ws://127.0.0.1:0",
+        heartbeatIntervalMs: 25,
+        pongTimeoutMs: 1,
+      });
+      stream = new WebSocket(handle.streamUrl);
+      await waitForOpen(stream);
+
+      await waitForClientClose(stream);
+      expect(stream.readyState).not.toBe(WebSocket.OPEN);
+    } finally {
+      closeClient(stream);
+      await handle?.close();
     }
   });
 

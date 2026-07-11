@@ -8,12 +8,15 @@
 // `canonicalToolName`, all carrying an explicit absolute path). These never
 // fork, so the kernel filesystem sandbox (src/sandbox/) cannot see them.
 //
-// Spawned shell commands ARE confined by the kernel sandbox, which supersedes
-// this guard for them — so shell commands are intentionally no longer analyzed
-// here (the old token/raw-command scanner is gone). Subagents with the memory-subagent profile are
-// also confined as whole processes and skip the guard entirely when the
-// sandbox sentinel is set. The guard is the in-process safety net; the kernel
-// is the enforcement boundary for spawned shells and process-confined subagents.
+// Spawned shell commands are intentionally no longer analyzed here (the old
+// token/raw-command scanner is gone — it was bypassable by symlinks, command
+// substitution, globbing, and subprocesses). When the opt-in cross-agent shell
+// sandbox is enabled (`LETTA_FS_SANDBOX=1`), the kernel confines spawned
+// shells instead; by default agent shells run unconfined. Subagents with the
+// memory-subagent profile are confined as whole processes (default-on) and
+// skip the guard entirely when the sandbox sentinel is set. The guard is the
+// in-process safety net; the kernel is the enforcement boundary for opted-in
+// shells and process-confined subagents.
 //
 // The guard runs BEFORE any other permission logic (decision step 0 in
 // checkPermission). Its deny is unbypassable by modes and permission rules.
