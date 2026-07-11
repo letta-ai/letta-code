@@ -20,8 +20,8 @@ import { sharedReminderProviders } from "@/reminders/engine";
 import { settingsManager } from "@/settings-manager";
 import { clearTools } from "@/tools/manager";
 import { injectQueuedSkillContent } from "@/websocket/listener/skill-injection";
-import { __listenerTurnIoTestUtils } from "@/websocket/listener/turn-io";
 import type { ConversationRuntime } from "@/websocket/listener/types";
+import { __listenerTurnIoTestUtils } from "./turn-io";
 
 type MockStream = { conversationId: string; agentId?: string };
 type DrainResult = {
