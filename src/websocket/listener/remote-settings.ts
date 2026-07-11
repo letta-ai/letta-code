@@ -5,10 +5,11 @@
  * restarts. Mirrors the in-memory Map keys used by cwd.ts and permissionMode.ts.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { isUsableDirectory } from "@/helpers/usable-directory";
 import type { PermissionMode } from "@/permissions/mode";
 
 /** Persisted permission mode state for a single conversation. */
@@ -57,14 +58,20 @@ export function loadRemoteSettings(): RemoteSettings {
     // Silently fall back to empty settings.
   }
 
-  // Validate cwdMap entries — filter out stale paths.
+  let repairedCwdMap = false;
+
+  // Validate cwdMap entries and durably remove stale paths. Persisting this
+  // startup repair matters: otherwise recreating a deleted path can resurrect
+  // the old conversation mapping on the next process restart.
   if (loaded.cwdMap) {
     const validCwdMap: Record<string, string> = {};
     for (const [key, value] of Object.entries(loaded.cwdMap)) {
-      if (typeof value === "string" && existsSync(value)) {
+      if (typeof value === "string" && isUsableDirectory(value)) {
         validCwdMap[key] = value;
       }
     }
+    repairedCwdMap =
+      Object.keys(validCwdMap).length !== Object.keys(loaded.cwdMap).length;
     loaded.cwdMap = validCwdMap;
   }
 
@@ -74,7 +81,20 @@ export function loadRemoteSettings(): RemoteSettings {
   }
 
   _cache = loaded;
+  if (repairedCwdMap) {
+    persistRemoteSettingsSync(loaded);
+  }
   return _cache;
+}
+
+function persistRemoteSettingsSync(settings: RemoteSettings): void {
+  try {
+    const settingsPath = getRemoteSettingsPath();
+    mkdirSync(path.dirname(settingsPath), { recursive: true });
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  } catch {
+    // A read-time repair should not prevent listener startup.
+  }
 }
 
 /**
