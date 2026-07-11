@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "@/agent/memory-git-signing";
 import { debugLog } from "@/utils/debug";
 
 const execFile = promisify(execFileCb);
@@ -23,7 +24,8 @@ interface GitResult {
 
 async function runGit(cwd: string, args: string[]): Promise<GitResult> {
   try {
-    const { stdout, stderr } = await execFile("git", args, {
+    const allArgs = [...GIT_DISABLE_COMMIT_SIGNING_ARGS, ...args];
+    const { stdout, stderr } = await execFile("git", allArgs, {
       cwd,
       env: {
         ...process.env,
