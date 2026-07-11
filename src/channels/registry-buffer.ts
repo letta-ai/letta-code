@@ -39,8 +39,22 @@ export type AdapterLookup = (
 
 export type MessageHandler = (delivery: ChannelInboundDelivery) => void;
 
+export interface ChannelBufferOptions {
+  /**
+   * Injectable clock for deterministic TTL testing.  Defaults to `Date.now`.
+   * Production callers should never pass this — it exists so tests can
+   * advance the buffer's internal clock without waiting real minutes.
+   */
+  now?: () => number;
+}
+
 export class ChannelBuffer {
   private readonly items: BufferedDelivery[] = [];
+  private readonly now: () => number;
+
+  constructor(options: ChannelBufferOptions = {}) {
+    this.now = options.now ?? Date.now;
+  }
 
   /**
    * Send a "reconnecting" notification back through the channel adapter
@@ -129,7 +143,7 @@ export class ChannelBuffer {
 
     this.items.push({
       delivery,
-      bufferedAt: Date.now(),
+      bufferedAt: this.now(),
       channelId,
       accountId,
       chatId,
@@ -146,7 +160,7 @@ export class ChannelBuffer {
    * (TTL) from the front of the queue first.
    */
   flush(handler: MessageHandler, lookup: AdapterLookup): void {
-    const now = Date.now();
+    const now = this.now();
 
     // Drop expired items from the front of the queue.
     while (this.items.length > 0) {
