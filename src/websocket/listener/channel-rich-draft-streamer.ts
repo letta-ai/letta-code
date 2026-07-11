@@ -2,7 +2,7 @@ import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/ag
 import { getChannelAccount } from "@/channels/accounts";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter, ChannelTurnSource } from "@/channels/types";
-import { isTelegramChannelAccount } from "@/channels/types";
+import { getRichDraftStreamingPolicy } from "@/channels/types";
 import { debugLog, debugWarn } from "@/utils/debug";
 
 const MESSAGE_CHANNEL_TOOL_NAMES = new Set([
@@ -12,8 +12,7 @@ const MESSAGE_CHANNEL_TOOL_NAMES = new Set([
 const DEFAULT_DRAFT_DEBOUNCE_MS = 1000;
 const MIN_DRAFT_TEXT_LENGTH = 1;
 
-type TelegramDraftSource = ChannelTurnSource & {
-  channel: "telegram";
+type ChannelDraftSource = ChannelTurnSource & {
   accountId: string;
 };
 
@@ -44,48 +43,47 @@ type DraftCallState = {
 
 type UnknownRecord = Record<string, unknown>;
 
-export type TelegramRichDraftStreamer = {
+export type ChannelRichDraftStreamer = {
   handleChunk(chunk: LettaStreamingResponse): void;
   flushPending(): Promise<void>;
   dispose(): void;
 };
 
-export function createTelegramRichDraftStreamer(options: {
+export function createChannelRichDraftStreamer(options: {
   batchId: string;
   sources?: ChannelTurnSource[];
   debounceMs?: number;
-}): TelegramRichDraftStreamer | null {
-  const source = resolveSingleTelegramDraftSource(options.sources ?? []);
+}): ChannelRichDraftStreamer | null {
+  const source = resolveSingleChannelDraftSource(options.sources ?? []);
   if (!source) {
     debugLog(
       "channels",
-      "Telegram rich draft streamer disabled: no single Telegram source",
+      "Channel rich draft streamer disabled: no single channel source",
     );
     return null;
   }
 
-  const account = getChannelAccount("telegram", source.accountId);
-  if (
-    !account ||
-    !isTelegramChannelAccount(account) ||
-    account.richDraftStreaming !== true
-  ) {
+  const account = getChannelAccount(source.channel, source.accountId);
+  const policy = getRichDraftStreamingPolicy(account);
+  if (!policy) {
     debugLog(
       "channels",
-      "Telegram rich draft streamer disabled: account not opted in (%s)",
+      "Channel rich draft streamer disabled: account not opted in (%s:%s)",
+      source.channel,
       source.accountId,
     );
     return null;
   }
 
   const adapter = getChannelRegistry()?.getAdapter(
-    "telegram",
+    source.channel,
     source.accountId,
   );
   if (!adapter?.sendRichMessageDraft || !adapter.isRunning()) {
     debugLog(
       "channels",
-      "Telegram rich draft streamer disabled: adapter unavailable (%s)",
+      "Channel rich draft streamer disabled: adapter unavailable (%s:%s)",
+      source.channel,
       source.accountId,
     );
     return null;
@@ -93,38 +91,42 @@ export function createTelegramRichDraftStreamer(options: {
 
   debugLog(
     "channels",
-    "Telegram rich draft streamer enabled for account=%s chat=%s thread=%s",
+    "Channel rich draft streamer enabled for channel=%s account=%s chat=%s thread=%s",
+    source.channel,
     source.accountId,
     source.chatId,
     source.threadId ?? "",
   );
 
-  return new TelegramRichDraftStreamerImpl({
+  return new ChannelRichDraftStreamerImpl({
     adapter,
     batchId: options.batchId,
     source,
-    richPrivateChatDefault: account.richPrivateChatDefault !== false,
+    richPrivateChatDefault: policy.richPrivateChatDefault,
     debounceMs: options.debounceMs ?? DEFAULT_DRAFT_DEBOUNCE_MS,
   });
 }
 
-function resolveSingleTelegramDraftSource(
+function resolveSingleChannelDraftSource(
   sources: ChannelTurnSource[],
-): TelegramDraftSource | null {
-  const telegramSources = sources.filter(
-    (source): source is TelegramDraftSource =>
-      source.channel === "telegram" &&
+): ChannelDraftSource | null {
+  const candidateSources = sources.filter(
+    (source): source is ChannelDraftSource =>
       typeof source.accountId === "string" &&
-      source.accountId.trim().length > 0,
+      source.accountId.trim().length > 0 &&
+      getRichDraftStreamingPolicy(
+        getChannelAccount(source.channel, source.accountId.trim()),
+      ) !== null,
   );
-  if (telegramSources.length === 0) {
+  if (candidateSources.length === 0) {
     return null;
   }
 
-  const byRoute = new Map<string, TelegramDraftSource>();
-  for (const source of telegramSources) {
+  const byRoute = new Map<string, ChannelDraftSource>();
+  for (const source of candidateSources) {
     byRoute.set(
       [
+        source.channel,
         source.accountId.trim(),
         source.chatId,
         source.threadId ?? "",
@@ -138,10 +140,10 @@ function resolveSingleTelegramDraftSource(
   return byRoute.size === 1 ? ([...byRoute.values()][0] ?? null) : null;
 }
 
-class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
+class ChannelRichDraftStreamerImpl implements ChannelRichDraftStreamer {
   private readonly adapter: ChannelAdapter;
   private readonly batchId: string;
-  private readonly source: TelegramDraftSource;
+  private readonly source: ChannelDraftSource;
   private readonly richPrivateChatDefault: boolean;
   private readonly debounceMs: number;
   private readonly calls = new Map<string, DraftCallState>();
@@ -153,7 +155,7 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
   constructor(options: {
     adapter: ChannelAdapter;
     batchId: string;
-    source: TelegramDraftSource;
+    source: ChannelDraftSource;
     richPrivateChatDefault: boolean;
     debounceMs: number;
   }) {
@@ -202,7 +204,7 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
       if (state.name && MESSAGE_CHANNEL_TOOL_NAMES.has(state.name)) {
         debugLog(
           "channels",
-          "Telegram rich draft streamer saw MessageChannel args: call=%s bytes=%d",
+          "Channel rich draft streamer saw MessageChannel args: call=%s bytes=%d",
           state.toolCallId,
           state.argumentsText.length,
         );
@@ -282,7 +284,7 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
       return;
     }
 
-    const intent = extractTelegramSendRichDraftIntent(
+    const intent = extractChannelSendRichDraftIntent(
       state.argumentsText,
       this.source,
       { richPrivateChatDefault: this.richPrivateChatDefault },
@@ -290,7 +292,7 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
     if (!intent) {
       debugLog(
         "channels",
-        "Telegram rich draft streamer waiting for routable intent: call=%s bytes=%d",
+        "Channel rich draft streamer waiting for routable intent: call=%s bytes=%d",
         state.toolCallId,
         state.argumentsText.length,
       );
@@ -305,7 +307,7 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
     ) {
       debugLog(
         "channels",
-        "Telegram rich draft streamer skipped unchanged/empty draft: call=%s chars=%d",
+        "Channel rich draft streamer skipped unchanged/empty draft: call=%s chars=%d",
         state.toolCallId,
         message.length,
       );
@@ -342,13 +344,13 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
     this.lastDraftAttemptAtMs = Date.now();
     debugLog(
       "channels",
-      "Telegram rich draft streamer sending draft: call=%s draft=%d chars=%d",
+      "Channel rich draft streamer sending draft: call=%s draft=%d chars=%d",
       state.toolCallId,
       state.draftId,
       message.length,
     );
     const draft = {
-      channel: "telegram",
+      channel: this.source.channel,
       accountId: this.source.accountId,
       chatId: this.source.chatId,
       threadId: this.source.threadId ?? null,
@@ -364,7 +366,7 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
           state.lastSentMessage = message;
         }
       } catch (error) {
-        const retryAfterMs = getTelegramRetryAfterMs(error);
+        const retryAfterMs = extractRetryAfterMs(error);
         if (retryAfterMs !== null) {
           this.retryBlockedUntilMs = Math.max(
             this.retryBlockedUntilMs,
@@ -378,14 +380,14 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
         }
         debugWarn(
           "channels",
-          `[Telegram] Rich draft update failed: ${
+          `[${this.source.channel}] Rich draft update failed: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
         if (retryAfterMs !== null) {
           debugWarn(
             "channels",
-            `[Telegram] Rich draft update rate-limited; retrying after ${retryAfterMs}ms`,
+            `[${this.source.channel}] Rich draft update rate-limited; retrying after ${retryAfterMs}ms`,
           );
         }
         return;
@@ -467,7 +469,12 @@ class TelegramRichDraftStreamerImpl implements TelegramRichDraftStreamer {
   }
 }
 
-function getTelegramRetryAfterMs(error: unknown): number | null {
+/**
+ * Best-effort extraction of a rate-limit retry hint from adapter send errors.
+ * Understands common bot-API shapes (`parameters.retry_after` seconds nested
+ * under response/payload/error) plus a `retry_after`-style message fallback.
+ */
+function extractRetryAfterMs(error: unknown): number | null {
   const candidates = findRetryAfterCandidates(error);
   for (const candidate of candidates) {
     const seconds = Number(candidate);
@@ -500,9 +507,9 @@ function findRetryAfterCandidates(error: unknown): unknown[] {
   ];
 }
 
-export function extractTelegramSendRichDraftIntent(
+export function extractChannelSendRichDraftIntent(
   argumentsText: string,
-  source: ChannelTurnSource & { channel: "telegram"; accountId: string },
+  source: ChannelTurnSource & { accountId: string },
   options: { richPrivateChatDefault?: boolean } = {},
 ): DraftIntent | null {
   const action = extractStringField(argumentsText, "action", false)?.value;
@@ -515,18 +522,19 @@ export function extractTelegramSendRichDraftIntent(
   if (!isExplicitRichSend && !isDefaultRichPrivateSend) {
     debugLog(
       "channels",
-      "Telegram rich draft intent rejected: action=%s",
+      "Channel rich draft intent rejected: action=%s",
       action ?? "",
     );
     return null;
   }
 
   const channel = extractStringField(argumentsText, "channel", false)?.value;
-  if (channel?.trim().toLowerCase() !== "telegram") {
+  if (channel?.trim().toLowerCase() !== source.channel) {
     debugLog(
       "channels",
-      "Telegram rich draft intent rejected: channel=%s",
+      "Channel rich draft intent rejected: channel=%s source=%s",
       channel ?? "",
+      source.channel,
     );
     return null;
   }
@@ -536,7 +544,7 @@ export function extractTelegramSendRichDraftIntent(
   if (!chatId || chatId !== source.chatId) {
     debugLog(
       "channels",
-      "Telegram rich draft intent rejected: chat=%s source=%s",
+      "Channel rich draft intent rejected: chat=%s source=%s",
       chatId ?? "",
       source.chatId,
     );
@@ -545,7 +553,7 @@ export function extractTelegramSendRichDraftIntent(
 
   const target = extractStringField(argumentsText, "target", false)?.value;
   if (target?.trim()) {
-    debugLog("channels", "Telegram rich draft intent rejected: target present");
+    debugLog("channels", "Channel rich draft intent rejected: target present");
     return null;
   }
 
@@ -557,7 +565,7 @@ export function extractTelegramSendRichDraftIntent(
   if (accountId?.trim() && accountId.trim() !== source.accountId) {
     debugLog(
       "channels",
-      "Telegram rich draft intent rejected: account=%s source=%s",
+      "Channel rich draft intent rejected: account=%s source=%s",
       accountId.trim(),
       source.accountId,
     );
@@ -570,7 +578,7 @@ export function extractTelegramSendRichDraftIntent(
   if (requestedThreadId !== null && requestedThreadId !== sourceThreadId) {
     debugLog(
       "channels",
-      "Telegram rich draft intent rejected: thread=%s source=%s",
+      "Channel rich draft intent rejected: thread=%s source=%s",
       requestedThreadId,
       sourceThreadId ?? "",
     );
@@ -579,16 +587,13 @@ export function extractTelegramSendRichDraftIntent(
 
   const media = extractStringField(argumentsText, "media", false)?.value;
   if (media?.trim()) {
-    debugLog("channels", "Telegram rich draft intent rejected: media present");
+    debugLog("channels", "Channel rich draft intent rejected: media present");
     return null;
   }
 
   const message = extractStringField(argumentsText, "message", true)?.value;
   if (!message?.trim()) {
-    debugLog(
-      "channels",
-      "Telegram rich draft intent rejected: message missing",
-    );
+    debugLog("channels", "Channel rich draft intent rejected: message missing");
     return null;
   }
 

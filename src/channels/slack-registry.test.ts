@@ -219,4 +219,171 @@ describe("slack channel registry", () => {
       ),
     ).not.toBeNull();
   });
+
+  test("mention slash detach silences the thread until the app is mentioned again", async () => {
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    registry.registerAdapter(adapter);
+
+    const deliveries: Array<{ turnSources?: unknown[] }> = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        isMention: true,
+        text: "please take a look",
+        messageId: "1712800001.000300",
+      }),
+    );
+    await adapter.onMessage?.(
+      createInboundMessage({
+        isMention: true,
+        text: "/detach",
+        messageId: "1712800002.000400",
+      }),
+    );
+
+    let route = getRoute("slack", "C123", "slack-bot", "1712790000.000050");
+    expect(route).toEqual(
+      expect.objectContaining({ detached: true, outboundEnabled: false }),
+    );
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        text: "normal follow-up after detach",
+        messageId: "1712800003.000500",
+      }),
+    );
+    expect(deliveries).toHaveLength(1);
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        isMention: true,
+        text: "rejoining this thread",
+        messageId: "1712800004.000600",
+      }),
+    );
+
+    route = getRoute("slack", "C123", "slack-bot", "1712790000.000050");
+    expect(route).toEqual(
+      expect.objectContaining({ detached: false, outboundEnabled: true }),
+    );
+    expect(deliveries).toHaveLength(2);
+  });
+
+  test("mention bang help in a DM is handled before agent delivery", async () => {
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const replies: string[] = [];
+    const adapter = {
+      ...createAdapter(),
+      sendDirectReply: async (_chatId: string, text: string) => {
+        replies.push(text);
+      },
+    };
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "D123",
+        chatType: "direct",
+        threadId: null,
+        isMention: true,
+        text: "!help",
+        messageId: "1712800001.000300",
+      }),
+    );
+
+    expect(deliveries).toEqual([]);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]).toContain(
+      "Control commands start immediately after the mention",
+    );
+    expect(replies[0]).toContain("@agent /model <handle-or-id>");
+    expect(replies[0]).toContain("Legacy bang aliases still work");
+  });
+
+  test("unmentioned bang text stays normal routed Slack input", async () => {
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        isMention: true,
+        text: "please take a look",
+        messageId: "1712800001.000300",
+      }),
+    );
+    await adapter.onMessage?.(
+      createInboundMessage({
+        text: "!detach",
+        messageId: "1712800002.000400",
+      }),
+    );
+
+    const route = getRoute("slack", "C123", "slack-bot", "1712790000.000050");
+    expect(route).toEqual(expect.objectContaining({ outboundEnabled: true }));
+    expect(route?.detached).not.toBe(true);
+    expect(deliveries).toHaveLength(2);
+  });
+
+  test("mention slash new replaces the Slack thread route conversation", async () => {
+    createConversation
+      .mockResolvedValueOnce({ id: "conv-original" })
+      .mockResolvedValueOnce({ id: "conv-replacement" });
+
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        isMention: true,
+        text: "please take a look",
+        messageId: "1712800001.000300",
+      }),
+    );
+    await adapter.onMessage?.(
+      createInboundMessage({
+        isMention: true,
+        text: "/new",
+        messageId: "1712800002.000400",
+      }),
+    );
+
+    expect(createConversation).toHaveBeenCalledTimes(2);
+    expect(getRoute("slack", "C123", "slack-bot", "1712790000.000050")).toEqual(
+      expect.objectContaining({
+        conversationId: "conv-replacement",
+        detached: false,
+        outboundEnabled: true,
+      }),
+    );
+    expect(deliveries).toHaveLength(1);
+  });
 });

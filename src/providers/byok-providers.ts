@@ -3,7 +3,7 @@
  * Unified module for managing custom LLM provider connections
  */
 
-import { getProviders } from "@earendil-works/pi-ai";
+import { getProviders } from "@earendil-works/pi-ai/compat";
 import { getOAuthProviders } from "@earendil-works/pi-ai/oauth";
 import {
   checkProviderApiKey as checkProviderApiKeyRequest,
@@ -48,6 +48,7 @@ export interface ProviderConnectionOptions {
 
 export interface ProviderOperationOptions {
   target?: ProviderStorageTarget;
+  connection?: ProviderConnectionOptions;
 }
 
 // Field definition for multi-field providers (like Bedrock)
@@ -132,6 +133,21 @@ export const CONSTELLATION_BYOK_PROVIDERS: readonly ByokProvider[] = [
     description: "Connect an OpenAI API key",
     providerType: "openai",
     providerName: "lc-openai",
+  },
+  {
+    id: "openai-compatible",
+    displayName: "OpenAI-compatible API",
+    description: "Connect an OpenAI-compatible Chat Completions endpoint",
+    providerType: "openai",
+    providerName: "lc-openai-compatible",
+    fields: [
+      { key: "apiKey", label: "API Key", secret: true },
+      {
+        key: "baseUrl",
+        label: "Base URL",
+        placeholder: "https://proxy.example.com/v1",
+      },
+    ],
   },
   {
     id: "zai",
@@ -626,6 +642,7 @@ export async function checkProviderApiKey(
     accessKey,
     region,
     profile,
+    options.connection?.baseURL,
   );
 }
 
@@ -661,6 +678,7 @@ export async function createProvider(
     accessKey,
     region,
     profile,
+    options.baseURL,
   );
 }
 
@@ -689,7 +707,14 @@ export async function updateProvider(
       options,
     );
   }
-  return updateProviderRequest(providerId, apiKey, accessKey, region, profile);
+  return updateProviderRequest(
+    providerId,
+    apiKey,
+    accessKey,
+    region,
+    profile,
+    options.baseURL,
+  );
 }
 
 /**
@@ -739,6 +764,7 @@ export async function createOrUpdateProvider(
     accessKey,
     region,
     profile,
+    options.baseURL,
   );
 }
 

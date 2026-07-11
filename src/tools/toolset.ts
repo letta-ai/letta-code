@@ -538,6 +538,7 @@ export async function prepareToolExecutionContextForScope(params: {
     agent: agent as AgentState,
     runtimeContext: {
       agentId,
+      agentName: (agent as AgentState).name ?? null,
       conversationId: scopedConversationId,
       workingDirectory,
       ...(channelToolScope.channels.length > 0 ? { channelToolScope } : {}),
@@ -672,56 +673,6 @@ export async function detachMemoryTools(agentId: string): Promise<boolean> {
       `Warning: Failed to detach memory tools: ${err instanceof Error ? err.message : String(err)}`,
     );
     return false;
-  }
-}
-
-/**
- * Re-attach the appropriate memory tool to an agent.
- * Used when disabling memfs (filesystem-backed memory).
- * Forces attachment even if agent had no memory tool before.
- *
- * @param agentId - Agent to attach memory tool to
- * @param modelIdentifier - Model handle to determine which memory tool to use
- */
-export async function reattachMemoryTool(
-  agentId: string,
-  modelIdentifier: string,
-): Promise<void> {
-  void resolveModel(modelIdentifier);
-  if (!getBackend().capabilities.serverSideToolManagement) {
-    return;
-  }
-  const client = await getClient();
-
-  try {
-    const agentWithTools = await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    });
-    const currentTools = agentWithTools.tools || [];
-    const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
-
-    // Determine which memory tool we want
-    const desiredMemoryTool = "memory";
-
-    // Already has the tool?
-    if (mapByName.has(desiredMemoryTool)) {
-      return;
-    }
-
-    // Find the tool on the server
-    const resp = await client.tools.list({ name: desiredMemoryTool });
-    const toolId = resp.items[0]?.id;
-    if (!toolId) {
-      console.warn(`Memory tool "${desiredMemoryTool}" not found on server`);
-      return;
-    }
-
-    // Attach it
-    await client.agents.tools.attach(toolId, { agent_id: agentId });
-  } catch (err) {
-    console.warn(
-      `Warning: Failed to reattach memory tool: ${err instanceof Error ? err.message : String(err)}`,
-    );
   }
 }
 

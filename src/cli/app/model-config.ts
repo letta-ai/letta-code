@@ -31,7 +31,8 @@ export function deriveReasoningEffort(
         re === "low" ||
         re === "medium" ||
         re === "high" ||
-        re === "xhigh"
+        re === "xhigh" ||
+        re === "max"
       )
         return re;
     }

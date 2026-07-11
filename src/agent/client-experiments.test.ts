@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getClientDefaultHeaders } from "@/backend/api/client";
-import { experimentManager } from "@/experiments/manager";
+import type { Settings } from "@/settings-manager";
 import { settingsManager } from "@/settings-manager";
 
 const originalHome = process.env.HOME;
@@ -59,20 +59,31 @@ afterEach(async () => {
 });
 
 describe("getClient experiment headers", () => {
-  test("uses LETTA_NODE when no explicit experiment override exists", async () => {
+  test("sends the node header when LETTA_NODE is enabled", async () => {
     process.env.LETTA_NODE = "1";
 
     expect(getClientDefaultHeaders()["x-letta-node"]).toBe("1");
   });
 
-  test("sends an explicit off header when the override disables node", async () => {
-    process.env.LETTA_NODE = "1";
-    experimentManager.set("node", false);
+  test("sends an explicit off header when LETTA_NODE is set but disabled", async () => {
+    process.env.LETTA_NODE = "0";
 
     expect(getClientDefaultHeaders()["x-letta-node"]).toBe("0");
   });
 
-  test("omits the node header when the experiment is default-off", async () => {
+  test("omits the node header when LETTA_NODE is unset", async () => {
+    expect(getClientDefaultHeaders()["x-letta-node"]).toBeUndefined();
+  });
+
+  test("ignores a persisted legacy node experiment override", async () => {
+    // Stale `experiments: { node: false }` settings (LET-9516) must not
+    // produce an opt-out header anymore.
+    // "node" is intentionally no longer a valid ExperimentId; simulate the
+    // legacy on-disk shape that older builds persisted.
+    settingsManager.updateSettings({
+      experiments: { node: false },
+    } as unknown as Partial<Settings>);
+
     expect(getClientDefaultHeaders()["x-letta-node"]).toBeUndefined();
   });
 

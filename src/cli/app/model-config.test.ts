@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  deriveReasoningEffort,
   mapHandleToLlmConfigPatch,
   providerTypeFromModelSettings,
   providerTypeFromUpdateArgs,
@@ -28,5 +29,17 @@ describe("model config helpers", () => {
     expect(providerTypeFromUpdateArgs({ provider_type: "chatgpt_oauth" })).toBe(
       "chatgpt_oauth",
     );
+  });
+
+  test("derives GPT-5.6 max from OpenAI-family model settings", () => {
+    expect(
+      deriveReasoningEffort(
+        {
+          provider_type: "chatgpt_oauth",
+          reasoning: { reasoning_effort: "max" },
+        } as never,
+        null,
+      ),
+    ).toBe("max");
   });
 });

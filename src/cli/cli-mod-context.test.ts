@@ -13,6 +13,7 @@ describe("buildCliModContext", () => {
       currentDirectory: "/repo",
       projectDirectory: "/repo",
       sessionId: "conv-123",
+      conversationSummary: "Investigate mod context",
       agentId: "agent-123",
       agentName: "Test Agent",
       totalDurationMs: 10_000,
@@ -29,7 +30,12 @@ describe("buildCliModContext", () => {
       networkPhase: "download",
       terminalWidth: 120,
       backgroundAgents: [
-        { type: "general-purpose", status: "running", durationMs: 1234 },
+        {
+          type: "general-purpose",
+          status: "running",
+          durationMs: 1234,
+          agentId: "agent-bg-1",
+        },
       ],
     });
 
@@ -37,6 +43,7 @@ describe("buildCliModContext", () => {
     expect(context.workspace.currentDir).toBe("/repo");
     expect(context.workspace.projectDir).toBe("/repo");
     expect(context.sessionId).toBe("conv-123");
+    expect(context.conversationSummary).toBe("Investigate mod context");
     expect(context.agent.id).toBe("agent-123");
     expect(context.agent.name).toBe("Test Agent");
     expect(context.model.id).toBe("anthropic/claude-sonnet-4");
@@ -54,7 +61,12 @@ describe("buildCliModContext", () => {
     expect(context.networkPhase).toBe("download");
     expect(context.terminalWidth).toBe(120);
     expect(context.backgroundAgents).toEqual([
-      { type: "general-purpose", status: "running", durationMs: 1234 },
+      {
+        type: "general-purpose",
+        status: "running",
+        durationMs: 1234,
+        agentId: "agent-bg-1",
+      },
     ]);
   });
 
@@ -65,6 +77,7 @@ describe("buildCliModContext", () => {
     });
 
     expect(context.sessionId).toBeNull();
+    expect(context.conversationSummary).toBeNull();
     expect(context.lastRunId).toBeNull();
     expect(context.agent.id).toBeNull();
     expect(context.agent.name).toBeNull();
