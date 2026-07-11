@@ -246,3 +246,73 @@ User plugins are discovered from `~/.letta/channels/<id>/channel.json`. They are
 intentionally headless in this MVP. They should be configured by editing
 `accounts.json` or by sending generic websocket/CLI account updates whose
 plugin-owned fields live under `config` / `plugin_config`.
+
+## WhatsApp account configuration
+
+WhatsApp accounts are configured in
+`~/.letta/channels/whatsapp/accounts.json`. All keys use `snake_case` in
+storage and are normalized to `camelCase` at runtime.
+
+### Standard fields
+
+| Key | Default | Description |
+|---|---|---|
+| `agent_id` | `null` | Agent ID for DM and group auto-routing. |
+| `self_chat_mode` | `true` | Reply under the linked user's identity. Set `false` to reply as the bot. |
+| `group_mode` | `disabled` | Group ingestion: `disabled`, `mention`, `open`. |
+| `allowed_groups` | `[]` | Group JIDs to allow when `group_mode` is not `open`. |
+| `mention_patterns` | `[]` | Text aliases for group mention detection. |
+| `transcribe_voice` | `false` | Auto-transcribe voice memos via OpenAI. |
+| `download_media` | `false` | Download inbound media to local storage. |
+| `media_max_bytes` | `52428800` | Max inbound media size (50 MB default). |
+
+### Messaging fields
+
+| Key | Default | Description |
+|---|---|---|
+| `message_prefix` | (none) | String prepended to outbound agent replies (e.g. an emoji for multi-agent identity). |
+| `inbound_debounce_ms` | `0` | Batch rapid-fire messages into one agent turn. `0` = disabled. Range `0..10000`. Voice notes and attachments bypass. |
+| `waiting_behavior` | `off` | UX feedback during agent turns: `off` (nothing), `typing_indicator` (typing dots), `message` (interim waiting message — reserved). |
+| `waiting_message` | (none) | Custom text for `waiting_behavior: "message"`. |
+
+### Audio fields
+
+| Key | Default | Description |
+|---|---|---|
+| `audio_as_voice_memo` | `false` | When `false` (default), all audio files are sent as documents. When `true`, `.ogg`/`.oga`/`.opus` are sent as voice memos (`ptt`). |
+
+### Attachment policy fields
+
+When `attachment_filter` is `true` (default), outbound media sends are
+checked against three allowlists. All three must pass. When `false`,
+policy checks are skipped and current behavior is preserved.
+
+| Key | Default | Description |
+|---|---|---|
+| `attachment_filter` | `true` | Enable/disable attachment policy enforcement. |
+| `attachment_mime_types` | `[]` | Allowed MIME types. `[]` denies all. `["*"]` allows all. Explicit entries are exact-match (e.g. `text/plain`, `application/pdf`). |
+| `attachment_allowed_recipients` | `[]` | Allowed recipients (phone numbers or JIDs). `[]` denies all. `["*"]` allows all. Phone numbers work alongside JIDs. |
+| `attachment_allowed_paths` | `[]` | Allowed source directories for files. Entries must be absolute paths to directories. `[]` denies all. |
+| `attachment_path_recursive` | `false` | When `false`, files must be directly inside an allowed directory. When `true`, files in subdirectories are also allowed. Symlink escape is blocked. |
+
+### Identity and LID discovery
+
+WhatsApp is migrating from phone-number (PN) addressing to linked
+identity (LID) addressing. The adapter handles this transparently:
+
+- **LidDesk** learns PN↔LID mappings from inbound messages and the
+  Baileys signal repository. Mappings persist to
+  `~/.letta/channels/whatsapp/auth/<accountId>/lid-mappings.json` and
+  survive container restarts.
+- **On-demand lookup** via `sock.onWhatsApp(phone)` resolves LID for
+  phone-only contacts that have never sent inbound. Rate-limited at 10
+  lookups per phone per minute.
+- **Route auto-bootstrap** creates routes for outbound sends to
+  contacts with no prior inbound. Phone and LID chatIds are treated as
+  aliases so a route created under one form is found when queried by
+  the other.
+- **Startup drain** migrates legacy phone-keyed routes to LID-keyed
+  when the LidDesk knows the mapping.
+
+Operators do not need to manually create parallel route entries (LID +
+phone) in `routing.yaml`. The system handles this automatically.
