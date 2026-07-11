@@ -22,9 +22,9 @@ import {
 } from "./commands/channels";
 import { handleCronCommand } from "./commands/cron";
 import { handleListMemoryCommand } from "./commands/memory";
+import { buildListModelsEntries } from "./commands/model-catalog";
 import {
   applyModelUpdateForRuntime,
-  buildListModelsEntries,
   buildListModelsResponse,
   buildModelUpdateStatusMessage,
   getCurrentModelStatusForRuntime,

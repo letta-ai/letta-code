@@ -1,5 +1,8 @@
 import type WebSocket from "ws";
-import { getAvailableModelHandles } from "@/agent/available-models";
+import {
+  getAvailableModelHandles,
+  getCachedAvailableModels,
+} from "@/agent/available-models";
 import {
   getModelInfo,
   models,
@@ -24,7 +27,6 @@ import {
 import { formatToolsetName } from "@/tools/toolset-labels";
 import type {
   ListModelsResponseMessage,
-  ListModelsResponseModelEntry,
   UpdateModelResponseMessage,
   UpdateToolsetResponseMessage,
 } from "@/types/protocol_v2";
@@ -43,6 +45,10 @@ import type {
   ConversationRuntime,
   ListenerRuntime,
 } from "@/websocket/listener/types";
+import {
+  buildListModelsEntries,
+  findAvailableModelForPreset,
+} from "./model-catalog";
 import type {
   GetOrCreateScopedRuntime,
   RunDetachedListenerTask,
@@ -202,6 +208,7 @@ export function resolveModelForUpdate(payload: {
   model_id?: string;
   model_handle?: string;
 }): ResolvedModelForUpdate | null {
+  const availableModels = getCachedAvailableModels() ?? [];
   if (typeof payload.model_id === "string" && payload.model_id.length > 0) {
     const byId = getModelInfo(payload.model_id);
     if (byId) {
@@ -219,20 +226,41 @@ export function resolveModelForUpdate(payload: {
           ? ({ ...byId.updateArgs } as Record<string, unknown>)
           : undefined;
       const providerType = inferProviderTypeFromRegistryHandle(byId.handle);
+      const availableModel = findAvailableModelForPreset(
+        byId.handle,
+        availableModels,
+      );
       if (
-        explicitHandle &&
+        (explicitHandle || availableModel) &&
         updateArgs &&
-        providerType &&
+        (availableModel?.providerType || providerType) &&
         typeof updateArgs.provider_type !== "string"
       ) {
-        updateArgs.provider_type = providerType;
+        updateArgs.provider_type = availableModel?.providerType ?? providerType;
       }
 
       return {
         id: byId.id,
-        handle: explicitHandle ?? byId.handle,
+        handle: explicitHandle ?? availableModel?.handle ?? byId.handle,
         label: byId.label,
         updateArgs,
+      };
+    }
+
+    const nativeModel = availableModels.find(
+      (model) => model.handle === payload.model_id,
+    );
+    if (nativeModel || payload.model_id.includes("/")) {
+      const explicitHandle =
+        typeof payload.model_handle === "string" &&
+        payload.model_handle.length > 0
+          ? payload.model_handle
+          : null;
+      return {
+        id: payload.model_id,
+        handle: explicitHandle ?? payload.model_id,
+        label: nativeModel?.label ?? payload.model_id,
+        updateArgs: undefined,
       };
     }
   }
@@ -255,10 +283,13 @@ export function resolveModelForUpdate(payload: {
       };
     }
 
+    const nativeModel = availableModels.find(
+      (model) => model.handle === payload.model_handle,
+    );
     return {
       id: payload.model_handle,
       handle: payload.model_handle,
-      label: payload.model_handle,
+      label: nativeModel?.label ?? payload.model_handle,
       updateArgs: undefined,
     };
   }
@@ -572,25 +603,6 @@ export async function applyToolsetUpdateForRuntime(params: {
   };
 }
 
-export function buildListModelsEntries(): ListModelsResponseModelEntry[] {
-  return models.map((model) => ({
-    id: model.id,
-    handle: model.handle,
-    label: model.label,
-    description: model.description,
-    ...(typeof model.isDefault === "boolean"
-      ? { isDefault: model.isDefault }
-      : {}),
-    ...(typeof model.isFeatured === "boolean"
-      ? { isFeatured: model.isFeatured }
-      : {}),
-    ...(typeof model.free === "boolean" ? { free: model.free } : {}),
-    ...(model.updateArgs && typeof model.updateArgs === "object"
-      ? { updateArgs: model.updateArgs as Record<string, unknown> }
-      : {}),
-  }));
-}
-
 /**
  * Build the full list_models_response payload, including availability data.
  * Fetches available handles and BYOK provider aliases in parallel (best-effort).
@@ -599,8 +611,6 @@ export async function buildListModelsResponse(
   requestId: string,
   options: { forceRefresh?: boolean } = {},
 ): Promise<ListModelsResponseMessage> {
-  const entries = buildListModelsEntries();
-
   const [handlesResult, providersResult] = await Promise.allSettled([
     // User-initiated refreshes bypass the availability cache: within the
     // cache TTL a stale snapshot would otherwise make every "Refresh model
@@ -615,6 +625,9 @@ export async function buildListModelsResponse(
     handlesResult.status === "fulfilled"
       ? [...handlesResult.value.handles]
       : null;
+  const entries = buildListModelsEntries(
+    handlesResult.status === "fulfilled" ? handlesResult.value.models : [],
+  );
 
   // listProviders already degrades to [] on failure, but handle rejection too
   const providers =
