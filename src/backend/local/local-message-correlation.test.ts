@@ -32,6 +32,7 @@ describe("local user message correlation", () => {
     const storageDir = await createStorageDirectory();
     const agentId = "agent-local-correlation";
     const otid = "desktop-user-message-1";
+    const clientMessageId = "transport-user-message-1";
     const store = new LocalStore(agentId, { storageDir });
 
     store.appendTurnInput("default", {
@@ -41,7 +42,7 @@ describe("local user message correlation", () => {
           role: "user",
           content: [{ type: "text", text: "hello" }],
           otid,
-          client_message_id: otid,
+          client_message_id: clientMessageId,
         },
       ],
     } as unknown as ConversationMessageCreateBody);
@@ -66,6 +67,37 @@ describe("local user message correlation", () => {
       } as ConversationMessageListBody),
     ).toEqual([
       expect.objectContaining({ message_type: "user_message", otid }),
+    ]);
+  });
+
+  test("seeds the otid from client_message_id when otid is absent", async () => {
+    const storageDir = await createStorageDirectory();
+    const agentId = "agent-local-client-correlation";
+    const clientMessageId = "transport-user-message-2";
+    const store = new LocalStore(agentId, { storageDir });
+
+    store.appendTurnInput("default", {
+      agent_id: agentId,
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "hello from an older sender" }],
+          client_message_id: clientMessageId,
+        },
+      ],
+    } as unknown as ConversationMessageCreateBody);
+
+    const reloaded = new LocalStore(agentId, { storageDir });
+    expect(
+      reloaded.listConversationMessages("default", {
+        agent_id: agentId,
+        order: "asc",
+      } as ConversationMessageListBody),
+    ).toEqual([
+      expect.objectContaining({
+        message_type: "user_message",
+        otid: clientMessageId,
+      }),
     ]);
   });
 });
