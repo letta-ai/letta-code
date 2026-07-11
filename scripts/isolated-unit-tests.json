@@ -1,0 +1,64 @@
+{
+  "tests": [
+    {
+      "path": "src/channels/discord-registry.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for the backend client."
+    },
+    {
+      "path": "src/channels/discord-service.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates shared channel account, route, pairing, and target stores."
+    },
+    {
+      "path": "src/channels/slack/media.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Imports the real media module while Slack adapter tests replace it."
+    },
+    {
+      "path": "src/cli/message-search-cache-warm.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for backend search."
+    },
+    {
+      "path": "src/hooks/prompt-executor.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for backend generation."
+    },
+    {
+      "path": "src/tools/bash.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Spawns real shells and temporarily mutates process platform and PATH state."
+    },
+    {
+      "path": "src/tools/enter-worktree.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Spawns real Git processes and mutates HOME, USER_CWD, cwd, and runtime singletons."
+    },
+    {
+      "path": "src/tools/memory-apply-patch.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for the backend client."
+    },
+    {
+      "path": "src/tools/memory-tool.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for the backend client."
+    },
+    {
+      "path": "src/tools/toolset-client-tool-rule-cleanup.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for the backend client."
+    },
+    {
+      "path": "src/tools/toolset-memfs-detach.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for the backend client."
+    },
+    {
+      "path": "src/websocket/listen-client-concurrency.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Uses several top-level Bun module mocks and exercises real concurrent listener state."
+    }
+  ]
+}
