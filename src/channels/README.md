@@ -199,7 +199,8 @@ subscriptions, Socket Mode settings, App Home messages, and native
 Bot scopes cover every Slack Web API call the adapter makes:
 
 - `assistant:write` — `assistant.threads.setStatus` for live progress status.
-- `channels:read` — `conversations.list` for proactive target resolution.
+- `channels:read` — `conversations.list` public channels for proactive target resolution.
+- `groups:read` — `conversations.list` private channels for proactive target resolution.
 - `im:write` — `conversations.open` for proactive DM target resolution.
 - `channels:history`, `groups:history`, `im:history` — message event subscriptions.
 - `chat:write` — `chat.postMessage` for outbound replies.

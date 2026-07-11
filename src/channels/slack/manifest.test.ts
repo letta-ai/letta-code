@@ -41,8 +41,11 @@ describe("Slack app manifest", () => {
     // assistant:write — assistant.threads.setStatus (status-controller.ts)
     expect(scopes).toContain("assistant:write");
 
-    // channels:read — conversations.list (target-resolution.ts)
+    // channels:read — conversations.list public channels (target-resolution.ts)
     expect(scopes).toContain("channels:read");
+
+    // groups:read — conversations.list private channels (target-resolution.ts)
+    expect(scopes).toContain("groups:read");
 
     // im:write — conversations.open (target-resolution.ts)
     expect(scopes).toContain("im:write");
@@ -55,6 +58,7 @@ describe("Slack app manifest", () => {
     expect(scopes).toContain("files:write");
     expect(scopes).toContain("groups:history");
     expect(scopes).toContain("im:history");
+    expect(scopes).toContain("groups:read");
     expect(scopes).toContain("reactions:read");
     expect(scopes).toContain("reactions:write");
     expect(scopes).toContain("users:read");

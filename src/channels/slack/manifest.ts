@@ -14,6 +14,7 @@ export const SLACK_APP_MANIFEST_BOT_SCOPES = [
   "files:read",
   "files:write",
   "groups:history",
+  "groups:read",
   "im:history",
   "im:write",
   "reactions:read",
