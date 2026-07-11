@@ -836,6 +836,7 @@ export function createWhatsAppAdapter(
           },
           mediaPath: msg.mediaPath,
           recipientChatId: msg.chatId,
+          lidDesk,
         });
         if (policyError) throw new Error(policyError);
       }

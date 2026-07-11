@@ -158,6 +158,7 @@ export function checkAttachmentPolicy(params: {
   policy: AttachmentPolicyParams;
   mediaPath: string;
   recipientChatId: string;
+  lidDesk?: import("./jid").LidDeskLike | null;
 }): string | null {
   const { policy, mediaPath, recipientChatId } = params;
 
@@ -182,7 +183,7 @@ export function checkAttachmentPolicy(params: {
     return `Attachment denied: no recipients are allowed (attachment_allowed_recipients is empty).`;
   }
   if (!recipients.includes("*")) {
-    if (!allowedUsersIncludes(recipients, recipientChatId)) {
+    if (!allowedUsersIncludes(recipients, recipientChatId, params.lidDesk)) {
       return `Attachment denied: recipient "${recipientChatId}" is not in the allowed list.`;
     }
   }

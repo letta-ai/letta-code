@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  allowedUsersIncludes,
   describeSenderId,
-  senderIdFromJid,
+  type LidDeskLike,
   type SenderIdDescription,
+  senderIdFromJid,
 } from "./jid";
 
 // ── describeSenderId ─────────────────────────────────────────────────
@@ -153,5 +155,108 @@ describe("senderIdFromJid (unchanged)", () => {
 
   test("undefined returns empty string", () => {
     expect(senderIdFromJid(undefined)).toBe("");
+  });
+});
+
+// ── allowedUsersIncludes (LID-aware) ────────────────────────────────
+
+/** Minimal mock LidDesk for testing. */
+function mockDesk(mapping: {
+  lidToPn?: Record<string, string>;
+  pnToLid?: Record<string, string>;
+}): LidDeskLike {
+  const lidToPn = mapping.lidToPn ?? {};
+  const pnToLid = mapping.pnToLid ?? {};
+  return {
+    resolveLid(lidJid: string) {
+      const normalized = lidJid.replace(/:\d+(@|$)/, "$1").split("@")[0] ?? "";
+      const pn = lidToPn[normalized] ?? lidToPn[lidJid];
+      return pn ?? null;
+    },
+    resolvePn(phoneJid: string) {
+      const normalized =
+        phoneJid.replace(/:\d+(@|$)/, "$1").split("@")[0] ?? "";
+      const lid = pnToLid[normalized] ?? pnToLid[phoneJid];
+      return lid ?? null;
+    },
+  };
+}
+
+describe("allowedUsersIncludes (LID-aware)", () => {
+  test("phone sender matches phone allowlist entry (unchanged behavior)", () => {
+    expect(
+      allowedUsersIncludes(["1234567890@s.whatsapp.net"], "1234567890"),
+    ).toBe(true);
+    expect(
+      allowedUsersIncludes(["1234567890"], "1234567890@s.whatsapp.net"),
+    ).toBe(true);
+    expect(allowedUsersIncludes(["9876543210"], "1234567890")).toBe(false);
+  });
+
+  test("phone sender matches without desk (backwards compatible)", () => {
+    // No desk parameter — must work exactly as before.
+    expect(
+      allowedUsersIncludes(["1234567890@s.whatsapp.net"], "1234567890"),
+    ).toBe(true);
+    expect(
+      allowedUsersIncludes(["1234567890"], "1234567890:5@s.whatsapp.net"),
+    ).toBe(true);
+    expect(allowedUsersIncludes(["111"], "222")).toBe(false);
+  });
+
+  test("LID sender with known LidDesk mapping matches phone allowlist entry", () => {
+    const desk = mockDesk({
+      lidToPn: { abc123: "1234567890@s.whatsapp.net" },
+    });
+    // Allowlist has the phone number, sender is the LID.
+    expect(
+      allowedUsersIncludes(["1234567890@s.whatsapp.net"], "abc123:5@lid", desk),
+    ).toBe(true);
+  });
+
+  test("LID sender matches when allowlist has the LID directly", () => {
+    const desk = mockDesk({
+      lidToPn: { abc123: "1234567890@s.whatsapp.net" },
+    });
+    // Allowlist contains the LID JID itself.
+    expect(allowedUsersIncludes(["abc123@lid"], "abc123:5@lid", desk)).toBe(
+      true,
+    );
+  });
+
+  test("LID sender with unknown LidDesk mapping fails (current behavior preserved)", () => {
+    const desk = mockDesk({}); // no mapping
+    expect(
+      allowedUsersIncludes(["1234567890@s.whatsapp.net"], "abc123@lid", desk),
+    ).toBe(false);
+  });
+
+  test("LID sender without desk fails (preserves original behavior)", () => {
+    // No desk — LID produces empty digits, comparison fails.
+    expect(allowedUsersIncludes(["1234567890"], "abc123@lid")).toBe(false);
+  });
+
+  test("LID sender with desk but phone not in allowlist fails", () => {
+    const desk = mockDesk({
+      lidToPn: { abc123: "1234567890@s.whatsapp.net" },
+    });
+    // Desk resolves LID→phone, but phone is NOT in allowlist.
+    expect(
+      allowedUsersIncludes(["9999999999@s.whatsapp.net"], "abc123@lid", desk),
+    ).toBe(false);
+  });
+
+  test("phone sender with desk still matches normally (desk is transparent)", () => {
+    const desk = mockDesk({
+      lidToPn: { abc123: "1234567890@s.whatsapp.net" },
+    });
+    expect(
+      allowedUsersIncludes(["1234567890"], "1234567890@s.whatsapp.net", desk),
+    ).toBe(true);
+  });
+
+  test("null desk is equivalent to no desk (backwards compat)", () => {
+    expect(allowedUsersIncludes(["1234567890"], "1234567890", null)).toBe(true);
+    expect(allowedUsersIncludes(["1234567890"], "abc@lid", null)).toBe(false);
   });
 });

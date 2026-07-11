@@ -172,8 +172,59 @@ export function describeSenderId(
 export function allowedUsersIncludes(
   allowedUsers: string[],
   senderId: string,
+  desk?: LidDeskLike | null,
 ): boolean {
   const normalizedSender = normalizePhoneLike(senderId);
+
+  // Fast path: direct digit comparison succeeds → done.
+  if (
+    normalizedSender &&
+    allowedUsers.some((entry) => normalizePhoneLike(entry) === normalizedSender)
+  ) {
+    return true;
+  }
+
+  // No desk → can't resolve LID. Preserve original behavior (fail).
+  if (!desk) {
+    return allowedUsers.some(
+      (entry) => normalizePhoneLike(entry) === normalizedSender,
+    );
+  }
+
+  // --- LID-aware fallback ---
+  // The senderId may be a LID JID, a phone JID, or raw digits.
+  // Use describeSenderId to classify without losing information.
+  const desc = describeSenderId(senderId);
+
+  // Case 1: sender is a LID. Try resolving LID→phone via desk, then
+  // compare digits. Also check whether the allowlist contains the LID
+  // directly (strip-to-normalized form).
+  if (desc.type === "lid" && desc.lidJid) {
+    // Direct LID match: does the allowlist contain this LID?
+    const lidMatch = allowedUsers.some(
+      (entry) => stripDeviceSuffix(entry) === desc.lidJid,
+    );
+    if (lidMatch) return true;
+
+    // Resolve LID→phone and retry digit comparison.
+    const phoneJid = desk.resolveLid(desc.lidJid);
+    if (phoneJid) {
+      const phoneDigits = normalizePhoneLike(phoneJid);
+      if (
+        phoneDigits &&
+        allowedUsers.some((entry) => normalizePhoneLike(entry) === phoneDigits)
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  // Case 2: sender is a phone JID but digit extraction somehow failed
+  // (shouldn't happen for valid PN JIDs, but guard anyway).
+  // Case 3: sender is unknown type with no digits.
+  // In both cases, fall through to original behavior (fail).
   return allowedUsers.some(
     (entry) => normalizePhoneLike(entry) === normalizedSender,
   );

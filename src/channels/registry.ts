@@ -1967,14 +1967,19 @@ export class ChannelRegistry {
 
     if (
       msg.chatType === "direct" &&
-      config.dmPolicy === "allowlist" &&
-      !allowedUsersIncludes(config.allowedUsers, msg.senderId)
+      config.dmPolicy === "allowlist"
     ) {
-      await adapter.sendDirectReply(
-        msg.chatId,
-        "You are not on the allowed users list for this WhatsApp account.",
-      );
-      return null;
+      const waAdapter = adapter as ChannelAdapter & {
+        getLidDesk?: () => LidDesk;
+      };
+      const lidDesk = waAdapter.getLidDesk?.() ?? null;
+      if (!allowedUsersIncludes(config.allowedUsers, msg.senderId, lidDesk)) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          "You are not on the allowed users list for this WhatsApp account.",
+        );
+        return null;
+      }
     }
 
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
