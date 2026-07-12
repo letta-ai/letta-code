@@ -1199,7 +1199,7 @@ async function main(): Promise<void> {
   if (!isUsingDevBackend && !isUsingLocalBackend) {
     // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
     // Stored OAuth credentials (interactive session tokens) are not accepted for
-    // automated/headless use — get an API key at https://app.letta.com/api-keys
+    // automated/headless use — get an API key at https://platform.letta.com/api-keys
     if (
       isHeadless &&
       baseURL === LETTA_CLOUD_API_URL &&
@@ -1209,7 +1209,7 @@ async function main(): Promise<void> {
       console.error(
         "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
       );
-      console.error("Get an API key at https://app.letta.com/api-keys");
+      console.error("Get an API key at https://platform.letta.com/api-keys");
       process.exit(1);
     }
 

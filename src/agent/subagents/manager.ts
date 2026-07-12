@@ -326,7 +326,6 @@ async function executeSubagent(
   config: SubagentConfig,
   model: string | null,
   userPrompt: string,
-  baseURL: string,
   subagentId: string,
   isRetry = false,
   signal?: AbortSignal,
@@ -559,7 +558,6 @@ async function executeSubagent(
             config,
             primaryModel,
             userPrompt,
-            baseURL,
             subagentId,
             true, // Mark as retry to prevent infinite loops
             signal,
@@ -649,25 +647,6 @@ async function executeSubagent(
       error: getErrorMessage(error),
     };
   }
-}
-
-/**
- * Get the base URL for constructing agent links
- */
-function getBaseURL(): string {
-  const settings = settingsManager.getSettings();
-
-  const baseURL =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    "https://api.letta.com";
-
-  // Convert API URL to web UI URL if using hosted service
-  if (baseURL === "https://api.letta.com") {
-    return "https://app.letta.com";
-  }
-
-  return baseURL;
 }
 
 /**
@@ -814,8 +793,6 @@ export async function spawnSubagent(
         subagentType: type,
         backendMode,
       });
-  const baseURL = getBaseURL();
-
   // Build the prompt with system reminder for deployed agents
   let finalPrompt = prompt;
   if (isDeployingExisting && resolvedParentAgentId) {
@@ -857,7 +834,6 @@ export async function spawnSubagent(
     config,
     model,
     finalPrompt,
-    baseURL,
     subagentId,
     false,
     signal,
