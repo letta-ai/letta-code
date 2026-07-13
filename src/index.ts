@@ -50,6 +50,7 @@ import {
   parseCsvListFlag,
   resolveImportFlagAlias,
 } from "./cli/flag-utils";
+import { LETTA_CHAT_API_KEYS_URL } from "./cli/helpers/app-urls";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import { ensureFdPath, resolveFdPath } from "./cli/helpers/file-autocomplete";
 import type { ApprovalRequest } from "./cli/helpers/stream";
@@ -1198,8 +1199,7 @@ async function main(): Promise<void> {
 
   if (!isUsingDevBackend && !isUsingLocalBackend) {
     // Headless mode against Letta API requires an explicit LETTA_API_KEY env var.
-    // Stored OAuth credentials (interactive session tokens) are not accepted for
-    // automated/headless use — get an API key at https://platform.letta.com/api-keys
+    // Stored interactive OAuth tokens are not accepted for automated/headless use.
     if (
       isHeadless &&
       baseURL === LETTA_CLOUD_API_URL &&
@@ -1209,7 +1209,7 @@ async function main(): Promise<void> {
       console.error(
         "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
       );
-      console.error("Get an API key at https://platform.letta.com/api-keys");
+      console.error(`Get an API key at ${LETTA_CHAT_API_KEYS_URL}`);
       process.exit(1);
     }
 
