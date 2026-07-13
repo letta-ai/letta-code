@@ -53,6 +53,50 @@ test("telegram adapter forwards plain text messages through onMessage", async ()
   });
 });
 
+test("telegram adapter preserves private topic metadata on inbound messages", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+
+  const bot = FakeBot.instances[0];
+  await bot?.emit("message", {
+    message: {
+      chat: { id: 123, type: "private" },
+      message_thread_id: 175380,
+      from: { id: 456, username: "alice", first_name: "Alice" },
+      text: "Hello from private topic",
+      date: 1_736_380_800,
+      message_id: 77,
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith({
+    channel: "telegram",
+    accountId: "telegram-test-account",
+    chatId: "123",
+    senderId: "456",
+    senderName: "alice",
+    text: "Hello from private topic",
+    isMention: false,
+    timestamp: 1_736_380_800_000,
+    messageId: "77",
+    threadId: "175380",
+    chatType: "direct",
+    attachments: undefined,
+    raw: expect.objectContaining({ message_id: 77 }),
+  });
+});
+
 test("telegram adapter preserves group topic metadata on inbound messages", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,

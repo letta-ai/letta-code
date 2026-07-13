@@ -239,7 +239,7 @@ export function createChannelRouteProvisioner(deps: {
         msg.chatId,
         "This Telegram bot isn't connected to a Letta agent yet.\n\n" +
           "Open Channels > Telegram in Letta Code, choose which agent this bot should represent, and try again.",
-        msg.messageId ? { replyToMessageId: msg.messageId } : undefined,
+        buildDirectReplyOptions(msg),
       );
       return null;
     }

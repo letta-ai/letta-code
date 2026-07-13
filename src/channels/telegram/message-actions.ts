@@ -37,17 +37,21 @@ function shouldSendTelegramRichMessage(params: {
 function resolveTelegramRouteThreadId(
   ctx: ChannelMessageActionContext,
 ): string | null {
-  const threadId = ctx.request.threadId ?? ctx.route.threadId ?? null;
-  const trimmed = threadId?.trim();
-  if (!trimmed) {
-    return null;
+  const requestThreadId = ctx.request.threadId?.trim();
+  if (requestThreadId) {
+    return requestThreadId;
   }
 
   if (ctx.route.chatType === "direct") {
     return null;
   }
 
-  return ctx.route.chatId.trim().startsWith("-") ? trimmed : null;
+  const routeThreadId = ctx.route.threadId?.trim();
+  if (!routeThreadId) {
+    return null;
+  }
+
+  return ctx.route.chatId.trim().startsWith("-") ? routeThreadId : null;
 }
 
 export const telegramMessageActions: ChannelMessageActionAdapter = {

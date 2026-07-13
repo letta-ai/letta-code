@@ -504,7 +504,7 @@ test("telegram adapter forwards parse mode and reply parameters", async () => {
   });
 });
 
-test("telegram adapter omits message_thread_id for private chats", async () => {
+test("telegram adapter omits message_thread_id for root private chats", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
     channel: "telegram",
@@ -519,7 +519,6 @@ test("telegram adapter omits message_thread_id for private chats", async () => {
     channel: "telegram",
     chatId: "123",
     text: "<b>hello private</b>",
-    threadId: "42",
     parseMode: "HTML",
   });
 
@@ -532,6 +531,61 @@ test("telegram adapter omits message_thread_id for private chats", async () => {
       parse_mode: "HTML",
     },
   );
+});
+
+test("telegram adapter sends messages into private bot topics", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "telegram",
+    chatId: "123",
+    text: "<b>hello private topic</b>",
+    threadId: "42",
+    parseMode: "HTML",
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot).toBeDefined();
+  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
+    "123",
+    "<b>hello private topic</b>",
+    {
+      message_thread_id: 42,
+      parse_mode: "HTML",
+    },
+  );
+});
+
+test("telegram adapter sends direct replies into private bot topics", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  await adapter.sendDirectReply("123", "pairing reply", {
+    replyToMessageId: "77",
+    threadId: "42",
+  });
+
+  const bot = FakeBot.instances[0];
+  expect(bot).toBeDefined();
+  expect(bot?.api.sendMessage).toHaveBeenCalledWith("123", "pairing reply", {
+    message_thread_id: 42,
+    reply_parameters: { message_id: 77 },
+  });
 });
 
 test("telegram adapter sends messages into forum topics", async () => {

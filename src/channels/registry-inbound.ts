@@ -8,12 +8,13 @@ import type { ChannelRegistryEvent } from "./registry-events";
 import type { ChannelInboundDelivery } from "./registry-handlers";
 import {
   buildChannelTurnSource,
+  buildDirectReplyOptions,
   buildPairingInstructions,
   buildUnboundRouteInstructions,
   getConfiguredAgentId,
 } from "./registry-presentation";
+import { loadAndGetRouteForInboundMessage } from "./registry-route-lookup";
 import type { ChannelRouteProvisioner } from "./registry-routes";
-import { getRoute as getRouteFromStore, loadRoutes } from "./routing";
 import type {
   ChannelAdapter,
   ChannelRoute,
@@ -59,22 +60,7 @@ export function createChannelInboundRouter(deps: {
     }
 
     const getStatusRoute = (): ChannelRoute | null => {
-      let statusRoute = getRouteFromStore(
-        msg.channel,
-        msg.chatId,
-        accountId,
-        msg.threadId,
-      );
-      if (!statusRoute) {
-        loadRoutes(msg.channel);
-        statusRoute = getRouteFromStore(
-          msg.channel,
-          msg.chatId,
-          accountId,
-          msg.threadId,
-        );
-      }
-      return statusRoute;
+      return loadAndGetRouteForInboundMessage(msg);
     };
 
     if (
@@ -304,6 +290,7 @@ export function createChannelInboundRouter(deps: {
         await adapter.sendDirectReply(
           msg.chatId,
           "You are not on the allowed users list for this bot.",
+          buildDirectReplyOptions(msg),
         );
         return;
       }
@@ -333,6 +320,7 @@ export function createChannelInboundRouter(deps: {
           buildPairingInstructions(msg.channel, code, {
             agentId: getConfiguredAgentId(config),
           }),
+          buildDirectReplyOptions(msg),
         );
         return;
       }
@@ -340,25 +328,12 @@ export function createChannelInboundRouter(deps: {
     // dm_policy === "open" → skip check
 
     // 2. Route lookup (reload from disk on miss — allows standalone CLI pairing)
-    let route = getRouteFromStore(
-      msg.channel,
-      msg.chatId,
-      accountId,
-      msg.threadId,
-    );
-    if (!route) {
-      loadRoutes(msg.channel);
-      route = getRouteFromStore(
-        msg.channel,
-        msg.chatId,
-        accountId,
-        msg.threadId,
-      );
-    }
+    const route = loadAndGetRouteForInboundMessage(msg);
     if (!route) {
       await adapter.sendDirectReply(
         msg.chatId,
         buildUnboundRouteInstructions(msg.channel, msg.chatId),
+        buildDirectReplyOptions(msg),
       );
       return;
     }

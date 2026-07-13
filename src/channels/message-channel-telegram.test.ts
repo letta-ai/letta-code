@@ -180,6 +180,79 @@ describe("MessageChannel Telegram", () => {
     });
   });
 
+  test("uses channel turn source thread ids for Telegram private topics", async () => {
+    installChannelStateTestOverrides();
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({
+      messageId: "telegram-msg-private-topic",
+    }));
+
+    const adapter: ChannelAdapter = {
+      id: "telegram:account-1",
+      channelId: "telegram",
+      accountId: "account-1",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+    upsertTelegramTestAccount({ richPrivateChatDefault: false });
+
+    setRouteInMemory("telegram", {
+      accountId: "account-1",
+      chatId: "7952253975",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "send",
+      channel: "telegram",
+      chat_id: "7952253975",
+      message: "hello private topic",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+      channelTurnSources: [
+        {
+          channel: "telegram",
+          accountId: "account-1",
+          chatId: "7952253975",
+          chatType: "direct",
+          messageId: "77",
+          threadId: "175380",
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      ],
+    });
+
+    expect(result).toContain("Message sent to telegram");
+    expect(sendMessage).toHaveBeenCalledWith({
+      channel: "telegram",
+      accountId: "account-1",
+      chatId: "7952253975",
+      text: "hello private topic",
+      replyToMessageId: undefined,
+      threadId: "175380",
+      mediaPath: undefined,
+      fileName: undefined,
+      title: undefined,
+      parseMode: "HTML",
+    });
+  });
+
   test("routes Telegram send-rich as rich markdown with HTML fallback", async () => {
     installChannelStateTestOverrides();
     const registry = new ChannelRegistry();

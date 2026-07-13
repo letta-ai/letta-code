@@ -27,11 +27,14 @@ import type {
   ChannelReloadHandler,
 } from "./registry-handlers";
 import { buildSlackConversationSummary } from "./registry-presentation";
+import {
+  loadAndGetRawRouteForInboundMessage,
+  loadAndGetRouteForInboundMessage,
+} from "./registry-route-lookup";
 import type { ChannelRouteProvisioner } from "./registry-routes";
 import {
   addRoute,
   getRoute as getRouteFromStore,
-  getRouteRaw,
   getRoutesForChannel,
   loadRoutes,
 } from "./routing";
@@ -57,23 +60,10 @@ export function createChannelCommandRouter(deps: {
   getReloadHandler: () => ChannelReloadHandler | null;
   getModelHandler: () => ChannelModelHandler | null;
 }) {
-  function findRawRouteForMessage(
-    msg: InboundChannelMessage,
-  ): ChannelRoute | null {
-    return (
-      getRouteRaw(msg.channel, msg.chatId, msg.accountId, msg.threadId) ?? null
-    );
-  }
-
   function loadAndFindRawRouteForMessage(
     msg: InboundChannelMessage,
   ): ChannelRoute | null {
-    const route = findRawRouteForMessage(msg);
-    if (route) {
-      return route;
-    }
-    loadRoutes(msg.channel);
-    return findRawRouteForMessage(msg);
+    return loadAndGetRawRouteForInboundMessage(msg);
   }
 
   async function handlePauseResumeSlashCommand(
@@ -389,18 +379,7 @@ export function createChannelCommandRouter(deps: {
   }
 
   function getCancelRoute(msg: InboundChannelMessage): ChannelRoute | null {
-    let route = deps.getRoute(
-      msg.channel,
-      msg.chatId,
-      msg.accountId,
-      msg.threadId,
-    );
-    if (route) {
-      return route;
-    }
-
-    loadRoutes(msg.channel);
-    route = deps.getRoute(msg.channel, msg.chatId, msg.accountId, msg.threadId);
+    const route = loadAndGetRouteForInboundMessage(msg);
     if (route) {
       return route;
     }

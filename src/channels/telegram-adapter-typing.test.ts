@@ -260,7 +260,7 @@ test("telegram adapter clears typing after sending control request prompt", asyn
   await adapter.stop();
 });
 
-test("telegram control prompts omit stale thread ids for private chats", async () => {
+test("telegram control prompts target private bot topics", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
     channel: "telegram",
@@ -293,15 +293,9 @@ test("telegram control prompts omit stale thread ids for private chats", async (
   expect(bot?.api.sendMessage).toHaveBeenCalledWith(
     "555",
     expect.stringContaining("Shell"),
-    expect.not.objectContaining({
-      message_thread_id: expect.anything(),
-    }),
-  );
-  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
-    "555",
-    expect.stringContaining("Shell"),
     expect.objectContaining({
-      reply_parameters: { message_id: 42 },
+      message_thread_id: 99,
+      reply_parameters: { message_id: 99 },
     }),
   );
 });

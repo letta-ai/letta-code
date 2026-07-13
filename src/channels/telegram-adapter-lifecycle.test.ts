@@ -60,7 +60,7 @@ test("telegram adapter replies with lifecycle errors", async () => {
   );
 });
 
-test("telegram lifecycle errors omit stale thread ids for private chats", async () => {
+test("telegram lifecycle errors target private bot topics", async () => {
   const adapter = createTelegramAdapter({
     ...telegramAccountDefaults,
     channel: "telegram",
@@ -95,15 +95,9 @@ test("telegram lifecycle errors omit stale thread ids for private chats", async 
   expect(bot?.api.sendMessage).toHaveBeenCalledWith(
     "123",
     "Turn failed:\nSomething failed.",
-    expect.not.objectContaining({
-      message_thread_id: expect.anything(),
-    }),
-  );
-  expect(bot?.api.sendMessage).toHaveBeenCalledWith(
-    "123",
-    "Turn failed:\nSomething failed.",
     expect.objectContaining({
-      reply_parameters: { message_id: 77 },
+      message_thread_id: 42,
+      reply_parameters: { message_id: 42 },
     }),
   );
 });

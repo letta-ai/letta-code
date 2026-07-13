@@ -132,17 +132,9 @@ export function resolveTelegramInputFileConstructor(
 }
 
 export function resolveTelegramOutboundThreadId(
-  msg: Pick<OutboundChannelMessage, "chatId" | "threadId">,
+  msg: Pick<OutboundChannelMessage, "threadId">,
 ): string | null {
-  const threadId = msg.threadId?.trim();
-  if (!threadId) {
-    return null;
-  }
-
-  // Telegram message_thread_id is only valid for forum topics in groups and
-  // supergroups. Private chat IDs are positive, so never attach a thread id
-  // there even if stale route state provided one.
-  return msg.chatId.trim().startsWith("-") ? threadId : null;
+  return msg.threadId?.trim() || null;
 }
 
 export function buildTelegramReplyOptions(

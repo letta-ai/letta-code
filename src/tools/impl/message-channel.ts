@@ -989,9 +989,7 @@ function inferAccountIdFromChannelTurnSources(params: {
   channelTurnSources?: ChannelTurnSource[];
 }): string | undefined {
   const chatId = params.input.chatId;
-  if (!chatId) {
-    return undefined;
-  }
+  if (!chatId) return undefined;
 
   const accountIds = new Set<string>();
   for (const source of params.channelTurnSources ?? []) {
@@ -1004,8 +1002,8 @@ function inferAccountIdFromChannelTurnSources(params: {
       continue;
     }
     if (
-      params.input.threadId !== undefined &&
-      (source.threadId ?? null) !== (params.input.threadId ?? null)
+      params.input.threadId?.trim() &&
+      (source.threadId ?? null) !== params.input.threadId.trim()
     ) {
       continue;
     }
@@ -1162,7 +1160,9 @@ export async function message_channel(
         request: buildMessageChannelRequest(
           input,
           input.chatId,
-          inferredThreadId ?? route.threadId ?? input.threadId,
+          inferredThreadId ??
+            (route.chatType === "direct" ? null : route.threadId) ??
+            input.threadId,
         ),
         route,
         adapter,

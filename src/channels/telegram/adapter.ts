@@ -835,19 +835,21 @@ export function createTelegramAdapter(
     async sendDirectReply(
       chatId: string,
       text: string,
-      options?: { replyToMessageId?: string },
+      options?: { replyToMessageId?: string; threadId?: string | null },
     ): Promise<void> {
       const telegramBot = await ensureBot();
+      const threadId = resolveTelegramOutboundThreadId({
+        threadId: options?.threadId,
+      });
       const reply_parameters = options?.replyToMessageId
         ? {
             message_id: Number(options.replyToMessageId),
           }
         : undefined;
-      await telegramBot.api.sendMessage(
-        chatId,
-        text,
-        reply_parameters ? { reply_parameters } : {},
-      );
+      await telegramBot.api.sendMessage(chatId, text, {
+        ...(threadId ? { message_thread_id: Number(threadId) } : {}),
+        ...(reply_parameters ? { reply_parameters } : {}),
+      });
     },
 
     async handleTurnLifecycleEvent(

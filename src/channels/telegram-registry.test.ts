@@ -22,6 +22,7 @@ import {
   __testOverrideSaveRoutes,
   clearAllRoutes,
   getRoute,
+  setRouteInMemory,
 } from "@/channels/routing";
 import {
   __testOverrideLoadTargetStore,
@@ -83,6 +84,7 @@ describe("telegram channel registry", () => {
       chatId: string;
       text: string;
       replyToMessageId?: string;
+      threadId?: string | null;
     }> = [],
   ): ChannelAdapter {
     return {
@@ -99,6 +101,7 @@ describe("telegram channel registry", () => {
           chatId,
           text,
           replyToMessageId: options?.replyToMessageId,
+          threadId: options?.threadId,
         });
       },
     };
@@ -273,5 +276,87 @@ describe("telegram channel registry", () => {
     expect(createConversation).not.toHaveBeenCalled();
     expect(getRoute("telegram", "123", "telegram-bot")).toBeNull();
     expect(deliveries).toHaveLength(0);
+  });
+
+  test("routes Telegram private topic messages through the root direct route", async () => {
+    __testOverrideLoadPairingStore(() => ({
+      pending: [],
+      approved: [
+        {
+          accountId: "telegram-bot",
+          senderId: "user-1",
+          senderName: "Cameron",
+          approvedAt: "2026-07-03T00:00:00.000Z",
+        },
+      ],
+    }));
+
+    setRouteInMemory("telegram", {
+      accountId: "telegram-bot",
+      chatId: "123",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-07-03T00:00:00.000Z",
+      updatedAt: "2026-07-03T00:00:00.000Z",
+    });
+
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        chatId: "123",
+        chatLabel: undefined,
+        chatType: "direct",
+        threadId: "175380",
+        messageId: "77",
+        text: "hello private topic",
+      }),
+    );
+
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(getRoute("telegram", "123", "telegram-bot", "175380")).toBeNull();
+    expect(getRoute("telegram", "123", "telegram-bot", null)).toMatchObject({
+      accountId: "telegram-bot",
+      chatId: "123",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "default",
+    });
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({
+      route: {
+        accountId: "telegram-bot",
+        chatId: "123",
+        chatType: "direct",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+      turnSources: [
+        {
+          channel: "telegram",
+          accountId: "telegram-bot",
+          chatId: "123",
+          chatType: "direct",
+          messageId: "77",
+          threadId: "175380",
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      ],
+    });
   });
 });
