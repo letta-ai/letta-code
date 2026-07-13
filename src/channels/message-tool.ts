@@ -145,8 +145,11 @@ function buildDynamicMessageChannelDescriptionFromDiscovery(
   const slackWorkAcknowledgement = discovery.activeChannels.includes("slack")
     ? '\n\nFor Slack requests that require nontrivial work or several tool calls, send one short MessageChannel call with action="send" before starting other tools. This gives the Slack user verbal acknowledgement and a View in web link. Do not do this for no-ops, reaction-only responses, or simple no-tool answers.'
     : "";
+  const slackAttachmentDownload = discovery.activeChannels.includes("slack")
+    ? '\n\nSlack attachments that exceed the automatic download limit include an exact recovery instruction. Use action="download-file" with channel, chat_id, attachmentId, and messageId from that instruction. The action saves the file in the normal Slack inbound attachment directory and returns its local_path.'
+    : "";
 
-  return `${description}${scopedReplyContract}${slackWorkAcknowledgement}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
+  return `${description}${scopedReplyContract}${slackWorkAcknowledgement}${slackAttachmentDownload}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
 }
 
 function pruneInactiveChannelGuidance(

@@ -131,6 +131,79 @@ describe("formatChannelNotification", () => {
     expect(reminder).not.toContain("ReadFileGemini");
   });
 
+  test("gives oversized Slack attachments an exact MessageChannel download instruction", () => {
+    const msg: InboundChannelMessage = {
+      channel: "slack",
+      accountId: "design-bot",
+      chatId: "C123",
+      senderId: "U123",
+      text: "Here are the assets",
+      timestamp: Date.now(),
+      messageId: "1712800000.000100",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      attachments: [
+        {
+          id: "FLARGE",
+          name: "LandscapeTransmission.zip",
+          mimeType: "application/zip",
+          sizeBytes: 43_714_492,
+          kind: "file",
+          sourceMessageId: "1712800000.000100",
+          sourceThreadId: "1712790000.000050",
+          downloadReason: "exceeds_auto_download_limit",
+          autoDownloadLimitBytes: 20 * 1024 * 1024,
+        },
+      ],
+    };
+
+    const reminder = buildChannelReminderText(msg);
+    const xml = buildChannelNotificationXml(msg);
+
+    expect(reminder).toContain('action="download-file"');
+    expect(reminder).not.toContain("attachment local_path values");
+    expect(xml).toContain('download_status="not_downloaded"');
+    expect(xml).toContain('download_reason="exceeds_auto_download_limit"');
+    expect(xml).toContain('auto_download_limit_bytes="20971520"');
+    expect(xml).toContain('attachment_id="FLARGE"');
+    expect(xml).toContain('source_thread_id="1712790000.000050"');
+    expect(xml).toContain(
+      'MessageChannel with action="download-file", channel="slack", chat_id="C123", accountId="design-bot", threadId="1712790000.000050", attachmentId="FLARGE", and messageId="1712800000.000100"',
+    );
+    expect(xml).toContain(
+      "same Slack inbound attachment directory and returns its local_path",
+    );
+    expect(xml).toContain("Do not ask the sender to reattach it.");
+    expect(xml).toContain(
+      "<download-instruction>This file is 41.7 MiB, above the 20 MiB automatic download limit. Call MessageChannel",
+    );
+  });
+
+  test("describes non-size Slack download failures as retries rather than guarantees", () => {
+    const xml = buildChannelNotificationXml({
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "See file",
+      timestamp: Date.now(),
+      messageId: "1712800000.000100",
+      attachments: [
+        {
+          id: "FMISSING",
+          name: "missing.zip",
+          kind: "file",
+          sourceMessageId: "1712800000.000100",
+          downloadReason: "missing_download_url",
+        },
+      ],
+    });
+
+    expect(xml).toContain("<download-retry>");
+    expect(xml).toContain("to retry");
+    expect(xml).toContain("may return a precise error");
+    expect(xml).not.toContain("The tool downloads the file");
+  });
+
   test("adds Slack thread guidance for channel notifications", () => {
     const msg: InboundChannelMessage = {
       channel: "slack",

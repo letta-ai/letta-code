@@ -59,8 +59,10 @@ describe("buildDynamicMessageChannelSchema", () => {
       "send",
       "react",
       "upload-file",
+      "download-file",
       "send-rich",
     ]);
+    expect(properties.attachmentId).toBeDefined();
   });
 
   test("keeps Telegram-only tool actions narrowed to Telegram-supported actions", async () => {
@@ -86,6 +88,7 @@ describe("buildDynamicMessageChannelSchema", () => {
       "react",
       "upload-file",
     ]);
+    expect(properties.attachmentId).toBeUndefined();
   });
 
   test("builds description from the same discovery result as the schema", async () => {
@@ -115,16 +118,20 @@ describe("buildDynamicMessageChannelSchema", () => {
       "Currently active channels: Slack, Telegram.",
     );
     expect(resolved.description).toContain(
-      "Available actions across the active channels: send, react, upload-file, send-rich.",
+      "Available actions across the active channels: send, react, upload-file, download-file, send-rich.",
     );
     expect(resolved.description).toContain(
       SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX,
+    );
+    expect(resolved.description).toContain(
+      'Use action="download-file" with channel, chat_id, attachmentId, and messageId',
     );
     expect(properties.channel?.enum).toEqual(["slack", "telegram"]);
     expect(properties.action?.enum).toEqual([
       "send",
       "react",
       "upload-file",
+      "download-file",
       "send-rich",
     ]);
   });
@@ -176,7 +183,12 @@ describe("buildDynamicMessageChannelSchema", () => {
     );
     expect(resolved.description).not.toContain("Telegram");
     expect(properties.channel?.enum).toEqual(["slack"]);
-    expect(properties.action?.enum).toEqual(["send", "react", "upload-file"]);
+    expect(properties.action?.enum).toEqual([
+      "send",
+      "react",
+      "upload-file",
+      "download-file",
+    ]);
   });
 
   test("does not add Slack work acknowledgement guidance to Telegram-only scoped descriptions", async () => {
@@ -211,6 +223,7 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(resolved.description).not.toContain(
       SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX,
     );
+    expect(resolved.description).not.toContain('action="download-file"');
     expect(properties.channel?.enum).toEqual(["telegram"]);
     expect(properties.action?.enum).toEqual([
       "send",
