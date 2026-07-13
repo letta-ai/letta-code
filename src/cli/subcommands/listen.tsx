@@ -10,12 +10,6 @@ import { Box, render, Text } from "ink";
 import TextInput from "ink-text-input";
 import type React from "react";
 import { useState } from "react";
-import {
-  LETTA_CLOUD_API_URL,
-  pollForToken,
-  refreshAccessToken,
-  requestDeviceCode,
-} from "@/auth/oauth";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import {
   type ChannelRestoreAgentScope,
@@ -29,12 +23,15 @@ import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
-  deriveListenerInstanceId,
   type RegisterOptions,
   registerWithCloudRetry,
 } from "@/websocket/listen-register";
-
-const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+import {
+  getListenerServerUrl,
+  isCloudListenerServerUrl,
+  MissingListenerApiKeyError,
+  resolveListenerRegistrationOptions,
+} from "@/websocket/listener/auth";
 
 type ListenerProcessAnchor = {
   close: () => void;
@@ -46,33 +43,6 @@ type CreateListenerProcessAnchor = () => ListenerProcessAnchor;
 // Without a retained reference, the MessageChannel anchor could be garbage
 // collected even though it is intended to hold channel-only listeners open.
 const activeListenerProcessAnchors = new Set<ListenerProcessAnchor>();
-
-type ListenerOAuthDeps = {
-  LETTA_CLOUD_API_URL: string;
-  pollForToken: typeof pollForToken;
-  refreshAccessToken: typeof refreshAccessToken;
-  requestDeviceCode: typeof requestDeviceCode;
-};
-
-const defaultListenerOAuthDeps: ListenerOAuthDeps = {
-  LETTA_CLOUD_API_URL,
-  pollForToken,
-  refreshAccessToken,
-  requestDeviceCode,
-};
-
-let listenerOAuthDepsOverride: ListenerOAuthDeps | null = null;
-
-function getListenerOAuthDeps(): ListenerOAuthDeps {
-  return listenerOAuthDepsOverride ?? defaultListenerOAuthDeps;
-}
-
-class MissingListenerApiKeyError extends Error {
-  constructor() {
-    super("LETTA_API_KEY not found");
-    this.name = "MissingListenerApiKeyError";
-  }
-}
 
 /**
  * Interactive prompt for environment name
@@ -143,17 +113,6 @@ async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
   }
 }
 
-function getListenerServerUrl(settings: {
-  env?: Record<string, string>;
-}): string {
-  const oauthDeps = getListenerOAuthDeps();
-  return (
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    oauthDeps.LETTA_CLOUD_API_URL
-  );
-}
-
 type ListenerStartupMode =
   | { kind: "remote"; serverUrl: string }
   | {
@@ -162,17 +121,6 @@ type ListenerStartupMode =
       backend: "local" | "self-hosted";
     }
   | { kind: "unsupported-self-hosted"; serverUrl: string };
-
-function normalizeListenerBaseUrl(url: string): string {
-  return url.trim().replace(/\/+$/, "");
-}
-
-function isCloudListenerServerUrl(serverUrl: string): boolean {
-  return (
-    normalizeListenerBaseUrl(serverUrl) ===
-    normalizeListenerBaseUrl(getListenerOAuthDeps().LETTA_CLOUD_API_URL)
-  );
-}
 
 async function resolveListenerStartupMode(
   channelNames: string[],
@@ -225,147 +173,12 @@ function resolveChannelRestoreAgentScope(
   );
 }
 
-async function refreshListenerAccessToken(
-  settings: Awaited<
-    ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
-  >,
-  deviceId: string,
-  connectionName: string,
-): Promise<string> {
-  const oauthDeps = getListenerOAuthDeps();
-  const now = Date.now();
-
-  console.log("Access token expired, refreshing...");
-
-  const tokens = await oauthDeps.refreshAccessToken(
-    settings.refreshToken as string,
-    deviceId,
-    connectionName,
-  );
-
-  settingsManager.updateSettings({
-    env: { LETTA_API_KEY: tokens.access_token },
-    tokenExpiresAt: now + tokens.expires_in * 1000,
-    ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
-  });
-  await settingsManager.flush();
-
-  console.log("Token refreshed successfully.");
-
-  return tokens.access_token;
-}
-
-async function runListenerOAuthLogin(
-  deviceId: string,
-  connectionName: string,
-): Promise<string> {
-  const oauthDeps = getListenerOAuthDeps();
-  console.log("No API key found. Starting OAuth login...\n");
-
-  const deviceData = await oauthDeps.requestDeviceCode();
-
-  console.log(
-    `To authenticate, visit: ${deviceData.verification_uri_complete}`,
-  );
-  console.log(`Your code: ${deviceData.user_code}\n`);
-  console.log("Waiting for authorization...\n");
-
-  const tokens = await oauthDeps.pollForToken(
-    deviceData.device_code,
-    deviceData.interval,
-    deviceData.expires_in,
-    deviceId,
-    connectionName,
-  );
-  const now = Date.now();
-
-  settingsManager.updateSettings({
-    env: { LETTA_API_KEY: tokens.access_token },
-    tokenExpiresAt: now + tokens.expires_in * 1000,
-    ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
-  });
-  await settingsManager.flush();
-
-  console.log("Authenticated successfully.\n");
-
-  return tokens.access_token;
-}
-
-async function resolveListenerRegistrationOptions(
-  deviceId: string,
-  connectionName: string,
-): Promise<RegisterOptions> {
-  const settings = await settingsManager.getSettingsWithSecureTokens();
-  const serverUrl = getListenerServerUrl(settings);
-  const envApiKey = process.env.LETTA_API_KEY;
-
-  if (envApiKey) {
-    return {
-      serverUrl,
-      apiKey: envApiKey,
-      deviceId,
-      connectionName,
-      listenerInstanceId: deriveListenerInstanceId("server", connectionName),
-    };
-  }
-
-  let apiKey = settings.env?.LETTA_API_KEY;
-
-  if (isCloudListenerServerUrl(serverUrl)) {
-    const expiresAt = settings.tokenExpiresAt;
-    if (settings.refreshToken && expiresAt) {
-      const now = Date.now();
-      if (!apiKey || now >= expiresAt - LISTENER_TOKEN_REFRESH_WINDOW_MS) {
-        try {
-          apiKey = await refreshListenerAccessToken(
-            settings,
-            deviceId,
-            connectionName,
-          );
-        } catch (refreshErr) {
-          console.warn(
-            "Token refresh failed:",
-            refreshErr instanceof Error
-              ? refreshErr.message
-              : String(refreshErr),
-          );
-          apiKey = undefined;
-        }
-      }
-    }
-
-    if (!apiKey) {
-      apiKey = await runListenerOAuthLogin(deviceId, connectionName);
-    }
-  }
-
-  if (!apiKey) {
-    throw new MissingListenerApiKeyError();
-  }
-
-  return {
-    serverUrl,
-    apiKey,
-    deviceId,
-    connectionName,
-    listenerInstanceId: deriveListenerInstanceId("server", connectionName),
-  };
-}
-
 export const __listenSubcommandTestUtils = {
   createListenerProcessAnchorPromise,
   flushListenerTelemetryEnd,
   getListenerServerUrl,
   resolveListenerStartupMode,
   resolveListenerRegistrationOptions,
-  setOAuthDepsForTests(overrides: Partial<ListenerOAuthDeps> | null) {
-    listenerOAuthDepsOverride = overrides
-      ? {
-          ...defaultListenerOAuthDeps,
-          ...overrides,
-        }
-      : null;
-  },
 };
 
 const LISTEN_OPTIONS = {

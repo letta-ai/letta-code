@@ -1,10 +1,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import {
-  __listenSubcommandTestUtils,
-  runListenSubcommand,
-} from "@/cli/subcommands/listen";
+import { runListenSubcommand } from "@/cli/subcommands/listen";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { __listenerAuthTestUtils } from "@/websocket/listener/auth";
 
 type TelemetryTestState = {
   events: unknown[];
@@ -47,7 +45,7 @@ describe("listen subcommand telemetry", () => {
     delete process.env.LETTA_RESTORE_CHANNEL_AGENT_SCOPE;
     delete process.env.LETTA_RESTORE_ENABLED_CHANNELS_AGENT_SCOPE;
     delete process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
-    __listenSubcommandTestUtils.setOAuthDepsForTests({
+    __listenerAuthTestUtils.setOAuthDepsForTests({
       LETTA_CLOUD_API_URL: "https://api.letta.com",
     });
 
@@ -116,7 +114,7 @@ describe("listen subcommand telemetry", () => {
         originalIgnoreSelfHostedListenerError;
     }
 
-    __listenSubcommandTestUtils.setOAuthDepsForTests(null);
+    __listenerAuthTestUtils.setOAuthDepsForTests(null);
     telemetry.trackSessionEnd = originalTrackSessionEnd;
     telemetry.flush = originalFlush;
   });
