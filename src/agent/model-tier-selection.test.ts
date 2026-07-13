@@ -78,6 +78,7 @@ describe("getModelInfo", () => {
       "gpt-5.6-luna",
       "gpt-5.6-sol-plus-pro-high",
       "gpt-5.6-terra-plus-pro-high",
+      "gpt-5.6-luna-plus-pro-high",
       "fable",
       "opus",
     ];
@@ -87,7 +88,6 @@ describe("getModelInfo", () => {
     );
     expect(featuredIds).not.toContain("gpt-5.5-high");
     expect(featuredIds).not.toContain("gpt-5.5-plus-pro-high");
-    expect(featuredIds).not.toContain("gpt-5.6-luna-plus-pro-high");
   });
 
   test("resolves direct xAI Grok 4.5 registry metadata", () => {
@@ -144,6 +144,12 @@ describe("getModelInfoForLlmConfig", () => {
     });
     expect(info?.id).toBe("gpt-5.5-plus-pro-high");
     expect(info?.label).toBe("GPT-5.5 (ChatGPT)");
+
+    const lunaInfo = getModelInfoForLlmConfig("openai-codex/gpt-5.6-luna", {
+      reasoning_effort: "high",
+    });
+    expect(lunaInfo?.id).toBe("gpt-5.6-luna-plus-pro-high");
+    expect(lunaInfo?.label).toBe("GPT-5.6 Luna (ChatGPT)");
   });
 
   test("uses Fast ChatGPT metadata when local ChatGPT service tier is priority", () => {
@@ -312,25 +318,27 @@ describe("getReasoningTierOptionsForHandle", () => {
   });
 
   test("returns distinct xhigh and max options for local ChatGPT OAuth GPT-5.6", () => {
-    const options = getReasoningTierOptionsForHandle(
-      "openai-codex/gpt-5.6-sol",
-    );
-    expect(options.map((option) => option.effort)).toEqual([
-      "none",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-    ]);
-    expect(options.map((option) => option.modelId)).toEqual([
-      "gpt-5.6-sol-plus-pro-none",
-      "gpt-5.6-sol-plus-pro-low",
-      "gpt-5.6-sol-plus-pro-medium",
-      "gpt-5.6-sol-plus-pro-high",
-      "gpt-5.6-sol-plus-pro-xhigh",
-      "gpt-5.6-sol-plus-pro-max",
-    ]);
+    for (const variant of ["sol", "terra", "luna"] as const) {
+      const options = getReasoningTierOptionsForHandle(
+        `openai-codex/gpt-5.6-${variant}`,
+      );
+      expect(options.map((option) => option.effort)).toEqual([
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+      ]);
+      expect(options.map((option) => option.modelId)).toEqual([
+        `gpt-5.6-${variant}-plus-pro-none`,
+        `gpt-5.6-${variant}-plus-pro-low`,
+        `gpt-5.6-${variant}-plus-pro-medium`,
+        `gpt-5.6-${variant}-plus-pro-high`,
+        `gpt-5.6-${variant}-plus-pro-xhigh`,
+        `gpt-5.6-${variant}-plus-pro-max`,
+      ]);
+    }
   });
 
   test("returns byok reasoning options for chatgpt-plus-pro gpt-5.5-fast", () => {

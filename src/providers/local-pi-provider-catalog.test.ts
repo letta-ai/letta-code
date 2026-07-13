@@ -138,7 +138,7 @@ describe("local pi provider catalog", () => {
     }
   });
 
-  test("local ChatGPT OAuth catalog includes supported GPT-5.6 variants", async () => {
+  test("local ChatGPT OAuth catalog includes GPT-5.6 named variants", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-chatgpt-56-"));
     try {
       setLocalOAuthProvider({
@@ -153,7 +153,7 @@ describe("local pi provider catalog", () => {
       });
 
       const models = await listLocalModels(storageDir);
-      for (const variant of ["sol", "terra"]) {
+      for (const variant of ["sol", "terra", "luna"]) {
         expect(models).toContainEqual(
           expect.objectContaining({
             handle: `openai-codex/gpt-5.6-${variant}`,
@@ -162,9 +162,6 @@ describe("local pi provider catalog", () => {
           }),
         );
       }
-      expect(
-        models.some((model) => model.handle === "openai-codex/gpt-5.6-luna"),
-      ).toBe(false);
       expect(
         models.some((model) => model.handle === "openai-codex/gpt-5.6"),
       ).toBe(false);

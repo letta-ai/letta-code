@@ -10,12 +10,12 @@ describe("browser-safe model preset export", () => {
 
   test("includes presentation metadata and settings without claiming availability", () => {
     const preset: ModelPreset | undefined = MODEL_PRESETS.find(
-      (entry) => entry.id === "gpt-5.6-sol-plus-pro-high",
+      (entry) => entry.id === "gpt-5.6-luna-plus-pro-high",
     );
 
     expect(preset).toMatchObject({
-      handle: "chatgpt-plus-pro/gpt-5.6-sol",
-      label: "GPT-5.6 Sol (ChatGPT)",
+      handle: "chatgpt-plus-pro/gpt-5.6-luna",
+      label: "GPT-5.6 Luna (ChatGPT)",
       isFeatured: true,
       updateArgs: {
         reasoning_effort: "high",
