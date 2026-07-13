@@ -47,6 +47,23 @@ export function labelForChatGPTByokAlias(
   return label.replace(CHATGPT_LABEL_SUFFIX_PATTERN, ` (${providerAlias})`);
 }
 
+export function labelForByokProviderAlias(
+  label: string,
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+): string {
+  const slashIndex = handle.indexOf("/");
+  if (slashIndex === -1) return label;
+
+  const providerAlias = handle.slice(0, slashIndex);
+  const baseProvider = byokProviderAliases[providerAlias];
+  if (!baseProvider || providerAlias === baseProvider) return label;
+  if (baseProvider === CHATGPT_OAUTH_BASE_PROVIDER) {
+    return labelForChatGPTByokAlias(label, handle, byokProviderAliases);
+  }
+  return `${label} (${providerAlias})`;
+}
+
 export function baseHandleForByokAlias(
   handle: string,
   byokProviderAliases: Record<string, string>,
@@ -89,6 +106,18 @@ export function registryHandleForBackendModel(
   }
 
   return normalizedHandle;
+}
+
+export function registryHandleForBackendModelOrAlias(
+  handle: string,
+  providerType: string | undefined,
+  byokProviderAliases: Record<string, string>,
+): string {
+  const slashIndex = handle.indexOf("/");
+  const providerAlias = slashIndex > 0 ? handle.slice(0, slashIndex) : null;
+  return providerAlias && byokProviderAliases[providerAlias]
+    ? registryHandleForByokAlias(handle, byokProviderAliases)
+    : registryHandleForBackendModel(handle, providerType);
 }
 
 export function labelForBackendModel(

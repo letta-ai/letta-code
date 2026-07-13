@@ -23,6 +23,7 @@ const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
 };
 
 const LOCAL_ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
+  claude: "anthropic-oauth",
   gemini: "google",
   "kimi-code": "kimi-coding",
   moonshot: "moonshotai",

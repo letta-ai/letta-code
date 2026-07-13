@@ -25,19 +25,26 @@ const CHATGPT_OAUTH_PROVIDER_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 // Provider type for ChatGPT OAuth (backend handles transformation)
 export const CHATGPT_OAUTH_PROVIDER_TYPE = "chatgpt_oauth";
 
-export function normalizeChatGPTOAuthProviderName(
+export function normalizeOAuthProviderName(
   providerName?: string | null,
 ): string {
   const normalized = (providerName ?? OPENAI_CODEX_PROVIDER_NAME).trim();
   if (!normalized) {
-    throw new Error("ChatGPT provider name cannot be empty.");
+    throw new Error("OAuth provider name cannot be empty.");
   }
   if (!CHATGPT_OAUTH_PROVIDER_NAME_PATTERN.test(normalized)) {
     throw new Error(
-      "ChatGPT provider name may only contain letters, numbers, dots, underscores, and hyphens.",
+      "OAuth provider name may only contain letters, numbers, dots, underscores, and hyphens.",
     );
   }
   return normalized;
+}
+
+/** @deprecated Use normalizeOAuthProviderName for all named OAuth connections. */
+export function normalizeChatGPTOAuthProviderName(
+  providerName?: string | null,
+): string {
+  return normalizeOAuthProviderName(providerName);
 }
 
 /**

@@ -153,6 +153,65 @@ describe("pi model factory", () => {
       );
 
       expect(resolved.apiKey).toBe("chatgpt-access-token");
+      expect(resolved.headers?.["X-Letta-Provider-Alias"]).toBeUndefined();
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves named ChatGPT and Claude OAuth connections independently", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-oauth-aliases-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "chatgpt_oauth",
+        providerName: "chatgpt-personal",
+        apiKey: JSON.stringify({
+          access_token: "chatgpt-personal-token",
+          id_token: "chatgpt-personal-id-token",
+          refresh_token: "chatgpt-personal-refresh-token",
+          account_id: "personal-account",
+          expires_at: Date.now() + 60_000,
+        }),
+        baseURL: "https://proxy.example.test/codex",
+      });
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "claude-work",
+        providerType: "anthropic",
+        auth: localOAuthAuthFromCredentials({
+          access: "claude-work-token",
+          refresh: "claude-work-refresh-token",
+          expires: Date.now() + 60_000,
+        }),
+      });
+
+      const [chatgpt, claude] = await Promise.all([
+        resolvePiModelForAgent(
+          "chatgpt-personal/gpt-5.6-sol",
+          {},
+          {
+            localProviderAuthStorageDir: storageDir,
+          },
+        ),
+        resolvePiModelForAgent(
+          "claude-work/claude-sonnet-4-6",
+          {},
+          {
+            localProviderAuthStorageDir: storageDir,
+          },
+        ),
+      ]);
+
+      expect(chatgpt.provider).toBe("openai-codex");
+      expect(chatgpt.model.id).toBe("gpt-5.6-sol");
+      expect(chatgpt.apiKey).toBe("chatgpt-personal-token");
+      expect(chatgpt.headers).toMatchObject({
+        "X-Letta-Provider-Alias": "chatgpt-personal",
+      });
+      expect(claude.provider).toBe("anthropic");
+      expect(claude.model.id).toBe("claude-sonnet-4-6");
+      expect(claude.apiKey).toBe("claude-work-token");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

@@ -14,6 +14,7 @@ import {
   type LocalProviderTimeout,
   resolveLocalProviderTimeout,
 } from "@/backend/local/local-provider-timeout";
+import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import {
   getRegisteredPiProvider,
@@ -249,6 +250,25 @@ function localProviderConnection(
     }),
     ...(record ? { record } : {}),
   };
+}
+
+function namedLocalOAuthProviderRecord(
+  modelHandle: string | undefined,
+  storageDir?: string,
+): LocalProviderRecord | null {
+  const separator = modelHandle?.indexOf("/") ?? -1;
+  if (separator <= 0) return null;
+  const providerName = modelHandle?.slice(0, separator);
+  if (!providerName) return null;
+  const record = getLocalProviderRecordByName(providerName, storageDir);
+  debugLog(
+    "pi-model-factory",
+    "named OAuth lookup alias=%s storage_dir=%s found=%s",
+    providerName,
+    storageDir ?? "<default>",
+    record?.auth.type === "oauth" ? "true" : "false",
+  );
+  return record?.auth.type === "oauth" ? record : null;
 }
 
 export interface ZaiConnection {
@@ -511,16 +531,29 @@ export async function resolvePiModelForAgent(
   const concreteModelHandle = normalizeOpenAICompatibleLocalModelHandle(
     isUnselectedLocalModelHandle(modelHandle) ? undefined : modelHandle,
   );
+  const storageDir = options.localProviderAuthStorageDir;
+  const namedOAuthRecord = namedLocalOAuthProviderRecord(
+    concreteModelHandle,
+    storageDir,
+  );
+  const namedOAuthProvider = namedOAuthRecord
+    ? resolveProviderFromProviderType(namedOAuthRecord.provider_type)
+    : undefined;
   const provider = options.provider
     ? resolvePiProvider(options.provider)
-    : resolvePiProviderFromAgent(concreteModelHandle, modelSettings);
+    : (namedOAuthProvider ??
+      resolvePiProviderFromAgent(concreteModelHandle, modelSettings));
   const registeredProvider = getRegisteredPiProvider(provider);
   const spec = isPiProvider(provider) ? getPiProviderSpec(provider) : undefined;
+  const selectedNamedOAuthRecord =
+    namedOAuthProvider === provider ? namedOAuthRecord : null;
   const modelId =
     options.model ??
     (registeredProvider
       ? stripRegisteredProviderHandlePrefix(concreteModelHandle, provider)
-      : undefined) ??
+      : selectedNamedOAuthRecord && concreteModelHandle
+        ? concreteModelHandle.slice(selectedNamedOAuthRecord.name.length + 1)
+        : undefined) ??
     (spec
       ? resolvePiModelFromAgent(concreteModelHandle, spec.id)
       : undefined) ??
@@ -530,7 +563,6 @@ export async function resolvePiModelForAgent(
       : undefined) ??
     process.env.LETTA_CODE_DEV_PI_MODEL ??
     "";
-  const storageDir = options.localProviderAuthStorageDir;
   const preferredProviderType =
     typeof modelSettings.provider_type === "string"
       ? modelSettings.provider_type
@@ -543,7 +575,9 @@ export async function resolvePiModelForAgent(
       )
     : spec
       ? localProviderConnection(
-          spec.localProviderNames,
+          selectedNamedOAuthRecord
+            ? [selectedNamedOAuthRecord.name]
+            : spec.localProviderNames,
           spec.apiKeyEnv?.() ?? spec.fallbackApiKey,
           storageDir,
         )
@@ -577,7 +611,9 @@ export async function resolvePiModelForAgent(
   if (connection.record?.auth.type === "oauth" && spec?.piProvider) {
     const oauth = await getLocalOAuthApiKey({
       providerId: spec.piProvider,
-      providerNames: spec.localProviderNames,
+      providerNames: selectedNamedOAuthRecord
+        ? [selectedNamedOAuthRecord.name]
+        : spec.localProviderNames,
       storageDir,
     });
     connection = {
@@ -607,6 +643,12 @@ export async function resolvePiModelForAgent(
     const bedrock = bedrockLocalProviderOptions(connection.record);
     providerOptions = bedrock.providerOptions;
     envOverrides = bedrock.envOverrides;
+  }
+
+  if (connection.record?.base_url) {
+    headers = mergeHeaders(headers, {
+      "X-Letta-Provider-Alias": connection.record.name,
+    });
   }
 
   const contextWindow = numericSetting(modelSettings.context_window_limit);

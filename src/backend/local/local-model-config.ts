@@ -313,8 +313,27 @@ function catalogModelSettingsForProviderModel(
 
 export function localModelSettingsForHandle(
   handle: string | undefined,
+  storageDir?: string,
 ): Record<string, unknown> | undefined {
   if (!handle) return undefined;
+  const separator = handle.indexOf("/");
+  const providerName = separator > 0 ? handle.slice(0, separator) : undefined;
+  const record = providerName
+    ? listLocalProviderRecords(storageDir).find(
+        (candidate) =>
+          candidate.name === providerName && candidate.auth.type === "oauth",
+      )
+    : undefined;
+  const namedProvider = record
+    ? resolveProviderFromProviderType(record.provider_type)
+    : undefined;
+  if (record && namedProvider && providerName) {
+    const modelId = handle.slice(providerName.length + 1);
+    return {
+      ...catalogModelSettingsForProviderModel(namedProvider, modelId),
+      provider_type: record.provider_type,
+    };
+  }
   const registeredProvider = resolveRegisteredPiProviderFromModelHandle(handle);
   if (registeredProvider) {
     return registeredModelSettingsForProviderModel(
@@ -330,6 +349,11 @@ export function localModelSettingsForHandle(
     registeredModelSettingsForProviderModel(provider, modelId) ??
     catalogModelSettingsForProviderModel(provider, modelId)
   );
+}
+
+export function localModelSettingsForStorage(storageDir?: string) {
+  return (handle: string | undefined) =>
+    localModelSettingsForHandle(handle, storageDir);
 }
 
 export function resolveLocalModelConfig(storageDir?: string): LocalModelConfig {
@@ -504,6 +528,20 @@ export async function listLocalModels(
           name: model.name,
         });
       }
+    }
+  }
+
+  for (const record of records) {
+    if (record.auth.type !== "oauth") continue;
+    const provider = resolveProviderFromProviderType(record.provider_type);
+    if (!provider || isDiscoverableLocalProvider(provider)) continue;
+
+    for (const model of listCatalogModelsForProvider(provider)) {
+      const modelId = stripProviderHandlePrefix(model, provider) ?? model;
+      addModel(provider, modelId, {
+        handle: `${record.name}/${modelId}`,
+        modelEndpointType: record.provider_type,
+      });
     }
   }
 
