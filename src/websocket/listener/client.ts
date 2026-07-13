@@ -113,6 +113,7 @@ import type {
   ListenerRuntime,
   StartListenerOptions,
 } from "./types";
+import { setListenerWebSocketFactoryForTests } from "./websocket-factory";
 
 function asListenerRuntimeForTests(
   runtime: ListenerRuntime | ConversationRuntime,
@@ -454,6 +455,7 @@ export const __listenClientTestUtils = {
     suppressCallbacks: boolean,
   ) => stopRuntime(asListenerRuntimeForTests(runtime), suppressCallbacks),
   setActiveRuntime,
+  setListenerWebSocketFactoryForTests,
   getListenerStatus,
   getOrCreateConversationRuntime,
   resolveRuntimeScope,

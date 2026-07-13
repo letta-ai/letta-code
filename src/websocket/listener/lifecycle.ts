@@ -37,6 +37,7 @@ import { isDebugEnabled } from "@/utils/debug";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
+import { resolveListenerReconnectApiKey } from "./auth";
 import {
   recoverActiveChannelTurn,
   uniqueChannelTurnSources,
@@ -120,6 +121,7 @@ import {
   clearListenerWarmState,
   scheduleListenerWarmupsAfterSync,
 } from "./warmup";
+import { createAuthenticatedListenerWebSocket } from "./websocket-factory";
 import { stopAllWorktreeWatchers } from "./worktree-watcher";
 
 function escapeTaskNotificationSummary(summary: string): string {
@@ -1496,12 +1498,12 @@ async function connectWithRetry(
     await loadTools();
   }
 
-  const settings = await settingsManager.getSettingsWithSecureTokens();
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-
-  if (!apiKey) {
-    throw new Error("Missing LETTA_API_KEY");
-  }
+  const apiKey = await resolveListenerReconnectApiKey(
+    opts.deviceId,
+    opts.connectionName,
+    runtime.everConnected ? opts.onNeedsReregister : undefined,
+  );
+  if (!apiKey) return;
 
   const url = new URL(opts.wsUrl);
   url.searchParams.set("deviceId", opts.deviceId);
@@ -1520,18 +1522,10 @@ async function connectWithRetry(
     streamUrl.searchParams.set("channel", "stream");
   }
 
-  const socket = new WebSocket(url.toString(), {
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-  });
+  const socket = createAuthenticatedListenerWebSocket(url.toString(), apiKey);
 
   const streamSocket = streamUrl
-    ? new WebSocket(streamUrl.toString(), {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-        },
-      })
+    ? createAuthenticatedListenerWebSocket(streamUrl.toString(), apiKey)
     : null;
 
   const fileCommandSession = createFileCommandSession({
