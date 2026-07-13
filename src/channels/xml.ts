@@ -32,6 +32,13 @@ function escapeXmlAttribute(text: string): string {
   return escapeXmlText(text).replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
+function formatMebibytes(bytes: number): string {
+  const mebibytes = bytes / (1024 * 1024);
+  const rounded =
+    mebibytes >= 100 ? Math.round(mebibytes).toString() : mebibytes.toFixed(1);
+  return `${rounded.replace(/\.0$/, "")} MiB`;
+}
+
 function hasNotificationAttachmentPaths(msg: InboundChannelMessage): boolean {
   if (msg.attachments?.some((attachment) => attachment.localPath)) {
     return true;
@@ -203,8 +210,16 @@ function buildAttachmentXml(
       : "";
     const action = `MessageChannel with action="download-file", channel="slack", chat_id="${escapeXmlAttribute(context.chatId)}"${accountArg}${threadArg}, attachmentId="${escapeXmlAttribute(attachment.id)}", and messageId="${escapeXmlAttribute(sourceMessageId)}"`;
     if (attachment.downloadReason === "exceeds_auto_download_limit") {
+      const sizeNote =
+        typeof attachment.sizeBytes === "number"
+          ? `This file is ${formatMebibytes(attachment.sizeBytes)}${
+              typeof attachment.autoDownloadLimitBytes === "number"
+                ? `, above the ${formatMebibytes(attachment.autoDownloadLimitBytes)} automatic download limit`
+                : ""
+            }. `
+          : "";
       children.push(
-        `<download-instruction>Call ${action}. The tool downloads the file into the same Slack inbound attachment directory and returns its local_path. Do not ask the sender to reattach it.</download-instruction>`,
+        `<download-instruction>${sizeNote}Call ${action}. The tool downloads the file into the same Slack inbound attachment directory and returns its local_path. Do not ask the sender to reattach it.</download-instruction>`,
       );
     } else {
       children.push(
