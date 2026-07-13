@@ -36,7 +36,7 @@
   "src/providers/chatgpt-usage-service.ts": 1115,
   "src/settings-manager.test.ts": 1669,
   "src/settings-manager.ts": 2113,
-  "src/tools/impl/enter-worktree.ts": 1265,
+  "src/tools/impl/enter-worktree.ts": 1260,
   "src/tools/impl/message-channel.ts": 1208,
   "src/tools/manager.ts": 3293,
   "src/tools/tool-execution-context.test.ts": 1422,

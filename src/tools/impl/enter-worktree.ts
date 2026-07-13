@@ -24,6 +24,7 @@ import {
 import {
   switchConversationWorkingDirectory,
   switchCurrentRuntimeWorkingDirectory,
+  updateToolExecutionContextCwd,
 } from "@/websocket/listener/cwd-change";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
 import { restartWorktreeWatcher } from "@/websocket/listener/worktree-watcher";
@@ -809,19 +810,13 @@ async function switchSessionToWorktree(params: {
       agentId: runtimeContext.agentId ?? null,
       conversationId: runtimeContext.conversationId,
     });
-    return true;
+  } else {
+    await switchCurrentRuntimeWorkingDirectory(worktreePath);
   }
-
-  await switchCurrentRuntimeWorkingDirectory(worktreePath);
-  if (params.executionContextId) {
-    const { updateToolExecutionContextWorkingDirectory } = await import(
-      "@/tools/manager"
-    );
-    updateToolExecutionContextWorkingDirectory(
-      params.executionContextId,
-      worktreePath,
-    );
-  }
+  // Both paths must refresh the captured execution context: the in-flight
+  // turn resolves tool cwds from the snapshot taken at turn start, so
+  // skipping this leaves every remaining tool call in the previous cwd.
+  await updateToolExecutionContextCwd(params.executionContextId, worktreePath);
   return true;
 }
 

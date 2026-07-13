@@ -291,6 +291,67 @@ describe("EnterWorktree tool", () => {
     }
   });
 
+  test("updates the active tool context in listener mode so same-turn tools use the new cwd", async () => {
+    const repo = await trackRepo();
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    listener.bootWorkingDirectory = repo;
+    __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+    setActiveRuntime(listener);
+    await loadSpecificTools(["EnterWorktree", "Bash"]);
+
+    const scope = {
+      agentId: "agent-1",
+      conversationId: "conv-a",
+      workingDirectory: repo,
+    };
+    const prepared = await runWithRuntimeContext(scope, () =>
+      prepareCurrentToolExecutionContext({ workingDirectory: repo }),
+    );
+
+    try {
+      const createResult = await runWithRuntimeContext(scope, () =>
+        executeTool(
+          "EnterWorktree",
+          { name: "Listener Same Turn Feature", refresh_base: false },
+          { toolContextId: prepared.contextId },
+        ),
+      );
+      expect(createResult.status).toBe("success");
+      const createdText = toolReturnText(createResult.toolReturn);
+      const worktreePath = createdText.match(/^Path: (.+)$/m)?.[1];
+      if (!worktreePath) {
+        throw new Error(
+          `Expected worktree path in tool return: ${createdText}`,
+        );
+      }
+      expect(
+        __listenClientTestUtils.getConversationWorkingDirectory(
+          listener,
+          "agent-1",
+          "conv-a",
+        ),
+      ).toBe(worktreePath);
+
+      // The regression under test: subsequent tool calls in the SAME turn
+      // resolve their cwd from the prepared execution context, which the
+      // listener branch previously never updated.
+      const pwdResult = await executeTool(
+        "Bash",
+        { command: 'node -e "console.log(process.cwd())"' },
+        { toolContextId: prepared.contextId },
+      );
+
+      expect(pwdResult.status).toBe("success");
+      expect(toolReturnText(pwdResult.toolReturn).trim()).toBe(worktreePath);
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+    }
+  });
+
   test("fetches the remote default branch before creating the worktree", async () => {
     const repo = await trackRepo();
     const remote = await mkdtemp(
