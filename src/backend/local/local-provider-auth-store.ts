@@ -12,8 +12,10 @@ import { getProviderOAuthAuth } from "@/backend/dev/pi-oauth";
 import { getRegisteredPiProvider } from "@/backend/dev/pi-provider-mod-registry";
 import {
   LOCAL_CHATGPT_PROVIDER_NAME,
+  PI_PROVIDER_SPECS,
   SUPPORTED_LOCAL_PROVIDER_TYPES,
 } from "@/backend/dev/pi-provider-registry";
+import { normalizeOAuthProviderName } from "@/utils/oauth-provider-name";
 import type { LocalProviderTimeout } from "./local-provider-timeout";
 import { getLocalBackendStorageDir } from "./paths";
 
@@ -122,6 +124,30 @@ function providerId(providerName: string): string {
   return `local-provider-${providerName}`;
 }
 
+function assertProviderNameMatchesType(
+  file: LocalProviderAuthFile,
+  providerName: string,
+  providerType: string,
+): void {
+  const existing = file.providers[providerName];
+  if (existing && existing.provider_type !== providerType) {
+    throw new Error(
+      `Provider name "${providerName}" is already used by type "${existing.provider_type}".`,
+    );
+  }
+
+  const reserved = PI_PROVIDER_SPECS.find(
+    (spec) =>
+      spec.id === providerName ||
+      spec.localProviderNames.includes(providerName),
+  );
+  if (reserved && !reserved.providerTypes.includes(providerType)) {
+    throw new Error(
+      `Provider name "${providerName}" is reserved for type "${reserved.providerTypes[0]}".`,
+    );
+  }
+}
+
 function providerResponse(record: LocalProviderRecord): ProviderResponse {
   return {
     id: record.id,
@@ -200,16 +226,21 @@ export async function createOrUpdateLocalProvider(input: {
     );
   }
 
+  const providerName =
+    input.providerType === "chatgpt_oauth"
+      ? normalizeOAuthProviderName(input.providerName)
+      : input.providerName;
   const file = readAuthFile(input.storageDir);
-  const existing = file.providers[input.providerName];
+  assertProviderNameMatchesType(file, providerName, input.providerType);
+  const existing = file.providers[providerName];
   const now = new Date().toISOString();
   const auth: LocalProviderAuth =
     input.providerType === "chatgpt_oauth"
       ? parseChatGPTOAuth(input.apiKey)
       : { type: "api", key: input.apiKey };
   const next: LocalProviderRecord = {
-    id: existing?.id ?? providerId(input.providerName),
-    name: input.providerName,
+    id: existing?.id ?? providerId(providerName),
+    name: providerName,
     provider_type: input.providerType,
     provider_category: "byok",
     auth,
@@ -227,7 +258,7 @@ export async function createOrUpdateLocalProvider(input: {
     created_at: existing?.created_at ?? now,
     updated_at: now,
   };
-  file.providers[input.providerName] = next;
+  file.providers[providerName] = next;
   writeAuthFile(file, input.storageDir);
   return providerResponse(next);
 }
@@ -335,12 +366,14 @@ export function setLocalOAuthProvider(input: {
     );
   }
 
+  const providerName = normalizeOAuthProviderName(input.providerName);
   const file = readAuthFile(input.storageDir);
+  assertProviderNameMatchesType(file, providerName, input.providerType);
   const now = new Date().toISOString();
-  const existing = file.providers[input.providerName];
-  file.providers[input.providerName] = {
-    id: existing?.id ?? providerId(input.providerName),
-    name: input.providerName,
+  const existing = file.providers[providerName];
+  file.providers[providerName] = {
+    id: existing?.id ?? providerId(providerName),
+    name: providerName,
     provider_type: input.providerType,
     provider_category: "byok",
     auth: input.auth,

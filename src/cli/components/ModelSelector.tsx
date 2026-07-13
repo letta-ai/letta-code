@@ -11,12 +11,11 @@ import {
 } from "@/agent/available-models";
 import {
   CHATGPT_FAST_SERVICE_TIER,
-  getChatGptFastRegistryHandleForModelHandle,
   models,
   normalizeModelHandleForRegistry,
 } from "@/agent/model";
 import { refreshModelCatalog } from "@/agent/remote-model-catalog";
-
+import { useByokProviderAliases } from "@/cli/hooks/use-byok-provider-aliases";
 import {
   buildByokProviderAliases,
   buildOpenAICompatibleProxyProviderNames,
@@ -27,11 +26,10 @@ import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import {
   baseHandleForByokAlias,
+  buildModelsForBackendHandle,
   filterModelsByAvailabilityForSelector,
   includeUnknownBackendHandleInRecommended,
-  labelForBackendModel,
   type ModelSelectorSelection,
-  registryHandleForBackendModel,
   registryHandleForByokAlias,
   toByokSelectorModel,
   toSelectorModelForHandle,
@@ -63,8 +61,10 @@ export {
   filterModelsByAvailabilityForSelector,
   includeUnknownBackendHandleInRecommended,
   labelForBackendModel,
+  labelForByokProviderAlias,
   labelForChatGPTByokAlias,
   registryHandleForBackendModel,
+  registryHandleForBackendModelOrAlias,
   registryHandleForByokAlias,
   toByokSelectorModel,
   toSelectorModelForHandle,
@@ -200,9 +200,8 @@ export function ModelSelector({
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [showLoginAction, setShowLoginAction] = useState(false);
-  const [byokProviderAliases, setByokProviderAliases] = useState<
-    Record<string, string>
-  >(() => buildByokProviderAliases([]));
+  const providerStorageTarget = localModelCatalog ? "local" : "api";
+  const byokProviderAliases = useByokProviderAliases(providerStorageTarget);
   const [openAICompatibleProxyHandles, setOpenAICompatibleProxyHandles] =
     useState<Set<string>>(
       () => getCachedOpenAICompatibleProxyHandles() ?? new Set(),
@@ -293,21 +292,18 @@ export function ModelSelector({
 
   useEffect(() => {
     if (localModelCatalog) {
-      setByokProviderAliases(buildByokProviderAliases([]));
       setOpenAICompatibleProxyProviders(new Set());
       return;
     }
     (async () => {
       try {
-        const providers = await listProviders();
+        const providers = await listProviders({ target: "api" });
         if (!mountedRef.current) return;
-        setByokProviderAliases(buildByokProviderAliases(providers));
         setOpenAICompatibleProxyProviders(
           buildOpenAICompatibleProxyProviderNames(providers),
         );
       } catch {
         if (!mountedRef.current) return;
-        setByokProviderAliases(buildByokProviderAliases([]));
         setOpenAICompatibleProxyProviders(new Set());
       }
     })();
@@ -393,69 +389,18 @@ export function ModelSelector({
   );
 
   const modelsForBackendHandle = useCallback(
-    (handle: string, includeUnknown: boolean): UiModel[] => {
-      const providerType = providerTypesByHandle.get(handle);
-      const registryHandle = registryHandleForBackendModel(
+    (handle: string, includeUnknown: boolean): UiModel[] =>
+      buildModelsForBackendHandle({
         handle,
-        providerType,
-      );
-      const baseStaticModel = pickPreferredStaticModel(registryHandle);
-      const fastRegistryHandle =
-        getChatGptFastRegistryHandleForModelHandle(handle);
-
-      const baseUpdateArgs = {
-        ...((baseStaticModel?.updateArgs as
-          | Record<string, unknown>
-          | undefined) ?? {}),
-        ...(fastRegistryHandle ? { service_tier: null } : {}),
-      };
-      const baseUpdateArgsWithProviderType = withProviderTypeMetadata(
-        handle,
-        Object.keys(baseUpdateArgs).length > 0 ? baseUpdateArgs : undefined,
-      );
-      const fallbackModel = includeUnknown
-        ? toSelectorModelForHandle(handle)
-        : null;
-      const baseModel = baseStaticModel
-        ? withActualHandle(
-            {
-              ...baseStaticModel,
-              label: labelForBackendModel(baseStaticModel.label, providerType),
-            },
-            handle,
-            registryHandle,
-            baseUpdateArgsWithProviderType,
-          )
-        : fallbackModel
-          ? {
-              ...fallbackModel,
-              updateArgs: withProviderTypeMetadata(
-                handle,
-                fallbackModel.updateArgs,
-              ),
-            }
-          : null;
-
-      const result = baseModel ? [baseModel] : [];
-
-      if (fastRegistryHandle) {
-        const fastStaticModel = pickPreferredStaticModel(fastRegistryHandle);
-        if (fastStaticModel) {
-          result.push(
-            withActualHandle(fastStaticModel, handle, fastRegistryHandle, {
-              ...((fastStaticModel.updateArgs as
-                | Record<string, unknown>
-                | undefined) ?? {}),
-              service_tier: CHATGPT_FAST_SERVICE_TIER,
-              ...withProviderTypeMetadata(handle, undefined),
-            }),
-          );
-        }
-      }
-
-      return result;
-    },
+        includeUnknown,
+        providerType: providerTypesByHandle.get(handle),
+        byokProviderAliases,
+        pickPreferredStaticModel,
+        withActualHandle,
+        withProviderTypeMetadata,
+      }),
     [
+      byokProviderAliases,
       pickPreferredStaticModel,
       providerTypesByHandle,
       withActualHandle,

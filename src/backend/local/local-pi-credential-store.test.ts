@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,6 +9,7 @@ import {
 import { createLocalPiCredentialStore } from "./local-pi-credential-store";
 import {
   createOrUpdateLocalProvider,
+  getLocalProviderAuthPath,
   getLocalProviderRecordByName,
   localOAuthAuthFromCredentials,
   setLocalOAuthProvider,
@@ -55,6 +56,60 @@ describe("createLocalPiCredentialStore", () => {
       enterpriseUrl: "https://ghe.example.com",
       accountId: "acct",
     });
+  });
+
+  test("reads custom OAuth aliases by exact record name", async () => {
+    const storageDir = await makeStorageDir();
+    setLocalOAuthProvider({
+      storageDir,
+      providerName: "claude-work",
+      providerType: "anthropic",
+      auth: localOAuthAuthFromCredentials({
+        access: "work-access",
+        refresh: "work-refresh",
+        expires: Date.now() + 60_000,
+      }),
+    });
+    setLocalOAuthProvider({
+      storageDir,
+      providerName: "claude-personal",
+      providerType: "anthropic",
+      auth: localOAuthAuthFromCredentials({
+        access: "personal-access",
+        refresh: "personal-refresh",
+        expires: Date.now() + 60_000,
+      }),
+    });
+    const store = createLocalPiCredentialStore(storageDir);
+
+    expect(await store.read("claude-work")).toMatchObject({
+      access: "work-access",
+    });
+    expect(await store.read("claude-personal")).toMatchObject({
+      access: "personal-access",
+    });
+  });
+
+  test("rejects wrong provider types while scanning canonical record names", async () => {
+    const storageDir = await makeStorageDir();
+    await createOrUpdateLocalProvider({
+      storageDir,
+      providerName: "lc-anthropic",
+      providerType: "anthropic",
+      apiKey: "wrong-provider-key",
+    });
+    const authPath = getLocalProviderAuthPath(storageDir);
+    const file = JSON.parse(await readFile(authPath, "utf8")) as {
+      providers: Record<string, { provider_type: string }>;
+    };
+    const mismatched = file.providers["lc-anthropic"];
+    expect(mismatched).toBeDefined();
+    if (!mismatched) throw new Error("Expected the Anthropic test record");
+    mismatched.provider_type = "openai";
+    await writeFile(authPath, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+    const store = createLocalPiCredentialStore(storageDir);
+
+    expect(await store.read("anthropic")).toBeUndefined();
   });
 
   test("modify is serialized per provider", async () => {

@@ -6,7 +6,12 @@ import {
   listLocalModels,
   localModelSettingsForHandle,
 } from "@/backend/local/local-model-config";
-import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth-store";
+import {
+  createOrUpdateLocalProvider,
+  localOAuthAuthFromCredentials,
+  removeLocalProviderByName,
+  setLocalOAuthProvider,
+} from "@/backend/local/local-provider-auth-store";
 import { resolvePiModelForAgent } from "./pi-model-factory";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
 
@@ -151,6 +156,104 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     );
   });
 
+  test("registers custom OAuth aliases as independent providers", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
+    storageDirs.push(storageDir);
+    setLocalOAuthProvider({
+      storageDir,
+      providerName: "chatgpt-work",
+      providerType: "chatgpt_oauth",
+      baseURL: "https://work.example.test/backend-api",
+      auth: localOAuthAuthFromCredentials({
+        access: "work-access",
+        refresh: "work-refresh",
+        expires: Date.now() + 60_000,
+      }),
+    });
+    const runtime = new LocalPiModelsRuntime({
+      storageDir,
+      fetchImpl: failingDiscoveryFetch,
+    });
+    const canonical = runtime.getModels("openai-codex");
+    const aliases = runtime.getModels("chatgpt-work");
+
+    expect(canonical.length).toBeGreaterThan(0);
+    expect(aliases.map((model) => model.id)).toEqual(
+      canonical.map((model) => model.id),
+    );
+    expect(aliases.every((model) => model.provider === "chatgpt-work")).toBe(
+      true,
+    );
+    expect(
+      aliases.every(
+        (model) => model.baseUrl === "https://work.example.test/backend-api",
+      ),
+    ).toBe(true);
+    expect(canonical.every((model) => model.provider === "openai-codex")).toBe(
+      true,
+    );
+    expect(await runtime.getStoredCredential("chatgpt-work")).toMatchObject({
+      access: "work-access",
+    });
+    expect(await runtime.getStoredCredential("openai-codex")).toBeUndefined();
+
+    const aliasModel = aliases[0];
+    expect(aliasModel).toBeDefined();
+    if (!aliasModel) throw new Error("Expected an aliased Codex model");
+    const modelId = aliasModel.id;
+    expect(
+      runtime.resolveOAuthAliasModelHandle(`chatgpt-work/${modelId}`),
+    ).toEqual({
+      providerId: "chatgpt-work",
+      canonicalProvider: "openai-codex",
+      providerType: "chatgpt_oauth",
+      modelId,
+    });
+  });
+
+  test("updates and removes custom OAuth alias providers dynamically", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
+    storageDirs.push(storageDir);
+    const auth = localOAuthAuthFromCredentials({
+      access: "claude-access",
+      refresh: "claude-refresh",
+      expires: Date.now() + 60_000,
+    });
+    setLocalOAuthProvider({
+      storageDir,
+      providerName: "claude-work",
+      providerType: "anthropic",
+      baseURL: "https://one.example.test",
+      auth,
+    });
+    const runtime = new LocalPiModelsRuntime({
+      storageDir,
+      fetchImpl: failingDiscoveryFetch,
+    });
+
+    expect(
+      runtime
+        .getModels("claude-work")
+        .every((model) => model.baseUrl === "https://one.example.test"),
+    ).toBe(true);
+    setLocalOAuthProvider({
+      storageDir,
+      providerName: "claude-work",
+      providerType: "anthropic",
+      baseURL: "https://two.example.test",
+      auth,
+    });
+    expect(
+      runtime
+        .getModels("claude-work")
+        .every((model) => model.baseUrl === "https://two.example.test"),
+    ).toBe(true);
+
+    await removeLocalProviderByName("claude-work", storageDir);
+    expect(runtime.getModels("claude-work")).toEqual([]);
+    expect(runtime.getModels("anthropic").length).toBeGreaterThan(0);
+  });
+
   test("stored API keys resolve through the runtime's credential seam", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
     storageDirs.push(storageDir);
@@ -250,7 +353,9 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     delete process.env.GEMINI_API_KEY;
     process.env.GOOGLE_GENERATIVE_AI_API_KEY = "letta-alias-key";
     try {
-      const runtime = new LocalPiModelsRuntime();
+      const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
+      storageDirs.push(storageDir);
+      const runtime = new LocalPiModelsRuntime({ storageDir });
       // Upstream google only reads GEMINI_API_KEY; the runtime's AuthContext
       // maps Letta's documented alias so resolution stays inside pi-ai's
       // provider auth — no factory-side ambient fallback exists.

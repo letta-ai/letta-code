@@ -154,6 +154,80 @@ describe("pi model factory", () => {
       );
 
       expect(resolved.apiKey).toBe("chatgpt-access-token");
+      expect(resolved.headers?.["X-Letta-Provider-Alias"]).toBeUndefined();
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves named ChatGPT and Claude OAuth connections independently", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-oauth-aliases-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "chatgpt_oauth",
+        providerName: "chatgpt-personal",
+        apiKey: JSON.stringify({
+          access_token: "chatgpt-personal-token",
+          id_token: "chatgpt-personal-id-token",
+          refresh_token: "chatgpt-personal-refresh-token",
+          account_id: "personal-account",
+          expires_at: Date.now() + 60_000,
+        }),
+        baseURL: "https://proxy.example.test/codex",
+      });
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "claude-work",
+        providerType: "anthropic",
+        auth: localOAuthAuthFromCredentials({
+          access: "claude-work-token",
+          refresh: "claude-work-refresh-token",
+          expires: Date.now() + 60_000,
+        }),
+      });
+      const modelsRuntime = new LocalPiModelsRuntime({ storageDir });
+
+      const [chatgpt, claude] = await Promise.all([
+        resolvePiModelForAgent(
+          "chatgpt-personal/gpt-5.6-sol",
+          {},
+          {
+            localProviderAuthStorageDir: storageDir,
+            modelsRuntime,
+          },
+        ),
+        resolvePiModelForAgent(
+          "claude-work/claude-sonnet-4-6",
+          {},
+          {
+            localProviderAuthStorageDir: storageDir,
+            modelsRuntime,
+          },
+        ),
+      ]);
+
+      expect(chatgpt.provider).toBe("openai-codex");
+      expect(chatgpt.model.id).toBe("gpt-5.6-sol");
+      expect(chatgpt.model.provider).toBe("chatgpt-personal");
+      const publishedChatGPT = modelsRuntime.getModel(
+        "chatgpt-personal",
+        "gpt-5.6-sol",
+      );
+      if (!publishedChatGPT) throw new Error("Expected ChatGPT alias model");
+      expect(chatgpt.model).toBe(publishedChatGPT);
+      expect(chatgpt.apiKey).toBe("chatgpt-personal-token");
+      expect(chatgpt.headers?.["X-Letta-Provider-Alias"]).toBeUndefined();
+      expect(claude.provider).toBe("anthropic");
+      expect(claude.model.id).toBe("claude-sonnet-4-6");
+      expect(claude.model.provider).toBe("claude-work");
+      const publishedClaude = modelsRuntime.getModel(
+        "claude-work",
+        "claude-sonnet-4-6",
+      );
+      if (!publishedClaude) throw new Error("Expected Claude alias model");
+      expect(claude.model).toBe(publishedClaude);
+      expect(claude.apiKey).toBe("claude-work-token");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

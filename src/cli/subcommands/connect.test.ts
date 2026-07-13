@@ -379,6 +379,48 @@ describe("connect subcommand", () => {
     expect(stdout.join("\n")).toContain("Successfully connected");
   });
 
+  test("passes a local OAuth alias through to the provider flow", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("local");
+    const runLocalOAuthConnectFlow = mock(
+      async (provider: { providerName: string }) => ({
+        providerName: provider.providerName,
+      }),
+    );
+
+    const exitCode = await runConnectSubcommand(
+      ["codex", "--name", "chatgpt-personal"],
+      { ...deps, runLocalOAuthConnectFlow },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(runLocalOAuthConnectFlow).toHaveBeenCalledWith(
+      expect.objectContaining({ providerName: "chatgpt-personal" }),
+      expect.any(Object),
+    );
+  });
+
+  test("connects named Claude OAuth aliases locally", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("local");
+    const runLocalOAuthConnectFlow = mock(
+      async (provider: { providerName: string }) => ({
+        providerName: provider.providerName,
+      }),
+    );
+
+    const exitCode = await runConnectSubcommand(
+      ["claude", "--name", "claude-work"],
+      { ...deps, runLocalOAuthConnectFlow },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(runLocalOAuthConnectFlow).toHaveBeenCalledWith(
+      expect.objectContaining({ providerName: "claude-work" }),
+      expect.any(Object),
+    );
+  });
+
   test("local codex connect honors --method device-code", async () => {
     const { deps } = createIoDeps();
     setProviderTarget("local");

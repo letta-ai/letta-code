@@ -34,6 +34,7 @@ import {
 } from "@/providers/openai-codex-provider";
 import { settingsManager } from "@/settings-manager";
 import { getErrorMessage } from "@/utils/error";
+import { normalizeOAuthProviderName } from "@/utils/oauth-provider-name";
 
 const CONNECT_OPTIONS = {
   help: { type: "boolean", short: "h" },
@@ -120,6 +121,7 @@ function formatUsage(): string {
     "Examples:",
     "  letta connect chatgpt",
     "  letta connect chatgpt --name chatgpt-work",
+    "  letta connect claude --name claude-work",
     "  letta connect codex",
     "  letta connect codex --method device-code",
     "  letta connect anthropic <api_key>",
@@ -278,6 +280,30 @@ export async function runConnectSubcommand(
         return 0;
       }
 
+      let providerName = provider.byokProvider.providerName;
+      const requestedProviderName = readStringOption(parsed.values.name);
+      const supportsNamedConnection =
+        provider.byokProvider.oauthProviderId === "openai-codex" ||
+        provider.byokProvider.oauthProviderId === "anthropic";
+      if (requestedProviderName !== undefined && !supportsNamedConnection) {
+        io.stderr(
+          `${provider.byokProvider.displayName} does not support named local OAuth connections.`,
+        );
+        return 1;
+      }
+      if (requestedProviderName !== undefined) {
+        try {
+          providerName = normalizeOAuthProviderName(requestedProviderName);
+        } catch (error) {
+          io.stderr(error instanceof Error ? error.message : String(error));
+          return 1;
+        }
+      }
+
+      const localOAuthProvider = {
+        ...provider.byokProvider,
+        providerName,
+      };
       const loginMethod = readStringOption(parsed.values.method);
       let connectionOptions: ProviderConnectionOptions;
       try {
@@ -286,7 +312,7 @@ export async function runConnectSubcommand(
         io.stderr(getErrorMessage(error));
         return 1;
       }
-      await io.runLocalOAuthConnectFlow(provider.byokProvider, {
+      await io.runLocalOAuthConnectFlow(localOAuthProvider, {
         baseURL: connectionOptions.baseURL,
         timeout: connectionOptions.timeout,
         onStatus: (status) => io.stdout(status),
@@ -294,7 +320,7 @@ export async function runConnectSubcommand(
           if (prompt.allowEmpty && !io.isTTY()) return "";
           if (!io.isTTY()) {
             throw new Error(
-              `${provider.byokProvider.displayName} requires input: ${prompt.message}`,
+              `${localOAuthProvider.displayName} requires input: ${prompt.message}`,
             );
           }
           return io.promptSecret(
@@ -309,7 +335,7 @@ export async function runConnectSubcommand(
             );
             if (!match) {
               throw new Error(
-                `Unknown ${provider.byokProvider.displayName} login method: ${loginMethod}. Available: ${prompt.options.map((option) => option.id).join(", ")}`,
+                `Unknown ${localOAuthProvider.displayName} login method: ${loginMethod}. Available: ${prompt.options.map((option) => option.id).join(", ")}`,
               );
             }
             return match.id;
@@ -320,7 +346,7 @@ export async function runConnectSubcommand(
       });
 
       io.stdout(
-        `Successfully connected to ${provider.byokProvider.displayName}.`,
+        `Successfully connected to ${localOAuthProvider.displayName} as '${providerName}'.`,
       );
       return 0;
     } catch (error) {

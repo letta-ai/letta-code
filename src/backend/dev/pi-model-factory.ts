@@ -406,13 +406,29 @@ export async function resolvePiModelForAgent(
   const concreteModelHandle = normalizeOpenAICompatibleLocalModelHandle(
     isUnselectedLocalModelHandle(modelHandle) ? undefined : modelHandle,
   );
+  const storageDir = options.localProviderAuthStorageDir;
+  // Every resolution goes through a pi-ai Models runtime: the backend's
+  // instance when threaded, otherwise a call-scoped one (tests, direct
+  // library use). The runtime owns model lookup and credential resolution;
+  // Models are never fabricated from name strings.
+  const modelsRuntime =
+    options.modelsRuntime ??
+    new LocalPiModelsRuntime({
+      ...(storageDir ? { storageDir } : {}),
+    });
+  const oauthAlias =
+    !options.provider && concreteModelHandle
+      ? modelsRuntime.resolveOAuthAliasModelHandle(concreteModelHandle)
+      : undefined;
   const provider = options.provider
     ? resolvePiProvider(options.provider)
-    : resolvePiProviderFromAgent(concreteModelHandle, modelSettings);
+    : (oauthAlias?.canonicalProvider ??
+      resolvePiProviderFromAgent(concreteModelHandle, modelSettings));
   const registeredProvider = getRegisteredPiProvider(provider);
   const spec = isPiProvider(provider) ? getPiProviderSpec(provider) : undefined;
   const modelId =
     options.model ??
+    oauthAlias?.modelId ??
     (registeredProvider
       ? stripRegisteredProviderHandlePrefix(concreteModelHandle, provider)
       : undefined) ??
@@ -425,16 +441,6 @@ export async function resolvePiModelForAgent(
       : undefined) ??
     process.env.LETTA_CODE_DEV_PI_MODEL ??
     "";
-  const storageDir = options.localProviderAuthStorageDir;
-  // Every resolution goes through a pi-ai Models runtime: the backend's
-  // instance when threaded, otherwise a call-scoped one (tests, direct
-  // library use). The runtime owns model lookup and credential resolution;
-  // Models are never fabricated from name strings.
-  const modelsRuntime =
-    options.modelsRuntime ??
-    new LocalPiModelsRuntime({
-      ...(storageDir ? { storageDir } : {}),
-    });
   const preferredProviderType =
     typeof modelSettings.provider_type === "string"
       ? modelSettings.provider_type
@@ -443,9 +449,11 @@ export async function resolvePiModelForAgent(
   // Non-credential connection config only: the stored record's base URL and
   // timeout plus spec defaults. All credential resolution happens in the
   // runtime below.
-  const localNames = registeredProvider
-    ? localNamesForProviderId(provider)
-    : (spec?.localProviderNames ?? [provider]);
+  const localNames = oauthAlias
+    ? [oauthAlias.providerId]
+    : registeredProvider
+      ? localNamesForProviderId(provider)
+      : (spec?.localProviderNames ?? [provider]);
   let connection = localProviderConnection(localNames, storageDir);
   let baseURL =
     connection.baseURL ??
@@ -468,11 +476,13 @@ export async function resolvePiModelForAgent(
   // provider-published Model and the resolved auth from one consistent
   // provider state (credential-identity invalidation applied first), so no
   // registered/catalog/auth branching exists here.
-  const runtimeProviderId = registeredProvider
-    ? provider
-    : spec && modelsRuntime.isRuntimeManagedProvider(spec.id)
-      ? spec.id
-      : spec?.piProvider;
+  const runtimeProviderId = oauthAlias
+    ? oauthAlias.providerId
+    : registeredProvider
+      ? provider
+      : spec && modelsRuntime.isRuntimeManagedProvider(spec.id)
+        ? spec.id
+        : spec?.piProvider;
   if (!runtimeProviderId) {
     throw new Error(
       `Unknown model "${modelId}" for provider "${provider}". ` +

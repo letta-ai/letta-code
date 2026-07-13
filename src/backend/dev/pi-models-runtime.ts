@@ -20,6 +20,7 @@ import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { createLocalPiCredentialStore } from "@/backend/local/local-pi-credential-store";
 import {
   getLocalProviderRecordByName,
+  listLocalProviderRecords,
   localProviderApiKeyFromRecord,
 } from "@/backend/local/local-provider-auth-store";
 import {
@@ -31,6 +32,13 @@ import {
   LMSTUDIO_PI_PROVIDER_ID,
 } from "./pi-lmstudio-provider";
 import { createModPiProvider } from "./pi-mod-provider";
+import {
+  createOAuthAliasProvider,
+  type OAuthAliasCanonicalProvider,
+  type OAuthAliasDefinition,
+  type OAuthAliasProviderType,
+  oauthAliasDefinitionFromRecord,
+} from "./pi-oauth-alias-provider";
 import {
   createOllamaPiProvider,
   OLLAMA_CLOUD_PI_PROVIDER_ID,
@@ -79,6 +87,13 @@ function aliasedAuthContext() {
 export interface LocalPiModelsRuntimeOptions {
   storageDir?: string;
   fetchImpl?: typeof fetch;
+}
+
+export interface ResolvedOAuthAliasModelHandle {
+  providerId: string;
+  canonicalProvider: OAuthAliasCanonicalProvider;
+  providerType: OAuthAliasProviderType;
+  modelId: string;
 }
 
 interface LocalEndpointConnection {
@@ -181,6 +196,12 @@ export class LocalPiModelsRuntime {
   private readonly fetchImpl?: typeof fetch;
   private readonly endpointSignatures = new Map<string, string>();
   private readonly modSignatures = new Map<string, string>();
+  private readonly oauthAliasSignatures = new Map<string, string>();
+  private readonly oauthAliasDefinitions = new Map<
+    string,
+    OAuthAliasDefinition
+  >();
+  private readonly canonicalOAuthProviders = new Map<string, Provider>();
   private readonly modelsStore = new InMemoryModelsStore();
   private readonly credentials: CredentialStore;
   private readonly dynamicBuiltinIds: ReadonlySet<string>;
@@ -201,6 +222,9 @@ export class LocalPiModelsRuntime {
     const builtins = builtinProviders();
     for (const provider of builtins) {
       this.models.setProvider(provider);
+      if (provider.id === "openai-codex" || provider.id === "anthropic") {
+        this.canonicalOAuthProviders.set(provider.id, provider);
+      }
     }
     this.dynamicBuiltinIds = new Set(
       builtins
@@ -345,8 +369,10 @@ export class LocalPiModelsRuntime {
 
   /** Providers whose models this runtime discovers and owns end-to-end. */
   isRuntimeManagedProvider(providerId: string): boolean {
+    this.ensureOAuthAliasProviders(providerId);
     return (
       getRegisteredPiProvider(providerId) !== undefined ||
+      this.oauthAliasSignatures.has(providerId) ||
       MANAGED_ENDPOINT_PROVIDERS.has(providerId)
     );
   }
@@ -436,13 +462,65 @@ export class LocalPiModelsRuntime {
     this.endpointSignatures.set(providerId, signature);
   }
 
+  private ensureOAuthAliasProviders(providerId?: string): boolean {
+    const aliases = new Map<string, OAuthAliasDefinition>();
+    for (const record of listLocalProviderRecords(this.storageDir)) {
+      const alias = oauthAliasDefinitionFromRecord(record);
+      if (alias) aliases.set(alias.providerId, alias);
+    }
+
+    const ids = providerId
+      ? new Set([providerId])
+      : new Set([...aliases.keys(), ...this.oauthAliasSignatures.keys()]);
+    let managedRequestedProvider = false;
+    for (const id of ids) {
+      const alias = aliases.get(id);
+      if (!alias || getRegisteredPiProvider(id)) {
+        if (this.oauthAliasSignatures.delete(id)) {
+          this.oauthAliasDefinitions.delete(id);
+          this.models.deleteProvider(id);
+          void this.modelsStore.delete(id);
+        }
+        continue;
+      }
+
+      managedRequestedProvider = managedRequestedProvider || id === providerId;
+      const signature = [
+        alias.canonicalProvider,
+        alias.providerType,
+        alias.baseUrl ?? "",
+      ].join(" ");
+      if (
+        this.oauthAliasSignatures.get(id) === signature &&
+        this.models.getProvider(id)
+      ) {
+        this.oauthAliasDefinitions.set(id, alias);
+        continue;
+      }
+
+      const canonical = this.canonicalOAuthProviders.get(
+        alias.canonicalProvider,
+      );
+      if (!canonical) continue;
+      if (this.oauthAliasSignatures.has(id)) void this.modelsStore.delete(id);
+      this.models.setProvider(createOAuthAliasProvider(alias, canonical));
+      this.oauthAliasSignatures.set(id, signature);
+      this.oauthAliasDefinitions.set(id, alias);
+    }
+    return managedRequestedProvider;
+  }
+
   private ensureManagedProviders(providerId?: string): void {
     if (providerId !== undefined) {
-      if (!this.ensureModProvider(providerId)) {
+      if (
+        !this.ensureModProvider(providerId) &&
+        !this.ensureOAuthAliasProviders(providerId)
+      ) {
         this.ensureEndpointProvider(providerId);
       }
       return;
     }
+    this.ensureOAuthAliasProviders();
     const modProviderIds = new Set(
       listRegisteredPiProviders().map((provider) => provider.providerName),
     );
@@ -452,6 +530,29 @@ export class LocalPiModelsRuntime {
     for (const id of MANAGED_ENDPOINT_PROVIDERS.keys()) {
       if (!modProviderIds.has(id)) this.ensureEndpointProvider(id);
     }
+  }
+
+  /** Resolve a configured custom OAuth alias handle without canonicalizing it. */
+  resolveOAuthAliasModelHandle(
+    handle: string,
+  ): ResolvedOAuthAliasModelHandle | undefined {
+    this.ensureOAuthAliasProviders();
+    const aliases = [...this.oauthAliasDefinitions.values()].sort(
+      (a, b) => b.providerId.length - a.providerId.length,
+    );
+    for (const alias of aliases) {
+      const prefix = `${alias.providerId}/`;
+      if (!handle.startsWith(prefix)) continue;
+      const modelId = handle.slice(prefix.length);
+      if (!modelId) return undefined;
+      return {
+        providerId: alias.providerId,
+        canonicalProvider: alias.canonicalProvider,
+        providerType: alias.providerType,
+        modelId,
+      };
+    }
+    return undefined;
   }
 
   getModels(providerId?: string): readonly Model<Api>[] {

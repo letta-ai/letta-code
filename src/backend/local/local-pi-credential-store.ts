@@ -60,9 +60,18 @@ function recordForProviderId(
   providerId: string,
   storageDir?: string,
 ): LocalProviderRecord | undefined {
+  const expectedProviderTypes = isPiProvider(providerId)
+    ? new Set(getPiProviderSpec(providerId).providerTypes)
+    : undefined;
   for (const name of localNamesForProviderId(providerId)) {
     const record = getLocalProviderRecordByName(name, storageDir);
-    if (record) return record;
+    if (
+      record &&
+      (!expectedProviderTypes ||
+        expectedProviderTypes.has(record.provider_type))
+    ) {
+      return record;
+    }
   }
   return undefined;
 }

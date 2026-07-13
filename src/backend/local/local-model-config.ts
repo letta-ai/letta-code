@@ -6,6 +6,7 @@ import {
   UNSELECTED_LOCAL_MODEL_HANDLE,
 } from "@/backend/dev/pi-model-factory";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
+import { oauthAliasDefinitionFromRecord } from "@/backend/dev/pi-oauth-alias-provider";
 import {
   getRegisteredPiProvider,
   listRegisteredPiProviders,
@@ -31,7 +32,7 @@ import {
 } from "./local-provider-auth-store";
 
 export interface LocalModelConfig {
-  provider: PiProvider;
+  provider: PiProvider | string;
   model: string;
   handle: string;
   modelSettings: Record<string, unknown>;
@@ -80,7 +81,7 @@ function isPiProviderForLocalModelHandle(
   return isPiProvider(provider);
 }
 
-export function resolveLocalProvider(storageDir?: string): PiProvider {
+export function resolveLocalProvider(storageDir?: string): PiProvider | string {
   const records = listLocalProviderRecords(storageDir);
   const registeredProvider = listRegisteredPiProviders().find(
     (provider) =>
@@ -88,10 +89,15 @@ export function resolveLocalProvider(storageDir?: string): PiProvider {
       (provider.config.models?.length ?? 0) > 0,
   );
   if (registeredProvider) return registeredProvider.providerName as PiProvider;
-  return (
-    listConfiguredPiProviders(localProviderNamesFromRecords(records))[0] ??
-    DEFAULT_PI_PROVIDER
-  );
+  const configuredProvider = listConfiguredPiProviders(
+    localProviderNamesFromRecords(records),
+  )[0];
+  if (configuredProvider) return configuredProvider;
+  for (const record of records) {
+    const alias = oauthAliasDefinitionFromRecord(record);
+    if (alias) return alias.providerId;
+  }
+  return DEFAULT_PI_PROVIDER;
 }
 
 export { localModelHandle, localProviderType, resolveLocalModel };
@@ -109,31 +115,42 @@ export function localModelSettingsForHandle(
   modelsRuntime?: LocalPiModelsRuntime,
 ): Record<string, unknown> | undefined {
   if (!handle) return undefined;
-  const registeredName = resolveRegisteredPiProviderFromModelHandle(handle);
-  const provider = registeredName ?? resolveProviderFromModelHandle(handle);
-  if (!provider) return undefined;
-  const modelId = registeredName
-    ? stripRegisteredProviderHandlePrefix(handle, registeredName)
-    : stripProviderHandlePrefix(handle, provider as PiProvider);
-  if (!modelId) return undefined;
-
   // Settings derive from the same runtime-published Model that listing and
   // turn execution resolve — no registration or static-catalog re-reads.
   const runtime =
     modelsRuntime ?? new LocalPiModelsRuntime({ storageDir: undefined });
-  const runtimeProviderId = registeredName
-    ? registeredName
-    : isPiProvider(provider)
-      ? runtime.isRuntimeManagedProvider(provider)
-        ? provider
-        : getPiProviderSpec(provider).piProvider
-      : provider;
+  const oauthAlias = runtime.resolveOAuthAliasModelHandle(handle);
+  const registeredName = oauthAlias
+    ? undefined
+    : resolveRegisteredPiProviderFromModelHandle(handle);
+  const provider =
+    oauthAlias?.canonicalProvider ??
+    registeredName ??
+    resolveProviderFromModelHandle(handle);
+  if (!provider) return undefined;
+  const modelId =
+    oauthAlias?.modelId ??
+    (registeredName
+      ? stripRegisteredProviderHandlePrefix(handle, registeredName)
+      : stripProviderHandlePrefix(handle, provider as PiProvider));
+  if (!modelId) return undefined;
+
+  const runtimeProviderId = oauthAlias
+    ? oauthAlias.providerId
+    : registeredName
+      ? registeredName
+      : isPiProvider(provider)
+        ? runtime.isRuntimeManagedProvider(provider)
+          ? provider
+          : getPiProviderSpec(provider).piProvider
+        : provider;
   const model = runtimeProviderId
     ? runtime.getModels(runtimeProviderId).find((entry) => entry.id === modelId)
     : undefined;
   if (!model) return undefined;
   return {
-    provider_type: localProviderTypeForModelConfig(provider),
+    provider_type:
+      oauthAlias?.providerType ?? localProviderTypeForModelConfig(provider),
     context_window_limit: model.contextWindow,
     max_tokens: model.maxTokens,
   };
@@ -147,27 +164,43 @@ export function resolveLocalModelConfig(
     modelsRuntime ??
     new LocalPiModelsRuntime({ ...(storageDir ? { storageDir } : {}) });
   const provider = resolveLocalProvider(storageDir);
+  const oauthAlias = listLocalProviderRecords(storageDir)
+    .map(oauthAliasDefinitionFromRecord)
+    .find((alias) => alias?.providerId === provider);
   const registeredName = getRegisteredPiProvider(provider)?.providerName;
-  const registeredModel = registeredName
-    ? runtime.getModels(registeredName)[0]
+  const oauthDefaultModel = oauthAlias
+    ? resolveLocalModel(oauthAlias.canonicalProvider)
     : undefined;
-  const defaultModel = registeredName ? undefined : resolveLocalModel(provider);
+  const publishedModel = oauthAlias
+    ? (runtime
+        .getModels(oauthAlias.providerId)
+        .find((model) => model.id === oauthDefaultModel) ??
+      runtime.getModels(oauthAlias.providerId)[0])
+    : registeredName
+      ? runtime.getModels(registeredName)[0]
+      : undefined;
+  const defaultModel =
+    oauthAlias || registeredName
+      ? undefined
+      : resolveLocalModel(provider as PiProvider);
   const model =
-    registeredModel?.id ??
-    (registeredName ? "default" : defaultModel) ??
+    publishedModel?.id ??
+    (oauthAlias || registeredName ? "default" : defaultModel) ??
     UNSELECTED_LOCAL_MODEL_HANDLE;
-  const handle = registeredName
-    ? `${provider}/${model}`
-    : model === UNSELECTED_LOCAL_MODEL_HANDLE
-      ? UNSELECTED_LOCAL_MODEL_HANDLE
-      : localModelHandle(provider, model);
+  const handle =
+    oauthAlias || registeredName
+      ? `${provider}/${model}`
+      : model === UNSELECTED_LOCAL_MODEL_HANDLE
+        ? UNSELECTED_LOCAL_MODEL_HANDLE
+        : localModelHandle(provider as PiProvider, model);
   const modelSettings = localModelSettingsForHandle(handle, runtime);
   return {
     provider,
     model,
     handle,
     modelSettings: {
-      provider_type: localProviderTypeForModelConfig(provider),
+      provider_type:
+        oauthAlias?.providerType ?? localProviderTypeForModelConfig(provider),
       ...(modelSettings ?? {}),
     },
   };
@@ -261,11 +294,18 @@ export async function listLocalModels(
       ...(options.fetch ? { fetchImpl: options.fetch } : {}),
     });
   const records = listLocalProviderRecords(storageDir);
+  const oauthAliases = records.flatMap((record) => {
+    const alias = oauthAliasDefinitionFromRecord(record);
+    return alias ? [alias] : [];
+  });
+  const oauthAliasesByProviderId = new Map(
+    oauthAliases.map((alias) => [alias.providerId, alias]),
+  );
   const providerNames = localProviderNamesFromRecords(records);
   // One collection-wide refresh (pi-ai 0.81 semantics): configured dynamic
   // providers re-fetch, per-provider failures keep last-known lists.
   await modelsRuntime.refreshAll();
-  const configured = resolveLocalModelConfig(storageDir);
+  const configured = resolveLocalModelConfig(storageDir, modelsRuntime);
   const models: LocalModelListEntry[] = [];
   const registeredProviders = listRegisteredPiProviders();
   const addModel = (
@@ -326,9 +366,9 @@ export async function listLocalModels(
 
   // Only add the configured model if its provider is actually reachable
   // (has keys/env configured). Otherwise we'd show models the user can't use.
-  const configuredProviderIsConfigured = listConfiguredPiProviders(
-    providerNames,
-  ).includes(configured.provider);
+  const configuredProviderIsConfigured =
+    isPiProviderForLocalModelHandle(configured.provider) &&
+    listConfiguredPiProviders(providerNames).includes(configured.provider);
   if (
     isPiProviderForLocalModelHandle(configured.provider) &&
     !isDiscoverableLocalProvider(configured.provider) &&
@@ -343,6 +383,7 @@ export async function listLocalModels(
   // resolve through the runtime-managed branch below or the runtime catalog.
   const providersToDiscover = new Set<PiProvider | string>([
     ...configuredProviders,
+    ...oauthAliases.map((alias) => alias.providerId),
     ...PI_PROVIDER_SPECS.filter((provider) =>
       isAutoDetectableLocalEndpointProvider(provider.id),
     ).map((provider) => provider.id),
@@ -388,11 +429,13 @@ export async function listLocalModels(
       const registeredName = getRegisteredPiProvider(result.provider)
         ? String(result.provider)
         : undefined;
+      const oauthAlias = oauthAliasesByProviderId.get(String(result.provider));
       addModel(result.provider, model.id, {
-        ...(registeredName
+        ...(registeredName || oauthAlias
           ? {
-              handle: `${registeredName}/${model.id}`,
-              modelEndpointType: registeredName,
+              handle: `${String(result.provider)}/${model.id}`,
+              modelEndpointType:
+                oauthAlias?.providerType ?? registeredName ?? undefined,
             }
           : {}),
         maxContextWindow: model.contextWindow,

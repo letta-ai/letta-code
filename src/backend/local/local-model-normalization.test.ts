@@ -110,6 +110,19 @@ describe("local model normalization", () => {
     ).toBe("custom-provider/custom-model");
   });
 
+  test("preserves named local OAuth model handles", () => {
+    expect(
+      normalizeLocalModelHandle("personal/gpt-5.6-sol", {
+        provider_type: "chatgpt_oauth",
+      }),
+    ).toBe("personal/gpt-5.6-sol");
+    expect(
+      normalizeLocalModelHandle("work/claude-sonnet-4-6", {
+        provider_type: "anthropic",
+      }),
+    ).toBe("work/claude-sonnet-4-6");
+  });
+
   test("projects canonical provider metadata for local agents", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-anthropic-llm-config-"),

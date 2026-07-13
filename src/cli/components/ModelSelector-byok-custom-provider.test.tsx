@@ -4,8 +4,10 @@ import {
   buildByokProviderAliases,
   isByokHandleForSelector,
   labelForBackendModel,
+  labelForByokProviderAlias,
   labelForChatGPTByokAlias,
   registryHandleForBackendModel,
+  registryHandleForBackendModelOrAlias,
   registryHandleForByokAlias,
   toByokSelectorModel,
   withProviderMetadataForSelector,
@@ -65,6 +67,14 @@ describe("ModelSelector custom BYOK provider detection", () => {
     const baseProvider = aliases[provider];
 
     expect(`${baseProvider}/${model}`).toBe("openai/gpt-5.4-fast");
+  });
+
+  test("does not treat a non-prefixed model as a provider alias", () => {
+    expect(
+      registryHandleForBackendModelOrAlias("gpt-5.5", "chatgpt_oauth", {
+        "gpt-5.": "openai-codex",
+      }),
+    ).toBe(registryHandleForBackendModel("gpt-5.5", "chatgpt_oauth"));
   });
 
   test("maps custom ChatGPT OAuth provider handles back to Codex registry handles", () => {
@@ -190,6 +200,41 @@ describe("ModelSelector custom BYOK provider detection", () => {
         "openai-sarah": "openai",
       }),
     ).toBe("GPT-5.5");
+
+    expect(
+      labelForChatGPTByokAlias(
+        "GPT-5.5 (ChatGPT)",
+        "chatgpt-plus-pro/gpt-5.5",
+        aliases,
+      ),
+    ).toBe("GPT-5.5 (ChatGPT)");
+  });
+
+  test("labels named Claude OAuth models with their selected account", () => {
+    const aliases = buildByokProviderAliases(
+      [
+        {
+          name: "anthropic-work",
+          provider_type: "anthropic",
+        },
+      ],
+      "local",
+    );
+
+    expect(
+      labelForByokProviderAlias(
+        "Opus 4.8",
+        "anthropic-work/claude-opus-4-8",
+        aliases,
+      ),
+    ).toBe("Opus 4.8 (anthropic-work)");
+    expect(
+      labelForByokProviderAlias(
+        "Opus 4.8",
+        "lc-anthropic/claude-opus-4-8",
+        aliases,
+      ),
+    ).toBe("Opus 4.8");
   });
 
   test("preserves existing lc-* aliases", () => {

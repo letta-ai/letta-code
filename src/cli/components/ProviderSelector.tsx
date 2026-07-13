@@ -20,11 +20,11 @@ import {
   formatChatGPTUsageQuotaRows,
   readChatGPTUsage,
 } from "@/providers/chatgpt-usage-service";
-import { normalizeChatGPTOAuthProviderName } from "@/providers/openai-codex-provider";
 import { connectedRecordsForProvider } from "@/providers/provider-connections";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { type AwsProfile, parseAwsCredentials } from "@/utils/aws-credentials";
 import { debugLog } from "@/utils/debug";
+import { normalizeOAuthProviderName } from "@/utils/oauth-provider-name";
 import { colors } from "./colors";
 import { Text } from "./Text";
 
@@ -144,9 +144,12 @@ export function canConnectAnotherProvider(
   target: ProviderStorageTarget,
 ): boolean {
   return (
-    target === "api" &&
     provider.isOAuth === true &&
-    provider.providerType === "chatgpt_oauth"
+    (target === "api"
+      ? provider.providerType === "chatgpt_oauth"
+      : provider.providerType === "chatgpt_oauth" ||
+        provider.oauthProviderId === "openai-codex" ||
+        provider.oauthProviderId === "anthropic")
   );
 }
 
@@ -217,7 +220,6 @@ export function ProviderSelector({
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
 
-  // State
   const [selectedTarget, setSelectedTarget] = useState<ProviderStorageTarget>(
     defaultProviderStorageTarget(),
   );
@@ -622,7 +624,6 @@ export function ProviderSelector({
           { target: selectedTarget },
         );
         clearAvailableModelsCache();
-        // Refresh connected providers
         const providers = await getConnectedProviders({
           target: selectedTarget,
         });
@@ -767,7 +768,6 @@ export function ProviderSelector({
     setConnectedProvidersForTarget,
   ]);
 
-  // Handle disconnect
   const handleDisconnect = useCallback(
     async (providerName?: string) => {
       if (viewState.type !== "options") return;
@@ -808,7 +808,7 @@ export function ProviderSelector({
 
     let providerName: string;
     try {
-      providerName = normalizeChatGPTOAuthProviderName(providerNameInput);
+      providerName = normalizeOAuthProviderName(providerNameInput);
     } catch (error) {
       setProviderNameError(
         error instanceof Error ? error.message : String(error),

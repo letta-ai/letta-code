@@ -1,10 +1,16 @@
 import {
+  CHATGPT_FAST_SERVICE_TIER,
+  getChatGptFastRegistryHandleForModelHandle,
   getLocalModelLabel,
   getModelInfo,
   isLocalModelHandle,
   models,
   normalizeModelHandleForRegistry,
 } from "@/agent/model";
+import {
+  getPiProviderSpec,
+  isPiProvider,
+} from "@/backend/dev/pi-provider-registry";
 import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 
 const CHATGPT_OAUTH_BASE_PROVIDER = "openai-codex";
@@ -14,6 +20,17 @@ const API_GATED_MODEL_HANDLES = new Set([
   "letta/auto-fast",
   "letta/glm",
 ]);
+
+function isBuiltInProviderName(
+  providerName: string,
+  baseProvider: string,
+): boolean {
+  return (
+    providerName === baseProvider ||
+    (isPiProvider(baseProvider) &&
+      getPiProviderSpec(baseProvider).localProviderNames.includes(providerName))
+  );
+}
 
 export type UiModel = {
   id: string;
@@ -58,11 +75,46 @@ export function labelForChatGPTByokAlias(
   if (slashIndex === -1) return label;
 
   const providerAlias = handle.slice(0, slashIndex);
-  if (byokProviderAliases[providerAlias] !== CHATGPT_OAUTH_BASE_PROVIDER) {
+  if (
+    byokProviderAliases[providerAlias] !== CHATGPT_OAUTH_BASE_PROVIDER ||
+    isBuiltInProviderName(providerAlias, CHATGPT_OAUTH_BASE_PROVIDER)
+  ) {
     return label;
   }
 
-  return label.replace(CHATGPT_LABEL_SUFFIX_PATTERN, ` (${providerAlias})`);
+  return CHATGPT_LABEL_SUFFIX_PATTERN.test(label)
+    ? label.replace(CHATGPT_LABEL_SUFFIX_PATTERN, ` (${providerAlias})`)
+    : `${label} (${providerAlias})`;
+}
+
+export function labelForByokProviderAlias(
+  label: string,
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+): string {
+  const slashIndex = handle.indexOf("/");
+  if (slashIndex === -1) return label;
+
+  const providerAlias = handle.slice(0, slashIndex);
+  const baseProvider = byokProviderAliases[providerAlias];
+  if (!baseProvider || isBuiltInProviderName(providerAlias, baseProvider)) {
+    return label;
+  }
+  if (baseProvider === CHATGPT_OAUTH_BASE_PROVIDER) {
+    return labelForChatGPTByokAlias(label, handle, byokProviderAliases);
+  }
+  return `${label} (${providerAlias})`;
+}
+
+export function withByokProviderAliasLabel<T extends { label: string }>(
+  model: T,
+  handle: string,
+  byokProviderAliases: Record<string, string>,
+): T {
+  return {
+    ...model,
+    label: labelForByokProviderAlias(model.label, handle, byokProviderAliases),
+  };
 }
 
 export function baseHandleForByokAlias(
@@ -109,6 +161,115 @@ export function registryHandleForBackendModel(
   return normalizedHandle;
 }
 
+export function registryHandleForBackendModelOrAlias(
+  handle: string,
+  providerType: string | undefined,
+  byokProviderAliases: Record<string, string>,
+): string {
+  const slashIndex = handle.indexOf("/");
+  const providerAlias = slashIndex > 0 ? handle.slice(0, slashIndex) : null;
+  return providerAlias && byokProviderAliases[providerAlias]
+    ? registryHandleForByokAlias(handle, byokProviderAliases)
+    : registryHandleForBackendModel(handle, providerType);
+}
+
+export function buildModelsForBackendHandle(input: {
+  handle: string;
+  includeUnknown: boolean;
+  providerType?: string;
+  byokProviderAliases: Record<string, string>;
+  pickPreferredStaticModel: (handle: string) => UiModel | undefined;
+  withActualHandle: (
+    model: UiModel,
+    handle: string,
+    registryHandle?: string,
+    updateArgs?: Record<string, unknown>,
+  ) => UiModel;
+  withProviderTypeMetadata: (
+    handle: string,
+    updateArgs: Record<string, unknown> | undefined,
+  ) => Record<string, unknown> | undefined;
+}): UiModel[] {
+  const registryHandle = registryHandleForBackendModelOrAlias(
+    input.handle,
+    input.providerType,
+    input.byokProviderAliases,
+  );
+  const baseStaticModel = input.pickPreferredStaticModel(registryHandle);
+  const fastRegistryHandle = getChatGptFastRegistryHandleForModelHandle(
+    input.handle,
+  );
+  const baseUpdateArgs = {
+    ...((baseStaticModel?.updateArgs as Record<string, unknown> | undefined) ??
+      {}),
+    ...(fastRegistryHandle ? { service_tier: null } : {}),
+  };
+  const baseUpdateArgsWithProviderType = input.withProviderTypeMetadata(
+    input.handle,
+    Object.keys(baseUpdateArgs).length > 0 ? baseUpdateArgs : undefined,
+  );
+  const fallbackModel = input.includeUnknown
+    ? toSelectorModelForHandle(input.handle)
+    : null;
+  const baseModel = baseStaticModel
+    ? input.withActualHandle(
+        withByokProviderAliasLabel(
+          {
+            ...baseStaticModel,
+            label: labelForBackendModel(
+              baseStaticModel.label,
+              input.providerType,
+            ),
+          },
+          input.handle,
+          input.byokProviderAliases,
+        ),
+        input.handle,
+        registryHandle,
+        baseUpdateArgsWithProviderType,
+      )
+    : fallbackModel
+      ? {
+          ...withByokProviderAliasLabel(
+            fallbackModel,
+            input.handle,
+            input.byokProviderAliases,
+          ),
+          updateArgs: input.withProviderTypeMetadata(
+            input.handle,
+            fallbackModel.updateArgs,
+          ),
+        }
+      : null;
+  const result = baseModel ? [baseModel] : [];
+
+  if (fastRegistryHandle) {
+    const fastStaticModel = input.pickPreferredStaticModel(fastRegistryHandle);
+    if (fastStaticModel) {
+      result.push(
+        input.withActualHandle(
+          withByokProviderAliasLabel(
+            fastStaticModel,
+            input.handle,
+            input.byokProviderAliases,
+          ),
+          input.handle,
+          fastRegistryHandle,
+          {
+            ...((fastStaticModel.updateArgs as
+              | Record<string, unknown>
+              | undefined) ?? {}),
+            service_tier: CHATGPT_FAST_SERVICE_TIER,
+            ...input.withProviderTypeMetadata(input.handle, undefined),
+          },
+        ),
+      );
+    }
+  }
+
+  return result;
+}
+
 export function labelForBackendModel(
   label: string,
   providerType?: string,
@@ -137,7 +298,7 @@ export function toByokSelectorModel(
     id: handle,
     handle,
     registryHandle: registryHandleForByokAlias(handle, byokProviderAliases),
-    label: labelForChatGPTByokAlias(
+    label: labelForByokProviderAlias(
       staticModel.label,
       handle,
       byokProviderAliases,

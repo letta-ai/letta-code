@@ -3,6 +3,7 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import {
   deriveReasoningEffort,
+  labelModelDisplayForProviderAlias,
   mapHandleToLlmConfigPatch,
   providerTypeFromModelSettings,
   providerTypeFromUpdateArgs,
@@ -102,5 +103,43 @@ describe("model config helpers", () => {
         null,
       ),
     ).toBeNull();
+  });
+
+  test("labels named local OAuth connections in the statusline", () => {
+    expect(
+      labelModelDisplayForProviderAlias({
+        label: "Opus 4.8",
+        modelHandle: "anthropic-work/claude-opus-4-8",
+        providerType: "anthropic",
+      }),
+    ).toBe("Opus 4.8 (anthropic-work)");
+    expect(
+      labelModelDisplayForProviderAlias({
+        label: "GPT-5.6 Sol (ChatGPT)",
+        modelHandle: "personal/gpt-5.6-sol",
+        providerType: "chatgpt_oauth",
+      }),
+    ).toBe("GPT-5.6 Sol (personal)");
+    expect(
+      labelModelDisplayForProviderAlias({
+        label: "GPT-5.6 Terra",
+        modelHandle: "work/gpt-5.6-terra",
+        providerType: "chatgpt_oauth",
+      }),
+    ).toBe("GPT-5.6 Terra (work)");
+    expect(
+      labelModelDisplayForProviderAlias({
+        label: "GPT-5.6 Terra (ChatGPT)",
+        modelHandle: "chatgpt-plus-pro/gpt-5.6-terra",
+        providerType: "chatgpt_oauth",
+      }),
+    ).toBe("GPT-5.6 Terra (ChatGPT)");
+    expect(
+      labelModelDisplayForProviderAlias({
+        label: "Opus 4.8",
+        modelHandle: "lc-anthropic/claude-opus-4-8",
+        providerType: "anthropic",
+      }),
+    ).toBe("Opus 4.8");
   });
 });

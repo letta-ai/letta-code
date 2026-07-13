@@ -5,6 +5,7 @@
  */
 
 import { getBalanceMetadata } from "@/backend/api/metadata";
+import { normalizeOAuthProviderName } from "@/utils/oauth-provider-name";
 import {
   createProvider,
   getProviderByName,
@@ -20,24 +21,13 @@ export { listProviders };
 // Provider name constant for letta-code's ChatGPT OAuth provider
 export { OPENAI_CODEX_PROVIDER_NAME };
 
-const CHATGPT_OAUTH_PROVIDER_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
-
 // Provider type for ChatGPT OAuth (backend handles transformation)
 export const CHATGPT_OAUTH_PROVIDER_TYPE = "chatgpt_oauth";
 
 export function normalizeChatGPTOAuthProviderName(
   providerName?: string | null,
 ): string {
-  const normalized = (providerName ?? OPENAI_CODEX_PROVIDER_NAME).trim();
-  if (!normalized) {
-    throw new Error("ChatGPT provider name cannot be empty.");
-  }
-  if (!CHATGPT_OAUTH_PROVIDER_NAME_PATTERN.test(normalized)) {
-    throw new Error(
-      "ChatGPT provider name may only contain letters, numbers, dots, underscores, and hyphens.",
-    );
-  }
-  return normalized;
+  return normalizeOAuthProviderName(providerName, OPENAI_CODEX_PROVIDER_NAME);
 }
 
 /**

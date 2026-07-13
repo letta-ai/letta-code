@@ -58,4 +58,56 @@ describe("local OAuth provider storage", () => {
       },
     });
   });
+
+  test("rejects OAuth aliases that collide with another provider type", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-oauth-collision-"));
+    storageDirs.push(storageDir);
+    await createOrUpdateLocalProvider({
+      storageDir,
+      providerType: "openai",
+      providerName: "work",
+      apiKey: "openai-key",
+    });
+
+    expect(() =>
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "work",
+        providerType: "anthropic",
+        auth: {
+          type: "oauth",
+          access: "anthropic-token",
+          expires: Date.now() + 60_000,
+        },
+      }),
+    ).toThrow('Provider name "work" is already used by type "openai".');
+
+    expect(() =>
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "anthropic",
+        providerType: "chatgpt_oauth",
+        auth: {
+          type: "oauth",
+          access: "chatgpt-token",
+          expires: Date.now() + 60_000,
+        },
+      }),
+    ).toThrow('Provider name "anthropic" is reserved for type "anthropic".');
+
+    expect(() =>
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "work/account",
+        providerType: "anthropic",
+        auth: {
+          type: "oauth",
+          access: "anthropic-token",
+          expires: Date.now() + 60_000,
+        },
+      }),
+    ).toThrow(
+      "OAuth provider name may only contain letters, numbers, dots, underscores, and hyphens.",
+    );
+  });
 });

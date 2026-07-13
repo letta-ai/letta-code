@@ -148,7 +148,7 @@ export async function handleConnectionCommand(
           buffersRef,
           refreshDerived,
           setCommandRunning,
-          onCodexConnected: (providerName) => {
+          onOAuthConnected: (providerName) => {
             markLocalModelsAvailable();
             setModelSelectorOptions({
               filterProvider: providerName,

@@ -49,6 +49,16 @@ describe("connect provider normalization", () => {
     expect(isConnectOAuthProvider(resolved)).toBe(true);
   });
 
+  test("normalizes Claude to the local OAuth provider", () => {
+    const resolved = resolveConnectProvider("claude", "local");
+
+    expect(resolved).not.toBeNull();
+    if (!resolved) throw new Error("Expected Claude OAuth provider");
+    expect(resolved.canonical).toBe("anthropic-oauth");
+    expect(resolved.byokProvider.oauthProviderId).toBe("anthropic");
+    expect(isConnectOAuthProvider(resolved)).toBe(true);
+  });
+
   test("resolves standard api-key providers", () => {
     const anthropic = resolveConnectProvider("anthropic", "api");
     const openrouter = resolveConnectProvider("openrouter", "api");

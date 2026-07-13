@@ -18,10 +18,10 @@ import {
 import {
   createOrUpdateOpenAICodexProvider,
   getOpenAICodexProvider,
-  normalizeChatGPTOAuthProviderName,
   OPENAI_CODEX_PROVIDER_NAME,
 } from "@/providers/openai-codex-provider";
 import { getErrorMessage } from "@/utils/error";
+import { normalizeOAuthProviderName } from "@/utils/oauth-provider-name";
 import { runLocalOAuthConnectFlow } from "./connect-local-oauth";
 import {
   defaultConnectApiKey,
@@ -57,7 +57,7 @@ export interface ConnectCommandContext {
   refreshDerived: () => void;
   setCommandRunning: (running: boolean) => void;
   target?: ProviderStorageTarget;
-  onCodexConnected?: (providerName: string) => void;
+  onOAuthConnected?: (providerName: string) => void;
 }
 
 function addCommandResult(
@@ -126,6 +126,7 @@ function formatConnectUsage(): string {
     "Examples:",
     "  /connect chatgpt",
     "  /connect chatgpt --name chatgpt-work",
+    "  /connect claude --name claude-work",
     "  /connect codex",
     "  /connect anthropic <api_key>",
     "  /connect openai <api_key>",
@@ -314,11 +315,14 @@ function parseApiProviderArgs(args: string[]): {
   };
 }
 
-function parseChatGPTArgs(args: string[]): {
+function parseOAuthProviderArgs(
+  args: string[],
+  defaultProviderName = OPENAI_CODEX_PROVIDER_NAME,
+): {
   providerName: string;
   error?: string;
 } {
-  let providerName = OPENAI_CODEX_PROVIDER_NAME;
+  let providerName = defaultProviderName;
 
   for (let i = 0; i < args.length; i += 1) {
     const token = args[i] ?? "";
@@ -338,13 +342,40 @@ function parseChatGPTArgs(args: string[]): {
   }
 
   try {
-    return { providerName: normalizeChatGPTOAuthProviderName(providerName) };
+    return {
+      providerName: normalizeOAuthProviderName(
+        providerName,
+        defaultProviderName,
+      ),
+    };
   } catch (error) {
     return {
       providerName,
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+function supportsNamedLocalOAuthProvider(
+  provider: ResolvedConnectProvider,
+): boolean {
+  return (
+    provider.byokProvider.oauthProviderId === "openai-codex" ||
+    provider.byokProvider.oauthProviderId === "anthropic"
+  );
+}
+
+function withNamedLocalOAuthProvider(
+  provider: ResolvedConnectProvider,
+  providerName: string,
+): ResolvedConnectProvider {
+  return {
+    ...provider,
+    byokProvider: {
+      ...provider.byokProvider,
+      providerName,
+    },
+  };
 }
 
 function providerOptionsSummary(options: {
@@ -450,8 +481,8 @@ async function handleConnectChatGPT(
       "finished",
     );
 
-    if (ctx.onCodexConnected) {
-      setTimeout(() => ctx.onCodexConnected?.(providerName), 500);
+    if (ctx.onOAuthConnected) {
+      setTimeout(() => ctx.onOAuthConnected?.(providerName), 500);
     }
   } catch (error) {
     const isCancelled = error instanceof Error && error.name === "AbortError";
@@ -530,12 +561,10 @@ async function handleConnectLocalOAuthProvider(
       "finished",
     );
 
-    if (provider.byokProvider.oauthProviderId === "openai-codex") {
-      setTimeout(
-        () => ctx.onCodexConnected?.(provider.byokProvider.providerName),
-        500,
-      );
-    }
+    setTimeout(
+      () => ctx.onOAuthConnected?.(provider.byokProvider.providerName),
+      500,
+    );
   } catch (error) {
     const isCancelled = error instanceof Error && error.name === "AbortError";
     updateCommandResult(
@@ -797,9 +826,38 @@ export async function handleConnect(
 
   if (isConnectOAuthProvider(provider)) {
     if (provider.target === "local") {
-      await handleConnectLocalOAuthProvider(ctx, msg, provider);
+      const oauthArgs = parts.slice(2);
+      if (oauthArgs.length > 0 && !supportsNamedLocalOAuthProvider(provider)) {
+        addCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          msg,
+          `${provider.byokProvider.displayName} does not support named local OAuth connections.`,
+          false,
+        );
+        return;
+      }
+      const parsed = parseOAuthProviderArgs(
+        oauthArgs,
+        provider.byokProvider.providerName,
+      );
+      if (parsed.error) {
+        addCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          msg,
+          `${parsed.error}\n\nUsage: /connect ${provider.canonical} [--name <provider-name>]`,
+          false,
+        );
+        return;
+      }
+      await handleConnectLocalOAuthProvider(
+        ctx,
+        msg,
+        withNamedLocalOAuthProvider(provider, parsed.providerName),
+      );
     } else {
-      const parsed = parseChatGPTArgs(parts.slice(2));
+      const parsed = parseOAuthProviderArgs(parts.slice(2));
       if (parsed.error) {
         addCommandResult(
           ctx.buffersRef,

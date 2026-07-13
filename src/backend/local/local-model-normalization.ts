@@ -50,6 +50,16 @@ export function normalizeLocalModelHandle(
     return model;
   }
   const providerType = providerTypeFromModelSettings(modelSettings);
+  if (
+    model.includes("/") &&
+    (providerType === "chatgpt_oauth" || providerType === "anthropic")
+  ) {
+    // Named local OAuth connections use their storage record as the provider
+    // prefix (for example, "personal/gpt-5.6-sol"). They are not Pi catalog
+    // prefixes, so normalizing them through legacy endpoint metadata corrupts
+    // the handle into "chatgpt-plus-pro/personal/gpt-5.6-sol".
+    return model;
+  }
   const legacyEndpointType = legacyLlmConfig?.model_endpoint_type;
   return (
     resolveModelHandleFromLlmConfig({
