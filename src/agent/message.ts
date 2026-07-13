@@ -13,11 +13,11 @@ import type { MessageCreateParams as ConversationMessageCreateParams } from "@le
 import { type Backend, getBackend } from "@/backend";
 import {
   type ClientTool,
-  type PermissionModeState,
   type PreparedToolExecutionContext,
   prepareCurrentToolExecutionContext,
   waitForToolsetReady,
 } from "@/tools/manager";
+import type { PermissionModeState } from "@/tools/permission-mode-state";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import {
   assertSupportedBase64ImageMediaTypes,

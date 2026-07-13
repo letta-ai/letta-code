@@ -72,14 +72,8 @@ type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
 const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
 /**
- * Frozen copy of the supported commands list. Avoids creating a new array on
- * every `buildDeviceStatus()` call (every 5–30 s per connected web client).
- * (LET-8948)
- */
-/**
- * Pre-computed copy of the supported commands list. Avoids creating a new
- * array on every `buildDeviceStatus()` call (every 5–30 s per connected
- * web client). (LET-8948)
+ * Frozen copy of the supported commands list. Avoids allocating it for every
+ * device-status update. (LET-8948)
  */
 const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
 
@@ -87,10 +81,13 @@ const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
  * Mod-contributed commands for the device status, omitted entirely when no mods
  * register commands so the common case adds no field.
  */
-function buildModCommandsField(listener: ListenerRuntime): {
+function buildModCommandsField(
+  listener: ListenerRuntime,
+  agentId?: string | null,
+): {
   mod_commands?: ModCommandInfo[];
 } {
-  const modCommands = listListenerModCommands(listener);
+  const modCommands = listListenerModCommands(listener, agentId);
   return modCommands.length > 0 ? { mod_commands: modCommands } : {};
 }
 const PROTOCOL_PERF_FLUSH_INTERVAL_MS = 1_000;
@@ -502,7 +499,7 @@ export function buildDeviceStatus(
     cwd_revision: listener.workingDirectoryRevision ?? 0,
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
     supported_commands: FROZEN_SUPPORTED_COMMANDS,
-    ...buildModCommandsField(listener),
+    ...buildModCommandsField(listener, scopedAgentId),
     reflection_settings: scopedAgentId
       ? {
           agent_id: scopedAgentId,

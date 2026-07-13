@@ -27,7 +27,7 @@
   "src/index.ts": 2854,
   "src/mods/learning-harness.ts": 2434,
   "src/mods/mod-engine.test.ts": 2178,
-  "src/mods/mod-engine.ts": 1919,
+  "src/mods/mod-engine.ts": 1879,
   "src/mods/package-installer.test.ts": 1248,
   "src/mods/package-installer.ts": 1201,
   "src/mods/package-registry.ts": 1033,
@@ -38,7 +38,7 @@
   "src/settings-manager.ts": 2113,
   "src/tools/impl/enter-worktree.ts": 1260,
   "src/tools/impl/message-channel.ts": 1187,
-  "src/tools/manager.ts": 3293,
+  "src/tools/manager.ts": 3282,
   "src/tools/tool-execution-context.test.ts": 1422,
   "src/types/protocol_v2.ts": 2940,
   "src/websocket/listen-client-concurrency.test.ts": 3016,
@@ -48,5 +48,5 @@
   "src/websocket/listener/file-commands.ts": 1030,
   "src/websocket/listener/lifecycle.ts": 1766,
   "src/websocket/listener/protocol-inbound.ts": 2279,
-  "src/websocket/listener/protocol-outbound.ts": 1287
+  "src/websocket/listener/protocol-outbound.ts": 1284
 }

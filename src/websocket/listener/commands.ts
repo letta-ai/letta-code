@@ -41,7 +41,10 @@ import type {
 import { debugLog } from "@/utils/debug";
 import { markSecretsReminderRefreshPending } from "./commands/secrets";
 import { getConversationWorkingDirectory } from "./cwd";
-import { reloadListenerModAdapter } from "./mod-adapter";
+import {
+  ensureListenerAgentModAdapter,
+  reloadListenerModAdapter,
+} from "./mod-adapter";
 import { getListenerModCommand, runListenerModCommand } from "./mod-commands";
 import {
   createLifecycleMessageBase,
@@ -165,9 +168,16 @@ export async function handleExecuteCommand(
         break;
 
       default: {
+        if (conversationRuntime.agentId) {
+          await ensureListenerAgentModAdapter(
+            conversationRuntime.listener,
+            conversationRuntime.agentId,
+          );
+        }
         const modCommand = getListenerModCommand(
           conversationRuntime.listener,
           command.command_id,
+          conversationRuntime.agentId,
         );
         if (!modCommand) {
           emitSlashCommandEnd(socket, conversationRuntime, scope, {
@@ -314,7 +324,7 @@ export async function handleReloadCommand(
     );
   }
 
-  await reloadListenerModAdapter(listener);
+  await reloadListenerModAdapter(listener, conversationRuntime.agentId);
 
   if (conversationRuntime.agentId) {
     invalidateSecretsCacheForAgent(listener, conversationRuntime.agentId);

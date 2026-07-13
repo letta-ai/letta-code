@@ -1,6 +1,7 @@
 import { getBackend } from "@/backend";
 import { debugWarn } from "@/utils/debug";
 import { ensureMemfsSyncedForAgent } from "./memfs-sync";
+import { ensureListenerAgentModAdapter } from "./mod-adapter";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import type { ListenerRuntime } from "./types";
 
@@ -92,6 +93,7 @@ export async function ensureListenerWarmStateForTurn(
       warmupDeps.ensureSecretsHydratedForAgent(listener, agentId),
       agentMetadataPromise,
     ]);
+    await ensureListenerAgentModAdapter(listener, agentId);
   } catch (error) {
     debugWarn(
       "listener-warmup",

@@ -197,8 +197,12 @@ export type ListenerRuntime = {
   hasSuccessfulConnection: boolean;
   /** True once the WS has connected at least once. Never reset to false. */
   everConnected: boolean;
-  /** Provider-only local mod adapter for desktop/listener surfaces. */
+  /** Global local mod adapter for desktop/listener surfaces. */
   modAdapter?: ModAdapter | undefined;
+  /** Isolated agent-scoped adapters loaded from each agent's MemFS. */
+  agentModAdapters?: Map<string, ModAdapter>;
+  /** Coalesces concurrent first-loads for one agent's scoped adapter. */
+  agentModAdapterLoads?: Map<string, Promise<ModAdapter | null>>;
   sessionId: string;
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
