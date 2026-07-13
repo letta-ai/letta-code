@@ -2,12 +2,19 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { migratePermissionMode } from "@/permissions/mode";
 import { isRecord } from "@/utils/type-guards";
 import {
+  buildRollbackError,
+  captureChannelSecretSnapshots,
+  deleteForegroundAccountSecrets,
+  getMutationSecretFieldPaths,
+  restoreChannelSecretSnapshots,
+  writeForegroundAccountSecrets,
+} from "./account-secret-transactions";
+import {
   getChannelAccountsPath,
   getChannelDir,
   readChannelConfig,
 } from "./config";
 import {
-  deleteChannelSecret,
   getActiveChannelCredentialsStoreMode,
   getCachedChannelCredentialsStoreMode,
   getChannelSecret,
@@ -21,6 +28,7 @@ import {
   isSecretPlaceholderValue,
   SECRET_PRESENT_PLACEHOLDER,
 } from "./credential-utils";
+import { makeDefaultLegacyAccount } from "./legacy-account";
 import type {
   ChannelAccount,
   ChannelDefaultPermissionMode,
@@ -28,7 +36,6 @@ import type {
   DiscordChannelAccount,
   SignalChannelAccount,
   SlackChannelAccount,
-  SupportedChannelId,
   TelegramChannelAccount,
   WhatsAppChannelAccount,
 } from "./types";
@@ -90,6 +97,10 @@ type PendingChannelSecretWrite = {
 type PendingChannelSecretWriteFilter = {
   channelId?: string;
   accountId?: string;
+};
+
+type PrepareAccountForStorageOptions = {
+  queueSecretWrites?: boolean;
 };
 
 let pendingSecretWrites: PendingChannelSecretWrite[] = [];
@@ -214,7 +225,10 @@ function queueSecretWrite(
   pendingSecretWrites.push({ channelId, accountId, fieldPath, promise });
 }
 
-function prepareAccountForStorage(account: ChannelAccount): ChannelAccount {
+function prepareAccountForStorage(
+  account: ChannelAccount,
+  options: PrepareAccountForStorageOptions = {},
+): ChannelAccount {
   const cloned = cloneAccount(account) as ChannelAccountWithSecretRefs;
   const secretFieldPaths = getAccountSecretFieldPaths(cloned);
   if (getCachedChannelCredentialsStoreMode() !== "keyring") {
@@ -248,7 +262,7 @@ function prepareAccountForStorage(account: ChannelAccount): ChannelAccount {
     const value = getSecretValueFromAccount(cloned, fieldPath);
     if (isNonEmptyString(value)) {
       markSecretRef(cloned, fieldPath);
-      if (!isSecretPlaceholder(value)) {
+      if (!isSecretPlaceholder(value) && options.queueSecretWrites !== false) {
         queueSecretWrite(
           cloned.channel,
           cloned.accountId,
@@ -416,123 +430,6 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
   return next;
 }
 
-function makeDefaultLegacyAccount(
-  channelId: SupportedChannelId,
-): ChannelAccount {
-  const config = readChannelConfig(channelId);
-  const now = new Date().toISOString();
-
-  if (!config) {
-    throw new Error(`Missing legacy config for ${channelId}`);
-  }
-
-  if (config.channel === "telegram") {
-    return {
-      channel: "telegram",
-      accountId: LEGACY_CHANNEL_ACCOUNT_ID,
-      enabled: config.enabled,
-      token: config.token,
-      dmPolicy: config.dmPolicy,
-      allowedUsers: [...config.allowedUsers],
-      transcribeVoice: config.transcribeVoice === true,
-      richPrivateChatDefault: config.richPrivateChatDefault !== false,
-      richDraftStreaming: config.richDraftStreaming === true,
-      binding: {
-        agentId: null,
-        conversationId: null,
-      },
-      createdAt: now,
-      updatedAt: now,
-    };
-  }
-
-  if (config.channel === "discord") {
-    return {
-      channel: "discord",
-      accountId: LEGACY_CHANNEL_ACCOUNT_ID,
-      enabled: config.enabled,
-      token: config.token,
-      dmPolicy: config.dmPolicy,
-      allowedUsers: [...config.allowedUsers],
-      allowedChannels: config.allowedChannels
-        ? Array.isArray(config.allowedChannels)
-          ? [...config.allowedChannels]
-          : { ...config.allowedChannels }
-        : undefined,
-      autoThreadOnMention: config.autoThreadOnMention ?? true,
-      threadPolicyByChannel: config.threadPolicyByChannel,
-      agentId: null,
-      defaultPermissionMode: config.defaultPermissionMode ?? "standard",
-      createdAt: now,
-      updatedAt: now,
-    };
-  }
-
-  if (config.channel === "whatsapp") {
-    return {
-      channel: "whatsapp",
-      accountId: LEGACY_CHANNEL_ACCOUNT_ID,
-      enabled: config.enabled,
-      dmPolicy: config.dmPolicy,
-      allowedUsers: [...config.allowedUsers],
-      agentId: config.agentId,
-      selfChatMode: config.selfChatMode !== false,
-      groupMode: config.groupMode ?? "disabled",
-      allowedGroups: config.allowedGroups ? [...config.allowedGroups] : [],
-      mentionPatterns: config.mentionPatterns
-        ? [...config.mentionPatterns]
-        : [],
-      transcribeVoice: config.transcribeVoice === true,
-      downloadMedia: config.downloadMedia === true,
-      mediaMaxBytes: config.mediaMaxBytes,
-      createdAt: now,
-      updatedAt: now,
-    };
-  }
-
-  if (config.channel === "signal") {
-    return {
-      channel: "signal",
-      accountId: LEGACY_CHANNEL_ACCOUNT_ID,
-      enabled: config.enabled,
-      baseUrl: config.baseUrl,
-      account: config.account,
-      accountUuid: config.accountUuid,
-      dmPolicy: config.dmPolicy,
-      allowedUsers: [...config.allowedUsers],
-      agentId: config.agentId,
-      selfChatMode: config.selfChatMode === true,
-      groupMode: config.groupMode ?? "disabled",
-      allowedGroups: config.allowedGroups ? [...config.allowedGroups] : [],
-      mentionPatterns: config.mentionPatterns
-        ? [...config.mentionPatterns]
-        : [],
-      recipientAliases: { ...(config.recipientAliases ?? {}) },
-      downloadMedia: config.downloadMedia !== false,
-      mediaMaxBytes: config.mediaMaxBytes,
-      createdAt: now,
-      updatedAt: now,
-    };
-  }
-
-  return {
-    channel: "slack",
-    accountId: LEGACY_CHANNEL_ACCOUNT_ID,
-    enabled: config.enabled,
-    mode: config.mode,
-    botToken: config.botToken,
-    appToken: config.appToken,
-    dmPolicy: config.dmPolicy,
-    allowedUsers: [...config.allowedUsers],
-    agentId: null,
-    defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
-    transcribeVoice: config.transcribeVoice === true,
-    listenMode: config.listenMode === true,
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
 function getStore(channelId: string): ChannelAccountStore {
   let store = stores.get(channelId);
   if (!store) {
@@ -586,7 +483,9 @@ export function loadChannelAccounts(channelId: string): void {
   ) {
     const legacyConfig = readChannelConfig(channelId);
     if (legacyConfig) {
-      const migratedAccounts = [makeDefaultLegacyAccount(channelId)];
+      const migratedAccounts = [
+        makeDefaultLegacyAccount(channelId, LEGACY_CHANNEL_ACCOUNT_ID),
+      ];
       stores.set(channelId, {
         accounts: migratedAccounts,
       });
@@ -598,10 +497,13 @@ export function loadChannelAccounts(channelId: string): void {
   stores.set(channelId, { accounts: [] });
 }
 
-function saveChannelAccounts(channelId: string): void {
+function saveChannelAccounts(
+  channelId: string,
+  options: PrepareAccountForStorageOptions = {},
+): void {
   const store = getStore(channelId);
   const writeAccounts = store.accounts.map((account) => {
-    const cloned = prepareAccountForStorage(account);
+    const cloned = prepareAccountForStorage(account, options);
     // Canonicalize: convert camelCase keys to snake_case for storage
     for (const [snakeKey, camelKey] of Object.entries(SNAKE_TO_CAMEL)) {
       const value = (cloned as unknown as Record<string, unknown>)[camelKey];
@@ -666,6 +568,20 @@ export async function flushPendingChannelSecretWrites(
       throw failed.reason;
     }
   }
+}
+
+function snapshotStoreAccounts(channelId: string): ChannelAccount[] {
+  return getStore(channelId).accounts.map((account) => cloneAccount(account));
+}
+
+function restoreStoreAccountsWithoutSecretWrites(
+  channelId: string,
+  accounts: ChannelAccount[],
+): void {
+  getStore(channelId).accounts = accounts.map((account) =>
+    cloneAccount(account),
+  );
+  saveChannelAccounts(channelId, { queueSecretWrites: false });
 }
 
 async function hydrateAccountSecrets(
@@ -815,13 +731,81 @@ export async function upsertChannelAccountWithSecrets(
   channelId: string,
   account: ChannelAccount,
 ): Promise<ChannelAccount> {
-  await getActiveChannelCredentialsStoreMode();
-  const updated = upsertChannelAccount(channelId, account);
-  await flushPendingChannelSecretWrites({
+  const mode = await getActiveChannelCredentialsStoreMode();
+  if (mode !== "keyring") {
+    return upsertChannelAccount(channelId, account);
+  }
+
+  const accountId = account.accountId;
+  await flushPendingChannelSecretWrites({ channelId, accountId });
+
+  const previousAccounts = snapshotStoreAccounts(channelId);
+  const previousAccount =
+    previousAccounts.find((entry) => entry.accountId === accountId) ?? null;
+  const nextAccount = cloneAccount(account);
+  const fieldPaths = getMutationSecretFieldPaths(previousAccount, nextAccount);
+  const secretSnapshots = await captureChannelSecretSnapshots(
     channelId,
-    accountId: account.accountId,
-  });
-  return updated;
+    accountId,
+    previousAccount,
+    fieldPaths,
+  );
+
+  try {
+    await writeForegroundAccountSecrets(nextAccount);
+  } catch (error) {
+    try {
+      await restoreChannelSecretSnapshots(
+        channelId,
+        accountId,
+        secretSnapshots,
+      );
+    } catch (rollbackError) {
+      throw buildRollbackError("Failed to write channel credentials", error, [
+        rollbackError,
+      ]);
+    }
+    throw error;
+  }
+
+  const nextAccounts = previousAccounts.map((entry) => cloneAccount(entry));
+  const index = nextAccounts.findIndex(
+    (entry) => entry.accountId === accountId,
+  );
+  if (index >= 0) {
+    nextAccounts[index] = nextAccount;
+  } else {
+    nextAccounts.push(nextAccount);
+  }
+  getStore(channelId).accounts = nextAccounts;
+
+  try {
+    saveChannelAccounts(channelId, { queueSecretWrites: false });
+  } catch (error) {
+    const rollbackErrors: unknown[] = [];
+    try {
+      restoreStoreAccountsWithoutSecretWrites(channelId, previousAccounts);
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
+    try {
+      await restoreChannelSecretSnapshots(
+        channelId,
+        accountId,
+        secretSnapshots,
+      );
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
+    if (rollbackErrors.length > 0) {
+      throw buildRollbackError("Failed to save channel account", error, [
+        ...rollbackErrors,
+      ]);
+    }
+    throw error;
+  }
+
+  return cloneAccount(nextAccount);
 }
 
 export function removeChannelAccount(
@@ -829,6 +813,9 @@ export function removeChannelAccount(
   accountId: string,
 ): boolean {
   const store = getStore(channelId);
+  const previousAccounts = store.accounts.map((account) =>
+    cloneAccount(account),
+  );
   const nextAccounts = store.accounts.filter(
     (entry) => entry.accountId !== accountId,
   );
@@ -836,7 +823,12 @@ export function removeChannelAccount(
     return false;
   }
   store.accounts = nextAccounts;
-  saveChannelAccounts(channelId);
+  try {
+    saveChannelAccounts(channelId);
+  } catch (error) {
+    store.accounts = previousAccounts;
+    throw error;
+  }
   return true;
 }
 
@@ -844,20 +836,70 @@ export async function removeChannelAccountWithSecrets(
   channelId: string,
   accountId: string,
 ): Promise<boolean> {
-  await getActiveChannelCredentialsStoreMode();
+  const mode = await getActiveChannelCredentialsStoreMode();
   const account = getChannelAccount(channelId, accountId);
   if (!account) {
     return false;
   }
-  if (getCachedChannelCredentialsStoreMode() === "keyring") {
-    await flushPendingChannelSecretWrites({ channelId, accountId });
-    await Promise.all(
-      getAccountSecretFieldPaths(account).map((fieldPath) =>
-        deleteChannelSecret(channelId, accountId, fieldPath),
-      ),
-    );
+  if (mode !== "keyring") {
+    return removeChannelAccount(channelId, accountId);
   }
-  return removeChannelAccount(channelId, accountId);
+
+  await flushPendingChannelSecretWrites({ channelId, accountId });
+  const previousAccounts = snapshotStoreAccounts(channelId);
+  const secretSnapshots = await captureChannelSecretSnapshots(
+    channelId,
+    accountId,
+    account,
+    getAccountSecretFieldPaths(account),
+  );
+
+  try {
+    await deleteForegroundAccountSecrets(channelId, accountId, secretSnapshots);
+  } catch (error) {
+    try {
+      await restoreChannelSecretSnapshots(
+        channelId,
+        accountId,
+        secretSnapshots,
+      );
+    } catch (rollbackError) {
+      throw buildRollbackError("Failed to delete channel credentials", error, [
+        rollbackError,
+      ]);
+    }
+    throw error;
+  }
+
+  getStore(channelId).accounts = previousAccounts.filter(
+    (entry) => entry.accountId !== accountId,
+  );
+  try {
+    saveChannelAccounts(channelId, { queueSecretWrites: false });
+  } catch (error) {
+    const rollbackErrors: unknown[] = [];
+    try {
+      restoreStoreAccountsWithoutSecretWrites(channelId, previousAccounts);
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
+    try {
+      await restoreChannelSecretSnapshots(
+        channelId,
+        accountId,
+        secretSnapshots,
+      );
+    } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
+    if (rollbackErrors.length > 0) {
+      throw buildRollbackError("Failed to remove channel account", error, [
+        ...rollbackErrors,
+      ]);
+    }
+    throw error;
+  }
+  return true;
 }
 
 export function clearChannelAccountStores(): void {

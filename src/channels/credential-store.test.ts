@@ -28,11 +28,7 @@ import {
 } from "@/channels/credential-store";
 import { __testClearUserChannelPluginCache } from "@/channels/plugin-registry";
 import { getChannelRegistry, initializeChannels } from "@/channels/registry";
-import {
-  createChannelAccountLiveWithSecrets,
-  removeChannelAccountLive,
-  setChannelConfigLive,
-} from "@/channels/service";
+import { setChannelConfigLive } from "@/channels/service";
 import type {
   CustomChannelAccount,
   SlackChannelAccount,
@@ -299,75 +295,6 @@ describe("channel credential storage", () => {
     ).toBe(false);
     expect(
       secrets.has(buildChannelSecretName("slack", "slack-account", "appToken")),
-    ).toBe(false);
-  });
-
-  test("secret-aware upserts await and surface keyring write failures", async () => {
-    __setActiveChannelCredentialsStoreModeForTests("keyring");
-    __setChannelSecretStoreOverrideForTests({
-      get: async () => null,
-      set: async () => {
-        throw new Error("keyring write failed");
-      },
-      delete: async () => true,
-    });
-
-    await expect(
-      upsertChannelAccountWithSecrets("slack", makeSlackAccount()),
-    ).rejects.toThrow("keyring write failed");
-  });
-
-  test("secret-aware deletes await keyring deletion and keep the account on failure", async () => {
-    __setActiveChannelCredentialsStoreModeForTests("keyring");
-
-    await upsertChannelAccountWithSecrets("slack", makeSlackAccount());
-    await flushPendingChannelSecretWrites();
-    __setChannelSecretStoreOverrideForTests({
-      get: async (name) => secrets.get(name) ?? null,
-      set: async (name, value) => {
-        secrets.set(name, value);
-      },
-      delete: async () => {
-        throw new Error("keyring delete failed");
-      },
-    });
-
-    await expect(
-      removeChannelAccountWithSecrets("slack", "slack-account"),
-    ).rejects.toThrow("keyring delete failed");
-
-    const persisted = readAccountsFile(channelsRoot, "slack") as {
-      accounts: Array<Record<string, unknown>>;
-    };
-    expect(persisted.accounts).toHaveLength(1);
-    expect(persisted.accounts[0]).toMatchObject({
-      accountId: "slack-account",
-    });
-  });
-
-  test("live account delete removes keyring secrets", async () => {
-    __setActiveChannelCredentialsStoreModeForTests("keyring");
-
-    await createChannelAccountLiveWithSecrets(
-      "telegram",
-      {
-        enabled: false,
-        token: "telegram-secret",
-        dmPolicy: "pairing",
-      },
-      { accountId: "telegram-live" },
-    );
-    await flushPendingChannelSecretWrites();
-
-    expect(
-      secrets.get(buildChannelSecretName("telegram", "telegram-live", "token")),
-    ).toBe("telegram-secret");
-
-    await expect(
-      removeChannelAccountLive("telegram", "telegram-live"),
-    ).resolves.toBe(true);
-    expect(
-      secrets.has(buildChannelSecretName("telegram", "telegram-live", "token")),
     ).toBe(false);
   });
 

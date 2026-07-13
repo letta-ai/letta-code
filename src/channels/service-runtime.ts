@@ -15,6 +15,7 @@ import {
 } from "./service-accounts";
 import {
   assertSupportedChannelId,
+  getSelectedChannelAccount,
   getSelectedChannelAccountWithSecrets,
   refreshLoadedMessageChannelTool,
 } from "./service-shared";
@@ -37,10 +38,7 @@ export async function setChannelConfigLive(
 ): Promise<ChannelConfigSnapshot> {
   assertSupportedChannelId(channelId);
   const normalizedPatch = normalizeChannelConfigPatch(channelId, patch);
-  const existing = await getSelectedChannelAccountWithSecrets(
-    channelId,
-    accountId,
-  );
+  const existing = getSelectedChannelAccount(channelId, accountId);
   let targetAccountId = existing?.accountId;
   let shouldRefreshDisplayName = false;
   if (existing) {

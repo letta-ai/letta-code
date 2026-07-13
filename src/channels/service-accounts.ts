@@ -64,7 +64,7 @@ export async function createChannelAccountLiveWithSecrets(
 ): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
   const accountId = options?.accountId?.trim() || randomUUID();
-  const existing = await getChannelAccountWithSecrets(channelId, accountId);
+  const existing = getChannelAccount(channelId, accountId);
   if (existing) {
     throw new Error(
       `Channel account "${accountId}" already exists for ${channelId}.`,
@@ -141,7 +141,7 @@ export async function updateChannelAccountLiveWithSecrets(
   patch: ChannelAccountPatch,
 ): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
-  const existing = await getChannelAccountWithSecrets(channelId, accountId);
+  const existing = getChannelAccount(channelId, accountId);
   if (!existing) {
     throw new Error(
       `Channel account "${accountId}" was not found for ${channelId}.`,
@@ -421,13 +421,17 @@ export async function removeChannelAccountLive(
   }
 
   await getChannelRegistry()?.stopChannelAccount(channelId, accountId);
+  const removed = await removeChannelAccountWithSecrets(channelId, accountId);
+  if (!removed) {
+    return false;
+  }
+
   loadRoutes(channelId);
   loadTargetStore(channelId);
   loadPairingStore(channelId);
   removeRoutesForAccount(channelId, accountId);
   removeChannelTargetsForAccount(channelId, accountId);
   removePairingStateForAccount(channelId, accountId);
-  const removed = await removeChannelAccountWithSecrets(channelId, accountId);
   await refreshLoadedMessageChannelTool();
-  return removed;
+  return true;
 }
