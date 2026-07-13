@@ -48,9 +48,8 @@ import {
   resolveManagedModPackages,
 } from "@/mods/package-registry";
 import {
-  getGlobalModsDirectory,
-  getLegacyGlobalExtensionsDirectory,
   getModCacheDirectory,
+  resolveGlobalModDirectories,
 } from "@/mods/paths";
 import {
   getModPermissionDefinition,
@@ -97,9 +96,10 @@ import type {
   ModTurnStartEvent,
 } from "@/mods/types";
 
-export const GLOBAL_MODS_DIRECTORY = getGlobalModsDirectory();
+const modsDirectory = resolveGlobalModDirectories();
+export const GLOBAL_MODS_DIRECTORY = modsDirectory.globalModsDirectory;
 export const LEGACY_GLOBAL_EXTENSIONS_DIRECTORY =
-  getLegacyGlobalExtensionsDirectory();
+  modsDirectory.legacyGlobalExtensionsDirectory;
 export const MOD_CACHE_DIRECTORY = getModCacheDirectory();
 
 const requireFromRuntime = createRequire(import.meta.url);
@@ -301,13 +301,18 @@ function isShadowedByOwner(owner: ModOwner, existingOwner?: ModOwner): boolean {
 export function resolveLocalModSources(
   options: ResolveLocalModSourcesOptions = {},
 ): LocalModSource[] {
+  // Resolve at call time, not via the module-level constants
+  // (GLOBAL_MODS_DIRECTORY, etc.) — those are snapshots from import
+  // time. Tests that set process.env after the module is loaded will
+  // see stale values if we use the constants here.
+  const resolvedModsDirectory = resolveGlobalModDirectories();
   const globalModsDirectory =
-    options.globalModsDirectory ?? getGlobalModsDirectory();
+    options.globalModsDirectory ?? resolvedModsDirectory.globalModsDirectory;
   const legacyGlobalExtensionsDirectory =
     options.legacyGlobalExtensionsDirectory ??
     (options.globalModsDirectory
       ? undefined
-      : getLegacyGlobalExtensionsDirectory());
+      : resolvedModsDirectory.legacyGlobalExtensionsDirectory);
   const managedPackages = resolveManagedModPackages(globalModsDirectory);
   const globalDiagnostics = managedPackages.diagnostics;
   const sources: LocalModSource[] = [];
@@ -1444,7 +1449,8 @@ function getLegacyExtensionMigrationTarget(
   modPath: string,
 ): string {
   const targetRoot =
-    source.legacyMigrationTargetRoot ?? getGlobalModsDirectory();
+    source.legacyMigrationTargetRoot ??
+    resolveGlobalModDirectories().globalModsDirectory;
   const relativePath = path.relative(source.root, modPath);
   if (
     !relativePath ||
