@@ -40,6 +40,15 @@ import { setWhatsAppConnectionState } from "./state";
 const CHANNEL_ID = "whatsapp";
 const DEDUPE_MAX_SIZE = 5000;
 const RECONNECT_MAX_MS = 30_000;
+
+/**
+ * Guardrail: if the socket disconnects this many times within the window,
+ * we stop reconnecting and mark the account as errored. This catches
+ * session-conflict loops (another WhatsApp client competing for the same
+ * linked-device session) instead of bouncing forever.
+ */
+const RAPID_DISCONNECT_LIMIT = 5;
+const RAPID_DISCONNECT_WINDOW_MS = 60_000;
 const MAX_MENTION_PATTERN_LENGTH = 256;
 const MENTION_MATCH_TEXT_MAX_LENGTH = 2000;
 const WHATSAPP_TYPING_REFRESH_MS = 12_000;
@@ -219,6 +228,7 @@ export function createWhatsAppAdapter(
   let stopping = false;
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let recentDisconnects: number[] = [];
   let selfPhoneJid: string | null = null;
   let selfLid: string | null = null;
   let connectedAtMs = 0;
@@ -358,6 +368,7 @@ export function createWhatsAppAdapter(
         if (generation !== connectionGeneration) return;
         if (update.connection === "open") {
           reconnectAttempts = 0;
+          recentDisconnects = [];
           selfPhoneJid = stripDeviceSuffix(sock?.user?.id ?? null) || null;
           selfLid = stripDeviceSuffix(sock?.user?.lid ?? null) || null;
           // Mine PN↔LID mappings from the Baileys signal repository.
@@ -388,6 +399,26 @@ export function createWhatsAppAdapter(
             });
             console.warn(
               `[WhatsApp:${account.accountId}] disconnected due to session conflict; not reconnecting automatically. Stop any other WhatsApp server using this account/auth session, then restart this server.`,
+            );
+            return;
+          }
+          // Guardrail: detect rapid disconnect loops (e.g. session conflict
+          // that doesn't trigger the explicit conflict-disconnect path).
+          const now = Date.now();
+          recentDisconnects = recentDisconnects.filter(
+            (ts) => now - ts < RAPID_DISCONNECT_WINDOW_MS,
+          );
+          recentDisconnects.push(now);
+          if (recentDisconnects.length > RAPID_DISCONNECT_LIMIT) {
+            running = false;
+            stopping = true;
+            const loopMessage = `WhatsApp disconnected ${recentDisconnects.length} times in ${RAPID_DISCONNECT_WINDOW_MS / 1000}s; stopping to avoid reconnect loop. Another client may be competing for this session. Restart the server to retry.`;
+            setWhatsAppConnectionState(account.accountId, {
+              status: "error",
+              lastError: loopMessage,
+            });
+            console.warn(
+              `[WhatsApp:${account.accountId}] ${loopMessage}`,
             );
             return;
           }
