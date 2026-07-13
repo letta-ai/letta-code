@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type Letta from "@letta-ai/letta-client";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
@@ -5,6 +6,7 @@ import { getBackend } from "@/backend";
 import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
 import { createModAdapter, type ModAdapter } from "@/mods/mod-adapter";
+import { getModCacheDirectory } from "@/mods/paths";
 import type {
   ModCapabilities,
   ModContext,
@@ -137,7 +139,15 @@ function resolveListenerAgentModsDirectory(agentId: string): string | null {
   }
 }
 
+function resolveListenerAgentModCacheDirectory(agentId: string): string {
+  // A distinct import path gives each agent its own ESM module instance while
+  // keeping generated files outside the git-backed MemFS repository.
+  const cacheKey = createHash("sha256").update(agentId).digest("hex");
+  return join(getModCacheDirectory(), "listener-agents", cacheKey);
+}
+
 let resolveAgentModsDirectory = resolveListenerAgentModsDirectory;
+let resolveAgentModCacheDirectory = resolveListenerAgentModCacheDirectory;
 
 export async function ensureListenerAgentModAdapter(
   runtime: ListenerRuntime,
@@ -159,6 +169,7 @@ export async function ensureListenerAgentModAdapter(
   const load = (async () => {
     const adapter = createListenerModAdapter({
       agentModsDirectory,
+      cacheDirectory: resolveAgentModCacheDirectory(agentId),
       capabilities: LISTENER_AGENT_MOD_CAPABILITIES,
       includeGlobalMods: false,
       registerCapabilitiesGlobally: false,
@@ -253,8 +264,14 @@ export const __listenerModAdapterTestUtils = {
   ): void {
     resolveAgentModsDirectory = resolver;
   },
+  setAgentModCacheDirectoryResolverForTests(
+    resolver: (agentId: string) => string,
+  ): void {
+    resolveAgentModCacheDirectory = resolver;
+  },
   resetForTests(): void {
     resolveAgentModsDirectory = resolveListenerAgentModsDirectory;
+    resolveAgentModCacheDirectory = resolveListenerAgentModCacheDirectory;
   },
 };
 
