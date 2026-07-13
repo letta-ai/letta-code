@@ -1291,6 +1291,13 @@ export class ChannelRegistry {
               });
               if (result.modelPicker?.modelLabel) {
                 activeModel = result.modelPicker.modelLabel;
+              } else if (result.text) {
+                // Fall back to parsing the model out of the formatted status text,
+                // e.g. "WhatsApp current chat model: anthropic/claude-sonnet-4-5".
+                const match = result.text.match(/model:\s*(.+?)(?:\s*\(([^)]+)\))?\s*\.?$/);
+                if (match) {
+                  activeModel = match[2] ? `${match[1]} (${match[2]})` : match[1];
+                }
               }
             } catch {
               // Best-effort; model label is optional in status.
