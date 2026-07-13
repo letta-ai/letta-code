@@ -79,7 +79,20 @@ interface ChannelAccountStore {
 export const LEGACY_CHANNEL_ACCOUNT_ID = "__legacy_migrated__";
 
 const stores = new Map<string, ChannelAccountStore>();
-const pendingSecretWrites: Promise<unknown>[] = [];
+
+type PendingChannelSecretWrite = {
+  channelId: string;
+  accountId: string;
+  fieldPath: string;
+  promise: Promise<unknown>;
+};
+
+type PendingChannelSecretWriteFilter = {
+  channelId?: string;
+  accountId?: string;
+};
+
+let pendingSecretWrites: PendingChannelSecretWrite[] = [];
 
 export class ChannelCredentialHydrationError extends Error {
   constructor(
@@ -188,14 +201,17 @@ function applySecretPlaceholders(account: ChannelAccount): void {
   }
 }
 
-function queueSecretWrite(promise: Promise<unknown>): void {
-  pendingSecretWrites.push(
-    promise.catch(() => {
-      // Best-effort background secret persistence. Foreground commands that
-      // need to validate credentials surface errors explicitly; detached secret
-      // writes should not spam startup logs or crash the process.
-    }),
-  );
+function queueSecretWrite(
+  channelId: string,
+  accountId: string,
+  fieldPath: string,
+  promise: Promise<unknown>,
+): void {
+  // Attach a rejection handler immediately so detached background writes cannot
+  // become unhandled rejections. Keep the original promise in the queue so
+  // foreground secret-aware operations can await and surface targeted failures.
+  promise.catch(() => {});
+  pendingSecretWrites.push({ channelId, accountId, fieldPath, promise });
 }
 
 function prepareAccountForStorage(account: ChannelAccount): ChannelAccount {
@@ -234,6 +250,9 @@ function prepareAccountForStorage(account: ChannelAccount): ChannelAccount {
       markSecretRef(cloned, fieldPath);
       if (!isSecretPlaceholder(value)) {
         queueSecretWrite(
+          cloned.channel,
+          cloned.accountId,
+          fieldPath,
           setChannelSecret(cloned.channel, cloned.accountId, fieldPath, value),
         );
       }
@@ -613,10 +632,39 @@ function saveChannelAccounts(channelId: string): void {
   );
 }
 
-export async function flushPendingChannelSecretWrites(): Promise<void> {
-  while (pendingSecretWrites.length > 0) {
-    const writes = pendingSecretWrites.splice(0, pendingSecretWrites.length);
-    await Promise.all(writes);
+function matchesPendingSecretWrite(
+  write: PendingChannelSecretWrite,
+  filter: PendingChannelSecretWriteFilter,
+): boolean {
+  return (
+    (!filter.channelId || write.channelId === filter.channelId) &&
+    (!filter.accountId || write.accountId === filter.accountId)
+  );
+}
+
+export async function flushPendingChannelSecretWrites(
+  filter: PendingChannelSecretWriteFilter = {},
+): Promise<void> {
+  while (true) {
+    const writes = pendingSecretWrites.filter((write) =>
+      matchesPendingSecretWrite(write, filter),
+    );
+    if (writes.length === 0) {
+      return;
+    }
+
+    pendingSecretWrites = pendingSecretWrites.filter(
+      (write) => !matchesPendingSecretWrite(write, filter),
+    );
+    const results = await Promise.allSettled(
+      writes.map((write) => write.promise),
+    );
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failed) {
+      throw failed.reason;
+    }
   }
 }
 
@@ -700,7 +748,9 @@ export async function hydrateChannelAccountSecrets(
 
   if (migratedPlaintextSecrets) {
     saveChannelAccounts(channelId);
-    await flushPendingChannelSecretWrites();
+    await flushPendingChannelSecretWrites(
+      accountId ? { channelId, accountId } : { channelId },
+    );
   }
 }
 
@@ -766,7 +816,12 @@ export async function upsertChannelAccountWithSecrets(
   account: ChannelAccount,
 ): Promise<ChannelAccount> {
   await getActiveChannelCredentialsStoreMode();
-  return upsertChannelAccount(channelId, account);
+  const updated = upsertChannelAccount(channelId, account);
+  await flushPendingChannelSecretWrites({
+    channelId,
+    accountId: account.accountId,
+  });
+  return updated;
 }
 
 export function removeChannelAccount(
@@ -791,10 +846,16 @@ export async function removeChannelAccountWithSecrets(
 ): Promise<boolean> {
   await getActiveChannelCredentialsStoreMode();
   const account = getChannelAccount(channelId, accountId);
-  if (account && getCachedChannelCredentialsStoreMode() === "keyring") {
-    for (const fieldPath of getAccountSecretFieldPaths(account)) {
-      queueSecretWrite(deleteChannelSecret(channelId, accountId, fieldPath));
-    }
+  if (!account) {
+    return false;
+  }
+  if (getCachedChannelCredentialsStoreMode() === "keyring") {
+    await flushPendingChannelSecretWrites({ channelId, accountId });
+    await Promise.all(
+      getAccountSecretFieldPaths(account).map((fieldPath) =>
+        deleteChannelSecret(channelId, accountId, fieldPath),
+      ),
+    );
   }
   return removeChannelAccount(channelId, accountId);
 }

@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import WebSocket from "ws";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
 } from "@/channels/accounts";
+import { __testOverrideChannelsRoot } from "@/channels/config";
 import {
   __setActiveChannelCredentialsStoreModeForTests,
   __setChannelSecretStoreOverrideForTests,
-  getActiveChannelCredentialsStoreMode,
 } from "@/channels/credential-store";
 import {
   __testOverrideLoadRoutes,
@@ -38,6 +41,7 @@ afterEach(() => {
   __testOverrideSaveChannelAccounts(null);
   __testOverrideLoadRoutes(null);
   __testOverrideSaveRoutes(null);
+  __testOverrideChannelsRoot(null);
   __setActiveChannelCredentialsStoreModeForTests(null);
   __setChannelSecretStoreOverrideForTests(null);
 });
@@ -84,17 +88,17 @@ function findMessage(
   return parseMessages(socket).find((message) => message.type === type);
 }
 
-async function expectCommandCompletesWithoutSecretFlush(
+async function expectCommandWaitsForSecretFlush(
   commandPromise: Promise<void>,
 ): Promise<void> {
   const result = await Promise.race([
     commandPromise.then(() => "completed" as const),
-    new Promise<"timed-out">((resolve) => {
-      setTimeout(() => resolve("timed-out"), 250);
+    new Promise<"pending">((resolve) => {
+      setTimeout(() => resolve("pending"), 50);
     }),
   ]);
 
-  expect(result).toBe("completed");
+  expect(result).toBe("pending");
 }
 
 describe("channel account list responses", () => {
@@ -542,28 +546,51 @@ describe("channel account list responses", () => {
     }
   });
 
-  test("Telegram account protocol commands complete while keyring writes are pending", async () => {
-    setupInMemoryChannelStores();
+  test("Telegram account protocol commands await keyring writes and deletes", async () => {
+    const channelsRoot = mkdtempSync(
+      join(tmpdir(), "letta-listener-channel-secrets-"),
+    );
+    clearChannelAccountStores();
+    clearAllRoutes();
+    __testOverrideChannelsRoot(channelsRoot);
+    __testOverrideLoadChannelAccounts(null);
+    __testOverrideSaveChannelAccounts(null);
+    __testOverrideLoadRoutes(null);
+    __testOverrideSaveRoutes(null);
 
+    const secrets = new Map<string, string>();
     const pendingSecretOperations: Array<() => void> = [];
-    __setActiveChannelCredentialsStoreModeForTests("keyring");
-    __setChannelSecretStoreOverrideForTests({
-      get: async () => {
-        throw new Error("Secret hydration should not run for LCD commands");
-      },
-      set: async () =>
-        new Promise<void>((resolve) => {
-          pendingSecretOperations.push(resolve);
-        }),
-      delete: async () =>
-        new Promise<boolean>((resolve) => {
-          pendingSecretOperations.push(() => resolve(true));
-        }),
-    });
-    await getActiveChannelCredentialsStoreMode();
-
     const socket = new MockSocket(WebSocket.OPEN);
     const runtime = __listenClientTestUtils.createListenerRuntime();
+    const completeNextSecretOperation = async (
+      commandPromise: Promise<void>,
+      responseType: string,
+    ): Promise<void> => {
+      await expectCommandWaitsForSecretFlush(commandPromise);
+      expect(findMessage(socket, responseType)).toBeUndefined();
+      const complete = pendingSecretOperations.shift();
+      expect(complete).toBeDefined();
+      complete?.();
+    };
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    __setChannelSecretStoreOverrideForTests({
+      get: async (name) => secrets.get(name) ?? null,
+      set: async (name, value) =>
+        new Promise<void>((resolve) => {
+          pendingSecretOperations.push(() => {
+            secrets.set(name, value);
+            resolve();
+          });
+        }),
+      delete: async (name) =>
+        new Promise<boolean>((resolve) => {
+          pendingSecretOperations.push(() => {
+            secrets.delete(name);
+            resolve(true);
+          });
+        }),
+    });
+
     const commandPromises: Array<Promise<void>> = [];
 
     try {
@@ -588,7 +615,11 @@ describe("channel account list responses", () => {
         runtime,
       );
       commandPromises.push(createPromise);
-      await expectCommandCompletesWithoutSecretFlush(createPromise);
+      await completeNextSecretOperation(
+        createPromise,
+        "channel_account_create_response",
+      );
+      await createPromise;
 
       expect(
         findMessage(socket, "channel_account_create_response"),
@@ -614,8 +645,8 @@ describe("channel account list responses", () => {
           },
         },
       });
-      expect(pendingSecretOperations).toHaveLength(1);
 
+      clearChannelAccountStores();
       const updatePromise = sendChannelCommand(
         {
           type: "channel_account_update",
@@ -637,7 +668,11 @@ describe("channel account list responses", () => {
         runtime,
       );
       commandPromises.push(updatePromise);
-      await expectCommandCompletesWithoutSecretFlush(updatePromise);
+      await completeNextSecretOperation(
+        updatePromise,
+        "channel_account_update_response",
+      );
+      await updatePromise;
 
       expect(
         findMessage(socket, "channel_account_update_response"),
@@ -657,8 +692,8 @@ describe("channel account list responses", () => {
           },
         },
       });
-      expect(pendingSecretOperations).toHaveLength(2);
 
+      clearChannelAccountStores();
       const deletePromise = sendChannelCommand(
         {
           type: "channel_account_delete",
@@ -670,7 +705,11 @@ describe("channel account list responses", () => {
         runtime,
       );
       commandPromises.push(deletePromise);
-      await expectCommandCompletesWithoutSecretFlush(deletePromise);
+      await completeNextSecretOperation(
+        deletePromise,
+        "channel_account_delete_response",
+      );
+      await deletePromise;
 
       expect(
         findMessage(socket, "channel_account_delete_response"),
@@ -681,15 +720,15 @@ describe("channel account list responses", () => {
         account_id: "telegram-bot",
         deleted: true,
       });
-      // Delete is intentionally non-hydrating for the LCD command path, but it
-      // still queues deletion for the persisted keyring ref.
-      expect(pendingSecretOperations).toHaveLength(3);
+      expect(pendingSecretOperations).toHaveLength(0);
     } finally {
       for (const resolveSecretOperation of pendingSecretOperations.splice(0)) {
         resolveSecretOperation();
       }
       await Promise.allSettled(commandPromises);
       __listenClientTestUtils.stopRuntime(runtime, true);
+      __testOverrideChannelsRoot(null);
+      rmSync(channelsRoot, { recursive: true, force: true });
     }
   });
 

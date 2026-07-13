@@ -3,7 +3,6 @@ import {
   getChannelAccount,
   getChannelAccountWithSecrets,
   listChannelAccounts,
-  listChannelAccountsWithSecrets,
 } from "./accounts";
 import { isSupportedChannelId } from "./plugin-registry";
 import type { ChannelAccount, SupportedChannelId } from "./types";
@@ -62,12 +61,15 @@ export async function getSelectedChannelAccountWithSecrets(
     return getChannelAccountWithSecrets(channelId, normalizedAccountId);
   }
 
-  const accounts = await listChannelAccountsWithSecrets(channelId);
+  const accounts = listChannelAccounts(channelId);
   if (accounts.length === 0) {
     return null;
   }
   if (accounts.length === 1) {
-    return accounts[0] ?? null;
+    const [account] = accounts;
+    return account
+      ? getChannelAccountWithSecrets(channelId, account.accountId)
+      : null;
   }
 
   throw new Error(

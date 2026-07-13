@@ -545,10 +545,27 @@ export class ChannelRegistry {
     }
 
     let started = false;
+    const failures: ChannelStartupFailure[] = [];
     for (const account of accounts) {
-      started =
-        (await this.startChannelAccount(channelId, account.accountId)) ||
-        started;
+      try {
+        started =
+          (await this.startChannelAccount(channelId, account.accountId)) ||
+          started;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push({
+          channelId,
+          accountId: account.accountId,
+          error: message,
+        });
+        console.error(
+          `[Channels] Failed to start ${channelId}/${account.accountId}:`,
+          message,
+        );
+      }
+    }
+    if (failures.length > 0) {
+      throw new ChannelInitializationError(failures);
     }
     return started;
   }

@@ -31,6 +31,7 @@ import { getChannelRegistry, initializeChannels } from "@/channels/registry";
 import {
   createChannelAccountLiveWithSecrets,
   removeChannelAccountLive,
+  setChannelConfigLive,
 } from "@/channels/service";
 import type {
   CustomChannelAccount,
@@ -301,6 +302,49 @@ describe("channel credential storage", () => {
     ).toBe(false);
   });
 
+  test("secret-aware upserts await and surface keyring write failures", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    __setChannelSecretStoreOverrideForTests({
+      get: async () => null,
+      set: async () => {
+        throw new Error("keyring write failed");
+      },
+      delete: async () => true,
+    });
+
+    await expect(
+      upsertChannelAccountWithSecrets("slack", makeSlackAccount()),
+    ).rejects.toThrow("keyring write failed");
+  });
+
+  test("secret-aware deletes await keyring deletion and keep the account on failure", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    await upsertChannelAccountWithSecrets("slack", makeSlackAccount());
+    await flushPendingChannelSecretWrites();
+    __setChannelSecretStoreOverrideForTests({
+      get: async (name) => secrets.get(name) ?? null,
+      set: async (name, value) => {
+        secrets.set(name, value);
+      },
+      delete: async () => {
+        throw new Error("keyring delete failed");
+      },
+    });
+
+    await expect(
+      removeChannelAccountWithSecrets("slack", "slack-account"),
+    ).rejects.toThrow("keyring delete failed");
+
+    const persisted = readAccountsFile(channelsRoot, "slack") as {
+      accounts: Array<Record<string, unknown>>;
+    };
+    expect(persisted.accounts).toHaveLength(1);
+    expect(persisted.accounts[0]).toMatchObject({
+      accountId: "slack-account",
+    });
+  });
+
   test("live account delete removes keyring secrets", async () => {
     __setActiveChannelCredentialsStoreModeForTests("keyring");
 
@@ -425,6 +469,39 @@ describe("channel credential storage", () => {
     await expect(
       getChannelAccountWithSecrets("schemasecret", "schema-broken"),
     ).rejects.toThrow(/saved secret reference was preserved/i);
+  });
+
+  test("ambiguous config updates do not hydrate every account before reporting ambiguity", async () => {
+    writeSchemaSecretChannel(channelsRoot);
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    await upsertChannelAccountWithSecrets("schemasecret", {
+      ...makeSchemaSecretAccount(),
+      accountId: "schema-good",
+      config: {
+        endpoint: "https://good.example.test/webhook",
+        api_key: "good-secret",
+      },
+    });
+    await upsertChannelAccountWithSecrets("schemasecret", {
+      ...makeSchemaSecretAccount(),
+      accountId: "schema-broken",
+      config: {
+        endpoint: "https://broken.example.test/webhook",
+        api_key: "broken-secret",
+      },
+    });
+    await flushPendingChannelSecretWrites();
+    secrets.delete(
+      buildChannelSecretName("schemasecret", "schema-broken", "config.api_key"),
+    );
+    clearChannelAccountStores();
+
+    await expect(
+      setChannelConfigLive("schemasecret", {
+        config: { endpoint: "https://ambiguous.example.test/webhook" },
+      }),
+    ).rejects.toThrow(/multiple accounts/i);
   });
 
   test("startup does not hydrate unrelated channel credential refs", async () => {

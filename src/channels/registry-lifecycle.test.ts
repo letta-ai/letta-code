@@ -5,6 +5,10 @@ import {
   clearChannelAccountStores,
 } from "@/channels/accounts";
 import {
+  __setActiveChannelCredentialsStoreModeForTests,
+  __setChannelSecretStoreOverrideForTests,
+} from "@/channels/credential-store";
+import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
   clearPairingStores,
@@ -26,7 +30,10 @@ import {
   addRoute,
   clearAllRoutes,
 } from "@/channels/routing";
-import type { SignalChannelAccount } from "@/channels/types";
+import type {
+  CustomChannelAccount,
+  SignalChannelAccount,
+} from "@/channels/types";
 
 beforeEach(() => {
   __testOverrideLoadPendingControlRequestStore(null);
@@ -62,6 +69,8 @@ describe("ChannelRegistry lifecycle", () => {
     __testOverrideSavePairingStore(null);
     __testOverrideLoadChannelAccounts(null);
     __testOverrideSaveChannelAccounts(null);
+    __setActiveChannelCredentialsStoreModeForTests(null);
+    __setChannelSecretStoreOverrideForTests(null);
   });
 
   test("pause() stops delivery but keeps singleton alive", () => {
@@ -177,6 +186,45 @@ describe("ChannelRegistry lifecycle", () => {
     await expect(registry.startChannelAccount("signal", "one")).rejects.toThrow(
       /share base_url/,
     );
+  });
+
+  test("startChannel starts healthy sibling accounts before reporting broken credentials", async () => {
+    const now = "2026-06-17T00:00:00.000Z";
+    const makeCustomAccount = (
+      accountId: string,
+      refs?: Record<string, boolean>,
+    ): CustomChannelAccount => ({
+      channel: "custom",
+      accountId,
+      displayName: accountId,
+      enabled: true,
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      config: {
+        url: `https://${accountId}.example.test/webhook`,
+      },
+      ...(refs ? { __letta_secret_refs: refs } : {}),
+      createdAt: now,
+      updatedAt: now,
+    });
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    __setChannelSecretStoreOverrideForTests({
+      get: async () => null,
+      set: async () => {},
+      delete: async () => true,
+    });
+    __testOverrideLoadChannelAccounts(() => [
+      makeCustomAccount("broken", { "config.auth": true }),
+      makeCustomAccount("healthy"),
+    ]);
+    const registry = new ChannelRegistry();
+
+    await expect(registry.startChannel("custom")).rejects.toBeInstanceOf(
+      ChannelInitializationError,
+    );
+
+    expect(registry.getAdapter("custom", "healthy")?.isRunning()).toBe(true);
+    expect(registry.getAdapter("custom", "broken")).toBeNull();
   });
 
   test("initializeChannels does not start accounts outside the restore scope", async () => {
