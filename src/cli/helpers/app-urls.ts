@@ -1,7 +1,8 @@
 import { isLocalAgentId as isLocalAgentIdShared } from "@/agent/agent-id";
 
 export const LETTA_APP_BASE_URL = "https://app.letta.com";
-export const LETTA_API_KEYS_URL = `${LETTA_APP_BASE_URL}/projects/default-project/api-keys`;
+export const LETTA_PLATFORM_BASE_URL = "https://platform.letta.com";
+export const LETTA_PLATFORM_API_KEYS_URL = `${LETTA_PLATFORM_BASE_URL}/projects/default-project/api-keys`;
 
 export function isLocalAgentId(agentId: string): boolean {
   return isLocalAgentIdShared(agentId);

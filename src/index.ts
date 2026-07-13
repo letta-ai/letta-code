@@ -50,7 +50,7 @@ import {
   parseCsvListFlag,
   resolveImportFlagAlias,
 } from "./cli/flag-utils";
-import { LETTA_API_KEYS_URL } from "./cli/helpers/app-urls";
+import { LETTA_PLATFORM_API_KEYS_URL } from "./cli/helpers/app-urls";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import { ensureFdPath, resolveFdPath } from "./cli/helpers/file-autocomplete";
 import type { ApprovalRequest } from "./cli/helpers/stream";
@@ -1209,7 +1209,7 @@ async function main(): Promise<void> {
       console.error(
         "Headless mode requires an API key set via the LETTA_API_KEY environment variable.",
       );
-      console.error(`Get an API key at ${LETTA_API_KEYS_URL}`);
+      console.error(`Get an API key at ${LETTA_PLATFORM_API_KEYS_URL}`);
       process.exit(1);
     }
 
