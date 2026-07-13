@@ -233,6 +233,22 @@ function validateRequestedContextWindow(params: {
   }
 }
 
+function formatMissingContextWindowDefaultError(params: {
+  modelHandle?: string | null;
+  currentContextWindow?: number | null;
+}): string {
+  const modelDescription = params.modelHandle
+    ? `model ${params.modelHandle}`
+    : "the current model";
+  const suggestedValue =
+    typeof params.currentContextWindow === "number" &&
+    Number.isSafeInteger(params.currentContextWindow) &&
+    params.currentContextWindow > 0
+      ? String(params.currentContextWindow)
+      : "<tokens>";
+  return `No catalog default for ${modelDescription}, so reset is unavailable. Pass an explicit value: /context-limit ${suggestedValue}.`;
+}
+
 export async function applySetMaxContext(params: {
   agentId: string;
   conversationId: string;
@@ -288,7 +304,11 @@ export async function applySetMaxContext(params: {
   const contextWindow = reset ? modelDefault.contextWindow : parsed.value;
   if (contextWindow === undefined || contextWindow === null) {
     throw new Error(
-      "No default value for max context window found in model.json",
+      formatMissingContextWindowDefaultError({
+        modelHandle: effectiveModelHandle,
+        currentContextWindow:
+          effectiveContextWindow ?? effectiveLlmConfig?.context_window ?? null,
+      }),
     );
   }
 
