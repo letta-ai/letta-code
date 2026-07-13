@@ -238,7 +238,7 @@ export type ListenerRuntime = {
     import("@/websocket/listener/worktree-watcher").WorktreeWatcherState
   >;
   /** Agent IDs whose memfs repo has been cloned/pulled this session. Concurrent callers coalesce on the same promise. */
-  memfsSyncedAgents: Map<string, Promise<void>>;
+  memfsSyncedAgents: Map<string, Promise<boolean>>;
   /** Agent IDs with an in-flight secrets refresh. Concurrent callers coalesce on the same promise. */
   secretsHydrationByAgent: Map<string, Promise<void>>;
   /** Per-agent timestamp of the last successful secrets hydration. Used for freshness-based caching. */

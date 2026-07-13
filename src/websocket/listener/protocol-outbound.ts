@@ -44,6 +44,10 @@ import {
 } from "./channel-turn-session";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory, getExportedCwdMap } from "./cwd";
+import {
+  recordDeviceStatus,
+  shouldEmitDeviceStatus,
+} from "./device-status-cache";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { listListenerModCommands } from "./mod-commands";
 import { getConversationPermissionModeState } from "./permission-mode";
@@ -697,12 +701,14 @@ export function emitDeviceStatusUpdate(
     conversation_id?: string | null;
   },
 ): void {
+  const deviceStatus = buildDeviceStatus(runtime, scope);
+  recordDeviceStatus(socket, getScopeForRuntime(runtime, scope), deviceStatus);
   const message: Omit<
     DeviceStatusUpdateMessage,
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
   > = {
     type: "update_device_status",
-    device_status: buildDeviceStatus(runtime, scope),
+    device_status: deviceStatus,
   };
   emitProtocolV2Message(socket, runtime, message, scope);
 }
@@ -940,17 +946,26 @@ export function emitQueueUpdateIfOpen(
   }
 }
 
-/**
- * Per-transport, per-scope cache of the last emitted device-status JSON.
- * Periodic syncs can opt into this cache to avoid redundant device-status
- * frames when idle, while recovery/visibility syncs can force a full replay.
- * Keyed by transport (WeakMap) so cache is naturally cleaned up when the
- * socket closes and gets GC'd. (LET-8948)
- */
-const lastSyncDeviceStatusByTransport = new WeakMap<
-  ListenerTransport,
-  Map<string, string>
->();
+export function emitDeviceStatusUpdateIfChanged(
+  socket: ListenerTransport,
+  runtime: RuntimeCarrier,
+  scope: RuntimeScope,
+  options?: { force?: boolean },
+): boolean {
+  const deviceStatus = buildDeviceStatus(runtime, scope);
+  if (!shouldEmitDeviceStatus(socket, scope, deviceStatus, options?.force)) {
+    return false;
+  }
+  const message: Omit<
+    DeviceStatusUpdateMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  > = {
+    type: "update_device_status",
+    device_status: deviceStatus,
+  };
+  emitProtocolV2Message(socket, runtime, message, scope);
+  return true;
+}
 
 export function emitStateSync(
   socket: ListenerTransport,
@@ -958,28 +973,12 @@ export function emitStateSync(
   scope: RuntimeScope,
   options?: { forceDeviceStatus?: boolean },
 ): void {
-  const deviceStatus = buildDeviceStatus(runtime, scope);
-  const deviceStatusJson = JSON.stringify(deviceStatus);
-  const cacheKey = `${scope.agent_id ?? ""}:${scope.conversation_id ?? ""}`;
-
-  let scopeCache = lastSyncDeviceStatusByTransport.get(socket);
-  if (!scopeCache) {
-    scopeCache = new Map();
-    lastSyncDeviceStatusByTransport.set(socket, scopeCache);
-  }
-  const prev = scopeCache.get(cacheKey);
-
-  if (options?.forceDeviceStatus || deviceStatusJson !== prev) {
-    scopeCache.set(cacheKey, deviceStatusJson);
-    const message: Omit<
-      DeviceStatusUpdateMessage,
-      "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
-    > = {
-      type: "update_device_status",
-      device_status: deviceStatus,
-    };
-    emitProtocolV2Message(socket, runtime, message, scope);
-  }
+  emitDeviceStatusUpdateIfChanged(
+    socket,
+    runtime,
+    scope,
+    options?.forceDeviceStatus ? { force: true } : undefined,
+  );
 
   emitLoopStatusUpdate(socket, runtime, scope);
   emitQueueUpdate(socket, runtime, scope);

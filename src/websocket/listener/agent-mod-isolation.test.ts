@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
@@ -47,6 +47,12 @@ function useFakeAgent(agentId: string): void {
     ),
   );
 }
+
+beforeEach(() => {
+  __listenerModAdapterTestUtils.setEnsureMemfsSyncedForAgentForTests(
+    async () => true,
+  );
+});
 
 afterEach(() => {
   __listenerModAdapterTestUtils.resetForTests();
@@ -229,6 +235,139 @@ describe("listener agent-scoped mods", () => {
     globalAdapter.dispose();
     agentAAdapter.dispose();
     agentBAdapter.dispose();
+  });
+
+  test("waits for MemFS sync before caching the agent adapter", async () => {
+    const root = createTempDir();
+    const memoryRoot = join(root, "agent-memory");
+    const modsDirectory = join(memoryRoot, "mods");
+    mkdirSync(modsDirectory, { recursive: true });
+    const modPath = join(modsDirectory, "sync-state.js");
+    const writeTool = (toolName: string): void => {
+      writeFileSync(
+        modPath,
+        `export default function activate(letta) {
+          letta.tools.register({
+            name: "${toolName}",
+            description: "MemFS sync state",
+            parameters: { type: "object", properties: {} },
+            run() { return "${toolName}"; },
+          });
+        }`,
+      );
+    };
+    writeTool("stale_before_sync");
+    execFileSync("git", ["init", "-q"], { cwd: memoryRoot });
+    execFileSync("git", ["add", "mods/sync-state.js"], { cwd: memoryRoot });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Listener Test",
+        "-c",
+        "user.email=listener@example.com",
+        "commit",
+        "-qm",
+        "stale mod",
+      ],
+      { cwd: memoryRoot },
+    );
+
+    let resolveSync: ((succeeded: boolean) => void) | undefined;
+    let syncCalls = 0;
+    __listenerModAdapterTestUtils.setEnsureMemfsSyncedForAgentForTests(
+      async () => {
+        syncCalls += 1;
+        return new Promise<boolean>((resolve) => {
+          resolveSync = resolve;
+        });
+      },
+    );
+    __listenerModAdapterTestUtils.setAgentModsDirectoryResolverForTests(
+      () => modsDirectory,
+    );
+    __listenerModAdapterTestUtils.setAgentModCacheDirectoryResolverForTests(
+      () => join(root, "listener-cache"),
+    );
+    const listener = {
+      agentModAdapters: new Map(),
+      agentModAdapterLoads: new Map(),
+      bootWorkingDirectory: root,
+      sessionId: "listener-sync-order-test",
+    } as unknown as ListenerRuntime;
+
+    const firstLoad = ensureListenerAgentModAdapter(listener, "agent-a");
+    const joinedLoad = ensureListenerAgentModAdapter(listener, "agent-a");
+    expect(syncCalls).toBe(1);
+    expect(listener.agentModAdapters?.has("agent-a")).toBe(false);
+
+    writeTool("fresh_after_sync");
+    execFileSync("git", ["add", "mods/sync-state.js"], { cwd: memoryRoot });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=Listener Test",
+        "-c",
+        "user.email=listener@example.com",
+        "commit",
+        "-qm",
+        "synced mod",
+      ],
+      { cwd: memoryRoot },
+    );
+    resolveSync?.(true);
+
+    const [firstAdapter, joinedAdapter] = await Promise.all([
+      firstLoad,
+      joinedLoad,
+    ]);
+    expect(firstAdapter).not.toBeNull();
+    expect(joinedAdapter).toBe(firstAdapter);
+    expect(
+      Object.keys(firstAdapter?.getSnapshot().registry.tools ?? {}),
+    ).toEqual(["fresh_after_sync"]);
+    expect(
+      execFileSync("git", ["status", "--porcelain"], {
+        cwd: memoryRoot,
+        encoding: "utf8",
+      }),
+    ).toBe("");
+
+    disposeListenerModAdapter(listener);
+  });
+
+  test("does not cache an adapter when shutdown cancels an in-flight sync", async () => {
+    const root = createTempDir();
+    const modsDirectory = join(root, "agent-memory", "mods");
+    mkdirSync(modsDirectory, { recursive: true });
+    writeFileSync(
+      join(modsDirectory, "cancelled.js"),
+      "export default function activate() {}",
+    );
+    let resolveSync: ((succeeded: boolean) => void) | undefined;
+    __listenerModAdapterTestUtils.setEnsureMemfsSyncedForAgentForTests(
+      async () =>
+        new Promise<boolean>((resolve) => {
+          resolveSync = resolve;
+        }),
+    );
+    __listenerModAdapterTestUtils.setAgentModsDirectoryResolverForTests(
+      () => modsDirectory,
+    );
+    const listener = {
+      agentModAdapters: new Map(),
+      agentModAdapterLoads: new Map(),
+      bootWorkingDirectory: root,
+      sessionId: "listener-sync-cancel-test",
+    } as unknown as ListenerRuntime;
+
+    const load = ensureListenerAgentModAdapter(listener, "agent-a");
+    disposeListenerModAdapter(listener);
+    resolveSync?.(true);
+
+    await expect(load).resolves.toBeNull();
+    expect(listener.agentModAdapters?.has("agent-a")).toBe(false);
   });
 
   test("uses distinct module identity for identical stateful agent mods", async () => {

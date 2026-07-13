@@ -83,28 +83,32 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
  * Concurrent callers for the same agent coalesce onto a single in-flight
  * promise so turn ordering stays deterministic.
  *
- * Non-fatal: logs a warning on failure but doesn't throw.
+ * Non-fatal: logs a warning and returns false on failure so source consumers
+ * do not read a stale checkout.
  */
 export async function ensureMemfsSyncedForAgent(
   listener: ListenerRuntime,
   agentId: string,
-): Promise<void> {
+): Promise<boolean> {
   const existing = listener.memfsSyncedAgents.get(agentId);
   if (existing) {
-    await existing;
-    return;
+    return existing;
   }
 
-  const promise = syncMemfsForAgent(agentId).catch((err) => {
-    // Non-fatal — agent can still process messages, just without local memory.
-    debugWarn(
-      "memfs-sync",
-      `Failed to sync memfs for agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    // Remove so next turn retries.
-    listener.memfsSyncedAgents.delete(agentId);
-  });
+  const promise = syncMemfsForAgent(agentId).then(
+    () => true,
+    (err) => {
+      // Non-fatal — agent can still process messages, just without local memory.
+      debugWarn(
+        "memfs-sync",
+        `Failed to sync memfs for agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      // Remove so next turn retries.
+      listener.memfsSyncedAgents.delete(agentId);
+      return false;
+    },
+  );
 
   listener.memfsSyncedAgents.set(agentId, promise);
-  await promise;
+  return promise;
 }

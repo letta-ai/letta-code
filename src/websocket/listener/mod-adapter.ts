@@ -17,6 +17,7 @@ import type {
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { getBootWorkingDirectory } from "./cwd";
+import { ensureMemfsSyncedForAgent } from "./memfs-sync";
 import type { ListenerRuntime } from "./types";
 
 export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
@@ -148,6 +149,7 @@ function resolveListenerAgentModCacheDirectory(agentId: string): string {
 
 let resolveAgentModsDirectory = resolveListenerAgentModsDirectory;
 let resolveAgentModCacheDirectory = resolveListenerAgentModCacheDirectory;
+let ensureAgentMemfsSynced = ensureMemfsSyncedForAgent;
 
 export async function ensureListenerAgentModAdapter(
   runtime: ListenerRuntime,
@@ -163,28 +165,42 @@ export async function ensureListenerAgentModAdapter(
   const pending = agentModAdapterLoads.get(agentId);
   if (pending) return pending;
 
-  const agentModsDirectory = resolveAgentModsDirectory(agentId);
-  if (!agentModsDirectory) return null;
-
-  const load = (async () => {
-    const adapter = createListenerModAdapter({
-      agentModsDirectory,
-      cacheDirectory: resolveAgentModCacheDirectory(agentId),
-      capabilities: LISTENER_AGENT_MOD_CAPABILITIES,
-      includeGlobalMods: false,
-      registerCapabilitiesGlobally: false,
-      sessionId: runtime.sessionId,
-      workingDirectory: runtime.bootWorkingDirectory,
-    });
+  let load: Promise<ModAdapter | null> | undefined;
+  load = (async () => {
     try {
-      await adapter.reload();
-      agentModAdapters.set(agentId, adapter);
-      return adapter;
-    } catch (error) {
-      adapter.dispose();
-      throw error;
+      const syncSucceeded = await ensureAgentMemfsSynced(runtime, agentId);
+      if (!syncSucceeded || agentModAdapterLoads.get(agentId) !== load) {
+        return null;
+      }
+
+      const agentModsDirectory = resolveAgentModsDirectory(agentId);
+      if (!agentModsDirectory) return null;
+
+      const adapter = createListenerModAdapter({
+        agentModsDirectory,
+        cacheDirectory: resolveAgentModCacheDirectory(agentId),
+        capabilities: LISTENER_AGENT_MOD_CAPABILITIES,
+        includeGlobalMods: false,
+        registerCapabilitiesGlobally: false,
+        sessionId: runtime.sessionId,
+        workingDirectory: runtime.bootWorkingDirectory,
+      });
+      try {
+        await adapter.reload();
+        if (agentModAdapterLoads.get(agentId) !== load) {
+          adapter.dispose();
+          return null;
+        }
+        agentModAdapters.set(agentId, adapter);
+        return adapter;
+      } catch (error) {
+        adapter.dispose();
+        throw error;
+      }
     } finally {
-      agentModAdapterLoads.delete(agentId);
+      if (agentModAdapterLoads.get(agentId) === load) {
+        agentModAdapterLoads.delete(agentId);
+      }
     }
   })();
 
@@ -269,9 +285,15 @@ export const __listenerModAdapterTestUtils = {
   ): void {
     resolveAgentModCacheDirectory = resolver;
   },
+  setEnsureMemfsSyncedForAgentForTests(
+    ensureSynced: typeof ensureMemfsSyncedForAgent,
+  ): void {
+    ensureAgentMemfsSynced = ensureSynced;
+  },
   resetForTests(): void {
     resolveAgentModsDirectory = resolveListenerAgentModsDirectory;
     resolveAgentModCacheDirectory = resolveListenerAgentModCacheDirectory;
+    ensureAgentMemfsSynced = ensureMemfsSyncedForAgent;
   },
 };
 
