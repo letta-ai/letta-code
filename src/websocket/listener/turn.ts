@@ -21,7 +21,6 @@ import {
   toLines,
 } from "@/cli/helpers/accumulator";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
-import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
@@ -32,6 +31,7 @@ import {
   LLM_API_ERROR_MAX_RETRIES,
   PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
+import { createCronTurnRunLogger } from "./cron-run-lifecycle";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
   emitInterruptToolReturnMessage,
@@ -74,6 +74,7 @@ import { handleApprovalStop } from "./turn-approval";
 import { runListenerTurnCleanup } from "./turn-cleanup";
 import { completeSuccessfulListenerTurn } from "./turn-completion";
 import { releaseListenerTurnContext } from "./turn-context";
+import { listenerDrainStreamWithResume } from "./turn-io";
 import type { TurnLease } from "./turn-lifecycle";
 import { createTurnInputSender } from "./turn-send";
 import { prepareListenerTurn } from "./turn-setup";
@@ -81,7 +82,6 @@ import { setTurnLoopStatus } from "./turn-status";
 import { finishListenerTurn } from "./turn-terminal";
 import { seedInboundUserTranscriptLines } from "./turn-transcript";
 import type { ConversationRuntime, IncomingMessage } from "./types";
-
 export async function handleIncomingMessage(
   msg: IncomingMessage,
   socket: ListenerTransport,
@@ -103,21 +103,21 @@ export async function handleIncomingMessage(
     normalizedAgentId,
     conversationId,
   );
-
   // Get the canonical mutable permission mode state ref for this turn.
   const turnPermissionModeState = getOrCreateConversationPermissionModeStateRef(
     runtime.listener,
     normalizedAgentId,
     conversationId,
   );
-
   const msgRunIds: string[] = [];
+  let runId: string | undefined;
   let postStopApprovalRecoveryRetries = 0;
   let llmApiErrorRetries = 0;
   let emptyResponseRetries = 0;
   let lastApprovalContinuationAccepted = false;
   let activeDequeuedBatchId = dequeuedBatchId;
-
+  const latestBackendRunId = (): string | undefined =>
+    runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
@@ -125,7 +125,6 @@ export async function handleIncomingMessage(
     batchId: dequeuedBatchId,
     sources: msg.channelTurnSources,
   });
-
   const turnLease =
     existingTurnLease ??
     runtime.turnLifecycle.begin({
@@ -136,6 +135,15 @@ export async function handleIncomingMessage(
     throw new Error("Cannot continue a turn with a stale lifecycle lease");
   }
   const turnAbortSignal = turnLease.signal;
+  const cronRunLogger = createCronTurnRunLogger({
+    msg,
+    agentId,
+    conversationId,
+    getBatchId: () => activeDequeuedBatchId,
+    getBackendRunId: latestBackendRunId,
+    isCancellationRequested: () =>
+      turnAbortSignal.aborted || runtime.cancelRequested,
+  });
   let finalizedByThisInvocation = false;
   const noteFinalization = (
     transition: ReturnType<typeof finishListenerTurn>,
@@ -154,16 +162,19 @@ export async function handleIncomingMessage(
     ) {
       return false;
     }
-    finishTurn({
+    const transition = finishTurn({
       stopReason: "cancelled",
       socket,
       runId,
       agentId: agentId ?? null,
       conversationId,
     });
+    if (transition.finished) {
+      cronRunLogger.cancelled(runId ?? latestBackendRunId());
+    }
     return true;
   };
-
+  cronRunLogger.turnStarted();
   try {
     runtime.lastTerminalLoopErrorMessage = null;
     runtime.lastTerminalLoopErrorRunId = null;
@@ -180,15 +191,14 @@ export async function handleIncomingMessage(
       conversation_id: conversationId,
     });
     telemetry.setCurrentAgentId(agentId ?? null);
-
     if (!agentId) {
+      cronRunLogger.missingAgent();
       finishTurn({
         stopReason: "error",
         conversationId,
       });
       return;
     }
-
     let turnToolContextId: string | null = null;
     const setup = await prepareListenerTurn({
       msg,
@@ -203,12 +213,16 @@ export async function handleIncomingMessage(
       connectionId,
     });
     if (setup.kind === "interrupted") {
-      finishTurn({
+      const terminalRunId = latestBackendRunId();
+      const transition = finishTurn({
         stopReason: "cancelled",
         socket,
         agentId,
         conversationId,
       });
+      if (transition.finished) {
+        cronRunLogger.cancelled(terminalRunId);
+      }
       return;
     }
     if (setup.kind === "cancelled") {
@@ -230,6 +244,7 @@ export async function handleIncomingMessage(
         abortSignal: turnAbortSignal,
       });
       runtime.lastTerminalLoopErrorMessage = formattedError ?? setup.reason;
+      cronRunLogger.setupCancelled(runtime.lastTerminalLoopErrorMessage);
       return;
     }
     let currentInput = setup.currentInput;
@@ -261,7 +276,6 @@ export async function handleIncomingMessage(
           }
         : {}),
     });
-
     const turnInputSender = createTurnInputSender({
       conversationId,
       agentId,
@@ -272,7 +286,6 @@ export async function handleIncomingMessage(
       buildSendOptions,
       onTerminal: noteFinalization,
     });
-
     const currentInputWithSkillContent = injectQueuedSkillContent(currentInput);
     const initialSendResult = await turnInputSender.send(
       currentInputWithSkillContent,
@@ -280,6 +293,7 @@ export async function handleIncomingMessage(
     currentInput = currentInputWithSkillContent;
     const initialStream = turnInputSender.accept(initialSendResult);
     if (!initialStream) {
+      cronRunLogger.streamUnavailable();
       return;
     }
     let stream = initialStream;
@@ -293,19 +307,16 @@ export async function handleIncomingMessage(
       agent_id: agentId,
       conversation_id: conversationId,
     });
-
     turnToolContextId = getStreamToolContextId(
       stream as Stream<LettaStreamingResponse>,
     );
     let runIdSent = false;
-    let runId: string | undefined;
     const buffers = createBuffers(agentId);
     seedInboundUserTranscriptLines(buffers, inboundUserTranscriptLines);
-
     while (true) {
       runIdSent = false;
       let latestErrorText: string | null = null;
-      const result = await drainStreamWithResume(
+      const result = await listenerDrainStreamWithResume(
         stream as Stream<LettaStreamingResponse>,
         buffers,
         () => {},
@@ -319,6 +330,7 @@ export async function handleIncomingMessage(
           if (typeof maybeRunId === "string") {
             runId = maybeRunId;
             runtime.turnLifecycle.setRunId(turnLease, maybeRunId);
+            cronRunLogger.backendRunStarted(maybeRunId);
             if (!runIdSent) {
               runIdSent = true;
               msgRunIds.push(maybeRunId);
@@ -328,7 +340,6 @@ export async function handleIncomingMessage(
               });
             }
           }
-
           if (errorInfo) {
             const recoverableApprovalErrorText =
               getApprovalToolCallDesyncErrorText(errorInfo);
@@ -359,11 +370,9 @@ export async function handleIncomingMessage(
               );
             }
           }
-
           richDraftStreamer?.handleChunk(
             chunk as unknown as LettaStreamingResponse,
           );
-
           if (shouldOutput) {
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
@@ -383,12 +392,10 @@ export async function handleIncomingMessage(
               );
             }
           }
-
           return undefined;
         },
         runtime.contextTracker,
       );
-
       const stopReason = result.stopReason;
       const approvals = result.approvals || [];
       const fallbackError = result.fallbackError ?? null;
@@ -402,7 +409,6 @@ export async function handleIncomingMessage(
         break;
       }
       lastApprovalContinuationAccepted = false;
-
       if (stopReason === "end_turn") {
         const transcriptLines = toLines(buffers);
         const completion = await completeSuccessfulListenerTurn({
@@ -426,23 +432,30 @@ export async function handleIncomingMessage(
         ) {
           break;
         }
-        finishTurn({
+        const terminalRunId = latestBackendRunId();
+        const transition = finishTurn({
           stopReason: "end_turn",
           agentId,
           conversationId,
         });
-
+        if (transition.finished) {
+          cronRunLogger.completed(terminalRunId);
+        }
         break;
       }
 
       if (stopReason === "cancelled") {
-        finishTurn({
+        const terminalRunId = latestBackendRunId();
+        const transition = finishTurn({
           stopReason: "cancelled",
           socket,
-          runId: runId || runtime.activeRunId,
+          runId: terminalRunId,
           agentId: agentId ?? null,
           conversationId,
         });
+        if (transition.finished) {
+          cronRunLogger.cancelled(terminalRunId);
+        }
         break;
       }
 
@@ -510,6 +523,7 @@ export async function handleIncomingMessage(
           currentInput = retryInputWithSkillContent;
           const retryStream = turnInputSender.accept(retrySendResult);
           if (!retryStream) {
+            cronRunLogger.streamUnavailable();
             return;
           }
           stream = retryStream;
@@ -585,6 +599,7 @@ export async function handleIncomingMessage(
           currentInput = retryInputWithSkillContent;
           const retryStream = turnInputSender.accept(retrySendResult);
           if (!retryStream) {
+            cronRunLogger.streamUnavailable();
             return;
           }
           stream = retryStream;
@@ -662,6 +677,7 @@ export async function handleIncomingMessage(
           currentInput = retryInputWithSkillContent;
           const retryStream = turnInputSender.accept(retrySendResult);
           if (!retryStream) {
+            cronRunLogger.streamUnavailable();
             return;
           }
           stream = retryStream;
@@ -686,13 +702,17 @@ export async function handleIncomingMessage(
           : (stopReason as StopReasonType) || "error";
 
         if (effectiveStopReason === "cancelled") {
-          finishTurn({
+          const cancelledRunId = latestBackendRunId();
+          const transition = finishTurn({
             stopReason: "cancelled",
             socket,
-            runId: runId || runtime.activeRunId,
+            runId: cancelledRunId,
             agentId: agentId ?? null,
             conversationId,
           });
+          if (transition.finished) {
+            cronRunLogger.cancelled(cancelledRunId);
+          }
           break;
         }
 
@@ -722,6 +742,14 @@ export async function handleIncomingMessage(
         });
         runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
         runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
+        cronRunLogger.failed({
+          summary: effectiveStopReason,
+          stopReason: effectiveStopReason,
+          error: runtime.lastTerminalLoopErrorMessage,
+          errorClass: effectiveStopReason,
+          errorMessage: runtime.lastTerminalLoopErrorMessage,
+          backendRunId: terminalRunId,
+        });
         break;
       }
 
@@ -745,7 +773,7 @@ export async function handleIncomingMessage(
       });
 
       if (approvalResult.kind === "error") {
-        const terminalRunId = runId || runtime.activeRunId;
+        const terminalRunId = latestBackendRunId();
         const transition = finishTurn({
           stopReason: "error",
           agentId,
@@ -765,6 +793,14 @@ export async function handleIncomingMessage(
         runtime.lastTerminalLoopErrorMessage =
           formattedError ?? approvalResult.message;
         runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
+        cronRunLogger.failed({
+          summary: "error",
+          stopReason: "error",
+          error: runtime.lastTerminalLoopErrorMessage,
+          errorClass: "approval_error",
+          errorMessage: runtime.lastTerminalLoopErrorMessage,
+          backendRunId: terminalRunId,
+        });
         return;
       }
 
@@ -790,24 +826,35 @@ export async function handleIncomingMessage(
             conversationId,
           });
         }
-        finishTurn({
+        const terminalRunId = latestBackendRunId();
+        const transition = finishTurn({
           stopReason: "cancelled",
           socket,
-          runId: runId || runtime.activeRunId,
+          runId: terminalRunId,
           agentId,
           conversationId,
         });
+        if (transition.finished) {
+          cronRunLogger.cancelled(terminalRunId);
+        }
         return;
       }
 
       if (approvalResult.kind === "terminal") {
-        noteFinalization(
+        const terminalRunId = latestBackendRunId();
+        const transition = noteFinalization(
           finalizeHandledRecoveryTurn(runtime, socket, turnLease, {
             drainResult: approvalResult.drainResult,
             agentId,
             conversationId,
           }),
         );
+        if (transition.finished) {
+          cronRunLogger.recoveryTerminal(
+            approvalResult.drainResult.stopReason as StopReasonType,
+            terminalRunId,
+          );
+        }
         return;
       }
 
@@ -856,19 +903,23 @@ export async function handleIncomingMessage(
         }
       }
 
-      finishTurn({
+      const terminalRunId = latestBackendRunId();
+      const transition = finishTurn({
         stopReason: "cancelled",
         socket,
-        runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
+        runId: terminalRunId,
         agentId: agentId || null,
         conversationId,
       });
+      if (transition.finished) {
+        cronRunLogger.cancelled(terminalRunId);
+      }
 
       return;
     }
 
     const errorMessage = error instanceof Error ? error.message : String(error);
-    const terminalRunId = runtime.activeRunId;
+    const terminalRunId = latestBackendRunId();
     const transition = finishTurn({
       stopReason: "error",
       agentId: agentId || null,
@@ -890,6 +941,14 @@ export async function handleIncomingMessage(
     });
     runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
     runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
+    cronRunLogger.failed({
+      summary: "error",
+      stopReason: "error",
+      error: runtime.lastTerminalLoopErrorMessage,
+      errorClass: error instanceof Error ? error.name : "Error",
+      errorMessage: runtime.lastTerminalLoopErrorMessage,
+      backendRunId: terminalRunId,
+    });
     if (isDebugEnabled()) {
       console.error("[Listen] Error handling message:", error);
     }
@@ -901,13 +960,18 @@ export async function handleIncomingMessage(
         context: "listener_turn_finalization",
         runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
       });
-      finishTurn({
-        stopReason: turnAbortSignal.aborted ? "cancelled" : "error",
+      const terminalRunId = latestBackendRunId();
+      const stopReason = turnAbortSignal.aborted ? "cancelled" : "error";
+      const transition = finishTurn({
+        stopReason,
         socket,
-        runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
+        runId: terminalRunId,
         agentId: agentId || null,
         conversationId,
       });
+      if (transition.finished) {
+        cronRunLogger.unfinalizedExit(stopReason, terminalRunId);
+      }
     }
 
     richDraftStreamer?.dispose();

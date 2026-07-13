@@ -1,6 +1,10 @@
 import { QueueRuntime } from "@/queue/queue-runtime";
 import { scheduleQueueEmit } from "./protocol-outbound";
-import { getQueueItemScope, getQueueItemsScope } from "./queue";
+import {
+  getQueueItemScope,
+  getQueueItemsScope,
+  recordCronQueueLifecycleForItems,
+} from "./queue";
 import {
   evictConversationRuntimeIfIdle,
   getOrCreateConversationRuntime,
@@ -30,14 +34,39 @@ export function ensureConversationQueueRuntime(
           conversation_id: runtime.conversationId,
         });
       },
-      onCleared: (_reason, _clearedCount, items) => {
+      onCleared: (reason, clearedCount, items) => {
         runtime.pendingTurns = 0;
+        recordCronQueueLifecycleForItems(items, {
+          action: "cleared",
+          status: "skipped",
+          clearedReason: reason,
+          clearedCount,
+          queueLenAfter: 0,
+        });
         scheduleQueueEmit(listener, getQueueItemsScope(items));
         evictConversationRuntimeIfIdle(runtime);
       },
-      onDropped: (item, _reason, queueLen) => {
+      onDropped: (item, reason, queueLen) => {
         runtime.pendingTurns = queueLen;
         runtime.queuedMessagesByItemId.delete(item.id);
+        recordCronQueueLifecycleForItems([item], {
+          action: "dropped",
+          status: "skipped",
+          droppedReason: reason,
+          queueLen,
+        });
+        scheduleQueueEmit(listener, getQueueItemScope(item));
+        evictConversationRuntimeIfIdle(runtime);
+      },
+      onRemoved: (item, queueLen) => {
+        runtime.pendingTurns = queueLen;
+        runtime.queuedMessagesByItemId.delete(item.id);
+        recordCronQueueLifecycleForItems([item], {
+          action: "removed",
+          status: "skipped",
+          removedReason: "explicit_remove",
+          queueLen,
+        });
         scheduleQueueEmit(listener, getQueueItemScope(item));
         evictConversationRuntimeIfIdle(runtime);
       },

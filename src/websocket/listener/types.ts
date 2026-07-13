@@ -59,11 +59,23 @@ export interface StartListenerOptions {
   ) => void;
 }
 
+export interface CronQueuedTurnRun {
+  cronTaskId: string;
+  cronRunId: string;
+  queueItemId: string;
+  batchId: string;
+  agentId?: string;
+  conversationId?: string;
+  enqueuedAt?: number;
+}
+
 export interface IncomingMessage {
   type: "message";
   agentId?: string;
   conversationId?: string;
   channelTurnSources?: ChannelTurnSource[];
+  /** Local-only schedule run correlation for queued cron turns. */
+  cronRuns?: CronQueuedTurnRun[];
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];
   messages: Array<

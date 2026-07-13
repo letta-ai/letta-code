@@ -7,7 +7,7 @@
  *   letta cron add --prompt <text> --cron <expr> [--agent <id>]
  *   letta cron list [--agent <id>] [--conversation <id>]
  *   letta cron get <id>
- *   letta cron runs --id <id>
+ *   letta cron runs --id <id> [--run-id <id>] [--backend-run-id <id>] [--cron-run-id <id>]
  *   letta cron delete <id>
  *   letta cron delete --all [--agent <id>]
  */
@@ -37,7 +37,7 @@ Usage:
   letta cron add --prompt <text> --cron <expr> [options]
   letta cron list [options]
   letta cron get <id>
-  letta cron runs --id <id> [--limit <n>]
+  letta cron runs --id <id> [--limit <n>] [--run-id <id>] [--backend-run-id <id>] [--cron-run-id <id>]
   letta cron delete <id>
   letta cron delete --all [--agent <id>]
 
@@ -53,6 +53,11 @@ Add options:
 List/filter options:
   --agent <id>           Filter by agent ID
   --conversation <id>    Filter by conversation ID
+
+Run history options:
+  --run-id <id>          Filter by public/backend/cron run ID
+  --backend-run-id <id>  Filter by backend run ID
+  --cron-run-id <id>     Filter by per-fire cron run ID
 
 Delete options:
   --all                  Delete all tasks for the given agent
@@ -79,6 +84,8 @@ const CRON_OPTIONS = {
   id: { type: "string" },
   limit: { type: "string" },
   "run-id": { type: "string" },
+  "backend-run-id": { type: "string" },
+  "cron-run-id": { type: "string" },
 } as const;
 
 function parseCronArgs(argv: string[]) {
@@ -275,6 +282,8 @@ function handleRuns(
   const limitRaw = Number.parseInt(String(values.limit ?? "50"), 10);
   const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 50;
   const runId = values["run-id"];
+  const backendRunId = values["backend-run-id"];
+  const cronRunId = values["cron-run-id"];
 
   try {
     const logPath = getCronRunLogPath(id);
@@ -282,6 +291,12 @@ function handleRuns(
       jobId: id,
       limit,
       ...(typeof runId === "string" && runId.trim() ? { runId } : {}),
+      ...(typeof backendRunId === "string" && backendRunId.trim()
+        ? { backendRunId }
+        : {}),
+      ...(typeof cronRunId === "string" && cronRunId.trim()
+        ? { cronRunId }
+        : {}),
     });
     console.log(JSON.stringify(page, null, 2));
     return 0;

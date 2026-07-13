@@ -59,6 +59,11 @@
       "path": "src/websocket/listen-client-concurrency.test.ts",
       "timeoutMs": 30000,
       "reason": "Uses several top-level Bun module mocks and exercises real concurrent listener state."
+    },
+    {
+      "path": "src/websocket/listener/cron-run-lifecycle.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock and listener IO test seams for cron turn lifecycle logging."
     }
   ]
 }

@@ -43,7 +43,10 @@ import {
   verifySchedulerLease,
 } from "./cron-file";
 import { cronMatchesTime } from "./parse-interval";
-import { safeAppendCronRunLogForTask } from "./run-log";
+import {
+  safeAppendCronRunLogForCronRun,
+  safeAppendCronRunLogForTask,
+} from "./run-log";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -54,6 +57,7 @@ type ProcessQueuedTurn = (
 
 interface SchedulerState {
   token: string;
+  startedAt: string;
   tickInterval: NodeJS.Timeout;
   gcInterval: NodeJS.Timeout;
   socket: ListenerTransport;
@@ -219,6 +223,23 @@ async function fireCronTask(
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
 ): Promise<boolean> {
+  const cronRunId = crypto.randomUUID();
+  const schedulerStartedAt = schedulerState?.startedAt;
+  const cronRunRef = {
+    jobId: task.id,
+    cronRunId,
+    agentId: task.agent_id,
+    conversationId: task.conversation_id,
+  };
+  safeAppendCronRunLogForCronRun(cronRunRef, {
+    action: "fire_started",
+    status: "ok",
+    runAtMs: now.getTime(),
+    scheduledFor: task.scheduled_for,
+    schedulerPid: process.pid,
+    schedulerStartedAt,
+  });
+
   const listener = getActiveRuntime();
   if (!listener) {
     setLastRunOutcome(task.id, {
@@ -227,13 +248,16 @@ async function fireCronTask(
       runAt: now,
       error: "No active runtime",
     });
-    safeAppendCronRunLogForTask(task, {
+    safeAppendCronRunLogForCronRun(cronRunRef, {
+      action: "enqueue_failed",
       status: "error",
       outcome: "failed",
       reason: "runtime_unavailable",
       error: "No active runtime",
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
+      schedulerPid: process.pid,
+      schedulerStartedAt,
     });
     return false;
   }
@@ -242,12 +266,24 @@ async function fireCronTask(
   try {
     targetConversationId = await resolveCronFireConversationId(task);
   } catch (err) {
-    safeAppendCronRunLogForTask(task, {
+    const errorMessage =
+      err instanceof Error ? err.message : "failed to resolve conversation";
+    setLastRunOutcome(task.id, {
+      outcome: "failed",
+      reason: "runtime_unavailable",
+      runAt: now,
+      error: errorMessage,
+    });
+    safeAppendCronRunLogForCronRun(cronRunRef, {
+      action: "enqueue_failed",
       status: "error",
-      error:
-        err instanceof Error ? err.message : "failed to resolve conversation",
+      outcome: "failed",
+      reason: "runtime_unavailable",
+      error: errorMessage,
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
+      schedulerPid: process.pid,
+      schedulerStartedAt,
     });
     return false;
   }
@@ -265,13 +301,16 @@ async function fireCronTask(
       runAt: now,
       error: "Conversation runtime unavailable",
     });
-    safeAppendCronRunLogForTask(task, {
+    safeAppendCronRunLogForCronRun(cronRunRef, {
+      action: "enqueue_failed",
       status: "error",
       outcome: "failed",
       reason: "runtime_unavailable",
       error: "Conversation runtime unavailable",
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
+      schedulerPid: process.pid,
+      schedulerStartedAt,
     });
     return false;
   }
@@ -290,6 +329,7 @@ async function fireCronTask(
     source: "cron" as import("@/types/protocol").QueueItemSource,
     text,
     cronTaskId: task.id,
+    cronRunId,
     agentId: task.agent_id,
     conversationId: targetConversationId ?? "default",
   } as Omit<CronPromptQueueItem, "id" | "enqueuedAt">);
@@ -301,13 +341,16 @@ async function fireCronTask(
       runAt: now,
       error: "queue buffer limit",
     });
-    safeAppendCronRunLogForTask(task, {
+    safeAppendCronRunLogForCronRun(cronRunRef, {
+      action: "enqueue_failed",
       status: "error",
       outcome: "failed",
       reason: "queue_full",
       error: "queue buffer limit",
       runAtMs: now.getTime(),
       scheduledFor: task.scheduled_for,
+      schedulerPid: process.pid,
+      schedulerStartedAt,
     });
     return false;
   }
@@ -339,16 +382,27 @@ async function fireCronTask(
     });
   }
 
-  safeAppendCronRunLogForTask(task, {
-    status: "ok",
-    outcome: "queued",
-    reason: task.recurring ? "scheduled_time_matched" : "one_off_due",
-    runAtMs: now.getTime(),
-    queueItemId: queuedItem.id,
-    scheduledFor: task.scheduled_for,
-    firedAt: nowIso,
-    conversationId: targetConversationId ?? "default",
-  });
+  safeAppendCronRunLogForCronRun(
+    {
+      ...cronRunRef,
+      queueItemId: queuedItem.id,
+      conversationId: targetConversationId ?? "default",
+    },
+    {
+      action: "enqueued",
+      status: "ok",
+      outcome: "queued",
+      reason: task.recurring ? "scheduled_time_matched" : "one_off_due",
+      runAtMs: now.getTime(),
+      queueItemId: queuedItem.id,
+      scheduledFor: task.scheduled_for,
+      firedAt: nowIso,
+      conversationId: targetConversationId ?? "default",
+      queueLen: conversationRuntime.queueRuntime.length,
+      schedulerPid: process.pid,
+      schedulerStartedAt,
+    },
+  );
   emitCronsUpdated(socket, task, targetConversationId ?? "default");
   return true;
 }
@@ -510,6 +564,7 @@ function tick(
             error: err instanceof Error ? err.message : String(err),
           });
           safeAppendCronRunLogForTask(freshTask, {
+            action: "failed",
             status: "error",
             outcome: "failed",
             reason: "scheduler_error",
@@ -585,6 +640,7 @@ export function startScheduler(
   const now = new Date();
   const state: SchedulerState = {
     token,
+    startedAt: now.toISOString(),
     tickInterval: null as unknown as NodeJS.Timeout,
     gcInterval: null as unknown as NodeJS.Timeout,
     socket,
