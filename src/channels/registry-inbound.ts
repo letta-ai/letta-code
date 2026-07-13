@@ -32,7 +32,6 @@ import {
 } from "./types";
 import { formatChannelNotification } from "./xml";
 import { getCurrentModelStatusForRuntime } from "@/websocket/listener/commands/model-toolset";
-import { WHATSAPP_CHANNEL_BUILD_NUMBER } from "./whatsapp/build-info";
 
 type ModelStatusResolver = typeof getCurrentModelStatusForRuntime;
 
@@ -68,10 +67,6 @@ export async function buildInboundChannelStatusContext(params: {
     accountEnabled: params.accountEnabled,
     route: params.route,
     activeModel,
-    buildNumber:
-      params.channelId === "whatsapp"
-        ? WHATSAPP_CHANNEL_BUILD_NUMBER
-        : undefined,
   };
 }
 

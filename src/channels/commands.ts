@@ -78,7 +78,6 @@ export type ChannelStatusContext = {
   accountEnabled?: boolean;
   route: ChannelRoute | null;
   activeModel?: string;
-  buildNumber?: string;
 };
 
 export type ChannelSlashCommandOptions = {
@@ -377,10 +376,6 @@ export function buildChannelStatusMessage(
 
   if (context.activeModel) {
     lines.push(`model: ${context.activeModel}.`);
-  }
-
-  if (context.buildNumber) {
-    lines.push(`build: ${context.buildNumber}.`);
   }
 
   if (route) {

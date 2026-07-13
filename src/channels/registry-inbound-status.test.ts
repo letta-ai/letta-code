@@ -16,7 +16,7 @@ const route: ChannelRoute = {
   createdAt: "2026-07-13T00:00:00.000Z",
 };
 
-test("WhatsApp inbound status includes runtime model and channel build", async () => {
+test("WhatsApp inbound status includes runtime model", async () => {
   const context = await buildInboundChannelStatusContext({
     adapter,
     accountConfigured: true,
@@ -33,5 +33,4 @@ test("WhatsApp inbound status includes runtime model and channel build", async (
   expect(context.activeModel).toBe(
     "GPT-5.6 Sol (openai/gpt-5.6-sol)",
   );
-  expect(context.buildNumber).toBe("0.28.2-whatsapp.1");
 });
