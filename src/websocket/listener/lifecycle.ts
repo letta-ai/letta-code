@@ -37,6 +37,7 @@ import { isDebugEnabled } from "@/utils/debug";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
+import { wireChannelExecuteCommand } from "./channel-command-execution";
 import {
   recoverActiveChannelTurn,
   uniqueChannelTurnSources,
@@ -708,11 +709,10 @@ export async function wireChannelIngress(
       };
     }
   });
-
+  wireChannelExecuteCommand(registry, listener, socket, opts);
   registry.setReflectionHandler(async ({ runtime }) => {
     const agentId = runtime.agent_id;
     const conversationId = runtime.conversation_id;
-
     const result = await launchReflectionSubagent({
       agentId,
       conversationId,

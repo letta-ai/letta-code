@@ -10,6 +10,8 @@ import {
   buildChannelChatUnavailableMessage,
   buildChannelDetachedMessage,
   buildChannelDetachUnsupportedMessage,
+  buildChannelLettaUnavailableMessage,
+  buildChannelLettaUsageMessage,
   buildChannelModelUnavailableMessage,
   buildChannelNewConversationMessage,
   buildChannelNewConversationUnavailableMessage,
@@ -18,10 +20,12 @@ import {
   buildChannelReflectionUnavailableMessage,
   buildChannelReloadUnavailableMessage,
   buildChannelResumedMessage,
+  parseChannelSlashCommand,
 } from "./commands";
 import type { ChannelRegistryEvent } from "./registry-events";
 import type {
   ChannelCancelHandler,
+  ChannelExecuteCommandHandler,
   ChannelModelHandler,
   ChannelReflectionHandler,
   ChannelReloadHandler,
@@ -37,6 +41,7 @@ import {
 } from "./routing";
 import type {
   ChannelAccount,
+  ChannelAdapter,
   ChannelModelPickerData,
   ChannelRoute,
   InboundChannelMessage,
@@ -56,6 +61,7 @@ export function createChannelCommandRouter(deps: {
   getReflectionHandler: () => ChannelReflectionHandler | null;
   getReloadHandler: () => ChannelReloadHandler | null;
   getModelHandler: () => ChannelModelHandler | null;
+  getExecuteCommandHandler: () => ChannelExecuteCommandHandler | null;
 }) {
   function findRawRouteForMessage(
     msg: InboundChannelMessage,
@@ -354,6 +360,88 @@ export function createChannelCommandRouter(deps: {
     });
   }
 
+  async function sendDirectReply(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+    text: string,
+  ): Promise<void> {
+    await adapter.sendDirectReply(
+      msg.chatId,
+      text,
+      msg.messageId || msg.threadId
+        ? {
+            replyToMessageId: msg.messageId,
+            threadId: msg.threadId ?? null,
+          }
+        : undefined,
+    );
+  }
+
+  async function handleLettaEscapeHatch(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+    injectedText: string,
+  ): Promise<boolean> {
+    const text = injectedText.trim();
+    if (!text) {
+      await sendDirectReply(
+        adapter,
+        msg,
+        buildChannelLettaUsageMessage(msg.channel),
+      );
+      return true;
+    }
+
+    if (!text.startsWith("/")) {
+      msg.text = text;
+      return false;
+    }
+
+    const route = loadAndFindRawRouteForMessage(msg);
+    if (!route?.enabled) {
+      await sendDirectReply(
+        adapter,
+        msg,
+        buildChannelNoRouteMessage(msg.channel),
+      );
+      return true;
+    }
+
+    const command = parseChannelSlashCommand(text);
+    if (!command) {
+      await sendDirectReply(
+        adapter,
+        msg,
+        buildChannelLettaUsageMessage(msg.channel),
+      );
+      return true;
+    }
+
+    const executeCommandHandler = deps.getExecuteCommandHandler();
+    if (!executeCommandHandler) {
+      await sendDirectReply(
+        adapter,
+        msg,
+        buildChannelLettaUnavailableMessage(msg.channel),
+      );
+      return true;
+    }
+
+    const result = await executeCommandHandler({
+      commandId: command.name,
+      args: command.args || undefined,
+      text,
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+    });
+    if (result.text) {
+      await sendDirectReply(adapter, msg, result.text);
+    }
+    return true;
+  }
+
   async function handleModelSlashCommand(
     command: { args: string },
     msg: InboundChannelMessage,
@@ -475,6 +563,7 @@ export function createChannelCommandRouter(deps: {
     handleDetachSlashCommand,
     handleModelSlashCommand,
     handleNewConversationSlashCommand,
+    handleLettaEscapeHatch,
     handlePauseResumeSlashCommand,
     handleReflectionSlashCommand,
     handleReloadSlashCommand,

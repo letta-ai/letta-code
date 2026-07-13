@@ -10,6 +10,8 @@ import {
   buildChannelCurrentModelMessage,
   buildChannelDetachedMessage,
   buildChannelHelpMessage,
+  buildChannelLettaUnavailableMessage,
+  buildChannelLettaUsageMessage,
   buildChannelModelListMessage,
   buildChannelModelListUnavailableMessage,
   buildChannelModelUnavailableMessage,
@@ -24,6 +26,7 @@ import {
   listChannelSlashCommands,
   parseChannelBangCommand,
   parseChannelSlashCommand,
+  parseLettaEscapeHatch,
   tryHandleChannelSlashCommand,
 } from "@/channels/commands";
 import { buildSlackModelPickerBlocks } from "@/channels/slack/model-picker-blocks";
@@ -76,6 +79,15 @@ describe("channel slash commands", () => {
       args: "letta/auto",
       raw: "/model",
     });
+  });
+
+  test("parses the /letta escape hatch prefix", () => {
+    expect(parseLettaEscapeHatch(" /LETTA@LettaBot /compact all ")).toBe(
+      "/compact all",
+    );
+    expect(parseLettaEscapeHatch("/letta hello there")).toBe("hello there");
+    expect(parseLettaEscapeHatch("/reload")).toBeNull();
+    expect(parseLettaEscapeHatch("hello /letta /reload")).toBeNull();
   });
 
   test("handles Slack mention slash commands as control commands", async () => {
@@ -141,6 +153,7 @@ describe("channel slash commands", () => {
       "chat",
       "model",
       "reflection",
+      "letta",
     ]) {
       expect(listChannelSlashCommands()).toContainEqual(
         expect.objectContaining({ name }),
@@ -151,7 +164,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).not.toContain("MessageChannel");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection, /letta.",
     );
 
     const slackText = buildChannelHelpMessage("slack");
@@ -171,8 +184,9 @@ describe("channel slash commands", () => {
     );
     expect(slackText).toContain("@agent /detach");
     expect(slackText).toContain("@agent /reload");
+    expect(slackText).toContain("@agent /letta /reload");
     expect(slackText).toContain(
-      "Legacy bang aliases still work after a mention: !help, !detach, !model, !new, !reload.",
+      "Legacy bang aliases still work after a mention: !help, !detach, !letta, !model, !new, !reload.",
     );
   });
 
@@ -238,6 +252,12 @@ describe("channel slash commands", () => {
     );
     expect(buildChannelAlreadyActiveMessage("telegram")).toContain(
       "already active",
+    );
+    expect(buildChannelLettaUsageMessage("telegram")).toContain(
+      "Use /letta /reload",
+    );
+    expect(buildChannelLettaUnavailableMessage("telegram")).toContain(
+      "listener command handler is not ready",
     );
   });
 
@@ -429,7 +449,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram received /compact now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
+      "Supported slash commands: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection, /letta.",
     );
     expect(text).toContain("without a leading slash");
 
@@ -451,7 +471,7 @@ describe("channel slash commands", () => {
     );
     expect(bangText).toContain("Slack received !pause");
     expect(bangText).toContain(
-      "Supported bang commands: !help, !detach, !model, !new, !reload.",
+      "Supported bang commands: !help, !detach, !letta, !model, !new, !reload.",
     );
   });
 });

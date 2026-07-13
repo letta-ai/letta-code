@@ -66,6 +66,10 @@ export type ChannelSlashCommandHandlers = {
     command: ParsedChannelSlashCommand,
     msg: InboundChannelMessage,
   ) => Promise<ChannelSlashCommandHandlerResult>;
+  letta?: (
+    command: ParsedChannelSlashCommand,
+    msg: InboundChannelMessage,
+  ) => Promise<ChannelSlashCommandHandlerResult>;
   resume?: (
     command: ParsedChannelSlashCommand,
     msg: InboundChannelMessage,
@@ -128,11 +132,17 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     kind: "agent-scoped",
     summary: "Start a memory reflection pass for this conversation.",
   },
+  {
+    name: "letta",
+    kind: "agent-scoped",
+    summary: "Run a listener command through this chat's routed conversation.",
+  },
 ];
 
 const SLACK_MENTION_COMMAND_NAMES = [
   "help",
   "detach",
+  "letta",
   "model",
   "new",
   "reload",
@@ -242,6 +252,14 @@ export function parseChannelBangCommand(
   return parseChannelCommand(text, "!");
 }
 
+export function parseLettaEscapeHatch(text: string): string | null {
+  const command = parseChannelSlashCommand(text);
+  if (command?.name !== "letta") {
+    return null;
+  }
+  return command.args.trim();
+}
+
 function supportedCommandsText(prefix: "/" | "!" = "/"): string {
   return listChannelSlashCommands()
     .map((definition) => `${prefix}${definition.name}`)
@@ -260,6 +278,7 @@ const SLACK_MENTION_SLASH_COMMAND_EXAMPLES = [
   "@agent /detach",
   "@agent /new",
   "@agent /reload",
+  "@agent /letta /reload",
 ] as const;
 
 function supportedSlackMentionSlashCommandsText(): string {
@@ -314,6 +333,7 @@ export function buildChannelHelpMessage(channelId: string): string {
       "@agent /detach - stop replying in this thread until mentioned again",
       "@agent /new - start a fresh conversation for this thread",
       "@agent /reload - reload channel/listener settings",
+      "@agent /letta /reload - run a listener slash command through this route",
       `Legacy bang aliases still work after a mention: ${supportedBangCommandsText()}.`,
       "If this chat is not connected yet, send a normal message and follow the pairing instructions.",
     ].join("\n");
@@ -401,6 +421,16 @@ export function buildChannelNoRouteMessage(channelId: string): string {
     `${displayName} could not find an existing route for this chat.`,
     "Send a normal message first and follow the pairing instructions, then try again.",
   ].join("\n\n");
+}
+
+export function buildChannelLettaUsageMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} received /letta without input. Use /letta /reload or /letta /compact all to run a listener slash command through this chat's routed conversation.`;
+}
+
+export function buildChannelLettaUnavailableMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} cannot use /letta because the listener command handler is not ready yet. Try again in a moment.`;
 }
 
 export function buildChannelPausedMessage(
@@ -917,6 +947,13 @@ export async function tryHandleChannelSlashCommand(
             msg,
             command,
             handler: options.handlers?.reload,
+          });
+        case "letta":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.letta,
+            defaultText: buildChannelLettaUsageMessage(msg.channel),
           });
         default:
           return buildUnsupportedChannelCommandMessage(msg.channel, command);

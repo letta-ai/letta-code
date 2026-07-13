@@ -35,6 +35,7 @@ import {
 import type { ChannelRegistryEvent } from "./registry-events";
 import type {
   ChannelCancelHandler,
+  ChannelExecuteCommandHandler,
   ChannelInboundDelivery,
   ChannelMessageHandler,
   ChannelModelHandler,
@@ -164,6 +165,7 @@ export class ChannelRegistry {
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
   private approvalResponseHandler: ChannelApprovalResponseHandler | null = null;
   private cancelHandler: ChannelCancelHandler | null = null;
+  private executeCommandHandler: ChannelExecuteCommandHandler | null = null;
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
   private reloadHandler: ChannelReloadHandler | null = null;
@@ -198,6 +200,7 @@ export class ChannelRegistry {
       getReflectionHandler: () => this.reflectionHandler,
       getReloadHandler: () => this.reloadHandler,
       getModelHandler: () => this.modelHandler,
+      getExecuteCommandHandler: () => this.executeCommandHandler,
     });
     this.inbound = createChannelInboundRouter({
       controls: this.controls,
@@ -429,6 +432,10 @@ export class ChannelRegistry {
 
   setCancelHandler(handler: ChannelCancelHandler | null): void {
     this.cancelHandler = handler;
+  }
+
+  setExecuteCommandHandler(handler: ChannelExecuteCommandHandler | null): void {
+    this.executeCommandHandler = handler;
   }
 
   setReflectionHandler(handler: ChannelReflectionHandler | null): void {
@@ -684,6 +691,7 @@ export class ChannelRegistry {
     this.eventHandler = null;
     this.approvalResponseHandler = null;
     this.cancelHandler = null;
+    this.executeCommandHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
     this.reloadHandler = null;
@@ -704,6 +712,7 @@ export class ChannelRegistry {
     this.eventHandler = null;
     this.approvalResponseHandler = null;
     this.cancelHandler = null;
+    this.executeCommandHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
     this.reloadHandler = null;

@@ -1,5 +1,4 @@
 import { spawn } from "node:child_process";
-import type WebSocket from "ws";
 import { actingUserRequestOptions } from "@/agent/acting-user";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
@@ -53,6 +52,7 @@ import {
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
 } from "./secrets-sync";
+import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
 import { buildMaybeLaunchReflectionSubagent } from "./turn-events";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
@@ -68,7 +68,7 @@ export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
  */
 export async function handleExecuteCommand(
   command: ExecuteCommandCommand,
-  socket: WebSocket,
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -76,7 +76,7 @@ export async function handleExecuteCommand(
     connectionId?: string;
     connectionName?: string;
   },
-): Promise<void> {
+): Promise<string> {
   const scope = {
     agent_id: conversationRuntime.agentId,
     conversation_id: conversationRuntime.conversationId,
@@ -175,9 +175,9 @@ export async function handleExecuteCommand(
             output: `Unknown command: ${command.command_id}`,
             success: false,
           });
-          return;
+          return `Unknown command: ${command.command_id}`;
         }
-        await handleModCommand(
+        return handleModCommand(
           modCommand,
           command,
           input,
@@ -187,7 +187,6 @@ export async function handleExecuteCommand(
           scope,
           opts,
         );
-        return;
       }
     }
 
@@ -197,6 +196,7 @@ export async function handleExecuteCommand(
       output,
       success: true,
     });
+    return output;
   } catch (error) {
     trackBoundaryError({
       errorType: "listener_execute_command_failed",
@@ -210,6 +210,7 @@ export async function handleExecuteCommand(
       output: `Failed: ${errorMessage}`,
       success: false,
     });
+    return `Failed: ${errorMessage}`;
   }
 }
 
@@ -223,14 +224,14 @@ async function handleModCommand(
   command: ExecuteCommandCommand,
   input: string,
   trimmedArgs: string | undefined,
-  socket: WebSocket,
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   scope: { agent_id: string | null; conversation_id: string },
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
     connectionId?: string;
   },
-): Promise<void> {
+): Promise<string> {
   const result = await runListenerModCommand(conversationRuntime, modCommand, {
     commandId: command.command_id,
     args: trimmedArgs ?? "",
@@ -245,7 +246,7 @@ async function handleModCommand(
         output: `/${modCommand.id} returned a prompt with showInTranscript: false. Hidden mod commands must return output or handled.`,
         success: false,
       });
-      return;
+      return `/${modCommand.id} returned a prompt with showInTranscript: false. Hidden mod commands must return output or handled.`;
     }
 
     const agentId = conversationRuntime.agentId;
@@ -256,13 +257,14 @@ async function handleModCommand(
         output: `No agent available to run /${modCommand.id}.`,
         success: false,
       });
-      return;
+      return `No agent available to run /${modCommand.id}.`;
     }
 
+    const output = `Running /${modCommand.id}...`;
     emitSlashCommandEnd(socket, conversationRuntime, scope, {
       command_id: command.command_id,
       input,
-      output: `Running /${modCommand.id}...`,
+      output,
       success: true,
     });
 
@@ -284,15 +286,17 @@ async function handleModCommand(
       opts.onStatusChange,
       opts.connectionId,
     );
-    return;
+    return output;
   }
 
+  const output = result.type === "output" ? result.output : "";
   emitSlashCommandEnd(socket, conversationRuntime, scope, {
     command_id: command.command_id,
     input,
-    output: result.type === "output" ? result.output : "",
+    output,
     success: result.type === "output" ? (result.success ?? true) : true,
   });
+  return output;
 }
 
 export async function handleReloadCommand(
@@ -397,7 +401,7 @@ function scheduleRemoteRestart(
 }
 
 function emitSlashCommandEnd(
-  socket: WebSocket,
+  socket: ListenerTransport,
   runtime: ConversationRuntime,
   scope: { agent_id: string | null; conversation_id: string },
   fields: Pick<
@@ -443,7 +447,7 @@ function compactHelpOutput(): string {
 
 /** /compact — Summarize conversation history through the active Backend. */
 async function handleCompactCommand(
-  socket: WebSocket,
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
 ): Promise<string> {
@@ -568,7 +572,7 @@ async function handleCompactCommand(
  * Returns a human-readable success message.
  */
 async function handleClearCommand(
-  _socket: WebSocket,
+  _socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -630,7 +634,7 @@ async function handleClearCommand(
  * turn executing the `context-doctor` skill.
  */
 async function handleDoctorCommand(
-  socket: WebSocket,
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -690,7 +694,7 @@ async function handleDoctorCommand(
  * turn executing the `initializing-memory` skill.
  */
 async function handleInitCommand(
-  socket: WebSocket,
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -741,7 +745,7 @@ async function handleInitCommand(
  * and optional user-provided text through the normal turn pipeline.
  */
 async function handleRememberCommand(
-  socket: WebSocket,
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
   opts: {
@@ -817,7 +821,7 @@ async function handleSetMaxContextCommand(
  *   /channels status                   — Show channel status
  */
 async function handleChannelsCommand(
-  _socket: WebSocket,
+  _socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
   _opts: {

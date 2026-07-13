@@ -36,3 +36,10 @@ export type ChannelModelHandler = (params: {
 export type ChannelReloadHandler = (params: {
   runtime: { agent_id: string; conversation_id: string };
 }) => Promise<{ handled: boolean; text?: string }>;
+
+export type ChannelExecuteCommandHandler = (params: {
+  commandId: string;
+  args?: string;
+  text: string;
+  runtime: { agent_id: string; conversation_id: string };
+}) => Promise<{ handled: boolean; text?: string }>;
