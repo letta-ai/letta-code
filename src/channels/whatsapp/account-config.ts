@@ -16,7 +16,6 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "download_media",
   "media_max_bytes",
   "message_prefix",
-  "audio_as_voice_memo",
   "inbound_debounce_ms",
   "waiting_behavior",
   "waiting_message",
@@ -86,8 +85,6 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
           isPositiveNumber(config.media_max_bytes)) &&
         (config.message_prefix === undefined ||
           isString(config.message_prefix)) &&
-        (config.audio_as_voice_memo === undefined ||
-          isBoolean(config.audio_as_voice_memo)) &&
         (config.inbound_debounce_ms === undefined ||
           (isNonNegativeNumber(config.inbound_debounce_ms) &&
             config.inbound_debounce_ms <= 10000)) &&
@@ -137,9 +134,6 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         messagePrefix: isString(config.message_prefix)
           ? config.message_prefix
           : undefined,
-        audioAsVoiceMemo: isBoolean(config.audio_as_voice_memo)
-          ? config.audio_as_voice_memo
-          : undefined,
         inboundDebounceMs:
           isNonNegativeNumber(config.inbound_debounce_ms) &&
           config.inbound_debounce_ms <= 10000
@@ -182,7 +176,6 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
         message_prefix: account.messagePrefix,
-        audio_as_voice_memo: account.audioAsVoiceMemo === true,
         inbound_debounce_ms: account.inboundDebounceMs,
         waiting_behavior: account.waitingBehavior,
         waiting_message: account.waitingMessage,
@@ -208,7 +201,6 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
         message_prefix: account.messagePrefix,
-        audio_as_voice_memo: account.audioAsVoiceMemo === true,
         inbound_debounce_ms: account.inboundDebounceMs,
         waiting_behavior: account.waitingBehavior,
         waiting_message: account.waitingMessage,

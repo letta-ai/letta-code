@@ -836,8 +836,6 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   mediaMaxBytes?: number;
   /** Optional prefix prepended to outbound agent text messages. */
   messagePrefix?: string;
-  /** When true, .ogg/.oga/.opus audio files are sent as voice memos (ptt). Default false: audio is always sent as a document. */
-  audioAsVoiceMemo?: boolean;
   /**
    * Optional debounce window (ms) for inbound messages.
    * When greater than 0, short back-to-back messages from the same sender

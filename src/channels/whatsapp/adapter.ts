@@ -851,9 +851,7 @@ export function createWhatsAppAdapter(
       ) {
         msg = { ...msg, text: account.messagePrefix + msg.text };
       }
-      const payload = buildWhatsAppOutboundPayload(msg, {
-        audioAsVoiceMemo: account.audioAsVoiceMemo,
-      });
+      const payload = buildWhatsAppOutboundPayload(msg);
       // Enforce attachment policy for outbound media sends
       if (msg.mediaPath) {
         const policyError = checkAttachmentPolicy({

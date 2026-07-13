@@ -65,7 +65,6 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   waiting_behavior: "waitingBehavior",
   waiting_message: "waitingMessage",
   download_media: "downloadMedia",
-  audio_as_voice_memo: "audioAsVoiceMemo",
   attachment_filter: "attachmentFilter",
   attachment_mime_types: "attachmentMimeTypes",
   attachment_allowed_recipients: "attachmentAllowedRecipients",

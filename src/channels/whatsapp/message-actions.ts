@@ -76,7 +76,7 @@ export const whatsappMessageActions: ChannelMessageActionAdapter = {
           media: {
             type: "string",
             description:
-              "Absolute local file path to upload. Audio files are sent as documents by default. To send as a voice memo (push-to-talk), the account must have audio_as_voice_memo enabled AND the file must be Ogg/Opus (.ogg, .oga, or .opus).",
+              "Absolute local file path to upload. Audio files (.ogg, .oga, .opus) are sent as voice memos (push-to-talk). All other audio formats are sent as documents.",
           },
         },
       },

@@ -46,7 +46,7 @@ describe("WhatsApp media helpers", () => {
         mediaPath: "/tmp/photo.png",
       }),
     ).toEqual({ image: { url: "/tmp/photo.png" }, caption: "caption" });
-    // By default (audioAsVoiceMemo not set = true), .ogg goes as voice memo.
+    // .ogg always goes as voice memo unconditionally.
     expect(
       buildWhatsAppOutboundPayload({
         text: "",
@@ -59,31 +59,12 @@ describe("WhatsApp media helpers", () => {
     });
   });
 
-  test("sends .ogg as voice memo when audioAsVoiceMemo is true", () => {
+  test("sends .mp3 as document", () => {
     expect(
-      buildWhatsAppOutboundPayload(
-        {
-          text: "",
-          mediaPath: "/tmp/voice.ogg",
-        },
-        { audioAsVoiceMemo: true },
-      ),
-    ).toEqual({
-      audio: { url: "/tmp/voice.ogg" },
-      mimetype: "audio/ogg; codecs=opus",
-      ptt: true,
-    });
-  });
-
-  test("sends .mp3 as document when audioAsVoiceMemo is false", () => {
-    expect(
-      buildWhatsAppOutboundPayload(
-        {
-          text: "",
-          mediaPath: "/tmp/audio.mp3",
-        },
-        { audioAsVoiceMemo: false },
-      ),
+      buildWhatsAppOutboundPayload({
+        text: "",
+        mediaPath: "/tmp/audio.mp3",
+      }),
     ).toEqual({
       document: { url: "/tmp/audio.mp3" },
       fileName: "audio.mp3",
@@ -91,16 +72,17 @@ describe("WhatsApp media helpers", () => {
     });
   });
 
-  test("rejects non-Ogg/Opus audio when audioAsVoiceMemo is true", () => {
-    expect(() =>
-      buildWhatsAppOutboundPayload(
-        {
-          text: "",
-          mediaPath: "/tmp/voice.mp3",
-        },
-        { audioAsVoiceMemo: true },
-      ),
-    ).toThrow(/Ogg\/Opus/);
+  test("sends .opus as voice memo", () => {
+    expect(
+      buildWhatsAppOutboundPayload({
+        text: "",
+        mediaPath: "/tmp/voice.opus",
+      }),
+    ).toEqual({
+      audio: { url: "/tmp/voice.opus" },
+      mimetype: "audio/ogg; codecs=opus",
+      ptt: true,
+    });
   });
 
   test("returns attachment metadata without downloading when media is disabled", async () => {

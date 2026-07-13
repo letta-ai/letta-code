@@ -275,11 +275,10 @@ storage and are normalized to `camelCase` at runtime.
 | `waiting_behavior` | `off` | UX feedback during agent turns: `off` (nothing), `typing_indicator` (typing dots), `message` (interim waiting message — reserved). |
 | `waiting_message` | (none) | Custom text for `waiting_behavior: "message"`. |
 
-### Audio fields
+### Audio
 
-| Key | Default | Description |
-|---|---|---|
-| `audio_as_voice_memo` | `true` | When `true` (default), `.ogg`/`.oga`/`.opus` files are sent as voice memos (`ptt`). Set `false` to send all audio as documents. |
+`.ogg`/`.oga`/`.opus` audio files are always sent as voice memos (`ptt`).
+All other audio formats (`.mp3`, `.m4a`, `.wav`, etc.) are sent as documents.
 
 ### Attachment policy fields
 
