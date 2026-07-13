@@ -200,6 +200,11 @@ interface BuildSubagentArgsOptions {
   promptTransport?: "argv" | "stdin";
   extraTools?: string[];
   parentAgentId?: string | null;
+  /**
+   * Replace the subagent's configured persona: pass `--system-custom <text>`
+   * to the child instead of `--system <type>`. Only applies to new agents.
+   */
+  systemPromptOverride?: string;
 }
 
 /**
@@ -237,8 +242,14 @@ export function buildSubagentArgs(
     // Don't pass --system (existing agent keeps its prompt)
     // Don't pass --model (existing agent keeps its model)
   } else {
-    // Create new agent (original behavior)
-    args.push("--new-agent", "--system", type);
+    // Create new agent (original behavior). A systemPromptOverride replaces the
+    // configured persona with a caller-supplied prompt via `--system-custom`
+    // (mutually exclusive with `--system`).
+    if (options.systemPromptOverride) {
+      args.push("--new-agent", "--system-custom", options.systemPromptOverride);
+    } else {
+      args.push("--new-agent", "--system", type);
+    }
     const subagentTags = [`type:${type}`];
     if (options.parentAgentId) {
       subagentTags.push(`parent:${options.parentAgentId}`);
@@ -336,6 +347,7 @@ async function executeSubagent(
   parentAgentIdOverride?: string,
   transcriptPath?: string,
   memoryScope?: SubagentMemoryScope,
+  systemPromptOverride?: string,
 ): Promise<SubagentResult> {
   // Check if already aborted before starting
   if (signal?.aborted) {
@@ -387,6 +399,7 @@ async function executeSubagent(
           config.fork && inheritedChannelContext
             ? ["MessageChannel"]
             : undefined,
+        systemPromptOverride,
       },
     );
 
@@ -757,6 +770,7 @@ export async function spawnSubagent(
   transcriptPath?: string,
   parentConversationId?: string,
   memoryScope?: SubagentMemoryScope,
+  systemPromptOverride?: string,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -867,6 +881,7 @@ export async function spawnSubagent(
     resolvedParentAgentId,
     transcriptPath,
     memoryScope,
+    systemPromptOverride,
   );
 
   return result;
