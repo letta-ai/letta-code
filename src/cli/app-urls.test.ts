@@ -8,9 +8,17 @@ import {
   buildAgentTerminalLink,
   buildChatUrl,
   isLocalAgentId,
+  LETTA_API_KEYS_URL,
 } from "@/cli/helpers/app-urls";
 
 describe("app URL helpers", () => {
+  test("LETTA_API_KEYS_URL uses the project-scoped API keys page", () => {
+    expect(LETTA_API_KEYS_URL).toBe(
+      "https://app.letta.com/projects/default-project/api-keys",
+    );
+    expect(LETTA_API_KEYS_URL).not.toBe("https://app.letta.com/api-keys");
+  });
+
   test("buildChatUrl links API-backed agents to the web app", () => {
     expect(buildChatUrl("agent-123")).toBe(
       "https://app.letta.com/chat/agent-123",

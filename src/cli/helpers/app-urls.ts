@@ -1,6 +1,7 @@
 import { isLocalAgentId as isLocalAgentIdShared } from "@/agent/agent-id";
 
-const APP_BASE = "https://app.letta.com";
+export const LETTA_APP_BASE_URL = "https://app.letta.com";
+export const LETTA_API_KEYS_URL = `${LETTA_APP_BASE_URL}/projects/default-project/api-keys`;
 
 export function isLocalAgentId(agentId: string): boolean {
   return isLocalAgentIdShared(agentId);
@@ -17,7 +18,7 @@ export function buildChatUrl(
     deviceId?: string;
   },
 ): string {
-  const base = `${APP_BASE}/chat/${agentId}`;
+  const base = `${LETTA_APP_BASE_URL}/chat/${agentId}`;
   const params = new URLSearchParams();
 
   if (options?.view) {
@@ -70,5 +71,5 @@ export function buildAgentTerminalLink(
  * Build a non-agent app URL (e.g. settings pages).
  */
 export function buildAppUrl(path: string): string {
-  return `${APP_BASE}${path}`;
+  return `${LETTA_APP_BASE_URL}${path}`;
 }

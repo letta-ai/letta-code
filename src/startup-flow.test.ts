@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { LETTA_API_KEYS_URL } from "@/cli/helpers/app-urls";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
 /**
@@ -173,6 +174,8 @@ describe("Startup Flow - Smoke", () => {
       expectExit: 1,
     });
     expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).toContain(`Get an API key at ${LETTA_API_KEYS_URL}`);
+    expect(result.stderr).not.toContain("https://app.letta.com/api-keys");
     expect(result.stderr).not.toContain("No recent session found");
   });
 
