@@ -94,17 +94,23 @@ function maybeAppendChannelTools(
   toolNames: ToolName[],
   channelToolScope?: MessageChannelToolDiscoveryScope | null,
 ): ToolName[] {
+  const hasScopedChannelTools =
+    channelToolScope !== undefined &&
+    (channelToolScope?.channels.length ?? 0) > 0;
   const hasActiveChannelTools =
     channelToolScope !== undefined
       ? (channelToolScope?.channels.length ?? 0) > 0
       : getActiveChannelIds().length > 0;
+  let resolvedToolNames = hasScopedChannelTools
+    ? toolNames.filter((name) => name !== "AskUserQuestion")
+    : toolNames;
   if (
     hasActiveChannelTools &&
-    !toolNames.includes("MessageChannel" as ToolName)
+    !resolvedToolNames.includes("MessageChannel" as ToolName)
   ) {
-    return [...toolNames, "MessageChannel" as ToolName];
+    resolvedToolNames = [...resolvedToolNames, "MessageChannel" as ToolName];
   }
-  return toolNames;
+  return resolvedToolNames;
 }
 
 /**
@@ -1260,9 +1266,12 @@ export async function prepareCurrentToolExecutionContext(options?: {
   await waitForToolsetReady();
   const currentToolNames = maybeAppendChannelTools(
     Array.from(toolRegistry.keys()) as ToolName[],
+    options?.channelToolScope,
   );
-  const toolRegistrySnapshot =
-    await buildSpecificToolRegistry(currentToolNames);
+  const toolRegistrySnapshot = await buildSpecificToolRegistry(
+    currentToolNames,
+    options?.channelToolScope,
+  );
   return capturePreparedToolExecutionContext(
     {
       toolRegistry: toolRegistrySnapshot,
@@ -1569,7 +1578,15 @@ async function buildSpecificToolRegistry(
   const { toolFilter } = await import("@/tools/filter");
   const newRegistry: ToolRegistry = new Map();
 
+  const hasScopedChannelTools =
+    channelToolScope !== undefined &&
+    (channelToolScope?.channels.length ?? 0) > 0;
+
   for (const name of toolNames) {
+    if (hasScopedChannelTools && name === "AskUserQuestion") {
+      continue;
+    }
+
     if (!toolFilter.isEnabled(name)) {
       continue;
     }

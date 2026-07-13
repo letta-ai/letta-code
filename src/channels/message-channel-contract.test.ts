@@ -167,4 +167,78 @@ describe("MessageChannel contracts", () => {
     );
     expect(sendMessage).not.toHaveBeenCalled();
   });
+
+  test("handles ask action through the shared path for a sibling channel", async () => {
+    const registry = new ChannelRegistry();
+
+    const sendMessage = mock(async () => ({ messageId: "discord-msg-ask" }));
+
+    const adapter: ChannelAdapter = {
+      id: "discord:discord-1",
+      channelId: "discord",
+      accountId: "discord-1",
+      name: "Discord",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+
+    setRouteInMemory("discord", {
+      accountId: "discord-1",
+      chatId: "DM-456",
+      chatType: "direct",
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const question = {
+      question: "Deploy to staging or production?",
+      header: "Target",
+      options: [
+        { label: "staging", description: "Deploy to staging" },
+        { label: "production", description: "Deploy to production" },
+      ],
+      multiSelect: false,
+    };
+
+    const pendingResult = await message_channel({
+      action: "ask",
+      channel: "discord",
+      chat_id: "DM-456",
+      questions: [question],
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(pendingResult).toBe("Waiting for user response...");
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const answeredResult = await message_channel({
+      action: "ask",
+      channel: "discord",
+      chat_id: "DM-456",
+      questions: [question],
+      answers: { "Deploy to staging or production?": "staging" },
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(answeredResult).toContain("User has answered your questions");
+    expect(answeredResult).toContain(
+      '"Deploy to staging or production?"="staging"',
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
 });

@@ -152,11 +152,15 @@ export function isFancyUITool(name: string): boolean {
  * Checks if a tool always requires user interaction, even in unrestricted mode.
  * These are tools that fundamentally need user input to proceed:
  * - AskUserQuestion: needs user to answer questions
+ * - MessageChannel action="ask": needs the channel user to answer questions
  *
  * Other tools (bash, file edits) should respect unrestricted mode and auto-approve.
  */
-export function alwaysRequiresUserInput(name: string): boolean {
-  return isInteractiveApprovalTool(name);
+export function alwaysRequiresUserInput(
+  name: string,
+  parsedArgs?: Record<string, unknown>,
+): boolean {
+  return isInteractiveApprovalTool(name, parsedArgs);
 }
 
 /**

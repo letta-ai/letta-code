@@ -736,4 +736,71 @@ describe("MessageChannel Slack", () => {
     );
     expect(sendMessage).not.toHaveBeenCalled();
   });
+
+  test("handles ask action as a routed user-input request", async () => {
+    const registry = new ChannelRegistry();
+    const sendMessage = mock(async () => ({ messageId: "slack-msg-ask" }));
+
+    const adapter: ChannelAdapter = {
+      id: "slack:account-1",
+      channelId: "slack",
+      accountId: "account-1",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage,
+      sendDirectReply: async () => {},
+    };
+
+    registry.registerAdapter(adapter);
+    setRouteInMemory("slack", {
+      accountId: "account-1",
+      chatId: "C123",
+      agentId: "agent-1",
+      conversationId: "default",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const question = {
+      question: "Which branch should I use?",
+      header: "Branch",
+      options: [
+        { label: "main", description: "Use main" },
+        { label: "feature", description: "Use feature" },
+      ],
+      multiSelect: false,
+    };
+
+    const pendingResult = await message_channel({
+      action: "ask",
+      channel: "slack",
+      chat_id: "C123",
+      questions: [question],
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(pendingResult).toBe("Waiting for user response...");
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    const answeredResult = await message_channel({
+      action: "ask",
+      channel: "slack",
+      chat_id: "C123",
+      questions: [question],
+      answers: { "Which branch should I use?": "feature" },
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+    });
+
+    expect(answeredResult).toContain("User has answered your questions");
+    expect(answeredResult).toContain('"Which branch should I use?"="feature"');
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
 });

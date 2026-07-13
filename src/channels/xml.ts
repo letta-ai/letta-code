@@ -62,6 +62,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
     SYSTEM_REMINDER_OPEN,
     `This is an external ${escapedChannel} turn. Plain assistant text is not delivered to the user.`,
     `If you should reply to the external user, use MessageChannel with action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}". Put the user-visible reply in message.`,
+    `If you need the external user to answer a structured question before continuing, use MessageChannel with action="ask", channel="${escapedChannel}", chat_id="${escapedChatId}", and questions. Do not use AskUserQuestion in external channel turns.`,
     "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
     'For lightweight acknowledgement, prefer MessageChannel action="react" when supported. If the useful response belongs later, schedule the follow-up instead of sending a placeholder.',
     "Do not produce a plain text assistant response as the user-visible reply.",

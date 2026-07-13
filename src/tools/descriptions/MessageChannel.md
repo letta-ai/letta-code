@@ -4,14 +4,15 @@ Send a message or channel action to an external channel.
 
 When you receive a `<channel-notification>`, use this tool to reply directly to the user on the same external channel. A normal assistant response is not delivered back to the external channel automatically.
 
-There are two supported send modes:
+There are two supported addressing modes:
 - Reply mode: use `channel` + `chat_id` from the notification to respond in the current routed chat.
 - Proactive mode: use `channel` + `target` on supported channels to send to an explicit outbound destination.
 
 Preferred reply pattern:
 - `action="send"` to send a normal reply
+- `action="ask"` to ask the channel user for input and wait for their answer
 - `channel` + `chat_id` from the notification attributes
-- `message` for the text body
+- `message` for the text body when sending, or `questions` when asking
 
 Parameters:
 - `action`: The action to perform. The exact available actions depend on the active channel plugins and are reflected in the JSON schema.
@@ -20,6 +21,8 @@ Parameters:
 - `target`: Explicit outbound target for proactive sends on supported channels.
 - `accountId`: Optional channel account selector when multiple eligible accounts are available.
 - `message`: Text body for `action="send"`.
+- `questions`: One to four structured questions for `action="ask"`, using the same question shape as `AskUserQuestion` (`question`, `header`, `options`, `multiSelect`).
+- `answers`: Filled by the channel approval layer after the user replies. Do not provide this yourself.
 - `replyTo`: Optional message ID to reply to. Omit this unless you intentionally want the platform's quote/reply UI.
 - `messageId`: Optional target message id for message-scoped actions like reactions.
 - `emoji`: Optional reaction payload for channels that support reactions.
@@ -30,6 +33,7 @@ Parameters:
 
 Rules:
 - Always pass `action` explicitly, even for a normal reply.
+- In a channel-originated turn, use `MessageChannel action="ask"` instead of `AskUserQuestion` when you need the external user's input before continuing.
 - Pass exactly one of `chat_id` or `target`.
 - `react` should be its own call.
 - `upload-file` can include both `media` and `message` so the uploaded file has a caption/comment when the channel supports it.

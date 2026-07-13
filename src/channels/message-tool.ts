@@ -140,7 +140,7 @@ function buildDynamicMessageChannelDescriptionFromDiscovery(
   const scopedChannels = scope?.channels ?? [];
   const scopedReplyContract =
     scopedChannels.length > 0
-      ? '\n\nThis tool is currently scoped to a routed external channel turn. Plain assistant text is not delivered to that external user. If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call with action="send", channel from the notification, chat_id from the notification, and message containing the reply. If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement. For lightweight acknowledgement, prefer action="react" when supported. If the useful response belongs later, schedule the follow-up instead of sending a placeholder.'
+      ? '\n\nThis tool is currently scoped to a routed external channel turn. Plain assistant text is not delivered to that external user. If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call with action="send", channel from the notification, chat_id from the notification, and message containing the reply. If you need the external user to answer a structured question before continuing, use MessageChannel with action="ask", channel from the notification, chat_id from the notification, and questions containing the prompt/options; do not use AskUserQuestion in channel turns. If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement. For lightweight acknowledgement, prefer action="react" when supported. If the useful response belongs later, schedule the follow-up instead of sending a placeholder.'
       : "";
   const slackWorkAcknowledgement = discovery.activeChannels.includes("slack")
     ? '\n\nFor Slack requests that require nontrivial work or several tool calls, send one short MessageChannel call with action="send" before starting other tools. This gives the Slack user verbal acknowledgement and a View in web link. Do not do this for no-ops, reaction-only responses, or simple no-tool answers.'
@@ -183,7 +183,7 @@ export async function resolveMessageChannelToolDiscovery(
         .filter((accountId): accountId is string => Boolean(accountId)),
     ),
   );
-  const actions = new Set<string>(["send"]);
+  const actions = new Set<string>(["send", "ask"]);
   const schemaContributions: ChannelMessageToolSchemaContribution[] = [];
 
   for (const { channelId, accountId } of discoveryTargets) {

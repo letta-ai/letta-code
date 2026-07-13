@@ -231,11 +231,25 @@ export interface ChannelMessageToolDiscovery {
     | null;
 }
 
+export interface ChannelMessageQuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface ChannelMessageQuestion {
+  question: string;
+  header: string;
+  options: ChannelMessageQuestionOption[];
+  multiSelect: boolean;
+}
+
 export interface ChannelMessageActionRequest {
   action: ChannelMessageActionName;
   channel: string;
   chatId: string;
   message?: string;
+  questions?: ChannelMessageQuestion[];
+  answers?: Record<string, string>;
   replyToMessageId?: string;
   threadId?: string | null;
   messageId?: string;

@@ -299,6 +299,46 @@ describe("classifyApprovals", () => {
     });
   });
 
+  test("alwaysRequiresUserInput sees parsed tool args", async () => {
+    await loadTools();
+    permissionMode.setMode("unrestricted");
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call-message-channel-ask",
+          toolName: "MessageChannel",
+          toolArgs: JSON.stringify({
+            action: "ask",
+            channel: "slack",
+            chat_id: "C123",
+            questions: [
+              {
+                question: "Which branch should I use?",
+                header: "Branch",
+                options: [
+                  { label: "main", description: "Use main" },
+                  { label: "feature", description: "Use feature" },
+                ],
+                multiSelect: false,
+              },
+            ],
+          }),
+        },
+      ],
+      {
+        workingDirectory: "/tmp/project",
+        alwaysRequiresUserInput: (toolName, parsedArgs) =>
+          toolName === "MessageChannel" && parsedArgs.action === "ask",
+      },
+    );
+
+    expect(result.autoAllowed).toHaveLength(0);
+    expect(result.autoDenied).toHaveLength(0);
+    expect(result.needsUserInput).toHaveLength(1);
+    expect(result.needsUserInput[0]?.parsedArgs.action).toBe("ask");
+  });
+
   test("treatAskAsDeny also denies alwaysAsk rules", async () => {
     permissionMode.setMode("unrestricted");
     const projectDir = await createTempProjectWithAlwaysAskRule();

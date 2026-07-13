@@ -27,12 +27,14 @@ import type {
   OutboundChannelMessage,
   SupportedChannelId,
 } from "@/channels/types";
+import { ask_user_question } from "./ask-user-question";
 
 const TELEGRAM_CHANNEL_ID = "telegram";
 const SIGNAL_CHANNEL_ID = "signal";
 const TELEGRAM_PLACEHOLDER_PREFIX = "LCTELEGRAMHTMLPLACEHOLDER";
 const TELEGRAM_PLACEHOLDER_SUFFIX = "X";
 const TELEGRAM_PLACEHOLDER_PATTERN = /LCTELEGRAMHTMLPLACEHOLDER(\d+)X/g;
+const MESSAGE_CHANNEL_ASK_ACTION = "ask";
 const SLACK_PLACEHOLDER_PREFIX = "LCSLACKMRKDWNPLACEHOLDER";
 const SLACK_PLACEHOLDER_SUFFIX = "X";
 const SLACK_PLACEHOLDER_PATTERN = /LCSLACKMRKDWNPLACEHOLDER(\d+)X/g;
@@ -795,6 +797,18 @@ export function formatOutboundChannelMessage(
   return formatter(normalizedText);
 }
 
+interface MessageChannelQuestionOption {
+  label: string;
+  description: string;
+}
+
+interface MessageChannelQuestion {
+  question: string;
+  header: string;
+  options: MessageChannelQuestionOption[];
+  multiSelect: boolean;
+}
+
 interface MessageChannelArgs {
   channel: string;
   action: string;
@@ -802,6 +816,8 @@ interface MessageChannelArgs {
   target?: string;
   accountId?: string;
   message?: string;
+  questions?: MessageChannelQuestion[];
+  answers?: Record<string, string>;
   replyTo?: string;
   threadId?: string;
   messageId?: string;
@@ -823,6 +839,8 @@ interface NormalizedMessageChannelInput {
   target?: string;
   accountId?: string;
   message?: string;
+  questions?: MessageChannelQuestion[];
+  answers?: Record<string, string>;
   replyToMessageId?: string;
   threadId?: string | null;
   messageId?: string;
@@ -930,6 +948,8 @@ function normalizeMessageChannelInput(
     ...(rawTarget ? { target: rawTarget } : {}),
     accountId: firstNonEmptyString(args.accountId),
     message: firstNonEmptyString(args.message),
+    questions: args.questions,
+    answers: args.answers,
     replyToMessageId: firstNonEmptyString(args.replyTo),
     threadId: firstNonEmptyString(args.threadId) ?? null,
     messageId: firstNonEmptyString(args.messageId),
@@ -951,6 +971,8 @@ function buildMessageChannelRequest(
     channel: input.channel,
     chatId,
     message: input.message,
+    questions: input.questions,
+    answers: input.answers,
     replyToMessageId: input.replyToMessageId,
     threadId: threadId ?? input.threadId ?? null,
     messageId: input.messageId,
@@ -960,6 +982,21 @@ function buildMessageChannelRequest(
     filename: input.filename,
     title: input.title,
   };
+}
+
+async function handleMessageChannelAskAction(
+  args: MessageChannelArgs,
+): Promise<string> {
+  try {
+    const result = await ask_user_question({
+      questions: args.questions ?? [],
+      answers: args.answers,
+    });
+    return result.message;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return `Error: MessageChannel action "ask" failed: ${message}`;
+  }
 }
 
 function buildSyntheticChannelRoute(params: {
@@ -1180,6 +1217,10 @@ export async function message_channel(
     }
 
     const { request, route, adapter, plugin } = executionContext;
+    if (request.action === MESSAGE_CHANNEL_ASK_ACTION) {
+      return await handleMessageChannelAskAction(args);
+    }
+
     if (!plugin.messageActions) {
       return `Error: Channel "${request.channel}" does not expose MessageChannel actions.`;
     }

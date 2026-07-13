@@ -304,7 +304,7 @@ export async function handleApprovalStop(params: {
         await registry.registerPendingControlRequest({
           requestId,
           kind:
-            getInteractiveApprovalKind(ac.approval.toolName) ??
+            getInteractiveApprovalKind(ac.approval.toolName, ac.parsedArgs) ??
             "generic_tool_approval",
           source: channelSource,
           toolName: ac.approval.toolName,

@@ -145,10 +145,17 @@ function getToolNamesForToolset(
       break;
   }
 
+  const hasExplicitScopedChannelTool =
+    channelToolScope !== undefined &&
+    (channelToolScope?.channels.length ?? 0) > 0;
   const hasScopedChannelTool =
     channelToolScope !== undefined
       ? (channelToolScope?.channels.length ?? 0) > 0
       : (getChannelRegistry()?.getActiveChannelIds().length ?? 0) > 0;
+
+  if (hasExplicitScopedChannelTool) {
+    tools = tools.filter((name) => name !== "AskUserQuestion");
+  }
 
   // Append channel tool if channels are active (covers ALL pinned toolsets)
   if (hasScopedChannelTool && !tools.includes("MessageChannel" as ToolName)) {
