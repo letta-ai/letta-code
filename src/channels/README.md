@@ -279,7 +279,7 @@ storage and are normalized to `camelCase` at runtime.
 
 | Key | Default | Description |
 |---|---|---|
-| `audio_as_voice_memo` | `false` | When `false` (default), all audio files are sent as documents. When `true`, `.ogg`/`.oga`/`.opus` are sent as voice memos (`ptt`). |
+| `audio_as_voice_memo` | `true` | When `true` (default), `.ogg`/`.oga`/`.opus` files are sent as voice memos (`ptt`). Set `false` to send all audio as documents. |
 
 ### Attachment policy fields
 
@@ -289,7 +289,7 @@ policy checks are skipped and current behavior is preserved.
 
 | Key | Default | Description |
 |---|---|---|
-| `attachment_filter` | `true` | Enable/disable attachment policy enforcement. |
+| `attachment_filter` | `false` | Enable/disable attachment policy enforcement. When `false` (default), all media sends are allowed. |
 | `attachment_mime_types` | `[]` | Allowed MIME types. `[]` denies all. `["*"]` allows all. Explicit entries are exact-match (e.g. `text/plain`, `application/pdf`). |
 | `attachment_allowed_recipients` | `[]` | Allowed recipients (phone numbers or JIDs). `[]` denies all. `["*"]` allows all. Phone numbers work alongside JIDs. |
 | `attachment_allowed_paths` | `[]` | Allowed source directories for files. Entries must be absolute paths to directories. `[]` denies all. |

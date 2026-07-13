@@ -858,7 +858,7 @@ export function createWhatsAppAdapter(
       if (msg.mediaPath) {
         const policyError = checkAttachmentPolicy({
           policy: {
-            attachmentFilter: account.attachmentFilter !== false,
+            attachmentFilter: account.attachmentFilter === true,
             attachmentMimeTypes: account.attachmentMimeTypes ?? [],
             attachmentAllowedRecipients:
               account.attachmentAllowedRecipients ?? [],

@@ -46,16 +46,16 @@ describe("WhatsApp media helpers", () => {
         mediaPath: "/tmp/photo.png",
       }),
     ).toEqual({ image: { url: "/tmp/photo.png" }, caption: "caption" });
-    // By default (audioAsVoiceMemo not set), .ogg falls through to document.
+    // By default (audioAsVoiceMemo not set = true), .ogg goes as voice memo.
     expect(
       buildWhatsAppOutboundPayload({
         text: "",
         mediaPath: "/tmp/voice.ogg",
       }),
     ).toEqual({
-      document: { url: "/tmp/voice.ogg" },
-      fileName: "voice.ogg",
-      mimetype: "application/octet-stream",
+      audio: { url: "/tmp/voice.ogg" },
+      mimetype: "audio/ogg; codecs=opus",
+      ptt: true,
     });
   });
 
@@ -75,12 +75,15 @@ describe("WhatsApp media helpers", () => {
     });
   });
 
-  test("sends .mp3 as document by default", () => {
+  test("sends .mp3 as document when audioAsVoiceMemo is false", () => {
     expect(
-      buildWhatsAppOutboundPayload({
-        text: "",
-        mediaPath: "/tmp/audio.mp3",
-      }),
+      buildWhatsAppOutboundPayload(
+        {
+          text: "",
+          mediaPath: "/tmp/audio.mp3",
+        },
+        { audioAsVoiceMemo: false },
+      ),
     ).toEqual({
       document: { url: "/tmp/audio.mp3" },
       fileName: "audio.mp3",

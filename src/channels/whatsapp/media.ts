@@ -423,7 +423,7 @@ export function buildWhatsAppOutboundPayload(
     return { video: { url: msg.mediaPath }, ...(caption ? { caption } : {}) };
   }
   if (
-    account?.audioAsVoiceMemo === true &&
+    account?.audioAsVoiceMemo !== false &&
     WHATSAPP_VOICE_MEMO_EXTENSIONS.has(extension)
   ) {
     return {
@@ -473,7 +473,7 @@ export function getWhatsAppOutboundMediaValidationError(
 ): string | null {
   const extension = getWhatsAppOutboundMediaExtension(msg);
   if (
-    account?.audioAsVoiceMemo === true &&
+    account?.audioAsVoiceMemo !== false &&
     WHATSAPP_AUDIO_EXTENSIONS.has(extension) &&
     !WHATSAPP_VOICE_MEMO_EXTENSIONS.has(extension)
   ) {
