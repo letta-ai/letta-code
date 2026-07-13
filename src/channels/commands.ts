@@ -77,6 +77,7 @@ export type ChannelStatusContext = {
   accountConfigured: boolean;
   accountEnabled?: boolean;
   route: ChannelRoute | null;
+  activeModel?: string;
 };
 
 export type ChannelSlashCommandOptions = {
@@ -376,6 +377,9 @@ export function buildChannelStatusMessage(
   if (route) {
     lines.push(`Agent: ${route.agentId}.`);
     lines.push(`Conversation: ${route.conversationId}.`);
+    if (context.activeModel) {
+      lines.push(`Model: ${context.activeModel}.`);
+    }
     if (route.threadId) {
       lines.push(`Thread: ${route.threadId}.`);
     }

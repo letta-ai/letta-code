@@ -1277,12 +1277,33 @@ export class ChannelRegistry {
 
     if (
       await tryHandleChannelSlashCommand(adapter, msg, {
-        statusContext: {
-          adapterRunning: adapter.isRunning(),
-          accountConfigured: !!config,
-          accountEnabled: config?.enabled,
-          route: getStatusRoute(),
-        },
+        statusContext: await (async () => {
+          const route = getStatusRoute();
+          let activeModel: string | undefined;
+          if (route && this.modelHandler) {
+            try {
+              const result = await this.modelHandler({
+                channelId: msg.channel,
+                runtime: {
+                  agent_id: route.agentId,
+                  conversation_id: route.conversationId,
+                },
+              });
+              if (result.modelPicker?.modelLabel) {
+                activeModel = result.modelPicker.modelLabel;
+              }
+            } catch {
+              // Best-effort; model label is optional in status.
+            }
+          }
+          return {
+            adapterRunning: adapter.isRunning(),
+            accountConfigured: !!config,
+            accountEnabled: config?.enabled,
+            route,
+            activeModel,
+          };
+        })(),
         handlers: {
           cancel: async (_command, commandMsg) =>
             this.handleCancelSlashCommand(commandMsg),
