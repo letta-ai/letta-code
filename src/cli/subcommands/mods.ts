@@ -143,13 +143,19 @@ export function listMods(options: ListModsOptions = {}): ModsList {
   const harness = sources.find((source) => source.scope === "global");
   const agent = sources.find((source) => source.scope === "agent");
   const managedPackages = listManagedModPackages(globalModsDirectory);
+  const legacyManagedPackages = legacyGlobalExtensionsDirectory
+    ? listManagedModPackages(legacyGlobalExtensionsDirectory)
+    : { packages: [], diagnostics: [] };
 
   return {
     ...(agent ? { agent: toSection(agent) } : {}),
     harness: harness ? toSection(harness) : { files: [], root: "" },
     ...(legacyHarness ? { legacyHarness: toSection(legacyHarness) } : {}),
-    packageDiagnostics: managedPackages.diagnostics,
-    packages: managedPackages.packages,
+    packageDiagnostics: [
+      ...managedPackages.diagnostics,
+      ...legacyManagedPackages.diagnostics,
+    ],
+    packages: [...managedPackages.packages, ...legacyManagedPackages.packages],
   };
 }
 
