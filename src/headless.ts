@@ -17,6 +17,7 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { detectShellContext } from "@/utils/shell-context";
+import { createSigintAbortSignal } from "@/utils/sigint-abort";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
@@ -354,6 +355,7 @@ export const __headlessTestUtils = {
   contentToTaskNotificationText,
   toBidirectionalQueuedInput,
   prepareHeadlessToolExecutionContext,
+  waitForEnvironmentAssistantMessage,
 };
 
 type ReflectionOverrides = {
@@ -737,21 +739,54 @@ function messageTime(message: LettaMessage): number {
   return date ? new Date(date).getTime() : 0;
 }
 
+function agentLastRunCompletionMs(agent: AgentState): number | null {
+  const raw = (agent as { last_run_completion?: unknown }).last_run_completion;
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  const ms = new Date(raw).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function agentLastStopReason(agent: AgentState): StopReasonType | null {
+  const raw = (agent as { last_stop_reason?: unknown }).last_stop_reason;
+  return typeof raw === "string" && raw.length > 0
+    ? (raw as StopReasonType)
+    : null;
+}
+
 async function waitForEnvironmentAssistantMessage(params: {
   backend: ReturnType<typeof getBackend>;
   agentId: string;
   conversationId: string;
   startedAtMs: number;
+  baselineLastRunCompletionMs?: number | null;
   timeoutMs?: number;
   pollIntervalMs?: number;
-}): Promise<string> {
+}): Promise<{ text: string; stopReason: StopReasonType | null }> {
   const timeoutMs = params.timeoutMs ?? 10 * 60_000;
   const pollIntervalMs = params.pollIntervalMs ?? 1_000;
   const deadline = Date.now() + timeoutMs;
   let lastText = "";
-  let stableCount = 0;
+  let postCompletionStableCount = 0;
+  let observedCompletion = false;
+  let observedStopReason: StopReasonType | null = null;
 
   while (Date.now() < deadline) {
+    const freshAgent = await params.backend.retrieveAgent(params.agentId);
+    const completionMs = agentLastRunCompletionMs(freshAgent);
+    const baselineCompletionMs = params.baselineLastRunCompletionMs ?? null;
+    const wasObservedCompletion = observedCompletion;
+    if (
+      completionMs !== null &&
+      (baselineCompletionMs === null || completionMs > baselineCompletionMs) &&
+      completionMs >= params.startedAtMs - 5_000
+    ) {
+      observedCompletion = true;
+      observedStopReason = agentLastStopReason(freshAgent);
+      if (!wasObservedCompletion) {
+        postCompletionStableCount = 0;
+      }
+    }
+
     const page =
       params.conversationId === "default"
         ? await params.backend.listAgentMessages(params.agentId, {
@@ -776,21 +811,23 @@ async function waitForEnvironmentAssistantMessage(params: {
     const text = assistant ? extractMessageText(assistant).trim() : "";
     if (text.length > 0) {
       if (text === lastText) {
-        stableCount += 1;
+        if (observedCompletion) postCompletionStableCount += 1;
       } else {
         lastText = text;
-        stableCount = 1;
+        postCompletionStableCount = observedCompletion ? 1 : 0;
       }
-      if (stableCount >= 2) {
-        return text;
+      if (observedCompletion && postCompletionStableCount >= 2) {
+        return { text, stopReason: observedStopReason };
       }
     }
 
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
-  if (lastText) return lastText;
-  throw new Error("Timed out waiting for environment response");
+  if (observedCompletion && lastText) {
+    return { text: lastText, stopReason: observedStopReason };
+  }
+  throw new Error("Timed out waiting for environment turn completion");
 }
 
 type ReplyEnvironmentMetadata =
@@ -2261,7 +2298,6 @@ ${SYSTEM_REMINDER_CLOSE}
   );
 
   if (usesRemoteEnvironment) {
-    const startedAtMs = Date.now();
     const environmentSelector = String(explicitEnvironmentSelector);
     const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
     const environmentRouting = useCloudSandbox
@@ -2332,6 +2368,8 @@ ${SYSTEM_REMINDER_CLOSE}
       }
       await exitHeadless(1, "headless_environment_unsupported");
     }
+    const startedAtMs = Date.now();
+    const baselineLastRunCompletionMs = agentLastRunCompletionMs(agent);
     await sendEnvironmentMessage(connectionId, {
       agentId: agent.id,
       conversationId,
@@ -2345,12 +2383,14 @@ ${SYSTEM_REMINDER_CLOSE}
       ],
     });
 
-    const resultText = await waitForEnvironmentAssistantMessage({
+    const environmentResult = await waitForEnvironmentAssistantMessage({
       backend,
       agentId: agent.id,
       conversationId,
       startedAtMs,
+      baselineLastRunCompletionMs,
     });
+    const resultText = environmentResult.text;
     const stats = sessionStats.getSnapshot();
 
     if (outputFormat === "json") {
@@ -2368,6 +2408,10 @@ ${SYSTEM_REMINDER_CLOSE}
             conversation_id: conversationId,
             environment: responseEnvironment,
             usage: null,
+            ...(environmentResult.stopReason &&
+            environmentResult.stopReason !== "end_turn"
+              ? { stop_reason: environmentResult.stopReason }
+              : {}),
           },
           null,
           2,
@@ -2390,16 +2434,14 @@ ${SYSTEM_REMINDER_CLOSE}
         run_ids: [],
         usage: null,
         uuid: `result-${agent.id}-${Date.now()}`,
+        ...(environmentResult.stopReason &&
+        environmentResult.stopReason !== "end_turn"
+          ? { stop_reason: environmentResult.stopReason }
+          : {}),
       };
       writeWireMessage(resultEvent);
     } else {
-      await writeFinalHeadlessStdout(
-        `${resultText}\n\n${formatAgentReplyMetadata({
-          agentId: agent.id,
-          conversationId,
-          environment: responseEnvironment,
-        })}\n`,
-      );
+      await writeFinalHeadlessStdout(`${resultText}\n`);
     }
 
     await exitHeadless(0, "headless_environment_message_complete");
@@ -2483,8 +2525,30 @@ ${SYSTEM_REMINDER_CLOSE}
     }
   };
 
+  // One-shot mode has no input loop, so wire SIGINT directly into the turn.
+  const sigintSignal = createSigintAbortSignal();
+  const exitInterrupted = async (): Promise<never> => {
+    if (outputFormat === "stream-json") {
+      const errorMsg: ErrorMessage = {
+        type: "error",
+        message: "Interrupted by SIGINT",
+        stop_reason: "cancelled",
+        session_id: sessionId,
+        uuid: `error-interrupted-${randomUUID()}`,
+      };
+      await writeWireMessageAsync(errorMsg);
+    } else {
+      console.error("Interrupted by SIGINT");
+    }
+    return exitHeadless(130, "headless_sigint_interrupted");
+  };
+
   try {
     while (true) {
+      if (sigintSignal.aborted) {
+        await exitInterrupted();
+      }
+
       const hasApprovalContinuation = currentInput.some(
         (item) => item.type === "approval",
       );
@@ -2537,14 +2601,23 @@ ${SYSTEM_REMINDER_CLOSE}
           modEvents: headlessModAdapter.events,
         });
         availableTools = turnToolContext.availableTools;
-        stream = await sendMessageStream(conversationId, currentInput, {
-          agentId: agent.id,
-          overrideModel: overrideModelHandle,
-          preparedToolContext:
-            turnToolContext.preparedToolContext.preparedToolContext,
-        });
+        stream = await sendMessageStream(
+          conversationId,
+          currentInput,
+          {
+            agentId: agent.id,
+            overrideModel: overrideModelHandle,
+            preparedToolContext:
+              turnToolContext.preparedToolContext.preparedToolContext,
+          },
+          { maxRetries: 0, signal: sigintSignal },
+        );
         turnToolContextId = getStreamToolContextId(stream);
       } catch (preStreamError) {
+        if (sigintSignal.aborted) {
+          await exitInterrupted();
+        }
+
         // Extract error detail using shared helper (handles nested/direct/message shapes)
         const errorDetail = extractConflictDetail(preStreamError);
 
@@ -2823,7 +2896,7 @@ ${SYSTEM_REMINDER_CLOSE}
           stream,
           buffers,
           () => {},
-          undefined,
+          sigintSignal,
           undefined,
           streamJsonHook,
           reminderContextTracker,
@@ -2839,7 +2912,7 @@ ${SYSTEM_REMINDER_CLOSE}
           stream,
           buffers,
           () => {}, // No UI refresh needed in headless mode
-          undefined,
+          sigintSignal,
           undefined,
           undefined,
           reminderContextTracker,
@@ -2853,6 +2926,11 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
+
+      // Exit before dispatching tool calls produced after an interrupt.
+      if (stopReason === "cancelled" || sigintSignal.aborted) {
+        await exitInterrupted();
+      }
 
       // Check max turns after each turn (server may have taken multiple steps),
       // but defer the limit when we're still resolving pending approvals.
@@ -2991,9 +3069,15 @@ ${SYSTEM_REMINDER_CLOSE}
           decisions,
           undefined,
           {
+            abortSignal: sigintSignal,
             toolContextId: turnToolContextId ?? undefined,
           },
         );
+
+        // Don't send interrupted tool results back for another provider round.
+        if (sigintSignal.aborted) {
+          await exitInterrupted();
+        }
 
         if (outputFormat === "stream-json") {
           emitLocalToolReturns(executedResults, sessionId);

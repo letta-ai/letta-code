@@ -6,7 +6,6 @@
  * 2. Warm recovery: existing batch map entries → resolved to single batch ID.
  * 3. Ambiguous mapping: conflicting batch IDs → fail-closed (null).
  * 4. Idempotency: repeated resolve calls with same state → same behavior.
- * 5. isRecoveringApprovals guard prevents concurrent recovery.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import {
@@ -20,6 +19,7 @@ import type {
   ChannelControlRequestEvent,
 } from "@/channels/types";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
+import type { ConversationRuntime } from "@/websocket/listener/types";
 
 const {
   createRuntime,
@@ -190,27 +190,6 @@ describe("resolveRecoveryBatchId warm path", () => {
   });
 });
 
-describe("isRecoveringApprovals guard", () => {
-  test("runtime starts with isRecoveringApprovals = false", () => {
-    const runtime = createRuntime();
-    expect(runtime.isRecoveringApprovals).toBe(false);
-  });
-
-  test("guard flag prevents concurrent recovery (production pattern)", () => {
-    const runtime = createRuntime();
-
-    // Simulate first recovery in progress
-    runtime.isRecoveringApprovals = true;
-
-    // Second recovery attempt should observe guard and bail
-    expect(runtime.isRecoveringApprovals).toBe(true);
-
-    // Simulate completion
-    runtime.isRecoveringApprovals = false;
-    expect(runtime.isRecoveringApprovals).toBe(false);
-  });
-});
-
 describe("resolvePendingApprovalBatchId original behavior preserved", () => {
   test("returns null when map is empty (unchanged behavior)", () => {
     const runtime = createRuntime();
@@ -270,9 +249,11 @@ describe("channel control request recovery", () => {
     const registry = new ChannelRegistry();
     registry.registerAdapter(createAdapter(replies));
     const listener = createListenerRuntime();
+    let recoveredRuntime: ConversationRuntime | undefined;
 
     await recoverPendingChannelControlRequests(listener, {
       recoverApprovalStateForSync: async (runtime) => {
+        recoveredRuntime = runtime;
         runtime.recoveredApprovalState = {
           agentId: "agent-1",
           conversationId: "conv-1",
@@ -315,6 +296,11 @@ describe("channel control request recovery", () => {
       },
     ]);
     expect(registry.hasPendingControlRequest(event.requestId)).toBe(true);
+    expect(recoveredRuntime?.activeChannelTurn?.sources).toEqual([
+      event.source,
+    ]);
+    expect(recoveredRuntime?.activeChannelTurn?.contextRecovered).toBe(true);
+    expect(recoveredRuntime?.activeChannelTurn?.progress).not.toBeNull();
   });
 
   test("clears persisted channel prompts that are no longer pending", async () => {

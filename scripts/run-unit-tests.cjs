@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-const { execSync } = require("node:child_process");
-const { readdirSync, statSync } = require("node:fs");
+const { execFileSync } = require("node:child_process");
+const { readFileSync, readdirSync } = require("node:fs");
 const path = require("node:path");
 
 // Unit test directories — bun discovers *.test.ts / *.test.tsx within each.
-// Listed explicitly so we skip src/integration-tests (API-gated) and avoid
-// shell expansion that can exceed the Windows command-line length limit.
+// Listed explicitly so we skip src/integration-tests (API-gated).
 const dirs = [
   "src/agent",
   "src/auth",
@@ -30,23 +29,23 @@ const dirs = [
   "src/utils",
   "src/web",
   "src/websocket",
-  // Root-level test files (not inside a subdirectory)
-  "src/*.test.ts",
 ];
 
-// slack-media.test.ts imports the real ./slack/media module. slack-adapter.test.ts
-// calls mock.module("./slack/media") which in Bun 1.3.x poisons the shared module
-// registry across parallel workers. We run slack-media in an isolated process first,
-// then run src/channels with all OTHER test files (excluding slack-media).
-function findTestFiles(dir, exclude) {
+const isolationManifest = JSON.parse(
+  readFileSync(path.join(__dirname, "isolated-unit-tests.json"), "utf8"),
+);
+const isolatedTests = isolationManifest.tests;
+const isolatedPaths = new Set(isolatedTests.map((entry) => entry.path));
+
+function findTestFiles(dir) {
   const results = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      results.push(...findTestFiles(full, exclude));
+      results.push(...findTestFiles(full));
     } else if (
-      (entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx")) &&
-      !exclude.includes(full.replace(/\\/g, "/"))
+      entry.name.endsWith(".test.ts") ||
+      entry.name.endsWith(".test.tsx")
     ) {
       results.push(full.replace(/\\/g, "/"));
     }
@@ -54,28 +53,87 @@ function findTestFiles(dir, exclude) {
   return results;
 }
 
-const channelTestFiles = findTestFiles("src/channels", [
-  "src/channels/slack-media.test.ts",
-]);
-
-const opts = { stdio: "inherit", shell: process.platform === "win32" };
-let exitCode = 0;
-
-// Run slack-media in isolation first (clean module registry)
-try {
-  execSync("bun test src/channels/slack-media.test.ts --timeout 15000", opts);
-} catch (e) {
-  exitCode = e.status ?? 1;
+function findRootTestFiles(dir) {
+  return readdirSync(dir, { withFileTypes: true })
+    .filter(
+      (entry) =>
+        entry.isFile() &&
+        (entry.name.endsWith(".test.ts") || entry.name.endsWith(".test.tsx")),
+    )
+    .map((entry) => path.join(dir, entry.name).replace(/\\/g, "/"));
 }
 
-// Run everything else
-try {
-  execSync(
-    `bun test ${[...dirs, ...channelTestFiles].join(" ")} --timeout 15000`,
-    opts,
-  );
-} catch (e) {
-  exitCode = e.status ?? 1;
+const allTestFiles = [
+  ...dirs.flatMap((dir) => findTestFiles(dir)),
+  ...findTestFiles("src/channels"),
+  ...findRootTestFiles("src"),
+].sort();
+const discoveredPaths = new Set(allTestFiles);
+
+for (const entry of isolatedTests) {
+  if (!discoveredPaths.has(entry.path)) {
+    throw new Error(
+      `Isolated unit test is missing from the unit-test roots: ${entry.path}`,
+    );
+  }
+  if (!Number.isInteger(entry.timeoutMs) || entry.timeoutMs <= 0) {
+    throw new Error(`Invalid timeout for isolated unit test: ${entry.path}`);
+  }
+}
+
+function runTests(files, timeoutMs) {
+  execFileSync("bun", ["test", ...files, "--timeout", String(timeoutMs)], {
+    stdio: "inherit",
+  });
+}
+
+function chunkByCommandLength(files, maxChars = 20000) {
+  const chunks = [];
+  let chunk = [];
+  let chars = 0;
+
+  for (const file of files) {
+    const nextChars = file.length + 3;
+    if (chunk.length > 0 && chars + nextChars > maxChars) {
+      chunks.push(chunk);
+      chunk = [];
+      chars = 0;
+    }
+    chunk.push(file);
+    chars += nextChars;
+  }
+  if (chunk.length > 0) {
+    chunks.push(chunk);
+  }
+  return chunks;
+}
+
+let exitCode = 0;
+
+// Bun module mocks and process-global state are shared within one test process.
+// Keep the explicitly stateful suites in fresh processes so they cannot poison
+// the ordinary unit batch or inherit another suite's cwd/env/module registry.
+for (const entry of isolatedTests) {
+  try {
+    runTests([entry.path], entry.timeoutMs);
+  } catch (error) {
+    exitCode = error.status ?? 1;
+  }
+}
+
+const sharedProcessTests = allTestFiles.filter(
+  (file) => !isolatedPaths.has(file),
+);
+
+// Passing argv directly avoids cmd.exe's shorter shell command-line limit on
+// Windows. Bounded batches also stay below CreateProcess's 32k limit as the
+// suite grows.
+for (const batch of chunkByCommandLength(sharedProcessTests)) {
+  try {
+    runTests(batch, 15000);
+  } catch (error) {
+    exitCode = error.status ?? 1;
+  }
 }
 
 process.exit(exitCode);

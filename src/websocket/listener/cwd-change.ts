@@ -28,6 +28,30 @@ export async function switchCurrentRuntimeWorkingDirectory(
   updateRuntimeContext({ workingDirectory });
 }
 
+/**
+ * Updates a captured tool execution context so tool calls later in the SAME
+ * turn resolve the new working directory. Turns bake their cwd into the
+ * prepared execution context at turn start; without this, an in-flight turn
+ * keeps running tools in the previous directory after a cwd switch.
+ */
+export async function updateToolExecutionContextCwd(
+  executionContextId: string | undefined,
+  workingDirectory: string,
+): Promise<void> {
+  if (!executionContextId) {
+    return;
+  }
+  // Imported lazily so `@/tools/manager` does not become a static dependency
+  // of the listener cwd module.
+  const { updateToolExecutionContextWorkingDirectory } = await import(
+    "@/tools/manager"
+  );
+  updateToolExecutionContextWorkingDirectory(
+    executionContextId,
+    workingDirectory,
+  );
+}
+
 export async function switchConversationWorkingDirectory(params: {
   runtime: ListenerRuntime;
   agentId: string | null;

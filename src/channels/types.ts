@@ -8,7 +8,11 @@
  */
 
 import type { PermissionMode } from "@/permissions/mode";
-import type { ListModelsResponseModelEntry } from "@/types/protocol_v2";
+import type {
+  ApprovalResponseBody,
+  ListModelsResponseModelEntry,
+  StopReasonType,
+} from "@/types/protocol_v2";
 
 /**
  * Vendor-neutral model-picker payload produced by the generic channel
@@ -203,6 +207,22 @@ export interface ChannelControlRequestEvent {
   input: Record<string, unknown>;
 }
 
+export type ChannelControlResponseResult =
+  | "handled"
+  | "expired"
+  | "unavailable"
+  | "forbidden";
+
+export interface ChannelControlResponseInput {
+  requestId: string;
+  response: ApprovalResponseBody;
+  senderId: string;
+  channel: string;
+  accountId?: string;
+  chatId: string;
+  threadId?: string | null;
+}
+
 export type ChannelTurnLifecycleEvent =
   | {
       type: "queued";
@@ -218,6 +238,7 @@ export type ChannelTurnLifecycleEvent =
       batchId: string;
       sources: ChannelTurnSource[];
       outcome: ChannelTurnOutcome;
+      stopReason: StopReasonType;
       error?: string;
       runId?: string;
     };
@@ -305,6 +326,11 @@ export interface ChannelAdapter {
    * instead of relying on a desktop/websocket UI intercept layer.
    */
   handleControlRequestEvent?(event: ChannelControlRequestEvent): Promise<void>;
+
+  /** Wired by ChannelRegistry for native approval controls such as Slack buttons. */
+  onControlResponse?: (
+    input: ChannelControlResponseInput,
+  ) => Promise<ChannelControlResponseResult>;
 
   /**
    * Called by the registry when the adapter receives an inbound message.
@@ -400,6 +426,10 @@ export interface OutboundChannelMessage {
   removeReaction?: boolean;
   /** Optional: target message id for reactions. */
   targetMessageId?: string;
+  /** Optional: sending agent identity, used by adapters that render web deep links. */
+  agentId?: string;
+  /** Optional: conversation identity, used by adapters that render web deep links. */
+  conversationId?: string;
 }
 
 export interface OutboundChannelRichMessageDraft {

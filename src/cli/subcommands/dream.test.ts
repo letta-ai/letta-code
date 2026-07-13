@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { runDreamSubcommand } from "./dream";
+import { parseDreamArgs, runDreamSubcommand } from "./dream";
 
 function captureConsole(): {
   errors: string[];
@@ -37,8 +37,11 @@ describe("dream subcommand", () => {
       expect(output).toContain("letta dream");
       expect(output).toContain("--memory");
       expect(output).toContain("--from");
+      expect(output).toContain("--model");
       expect(output).toContain("--to");
       expect(output).toContain("--instruction");
+      expect(output).toContain("--prompt");
+      expect(output).toContain("--system");
     } finally {
       captured.restore();
     }
@@ -75,5 +78,23 @@ describe("dream subcommand", () => {
     } finally {
       captured.restore();
     }
+  });
+
+  test("accepts an explicit reflection model", () => {
+    const parsed = parseDreamArgs(["--model", "zai/glm-5.2"]);
+
+    expect(parsed.values.model).toBe("zai/glm-5.2");
+  });
+
+  test("accepts a reflection task prompt override", () => {
+    const parsed = parseDreamArgs(["--prompt", "Distill task X notes."]);
+
+    expect(parsed.values.prompt).toBe("Distill task X notes.");
+  });
+
+  test("accepts a reflection system prompt override", () => {
+    const parsed = parseDreamArgs(["--system", "You write terse notes."]);
+
+    expect(parsed.values.system).toBe("You write terse notes.");
   });
 });

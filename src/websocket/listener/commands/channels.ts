@@ -1,8 +1,9 @@
 import WebSocket from "ws";
 import { getChannelPluginConfig } from "@/channels/account-config";
+import { getActiveChannelCredentialsStoreMode } from "@/channels/credential-store";
 import { removeUserPlugin } from "@/channels/custom/scaffolding";
 import { getChannelPluginMetadata } from "@/channels/plugin-registry";
-import type { ChannelRegistryEvent } from "@/channels/registry";
+import type { ChannelRegistryEvent } from "@/channels/registry-events";
 import { LEGACY_DEFAULT_CHANNEL_ID } from "@/channels/types";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import type {
@@ -274,7 +275,6 @@ export async function handleChannelsProtocolCommand(
     updateChannelAccountLive,
     updateChannelRouteLive,
   } = await loadChannelsService();
-
   const mapChannelSummary = (
     summary: ReturnType<typeof listChannelSummaries>[number],
   ) => {
@@ -299,7 +299,6 @@ export async function handleChannelsProtocolCommand(
       config_schema: configSchema,
     };
   };
-
   const mapChannelConfig = (
     snapshot: ReturnType<typeof getChannelConfigSnapshot>,
   ): ProtocolChannelConfigSnapshot | null => {
@@ -334,7 +333,6 @@ export async function handleChannelsProtocolCommand(
       updated_at: snapshot.updatedAt,
     };
   };
-
   const mapRouteSnapshot = (
     route: ReturnType<typeof listChannelRouteSnapshots>[number],
   ) => ({
@@ -350,7 +348,6 @@ export async function handleChannelsProtocolCommand(
     created_at: route.createdAt,
     updated_at: route.updatedAt,
   });
-
   const mapTargetSnapshot = (
     target: ReturnType<typeof listChannelTargetSnapshots>[number],
   ) => ({
@@ -470,6 +467,7 @@ export async function handleChannelsProtocolCommand(
 
       const pluginConfig =
         getChannelPluginConfig(parsed.account as Record<string, unknown>) ?? {};
+      await getActiveChannelCredentialsStoreMode();
       const created = createChannelAccountLive(
         effectiveChannelId,
         {
@@ -544,6 +542,7 @@ export async function handleChannelsProtocolCommand(
         allowedUsers: parsed.patch.allowed_users,
         config: pluginConfig,
       };
+      await getActiveChannelCredentialsStoreMode();
       const account = updateChannelAccountLive(
         parsed.channel_id,
         parsed.account_id,

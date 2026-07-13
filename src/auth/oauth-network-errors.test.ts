@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import {
+  OAuthRefreshError,
   pollForToken,
   refreshAccessToken,
   requestDeviceCode,
@@ -67,11 +68,55 @@ describe("OAuth network errors", () => {
       ),
     ) as unknown as typeof fetch;
 
-    await expect(
-      refreshAccessToken("refresh-token", "device-id", "device-name"),
-    ).rejects.toThrow(
+    let refreshError: unknown;
+    try {
+      await refreshAccessToken("refresh-token", "device-id", "device-name");
+    } catch (error) {
+      refreshError = error;
+    }
+    expect(refreshError).toBeInstanceOf(OAuthRefreshError);
+    expect((refreshError as OAuthRefreshError).message).toContain(
       "Failed to refresh access token from app.letta.com: certificate has expired (CERT_HAS_EXPIRED).",
     );
+    expect((refreshError as OAuthRefreshError).retryable).toBe(true);
+  });
+
+  test("refreshAccessToken distinguishes revoked credentials from server failures", async () => {
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "invalid_grant" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    ) as unknown as typeof fetch;
+
+    try {
+      await refreshAccessToken("revoked", "device-id");
+      throw new Error("Expected revoked refresh to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(OAuthRefreshError);
+      expect((error as OAuthRefreshError).retryable).toBe(false);
+      expect((error as OAuthRefreshError).oauthCode).toBe("invalid_grant");
+    }
+
+    globalThis.fetch = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: "temporarily_unavailable" }), {
+          status: 503,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    ) as unknown as typeof fetch;
+
+    try {
+      await refreshAccessToken("valid", "device-id");
+      throw new Error("Expected server failure to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(OAuthRefreshError);
+      expect((error as OAuthRefreshError).retryable).toBe(true);
+      expect((error as OAuthRefreshError).status).toBe(503);
+    }
   });
 
   test("validateCredentialsWithResult classifies authentication failures", async () => {

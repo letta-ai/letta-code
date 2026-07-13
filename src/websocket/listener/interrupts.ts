@@ -436,6 +436,7 @@ export function createToolExecutionOutputEmitter(
     runId?: string | null;
     agentId?: string;
     conversationId?: string;
+    shouldEmit?: () => boolean;
   },
 ): ToolExecutionOutputEmitter {
   const outputByToolCallId = new Map<string, StreamingToolOutputState>();
@@ -444,7 +445,7 @@ export function createToolExecutionOutputEmitter(
     toolCallId: string,
     outputState: StreamingToolOutputState,
   ) => {
-    if (!outputState.dirty) {
+    if (!outputState.dirty || params.shouldEmit?.() === false) {
       return;
     }
 
@@ -467,7 +468,7 @@ export function createToolExecutionOutputEmitter(
         message_type: "tool_return_message",
         id: outputState.messageId,
         date: new Date().toISOString(),
-        run_id: params.runId ?? runtime.activeRunId ?? undefined,
+        run_id: params.runId ?? undefined,
         status: "success",
         tool_call_id: toolCallId,
         tool_return: toolReturn,
@@ -504,7 +505,7 @@ export function createToolExecutionOutputEmitter(
     chunk: string,
     isStderr: boolean = false,
   ) => {
-    if (!toolCallId || chunk.length === 0) {
+    if (!toolCallId || chunk.length === 0 || params.shouldEmit?.() === false) {
       return;
     }
 

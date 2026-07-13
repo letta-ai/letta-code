@@ -17,11 +17,9 @@ import {
   clearSubagentConfigCache,
   discoverSubagents,
   getAllSubagentConfigs,
-} from "@/agent/subagents";
-import {
   type SubagentMemoryScope,
-  spawnSubagent,
-} from "@/agent/subagents/manager";
+} from "@/agent/subagents";
+import { spawnSubagent } from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -76,6 +74,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
   prompt: string;
   description: string;
   model?: string;
+  /** Replace the subagent's configured system prompt/persona (advanced). */
+  systemPromptOverride?: string;
   toolCallId?: string;
   existingAgentId?: string;
   existingConversationId?: string;
@@ -326,6 +326,7 @@ export function spawnBackgroundSubagentTask(
     prompt,
     description,
     model,
+    systemPromptOverride,
     toolCallId,
     existingAgentId,
     existingConversationId,
@@ -411,6 +412,7 @@ export function spawnBackgroundSubagentTask(
     transcriptPath,
     resolvedParentScope?.conversationId,
     memoryScope,
+    systemPromptOverride,
   )
     .then(async (result) => {
       bgTask.status = result.success ? "completed" : "failed";

@@ -27,6 +27,11 @@ import {
   getActiveChannelCredentialsStoreMode,
 } from "@/channels/credential-store";
 import { __testClearUserChannelPluginCache } from "@/channels/plugin-registry";
+import { getChannelRegistry, initializeChannels } from "@/channels/registry";
+import {
+  createChannelAccountLiveWithSecrets,
+  removeChannelAccountLive,
+} from "@/channels/service";
 import type {
   CustomChannelAccount,
   SlackChannelAccount,
@@ -296,6 +301,32 @@ describe("channel credential storage", () => {
     ).toBe(false);
   });
 
+  test("live account delete removes keyring secrets", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    await createChannelAccountLiveWithSecrets(
+      "telegram",
+      {
+        enabled: false,
+        token: "telegram-secret",
+        dmPolicy: "pairing",
+      },
+      { accountId: "telegram-live" },
+    );
+    await flushPendingChannelSecretWrites();
+
+    expect(
+      secrets.get(buildChannelSecretName("telegram", "telegram-live", "token")),
+    ).toBe("telegram-secret");
+
+    await expect(
+      removeChannelAccountLive("telegram", "telegram-live"),
+    ).resolves.toBe(true);
+    expect(
+      secrets.has(buildChannelSecretName("telegram", "telegram-live", "token")),
+    ).toBe(false);
+  });
+
   test("keyring mode stores schema-declared plugin secrets outside accounts.json and hydrates them", async () => {
     writeSchemaSecretChannel(channelsRoot);
     __setActiveChannelCredentialsStoreModeForTests("keyring");
@@ -354,6 +385,80 @@ describe("channel credential storage", () => {
         ),
       ),
     ).toBe(false);
+  });
+
+  test("scoped hydration ignores missing refs on unrelated accounts", async () => {
+    writeSchemaSecretChannel(channelsRoot);
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    await upsertChannelAccountWithSecrets("schemasecret", {
+      ...makeSchemaSecretAccount(),
+      accountId: "schema-good",
+      config: {
+        endpoint: "https://good.example.test/webhook",
+        api_key: "good-secret",
+      },
+    });
+    await upsertChannelAccountWithSecrets("schemasecret", {
+      ...makeSchemaSecretAccount(),
+      accountId: "schema-broken",
+      config: {
+        endpoint: "https://broken.example.test/webhook",
+        api_key: "broken-secret",
+      },
+    });
+    await flushPendingChannelSecretWrites();
+    secrets.delete(
+      buildChannelSecretName("schemasecret", "schema-broken", "config.api_key"),
+    );
+    clearChannelAccountStores();
+
+    const hydrated = (await getChannelAccountWithSecrets(
+      "schemasecret",
+      "schema-good",
+    )) as CustomChannelAccount | null;
+    expect(hydrated?.config).toMatchObject({
+      endpoint: "https://good.example.test/webhook",
+      api_key: "good-secret",
+    });
+
+    await expect(
+      getChannelAccountWithSecrets("schemasecret", "schema-broken"),
+    ).rejects.toThrow(/saved secret reference was preserved/i);
+  });
+
+  test("startup does not hydrate unrelated channel credential refs", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    mkdirSync(join(channelsRoot, "telegram"), { recursive: true });
+    writeFileSync(
+      join(channelsRoot, "telegram", "accounts.json"),
+      `${JSON.stringify(
+        {
+          accounts: [
+            {
+              channel: "telegram",
+              accountId: "broken-telegram",
+              enabled: true,
+              token: "__letta_channel_secret_present__",
+              dmPolicy: "pairing",
+              allowedUsers: [],
+              binding: { agentId: null, conversationId: null },
+              __letta_secret_refs: { token: true },
+              createdAt: "2026-05-26T00:00:00.000Z",
+              updatedAt: "2026-05-26T00:00:00.000Z",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    try {
+      await expect(initializeChannels(["slack"])).resolves.toBeTruthy();
+    } finally {
+      await getChannelRegistry()?.stopAll();
+    }
   });
 
   test("missing keyring refs preserve schema-declared plugin refs instead of writing blank config", async () => {
@@ -489,5 +594,38 @@ describe("channel credential storage", () => {
     expect(persistedText).toContain("xapp-secret");
     expect(persistedText).not.toContain("__letta_secret_refs");
     expect(existsSync(join(channelsRoot, "slack", "accounts.json"))).toBe(true);
+  });
+
+  test("file mode refuses to rewrite accounts that still contain keyring refs", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    await upsertChannelAccountWithSecrets("slack", makeSlackAccount());
+    await flushPendingChannelSecretWrites();
+    const beforeText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+
+    clearChannelAccountStores();
+    __setActiveChannelCredentialsStoreModeForTests("file");
+    const account = (await getChannelAccountWithSecrets(
+      "slack",
+      "slack-account",
+    )) as SlackChannelAccount | null;
+    if (!account) {
+      throw new Error("Expected slack account to load from accounts.json");
+    }
+
+    await expect(
+      upsertChannelAccountWithSecrets("slack", {
+        ...account,
+        displayName: "Renamed Slack",
+      }),
+    ).rejects.toThrow(/Cannot save slack\/slack-account\/botToken/);
+
+    const afterText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+    expect(afterText).toBe(beforeText);
   });
 });

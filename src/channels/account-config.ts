@@ -1,9 +1,13 @@
+import { isRecord } from "@/utils/type-guards";
 import {
-  BUILTIN_CONFIG_SECRET_KEYS,
-  isNonEmptyString,
+  configSecretFieldPathToKey,
+  getConfigSecretKeys,
+  getPersistedSecretRefPaths,
+  isPresentSecretValue,
 } from "./credential-utils";
 import { customAccountConfigAdapter } from "./custom/account-config";
 import { discordAccountConfigAdapter } from "./discord/account-config";
+import { getChannelPluginMetadata } from "./plugin-registry";
 import type {
   ChannelAccountConfigAdapter,
   ChannelAccountPatch,
@@ -11,6 +15,7 @@ import type {
   ChannelPluginAccountPatch,
   ChannelProtocolConfig,
 } from "./plugin-types";
+import { redactConfigForSnapshot } from "./schema-config";
 import { signalAccountConfigAdapter } from "./signal/account-config";
 import { slackAccountConfigAdapter } from "./slack/account-config";
 import { telegramAccountConfigAdapter } from "./telegram/account-config";
@@ -36,30 +41,78 @@ const CHANNEL_ACCOUNT_CONFIG_ADAPTERS: Record<
     signalAccountConfigAdapter as ChannelAccountConfigAdapter<ChannelAccount>,
 };
 
-/**
- * Keys recognized as secrets across all user-installed plugins. These are
- * never sent back to the client; only their `has_<key>` presence flag is
- * exposed.
- */
-const KNOWN_SECRET_KEYS = new Set<string>(BUILTIN_CONFIG_SECRET_KEYS);
+function getSchemaForAccount(account: ChannelAccount) {
+  try {
+    return getChannelPluginMetadata(account.channel).configSchema;
+  } catch {
+    return undefined;
+  }
+}
+
+function getConfigRefSecretKeys(account: ChannelAccount): Set<string> {
+  const keys = new Set<string>();
+  for (const fieldPath of getPersistedSecretRefPaths(account)) {
+    const key = configSecretFieldPathToKey(fieldPath);
+    if (key) {
+      keys.add(key);
+    }
+  }
+  return keys;
+}
+
+function isCustomConfigConfigured(account: ChannelAccount): boolean {
+  if (!isCustomChannelAccount(account)) {
+    return false;
+  }
+  return (
+    Object.keys(account.config).length > 0 ||
+    getConfigRefSecretKeys(account).size > 0
+  );
+}
 
 /**
  * Build a client-safe snapshot of a user-plugin account config when no
  * schema is available. Surfaces every non-secret value from the stored
  * config (so fields like `accounts_json` / `configs_json` / `agent_id`
  * round-trip to the UI) while collapsing recognized secret keys to
- * `has_<key>` booleans (Slack pattern).
+ * `has_<key>` booleans (Slack pattern). Persisted refs are treated as
+ * secrets even if plugin metadata is missing.
  */
 function redactSchemalessConfig(
+  account: ChannelAccount,
   storedConfig: Record<string, unknown>,
 ): ChannelProtocolConfig {
   const result: ChannelProtocolConfig = {};
+  const persistedRefKeys = getConfigRefSecretKeys(account);
+  const secretKeys = getConfigSecretKeys(
+    account.channel,
+    getPersistedSecretRefPaths(account),
+  );
   for (const [key, value] of Object.entries(storedConfig)) {
-    if (KNOWN_SECRET_KEYS.has(key)) {
-      result[`has_${key}`] = isNonEmptyString(value);
+    if (secretKeys.has(key)) {
+      result[`has_${key}`] = isPresentSecretValue(value);
       continue;
     }
     result[key] = value;
+  }
+  for (const key of persistedRefKeys) {
+    result[`has_${key}`] = true;
+  }
+  return result;
+}
+
+function redactCustomConfig(account: ChannelAccount): ChannelProtocolConfig {
+  if (!isCustomChannelAccount(account)) {
+    return {};
+  }
+  const schema = getSchemaForAccount(account);
+  if (!schema) {
+    return redactSchemalessConfig(account, account.config);
+  }
+
+  const result = redactConfigForSnapshot(schema, account.config);
+  for (const key of getConfigRefSecretKeys(account)) {
+    result[`has_${key}`] = true;
   }
   return result;
 }
@@ -77,8 +130,8 @@ const customChannelAccountConfigAdapter: ChannelAccountConfigAdapter<ChannelAcco
         return {};
       }
       return {
-        ...redactSchemalessConfig(account.config),
-        configured: Object.keys(account.config).length > 0,
+        ...redactCustomConfig(account),
+        configured: isCustomConfigConfigured(account),
       };
     },
     toConfigSnapshotConfig(account) {
@@ -86,8 +139,8 @@ const customChannelAccountConfigAdapter: ChannelAccountConfigAdapter<ChannelAcco
         return {};
       }
       return {
-        ...redactSchemalessConfig(account.config),
-        configured: Object.keys(account.config).length > 0,
+        ...redactCustomConfig(account),
+        configured: isCustomConfigConfigured(account),
       };
     },
     shouldRefreshDisplayName() {
@@ -95,7 +148,6 @@ const customChannelAccountConfigAdapter: ChannelAccountConfigAdapter<ChannelAcco
     },
   };
 
-import { isRecord } from "@/utils/type-guards";
 export { isRecord };
 
 export function getChannelAccountConfigAdapter(

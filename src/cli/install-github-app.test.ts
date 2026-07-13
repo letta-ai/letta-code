@@ -97,7 +97,7 @@ describe("install-github-app helpers", () => {
     expect(body).toContain(".github/workflows/letta.yml");
     expect(body).toContain("@letta-code");
     expect(body).toContain("stateful");
-    expect(body).toContain("app.letta.com");
+    expect(body).toContain("chat.letta.com");
     expect(body).toContain("letta-code-action");
   });
 });
@@ -271,12 +271,12 @@ describe("success screen content", () => {
     secretAction: "set",
     agentId: "agent-aaaabbbb-cccc-dddd-eeee-ffffffffffff",
     agentUrl:
-      "https://app.letta.com/chat/agent-aaaabbbb-cccc-dddd-eeee-ffffffffffff",
+      "https://chat.letta.com/chat/agent-aaaabbbb-cccc-dddd-eeee-ffffffffffff",
   };
 
-  test("agentUrl points to app.letta.com chat", () => {
+  test("agentUrl points to chat.letta.com", () => {
     expect(baseResult.agentUrl).toBe(
-      `https://app.letta.com/chat/${baseResult.agentId}`,
+      `https://chat.letta.com/chat/${baseResult.agentId}`,
     );
   });
 
@@ -363,13 +363,13 @@ describe("success screen content", () => {
 
   test("agent URL uses correct chat format for any agent ID", () => {
     const agentId = "agent-12345678-abcd-efgh-ijkl-123456789012";
-    const expectedUrl = `https://app.letta.com/chat/${agentId}`;
+    const expectedUrl = `https://chat.letta.com/chat/${agentId}`;
 
     // This mirrors the logic in installGithubApp
-    const agentUrl = agentId ? `https://app.letta.com/chat/${agentId}` : null;
+    const agentUrl = agentId ? `https://chat.letta.com/chat/${agentId}` : null;
 
     expect(agentUrl).toBe(expectedUrl);
-    expect(agentUrl).toContain("app.letta.com/chat/");
+    expect(agentUrl).toContain("chat.letta.com/chat/");
     expect(agentUrl).toContain(agentId);
   });
 });

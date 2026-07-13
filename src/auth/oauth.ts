@@ -38,6 +38,28 @@ export interface OAuthError {
   error_description?: string;
 }
 
+export class OAuthRefreshError extends Error {
+  readonly retryable: boolean;
+  readonly status?: number;
+  readonly oauthCode?: string;
+
+  constructor(
+    message: string,
+    options: {
+      retryable: boolean;
+      status?: number;
+      oauthCode?: string;
+      cause?: unknown;
+    },
+  ) {
+    super(message, { cause: options.cause });
+    this.name = "OAuthRefreshError";
+    this.retryable = options.retryable;
+    this.status = options.status;
+    this.oauthCode = options.oauthCode;
+  }
+}
+
 export type CredentialValidationFailureReason =
   | "invalid_credentials"
   | "network_error"
@@ -318,14 +340,29 @@ export async function refreshAccessToken(
 
     if (!response.ok) {
       const error = (await response.json()) as OAuthError;
-      throw new Error(
+      throw new OAuthRefreshError(
         `Failed to refresh access token from ${authHost}: ${error.error_description || error.error}`,
+        {
+          retryable:
+            response.status === 408 ||
+            response.status === 429 ||
+            response.status >= 500,
+          status: response.status,
+          oauthCode: error.error,
+        },
       );
     }
 
     return (await response.json()) as TokenResponse;
   } catch (error) {
-    throw toOAuthActionError("refresh access token", error);
+    if (error instanceof OAuthRefreshError) {
+      throw error;
+    }
+    const actionError = toOAuthActionError("refresh access token", error);
+    throw new OAuthRefreshError(actionError.message, {
+      retryable: true,
+      cause: error,
+    });
   }
 }
 

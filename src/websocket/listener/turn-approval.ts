@@ -40,24 +40,24 @@ import {
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
   normalizeExecutionResultsForInterruptParity,
-  populateInterruptQueue,
 } from "./interrupts";
 import {
   emitDequeuedUserMessage,
   emitRuntimeStateUpdates,
-  setLoopStatus,
 } from "./protocol-outbound";
 import type { ProviderFallbackState } from "./provider-fallback";
 import { consumeQueuedTurn } from "./queue";
-import { emitLoopErrorNotice } from "./recoverable-notices";
 import { debugLogApprovalResumeState } from "./recovery";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import {
+  type ApprovalContinuationSendResult,
   markAwaitingAcceptedApprovalContinuationRunId,
   sendApprovalContinuationWithRetry,
 } from "./send";
 import { injectQueuedSkillContent } from "./skill-injection";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
+import type { TurnLease } from "./turn-lifecycle";
+import { setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime } from "./types";
 
 type Decision =
@@ -80,9 +80,7 @@ type Decision =
       reason: string;
     };
 
-export type ApprovalBranchResult = {
-  terminated: boolean;
-  stream: Stream<LettaStreamingResponse> | null;
+type ApprovalBranchProgress = {
   currentInput: Array<MessageCreate | ApprovalCreate>;
   dequeuedBatchId: string;
   pendingNormalizationInterruptedToolCallIds: string[];
@@ -92,6 +90,21 @@ export type ApprovalBranchResult = {
   lastNeedsUserInputToolCallIds: string[];
   lastApprovalContinuationAccepted: boolean;
 };
+
+export type ApprovalBranchResult =
+  | ({
+      kind: "continue";
+      stream: Stream<LettaStreamingResponse>;
+    } & ApprovalBranchProgress)
+  | ({ kind: "interrupted" } & ApprovalBranchProgress)
+  | ({
+      kind: "terminal";
+      drainResult: Extract<
+        ApprovalContinuationSendResult,
+        { kind: "terminal" }
+      >["drainResult"];
+    } & ApprovalBranchProgress)
+  | { kind: "error"; message: string };
 
 function getChannelApprovalSourceScopeKey(source: ChannelTurnSource): string {
   return [
@@ -105,7 +118,7 @@ function getChannelApprovalSourceScopeKey(source: ChannelTurnSource): string {
 export function resolveChannelApprovalSource(
   runtime: ConversationRuntime,
 ): ChannelTurnSource | null {
-  const sources = runtime.activeChannelTurnSources ?? [];
+  const sources = runtime.activeChannelTurn?.sources ?? [];
   if (sources.length === 0) {
     return null;
   }
@@ -140,10 +153,16 @@ export async function handleApprovalStop(params: {
   currentInput: Array<MessageCreate | ApprovalCreate>;
   pendingNormalizationInterruptedToolCallIds: string[];
   turnToolContextId: string | null;
+  turnLease: TurnLease;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
   providerFallback?: ProviderFallbackState;
+  dependencies?: {
+    classifyApprovals?: typeof classifyApprovalsWithSuggestions;
+    executeApprovalBatch?: typeof executeApprovalBatch;
+    ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
+  };
 }): Promise<ApprovalBranchResult> {
   const {
     approvals,
@@ -158,57 +177,32 @@ export async function handleApprovalStop(params: {
     msgRunIds,
     currentInput,
     turnToolContextId,
+    turnLease,
     buildSendOptions,
     providerFallback,
+    dependencies,
   } = params;
-  const abortController = runtime.activeAbortController;
-
-  if (!abortController) {
-    throw new Error("Missing active abort controller during approval handling");
-  }
+  const abortSignal = turnLease.signal;
+  const classifyApprovals =
+    dependencies?.classifyApprovals ?? classifyApprovalsWithSuggestions;
+  const executeApprovals =
+    dependencies?.executeApprovalBatch ?? executeApprovalBatch;
+  const ensureSecretsHydrated =
+    dependencies?.ensureSecretsHydrated ?? ensureSecretsHydratedForAgent;
 
   if (approvals.length === 0) {
-    runtime.lastStopReason = "error";
-    runtime.isProcessing = false;
-    setLoopStatus(runtime, "WAITING_ON_INPUT", {
-      agent_id: agentId,
-      conversation_id: conversationId,
-    });
-    runtime.activeWorkingDirectory = null;
-    runtime.activeRunId = null;
-    runtime.activeRunStartedAt = null;
-    runtime.activeAbortController = null;
-    emitRuntimeStateUpdates(runtime, {
-      agent_id: agentId,
-      conversation_id: conversationId,
-    });
-
-    emitLoopErrorNotice(socket, runtime, {
-      message: "requires_approval stop returned no approvals",
-      stopReason: "error",
-      isTerminal: true,
-      agentId,
-      conversationId,
-    });
     return {
-      terminated: true,
-      stream: null,
-      currentInput,
-      dequeuedBatchId,
-      pendingNormalizationInterruptedToolCallIds: [],
-      turnToolContextId,
-      lastExecutionResults: null,
-      lastExecutingToolCallIds: [],
-      lastNeedsUserInputToolCallIds: [],
-      lastApprovalContinuationAccepted: false,
+      kind: "error",
+      message: "requires_approval stop returned no approvals",
     };
   }
 
   clearPendingApprovalBatchIds(runtime, approvals);
   rememberPendingApprovalBatchIds(runtime, approvals, dequeuedBatchId);
 
-  const { autoAllowed, autoDenied, needsUserInput } =
-    await classifyApprovalsWithSuggestions(approvals, {
+  const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
+    approvals,
+    {
       alwaysRequiresUserInput: isInteractiveApprovalTool,
       treatAskAsDeny: false,
       requireArgsForAutoApprove: true,
@@ -217,7 +211,8 @@ export async function handleApprovalStop(params: {
       permissionModeState: turnPermissionModeState,
       agentId,
       toolContextId: turnToolContextId ?? undefined,
-    });
+    },
+  );
   const continuationWasFullyAutoHandled = needsUserInput.length === 0;
 
   let pendingNeedsUserInput = [...needsUserInput];
@@ -228,22 +223,14 @@ export async function handleApprovalStop(params: {
   let lastExecutingToolCallIds: string[] = [];
 
   const shouldInterrupt = () =>
-    abortController.signal.aborted || runtime.cancelRequested;
+    abortSignal.aborted || !runtime.turnLifecycle.isCurrent(turnLease);
 
   const interruptTermination = (
     interruptedInput: Array<MessageCreate | ApprovalCreate> = currentInput,
     interruptedBatchId: string = dequeuedBatchId,
   ): ApprovalBranchResult => {
-    populateInterruptQueue(runtime, {
-      lastExecutionResults,
-      lastExecutingToolCallIds,
-      lastNeedsUserInputToolCallIds,
-      agentId: agentId || "",
-      conversationId,
-    });
     return {
-      terminated: true,
-      stream: null,
+      kind: "interrupted",
       currentInput: interruptedInput,
       dequeuedBatchId: interruptedBatchId,
       pendingNormalizationInterruptedToolCallIds: [],
@@ -323,6 +310,10 @@ export async function handleApprovalStop(params: {
           toolName: ac.approval.toolName,
           input: ac.parsedArgs,
         });
+        if (shouldInterrupt()) {
+          registry.clearPendingControlRequest(requestId);
+          return interruptTermination();
+        }
       }
 
       let responseBody: ApprovalResponseBody;
@@ -330,6 +321,7 @@ export async function handleApprovalStop(params: {
         responseBody = await requestApprovalOverWS(
           runtime,
           socket,
+          turnLease,
           requestId,
           controlRequest,
         );
@@ -428,8 +420,11 @@ export async function handleApprovalStop(params: {
   lastExecutingToolCallIds = approvedDecisions.map(
     (decision) => decision.approval.toolCallId,
   );
-  runtime.activeExecutingToolCallIds = [...lastExecutingToolCallIds];
-  setLoopStatus(runtime, "EXECUTING_CLIENT_SIDE_TOOL", {
+  runtime.turnLifecycle.setExecutingToolCallIds(
+    turnLease,
+    lastExecutingToolCallIds,
+  );
+  setTurnLoopStatus(runtime, turnLease, "EXECUTING_CLIENT_SIDE_TOOL", {
     agent_id: agentId,
     conversation_id: conversationId,
   });
@@ -456,6 +451,7 @@ export async function handleApprovalStop(params: {
       runId: executionRunId,
       agentId,
       conversationId,
+      shouldEmit: () => runtime.turnLifecycle.isCurrent(turnLease),
     },
   );
 
@@ -466,7 +462,10 @@ export async function handleApprovalStop(params: {
   // Broadcast new file content to web clients when a file-mutating tool
   // (Edit, Write, MultiEdit) writes to disk, so all windows update immediately.
   const onFileWrite = (filePath: string, content: string) => {
-    if (isListenerTransportOpen(socket)) {
+    if (
+      runtime.turnLifecycle.isCurrent(turnLease) &&
+      isListenerTransportOpen(socket)
+    ) {
       socket.send(
         JSON.stringify({
           type: "file_ops",
@@ -483,20 +482,26 @@ export async function handleApprovalStop(params: {
   let executionResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
   try {
     if (agentId) {
-      await ensureSecretsHydratedForAgent(runtime.listener, agentId);
+      await ensureSecretsHydrated(runtime.listener, agentId);
     }
-    executionResults = await executeApprovalBatch(decisions, undefined, {
+    if (shouldInterrupt()) {
+      return interruptTermination();
+    }
+    executionResults = await executeApprovals(decisions, undefined, {
       toolContextId: turnToolContextId ?? undefined,
-      abortSignal: abortController.signal,
+      abortSignal,
       onStreamingOutput: emitToolExecutionOutput,
       workingDirectory: turnWorkingDirectory,
       parentScope:
         agentId && conversationId ? { agentId, conversationId } : undefined,
-      channelTurnSources: runtime.activeChannelTurnSources ?? undefined,
+      channelTurnSources: runtime.activeChannelTurn?.sources,
       onFileWrite,
     });
   } finally {
     emitToolExecutionOutput.flush();
+  }
+  if (!runtime.turnLifecycle.isCurrent(turnLease)) {
+    return interruptTermination();
   }
   const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
     runtime,
@@ -522,10 +527,7 @@ export async function handleApprovalStop(params: {
     socket,
     runtime,
     persistedExecutionResults,
-    runtime.activeRunId ||
-      runId ||
-      msgRunIds[msgRunIds.length - 1] ||
-      undefined,
+    executionRunId,
     "tool-return",
   );
 
@@ -555,13 +557,13 @@ export async function handleApprovalStop(params: {
     return interruptTermination(nextInputWithSkillContent, continuationBatchId);
   }
 
-  setLoopStatus(runtime, "SENDING_API_REQUEST", {
+  setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
     agent_id: agentId,
     conversation_id: conversationId,
   });
-  let stream: Stream<LettaStreamingResponse> | null;
+  let sendResult: ApprovalContinuationSendResult;
   try {
-    stream = await sendApprovalContinuationWithRetry(
+    sendResult = await sendApprovalContinuationWithRetry(
       conversationId,
       nextInputWithSkillContent,
       {
@@ -572,7 +574,7 @@ export async function handleApprovalStop(params: {
       },
       socket,
       runtime,
-      abortController.signal,
+      turnLease,
       { providerFallback },
     );
   } catch (error) {
@@ -584,10 +586,10 @@ export async function handleApprovalStop(params: {
     }
     throw error;
   }
-  if (!stream) {
+  if (sendResult.kind === "terminal") {
     return {
-      terminated: true,
-      stream: null,
+      kind: "terminal",
+      drainResult: sendResult.drainResult,
       currentInput: nextInputWithSkillContent,
       dequeuedBatchId: continuationBatchId,
       pendingNormalizationInterruptedToolCallIds: [],
@@ -598,6 +600,7 @@ export async function handleApprovalStop(params: {
       lastApprovalContinuationAccepted: false,
     };
   }
+  const stream = sendResult.stream;
 
   clearPendingApprovalBatchIds(
     runtime,
@@ -617,20 +620,20 @@ export async function handleApprovalStop(params: {
       persistedExecutionResults,
     ),
   });
-  markAwaitingAcceptedApprovalContinuationRunId(runtime, nextInput);
-  setLoopStatus(runtime, "PROCESSING_API_RESPONSE", {
+  markAwaitingAcceptedApprovalContinuationRunId(runtime, turnLease, nextInput);
+  setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", {
     agent_id: agentId,
     conversation_id: conversationId,
   });
 
-  runtime.activeExecutingToolCallIds = [];
+  runtime.turnLifecycle.setExecutingToolCallIds(turnLease, []);
   emitRuntimeStateUpdates(runtime, {
     agent_id: agentId,
     conversation_id: conversationId,
   });
 
   return {
-    terminated: false,
+    kind: "continue",
     stream,
     currentInput: nextInputWithSkillContent,
     dequeuedBatchId: continuationBatchId,

@@ -2,13 +2,21 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const TESTS_DIR_ENV = "LETTA_MOCK_ISOLATION_TESTS_DIR";
 
 const rootDir = process.cwd();
+const scriptDir = dirname(fileURLToPath(import.meta.url));
 const testsDir = process.env[TESTS_DIR_ENV]
   ? resolve(process.env[TESTS_DIR_ENV])
   : join(rootDir, "src");
+const isolationManifest = JSON.parse(
+  readFileSync(join(scriptDir, "isolated-unit-tests.json"), "utf8"),
+);
+const ISOLATED_TEST_FILES = new Set(
+  isolationManifest.tests.map((entry) => entry.path),
+);
 
 const FORBIDDEN_MOCK_MODULES = new Map([
   [
@@ -33,32 +41,6 @@ const COMPLETE_EXPORT_MOCK_MODULES = new Set([
   "/channels/slack/runtime",
   "/channels/telegram/runtime",
   "/channels/discord/runtime",
-]);
-
-// Existing top-level module mocks that predate this guard. New top-level
-// internal mocks are rejected by default because they are active while Bun loads
-// other test files in the same process. Prefer dependency injection or an
-// explicit test override helper. If a new top-level mock is truly unavoidable,
-// add a file+module entry here in the same PR with a clear explanation.
-const ALLOWED_TOP_LEVEL_MOCKS = new Set([
-  "src/channels/discord-registry.test.ts::../backend/api/client",
-  "src/channels/slack-adapter-interop.test.ts::./slack/media",
-  "src/channels/slack-adapter-interop.test.ts::./slack/runtime",
-  "src/channels/slack-adapter.test.ts::./slack/media",
-  "src/channels/slack-adapter.test.ts::./slack/runtime",
-  "src/channels/telegram-adapter.test.ts::./telegram/runtime",
-  "src/cli/message-search-cache-warm.test.ts::../backend/api/search",
-  "src/hooks/prompt-executor.test.ts::../backend/api/generate",
-  "src/tools/memory-apply-patch.test.ts::../backend/api/client",
-  "src/tools/memory-tool.test.ts::../backend/api/client",
-  "src/tools/toolset-client-tool-rule-cleanup.test.ts::../backend/api/client",
-  "src/tools/toolset-memfs-detach.test.ts::../backend/api/client",
-  "src/websocket/listen-client-concurrency.test.ts::../agent/approval-execution",
-  "src/websocket/listen-client-concurrency.test.ts::../agent/approval-recovery",
-  "src/websocket/listen-client-concurrency.test.ts::../agent/message",
-  "src/websocket/listen-client-concurrency.test.ts::../backend/api/client",
-  "src/websocket/listen-client-concurrency.test.ts::../cli/helpers/approvalClassification",
-  "src/websocket/listen-client-concurrency.test.ts::../cli/helpers/stream",
 ]);
 
 const mockModulePattern = /\bmock\.module\s*\(\s*(["'`])([^"'`]+)\1/g;
@@ -395,8 +377,7 @@ for (const filePath of collectTestFiles(testsDir)) {
       isRelativeInternalModule(moduleSpecifier) &&
       isTopLevelMockCall(sourceText, match.index ?? 0)
     ) {
-      const key = `${relativePath}::${moduleSpecifier}`;
-      if (!ALLOWED_TOP_LEVEL_MOCKS.has(key)) {
+      if (!ISOLATED_TEST_FILES.has(relativePath)) {
         failures.push({
           type: "top-level-mock",
           filePath: relativePath,
@@ -462,7 +443,7 @@ if (failures.length > 0) {
           `  unsafe top-level internal module mock: ${failure.moduleSpecifier}`,
         );
         console.error(
-          "  Top-level mock.module() calls are active while Bun loads other test files. Move the mock into the test/beforeEach, use dependency injection, or add an explicit test override helper.",
+          "  Top-level mock.module() calls are active while Bun loads other test files. Move the mock into the test/beforeEach, use dependency injection, or register a justified standalone process in scripts/isolated-unit-tests.json.",
         );
         break;
       case "partial-runtime-mock":
@@ -486,7 +467,7 @@ if (failures.length > 0) {
     "\nWhy this fails: Bun module mocks are process-global and can leak across files in the shared module cache.",
   );
   console.error(
-    "Prefer explicit test override helpers or dependency injection. If a module mock is unavoidable, keep it scoped and restore it with afterEach().",
+    "Prefer explicit test override helpers or dependency injection. If a module mock is unavoidable, keep it scoped and restore it with afterEach(); top-level mocks must also run in an isolated process.",
   );
   process.exit(1);
 }

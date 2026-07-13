@@ -290,5 +290,8 @@ export interface ChannelPlugin {
     account: ChannelAccount,
   ): Promise<ChannelAdapter> | ChannelAdapter;
   runSetup?(): Promise<boolean>;
+  resolveAccountDisplayName?(
+    account: ChannelAccount,
+  ): Promise<string | undefined> | string | undefined;
   messageActions?: ChannelMessageActionAdapter;
 }

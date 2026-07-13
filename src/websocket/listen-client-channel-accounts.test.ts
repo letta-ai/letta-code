@@ -49,6 +49,7 @@ type ChannelsCommand = Parameters<
 function setupInMemoryChannelStores(): void {
   clearChannelAccountStores();
   clearAllRoutes();
+  __setActiveChannelCredentialsStoreModeForTests("file");
   __testOverrideLoadChannelAccounts(() => []);
   __testOverrideSaveChannelAccounts(() => {});
   __testOverrideLoadRoutes(() => null);
@@ -99,6 +100,7 @@ async function expectCommandCompletesWithoutSecretFlush(
 describe("channel account list responses", () => {
   test("creates custom app accounts on the built-in custom channel", async () => {
     clearChannelAccountStores();
+    __setActiveChannelCredentialsStoreModeForTests("file");
     __testOverrideLoadChannelAccounts(() => []);
     __testOverrideSaveChannelAccounts(() => {});
 
@@ -149,6 +151,56 @@ describe("channel account list responses", () => {
           },
         },
       });
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
+  test("custom channel account create response redacts schema secrets", async () => {
+    clearChannelAccountStores();
+    __setActiveChannelCredentialsStoreModeForTests("file");
+    __testOverrideLoadChannelAccounts(() => []);
+    __testOverrideSaveChannelAccounts(() => {});
+
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    try {
+      await sendChannelCommand(
+        {
+          type: "channel_account_create",
+          request_id: "custom-create-secret",
+          channel_id: "custom",
+          account: {
+            account_id: "custom-secret-app",
+            display_name: "Secret app",
+            enabled: false,
+            dm_policy: "pairing",
+            config: {
+              url: "https://example.com/webhook",
+              auth: "super-secret-auth",
+              agent_id: "agent-1",
+            },
+          },
+        },
+        socket,
+        runtime,
+      );
+
+      const response = findMessage(socket, "channel_account_create_response");
+      expect(response).toMatchObject({
+        type: "channel_account_create_response",
+        success: true,
+        account: {
+          account_id: "custom-secret-app",
+          config: {
+            url: "https://example.com/webhook",
+            has_auth: true,
+            agent_id: "agent-1",
+          },
+        },
+      });
+      expect(JSON.stringify(response)).not.toContain("super-secret-auth");
     } finally {
       __listenClientTestUtils.stopRuntime(runtime, true);
     }
@@ -629,9 +681,9 @@ describe("channel account list responses", () => {
         account_id: "telegram-bot",
         deleted: true,
       });
-      // Delete is intentionally non-hydrating for the LCD command path, so it
-      // should not enqueue another keyring operation before responding.
-      expect(pendingSecretOperations).toHaveLength(2);
+      // Delete is intentionally non-hydrating for the LCD command path, but it
+      // still queues deletion for the persisted keyring ref.
+      expect(pendingSecretOperations).toHaveLength(3);
     } finally {
       for (const resolveSecretOperation of pendingSecretOperations.splice(0)) {
         resolveSecretOperation();

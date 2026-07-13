@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModels, getProviders } from "@earendil-works/pi-ai";
+import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import {
   getOAuthProvider,
   getOAuthProviders,
@@ -133,6 +133,69 @@ describe("local pi provider catalog", () => {
       expect(
         models.some((model) => model.handle === "anthropic/claude-opus-4-8"),
       ).toBe(true);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("local ChatGPT OAuth catalog includes supported GPT-5.6 variants", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-chatgpt-56-"));
+    try {
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "chatgpt-plus-pro",
+        providerType: "chatgpt_oauth",
+        auth: localOAuthAuthFromCredentials({
+          access: "chatgpt-access-token",
+          refresh: "chatgpt-refresh-token",
+          expires: Date.now() + 60_000,
+        }),
+      });
+
+      const models = await listLocalModels(storageDir);
+      for (const variant of ["sol", "terra"]) {
+        expect(models).toContainEqual(
+          expect.objectContaining({
+            handle: `openai-codex/gpt-5.6-${variant}`,
+            max_context_window: 372000,
+            model_endpoint_type: "chatgpt_oauth",
+          }),
+        );
+      }
+      expect(
+        models.some((model) => model.handle === "openai-codex/gpt-5.6-luna"),
+      ).toBe(false);
+      expect(
+        models.some((model) => model.handle === "openai-codex/gpt-5.6"),
+      ).toBe(false);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("local OpenAI catalog includes GPT-5.6 named variants", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-openai-56-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "openai",
+        providerName: "lc-openai",
+        apiKey: "test-openai-key",
+      });
+
+      const models = await listLocalModels(storageDir);
+      for (const variant of ["sol", "terra", "luna"]) {
+        expect(models).toContainEqual(
+          expect.objectContaining({
+            handle: `openai/gpt-5.6-${variant}`,
+            max_context_window: 272000,
+            model_endpoint_type: "openai",
+          }),
+        );
+      }
+      expect(models.some((model) => model.handle === "openai/gpt-5.6")).toBe(
+        false,
+      );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -311,12 +374,17 @@ describe("local pi provider catalog", () => {
 
       const models = await listLocalModels(storageDir);
 
-      expect(models).toContainEqual({
-        handle: "kilo/dynamic-kilo-code",
-        max_context_window: 128000,
-        model: "kilo/dynamic-kilo-code",
-        model_endpoint_type: "kilo",
-      });
+      expect(models).toContainEqual(
+        expect.objectContaining({
+          display_name: "Dynamic Kilo Code",
+          handle: "kilo/dynamic-kilo-code",
+          max_context_window: 128000,
+          max_tokens: 8192,
+          model: "kilo/dynamic-kilo-code",
+          model_endpoint_type: "kilo",
+          provider_type: "kilo",
+        }),
+      );
       expect(connections).toEqual([
         {
           id: "kilo",
@@ -375,12 +443,17 @@ describe("local pi provider catalog", () => {
 
       const models = await listLocalModels(storageDir);
 
-      expect(models).toContainEqual({
-        handle: "kilo/oauth-kilo-code",
-        max_context_window: 128000,
-        model: "kilo/oauth-kilo-code",
-        model_endpoint_type: "kilo",
-      });
+      expect(models).toContainEqual(
+        expect.objectContaining({
+          display_name: "OAuth Kilo Code",
+          handle: "kilo/oauth-kilo-code",
+          max_context_window: 128000,
+          max_tokens: 8192,
+          model: "kilo/oauth-kilo-code",
+          model_endpoint_type: "kilo",
+          provider_type: "kilo",
+        }),
+      );
       expect(connections).toEqual([
         {
           id: "kilo",

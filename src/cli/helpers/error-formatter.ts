@@ -3,12 +3,16 @@ import {
   formatConversationBusyErrorMessage,
   isConversationBusyErrorText,
 } from "@/utils/conversation-busy-error";
-import { buildAgentTerminalLink, buildAppUrl } from "./app-urls";
+import {
+  buildAgentTerminalLink,
+  buildChatWebUrl,
+  buildPlatformUrl,
+} from "./app-urls";
 import { getErrorContext } from "./error-context";
 import { checkZaiError } from "./zai-errors";
 
-const LETTA_USAGE_URL = buildAppUrl("/settings/organization/usage");
-const LETTA_AGENTS_URL = buildAppUrl("/projects/default-project/agents");
+const LETTA_USAGE_URL = buildChatWebUrl("/preferences/usage");
+const LETTA_AGENTS_URL = buildPlatformUrl("/projects/default-project/agents");
 
 export type ErrorDisplaySurface = "plain" | "terminal";
 

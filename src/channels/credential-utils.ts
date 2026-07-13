@@ -10,6 +10,7 @@ import {
 } from "./types";
 
 export const CHANNEL_SECRET_REFS_KEY = "__letta_secret_refs";
+export const SECRET_PRESENT_PLACEHOLDER = "__letta_channel_secret_present__";
 export const BUILTIN_CONFIG_SECRET_KEYS = ["bot_token", "auth"] as const;
 
 const CONFIG_SECRET_FIELD_PREFIX = "config.";
@@ -18,6 +19,14 @@ export type MissingCredentialMessageScope = "account" | "channel";
 
 export function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+export function isSecretPlaceholderValue(value: unknown): value is string {
+  return value === SECRET_PRESENT_PLACEHOLDER;
+}
+
+export function isPresentSecretValue(value: unknown): value is string {
+  return isSecretPlaceholderValue(value) || isNonEmptyString(value);
 }
 
 export function toConfigSecretFieldPath(key: string): string {

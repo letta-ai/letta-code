@@ -64,6 +64,19 @@ describe("connect provider normalization", () => {
     expect(isConnectApiKeyProvider(openrouter)).toBe(true);
   });
 
+  test("resolves OpenAI-compatible API provider", () => {
+    const resolved = resolveConnectProvider("openai-compatible", "api");
+
+    if (!resolved) {
+      throw new Error("Expected openai-compatible provider to resolve");
+    }
+
+    expect(resolved.canonical).toBe("openai-compatible");
+    expect(resolved.byokProvider.providerType).toBe("openai");
+    expect(resolved.byokProvider.providerName).toBe("lc-openai-compatible");
+    expect(isConnectApiKeyProvider(resolved)).toBe(true);
+  });
+
   test("resolves bedrock as non-api-key provider", () => {
     const bedrock = resolveConnectProvider("bedrock", "api");
     if (!bedrock) {

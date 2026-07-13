@@ -330,10 +330,9 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             }
           | undefined;
         const rawReasoningEffort = modelUpdateArgs?.reasoning_effort;
-        const usesDistinctXHighLabel =
-          model.label.includes("Fable 5") ||
-          model.label.includes("Opus 4.7") ||
-          model.label.includes("Opus 4.8");
+        const usesDistinctXHighLabel = /Fable 5|Opus 4\.[78]|GPT-5\.6/.test(
+          model.label,
+        );
         const reasoningLevel =
           typeof rawReasoningEffort === "string"
             ? rawReasoningEffort === "none"

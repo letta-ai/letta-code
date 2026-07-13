@@ -23,7 +23,6 @@ import type {
   DeviceStatus,
   DeviceStatusUpdateMessage,
   LoopState,
-  LoopStatus,
   LoopStatusUpdateMessage,
   ModCommandInfo,
   QueueMessage,
@@ -39,6 +38,10 @@ import type {
   WsProtocolMessage,
 } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
+import {
+  type ChannelTurnRuntimeCarrier,
+  getActiveChannelTurnProgressContext,
+} from "./channel-turn-session";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
@@ -583,21 +586,6 @@ export function buildQueueSnapshot(
   }));
 }
 
-export function setLoopStatus(
-  runtime: ConversationRuntime,
-  status: LoopStatus,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
-): void {
-  if (runtime.loopStatus === status) {
-    return;
-  }
-  runtime.loopStatus = status;
-  emitLoopStatusIfOpen(runtime, scope);
-}
-
 /** Message types that belong on the stream channel.
  *  These are high-frequency runtime emissions that should be separated
  *  from control/command-response traffic on the control channel. */
@@ -1129,33 +1117,14 @@ export function createLifecycleMessageBase<TMessageType extends string>(
   };
 }
 
-function getActiveChannelTurnProgressContext(runtime: RuntimeCarrier): {
-  sources: NonNullable<ConversationRuntime["activeChannelTurnSources"]>;
-  batchId: string | null;
-  progressBuilder: NonNullable<
-    ConversationRuntime["activeChannelTurnProgress"]
-  >;
-} | null {
-  if (!runtime || !("activeChannelTurnSources" in runtime)) {
-    return null;
-  }
-  const sources = runtime.activeChannelTurnSources;
-  const progressBuilder = runtime.activeChannelTurnProgress;
-  if (!sources || sources.length === 0 || !progressBuilder) {
-    return null;
-  }
-  return {
-    sources,
-    batchId: runtime.activeChannelTurnBatchId,
-    progressBuilder,
-  };
-}
-
 function dispatchChannelTurnProgressFromDelta(
   runtime: RuntimeCarrier,
   delta: StreamDelta,
 ): void {
-  const context = getActiveChannelTurnProgressContext(runtime);
+  if (!runtime || !("activeChannelTurn" in runtime)) return;
+  const context = getActiveChannelTurnProgressContext(
+    runtime as ChannelTurnRuntimeCarrier,
+  );
   if (!context) {
     return;
   }

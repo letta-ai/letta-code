@@ -22,9 +22,9 @@ import {
 } from "./commands/channels";
 import { handleCronCommand } from "./commands/cron";
 import { handleListMemoryCommand } from "./commands/memory";
+import { buildListModelsEntries } from "./commands/model-catalog";
 import {
   applyModelUpdateForRuntime,
-  buildListModelsEntries,
   buildListModelsResponse,
   buildModelUpdateStatusMessage,
   getCurrentModelStatusForRuntime,
@@ -92,7 +92,6 @@ import {
   scheduleQueuePump,
 } from "./queue";
 import {
-  getApprovalContinuationRecoveryDisposition,
   getApprovalToolCallDesyncErrorText,
   recoverApprovalStateForSync,
   shouldAttemptPostStopApprovalRecovery,
@@ -482,7 +481,6 @@ export const __listenClientTestUtils = {
   normalizeExecutionResultsForInterruptParity,
   getApprovalToolCallDesyncErrorText,
   shouldAttemptPostStopApprovalRecovery,
-  getApprovalContinuationRecoveryDisposition,
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
   normalizeMessageContentImages,

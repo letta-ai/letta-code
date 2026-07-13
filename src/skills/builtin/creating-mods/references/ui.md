@@ -77,7 +77,7 @@ Checklist:
 
 - Open a panel with `order: 1`, not an additive panel.
 - Read active hidden background agents from `ctx.backgroundAgents`; filter by `status` (`pending`/`running`).
-- Use `agent.agentId` to build `https://app.letta.com/chat/${agent.agentId}`.
+- Use `agent.agentId` to build `https://chat.letta.com/chat/${agent.agentId}`.
 - If the user asks for the full URL, render visible text; do not use `ctx.link()` because it hides the URL behind OSC-8.
 - If preserving animation, own the timer and call `panel.update()`; clean up timer and panel in the disposer.
 - Keep `render()` pure: do not call diagnostics or mutate external state from render.
@@ -95,7 +95,7 @@ const panel = letta.ui.openPanel({
     if (!agent) return "";
 
     const url = agent.agentId
-      ? `https://app.letta.com/chat/${agent.agentId}`
+      ? `https://chat.letta.com/chat/${agent.agentId}`
       : null;
     // Render spinner/label/elapsed, plus visible URL if requested.
   },

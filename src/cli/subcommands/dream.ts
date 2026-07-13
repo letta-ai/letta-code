@@ -30,12 +30,19 @@ Options:
                               the agent's primary "default" history), or an
                               external source, e.g. openhands:<conversation-dir>
                               or transcript:./rows.jsonl
+  -m, --model <handle>        Model for the reflection subagent (default:
+                              letta/auto-memory)
   --to <path>                 Maintain a doc (e.g. ./AGENTS.md) from memory;
                               the agent edits it in place, using judgment
   --effort <level>            Reflection effort (reserved; not yet implemented)
   --timeout <seconds>         Fail if the reflection pass has not completed
                               in this many seconds (default: 1500)
   -i, --instruction <text>    Additional instruction for the reflection pass
+  --prompt <text>             Advanced: replace the reflection task prompt
+                              entirely (you supply the transcript/memory
+                              mechanics via $TRANSCRIPT_PATH and $MEMORY_DIR)
+  --system <text>             Advanced: replace the reflection subagent's
+                              system prompt
   --json                      Emit machine-readable JSON output
   -h, --help                  Show this help
 
@@ -51,16 +58,19 @@ const DREAM_OPTIONS = {
   help: { type: "boolean", short: "h" },
   memory: { type: "string" },
   from: { type: "string" },
+  model: { type: "string", short: "m" },
   to: { type: "string" },
   effort: { type: "string" },
   timeout: { type: "string" },
   instruction: { type: "string", short: "i" },
+  prompt: { type: "string" },
+  system: { type: "string" },
   json: { type: "boolean" },
 } as const;
 
 const DEFAULT_TIMEOUT_SECONDS = 1500;
 
-function parseDreamArgs(argv: string[]) {
+export function parseDreamArgs(argv: string[]) {
   return parseArgs({
     args: argv,
     options: DREAM_OPTIONS,
@@ -241,7 +251,10 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     memfsEnabled: true,
     triggerSource: "manual",
     description: "Reflect on recent conversations",
+    model: parsed.values.model,
     instruction,
+    reflectionPromptOverride: parsed.values.prompt,
+    reflectionSystemPromptOverride: parsed.values.system,
     recompileByConversation: new Map(),
     recompileQueuedByConversation: new Set(),
     onCompletionMessage: (message, completionResult) => {
@@ -253,6 +266,7 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     },
     feedbackContext: {
       surface: "letta_code_cli",
+      model: parsed.values.model,
     },
   });
 

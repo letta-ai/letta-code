@@ -14,6 +14,17 @@ import type { ListenerRuntime } from "./types";
  * Core sync logic — fetches agent, checks tag, clones/pulls repo.
  */
 async function syncMemfsForAgent(agentId: string): Promise<void> {
+  const { settingsManager } = await import("@/settings-manager");
+  if (settingsManager.isMemfsExplicitlyDisabled(agentId)) {
+    // Worker-style agent deliberately created without a memfs (e.g. dream
+    // reflectors) — its memory scope arrives per session via MEMORY_DIR.
+    // Not a broken agent; do not "repair" it.
+    debugLog(
+      "memfs-sync",
+      `Agent ${agentId} is explicitly memfs-disabled, skipping sync`,
+    );
+    return;
+  }
   const { getBackend } = await import("@/backend");
   // `include: ["agent.tags"]` is required — without it the API can return
   // empty tags for a correctly tagged agent, which previously made the
