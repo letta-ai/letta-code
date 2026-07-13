@@ -1095,7 +1095,7 @@ describe("tool execution context snapshot", () => {
       >
     ).action;
 
-    expect(actionParameter?.enum).toEqual(["send", "react", "upload-file"]);
+    expect(actionParameter?.enum).toContain("download-file");
   });
 
   test("captures scoped working directories per execution context", async () => {

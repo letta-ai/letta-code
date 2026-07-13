@@ -33,14 +33,20 @@ function escapeXmlAttribute(text: string): string {
 }
 
 function hasNotificationAttachmentPaths(msg: InboundChannelMessage): boolean {
-  if (msg.attachments?.length) {
+  if (msg.attachments?.some((attachment) => attachment.localPath)) {
     return true;
   }
-  if (msg.threadContext?.starter?.attachments?.length) {
+  if (
+    msg.threadContext?.starter?.attachments?.some(
+      (attachment) => attachment.localPath,
+    )
+  ) {
     return true;
   }
   return Boolean(
-    msg.threadContext?.history?.some((entry) => entry.attachments?.length),
+    msg.threadContext?.history?.some((entry) =>
+      entry.attachments?.some((attachment) => attachment.localPath),
+    ),
   );
 }
 
@@ -78,7 +84,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
     lines.splice(
       lines.length - 2,
       0,
-      'On Slack, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media.',
+      'On Slack, MessageChannel also supports action="react" with emoji + messageId, action="upload-file" with media, and action="download-file" with attachmentId + messageId.',
       'For Slack requests that require nontrivial work or several tool calls, send a short MessageChannel action="send" acknowledgement before starting other tools. This gives the Slack user verbal acknowledgement and a View in web link. Do not do this for no-ops, reaction-only responses, or simple no-tool answers.',
     );
   }
@@ -121,11 +127,24 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
   return lines.join("\n");
 }
 
-function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
-  const attrs = [
-    `kind="${escapeXmlAttribute(attachment.kind)}"`,
-    `local_path="${escapeXmlAttribute(attachment.localPath)}"`,
-  ];
+type AttachmentXmlContext = {
+  channel: string;
+  accountId?: string;
+  chatId: string;
+  messageId?: string;
+};
+
+function buildAttachmentXml(
+  attachment: ChannelMessageAttachment,
+  context: AttachmentXmlContext,
+): string {
+  const attrs = [`kind="${escapeXmlAttribute(attachment.kind)}"`];
+
+  if (attachment.localPath) {
+    attrs.push(`local_path="${escapeXmlAttribute(attachment.localPath)}"`);
+  } else {
+    attrs.push('download_status="not_downloaded"');
+  }
 
   if (attachment.id) {
     attrs.push(`attachment_id="${escapeXmlAttribute(attachment.id)}"`);
@@ -139,6 +158,25 @@ function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
   if (typeof attachment.sizeBytes === "number") {
     attrs.push(`size_bytes="${attachment.sizeBytes}"`);
   }
+  const sourceMessageId = attachment.sourceMessageId ?? context.messageId;
+  if (!attachment.localPath && sourceMessageId) {
+    attrs.push(`source_message_id="${escapeXmlAttribute(sourceMessageId)}"`);
+  }
+  if (!attachment.localPath && attachment.sourceThreadId) {
+    attrs.push(
+      `source_thread_id="${escapeXmlAttribute(attachment.sourceThreadId)}"`,
+    );
+  }
+  if (attachment.downloadReason) {
+    attrs.push(
+      `download_reason="${escapeXmlAttribute(attachment.downloadReason)}"`,
+    );
+  }
+  if (typeof attachment.autoDownloadLimitBytes === "number") {
+    attrs.push(
+      `auto_download_limit_bytes="${attachment.autoDownloadLimitBytes}"`,
+    );
+  }
 
   const children: string[] = [];
   if (attachment.transcription) {
@@ -150,6 +188,29 @@ function buildAttachmentXml(attachment: ChannelMessageAttachment): string {
     children.push(
       `<attempted_transcription_error>${escapeXmlText(attachment.transcriptionError)}</attempted_transcription_error>`,
     );
+  }
+  if (
+    !attachment.localPath &&
+    context.channel === "slack" &&
+    attachment.id &&
+    sourceMessageId
+  ) {
+    const accountArg = context.accountId
+      ? `, accountId="${escapeXmlAttribute(context.accountId)}"`
+      : "";
+    const threadArg = attachment.sourceThreadId
+      ? `, threadId="${escapeXmlAttribute(attachment.sourceThreadId)}"`
+      : "";
+    const action = `MessageChannel with action="download-file", channel="slack", chat_id="${escapeXmlAttribute(context.chatId)}"${accountArg}${threadArg}, attachmentId="${escapeXmlAttribute(attachment.id)}", and messageId="${escapeXmlAttribute(sourceMessageId)}"`;
+    if (attachment.downloadReason === "exceeds_auto_download_limit") {
+      children.push(
+        `<download-instruction>Call ${action}. The tool downloads the file into the same Slack inbound attachment directory and returns its local_path. Do not ask the sender to reattach it.</download-instruction>`,
+      );
+    } else {
+      children.push(
+        `<download-retry>Automatic download did not complete. Call ${action} to retry. The action may return a precise error if Slack still cannot provide the file.</download-retry>`,
+      );
+    }
   }
 
   if (children.length > 0) {
@@ -215,6 +276,7 @@ function buildReplyContextXml(msg: InboundChannelMessage): string | null {
 function buildThreadContextEntryXml(
   tagName: string,
   entry: ChannelThreadContextEntry,
+  context: Omit<AttachmentXmlContext, "messageId">,
 ): string {
   const attrs: string[] = [];
   if (entry.senderId) {
@@ -230,7 +292,12 @@ function buildThreadContextEntryXml(
   const attrString = attrs.length > 0 ? ` ${attrs.join(" ")}` : "";
   const body = [
     ...(entry.text ? [escapeXmlText(entry.text)] : []),
-    ...(entry.attachments ?? []).map(buildAttachmentXml),
+    ...(entry.attachments ?? []).map((attachment) =>
+      buildAttachmentXml(attachment, {
+        ...context,
+        messageId: entry.messageId,
+      }),
+    ),
   ].join("\n");
   return `<${tagName}${attrString}>\n${body}\n</${tagName}>`;
 }
@@ -244,7 +311,11 @@ function buildThreadContextXml(msg: InboundChannelMessage): string | null {
   const parts: string[] = [];
   if (threadContext.starter) {
     parts.push(
-      buildThreadContextEntryXml("thread-starter", threadContext.starter),
+      buildThreadContextEntryXml("thread-starter", threadContext.starter, {
+        channel: msg.channel,
+        accountId: msg.accountId,
+        chatId: msg.chatId,
+      }),
     );
   }
   const historyEntries = threadContext.history ?? [];
@@ -253,7 +324,11 @@ function buildThreadContextXml(msg: InboundChannelMessage): string | null {
       [
         "<thread-history>",
         ...historyEntries.map((entry) =>
-          buildThreadContextEntryXml("thread-message", entry),
+          buildThreadContextEntryXml("thread-message", entry, {
+            channel: msg.channel,
+            accountId: msg.accountId,
+            chatId: msg.chatId,
+          }),
         ),
         "</thread-history>",
       ].join("\n"),
@@ -310,7 +385,14 @@ export function buildChannelNotificationXml(
   const reactionXml = buildReactionXml(msg);
   const replyContextXml = buildReplyContextXml(msg);
   const threadContextXml = buildThreadContextXml(msg);
-  const attachmentXml = (msg.attachments ?? []).map(buildAttachmentXml);
+  const attachmentXml = (msg.attachments ?? []).map((attachment) =>
+    buildAttachmentXml(attachment, {
+      channel: msg.channel,
+      accountId: msg.accountId,
+      chatId: msg.chatId,
+      messageId: msg.messageId,
+    }),
+  );
   const body = [
     threadContextXml,
     replyContextXml,

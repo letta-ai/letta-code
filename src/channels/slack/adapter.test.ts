@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createSlackAdapter,
+  downloadSlackAttachmentByIdMock,
   FakeSlackApp,
   FakeSlackWriteClient,
   fetchMock,
@@ -14,6 +15,37 @@ import {
 import { buildSlackModelPickerBlocks } from "./model-picker-blocks";
 
 installSlackAdapterTestHooks();
+
+test("slack adapter downloads attachments through its authenticated app client", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+  await adapter.start();
+
+  await adapter.downloadAttachment({
+    attachmentId: "FLARGE",
+    chatId: "C123",
+    threadId: "1712790000.000050",
+    messageId: "1712800000.000100",
+  });
+
+  expect(downloadSlackAttachmentByIdMock).toHaveBeenCalledWith({
+    accountId: "slack-test-account",
+    token: "xoxb-test-token-1234567890",
+    attachmentId: "FLARGE",
+    channelId: "C123",
+    threadTs: "1712790000.000050",
+    messageTs: "1712800000.000100",
+    client: FakeSlackApp.instances[0]?.client,
+  });
+});
 
 test("slack adapter start does not re-run bolt init", async () => {
   const adapter = createSlackAdapter({

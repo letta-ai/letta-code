@@ -239,6 +239,7 @@ export interface ChannelMessageActionRequest {
   replyToMessageId?: string;
   threadId?: string | null;
   messageId?: string;
+  attachmentId?: string;
   emoji?: string;
   remove?: boolean;
   mediaPath?: string;
