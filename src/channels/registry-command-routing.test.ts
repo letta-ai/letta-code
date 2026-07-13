@@ -652,7 +652,7 @@ describe("ChannelRegistry command routing", () => {
 
     expect(delivered).toHaveLength(0);
     expect(replies[0]?.text).toContain(
-      "https://app.letta.com/chat/agent-1?conversation=conv-1",
+      "https://chat.letta.com/chat/agent-1?conversation=conv-1",
     );
     expect(replies[0]?.text).toContain("Conversation: conv-1.");
   });

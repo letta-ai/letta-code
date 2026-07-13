@@ -269,7 +269,7 @@ describe("channel slash commands", () => {
       buildChannelChatLinkMessage(
         "slack",
         route,
-        "https://app.letta.com/chat/agent-1?conversation=conv-1",
+        "https://chat.letta.com/chat/agent-1?conversation=conv-1",
       ),
     ).toContain("Slack chat for this route");
     expect(buildChannelChatUnavailableMessage("telegram", route)).toContain(
