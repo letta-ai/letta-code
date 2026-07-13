@@ -1,0 +1,1 @@
+export const WHATSAPP_CHANNEL_BUILD_NUMBER = "f4b1a275";

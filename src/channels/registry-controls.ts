@@ -32,7 +32,7 @@ export type PendingChannelControlRequest = {
   deliveredThisProcess: boolean;
 };
 
-function getChannelApprovalScopeKey(params: {
+export function getChannelApprovalScopeKey(params: {
   channel: string;
   accountId?: string;
   chatId: string;
@@ -67,6 +67,12 @@ export class ChannelControlRequests {
 
   has(requestId: string): boolean {
     return this.pendingById.has(requestId);
+  }
+
+  getByScopeKey(scopeKey: string): PendingChannelControlRequest | null {
+    const requestId = this.requestIdByScope.get(scopeKey);
+    if (!requestId) return null;
+    return this.pendingById.get(requestId) ?? null;
   }
 
   getAll(): PendingChannelControlRequest[] {

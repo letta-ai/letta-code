@@ -78,6 +78,7 @@ export type ChannelStatusContext = {
   accountEnabled?: boolean;
   route: ChannelRoute | null;
   activeModel?: string;
+  buildNumber?: string;
 };
 
 export type ChannelSlashCommandOptions = {
@@ -373,6 +374,14 @@ export function buildChannelStatusMessage(
     `Listener: ${context.adapterRunning ? "running" : "stopped"}.`,
     `Route: ${routeStatus}`,
   ];
+
+  if (context.activeModel) {
+    lines.push(`model: ${context.activeModel}.`);
+  }
+
+  if (context.buildNumber) {
+    lines.push(`build: ${context.buildNumber}.`);
+  }
 
   if (route) {
     lines.push(`Agent: ${route.agentId}.`);

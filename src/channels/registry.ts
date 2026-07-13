@@ -11,14 +11,34 @@
 
 import {
   getChannelAccountWithSecrets,
+  getChannelAccount,
   hydrateChannelAccountSecrets,
   LEGACY_CHANNEL_ACCOUNT_ID,
   listChannelAccounts,
   listChannelAccountsWithSecrets,
 } from "./accounts";
+import { buildChatUrl } from "@/cli/helpers/app-urls";
 import { getChannelAccountsPath, getChannelsRoot } from "./config";
 import {
+  buildChannelAlreadyActiveMessage,
+  buildChannelAlreadyPausedMessage,
+  buildChannelCancelNoActiveTurnMessage,
+  buildChannelCancelUnavailableMessage,
+  buildChannelChatLinkMessage,
+  buildChannelChatUnavailableMessage,
+  buildChannelModelUnavailableMessage,
+  buildChannelNoRouteMessage,
+  buildChannelPausedMessage,
+  buildChannelReflectionUnavailableMessage,
+  buildChannelResumedMessage,
+  parseChannelSlashCommand,
+  tryHandleChannelSlashCommand,
+} from "./commands";
+import { isDiscordGuildChannelAllowed } from "./discord/channel-gating";
+import {
   consumePairingCode,
+  createPairingCode,
+  isUserApproved,
   loadPairingStore,
   rollbackPairingApproval,
 } from "./pairing";
@@ -32,6 +52,7 @@ import {
   ChannelControlRequests,
   type PendingChannelControlRequest,
 } from "./registry-controls";
+import { getChannelApprovalScopeKey } from "./registry-controls";
 import type { ChannelRegistryEvent } from "./registry-events";
 import type {
   ChannelCancelHandler,
@@ -67,6 +88,21 @@ import {
   findSignalBaseUrlConflictForStart,
 } from "./signal/account-conflicts";
 import { loadTargetStore } from "./targets";
+import { isLocalAgentId } from "@/agent/agent-id";
+import { getCurrentModelStatusForRuntime } from "@/websocket/listener/commands/model-toolset";
+import {
+  buildChannelTurnSource,
+  buildPairingInstructions,
+  buildDiscordConversationSummary,
+  buildSlackConversationSummary,
+  buildTelegramConversationSummary,
+  buildUnboundRouteInstructions,
+  buildWhatsAppConversationSummary,
+  buildSignalConversationSummary,
+  getConfiguredAgentId,
+  buildSlackAppSetupInstructions,
+} from "./registry-presentation";
+import { parseChannelControlRequestResponse } from "./interactive";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -79,11 +115,18 @@ import type {
 } from "./types";
 import {
   isDiscordChannelAccount,
+  type DiscordChannelAccount,
+  type ChannelAccount,
   isSignalChannelAccount,
+  type SignalChannelAccount,
   isSlackChannelAccount,
+  type SlackChannelAccount,
   isTelegramChannelAccount,
+  type TelegramChannelAccount,
   isWhatsAppChannelAccount,
+  type WhatsAppChannelAccount,
 } from "./types";
+import { WHATSAPP_CHANNEL_BUILD_NUMBER } from "./whatsapp/build-info";
 import {
   allowedUsersIncludes,
   isLidJid,
@@ -93,6 +136,10 @@ import {
 } from "./whatsapp/jid";
 import type { LidDesk, OnWhatsAppSocket } from "./whatsapp/lid-desk";
 import { subscribeWhatsAppConnectionState } from "./whatsapp/state";
+import { formatChannelNotification } from "./xml";
+import { upsertChannelTarget } from "./targets";
+import { signalAllowedUsersIncludes } from "./signal/target";
+import { getBackend } from "@/backend";
 
 // ── Singleton ─────────────────────────────────────────────────────
 
@@ -924,7 +971,7 @@ export class ChannelRegistry {
 
   // ── Inbound message pipeline ──────────────────────────────────
 
-  private async tryHandlePendingControlRequest(
+  async tryHandlePendingControlRequest(
     adapter: ChannelAdapter,
     msg: InboundChannelMessage,
   ): Promise<boolean> {
@@ -939,14 +986,8 @@ export class ChannelRegistry {
       chatId: msg.chatId,
       threadId: msg.threadId,
     });
-    const requestId = this.pendingControlRequestIdByScope.get(scopeKey);
-    if (!requestId) {
-      return false;
-    }
-
-    const pending = this.pendingControlRequestsById.get(requestId);
+    const pending = this.controls.getByScopeKey(scopeKey);
     if (!pending) {
-      this.pendingControlRequestIdByScope.delete(scopeKey);
       return false;
     }
 
@@ -977,7 +1018,7 @@ export class ChannelRegistry {
       response: parsed.response,
     });
 
-    this.clearPendingControlRequest(requestId);
+    this.controls.clear(pending.event.requestId);
 
     if (!handled) {
       await adapter.sendDirectReply(
@@ -1240,7 +1281,7 @@ export class ChannelRegistry {
     );
   }
 
-  private async handleInboundMessage(
+  async handleInboundMessage(
     msg: InboundChannelMessage,
   ): Promise<void> {
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
@@ -1280,25 +1321,15 @@ export class ChannelRegistry {
         statusContext: await (async () => {
           const route = getStatusRoute();
           let activeModel: string | undefined;
-          if (route && this.modelHandler) {
+          if (route) {
             try {
-              const result = await this.modelHandler({
-                channelId: msg.channel,
-                runtime: {
-                  agent_id: route.agentId,
-                  conversation_id: route.conversationId,
-                },
+              const status = await getCurrentModelStatusForRuntime({
+                agentId: route.agentId,
+                conversationId: route.conversationId,
               });
-              if (result.modelPicker?.modelLabel) {
-                activeModel = result.modelPicker.modelLabel;
-              } else if (result.text) {
-                // Fall back to parsing the model out of the formatted status text,
-                // e.g. "WhatsApp current chat model: anthropic/claude-sonnet-4-5".
-                const match = result.text.match(/model:\s*(.+?)(?:\s*\(([^)]+)\))?\s*\.?$/);
-                if (match) {
-                  activeModel = match[2] ? `${match[1]} (${match[2]})` : match[1];
-                }
-              }
+              activeModel = status.modelHandle
+                ? `${status.modelLabel} (${status.modelHandle})`
+                : status.modelLabel;
             } catch {
               // Best-effort; model label is optional in status.
             }
@@ -1309,6 +1340,7 @@ export class ChannelRegistry {
             accountEnabled: config?.enabled,
             route,
             activeModel,
+            buildNumber: WHATSAPP_CHANNEL_BUILD_NUMBER,
           };
         })(),
         handlers: {
