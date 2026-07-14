@@ -14,6 +14,7 @@ import {
   clearChannelAccountStores,
   flushPendingChannelSecretWrites,
   getChannelAccount,
+  getChannelAccountWithSecrets,
   removeChannelAccountWithSecrets,
   upsertChannelAccountWithSecrets,
 } from "@/channels/accounts";
@@ -42,6 +43,7 @@ import {
   getRoutesForChannel,
 } from "@/channels/routing";
 import {
+  bindChannelAccountLive,
   createChannelAccountLiveWithSecrets,
   removeChannelAccountLive,
   startChannelAccountLive,
@@ -365,6 +367,204 @@ describe("channel credential transaction boundaries", () => {
     expect(
       secrets.get(buildChannelSecretName("slack", "slack-b", "appToken")),
     ).toBe("xapp-b-new");
+  });
+
+  test("same-account concurrent stale patches conflict instead of losing fields", async () => {
+    await upsertChannelAccountWithSecrets("slack", {
+      ...makeSlackAccount(),
+      displayName: "Base",
+      allowedUsers: [],
+    });
+    await flushPendingChannelSecretWrites();
+
+    const displayNameUpdate = updateChannelAccountLiveWithSecrets(
+      "slack",
+      "slack-account",
+      { displayName: "First" },
+    );
+    const allowedUsersUpdate = updateChannelAccountLiveWithSecrets(
+      "slack",
+      "slack-account",
+      { allowedUsers: ["U-stale"] },
+    );
+
+    const results = await Promise.allSettled([
+      displayNameUpdate,
+      allowedUsersUpdate,
+    ]);
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    const rejected = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    expect(rejected?.reason).toBeInstanceOf(Error);
+    expect((rejected?.reason as Error).message).toContain("Retry");
+
+    const finalAccount = getChannelAccount(
+      "slack",
+      "slack-account",
+    ) as SlackChannelAccount | null;
+    expect(finalAccount).not.toBeNull();
+    if (finalAccount?.displayName === "First") {
+      expect(finalAccount.allowedUsers).toEqual([]);
+    } else {
+      expect(finalAccount?.displayName).toBe("Base");
+      expect(finalAccount?.allowedUsers).toEqual(["U-stale"]);
+    }
+  });
+
+  test("metadata binding survives a delayed conflicting credential update", async () => {
+    await upsertChannelAccountWithSecrets("slack", {
+      ...makeSlackAccount(),
+      displayName: "Slack Old",
+      agentId: "agent-old",
+      botToken: "xoxb-old",
+      appToken: "xapp-old",
+    });
+    await flushPendingChannelSecretWrites();
+
+    const botSecretName = buildChannelSecretName(
+      "slack",
+      "slack-account",
+      "botToken",
+    );
+    let releaseBotWrite: () => void = () => {};
+    const botWriteMayContinue = new Promise<void>((resolve) => {
+      releaseBotWrite = resolve;
+    });
+    let botWriteStarted: () => void = () => {};
+    const botWriteHasStarted = new Promise<void>((resolve) => {
+      botWriteStarted = resolve;
+    });
+    __setChannelSecretStoreOverrideForTests({
+      get: async (name) => secrets.get(name) ?? null,
+      set: async (name, value) => {
+        if (name === botSecretName && value === "xoxb-new") {
+          botWriteStarted();
+          await botWriteMayContinue;
+        }
+        secrets.set(name, value);
+      },
+      delete: async (name) => secrets.delete(name),
+    });
+
+    const credentialUpdate = updateChannelAccountLiveWithSecrets(
+      "slack",
+      "slack-account",
+      {
+        displayName: "Slack New",
+        botToken: "xoxb-new",
+        appToken: "xapp-new",
+      },
+    );
+    await botWriteHasStarted;
+
+    await expect(
+      bindChannelAccountLive(
+        "slack",
+        "slack-account",
+        "agent-bound",
+        "conv-bound",
+      ),
+    ).resolves.toEqual(expect.objectContaining({ agentId: "agent-bound" }));
+
+    releaseBotWrite();
+    await expect(credentialUpdate).rejects.toThrow("Retry");
+
+    const finalAccount = getChannelAccount(
+      "slack",
+      "slack-account",
+    ) as SlackChannelAccount | null;
+    expect(finalAccount).toEqual(
+      expect.objectContaining({
+        displayName: "Slack Old",
+        agentId: "agent-bound",
+      }),
+    );
+    expect(secrets.get(botSecretName)).toBe("xoxb-old");
+    expect(
+      secrets.get(buildChannelSecretName("slack", "slack-account", "appToken")),
+    ).toBe("xapp-old");
+  });
+
+  test("delayed plaintext hydration cannot overwrite a concurrent credential update", async () => {
+    mkdirSync(join(channelsRoot, "slack"), { recursive: true });
+    writeFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      `${JSON.stringify(
+        {
+          accounts: [
+            {
+              ...makeSlackAccount(),
+              displayName: "Plaintext Slack",
+              botToken: "xoxb-old-plaintext",
+              appToken: "xapp-old-plaintext",
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    clearChannelAccountStores();
+
+    const botSecretName = buildChannelSecretName(
+      "slack",
+      "slack-account",
+      "botToken",
+    );
+    const appSecretName = buildChannelSecretName(
+      "slack",
+      "slack-account",
+      "appToken",
+    );
+    const botWrites: string[] = [];
+    let releasePlaintextWrite: () => void = () => {};
+    const plaintextWriteMayContinue = new Promise<void>((resolve) => {
+      releasePlaintextWrite = resolve;
+    });
+    let plaintextWriteStarted: () => void = () => {};
+    const plaintextWriteHasStarted = new Promise<void>((resolve) => {
+      plaintextWriteStarted = resolve;
+    });
+    __setChannelSecretStoreOverrideForTests({
+      get: async (name) => secrets.get(name) ?? null,
+      set: async (name, value) => {
+        if (name === botSecretName) {
+          botWrites.push(value);
+          if (value === "xoxb-old-plaintext") {
+            plaintextWriteStarted();
+            await plaintextWriteMayContinue;
+          }
+        }
+        secrets.set(name, value);
+      },
+      delete: async (name) => secrets.delete(name),
+    });
+
+    const hydration = getChannelAccountWithSecrets("slack", "slack-account");
+    await plaintextWriteHasStarted;
+    const credentialUpdate = updateChannelAccountLiveWithSecrets(
+      "slack",
+      "slack-account",
+      {
+        botToken: "xoxb-new-secret",
+        appToken: "xapp-new-secret",
+      },
+    );
+
+    releasePlaintextWrite();
+    await expect(hydration).resolves.toEqual(
+      expect.objectContaining({ botToken: "xoxb-old-plaintext" }),
+    );
+    await expect(credentialUpdate).resolves.toEqual(
+      expect.objectContaining({ configured: true }),
+    );
+
+    expect(secrets.get(botSecretName)).toBe("xoxb-new-secret");
+    expect(secrets.get(appSecretName)).toBe("xapp-new-secret");
+    expect(botWrites).toEqual(["xoxb-old-plaintext", "xoxb-new-secret"]);
   });
 
   test("secret-aware updates can repair missing old refs with new credentials", async () => {

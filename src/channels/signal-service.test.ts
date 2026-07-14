@@ -142,9 +142,9 @@ describe("Signal channel service", () => {
     );
   });
 
-  test("bind updates the account-level agent id", () => {
+  test("bind updates the account-level agent id", async () => {
     createChannelAccountLive("signal", {}, { accountId: "personal" });
-    const bound = bindChannelAccountLive(
+    const bound = await bindChannelAccountLive(
       "signal",
       "personal",
       "agent-bound",

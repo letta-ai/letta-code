@@ -238,7 +238,7 @@ describe("channel service", () => {
     }
     expect(updated.defaultPermissionMode).toBe("unrestricted");
 
-    const bound = bindChannelAccountLive(
+    const bound = await bindChannelAccountLive(
       "slack",
       "docsbot",
       "agent-docs",
@@ -290,7 +290,7 @@ describe("channel service", () => {
     expect(listEnabledChannelIds()).toEqual(["telegram"]);
   });
 
-  test("listEnabledChannelIds can filter restored accounts by agent scope", () => {
+  test("listEnabledChannelIds can filter restored accounts by agent scope", async () => {
     createChannelAccountLive(
       "telegram",
       {
@@ -301,7 +301,7 @@ describe("channel service", () => {
       },
       { accountId: "telegram-local" },
     );
-    bindChannelAccountLive(
+    await bindChannelAccountLive(
       "telegram",
       "telegram-local",
       "agent-local-123",
@@ -333,7 +333,7 @@ describe("channel service", () => {
     ]);
   });
 
-  test("updateChannelRouteLive updates the Slack route without changing the app's default agent", () => {
+  test("updateChannelRouteLive updates the Slack route without changing the app's default agent", async () => {
     createChannelAccountLive(
       "slack",
       {
@@ -346,7 +346,7 @@ describe("channel service", () => {
       { accountId: "docsbot" },
     );
 
-    bindChannelAccountLive("slack", "docsbot", "agent-old", "conv-old");
+    await bindChannelAccountLive("slack", "docsbot", "agent-old", "conv-old");
     bindChannelTarget(
       "slack",
       upsertTargetForRouteTest("C-updatable"),
@@ -570,7 +570,7 @@ describe("channel service", () => {
     ).toThrow(/missing a bot token or app token/i);
   });
 
-  test("updateChannelRouteLive leaves the Slack app's default agent unchanged when route save fails", () => {
+  test("updateChannelRouteLive leaves the Slack app's default agent unchanged when route save fails", async () => {
     createChannelAccountLive(
       "slack",
       {
@@ -582,7 +582,7 @@ describe("channel service", () => {
       { accountId: "docsbot" },
     );
 
-    bindChannelAccountLive("slack", "docsbot", "agent-old", "conv-old");
+    await bindChannelAccountLive("slack", "docsbot", "agent-old", "conv-old");
     bindChannelTarget(
       "slack",
       upsertTargetForRouteTest("C-rollback"),

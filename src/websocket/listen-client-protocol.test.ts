@@ -3052,7 +3052,7 @@ describe("listen-client channels command handling", () => {
 
     __listenClientTestUtils.setChannelsServiceLoaderForTests(async () => ({
       ...actualChannelsService,
-      bindChannelAccountLive: () => ({
+      bindChannelAccountLive: async () => ({
         channelId: "slack" as const,
         accountId: "acct-1",
         displayName: "DocsBot Slack",
@@ -3076,7 +3076,7 @@ describe("listen-client channels command handling", () => {
         createdAt: "2026-04-11T00:00:00.000Z",
         updatedAt: "2026-04-11T01:00:00.000Z",
       }),
-      unbindChannelAccountLive: () => ({
+      unbindChannelAccountLive: async () => ({
         channelId: "slack" as const,
         accountId: "acct-1",
         displayName: "DocsBot Slack",

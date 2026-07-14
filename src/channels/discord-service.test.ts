@@ -69,7 +69,7 @@ describe("discord channel service", () => {
     resetState();
   });
 
-  test("create / update / bind / unbind lifecycle", () => {
+  test("create / update / bind / unbind lifecycle", async () => {
     const created = createChannelAccountLive(
       "discord",
       { token: "test-token", dmPolicy: "pairing" },
@@ -90,7 +90,7 @@ describe("discord channel service", () => {
     });
     expect(updated.displayName).toBe("My Bot");
 
-    const bound = bindChannelAccountLive(
+    const bound = await bindChannelAccountLive(
       "discord",
       "discord-bot",
       "agent-123",
@@ -106,7 +106,7 @@ describe("discord channel service", () => {
     // Discord uses top-level agentId, not a binding object
     expect((snapshot as Record<string, unknown>).binding).toBeUndefined();
 
-    unbindChannelAccountLive("discord", "discord-bot");
+    await unbindChannelAccountLive("discord", "discord-bot");
     const unbound = getChannelAccountSnapshot("discord", "discord-bot");
     if (!unbound || unbound.channelId !== "discord")
       throw new Error("wrong channel");
@@ -243,14 +243,14 @@ describe("discord channel service", () => {
     expect(snapshot?.displayName).toBeUndefined();
   });
 
-  test("bind sets top-level agentId, not a binding object", () => {
+  test("bind sets top-level agentId, not a binding object", async () => {
     createChannelAccountLive(
       "discord",
       { token: "test-token", dmPolicy: "pairing" },
       { accountId: "discord-bot" },
     );
 
-    const bound = bindChannelAccountLive(
+    const bound = await bindChannelAccountLive(
       "discord",
       "discord-bot",
       "agent-456",

@@ -1,7 +1,7 @@
 import {
   getChannelAccount,
   LEGACY_CHANNEL_ACCOUNT_ID,
-  upsertChannelAccount,
+  upsertChannelAccountMetadataIfCurrent,
 } from "./accounts";
 import { getPendingPairings, loadPairingStore } from "./pairing";
 import { completePairing } from "./registry";
@@ -312,16 +312,21 @@ export function updateChannelRouteLive(
     );
   }
 
-  if (existingAccount && isTelegramChannelAccount(existingAccount)) {
-    upsertChannelAccount(channelId, {
-      ...existingAccount,
-      binding: {
-        agentId,
-        conversationId,
-      },
-      updatedAt: new Date().toISOString(),
-    });
-  }
+  const updatedAccount =
+    existingAccount && isTelegramChannelAccount(existingAccount)
+      ? upsertChannelAccountMetadataIfCurrent(
+          channelId,
+          {
+            ...existingAccount,
+            binding: {
+              agentId,
+              conversationId,
+            },
+            updatedAt: new Date().toISOString(),
+          },
+          existingAccount,
+        )
+      : null;
 
   const updatedRoute: ChannelRoute = {
     ...(existingRoute ?? {
@@ -349,9 +354,13 @@ export function updateChannelRouteLive(
       setRouteInMemory(channelId, existingRoute);
     }
 
-    if (existingAccount && isTelegramChannelAccount(existingAccount)) {
+    if (updatedAccount && existingAccount) {
       try {
-        upsertChannelAccount(channelId, existingAccount);
+        upsertChannelAccountMetadataIfCurrent(
+          channelId,
+          existingAccount,
+          updatedAccount,
+        );
       } catch (rollbackError) {
         throw new Error(
           `Failed to update channel route: ${getErrorMessage(

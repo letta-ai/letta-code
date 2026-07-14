@@ -586,7 +586,7 @@ export async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_account_bind") {
     try {
-      const account = bindChannelAccountLive(
+      const account = await bindChannelAccountLive(
         parsed.channel_id,
         parsed.account_id,
         parsed.runtime.agent_id,
@@ -633,7 +633,7 @@ export async function handleChannelsProtocolCommand(
 
   if (parsed.type === "channel_account_unbind") {
     try {
-      const account = unbindChannelAccountLive(
+      const account = await unbindChannelAccountLive(
         parsed.channel_id,
         parsed.account_id,
       );

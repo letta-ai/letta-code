@@ -9,6 +9,7 @@ import {
   removeChannelAccountWithSecrets,
   restoreChannelAccountWithSecretsIfCurrent,
   upsertChannelAccount,
+  upsertChannelAccountMetadataIfCurrent,
   upsertChannelAccountWithSecrets,
 } from "./accounts";
 import { getActiveChannelCredentialsStoreMode } from "./credential-store";
@@ -113,6 +114,7 @@ export async function createChannelAccountLiveWithSecrets(
   const created = await upsertChannelAccountWithSecrets(
     channelId,
     createAccountFromPatch(channelId, accountId, patch),
+    { expectedCurrent: null },
   );
   return toAccountSnapshot(created);
 }
@@ -211,7 +213,13 @@ export async function updateChannelAccountLiveWithSecrets(
           getMutationSecretFieldPaths(existing, nextAccount),
         )
       : [];
-  const updated = await upsertChannelAccountWithSecrets(channelId, nextAccount);
+  const updated = await upsertChannelAccountWithSecrets(
+    channelId,
+    nextAccount,
+    {
+      expectedCurrent: existing,
+    },
+  );
 
   if (shouldResetRoutes) {
     let routeSnapshot: ReturnType<typeof snapshotRoutesForAccount> = [];
@@ -284,20 +292,24 @@ export async function refreshChannelAccountDisplayNameLive(
     return toAccountSnapshot(existing);
   }
 
-  const updated = await upsertChannelAccountWithSecrets(channelId, {
-    ...existing,
-    displayName: nextDisplayName,
-    updatedAt: new Date().toISOString(),
-  });
+  const updated = await upsertChannelAccountWithSecrets(
+    channelId,
+    {
+      ...existing,
+      displayName: nextDisplayName,
+      updatedAt: new Date().toISOString(),
+    },
+    { expectedCurrent: existing },
+  );
   return toAccountSnapshot(updated);
 }
 
-export function bindChannelAccountLive(
+export async function bindChannelAccountLive(
   channelId: string,
   accountId: string,
   agentId: string,
   conversationId: string,
-): ChannelAccountSnapshot {
+): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
   const existing = getChannelAccount(channelId, accountId);
   if (!existing) {
@@ -308,11 +320,15 @@ export function bindChannelAccountLive(
 
   let updated: ChannelAccount;
   if (isTelegramChannelAccount(existing)) {
-    updated = upsertChannelAccount(channelId, {
-      ...existing,
-      binding: { agentId, conversationId },
-      updatedAt: new Date().toISOString(),
-    });
+    updated = upsertChannelAccountMetadataIfCurrent(
+      channelId,
+      {
+        ...existing,
+        binding: { agentId, conversationId },
+        updatedAt: new Date().toISOString(),
+      },
+      existing,
+    );
   } else if (
     isSlackChannelAccount(existing) ||
     isDiscordChannelAccount(existing) ||
@@ -320,25 +336,33 @@ export function bindChannelAccountLive(
     isSignalChannelAccount(existing)
   ) {
     // Slack, Discord, WhatsApp, and Signal use a top-level agentId.
-    updated = upsertChannelAccount(channelId, {
-      ...existing,
-      agentId,
-      updatedAt: new Date().toISOString(),
-    });
+    updated = upsertChannelAccountMetadataIfCurrent(
+      channelId,
+      {
+        ...existing,
+        agentId,
+        updatedAt: new Date().toISOString(),
+      },
+      existing,
+    );
   } else {
-    updated = upsertChannelAccount(channelId, {
-      ...existing,
-      updatedAt: new Date().toISOString(),
-    });
+    updated = upsertChannelAccountMetadataIfCurrent(
+      channelId,
+      {
+        ...existing,
+        updatedAt: new Date().toISOString(),
+      },
+      existing,
+    );
   }
 
   return toAccountSnapshot(updated);
 }
 
-export function unbindChannelAccountLive(
+export async function unbindChannelAccountLive(
   channelId: string,
   accountId: string,
-): ChannelAccountSnapshot {
+): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
   const existing = getChannelAccount(channelId, accountId);
   if (!existing) {
@@ -349,11 +373,15 @@ export function unbindChannelAccountLive(
 
   let updated: ChannelAccount;
   if (isTelegramChannelAccount(existing)) {
-    updated = upsertChannelAccount(channelId, {
-      ...existing,
-      binding: { agentId: null, conversationId: null },
-      updatedAt: new Date().toISOString(),
-    });
+    updated = upsertChannelAccountMetadataIfCurrent(
+      channelId,
+      {
+        ...existing,
+        binding: { agentId: null, conversationId: null },
+        updatedAt: new Date().toISOString(),
+      },
+      existing,
+    );
   } else if (
     isSlackChannelAccount(existing) ||
     isDiscordChannelAccount(existing) ||
@@ -361,16 +389,24 @@ export function unbindChannelAccountLive(
     isSignalChannelAccount(existing)
   ) {
     // Slack, Discord, WhatsApp, and Signal use a top-level agentId.
-    updated = upsertChannelAccount(channelId, {
-      ...existing,
-      agentId: null,
-      updatedAt: new Date().toISOString(),
-    });
+    updated = upsertChannelAccountMetadataIfCurrent(
+      channelId,
+      {
+        ...existing,
+        agentId: null,
+        updatedAt: new Date().toISOString(),
+      },
+      existing,
+    );
   } else {
-    updated = upsertChannelAccount(channelId, {
-      ...existing,
-      updatedAt: new Date().toISOString(),
-    });
+    updated = upsertChannelAccountMetadataIfCurrent(
+      channelId,
+      {
+        ...existing,
+        updatedAt: new Date().toISOString(),
+      },
+      existing,
+    );
   }
 
   return toAccountSnapshot(updated);
@@ -408,13 +444,18 @@ export async function startChannelAccountLive(
     );
   }
 
+  let enabledAccount: ChannelAccount | null = null;
   if (!existing.enabled) {
     assertAccountHasRequiredCredentials(existing);
-    await upsertChannelAccountWithSecrets(channelId, {
-      ...existing,
-      enabled: true,
-      updatedAt: new Date().toISOString(),
-    });
+    enabledAccount = await upsertChannelAccountWithSecrets(
+      channelId,
+      {
+        ...existing,
+        enabled: true,
+        updatedAt: new Date().toISOString(),
+      },
+      { expectedCurrent: existing },
+    );
   }
 
   let startupTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -434,7 +475,9 @@ export async function startChannelAccountLive(
   } catch (error) {
     if (!existing.enabled) {
       try {
-        await upsertChannelAccountWithSecrets(channelId, existing);
+        await upsertChannelAccountWithSecrets(channelId, existing, {
+          expectedCurrent: enabledAccount,
+        });
       } catch (rollbackError) {
         throw new Error(
           `Failed to start ${channelId} account "${accountId}": ${getErrorMessage(
@@ -477,11 +520,15 @@ export async function stopChannelAccountLive(
   }
 
   const next = existing.enabled
-    ? await upsertChannelAccountWithSecrets(channelId, {
-        ...existing,
-        enabled: false,
-        updatedAt: new Date().toISOString(),
-      })
+    ? await upsertChannelAccountWithSecrets(
+        channelId,
+        {
+          ...existing,
+          enabled: false,
+          updatedAt: new Date().toISOString(),
+        },
+        { expectedCurrent: existing },
+      )
     : existing;
 
   await getChannelRegistry()?.stopChannelAccount(channelId, accountId);
@@ -511,7 +558,9 @@ export async function removeChannelAccountLive(
       : [];
 
   await getChannelRegistry()?.stopChannelAccount(channelId, accountId);
-  const removed = await removeChannelAccountWithSecrets(channelId, accountId);
+  const removed = await removeChannelAccountWithSecrets(channelId, accountId, {
+    expectedCurrent: existing,
+  });
   if (!removed) {
     return false;
   }

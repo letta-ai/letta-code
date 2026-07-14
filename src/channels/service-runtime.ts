@@ -190,11 +190,15 @@ export async function startChannelLive(
   }
 
   if (!existing.enabled) {
-    await upsertChannelAccountWithSecrets(channelId, {
-      ...existing,
-      enabled: true,
-      updatedAt: new Date().toISOString(),
-    });
+    await upsertChannelAccountWithSecrets(
+      channelId,
+      {
+        ...existing,
+        enabled: true,
+        updatedAt: new Date().toISOString(),
+      },
+      { expectedCurrent: existing },
+    );
   }
 
   await ensureChannelRegistry().startChannelAccount(
@@ -231,11 +235,15 @@ export async function stopChannelLive(
     );
   }
 
-  await upsertChannelAccountWithSecrets(channelId, {
-    ...existing,
-    enabled: false,
-    updatedAt: new Date().toISOString(),
-  });
+  await upsertChannelAccountWithSecrets(
+    channelId,
+    {
+      ...existing,
+      enabled: false,
+      updatedAt: new Date().toISOString(),
+    },
+    { expectedCurrent: existing },
+  );
 
   await getChannelRegistry()?.stopChannelAccount(channelId, existing.accountId);
 

@@ -31,7 +31,7 @@ test("telegram channel starts through service and routes inbound topic messages 
     },
     { accountId: "telegram-e2e" },
   );
-  bindChannelAccountLive(
+  await bindChannelAccountLive(
     "telegram",
     "telegram-e2e",
     "agent-telegram",
@@ -160,7 +160,7 @@ test("telegram channel routes permission prompts and approvals through the topic
     },
     { accountId: "telegram-permissions" },
   );
-  bindChannelAccountLive(
+  await bindChannelAccountLive(
     "telegram",
     "telegram-permissions",
     "agent-telegram",
@@ -259,7 +259,7 @@ test("telegram channel modifies config while running and keeps the adapter live"
     },
     { accountId: "telegram-running-config" },
   );
-  bindChannelAccountLive(
+  await bindChannelAccountLive(
     "telegram",
     "telegram-running-config",
     "agent-telegram",

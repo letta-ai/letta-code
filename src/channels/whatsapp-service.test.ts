@@ -118,9 +118,9 @@ describe("WhatsApp channel service", () => {
     expect(updated.selfChatMode).toBe(true);
   });
 
-  test("bind updates the account-level agent id", () => {
+  test("bind updates the account-level agent id", async () => {
     createChannelAccountLive("whatsapp", {}, { accountId: "personal" });
-    const bound = bindChannelAccountLive(
+    const bound = await bindChannelAccountLive(
       "whatsapp",
       "personal",
       "agent-bound",
