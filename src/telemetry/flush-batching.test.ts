@@ -109,6 +109,47 @@ describe("telemetry flush batching", () => {
     expect(telemetryState.events).toHaveLength(0);
   });
 
+  test("flush sends session-end events queued during an in-flight request", async () => {
+    const payloads: CapturedTelemetryPayload[] = [];
+    let resolveFirst: (value: Response) => void = () => {};
+    const firstResponse = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const fetchMock = mock(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        payloads.push(
+          JSON.parse(String(init?.body ?? "{}")) as CapturedTelemetryPayload,
+        );
+        if (payloads.length === 1) {
+          return firstResponse;
+        }
+        return new Response(null, { status: 200 });
+      },
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    telemetry.trackUserInput("first", "user", "model-1");
+    const firstFlush = telemetry.flush();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    telemetry.trackToolUsage("Bash", true, 5, 10);
+    telemetry.trackSessionEnd(undefined, "exit_command");
+    const exitFlush = telemetry.flush();
+
+    resolveFirst(new Response(null, { status: 200 }));
+    await Promise.all([firstFlush, exitFlush]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(payloads[0]?.events?.map((event) => event.type)).toEqual([
+      "user_input",
+    ]);
+    expect(payloads[1]?.events?.map((event) => event.type)).toEqual([
+      "tool_usage",
+      "session_end",
+    ]);
+    expect(telemetryState.events).toHaveLength(0);
+  });
+
   test("drain awaits the in-flight flush and exits when queue is empty", async () => {
     const fetchMock = mock(async () => new Response(null, { status: 200 }));
     globalThis.fetch = fetchMock as unknown as typeof fetch;

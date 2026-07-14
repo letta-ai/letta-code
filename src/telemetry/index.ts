@@ -916,7 +916,11 @@ class TelemetryManager {
       return;
     }
     if (this.inflightFlush) {
-      return this.inflightFlush;
+      await this.inflightFlush;
+      if (!this.hasPendingTelemetry()) {
+        return;
+      }
+      return this.flush(reason);
     }
 
     this.flushPendingTelemetryAggregates(reason);
