@@ -271,6 +271,7 @@ function buildRequestBodyFromPreparedMessages(
     client_skills: clientSkills,
     client_tools: clientTools,
     include_compaction_messages: true,
+    use_assistant_message: false,
     ...(opts.overrideModel ? { override_model: opts.overrideModel } : {}),
     ...(isDefaultConversation ? { agent_id: opts.agentId } : {}),
   };

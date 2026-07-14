@@ -33,3 +33,16 @@ describe("buildConversationMessagesCreateRequestBody client_skills", () => {
     ]);
   });
 });
+
+describe("buildConversationMessagesCreateRequestBody use_assistant_message", () => {
+  test("opts out of assistant message conversion", () => {
+    const body = buildConversationMessagesCreateRequestBody(
+      "conversation-1",
+      [{ type: "message", role: "user", content: "hello" }],
+      {},
+      [],
+    );
+
+    expect(body.use_assistant_message).toBe(false);
+  });
+});
