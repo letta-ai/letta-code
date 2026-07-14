@@ -141,6 +141,7 @@ import {
   useLocalModAdapter,
 } from "@/cli/mods/use-local-mod-adapter";
 import {
+  getIntendedCronOccurrence,
   getTask,
   handleMissedOneShot,
   isProcessAlive,
@@ -148,6 +149,7 @@ import {
   safeAppendCronRunLogForTask,
   shouldFireTask,
   updateTask,
+  wrapCronPrompt,
 } from "@/cron";
 import { experimentManager } from "@/experiments/manager";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
@@ -1540,6 +1542,7 @@ export function App({
 
         if (shouldFireTask(task, now)) {
           firedThisMinute.add(task.id);
+          const intendedOccurrence = getIntendedCronOccurrence(task, now);
 
           // Apply jitter delay for recurring tasks (same as WS scheduler)
           const jitterMs = task.recurring ? task.jitter_offset_ms : 0;
@@ -1549,17 +1552,12 @@ export function App({
             const freshTask = getTask(taskId);
             if (!freshTask || freshTask.status !== "active") return;
 
-            // Format as plain text for the TUI — no <system-reminder> wrapper
-            // (the WS scheduler uses wrapCronPrompt with XML, but the TUI
-            // renders user messages as-is, so XML shows up raw)
-            const text = [
-              `Scheduled task "${freshTask.name}" is firing.`,
-              freshTask.recurring
-                ? `This is fire #${freshTask.fire_count + 1} (cron: ${freshTask.cron}).`
-                : `This is a one-off scheduled task.`,
-              "",
-              freshTask.prompt,
-            ].join("\n");
+            const schedulerNow = new Date();
+            // Use the same user-visible prompt formatter as the WS scheduler.
+            const text = wrapCronPrompt(freshTask, {
+              intendedOccurrence,
+              schedulerNow,
+            });
             addToMessageQueue({
               kind: "user",
               text,
@@ -1568,7 +1566,7 @@ export function App({
             });
 
             // Update task state
-            const nowIso = new Date().toISOString();
+            const nowIso = schedulerNow.toISOString();
             if (freshTask.recurring) {
               updateTask(freshTask.id, (t) => {
                 t.last_fired_at = nowIso;
@@ -1585,7 +1583,7 @@ export function App({
 
             safeAppendCronRunLogForTask(freshTask, {
               status: "ok",
-              runAtMs: now.getTime(),
+              runAtMs: schedulerNow.getTime(),
               scheduledFor: freshTask.scheduled_for,
               firedAt: nowIso,
             });
