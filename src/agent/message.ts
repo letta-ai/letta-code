@@ -21,6 +21,7 @@ import {
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import {
   assertSupportedBase64ImageMediaTypes,
+  type ImageFailureModesByMessageOtid,
   normalizeMessageImageParts,
 } from "@/utils/message-image-normalization";
 import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
@@ -202,8 +203,12 @@ export type SendMessageStreamOptions = {
    * the client, with no human approval/denial in the loop.
    */
   allowResponseStateReuse?: boolean;
-  /** Skip shared image normalization when the caller already did it. */
-  skipImageNormalization?: boolean;
+  /**
+   * Per-message failure policy for best-effort channel attachments. Images are
+   * always normalized; entries here only choose whether a failed conversion is
+   * dropped instead of failing the request.
+   */
+  imageFailureModesByMessageOtid?: ImageFailureModesByMessageOtid;
   /**
    * Cloud user id of the human who pressed "send" (multi-user
    * sandbox scenario). When set, `sendMessageStream` echoes this on
@@ -301,9 +306,9 @@ export async function sendMessageStreamWithBackend(
 ): Promise<Stream<LettaStreamingResponse>> {
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const requestStartedAtMs = Date.now();
-  const normalizedMessages = opts.skipImageNormalization
-    ? messages
-    : await normalizeMessageImageParts(messages);
+  const normalizedMessages = await normalizeMessageImageParts(messages, {
+    failureModesByMessageOtid: opts.imageFailureModesByMessageOtid,
+  });
   assertSupportedBase64ImageMediaTypes(normalizedMessages);
 
   const preparedToolContext = opts.preparedToolContext

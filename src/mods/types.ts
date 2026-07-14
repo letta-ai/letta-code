@@ -97,7 +97,6 @@ export type ModConversationMessage = MessageCreate | ApprovalCreate;
 export interface ModConversationSendMessageOptions {
   background?: boolean;
   overrideModel?: string;
-  skipImageNormalization?: boolean;
   streamTokens?: boolean;
   workingDirectory?: string;
 }

@@ -94,7 +94,6 @@ const sendMessageStreamCalls: Array<{
       clientTools: Array<{ name: string }>;
       loadedToolNames: string[];
     };
-    skipImageNormalization?: boolean;
   };
 }> = [];
 const sendMessageStreamMock = mock(
@@ -628,7 +627,7 @@ describe("listen-client multi-worker concurrency", () => {
     }
   });
 
-  test("listener turns skip duplicate shared image normalization", async () => {
+  test("listener turns do not bypass send-boundary image normalization", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
       listener,
@@ -667,9 +666,9 @@ describe("listen-client multi-worker concurrency", () => {
 
     await waitFor(() => sendMessageStreamCalls.length === 1);
 
-    expect(sendMessageStreamCalls[0]?.opts).toMatchObject({
-      skipImageNormalization: true,
-    });
+    expect(sendMessageStreamCalls[0]?.opts).not.toHaveProperty(
+      "skipImageNormalization",
+    );
 
     drain.resolve(defaultDrainResult);
     await turn;

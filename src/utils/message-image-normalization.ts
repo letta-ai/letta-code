@@ -20,6 +20,15 @@ export type Base64ImageContentPart = {
 
 export type ImageNormalizationFailureMode = "strict" | "drop";
 
+export type ImageFailureModesByMessageOtid = Readonly<
+  Record<string, ImageNormalizationFailureMode>
+>;
+
+type NormalizeMessageImagePartsOptions = {
+  failureModesByMessageOtid?: ImageFailureModesByMessageOtid;
+  resize?: typeof resizeImageIfNeeded;
+};
+
 function formatImageNormalizationError(error: unknown): Error {
   const detail = error instanceof Error ? error.message : String(error);
   return new Error(`Failed to prepare image for model: ${detail}`);
@@ -52,7 +61,7 @@ export function isBase64ImageContentPart(
   );
 }
 
-export async function normalizeMessageContentImages(
+async function normalizeMessageContentImages(
   content: MessageCreate["content"],
   resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
   failureMode: ImageNormalizationFailureMode = "strict",
@@ -123,9 +132,10 @@ export async function normalizeMessageImageParts<
   T extends ApprovalCreate | MessageCreate,
 >(
   messages: T[],
-  resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
+  options: NormalizeMessageImagePartsOptions = {},
 ): Promise<T[]> {
   let didChange = false;
+  const resize = options.resize ?? resizeImageIfNeeded;
 
   const normalizedMessages = await Promise.all(
     messages.map(async (message) => {
@@ -136,6 +146,7 @@ export async function normalizeMessageImageParts<
       const normalizedContent = await normalizeMessageContentImages(
         message.content,
         resize,
+        getImageFailureMode(message, options.failureModesByMessageOtid),
       );
       if (normalizedContent !== message.content) {
         didChange = true;
@@ -149,6 +160,48 @@ export async function normalizeMessageImageParts<
   );
 
   return didChange ? normalizedMessages : messages;
+}
+
+function getImageFailureMode(
+  message: ApprovalCreate | MessageCreate,
+  failureModesByMessageOtid?: ImageFailureModesByMessageOtid,
+): ImageNormalizationFailureMode {
+  if (!failureModesByMessageOtid) {
+    return "strict";
+  }
+
+  const otid = (message as { otid?: unknown }).otid;
+  return typeof otid === "string"
+    ? (failureModesByMessageOtid[otid] ?? "strict")
+    : "strict";
+}
+
+export function buildImageFailureModesByMessageOtid(
+  messages: Array<ApprovalCreate | MessageCreate>,
+  failureMode: ImageNormalizationFailureMode,
+): ImageFailureModesByMessageOtid | undefined {
+  const entries: Array<[string, ImageNormalizationFailureMode]> = [];
+  for (const message of messages) {
+    if (!("content" in message)) {
+      continue;
+    }
+    const otid = (message as { otid?: unknown }).otid;
+    if (typeof otid === "string" && otid.length > 0) {
+      entries.push([otid, failureMode]);
+    }
+  }
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+export function mergeImageFailureModesByMessageOtid(
+  ...failureModes: Array<ImageFailureModesByMessageOtid | undefined>
+): ImageFailureModesByMessageOtid | undefined {
+  const presentModes = failureModes.filter(
+    (modes): modes is ImageFailureModesByMessageOtid => modes !== undefined,
+  );
+  return presentModes.length > 0
+    ? Object.assign({}, ...presentModes)
+    : undefined;
 }
 
 export function assertSupportedBase64ImageMediaTypes(
