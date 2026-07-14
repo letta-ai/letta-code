@@ -32,6 +32,7 @@ import {
   MissingListenerApiKeyError,
   resolveListenerRegistrationOptions,
 } from "@/websocket/listener/auth";
+import { flushRemoteSettingsWrites } from "@/websocket/listener/remote-settings";
 
 type ListenerProcessAnchor = {
   close: () => void;
@@ -292,6 +293,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best-effort cleanup — don't block exit
     }
+    await flushRemoteSettingsWrites();
     process.exit(0);
   };
 
@@ -312,6 +314,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best effort — don't block exit on channel cleanup failure
     }
+    await flushRemoteSettingsWrites();
     await flushListenerTelemetryEnd(exitReason);
     process.exit(code);
   };

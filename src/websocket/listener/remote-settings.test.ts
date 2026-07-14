@@ -124,4 +124,116 @@ describe("remote settings cwd repair", () => {
       },
     });
   });
+
+  test("retries an unchanged snapshot after a transient write failure", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
+    const fakeHome = path.join(tempRoot, "home");
+    process.env.HOME = fakeHome;
+
+    await mkdir(fakeHome);
+    await writeFile(path.join(fakeHome, ".letta"), "temporarily blocked");
+
+    const updates = {
+      cwdMap: { "conversation:live": "/repository/root" },
+    };
+    saveRemoteSettings(updates);
+    expect(await flushRemoteSettingsWrites()).toBe(false);
+
+    await rm(path.join(fakeHome, ".letta"));
+    await mkdir(path.join(fakeHome, ".letta"));
+
+    saveRemoteSettings(updates);
+    expect(await flushRemoteSettingsWrites()).toBe(true);
+    expect(
+      JSON.parse(await readFile(getRemoteSettingsPath(), "utf-8")),
+    ).toEqual(updates);
+  });
+
+  test("merges entry patches with settings written by another listener", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
+    const fakeHome = path.join(tempRoot, "home");
+    const localDirectory = path.join(tempRoot, "local");
+    const nextLocalDirectory = path.join(tempRoot, "local-next");
+    const externalDirectory = path.join(tempRoot, "external");
+    process.env.HOME = fakeHome;
+
+    await mkdir(path.dirname(getRemoteSettingsPath()), { recursive: true });
+    await Promise.all([
+      mkdir(localDirectory),
+      mkdir(nextLocalDirectory),
+      mkdir(externalDirectory),
+    ]);
+    await writeFile(
+      getRemoteSettingsPath(),
+      JSON.stringify({
+        cwdMap: { "conversation:local": localDirectory },
+        permissionModeMap: {
+          "conversation:shared": { mode: "standard" },
+        },
+      }),
+    );
+    loadRemoteSettings();
+
+    // Simulate another listener publishing after this process populated its
+    // cache. Its unrelated map entry and permission update must survive.
+    await writeFile(
+      getRemoteSettingsPath(),
+      JSON.stringify({
+        cwdMap: {
+          "conversation:local": localDirectory,
+          "conversation:external": externalDirectory,
+        },
+        permissionModeMap: {
+          "conversation:shared": { mode: "unrestricted" },
+        },
+      }),
+    );
+
+    await mkdir(`${getRemoteSettingsPath()}.lock`);
+    saveRemoteSettingsSync({
+      cwdMap: { "conversation:local": nextLocalDirectory },
+    });
+    await rm(`${getRemoteSettingsPath()}.lock`, { recursive: true });
+    expect(await flushRemoteSettingsWrites()).toBe(true);
+
+    expect(
+      JSON.parse(await readFile(getRemoteSettingsPath(), "utf-8")),
+    ).toEqual({
+      cwdMap: {
+        "conversation:local": nextLocalDirectory,
+        "conversation:external": externalDirectory,
+      },
+      permissionModeMap: {
+        "conversation:shared": { mode: "unrestricted" },
+      },
+    });
+
+    // A stale deletion must not remove a same-key reassignment published by
+    // another listener after this process last saw the entry.
+    await writeFile(
+      getRemoteSettingsPath(),
+      JSON.stringify({
+        cwdMap: {
+          "conversation:local": externalDirectory,
+          "conversation:external": externalDirectory,
+        },
+        permissionModeMap: {
+          "conversation:shared": { mode: "unrestricted" },
+        },
+      }),
+    );
+    saveRemoteSettingsSync({ cwdMap: {} });
+    expect(await flushRemoteSettingsWrites()).toBe(true);
+    expect(
+      JSON.parse(await readFile(getRemoteSettingsPath(), "utf-8")),
+    ).toEqual({
+      cwdMap: {
+        "conversation:local": externalDirectory,
+        "conversation:external": externalDirectory,
+      },
+      permissionModeMap: {
+        "conversation:shared": { mode: "unrestricted" },
+      },
+    });
+  });
 });
