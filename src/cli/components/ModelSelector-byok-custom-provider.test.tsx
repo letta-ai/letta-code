@@ -54,7 +54,7 @@ describe("ModelSelector custom BYOK provider detection", () => {
     );
   });
 
-  test("uses ChatGPT GPT-5.6 metadata with a direct fallback", () => {
+  test("uses ChatGPT GPT-5.6 metadata for available variants", () => {
     expect(
       registryHandleForBackendModel(
         "openai-codex/gpt-5.6-sol",
@@ -66,7 +66,7 @@ describe("ModelSelector custom BYOK provider detection", () => {
         "openai-codex/gpt-5.6-luna",
         "chatgpt_oauth",
       ),
-    ).toBe("openai/gpt-5.6-luna");
+    ).toBe("chatgpt-plus-pro/gpt-5.6-luna");
     expect(labelForBackendModel("GPT-5.6 Sol", "chatgpt_oauth")).toBe(
       "GPT-5.6 Sol (ChatGPT)",
     );
