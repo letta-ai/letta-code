@@ -106,6 +106,12 @@ export class TurnLifecycle {
     return this.#state.kind === "active" ? this.#state.runId : null;
   }
 
+  get executingToolCallIds(): readonly string[] {
+    return this.#state.kind === "active" || this.#state.kind === "cancelling"
+      ? this.#state.executingToolCallIds
+      : [];
+  }
+
   get lastStopReason(): StopReasonType | null {
     return this.#lastStopReason;
   }

@@ -202,4 +202,59 @@ describe("recovered approval lease boundaries", () => {
     expect(runtime.turnLifecycle.isCurrent(replacementLease)).toBe(true);
     expect(sentPayloads).toEqual([]);
   });
+
+  test("aborted recovered execution that throws still closes lifecycle starts exactly once", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    runtime.recoveredApprovalState = createRecoveredState();
+    const sentPayloads: string[] = [];
+    let executionStarted = false;
+    let rejectExecution!: (error: Error) => void;
+    const execution = new Promise<never[]>((_, reject) => {
+      rejectExecution = reject;
+    });
+    const handled = resolveRecoveredApprovalResponse(
+      runtime,
+      createTransport(sentPayloads),
+      { request_id: "perm-1", decision: { behavior: "allow" } },
+      mock(async () => {}),
+      {
+        dependencies: {
+          applySuggestedPermissions: async () => false,
+          ensureSecretsHydrated: async () => {},
+          prepareToolExecutionContext: async () => createPreparedToolContext(),
+          executeApprovalBatch: (async () => {
+            executionStarted = true;
+            return execution;
+          }) as never,
+        },
+      },
+    );
+    await waitFor(() => executionStarted);
+
+    // Abort the recovery mid-execution, then have execution reject. Unlike
+    // the normal turn path, recovered approvals do not unwind through the
+    // turn.ts interrupt emission, so the recovery catch itself must close
+    // the client_tool_start lifecycle events even when aborted.
+    runtime.turnLifecycle.requestCancellation();
+    rejectExecution(new Error("tool execution crashed"));
+    await handled.catch(() => {});
+
+    const deltas = sentPayloads
+      .map((payload) => JSON.parse(payload))
+      .filter((frame) => frame.type === "stream_delta")
+      .map((frame) => frame.delta);
+    const starts = deltas.filter(
+      (delta) => delta.message_type === "client_tool_start",
+    );
+    const ends = deltas.filter(
+      (delta) => delta.message_type === "client_tool_end",
+    );
+    expect(starts.map((delta) => delta.tool_call_id)).toEqual(["call-1"]);
+    expect(ends.map((delta) => delta.tool_call_id)).toEqual(["call-1"]);
+    expect(ends[0].status).toBe("error");
+  });
 });

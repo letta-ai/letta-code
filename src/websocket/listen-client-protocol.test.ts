@@ -4550,6 +4550,7 @@ describe("listen-client v2 status builders", () => {
     expect(outbound[1].loop_status).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
+      executing_tool_call_ids: [],
     });
   });
 
@@ -4694,6 +4695,7 @@ describe("listen-client v2 status builders", () => {
     ).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
+      executing_tool_call_ids: [],
     });
   });
 
