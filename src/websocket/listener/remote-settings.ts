@@ -57,7 +57,9 @@ let _retryTimer: ReturnType<typeof setTimeout> | null = null;
 
 const REMOTE_SETTINGS_RETRY_DELAY_MS = 250;
 const REMOTE_SETTINGS_STALE_LOCK_MS = 30_000;
-const REMOTE_SETTINGS_FLUSH_RETRY_DELAYS_MS = [0, 50, 150] as const;
+const REMOTE_SETTINGS_FLUSH_TIMEOUT_MS = 1_000;
+const REMOTE_SETTINGS_FLUSH_RETRY_MIN_MS = 10;
+const REMOTE_SETTINGS_FLUSH_RETRY_JITTER_MS = 30;
 const REMOTE_SETTINGS_LOCK_OWNER = `${process.pid}-${randomUUID()}`;
 
 function getRemoteSettingsHome(): string {
@@ -632,13 +634,19 @@ export async function flushRemoteSettingsWrites(): Promise<boolean> {
     return true;
   }
 
-  for (const delayMs of REMOTE_SETTINGS_FLUSH_RETRY_DELAYS_MS) {
-    if (delayMs > 0) {
-      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-    }
+  const deadline = Date.now() + REMOTE_SETTINGS_FLUSH_TIMEOUT_MS;
+  while (true) {
     if (persistRemoteSettingsSync(_settingsGeneration)) {
       return true;
     }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    const retryDelayMs = Math.min(
+      remainingMs,
+      REMOTE_SETTINGS_FLUSH_RETRY_MIN_MS +
+        Math.floor(Math.random() * REMOTE_SETTINGS_FLUSH_RETRY_JITTER_MS),
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
   }
 
   scheduleRemoteSettingsRetry();
