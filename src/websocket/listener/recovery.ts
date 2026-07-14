@@ -25,6 +25,7 @@ import {
 import { getBackend } from "@/backend";
 import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
 import { getChannelRegistry } from "@/channels/registry";
+import type { ChannelTurnSource } from "@/channels/types";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { formatPermissionDenial } from "@/permissions/format-denial";
@@ -44,6 +45,7 @@ import {
   recoverActiveChannelTurn,
 } from "./channel-turn-session";
 import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
+import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
   createToolExecutionOutputEmitter,
@@ -829,7 +831,7 @@ export async function resolveRecoveredApprovalResponse(
     }
     emitRuntimeStateUpdates(runtime, scope);
 
-    const continuationMessages: Array<MessageCreate | ApprovalCreate> = [
+    let continuationMessages: Array<MessageCreate | ApprovalCreate> = [
       {
         type: "approval",
         approvals: approvalResults,
@@ -837,11 +839,16 @@ export async function resolveRecoveredApprovalResponse(
       },
     ];
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
+    let queuedChannelTurnSources: ChannelTurnSource[] | undefined;
     const consumedQueuedTurn = consumeQueuedTurn(runtime);
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
       continuationBatchId = dequeuedBatch.batchId;
-      continuationMessages.push(...queuedTurn.messages);
+      continuationMessages = appendQueuedTurnToInput(
+        continuationMessages,
+        queuedTurn,
+      ).input;
+      queuedChannelTurnSources = queuedTurn.channelTurnSources;
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
     }
 
@@ -855,6 +862,9 @@ export async function resolveRecoveredApprovalResponse(
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
         messages: continuationMessages,
+        ...(queuedChannelTurnSources?.length
+          ? { channelTurnSources: queuedChannelTurnSources }
+          : {}),
       },
       socket,
       runtime,
