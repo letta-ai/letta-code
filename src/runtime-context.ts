@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import type { SkillSource } from "./agent/skills";
 import type { MessageChannelToolDiscoveryScope } from "./channels/message-tool";
 import type { ChannelTurnSource } from "./channels/types";
@@ -92,11 +92,12 @@ function getProcessWorkingDirectory(): string | null {
   }
 }
 
-function getFallbackWorkingDirectory(): string {
+export function getFallbackWorkingDirectory(): string {
   const fallback = [
     process.env.USER_CWD,
     getProcessWorkingDirectory(),
     homedir(),
+    tmpdir(),
     process.platform === "win32" ? undefined : "/",
   ].find(isUsableDirectory);
 

@@ -32,6 +32,7 @@ import {
   MissingListenerApiKeyError,
   resolveListenerRegistrationOptions,
 } from "@/websocket/listener/auth";
+import { flushRemoteSettingsWrites } from "@/websocket/listener/remote-settings";
 
 type ListenerProcessAnchor = {
   close: () => void;
@@ -269,13 +270,18 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   await settingsManager.initialize();
   await applyStartupPermissionMode({});
   telemetry.setSurface(getListenerTelemetrySurface());
-  telemetry.init();
+  telemetry.init({ handleSigint: false });
 
   // Register signal handlers so the listener can clean up child processes
   // (subagents, bash commands, PTY sessions) before exiting. Without these,
   // SIGTERM from the desktop app only kills the listener process itself,
   // orphaning its descendants which accumulate over time.
-  const handleShutdownSignal = async (): Promise<void> => {
+  let isShuttingDown = false;
+  const handleShutdownSignal = async (
+    signal: "SIGINT" | "SIGHUP" | "SIGTERM",
+  ): Promise<void> => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
     try {
       const { stopListenerClient, isListenerActive } = await import(
         "@/websocket/listen-client"
@@ -292,11 +298,14 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best-effort cleanup — don't block exit
     }
+    await flushRemoteSettingsWrites();
+    await flushListenerTelemetryEnd(`listener_${signal.toLowerCase()}`);
     process.exit(0);
   };
 
-  process.once("SIGTERM", handleShutdownSignal);
-  process.once("SIGINT", handleShutdownSignal);
+  process.once("SIGTERM", () => void handleShutdownSignal("SIGTERM"));
+  process.once("SIGINT", () => void handleShutdownSignal("SIGINT"));
+  process.once("SIGHUP", () => void handleShutdownSignal("SIGHUP"));
 
   const exitWithTelemetry = async (
     code: number,
@@ -312,6 +321,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best effort — don't block exit on channel cleanup failure
     }
+    await flushRemoteSettingsWrites();
     await flushListenerTelemetryEnd(exitReason);
     process.exit(code);
   };
@@ -772,6 +782,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const msg = error instanceof Error ? error.message : String(error);
     sessionLog.log(`FATAL: ${msg}`);
     console.error(`Failed to start listener: ${msg}`);
+    await flushRemoteSettingsWrites();
     await flushListenerTelemetryEnd("listener_start_failed");
     return 1;
   }

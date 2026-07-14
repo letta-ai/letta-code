@@ -69,6 +69,21 @@
       "path": "src/websocket/listener/auth-lifecycle.test.ts",
       "timeoutMs": 30000,
       "reason": "Exercises real WebSockets while mutating listener, settings, HOME, and process environment state."
+    },
+    {
+      "path": "src/websocket/listener/control-inputs.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates HOME and the remote-settings singleton while exercising cwd recovery persistence."
+    },
+    {
+      "path": "src/websocket/listener/protocol-ergonomics.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates HOME and the remote-settings singleton while verifying durable cwd-map pruning."
+    },
+    {
+      "path": "src/websocket/listener/remote-settings.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates HOME and the remote-settings singleton to verify startup cwd-map repair."
     }
   ]
 }

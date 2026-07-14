@@ -48,6 +48,7 @@ import {
   emitCanonicalMessageDelta,
   emitDeviceStatusUpdate,
 } from "./protocol-outbound";
+import { flushRemoteSettingsWrites } from "./remote-settings";
 import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
 import {
   ensureSecretsHydratedForAgent,
@@ -374,7 +375,8 @@ function scheduleRemoteRestart(
   }
 
   log(`scheduling remote listener restart for env ${connectionName}`);
-  setTimeout(() => {
+  setTimeout(async () => {
+    await flushRemoteSettingsWrites();
     log(
       `spawning replacement listener: ${process.execPath} ${entrypoint} remote --env-name ${connectionName}`,
     );

@@ -4,6 +4,7 @@ import { buildModInvocationContext } from "@/mods/context";
 import { createModAdapter, type ModAdapter } from "@/mods/mod-adapter";
 import type { ModCapabilities, ModContext } from "@/mods/types";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { getBootWorkingDirectory } from "./cwd";
 import type { ListenerRuntime } from "./types";
 
 export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
@@ -90,7 +91,7 @@ export function createListenerModAdapter(
 export function ensureListenerModAdapter(runtime: ListenerRuntime): ModAdapter {
   runtime.modAdapter ??= createListenerModAdapter({
     sessionId: runtime.sessionId,
-    workingDirectory: runtime.bootWorkingDirectory,
+    workingDirectory: getBootWorkingDirectory(runtime),
   });
   return runtime.modAdapter;
 }

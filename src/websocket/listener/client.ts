@@ -51,6 +51,7 @@ import {
 } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
+  getBootWorkingDirectory,
   getConversationWorkingDirectory,
   setConversationWorkingDirectory,
 } from "./cwd";
@@ -239,7 +240,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       },
     },
     bootWorkingDirectory: {
-      get: () => listener.bootWorkingDirectory,
+      get: () => getBootWorkingDirectory(listener),
       set: (value: string) => {
         listener.bootWorkingDirectory = value;
       },
