@@ -784,14 +784,15 @@ export async function resolveRecoveredApprovalResponse(
       // emission below never runs. Close the client_tool_start lifecycle
       // events explicitly or observer UIs shimmer these tool calls forever.
       // Flush buffered tool output first so no progress frame lands after
-      // the terminal end events. Skip emission when this owner lost the
-      // recovery lease or the recovery was aborted: the interrupt path or
-      // the replacement runtime owns terminal state then.
+      // the terminal end events. Gate only on lease ownership: unlike the
+      // normal turn path, recovered approvals do not unwind through the
+      // turn.ts interrupt emission, so an aborted recovery that throws has
+      // no other owner for these terminal events (the outer catch below
+      // finalizes the lease without emitting ends). isCurrent stays true
+      // while the lease is cancelling, so abort+throw still emits exactly
+      // once; only a replacement owner suppresses emission.
       emitToolExecutionOutput.flush();
-      if (
-        runtime.turnLifecycle.isCurrent(recoveryLease) &&
-        !recoveryLease.signal.aborted
-      ) {
+      if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
         emitToolExecutionAbortedEvents(socket, runtime, {
           toolCallIds: approvedToolCallIds,
           runId: executionRunId,
