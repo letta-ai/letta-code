@@ -775,6 +775,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const msg = error instanceof Error ? error.message : String(error);
     sessionLog.log(`FATAL: ${msg}`);
     console.error(`Failed to start listener: ${msg}`);
+    await flushRemoteSettingsWrites();
     await flushListenerTelemetryEnd("listener_start_failed");
     return 1;
   }

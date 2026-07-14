@@ -77,6 +77,29 @@ describe("remote settings cwd repair", () => {
     });
   });
 
+  test("persists an empty legacy migration so stale entries cannot resurrect", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
+    const fakeHome = path.join(tempRoot, "home");
+    const deletedDirectory = path.join(tempRoot, "deleted-worktree");
+    process.env.HOME = fakeHome;
+
+    const legacyPath = path.join(fakeHome, ".letta", "cwd-cache.json");
+    await mkdir(path.dirname(legacyPath), { recursive: true });
+    await writeFile(
+      legacyPath,
+      JSON.stringify({ "conversation:stale": deletedDirectory }),
+    );
+
+    expect(loadRemoteSettings().cwdMap).toEqual({});
+    expect(
+      JSON.parse(await readFile(getRemoteSettingsPath(), "utf-8")),
+    ).toEqual({ cwdMap: {} });
+
+    await mkdir(deletedDirectory);
+    resetRemoteSettingsCache();
+    expect(loadRemoteSettings().cwdMap).toEqual({});
+  });
+
   test("coalesces asynchronous updates while preserving merged settings", async () => {
     tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
     process.env.HOME = path.join(tempRoot, "home");

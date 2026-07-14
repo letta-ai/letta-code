@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -15,7 +16,15 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  link,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { isConfirmedUnusableDirectory } from "@/helpers/usable-directory";
@@ -39,6 +48,7 @@ type SettingsMapPatch<T> = Record<string, SettingsMapMutation<T>>;
 
 interface RemoteSettingsPatch {
   cwdMap?: SettingsMapPatch<string>;
+  initializeCwdMap?: Record<string, string>;
   permissionModeMap?: SettingsMapPatch<PersistedPermissionModeState>;
 }
 
@@ -54,6 +64,7 @@ let _settledGeneration = 0;
 let _pendingPatches: PendingRemoteSettingsPatch[] = [];
 let _writeLoop: Promise<void> | null = null;
 let _retryTimer: ReturnType<typeof setTimeout> | null = null;
+let _ownsRemoteSettingsLock = false;
 
 const REMOTE_SETTINGS_RETRY_DELAY_MS = 250;
 const REMOTE_SETTINGS_STALE_LOCK_MS = 30_000;
@@ -96,6 +107,7 @@ export function loadRemoteSettings(): RemoteSettings {
   }
 
   let repairedCwdMap = false;
+  let migratedLegacyCwdMap = false;
   let originalCwdMap: Record<string, string> | undefined;
 
   // Validate cwdMap entries and durably remove stale paths. Persisting this
@@ -117,6 +129,7 @@ export function loadRemoteSettings(): RemoteSettings {
   // One-time migration: load legacy cwd-cache.json if cwdMap not present.
   if (!loaded.cwdMap) {
     loaded.cwdMap = loadLegacyCwdCache();
+    migratedLegacyCwdMap = true;
   }
 
   _cache = loaded;
@@ -127,6 +140,9 @@ export function loadRemoteSettings(): RemoteSettings {
         { cwdMap: loaded.cwdMap },
       ),
     );
+    persistCurrentSettingsSync();
+  } else if (migratedLegacyCwdMap) {
+    queueRemoteSettingsPatch({ initializeCwdMap: loaded.cwdMap });
     persistCurrentSettingsSync();
   }
   return _cache;
@@ -143,10 +159,6 @@ function hasErrorCode(error: unknown, code: string): boolean {
 
 function getRemoteSettingsLockPath(): string {
   return `${getRemoteSettingsPath()}.lock`;
-}
-
-function getRemoteSettingsLockOwnerPath(): string {
-  return path.join(getRemoteSettingsLockPath(), "owner");
 }
 
 function isLockOwnerProcessAlive(owner: string): boolean {
@@ -168,11 +180,7 @@ function isLockOwnerProcessAlive(owner: string): boolean {
 
 function isRemoteSettingsLockStaleSync(lockPath: string): boolean {
   try {
-    if (
-      isLockOwnerProcessAlive(
-        readFileSync(path.join(lockPath, "owner"), "utf-8"),
-      )
-    ) {
+    if (isLockOwnerProcessAlive(readFileSync(lockPath, "utf-8"))) {
       return false;
     }
   } catch {
@@ -189,11 +197,7 @@ function isRemoteSettingsLockStaleSync(lockPath: string): boolean {
 
 async function isRemoteSettingsLockStale(lockPath: string): Promise<boolean> {
   try {
-    if (
-      isLockOwnerProcessAlive(
-        await readFile(path.join(lockPath, "owner"), "utf-8"),
-      )
-    ) {
+    if (isLockOwnerProcessAlive(await readFile(lockPath, "utf-8"))) {
       return false;
     }
   } catch {
@@ -209,6 +213,32 @@ async function isRemoteSettingsLockStale(lockPath: string): Promise<boolean> {
   }
 }
 
+function reclaimAbandonedOwnLockSync(lockPath: string): boolean {
+  if (_ownsRemoteSettingsLock) return false;
+  try {
+    if (readFileSync(lockPath, "utf-8") !== REMOTE_SETTINGS_LOCK_OWNER) {
+      return false;
+    }
+    rmSync(lockPath, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function reclaimAbandonedOwnLock(lockPath: string): Promise<boolean> {
+  if (_ownsRemoteSettingsLock) return false;
+  try {
+    if ((await readFile(lockPath, "utf-8")) !== REMOTE_SETTINGS_LOCK_OWNER) {
+      return false;
+    }
+    await rm(lockPath, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function tryAcquireRemoteSettingsLockSync(): boolean {
   const lockPath = getRemoteSettingsLockPath();
   try {
@@ -218,33 +248,42 @@ function tryAcquireRemoteSettingsLockSync(): boolean {
   }
 
   for (let attempt = 0; attempt < 2; attempt++) {
+    const candidatePath = `${lockPath}.${REMOTE_SETTINGS_LOCK_OWNER}.${randomUUID()}.candidate`;
+    let acquisitionError: unknown;
     try {
-      mkdirSync(lockPath);
-      try {
-        writeFileSync(
-          getRemoteSettingsLockOwnerPath(),
-          REMOTE_SETTINGS_LOCK_OWNER,
-        );
-        return true;
-      } catch {
-        rmSync(lockPath, { recursive: true, force: true });
-        return false;
-      }
+      writeFileSync(candidatePath, REMOTE_SETTINGS_LOCK_OWNER, { flag: "wx" });
+      linkSync(candidatePath, lockPath);
     } catch (error) {
-      if (
-        attempt > 0 ||
-        !hasErrorCode(error, "EEXIST") ||
-        !isRemoteSettingsLockStaleSync(lockPath)
-      ) {
-        return false;
-      }
-      const stalePath = `${lockPath}.${REMOTE_SETTINGS_LOCK_OWNER}.${Date.now()}.stale`;
-      try {
-        renameSync(lockPath, stalePath);
-        rmSync(stalePath, { recursive: true, force: true });
-      } catch {
-        return false;
-      }
+      acquisitionError = error;
+    }
+    try {
+      rmSync(candidatePath, { force: true });
+    } catch {
+      // Best-effort cleanup; candidate names are unique per attempt.
+    }
+    if (acquisitionError === undefined) {
+      _ownsRemoteSettingsLock = true;
+      return true;
+    }
+    if (
+      hasErrorCode(acquisitionError, "EEXIST") &&
+      reclaimAbandonedOwnLockSync(lockPath)
+    ) {
+      continue;
+    }
+    if (
+      attempt > 0 ||
+      !hasErrorCode(acquisitionError, "EEXIST") ||
+      !isRemoteSettingsLockStaleSync(lockPath)
+    ) {
+      return false;
+    }
+    const stalePath = `${lockPath}.${REMOTE_SETTINGS_LOCK_OWNER}.${Date.now()}.stale`;
+    try {
+      renameSync(lockPath, stalePath);
+      rmSync(stalePath, { recursive: true, force: true });
+    } catch {
+      return false;
     }
   }
   return false;
@@ -259,33 +298,40 @@ async function tryAcquireRemoteSettingsLock(): Promise<boolean> {
   }
 
   for (let attempt = 0; attempt < 2; attempt++) {
+    const candidatePath = `${lockPath}.${REMOTE_SETTINGS_LOCK_OWNER}.${randomUUID()}.candidate`;
+    let acquisitionError: unknown;
     try {
-      await mkdir(lockPath);
-      try {
-        await writeFile(
-          getRemoteSettingsLockOwnerPath(),
-          REMOTE_SETTINGS_LOCK_OWNER,
-        );
-        return true;
-      } catch {
-        await rm(lockPath, { recursive: true, force: true });
-        return false;
-      }
+      await writeFile(candidatePath, REMOTE_SETTINGS_LOCK_OWNER, {
+        flag: "wx",
+      });
+      await link(candidatePath, lockPath);
     } catch (error) {
-      if (
-        attempt > 0 ||
-        !hasErrorCode(error, "EEXIST") ||
-        !(await isRemoteSettingsLockStale(lockPath))
-      ) {
-        return false;
-      }
-      const stalePath = `${lockPath}.${REMOTE_SETTINGS_LOCK_OWNER}.${Date.now()}.stale`;
-      try {
-        await rename(lockPath, stalePath);
-        await rm(stalePath, { recursive: true, force: true });
-      } catch {
-        return false;
-      }
+      acquisitionError = error;
+    }
+    await rm(candidatePath, { force: true }).catch(() => {});
+    if (acquisitionError === undefined) {
+      _ownsRemoteSettingsLock = true;
+      return true;
+    }
+    if (
+      hasErrorCode(acquisitionError, "EEXIST") &&
+      (await reclaimAbandonedOwnLock(lockPath))
+    ) {
+      continue;
+    }
+    if (
+      attempt > 0 ||
+      !hasErrorCode(acquisitionError, "EEXIST") ||
+      !(await isRemoteSettingsLockStale(lockPath))
+    ) {
+      return false;
+    }
+    const stalePath = `${lockPath}.${REMOTE_SETTINGS_LOCK_OWNER}.${Date.now()}.stale`;
+    try {
+      await rename(lockPath, stalePath);
+      await rm(stalePath, { recursive: true, force: true });
+    } catch {
+      return false;
     }
   }
   return false;
@@ -294,31 +340,33 @@ async function tryAcquireRemoteSettingsLock(): Promise<boolean> {
 function releaseRemoteSettingsLockSync(): void {
   try {
     if (
-      readFileSync(getRemoteSettingsLockOwnerPath(), "utf-8") !==
+      readFileSync(getRemoteSettingsLockPath(), "utf-8") !==
       REMOTE_SETTINGS_LOCK_OWNER
     ) {
       return;
     }
-    rmSync(getRemoteSettingsLockPath(), { recursive: true, force: true });
+    rmSync(getRemoteSettingsLockPath(), { force: true });
   } catch {
-    // A later writer can recover the lock after its stale timeout.
+    // A later local writer reclaims this token; other processes wait for stale recovery.
+  } finally {
+    _ownsRemoteSettingsLock = false;
   }
 }
 
 async function releaseRemoteSettingsLock(): Promise<void> {
   try {
     if (
-      (await readFile(getRemoteSettingsLockOwnerPath(), "utf-8")) !==
+      (await readFile(getRemoteSettingsLockPath(), "utf-8")) !==
       REMOTE_SETTINGS_LOCK_OWNER
     ) {
       return;
     }
   } catch {
+    _ownsRemoteSettingsLock = false;
     return;
   }
-  await rm(getRemoteSettingsLockPath(), { recursive: true, force: true }).catch(
-    () => {},
-  );
+  await rm(getRemoteSettingsLockPath(), { force: true }).catch(() => {});
+  _ownsRemoteSettingsLock = false;
 }
 
 function readCurrentRemoteSettingsSync(): RemoteSettings | null {
@@ -390,7 +438,11 @@ function buildRemoteSettingsPatch(
 }
 
 function isRemoteSettingsPatchEmpty(patch: RemoteSettingsPatch): boolean {
-  return patch.cwdMap === undefined && patch.permissionModeMap === undefined;
+  return (
+    patch.cwdMap === undefined &&
+    patch.initializeCwdMap === undefined &&
+    patch.permissionModeMap === undefined
+  );
 }
 
 function queueRemoteSettingsPatch(
@@ -437,6 +489,12 @@ function applyPendingRemoteSettingsPatches(
   const result = { ...settings };
   for (const pending of _pendingPatches) {
     if (pending.generation > generation) continue;
+    if (
+      pending.patch.initializeCwdMap !== undefined &&
+      result.cwdMap === undefined
+    ) {
+      result.cwdMap = { ...pending.patch.initializeCwdMap };
+    }
     if (pending.patch.cwdMap) {
       result.cwdMap = applySettingsMapPatch(
         result.cwdMap,
@@ -679,7 +737,7 @@ function loadLegacyCwdCache(): Record<string, string> {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const result: Record<string, string> = {};
     for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value === "string" && existsSync(value)) {
+      if (typeof value === "string" && !isConfirmedUnusableDirectory(value)) {
         result[key] = value;
       }
     }
