@@ -225,6 +225,28 @@ describe("ProviderTurnExecutor", () => {
     ).toBe("end_turn");
   });
 
+  test("maps pi length completions to max_tokens_exceeded", async () => {
+    const finalMessage = {
+      ...assistantMessage(),
+      content: [],
+      stopReason: "length" as const,
+    };
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield providerStreamPart(
+          part({ type: "done", reason: "length", message: finalMessage }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    expect(
+      (chunks.at(-1) as { stop_reason?: string } | undefined)?.stop_reason,
+    ).toBe("max_tokens_exceeded");
+  });
+
   test("emits estimated context_tokens when provider usage is empty", async () => {
     const finalMessage = assistantMessage();
     const adapter: ProviderStreamAdapter = {

@@ -411,7 +411,9 @@ function createProviderLettaStream(
               stop_reason:
                 sawToolCall || part.reason === "toolUse"
                   ? "requires_approval"
-                  : "end_turn",
+                  : part.reason === "length"
+                    ? "max_tokens_exceeded"
+                    : "end_turn",
             } as LettaStreamingResponse;
             continue;
           }
