@@ -143,6 +143,28 @@ describe("connect provider normalization", () => {
     expect(githubCopilot.byokProvider.oauthProviderId).toBe("github-copilot");
   });
 
+  test("resolves local xAI Grok OAuth aliases", () => {
+    for (const token of ["xai-oauth", "grok-oauth", "grok"] as const) {
+      const resolved = resolveConnectProvider(token, "local");
+      expect(resolved).not.toBeNull();
+      if (!resolved) throw new Error(`Expected ${token} to resolve`);
+      expect(isConnectOAuthProvider(resolved)).toBe(true);
+      expect(resolved.byokProvider.oauthProviderId).toBe("xai");
+      expect(resolved.byokId).toBe("xai-oauth");
+    }
+  });
+
+  test("does not resolve xAI Grok OAuth on the API provider store", () => {
+    expect(resolveConnectProvider("xai-oauth", "api")).toBeNull();
+    expect(resolveConnectProvider("grok-oauth", "api")).toBeNull();
+  });
+
+  test("help list labels xai-oauth aliases on local target", () => {
+    expect(listConnectProvidersForHelp("local")).toContain(
+      "xai-oauth (aliases: grok-oauth, grok)",
+    );
+  });
+
   test("uses environment keys before API-key optional defaults", () => {
     withEnv({ LMSTUDIO_API_KEY: "1234" }, () => {
       const lmstudio = resolveConnectProvider("lmstudio", "local");

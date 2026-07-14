@@ -18,11 +18,11 @@ import {
 import {
   buildByokProviderAliases,
   isByokHandleForSelector,
-  listProviders,
 } from "@/providers/byok-providers";
 import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import {
+  applyProviderAuthPresentation,
   baseHandleForByokAlias,
   filterModelsByAvailabilityForSelector,
   includeUnknownBackendHandleInRecommended,
@@ -37,6 +37,7 @@ import {
 import { OverlayShell } from "./OverlayShell";
 import { TabBar } from "./TabBar";
 import { Text } from "./Text";
+import { useModelSelectorProviders } from "./use-model-selector-providers";
 
 const VISIBLE_ITEMS = 8;
 
@@ -56,6 +57,7 @@ export type {
   UiModel,
 } from "./model-selector-helpers";
 export {
+  applyProviderAuthPresentation,
   filterModelsByAvailabilityForSelector,
   includeUnknownBackendHandleInRecommended,
   labelForBackendModel,
@@ -195,9 +197,8 @@ export function ModelSelector({
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [showLoginAction, setShowLoginAction] = useState(false);
-  const [byokProviderAliases, setByokProviderAliases] = useState<
-    Record<string, string>
-  >(() => buildByokProviderAliases([]));
+  const { byokProviderAliases, providerAuthByName } =
+    useModelSelectorProviders(localModelCatalog);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -267,23 +268,6 @@ export function ModelSelector({
   useEffect(() => {
     loadModels.current(forceRefreshOnMount ?? false);
   }, [forceRefreshOnMount]);
-
-  useEffect(() => {
-    if (localModelCatalog) {
-      setByokProviderAliases(buildByokProviderAliases([]));
-      return;
-    }
-    (async () => {
-      try {
-        const providers = await listProviders();
-        if (!mountedRef.current) return;
-        setByokProviderAliases(buildByokProviderAliases(providers));
-      } catch {
-        if (!mountedRef.current) return;
-        setByokProviderAliases(buildByokProviderAliases([]));
-      }
-    })();
-  }, [localModelCatalog]);
 
   const pickPreferredStaticModel = useCallback(
     (handle: string, contextWindow?: number): UiModel | undefined => {
@@ -399,19 +383,24 @@ export function ModelSelector({
             }
           : null;
 
-      const result = baseModel ? [baseModel] : [];
+      const result = baseModel
+        ? [applyProviderAuthPresentation(baseModel, providerAuthByName)]
+        : [];
 
       if (fastRegistryHandle) {
         const fastStaticModel = pickPreferredStaticModel(fastRegistryHandle);
         if (fastStaticModel) {
           result.push(
-            withActualHandle(fastStaticModel, handle, fastRegistryHandle, {
-              ...((fastStaticModel.updateArgs as
-                | Record<string, unknown>
-                | undefined) ?? {}),
-              service_tier: CHATGPT_FAST_SERVICE_TIER,
-              ...withProviderTypeMetadata(handle, undefined),
-            }),
+            applyProviderAuthPresentation(
+              withActualHandle(fastStaticModel, handle, fastRegistryHandle, {
+                ...((fastStaticModel.updateArgs as
+                  | Record<string, unknown>
+                  | undefined) ?? {}),
+                service_tier: CHATGPT_FAST_SERVICE_TIER,
+                ...withProviderTypeMetadata(handle, undefined),
+              }),
+              providerAuthByName,
+            ),
           );
         }
       }
@@ -420,6 +409,7 @@ export function ModelSelector({
     },
     [
       pickPreferredStaticModel,
+      providerAuthByName,
       providerTypesByHandle,
       withActualHandle,
       withProviderTypeMetadata,
@@ -610,6 +600,9 @@ export function ModelSelector({
   // Discoverable local endpoint providers (Ollama, LM Studio, llama.cpp) do
   // not have a static models.json catalog, so include their live-discovered
   // handles here instead of hiding them until the user switches to "All".
+  // Local backend catalogs (pi-ai / OAuth providers like xAI SuperGrok) are
+  // also source-of-truth for available handles — include unknown handles so
+  // OAuth connects aren't empty on Recommended when models.json is stale.
   // Filter out letta/letta-free legacy model
   const serverRecommendedModels = useMemo(() => {
     if (!backendModelCatalog || availableHandles === undefined) return [];
@@ -618,7 +611,8 @@ export function ModelSelector({
       .flatMap((handle) =>
         modelsForBackendHandle(
           handle,
-          includeUnknownBackendHandleInRecommended(handle),
+          includeUnknownBackendHandleInRecommended(handle) ||
+            Boolean(localModelCatalog),
         ),
       );
     if (searchQuery) {
@@ -644,6 +638,7 @@ export function ModelSelector({
     return deduped;
   }, [
     backendModelCatalog,
+    localModelCatalog,
     availableHandles,
     allApiHandles,
     searchQuery,

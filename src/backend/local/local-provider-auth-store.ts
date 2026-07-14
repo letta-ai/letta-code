@@ -138,6 +138,26 @@ function providerResponse(record: LocalProviderRecord): ProviderResponse {
   };
 }
 
+function authTypeLabel(type: LocalProviderAuthType): string {
+  return type === "oauth" ? "OAuth credentials" : "an API key";
+}
+
+function assertCanWriteAuthType(input: {
+  providerName: string;
+  existing?: LocalProviderRecord;
+  nextAuthType: LocalProviderAuthType;
+}): void {
+  const existingType = input.existing?.auth.type;
+  if (!existingType || existingType === input.nextAuthType) {
+    return;
+  }
+
+  throw new Error(
+    `Provider "${input.providerName}" is already connected with ${authTypeLabel(existingType)}. ` +
+      `Disconnect it before connecting ${authTypeLabel(input.nextAuthType)}.`,
+  );
+}
+
 export function localProviderApiKeyFromRecord(
   record: LocalProviderRecord | null | undefined,
 ): string | undefined {
@@ -209,6 +229,11 @@ export async function createOrUpdateLocalProvider(input: {
     input.providerType === "chatgpt_oauth"
       ? parseChatGPTOAuth(input.apiKey)
       : { type: "api", key: input.apiKey };
+  assertCanWriteAuthType({
+    providerName: input.providerName,
+    existing,
+    nextAuthType: auth.type,
+  });
   const next: LocalProviderRecord = {
     id: existing?.id ?? providerId(input.providerName),
     name: input.providerName,
@@ -338,6 +363,11 @@ export function setLocalOAuthProvider(input: {
   const file = readAuthFile(input.storageDir);
   const now = new Date().toISOString();
   const existing = file.providers[input.providerName];
+  assertCanWriteAuthType({
+    providerName: input.providerName,
+    existing,
+    nextAuthType: "oauth",
+  });
   file.providers[input.providerName] = {
     id: existing?.id ?? providerId(input.providerName),
     name: input.providerName,

@@ -8,11 +8,18 @@ import {
 
 const CHATGPT_OAUTH_BASE_PROVIDER = "openai-codex";
 const CHATGPT_LABEL_SUFFIX_PATTERN = /\s+\(ChatGPT\)$/;
+const XAI_SUPERGROK_LABEL_SUFFIX_PATTERN = /\s+\(SuperGrok\)$/;
+const XAI_API_KEY_LABEL_SUFFIX_PATTERN = /\s+\(API key\)$/;
 const API_GATED_MODEL_HANDLES = new Set([
   "letta/auto",
   "letta/auto-fast",
   "letta/glm",
 ]);
+
+export type ProviderAuthType = "api" | "oauth";
+
+/** Local provider name / handle prefix → how that provider is authenticated. */
+export type ProviderAuthByName = ReadonlyMap<string, ProviderAuthType>;
 
 export type UiModel = {
   id: string;
@@ -102,6 +109,55 @@ export function labelForBackendModel(
     return label;
   }
   return `${label} (ChatGPT)`;
+}
+
+export function providerNameFromModelHandle(
+  handle: string,
+): string | undefined {
+  const slashIndex = handle.indexOf("/");
+  if (slashIndex <= 0) return undefined;
+  return handle.slice(0, slashIndex);
+}
+
+/**
+ * Mark local dual-auth providers (xAI SuperGrok OAuth vs API key) so /model
+ * does not look like an anonymous "xAI API" catalog when only OAuth is linked.
+ */
+export function applyProviderAuthPresentation(
+  model: UiModel,
+  authByProvider: ProviderAuthByName | undefined,
+): UiModel {
+  if (!authByProvider || authByProvider.size === 0) return model;
+
+  const providerName = providerNameFromModelHandle(model.handle);
+  if (!providerName) return model;
+
+  // xAI SuperGrok OAuth and console API key share provider_type=xai / handle prefix xai/
+  if (providerName === "xai") {
+    const authType = authByProvider.get("xai");
+    if (authType === "oauth") {
+      const label = XAI_SUPERGROK_LABEL_SUFFIX_PATTERN.test(model.label)
+        ? model.label
+        : `${model.label.replace(XAI_API_KEY_LABEL_SUFFIX_PATTERN, "")} (SuperGrok)`;
+      return {
+        ...model,
+        label,
+        description: "SuperGrok / X Premium+ subscription (OAuth — no API key)",
+      };
+    }
+    if (authType === "api") {
+      const label = XAI_API_KEY_LABEL_SUFFIX_PATTERN.test(model.label)
+        ? model.label
+        : `${model.label.replace(XAI_SUPERGROK_LABEL_SUFFIX_PATTERN, "")} (API key)`;
+      return {
+        ...model,
+        label,
+        description: "xAI console API key",
+      };
+    }
+  }
+
+  return model;
 }
 
 export function toByokSelectorModel(

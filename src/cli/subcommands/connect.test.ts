@@ -327,6 +327,17 @@ describe("connect subcommand", () => {
     return { selections, runLocalOAuthConnectFlow };
   }
 
+  test("guides users to local backend for xAI Grok OAuth on API target", async () => {
+    const { stderr, deps } = createIoDeps();
+    setProviderTarget("api");
+
+    const exitCode = await runConnectSubcommand(["xai-oauth"], deps);
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join("\n")).toContain("local backend");
+    expect(stderr.join("\n")).toContain("xai-oauth");
+  });
+
   test("local codex connect defaults to the first login method option", async () => {
     const { stdout, deps } = createIoDeps();
     setProviderTarget("local");

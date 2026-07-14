@@ -209,6 +209,12 @@ const PI_PROVIDER_OVERRIDES: Partial<
     handlePrefixes: ["openai-codex/", "chatgpt-plus-pro/"],
     localProviderNames: ["openai-codex", LOCAL_CHATGPT_PROVIDER_NAME],
   },
+  // Live-list models from api.x.ai when SuperGrok OAuth or XAI_API_KEY is
+  // configured so catalog stays current (e.g. grok-4.5) without waiting on pi-ai.
+  xai: {
+    defaultBaseURL: "https://api.x.ai/v1",
+    localModelDiscovery: "openai-compatible",
+  },
 };
 
 function defaultModelForProvider(

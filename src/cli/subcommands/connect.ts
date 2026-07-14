@@ -12,6 +12,7 @@ import {
   isConnectBedrockProvider,
   isConnectOAuthProvider,
   isConnectZaiBaseProvider,
+  isLocalOnlyConnectProviderToken,
   listConnectProvidersForHelp,
   listConnectProviderTokens,
   resolveConnectProvider,
@@ -110,18 +111,33 @@ const DEFAULT_DEPS: ConnectSubcommandDeps = {
 };
 
 function formatUsage(): string {
+  const providers = listConnectProvidersForHelp();
+  const localOnlyNote = providers.some((line) => line.startsWith("xai-oauth"))
+    ? [
+        "",
+        "xAI Grok OAuth (SuperGrok):",
+        "  letta --backend local connect xai-oauth",
+        "  letta --backend local connect grok-oauth",
+      ]
+    : [
+        "",
+        "xAI Grok OAuth (SuperGrok) requires the local backend:",
+        "  letta --backend local connect xai-oauth",
+      ];
   return [
     "Usage:",
     "  letta connect <provider> [options]",
     "",
     "Providers:",
-    `  ${listConnectProvidersForHelp().join("\n  ")}`,
+    `  ${providers.join("\n  ")}`,
+    ...localOnlyNote,
     "",
     "Examples:",
     "  letta connect chatgpt",
     "  letta connect chatgpt --name chatgpt-work",
     "  letta connect codex",
     "  letta connect codex --method device-code",
+    "  letta --backend local connect xai-oauth",
     "  letta connect anthropic <api_key>",
     "  letta connect openai --api-key <api_key>",
     "  letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
@@ -231,6 +247,13 @@ export async function runConnectSubcommand(
 
   const provider = resolveConnectProvider(providerToken);
   if (!provider) {
+    if (isLocalOnlyConnectProviderToken(providerToken)) {
+      io.stderr(
+        `Provider '${providerToken}' (xAI Grok OAuth / SuperGrok) is only available on the local backend.\n` +
+          `Run: letta --backend local connect xai-oauth`,
+      );
+      return 1;
+    }
     io.stderr(
       `Unknown provider: ${providerToken}. Supported providers: ${listConnectProviderTokens().join(", ")}`,
     );
@@ -304,6 +327,46 @@ export async function runConnectSubcommand(
       io.stdout(
         `Successfully connected to ${provider.byokProvider.displayName}.`,
       );
+      if (
+        provider.target === "local" &&
+        provider.byokProvider.oauthProviderId === "xai"
+      ) {
+        try {
+          const { listLocalModels } = await import(
+            "@/backend/local/local-model-config"
+          );
+          const models = await listLocalModels();
+          const xaiModels = models
+            .map((model) => model.handle)
+            .filter(
+              (handle): handle is string =>
+                typeof handle === "string" && handle.startsWith("xai/"),
+            );
+          if (xaiModels.length > 0) {
+            io.stdout(
+              [
+                "",
+                "Available xAI models:",
+                ...xaiModels.map((handle) => `  ${handle}`),
+                "",
+                "Start local mode and pick one with /model:",
+                "  letta --backend local",
+                "  /model",
+              ].join("\n"),
+            );
+          } else {
+            io.stdout(
+              [
+                "",
+                "No xAI models were listed yet. Start local mode and press r in /model to refresh:",
+                "  letta --backend local",
+              ].join("\n"),
+            );
+          }
+        } catch {
+          // Listing is best-effort after a successful login.
+        }
+      }
       return 0;
     } catch (error) {
       io.stderr(
@@ -421,6 +484,16 @@ export async function runConnectSubcommand(
           `Missing API key for ${provider.canonical}. Pass as positional arg or --api-key.`,
         );
         return 1;
+      }
+      if (
+        provider.target === "local" &&
+        (provider.byokProvider.providerType === "xai" ||
+          provider.byokId === "xai")
+      ) {
+        io.stdout(
+          "Tip: for SuperGrok / X Premium+ subscription OAuth (no API key), run:\n" +
+            "  letta --backend local connect xai-oauth",
+        );
       }
       apiKey = await io.promptSecret(
         `${provider.byokProvider.displayName} API key: `,

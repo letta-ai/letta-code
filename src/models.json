@@ -1907,7 +1907,7 @@
       "id": "gpt-5.4-pro-medium",
       "handle": "openai/gpt-5.4-pro",
       "label": "GPT-5.4 Pro",
-      "description": "GPT-5.4 Pro — max performance variant (med reasoning)",
+      "description": "GPT-5.4 Pro \u2014 max performance variant (med reasoning)",
       "updateArgs": {
         "reasoning_effort": "medium",
         "verbosity": "medium",
@@ -1920,7 +1920,7 @@
       "id": "gpt-5.4-pro-high",
       "handle": "openai/gpt-5.4-pro",
       "label": "GPT-5.4 Pro",
-      "description": "GPT-5.4 Pro — max performance variant (high reasoning)",
+      "description": "GPT-5.4 Pro \u2014 max performance variant (high reasoning)",
       "updateArgs": {
         "reasoning_effort": "high",
         "verbosity": "medium",
@@ -1933,7 +1933,7 @@
       "id": "gpt-5.4-pro-xhigh",
       "handle": "openai/gpt-5.4-pro",
       "label": "GPT-5.4 Pro",
-      "description": "GPT-5.4 Pro — max performance variant (max reasoning)",
+      "description": "GPT-5.4 Pro \u2014 max performance variant (max reasoning)",
       "updateArgs": {
         "reasoning_effort": "xhigh",
         "verbosity": "medium",
@@ -2180,10 +2180,91 @@
       "id": "grok-4.5",
       "handle": "xai/grok-4.5",
       "label": "Grok 4.5",
-      "description": "xAI's Grok 4.5 model via the direct xAI API",
+      "description": "xAI Grok 4.5",
       "isFeatured": true,
       "updateArgs": {
         "context_window": 500000,
+        "max_output_tokens": 16384,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "grok-4.3",
+      "handle": "xai/grok-4.3",
+      "label": "Grok 4.3",
+      "description": "xAI Grok 4.3",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 64000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "grok-4.20-0309-reasoning",
+      "handle": "xai/grok-4.20-0309-reasoning",
+      "label": "Grok 4.20 Reasoning",
+      "description": "xAI Grok 4.20 reasoning (default local xAI model)",
+      "isFeatured": true,
+      "isDefault": true,
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 64000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "grok-4.20-0309-non-reasoning",
+      "handle": "xai/grok-4.20-0309-non-reasoning",
+      "label": "Grok 4.20 Non-reasoning",
+      "description": "xAI Grok 4.20 non-reasoning",
+      "updateArgs": {
+        "context_window": 1000000,
+        "max_output_tokens": 64000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "grok-build-0.1",
+      "handle": "xai/grok-build-0.1",
+      "label": "Grok Build 0.1",
+      "description": "xAI Grok Build coding model",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 256000,
+        "max_output_tokens": 64000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "grok-code-fast-1",
+      "handle": "xai/grok-code-fast-1",
+      "label": "Grok Code Fast 1",
+      "description": "xAI fast coding model",
+      "updateArgs": {
+        "context_window": 32768,
+        "max_output_tokens": 16000,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "grok-3",
+      "handle": "xai/grok-3",
+      "label": "Grok 3",
+      "description": "xAI Grok 3",
+      "updateArgs": {
+        "context_window": 131072,
+        "max_output_tokens": 16384,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "grok-3-fast",
+      "handle": "xai/grok-3-fast",
+      "label": "Grok 3 Fast",
+      "description": "xAI Grok 3 Fast",
+      "updateArgs": {
+        "context_window": 131072,
         "max_output_tokens": 16384,
         "parallel_tool_calls": true
       }

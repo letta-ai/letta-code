@@ -10,6 +10,8 @@ import {
   type LocalProviderRecord,
   localProviderApiKeyFromRecord,
 } from "@/backend/local/local-provider-auth-store";
+// Ensure xAI Grok OAuth is registered before runtime token refresh.
+import "@/providers/xai-oauth";
 import {
   type LocalProviderTimeout,
   resolveLocalProviderTimeout,
@@ -376,6 +378,12 @@ function customOpenAICompatibleModel(input: {
   };
 }
 
+function shouldCreateDynamicOpenAICompatibleModel(
+  spec: ReturnType<typeof getPiProviderSpec>,
+): boolean {
+  return spec.localModelDiscovery === "openai-compatible";
+}
+
 function withOverrides(
   model: Model<Api>,
   overrides: {
@@ -684,18 +692,30 @@ export async function resolvePiModelForAgent(
         spec.piProvider ?? "openai",
         modelId as never,
       ) as Model<Api> | undefined;
-      if (!fallback) {
+      if (fallback) {
+        model = withOverrides(fallback, {
+          baseURL,
+          headers,
+          contextWindow,
+          maxTokens,
+        });
+      } else if (shouldCreateDynamicOpenAICompatibleModel(spec)) {
+        model = withOverrides(
+          customOpenAICompatibleModel({
+            provider: spec.id,
+            modelId,
+            baseURL: normalizedBaseURL ?? spec.defaultBaseURL ?? "",
+            contextWindow,
+            maxTokens,
+          }),
+          { headers },
+        );
+      } else {
         throw new Error(
           `Unknown model "${modelId}" for provider "${provider}". ` +
             "Check the model handle or update the model catalog.",
         );
       }
-      model = withOverrides(fallback, {
-        baseURL,
-        headers,
-        contextWindow,
-        maxTokens,
-      });
     }
   }
 

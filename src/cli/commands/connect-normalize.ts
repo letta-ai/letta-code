@@ -27,7 +27,26 @@ const LOCAL_ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
   "kimi-code": "kimi-coding",
   moonshot: "moonshotai",
   bedrock: "amazon-bedrock",
+  // SuperGrok / X Premium+ subscription OAuth (local backend only for now)
+  "xai-oauth": "xai-oauth",
+  "grok-oauth": "xai-oauth",
+  "x-ai-oauth": "xai-oauth",
+  "xai-grok-oauth": "xai-oauth",
+  grok: "xai-oauth",
 };
+
+/** Tokens that only resolve under the local provider store (Phase 1 SuperGrok OAuth). */
+const LOCAL_ONLY_OAUTH_TOKENS = new Set([
+  "xai-oauth",
+  "grok-oauth",
+  "x-ai-oauth",
+  "xai-grok-oauth",
+  "grok",
+]);
+
+export function isLocalOnlyConnectProviderToken(token: string): boolean {
+  return LOCAL_ONLY_OAUTH_TOKENS.has(token.trim().toLowerCase());
+}
 
 function providerMatches(provider: ByokProvider, token: string): boolean {
   if (provider.id === token) return true;
@@ -95,15 +114,19 @@ export function listConnectProvidersForHelp(
   target: ProviderStorageTarget = defaultProviderStorageTarget(),
 ): string[] {
   const providers = getProviderConfigs(target).map((provider) => provider.id);
+  const withAliases: string[] = [];
   if (providers.includes("codex") || providers.includes("openai-codex-oauth")) {
-    return [
-      "chatgpt (alias: codex)",
-      ...providers.filter(
-        (provider) => provider !== "codex" && provider !== "openai-codex-oauth",
-      ),
-    ];
+    withAliases.push("chatgpt (alias: codex)");
   }
-  return providers;
+  for (const id of providers) {
+    if (id === "codex" || id === "openai-codex-oauth") continue;
+    if (id === "xai-oauth") {
+      withAliases.push("xai-oauth (aliases: grok-oauth, grok)");
+      continue;
+    }
+    withAliases.push(id);
+  }
+  return withAliases;
 }
 
 export function listConnectProviderTokens(
