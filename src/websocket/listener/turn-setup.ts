@@ -18,13 +18,17 @@ import { buildListenReminderContext } from "@/reminders/listen-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
-import type { ImageFailureModesByMessageOtid } from "@/utils/message-image-normalization";
 import { detectShellContext } from "@/utils/shell-context";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
 import { ensureListenerModAdapter } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
 import { emitListenerTurnStart } from "./turn-events";
+import {
+  createTurnInputState,
+  ensureTurnInputMessageOtids,
+  type TurnInputState,
+} from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import {
   buildInboundUserTranscriptLines,
@@ -47,8 +51,7 @@ export type ListenerTurnSetupResult =
   | {
       kind: "ready";
       getCachedAgent: () => AgentState | null;
-      currentInput: Array<MessageCreate | ApprovalCreate>;
-      imageFailureModesByMessageOtid?: ImageFailureModesByMessageOtid;
+      turnInput: TurnInputState;
       inboundUserTranscriptLines: Line[];
       pendingNormalizationInterruptedToolCallIds: string[];
       preparedToolContext: PreparedToolContext;
@@ -111,26 +114,7 @@ export async function prepareListenerTurn(params: {
     messagesToSend.push(consumed.approvalMessage);
     queuedInterruptedToolCallIds = consumed.interruptedToolCallIds;
   }
-  messagesToSend.push(
-    ...msg.messages.map((message) =>
-      "content" in message && !message.otid
-        ? {
-            ...message,
-            // Reconcile optimistic transcript rows with the canonical echo.
-            otid:
-              "client_message_id" in message &&
-              typeof message.client_message_id === "string"
-                ? message.client_message_id
-                : crypto.randomUUID(),
-          }
-        : message,
-    ),
-  );
-
-  const imageFailureModesByMessageOtid = getInboundImageFailureModes({
-    channelTurnSources: msg.channelTurnSources,
-    messages: messagesToSend,
-  });
+  messagesToSend.push(...ensureTurnInputMessageOtids(msg.messages));
 
   let inboundUserTranscriptLines =
     buildInboundUserTranscriptLines(messagesToSend);
@@ -252,7 +236,14 @@ export async function prepareListenerTurn(params: {
     return { kind: "cancelled", reason: turnStartEmission.reason };
   }
 
-  const currentInput = turnStartEmission.input;
+  const currentInput = ensureTurnInputMessageOtids(turnStartEmission.input);
+  const turnInput = createTurnInputState(
+    currentInput,
+    getInboundImageFailureModes({
+      channelTurnSources: msg.channelTurnSources,
+      messages: currentInput,
+    }),
+  );
   if (currentInput !== messagesToSend) {
     inboundUserTranscriptLines = buildInboundUserTranscriptLines(currentInput);
   }
@@ -278,8 +269,7 @@ export async function prepareListenerTurn(params: {
   return {
     kind: "ready",
     getCachedAgent: () => cachedAgent,
-    currentInput,
-    imageFailureModesByMessageOtid,
+    turnInput,
     inboundUserTranscriptLines,
     pendingNormalizationInterruptedToolCallIds: [
       ...queuedInterruptedToolCallIds,

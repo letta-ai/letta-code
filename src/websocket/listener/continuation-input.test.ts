@@ -5,13 +5,15 @@ describe("queued continuation input", () => {
   test("appends queued channel images with their best-effort failure policy", () => {
     const queuedOtid = "cm-queued-channel-image";
     const result = appendQueuedTurnToInput(
-      [
-        {
-          type: "approval",
-          approvals: [],
-          otid: "approval-1",
-        },
-      ],
+      {
+        messages: [
+          {
+            type: "approval",
+            approvals: [],
+            otid: "approval-1",
+          },
+        ],
+      },
       {
         type: "message",
         agentId: "agent-1",
@@ -45,8 +47,8 @@ describe("queued continuation input", () => {
       },
     );
 
-    expect(result.input).toHaveLength(2);
-    expect(result.input[1]).toMatchObject({
+    expect(result.messages).toHaveLength(2);
+    expect(result.messages[1]).toMatchObject({
       role: "user",
       otid: queuedOtid,
     });
@@ -56,18 +58,21 @@ describe("queued continuation input", () => {
   });
 
   test("keeps interactive queued input strict by default", () => {
-    const result = appendQueuedTurnToInput([], {
-      type: "message",
-      agentId: "agent-1",
-      conversationId: "conv-1",
-      messages: [
-        {
-          role: "user",
-          content: "queued follow-up",
-          otid: "cm-interactive",
-        },
-      ],
-    });
+    const result = appendQueuedTurnToInput(
+      { messages: [] },
+      {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [
+          {
+            role: "user",
+            content: "queued follow-up",
+            otid: "cm-interactive",
+          },
+        ],
+      },
+    );
 
     expect(result.imageFailureModesByMessageOtid).toBeUndefined();
   });
