@@ -502,6 +502,7 @@ export interface ChannelRoute {
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 export type SlackChannelMode = "socket";
+export type SlackAllowBotsMode = false | "mentions";
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
 export type SignalGroupMode = "disabled" | "mention" | "open";
@@ -558,6 +559,12 @@ export interface SlackChannelConfig {
   transcribeVoice?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
+  /**
+   * Bot-authored inbound policy. Default false drops bot messages. "mentions"
+   * accepts only explicit foreign bot mentions. There is intentionally no
+   * accept-all mode until Letta has a shared pair-loop guard.
+   */
+  allowBots?: SlackAllowBotsMode;
 }
 
 export interface DiscordChannelConfig {
@@ -724,6 +731,12 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   transcribeVoice?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
+  /**
+   * Bot-authored inbound policy. Default false drops bot messages. "mentions"
+   * accepts only explicit foreign bot mentions. There is intentionally no
+   * accept-all mode until Letta has a shared pair-loop guard.
+   */
+  allowBots?: SlackAllowBotsMode;
   /**
    * Optional debounce window (ms) for inbound messages. When greater than
    * `0`, short back-to-back messages from the same sender in the same

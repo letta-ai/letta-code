@@ -31,6 +31,8 @@ type SlackEventHandler = (args: {
     item_user?: string;
     reaction?: string;
     event_ts?: string;
+    bot_id?: string;
+    subtype?: string;
   };
 }) => Promise<void>;
 
@@ -62,6 +64,7 @@ export class FakeSlackApp {
         team: "Test Workspace",
         user: "letta_code_charles_le",
         user_id: "U0AS42PTEAX",
+        bot_id: "B0AS42PTEAX",
       })),
     },
     users: {

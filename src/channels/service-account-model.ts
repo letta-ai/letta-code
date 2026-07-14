@@ -179,6 +179,7 @@ export function createAccountFromPatch(
       normalizedPatch.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: normalizedPatch.transcribeVoice === true,
     listenMode: normalizedPatch.listenMode === true,
+    allowBots: normalizedPatch.allowBots ?? false,
     dmPolicy: normalizedPatch.dmPolicy ?? "open",
     allowedUsers: normalizedPatch.allowedUsers ?? [],
     createdAt: now,
@@ -363,6 +364,7 @@ export function mergeAccountPatch(
     transcribeVoice:
       normalizedPatch.transcribeVoice ?? existing.transcribeVoice ?? false,
     listenMode: normalizedPatch.listenMode ?? existing.listenMode ?? false,
+    allowBots: normalizedPatch.allowBots ?? existing.allowBots ?? false,
     dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
     allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
     updatedAt: nextUpdatedAt,

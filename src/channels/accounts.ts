@@ -13,6 +13,7 @@ import {
   getChannelSecret,
   setChannelSecret,
 } from "./credential-store";
+import { normalizeSlackAllowBotsMode } from "./slack/bot-policy";
 import type {
   ChannelAccount,
   ChannelDefaultPermissionMode,
@@ -45,6 +46,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   account_uuid: "accountUuid",
   allowed_channels: "allowedChannels",
   allowed_groups: "allowedGroups",
+  allow_bots: "allowBots",
   auto_thread_on_mention: "autoThreadOnMention",
   base_url: "baseUrl",
   acknowledge_message_reaction: "acknowledgeMessageReaction",
@@ -326,6 +328,9 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     delete (next as unknown as Record<string, unknown>).progressUi;
     (next as SlackChannelAccount).listenMode =
       (next as SlackChannelAccount).listenMode === true;
+    (next as SlackChannelAccount).allowBots = normalizeSlackAllowBotsMode(
+      (next as SlackChannelAccount).allowBots,
+    );
   }
   if (isDiscordChannelAccount(next)) {
     const migrated = migratePermissionMode(
@@ -476,6 +481,7 @@ function makeDefaultLegacyAccount(
     defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: config.transcribeVoice === true,
     listenMode: config.listenMode === true,
+    allowBots: config.allowBots ?? false,
     createdAt: now,
     updatedAt: now,
   };
