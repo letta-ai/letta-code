@@ -203,7 +203,7 @@ describe("memory subagent recompile handling", () => {
     );
 
     expect(message).toBe(
-      "\x1b]8;;https://app.letta.com/chat/agent-reflection\x1b\\Dreamed\x1b]8;;\x1b\\ and made some memories.",
+      "\x1b]8;;https://chat.letta.com/chat/agent-reflection\x1b\\Dreamed\x1b]8;;\x1b\\ and made some memories.",
     );
   });
 

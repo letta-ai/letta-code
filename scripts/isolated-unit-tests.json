@@ -26,6 +26,11 @@
       "reason": "Uses a top-level Bun module mock for backend generation."
     },
     {
+      "path": "src/settings-manager-auth-cache.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates the settings singleton, keychain test overrides, HOME, and the secrets service name."
+    },
+    {
       "path": "src/tools/bash.test.ts",
       "timeoutMs": 30000,
       "reason": "Spawns real shells and temporarily mutates process platform and PATH state."
@@ -59,6 +64,11 @@
       "path": "src/websocket/listen-client-concurrency.test.ts",
       "timeoutMs": 30000,
       "reason": "Uses several top-level Bun module mocks and exercises real concurrent listener state."
+    },
+    {
+      "path": "src/websocket/listener/auth-lifecycle.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Exercises real WebSockets while mutating listener, settings, HOME, and process environment state."
     }
   ]
 }

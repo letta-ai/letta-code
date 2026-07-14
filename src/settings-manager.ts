@@ -574,7 +574,7 @@ class SettingsManager {
    */
   async getSettingsWithSecureTokens(): Promise<Settings> {
     const baseSettings = this.getSettings();
-    let secureTokens: SecureTokens = { ...this.secureTokensCache };
+    const secureTokens: SecureTokens = { ...this.secureTokensCache };
 
     // Bun 1.3.0 can crash when keychain reads happen while AsyncLocalStorage
     // runtime scope is active. Reuse cached tokens in that case and let callers
@@ -582,10 +582,10 @@ class SettingsManager {
     if (!getRuntimeContext()) {
       const secretsAvailable = await this.isKeychainAvailable();
       if (secretsAvailable) {
-        secureTokens = {
-          ...secureTokens,
-          ...(await this.getSecureTokens()),
-        };
+        const storedTokens = await this.getSecureTokens();
+        secureTokens.apiKey = storedTokens.apiKey ?? secureTokens.apiKey;
+        secureTokens.refreshToken =
+          storedTokens.refreshToken ?? secureTokens.refreshToken;
       }
     }
 

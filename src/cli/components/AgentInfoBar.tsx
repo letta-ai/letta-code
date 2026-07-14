@@ -4,8 +4,8 @@ import { memo, useMemo } from "react";
 import stringWidth from "string-width";
 import type { ModelReasoningEffort } from "@/agent/model";
 import {
-  buildAppUrl,
   buildChatUrl,
+  buildChatWebUrl,
   isLocalAgentId,
 } from "@/cli/helpers/app-urls";
 import { shouldHideReasoningForModelDisplay } from "@/cli/helpers/startup-model-display";
@@ -123,7 +123,7 @@ export const AgentInfoBar = memo(function AgentInfoBar({
     showCloudLinks && agentId && agentId !== "loading"
       ? buildChatUrl(agentId, { conversationId })
       : "";
-  const usageUrl = buildAppUrl("/settings/organization/usage");
+  const usageUrl = buildChatWebUrl("/preferences/usage");
   const showBottomBar = agentId && agentId !== "loading";
   const reasoningLabel = shouldHideReasoningForModelDisplay(currentModel)
     ? null

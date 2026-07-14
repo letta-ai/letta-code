@@ -7,20 +7,23 @@ import {
   buildAgentReference,
   buildAgentTerminalLink,
   buildChatUrl,
+  buildChatWebUrl,
+  buildPlatformUrl,
   isLocalAgentId,
+  LETTA_CHAT_API_KEYS_URL,
 } from "@/cli/helpers/app-urls";
 
 describe("app URL helpers", () => {
   test("buildChatUrl links API-backed agents to the web app", () => {
     expect(buildChatUrl("agent-123")).toBe(
-      "https://app.letta.com/chat/agent-123",
+      "https://chat.letta.com/chat/agent-123",
     );
   });
 
   test("buildAgentReference links API-backed agents to the web app", () => {
     expect(
       buildAgentReference("agent-123", { conversationId: "conv-123" }),
-    ).toBe("https://app.letta.com/chat/agent-123?conversation=conv-123");
+    ).toBe("https://chat.letta.com/chat/agent-123?conversation=conv-123");
   });
 
   test("buildAgentReference displays local-backend agents by ID", () => {
@@ -50,7 +53,7 @@ describe("app URL helpers", () => {
   test("buildAgentTerminalLink only hyperlinks API-backed agents", () => {
     expect(buildAgentTerminalLink("agent-local-abc")).toBe("agent-local-abc");
     expect(buildAgentTerminalLink("agent-abc")).toBe(
-      "\x1b]8;;https://app.letta.com/chat/agent-abc\x1b\\agent-abc\x1b]8;;\x1b\\",
+      "\x1b]8;;https://chat.letta.com/chat/agent-abc\x1b\\agent-abc\x1b]8;;\x1b\\",
     );
   });
 
@@ -58,6 +61,18 @@ describe("app URL helpers", () => {
     const targetUrl = buildChatUrl("agent-abc");
     expect(buildAgentTerminalLink("agent-abc", undefined, "memories")).toBe(
       `\x1b]8;;${targetUrl}\x1b\\memories\x1b]8;;\x1b\\`,
+    );
+  });
+
+  test("builds non-agent URLs for their owning surface", () => {
+    expect(buildChatWebUrl("/preferences/usage")).toBe(
+      "https://chat.letta.com/preferences/usage",
+    );
+    expect(LETTA_CHAT_API_KEYS_URL).toBe(
+      "https://chat.letta.com/preferences/api-keys",
+    );
+    expect(buildPlatformUrl("/projects/default-project/agents")).toBe(
+      "https://platform.letta.com/projects/default-project/agents",
     );
   });
 });

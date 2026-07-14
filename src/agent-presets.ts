@@ -24,6 +24,10 @@ export {
   LETTA_CODE_AGENT_TYPE,
 } from "./agent/create-agent-request";
 export {
+  MODEL_PRESETS,
+  type ModelPreset,
+} from "./agent/model-catalog";
+export {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   type DefaultCreateAgentPersonalityId,
   getPersonalityOption,

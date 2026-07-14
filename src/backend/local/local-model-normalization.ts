@@ -2,6 +2,8 @@ import {
   mapModelHandleToLlmConfigPatch,
   resolveModelHandleFromLlmConfig,
 } from "@/agent/model-handles";
+import { resolveRegisteredPiProviderFromModelHandle } from "@/backend/dev/pi-provider-mod-registry";
+import { isResolvablePiModelHandle } from "@/backend/dev/pi-provider-registry";
 import { isRecord } from "@/utils/type-guards";
 
 export function supportedModelSettingsFromBody(
@@ -41,6 +43,12 @@ export function normalizeLocalModelHandle(
   modelSettings?: Record<string, unknown>,
   legacyLlmConfig?: Record<string, unknown>,
 ): string {
+  if (
+    isResolvablePiModelHandle(model) ||
+    resolveRegisteredPiProviderFromModelHandle(model)
+  ) {
+    return model;
+  }
   const providerType = providerTypeFromModelSettings(modelSettings);
   const legacyEndpointType = legacyLlmConfig?.model_endpoint_type;
   return (

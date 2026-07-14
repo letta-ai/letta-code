@@ -3,10 +3,19 @@ import { refreshByokProviders } from "@/backend/api/providers";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+export type AvailableModel = {
+  handle: string;
+  label: string;
+  maxContextWindow?: number;
+  maxOutputTokens?: number;
+  providerType?: string;
+};
+
 type CacheEntry = {
   handles: Set<string>;
   contextWindows: Map<string, number>; // handle -> max_context_window
   providerTypes: Map<string, string>; // handle -> provider_type
+  models: AvailableModel[];
   fetchedAt: number;
 };
 
@@ -24,6 +33,7 @@ function isFresh(now = Date.now()) {
 export type AvailableModelHandlesResult = {
   handles: Set<string>;
   providerTypes: Map<string, string>;
+  models: AvailableModel[];
   source: "cache" | "network";
   fetchedAt: number;
 };
@@ -74,6 +84,10 @@ export function getCachedModelProviderTypes(): Map<string, string> | null {
   return new Map(cache.providerTypes);
 }
 
+export function getCachedAvailableModels(): AvailableModel[] | null {
+  return cache?.models.map((model) => ({ ...model })) ?? null;
+}
+
 async function fetchFromNetwork(): Promise<CacheEntry> {
   const modelsList = await getBackend().listModels();
   const handles = new Set(
@@ -82,6 +96,7 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
   // Build context window map from API response
   const contextWindows = new Map<string, number>();
   const providerTypes = new Map<string, string>();
+  const modelsByHandle = new Map<string, AvailableModel>();
   for (const model of modelsList) {
     if (model.handle && model.max_context_window) {
       contextWindows.set(model.handle, model.max_context_window);
@@ -95,8 +110,35 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
     if (model.handle && providerType) {
       providerTypes.set(model.handle, providerType);
     }
+    if (model.handle) {
+      const label =
+        (typeof model.display_name === "string" && model.display_name) ||
+        (typeof model.name === "string" && model.name) ||
+        (typeof model.model === "string" && model.model) ||
+        model.handle;
+      const availableModel = {
+        handle: model.handle,
+        label,
+        ...(typeof model.max_context_window === "number"
+          ? { maxContextWindow: model.max_context_window }
+          : {}),
+        ...(typeof model.max_tokens === "number"
+          ? { maxOutputTokens: model.max_tokens }
+          : {}),
+        ...(providerType ? { providerType } : {}),
+      };
+      if (!modelsByHandle.has(model.handle)) {
+        modelsByHandle.set(model.handle, availableModel);
+      }
+    }
   }
-  return { handles, contextWindows, providerTypes, fetchedAt: Date.now() };
+  return {
+    handles,
+    contextWindows,
+    providerTypes,
+    models: [...modelsByHandle.values()],
+    fetchedAt: Date.now(),
+  };
 }
 
 export async function getAvailableModelHandles(options?: {
@@ -109,6 +151,7 @@ export async function getAvailableModelHandles(options?: {
     return {
       handles: cache.handles,
       providerTypes: cache.providerTypes,
+      models: cache.models,
       source: "cache",
       fetchedAt: cache.fetchedAt,
     };
@@ -119,6 +162,7 @@ export async function getAvailableModelHandles(options?: {
     return {
       handles: entry.handles,
       providerTypes: entry.providerTypes,
+      models: entry.models,
       source: "network",
       fetchedAt: entry.fetchedAt,
     };
@@ -154,6 +198,7 @@ export async function getAvailableModelHandles(options?: {
   return {
     handles: entry.handles,
     providerTypes: entry.providerTypes,
+    models: entry.models,
     source: "network",
     fetchedAt: entry.fetchedAt,
   };

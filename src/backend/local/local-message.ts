@@ -54,6 +54,7 @@ export interface LocalUserMessage
   extends Omit<UserMessage, "timestamp">,
     LocalMessageBase {
   role: "user";
+  otid?: string;
   timestamp: number;
 }
 

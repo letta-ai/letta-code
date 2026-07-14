@@ -374,12 +374,17 @@ describe("local pi provider catalog", () => {
 
       const models = await listLocalModels(storageDir);
 
-      expect(models).toContainEqual({
-        handle: "kilo/dynamic-kilo-code",
-        max_context_window: 128000,
-        model: "kilo/dynamic-kilo-code",
-        model_endpoint_type: "kilo",
-      });
+      expect(models).toContainEqual(
+        expect.objectContaining({
+          display_name: "Dynamic Kilo Code",
+          handle: "kilo/dynamic-kilo-code",
+          max_context_window: 128000,
+          max_tokens: 8192,
+          model: "kilo/dynamic-kilo-code",
+          model_endpoint_type: "kilo",
+          provider_type: "kilo",
+        }),
+      );
       expect(connections).toEqual([
         {
           id: "kilo",
@@ -438,12 +443,17 @@ describe("local pi provider catalog", () => {
 
       const models = await listLocalModels(storageDir);
 
-      expect(models).toContainEqual({
-        handle: "kilo/oauth-kilo-code",
-        max_context_window: 128000,
-        model: "kilo/oauth-kilo-code",
-        model_endpoint_type: "kilo",
-      });
+      expect(models).toContainEqual(
+        expect.objectContaining({
+          display_name: "OAuth Kilo Code",
+          handle: "kilo/oauth-kilo-code",
+          max_context_window: 128000,
+          max_tokens: 8192,
+          model: "kilo/oauth-kilo-code",
+          model_endpoint_type: "kilo",
+          provider_type: "kilo",
+        }),
+      );
       expect(connections).toEqual([
         {
           id: "kilo",
