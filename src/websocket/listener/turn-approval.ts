@@ -502,12 +502,20 @@ export async function handleApprovalStop(params: {
     // Execution threw before results exist, so the normal finished-events
     // emission below never runs. Close the client_tool_start lifecycle
     // events explicitly or observer UIs shimmer these tool calls forever.
-    emitToolExecutionAbortedEvents(socket, runtime, {
-      toolCallIds: lastExecutingToolCallIds,
-      runId: executionRunId,
-      agentId,
-      conversationId,
-    });
+    // Flush buffered tool output first so no progress frame lands after
+    // the terminal end events. Skip emission when this owner lost the
+    // turn lease (a replacement runtime owns terminal state now) or when
+    // an interrupt is in flight (the interrupt path emits finished events
+    // from the interrupted-results cache).
+    emitToolExecutionOutput.flush();
+    if (!shouldInterrupt()) {
+      emitToolExecutionAbortedEvents(socket, runtime, {
+        toolCallIds: lastExecutingToolCallIds,
+        runId: executionRunId,
+        agentId,
+        conversationId,
+      });
+    }
     throw error;
   } finally {
     emitToolExecutionOutput.flush();

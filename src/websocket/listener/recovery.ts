@@ -738,30 +738,33 @@ export async function resolveRecoveredApprovalResponse(
         shouldEmit: () => runtime.turnLifecycle.isCurrent(recoveryLease),
       },
     );
-    await ensureSecretsHydrated(runtime.listener, recovered.agentId);
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      return true;
-    }
-    const preparedToolContext = await prepareToolExecutionContext({
-      agentId: recovered.agentId,
-      conversationId: recovered.conversationId,
-      workingDirectory,
-      permissionModeState: getOrCreateConversationPermissionModeStateRef(
-        runtime.listener,
-        recovered.agentId,
-        recovered.conversationId,
-      ),
-      modEvents: ensureListenerModAdapter(runtime.listener).events,
-    });
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      return true;
-    }
-    runtime.currentToolset = preparedToolContext.toolset;
-    runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
-    runtime.currentLoadedTools =
-      preparedToolContext.preparedToolContext.loadedToolNames;
     let approvalResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
     try {
+      // Hydration and tool-context preparation sit inside the try: they run
+      // after the client_tool_start events above, so a throw here would
+      // otherwise leave those lifecycle events orphaned.
+      await ensureSecretsHydrated(runtime.listener, recovered.agentId);
+      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        return true;
+      }
+      const preparedToolContext = await prepareToolExecutionContext({
+        agentId: recovered.agentId,
+        conversationId: recovered.conversationId,
+        workingDirectory,
+        permissionModeState: getOrCreateConversationPermissionModeStateRef(
+          runtime.listener,
+          recovered.agentId,
+          recovered.conversationId,
+        ),
+        modEvents: ensureListenerModAdapter(runtime.listener).events,
+      });
+      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        return true;
+      }
+      runtime.currentToolset = preparedToolContext.toolset;
+      runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
+      runtime.currentLoadedTools =
+        preparedToolContext.preparedToolContext.loadedToolNames;
       approvalResults = await executeApprovals(decisions, undefined, {
         abortSignal: recoveryLease.signal,
         onStreamingOutput: emitToolExecutionOutput,
@@ -780,12 +783,22 @@ export async function resolveRecoveredApprovalResponse(
       // Execution threw before results exist, so the finished-events
       // emission below never runs. Close the client_tool_start lifecycle
       // events explicitly or observer UIs shimmer these tool calls forever.
-      emitToolExecutionAbortedEvents(socket, runtime, {
-        toolCallIds: approvedToolCallIds,
-        runId: executionRunId,
-        agentId: recovered.agentId,
-        conversationId: recovered.conversationId,
-      });
+      // Flush buffered tool output first so no progress frame lands after
+      // the terminal end events. Skip emission when this owner lost the
+      // recovery lease or the recovery was aborted: the interrupt path or
+      // the replacement runtime owns terminal state then.
+      emitToolExecutionOutput.flush();
+      if (
+        runtime.turnLifecycle.isCurrent(recoveryLease) &&
+        !recoveryLease.signal.aborted
+      ) {
+        emitToolExecutionAbortedEvents(socket, runtime, {
+          toolCallIds: approvedToolCallIds,
+          runId: executionRunId,
+          agentId: recovered.agentId,
+          conversationId: recovered.conversationId,
+        });
+      }
       throw error;
     } finally {
       emitToolExecutionOutput.flush();
