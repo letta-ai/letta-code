@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -141,7 +148,7 @@ describe("remote settings cwd repair", () => {
     const persisted = JSON.parse(
       readFileSync(getRemoteSettingsPath(), "utf-8"),
     );
-    expect(persisted).toEqual({
+    expect(persisted).toMatchObject({
       cwdMap: { "conversation:live": "/repository/root" },
       permissionModeMap: {
         "conversation:live": { mode: "unrestricted" },
@@ -210,12 +217,97 @@ describe("remote settings cwd repair", () => {
     expect(await flushRemoteSettingsWrites()).toBe(true);
     expect(
       JSON.parse(await readFile(getRemoteSettingsPath(), "utf-8")),
-    ).toEqual({
+    ).toMatchObject({
       cwdMap: {},
       permissionModeMap: {
         "conversation:live": { mode: "acceptEdits" },
       },
     });
+  });
+
+  test("replays a cwd deletion after shutdown lock contention", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
+    process.env.HOME = path.join(tempRoot, "home");
+    const settingsPath = getRemoteSettingsPath();
+    const staleDirectory = path.join(tempRoot, "recreated-worktree");
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    await mkdir(staleDirectory);
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        cwdMap: { "conversation:stale": staleDirectory },
+      }),
+    );
+
+    resetRemoteSettingsCache();
+    expect(loadRemoteSettings().cwdMap).toEqual({
+      "conversation:stale": staleDirectory,
+    });
+    await rm(staleDirectory, { recursive: true });
+    await writeFile(`${settingsPath}.lock`, `${process.pid}-foreign-owner`);
+
+    saveRemoteSettingsSync({ cwdMap: {} });
+    expect(await flushRemoteSettingsWrites()).toBe(false);
+    expect(JSON.parse(await readFile(settingsPath, "utf-8")).cwdMap).toEqual({
+      "conversation:stale": staleDirectory,
+    });
+    expect(
+      (await readdir(path.dirname(settingsPath))).some((name) =>
+        name.includes(".cwd-repair."),
+      ),
+    ).toBe(true);
+
+    await rm(`${settingsPath}.lock`);
+    await mkdir(staleDirectory);
+    resetRemoteSettingsCache();
+    expect(loadRemoteSettings().cwdMap).toEqual({});
+    expect(await flushRemoteSettingsWrites()).toBe(true);
+    expect(JSON.parse(await readFile(settingsPath, "utf-8")).cwdMap).toEqual(
+      {},
+    );
+    expect(
+      (await readdir(path.dirname(settingsPath))).some((name) =>
+        name.includes(".cwd-repair."),
+      ),
+    ).toBe(false);
+  });
+
+  test("does not replay a repair already fenced in settings", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
+    process.env.HOME = path.join(tempRoot, "home");
+    const settingsPath = getRemoteSettingsPath();
+    const restoredDirectory = path.join(tempRoot, "explicitly-restored");
+    const repairId = "repair-applied-before-crash";
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    await mkdir(restoredDirectory);
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        cwdMap: { "conversation:restored": restoredDirectory },
+        cwdRepairJournalIds: [repairId],
+      }),
+    );
+    await writeFile(
+      `${settingsPath}.cwd-repair.${repairId}.json`,
+      JSON.stringify({
+        cwdDeletes: { "conversation:restored": restoredDirectory },
+        id: repairId,
+      }),
+    );
+
+    resetRemoteSettingsCache();
+    expect(loadRemoteSettings().cwdMap).toEqual({
+      "conversation:restored": restoredDirectory,
+    });
+    expect(await flushRemoteSettingsWrites()).toBe(true);
+    expect(JSON.parse(await readFile(settingsPath, "utf-8")).cwdMap).toEqual({
+      "conversation:restored": restoredDirectory,
+    });
+    expect(
+      (await readdir(path.dirname(settingsPath))).some((name) =>
+        name.includes(".cwd-repair."),
+      ),
+    ).toBe(false);
   });
 
   test("merges entry patches with settings written by another listener", async () => {
@@ -295,7 +387,7 @@ describe("remote settings cwd repair", () => {
     expect(await flushRemoteSettingsWrites()).toBe(true);
     expect(
       JSON.parse(await readFile(getRemoteSettingsPath(), "utf-8")),
-    ).toEqual({
+    ).toMatchObject({
       cwdMap: {
         "conversation:local": externalDirectory,
         "conversation:external": externalDirectory,

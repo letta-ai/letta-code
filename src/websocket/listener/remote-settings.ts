@@ -5,8 +5,11 @@
  * restarts. Mirrors the in-memory Map keys used by cwd.ts and permissionMode.ts.
  */
 
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
+  mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -32,7 +35,19 @@ export interface PersistedPermissionModeState {
 
 export interface RemoteSettings {
   cwdMap?: Record<string, string>;
+  cwdRepairJournalIds?: string[];
   permissionModeMap?: Record<string, PersistedPermissionModeState>;
+}
+
+interface CwdRepairJournal {
+  cwdDeletes: Record<string, string>;
+  id: string;
+  path: string;
+}
+
+interface CurrentRemoteSettings {
+  repairJournals: CwdRepairJournal[];
+  settings: RemoteSettings;
 }
 
 type SettingsMapMutation<T> =
@@ -124,17 +139,23 @@ export function loadRemoteSettings(): RemoteSettings {
     migratedLegacyCwdMap = true;
   }
 
+  const startupRepairJournals = readCwdRepairJournals(getRemoteSettingsPath());
+  loaded = applyCwdRepairJournals(loaded, startupRepairJournals);
+
   _cache = loaded;
   if (repairedCwdMap) {
-    queueRemoteSettingsPatch(
-      buildRemoteSettingsPatch(
-        { cwdMap: originalCwdMap },
-        { cwdMap: loaded.cwdMap },
-      ),
+    const repairPatch = buildRemoteSettingsPatch(
+      { cwdMap: originalCwdMap },
+      { cwdMap: loaded.cwdMap },
     );
+    writeCwdRepairJournal(getRemoteSettingsPath(), repairPatch);
+    queueRemoteSettingsPatch(repairPatch);
     persistCurrentSettingsSync();
   } else if (migratedLegacyCwdMap) {
     queueRemoteSettingsPatch({ initializeCwdMap: loaded.cwdMap });
+    persistCurrentSettingsSync();
+  } else if (startupRepairJournals.length > 0) {
+    queueRemoteSettingsPatch({}, true);
     persistCurrentSettingsSync();
   }
   return _cache;
@@ -153,23 +174,168 @@ function getRemoteSettingsLockPath(settingsPath: string): string {
   return `${settingsPath}.lock`;
 }
 
+function getCwdRepairJournalPrefix(settingsPath: string): string {
+  return `${path.basename(settingsPath)}.cwd-repair.`;
+}
+
+function readCwdRepairJournals(settingsPath: string): CwdRepairJournal[] {
+  const directory = path.dirname(settingsPath);
+  const prefix = getCwdRepairJournalPrefix(settingsPath);
+  let names: string[];
+  try {
+    names = readdirSync(directory).filter(
+      (name) => name.startsWith(prefix) && name.endsWith(".json"),
+    );
+  } catch {
+    return [];
+  }
+
+  const journals: CwdRepairJournal[] = [];
+  for (const name of names) {
+    const journalPath = path.join(directory, name);
+    try {
+      const parsed = JSON.parse(readFileSync(journalPath, "utf-8")) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        continue;
+      }
+      const record = parsed as Record<string, unknown>;
+      if (
+        typeof record.id !== "string" ||
+        !record.cwdDeletes ||
+        typeof record.cwdDeletes !== "object" ||
+        Array.isArray(record.cwdDeletes)
+      ) {
+        continue;
+      }
+      const cwdDeletes = Object.fromEntries(
+        Object.entries(record.cwdDeletes).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      );
+      if (Object.keys(cwdDeletes).length === 0) continue;
+      journals.push({ cwdDeletes, id: record.id, path: journalPath });
+    } catch {
+      // Preserve unreadable journals for a later retry or manual diagnosis.
+    }
+  }
+  return journals;
+}
+
+function applyCwdRepairJournals(
+  settings: RemoteSettings,
+  journals: CwdRepairJournal[],
+): RemoteSettings {
+  if (journals.length === 0) return settings;
+
+  const appliedIds = new Set(
+    Array.isArray(settings.cwdRepairJournalIds)
+      ? settings.cwdRepairJournalIds.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : [],
+  );
+  const cwdMap = { ...settings.cwdMap };
+  for (const journal of journals) {
+    if (appliedIds.has(journal.id)) continue;
+    for (const [key, expected] of Object.entries(journal.cwdDeletes)) {
+      if (cwdMap[key] === expected) delete cwdMap[key];
+    }
+    appliedIds.add(journal.id);
+  }
+
+  return {
+    ...settings,
+    cwdMap,
+    cwdRepairJournalIds: [...appliedIds],
+  };
+}
+
+function writeCwdRepairJournal(
+  settingsPath: string,
+  patch: RemoteSettingsPatch,
+): void {
+  if (!patch.cwdMap) return;
+  const cwdDeletes = Object.fromEntries(
+    Object.entries(patch.cwdMap).flatMap(([key, mutation]) =>
+      mutation.kind === "delete" ? [[key, mutation.expected]] : [],
+    ),
+  );
+  if (Object.keys(cwdDeletes).length === 0) return;
+
+  const id = randomUUID();
+  const journalPath = path.join(
+    path.dirname(settingsPath),
+    `${getCwdRepairJournalPrefix(settingsPath)}${id}.json`,
+  );
+  const tempPath = `${journalPath}.${process.pid}.tmp`;
+  try {
+    mkdirSync(path.dirname(settingsPath), { recursive: true });
+    writeFileSync(tempPath, JSON.stringify({ cwdDeletes, id }, null, 2));
+    renameSync(tempPath, journalPath);
+  } catch {
+    if (process.env.LETTA_DEBUG) {
+      console.warn("[Remote Settings] Unable to persist cwd repair journal");
+    }
+  } finally {
+    try {
+      rmSync(tempPath, { force: true });
+    } catch {
+      // Best-effort cleanup; the published journal never uses the temp path.
+    }
+  }
+}
+
+function cleanupCwdRepairJournals(journals: CwdRepairJournal[]): void {
+  for (const journal of journals) {
+    try {
+      rmSync(journal.path, { force: true });
+    } catch {
+      // The applied journal ID fences a replay if cleanup fails or we crash.
+    }
+  }
+}
+
 function readCurrentRemoteSettingsSync(
   settingsPath: string,
-): RemoteSettings | null {
+): CurrentRemoteSettings | null {
   try {
-    return JSON.parse(readFileSync(settingsPath, "utf-8")) as RemoteSettings;
+    const settings = JSON.parse(
+      readFileSync(settingsPath, "utf-8"),
+    ) as RemoteSettings;
+    const repairJournals = readCwdRepairJournals(settingsPath);
+    return {
+      repairJournals,
+      settings: applyCwdRepairJournals(settings, repairJournals),
+    };
   } catch (error) {
-    return hasErrorCode(error, "ENOENT") ? {} : null;
+    if (!hasErrorCode(error, "ENOENT")) return null;
+    const repairJournals = readCwdRepairJournals(settingsPath);
+    return {
+      repairJournals,
+      settings: applyCwdRepairJournals({}, repairJournals),
+    };
   }
 }
 
 async function readCurrentRemoteSettings(
   settingsPath: string,
-): Promise<RemoteSettings | null> {
+): Promise<CurrentRemoteSettings | null> {
   try {
-    return JSON.parse(await readFile(settingsPath, "utf-8")) as RemoteSettings;
+    const settings = JSON.parse(
+      await readFile(settingsPath, "utf-8"),
+    ) as RemoteSettings;
+    const repairJournals = readCwdRepairJournals(settingsPath);
+    return {
+      repairJournals,
+      settings: applyCwdRepairJournals(settings, repairJournals),
+    };
   } catch (error) {
-    return hasErrorCode(error, "ENOENT") ? {} : null;
+    if (!hasErrorCode(error, "ENOENT")) return null;
+    const repairJournals = readCwdRepairJournals(settingsPath);
+    return {
+      repairJournals,
+      settings: applyCwdRepairJournals({}, repairJournals),
+    };
   }
 }
 
@@ -309,11 +475,14 @@ function hasPendingPatchThrough(generation: number): boolean {
 }
 
 function persistRemoteSettingsSync(generation: number): boolean {
-  if (!hasPendingPatchThrough(generation)) {
+  const settingsPath = getRemoteSettingsPath();
+  if (
+    !hasPendingPatchThrough(generation) &&
+    readCwdRepairJournals(settingsPath).length === 0
+  ) {
     settleRemoteSettingsGeneration(generation);
     return true;
   }
-  const settingsPath = getRemoteSettingsPath();
   const lock = tryAcquireRemoteSettingsLockSync(
     getRemoteSettingsLockPath(settingsPath),
   );
@@ -323,10 +492,14 @@ function persistRemoteSettingsSync(generation: number): boolean {
   try {
     const current = readCurrentRemoteSettingsSync(settingsPath);
     if (current === null) return false;
-    const settings = applyPendingRemoteSettingsPatches(current, generation);
+    const settings = applyPendingRemoteSettingsPatches(
+      current.settings,
+      generation,
+    );
     writeFileSync(tempPath, JSON.stringify(settings, null, 2));
     renameSync(tempPath, settingsPath);
     settleRemoteSettingsGeneration(generation);
+    cleanupCwdRepairJournals(current.repairJournals);
     return true;
   } catch {
     // Callers keep the generation dirty so it can be retried.
@@ -344,11 +517,14 @@ function persistRemoteSettingsSync(generation: number): boolean {
 async function persistPendingRemoteSettings(): Promise<void> {
   while (_settledGeneration < _settingsGeneration) {
     const generation = _settingsGeneration;
-    if (!hasPendingPatchThrough(generation)) {
+    const settingsPath = getRemoteSettingsPath();
+    if (
+      !hasPendingPatchThrough(generation) &&
+      readCwdRepairJournals(settingsPath).length === 0
+    ) {
       settleRemoteSettingsGeneration(generation);
       continue;
     }
-    const settingsPath = getRemoteSettingsPath();
     const lock = await tryAcquireRemoteSettingsLock(
       getRemoteSettingsLockPath(settingsPath),
     );
@@ -360,7 +536,10 @@ async function persistPendingRemoteSettings(): Promise<void> {
     try {
       const current = await readCurrentRemoteSettings(settingsPath);
       if (current === null) return;
-      const settings = applyPendingRemoteSettingsPatches(current, generation);
+      const settings = applyPendingRemoteSettingsPatches(
+        current.settings,
+        generation,
+      );
       await writeFile(tempPath, JSON.stringify(settings, null, 2));
 
       // A synchronous repair increments the generation before touching disk.
@@ -371,6 +550,7 @@ async function persistPendingRemoteSettings(): Promise<void> {
         renameSync(tempPath, settingsPath);
         published = true;
         settleRemoteSettingsGeneration(generation);
+        cleanupCwdRepairJournals(current.repairJournals);
       }
     } catch {
       return;
@@ -459,11 +639,13 @@ export function saveRemoteSettingsSync(updates: Partial<RemoteSettings>): void {
   }
 
   const previous = _cache ?? {};
+  const patch = buildRemoteSettingsPatch(previous, updates);
+  writeCwdRepairJournal(getRemoteSettingsPath(), patch);
   _cache = {
     ...previous,
     ...updates,
   };
-  queueRemoteSettingsPatch(buildRemoteSettingsPatch(previous, updates), true);
+  queueRemoteSettingsPatch(patch, true);
   persistCurrentSettingsSync();
 }
 
