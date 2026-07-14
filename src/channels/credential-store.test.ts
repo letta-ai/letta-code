@@ -12,6 +12,7 @@ import { join } from "node:path";
 import {
   clearChannelAccountStores,
   flushPendingChannelSecretWrites,
+  getChannelAccount,
   getChannelAccountWithSecrets,
   hydrateChannelAccountSecrets,
   removeChannelAccountWithSecrets,
@@ -28,7 +29,10 @@ import {
 } from "@/channels/credential-store";
 import { __testClearUserChannelPluginCache } from "@/channels/plugin-registry";
 import { getChannelRegistry, initializeChannels } from "@/channels/registry";
-import { setChannelConfigLive } from "@/channels/service";
+import {
+  listChannelAccountSnapshotsWithSecrets,
+  setChannelConfigLive,
+} from "@/channels/service";
 import type {
   CustomChannelAccount,
   SlackChannelAccount,
@@ -501,6 +505,190 @@ describe("channel credential storage", () => {
       },
     });
     expect(persisted.accounts[0]?.config).not.toHaveProperty("api_key", "");
+  });
+
+  test("hydration does not partially migrate plaintext when a sibling ref is missing", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    mkdirSync(join(channelsRoot, "slack"), { recursive: true });
+    writeFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      `${JSON.stringify(
+        {
+          accounts: [
+            {
+              ...makeSlackAccount(),
+              accountId: "mixed-slack",
+              botToken: "xoxb-plaintext",
+              appToken: "__letta_channel_secret_present__",
+              __letta_secret_refs: { appToken: true },
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    clearChannelAccountStores();
+    const beforeText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+    const beforeAccount = getChannelAccount("slack", "mixed-slack");
+
+    await expect(hydrateChannelAccountSecrets("slack")).rejects.toThrow(
+      /saved secret reference was preserved/i,
+    );
+
+    const afterText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+    expect(afterText).toBe(beforeText);
+    expect(getChannelAccount("slack", "mixed-slack")).toEqual(beforeAccount);
+    expect(
+      secrets.has(buildChannelSecretName("slack", "mixed-slack", "botToken")),
+    ).toBe(false);
+    expect(
+      secrets.has(buildChannelSecretName("slack", "mixed-slack", "appToken")),
+    ).toBe(false);
+  });
+
+  test("hydration treats keyring secrets as authoritative over stale plaintext", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    const setCalls: string[] = [];
+    __setChannelSecretStoreOverrideForTests({
+      get: async (name) => secrets.get(name) ?? null,
+      set: async (name, value) => {
+        setCalls.push(`${name}:${value}`);
+        secrets.set(name, value);
+      },
+      delete: async (name) => secrets.delete(name),
+    });
+    mkdirSync(join(channelsRoot, "slack"), { recursive: true });
+    writeFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      `${JSON.stringify(
+        {
+          accounts: [
+            {
+              ...makeSlackAccount(),
+              accountId: "stale-slack",
+              botToken: "xoxb-stale-plaintext",
+              appToken: "__letta_channel_secret_present__",
+              __letta_secret_refs: { botToken: true, appToken: true },
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    secrets.set(
+      buildChannelSecretName("slack", "stale-slack", "botToken"),
+      "xoxb-keyring",
+    );
+    secrets.set(
+      buildChannelSecretName("slack", "stale-slack", "appToken"),
+      "xapp-keyring",
+    );
+
+    clearChannelAccountStores();
+    await hydrateChannelAccountSecrets("slack");
+
+    expect(setCalls).toEqual([]);
+    expect(
+      secrets.get(buildChannelSecretName("slack", "stale-slack", "botToken")),
+    ).toBe("xoxb-keyring");
+    expect(
+      secrets.get(buildChannelSecretName("slack", "stale-slack", "appToken")),
+    ).toBe("xapp-keyring");
+    expect(await getChannelAccountWithSecrets("slack", "stale-slack")).toEqual(
+      expect.objectContaining({
+        botToken: "xoxb-keyring",
+        appToken: "xapp-keyring",
+      }),
+    );
+    const persistedText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+    expect(persistedText).not.toContain("xoxb-stale-plaintext");
+    expect(persistedText).not.toContain("xoxb-keyring");
+  });
+
+  test("snapshot listing keeps broken keyring accounts visible while hydrating healthy siblings", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    mkdirSync(join(channelsRoot, "slack"), { recursive: true });
+    writeFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      `${JSON.stringify(
+        {
+          accounts: [
+            {
+              ...makeSlackAccount(),
+              accountId: "broken-slack",
+              displayName: "Broken Slack",
+              botToken: "__letta_channel_secret_present__",
+              appToken: "__letta_channel_secret_present__",
+              __letta_secret_refs: { botToken: true, appToken: true },
+            },
+            {
+              ...makeSlackAccount(),
+              accountId: "healthy-slack",
+              displayName: "Healthy Slack",
+              botToken: "__letta_channel_secret_present__",
+              appToken: "__letta_channel_secret_present__",
+              __letta_secret_refs: { botToken: true, appToken: true },
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    secrets.set(
+      buildChannelSecretName("slack", "healthy-slack", "botToken"),
+      "xoxb-healthy",
+    );
+    secrets.set(
+      buildChannelSecretName("slack", "healthy-slack", "appToken"),
+      "xapp-healthy",
+    );
+
+    clearChannelAccountStores();
+    const snapshots = await listChannelAccountSnapshotsWithSecrets("slack");
+
+    expect(snapshots.map((snapshot) => snapshot.accountId).sort()).toEqual([
+      "broken-slack",
+      "healthy-slack",
+    ]);
+    expect(snapshots).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          accountId: "broken-slack",
+          displayName: "Broken Slack",
+          configured: true,
+        }),
+        expect.objectContaining({
+          accountId: "healthy-slack",
+          displayName: "Healthy Slack",
+          configured: true,
+        }),
+      ]),
+    );
+    expect(getChannelAccount("slack", "broken-slack")).toEqual(
+      expect.objectContaining({
+        botToken: "__letta_channel_secret_present__",
+        appToken: "__letta_channel_secret_present__",
+      }),
+    );
+    expect(getChannelAccount("slack", "healthy-slack")).toEqual(
+      expect.objectContaining({
+        botToken: "xoxb-healthy",
+        appToken: "xapp-healthy",
+      }),
+    );
   });
 
   test("persisted plugin secret refs hydrate and delete without plugin metadata", async () => {

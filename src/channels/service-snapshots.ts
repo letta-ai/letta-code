@@ -6,7 +6,6 @@ import {
   getChannelAccount,
   getChannelAccountWithSecrets,
   listChannelAccounts,
-  listChannelAccountsWithSecrets,
 } from "./accounts";
 import {
   getApprovedUsers,
@@ -459,9 +458,14 @@ export async function listChannelAccountSnapshotsWithSecrets(
   channelId: string,
 ): Promise<ChannelAccountSnapshot[]> {
   assertSupportedChannelId(channelId);
-  return (await listChannelAccountsWithSecrets(channelId)).map(
-    toAccountSnapshot,
-  );
+  for (const account of listChannelAccounts(channelId)) {
+    try {
+      await getChannelAccountWithSecrets(channelId, account.accountId);
+    } catch {
+      // Keep the broken account visible as a redacted snapshot below.
+    }
+  }
+  return listChannelAccounts(channelId).map(toAccountSnapshot);
 }
 
 export function getChannelAccountSnapshot(

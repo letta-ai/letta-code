@@ -138,6 +138,7 @@ export const channelPlugin = {
 // ── Public API ────────────────────────────────────────────────────────────────
 
 const FIRST_PARTY_SET = new Set<string>(FIRST_PARTY_CHANNEL_IDS);
+let removeUserPluginOverride: ((channelId: string) => void) | null = null;
 
 /**
  * Creates `~/.letta/channels/<slug>/channel.json` and a stub `plugin.mjs`.
@@ -194,6 +195,11 @@ export function scaffoldUserPlugin(displayName: string): string {
  * No-op for first-party channels.
  */
 export function removeUserPlugin(channelId: string): void {
+  if (removeUserPluginOverride) {
+    removeUserPluginOverride(channelId);
+    return;
+  }
+
   if (FIRST_PARTY_SET.has(channelId)) {
     return;
   }
@@ -213,4 +219,18 @@ export function removeUserPlugin(channelId: string): void {
       err,
     );
   }
+}
+
+export function removeUserPluginBestEffort(channelId: string): void {
+  try {
+    removeUserPlugin(channelId);
+  } catch (error) {
+    console.warn(`[channels] failed to remove user plugin ${channelId}`, error);
+  }
+}
+
+export function __testOverrideRemoveUserPlugin(
+  fn: ((channelId: string) => void) | null,
+): void {
+  removeUserPluginOverride = fn;
 }

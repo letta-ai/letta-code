@@ -17,7 +17,10 @@ import {
   removeChannelAccountWithSecrets,
   upsertChannelAccountWithSecrets,
 } from "@/channels/accounts";
-import { __testOverrideChannelsRoot } from "@/channels/config";
+import {
+  __testOverrideChannelsRoot,
+  getChannelRoutingPath,
+} from "@/channels/config";
 import {
   __setActiveChannelCredentialsStoreModeForTests,
   __setChannelSecretStoreOverrideForTests,
@@ -31,7 +34,9 @@ import {
   getPendingPairings,
 } from "@/channels/pairing";
 import { __testClearUserChannelPluginCache } from "@/channels/plugin-registry";
+import { getChannelRegistry } from "@/channels/registry";
 import {
+  __testOverrideSaveRoutes,
   addRoute,
   clearAllRoutes,
   getRoutesForChannel,
@@ -39,6 +44,7 @@ import {
 import {
   createChannelAccountLiveWithSecrets,
   removeChannelAccountLive,
+  startChannelAccountLive,
   updateChannelAccountLiveWithSecrets,
 } from "@/channels/service";
 import {
@@ -46,7 +52,10 @@ import {
   listChannelTargets,
   upsertChannelTarget,
 } from "@/channels/targets";
-import type { SlackChannelAccount } from "@/channels/types";
+import type {
+  CustomChannelAccount,
+  SlackChannelAccount,
+} from "@/channels/types";
 
 function readAccountsFile(root: string, channelId: string): unknown {
   return JSON.parse(
@@ -66,6 +75,44 @@ function makeSlackAccount(): SlackChannelAccount {
     defaultPermissionMode: "acceptEdits",
     dmPolicy: "pairing",
     allowedUsers: [],
+    createdAt: "2026-05-26T00:00:00.000Z",
+    updatedAt: "2026-05-26T00:00:00.000Z",
+  };
+}
+
+function writeFailingSchemaChannel(root: string): void {
+  const channelDir = join(root, "schemasecret");
+  mkdirSync(channelDir, { recursive: true });
+  writeFileSync(
+    join(channelDir, "channel.json"),
+    `${JSON.stringify(
+      {
+        id: "schemasecret",
+        displayName: "Schema Secret",
+        entry: "./plugin.mjs",
+        configSchema: {
+          version: 1,
+          fields: [{ type: "secret", key: "api_key", label: "API Key" }],
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  writeFileSync(
+    join(channelDir, "plugin.mjs"),
+    "export const channelPlugin = { metadata: { id: 'schemasecret', displayName: 'Schema Secret' }, createAdapter() { return { id: 'schemasecret:schema-account', channelId: 'schemasecret', accountId: 'schema-account', name: 'Schema Secret', async start() { throw new Error('adapter start failed'); }, async stop() {}, isRunning() { return false; }, async sendMessage() { return { messageId: 'unused' }; } }; } };\n",
+  );
+}
+
+function makeSchemaAccount(): CustomChannelAccount {
+  return {
+    channel: "schemasecret",
+    accountId: "schema-account",
+    enabled: false,
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    config: { api_key: "schema-secret" },
     createdAt: "2026-05-26T00:00:00.000Z",
     updatedAt: "2026-05-26T00:00:00.000Z",
   };
@@ -94,7 +141,8 @@ describe("channel credential transaction boundaries", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await getChannelRegistry()?.stopAll();
     clearChannelAccountStores();
     clearAllRoutes();
     clearPairingStores();
@@ -104,6 +152,7 @@ describe("channel credential transaction boundaries", () => {
     __setActiveChannelCredentialsStoreModeForTests(null);
     __setChannelSecretStoreOverrideForTests(null);
     __testOverrideSaveChannelAccounts(null);
+    __testOverrideSaveRoutes(null);
     rmSync(channelsRoot, { recursive: true, force: true });
   });
 
@@ -202,6 +251,122 @@ describe("channel credential transaction boundaries", () => {
     expect(secrets.get(botSecretName)).toBe("xoxb-secret");
   });
 
+  test("secret-aware update rollback does not overwrite concurrent sibling mutations", async () => {
+    await upsertChannelAccountWithSecrets("slack", {
+      ...makeSlackAccount(),
+      accountId: "slack-a",
+      displayName: "Slack A Old",
+      botToken: "xoxb-a-old",
+      appToken: "xapp-a-old",
+    });
+    await upsertChannelAccountWithSecrets("slack", {
+      ...makeSlackAccount(),
+      accountId: "slack-b",
+      displayName: "Slack B Old",
+      botToken: "xoxb-b-old",
+      appToken: "xapp-b-old",
+    });
+    await flushPendingChannelSecretWrites();
+
+    let releaseAWrite: () => void = () => {};
+    const aWriteMayContinue = new Promise<void>((resolve) => {
+      releaseAWrite = resolve;
+    });
+    let aWriteStarted: () => void = () => {};
+    const aWriteHasStarted = new Promise<void>((resolve) => {
+      aWriteStarted = resolve;
+    });
+    const aBotSecret = buildChannelSecretName("slack", "slack-a", "botToken");
+    __setChannelSecretStoreOverrideForTests({
+      get: async (name) => secrets.get(name) ?? null,
+      set: async (name, value) => {
+        if (name === aBotSecret && value === "xoxb-a-new") {
+          aWriteStarted();
+          await aWriteMayContinue;
+        }
+        secrets.set(name, value);
+      },
+      delete: async (name) => secrets.delete(name),
+    });
+    __testOverrideSaveChannelAccounts((channelId, accounts) => {
+      if (
+        accounts.some(
+          (account) =>
+            account.accountId === "slack-a" &&
+            account.displayName === "Slack A New",
+        )
+      ) {
+        throw new Error("account save failed");
+      }
+      mkdirSync(join(channelsRoot, channelId), { recursive: true });
+      writeFileSync(
+        join(channelsRoot, channelId, "accounts.json"),
+        `${JSON.stringify({ accounts }, null, 2)}\n`,
+      );
+    });
+
+    const updateA = upsertChannelAccountWithSecrets("slack", {
+      ...makeSlackAccount(),
+      accountId: "slack-a",
+      displayName: "Slack A New",
+      botToken: "xoxb-a-new",
+      appToken: "xapp-a-new",
+    });
+    await aWriteHasStarted;
+    await upsertChannelAccountWithSecrets("slack", {
+      ...makeSlackAccount(),
+      accountId: "slack-b",
+      displayName: "Slack B New",
+      botToken: "xoxb-b-new",
+      appToken: "xapp-b-new",
+    });
+    releaseAWrite();
+
+    await expect(updateA).rejects.toThrow("account save failed");
+
+    const persisted = readAccountsFile(channelsRoot, "slack") as {
+      accounts: Array<Record<string, unknown>>;
+    };
+    expect(persisted.accounts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          accountId: "slack-a",
+          displayName: "Slack A Old",
+        }),
+        expect.objectContaining({
+          accountId: "slack-b",
+          displayName: "Slack B New",
+        }),
+      ]),
+    );
+    expect(getChannelAccount("slack", "slack-a")).toEqual(
+      expect.objectContaining({
+        displayName: "Slack A Old",
+        botToken: "xoxb-a-old",
+        appToken: "xapp-a-old",
+      }),
+    );
+    expect(getChannelAccount("slack", "slack-b")).toEqual(
+      expect.objectContaining({
+        displayName: "Slack B New",
+        botToken: "xoxb-b-new",
+        appToken: "xapp-b-new",
+      }),
+    );
+    expect(
+      secrets.get(buildChannelSecretName("slack", "slack-a", "botToken")),
+    ).toBe("xoxb-a-old");
+    expect(
+      secrets.get(buildChannelSecretName("slack", "slack-a", "appToken")),
+    ).toBe("xapp-a-old");
+    expect(
+      secrets.get(buildChannelSecretName("slack", "slack-b", "botToken")),
+    ).toBe("xoxb-b-new");
+    expect(
+      secrets.get(buildChannelSecretName("slack", "slack-b", "appToken")),
+    ).toBe("xapp-b-new");
+  });
+
   test("secret-aware updates can repair missing old refs with new credentials", async () => {
     await upsertChannelAccountWithSecrets("slack", {
       ...makeSlackAccount(),
@@ -241,6 +406,74 @@ describe("channel credential transaction boundaries", () => {
         appToken: true,
       },
     });
+  });
+
+  test("secret-aware agent updates roll back account, keyring, and routes when route reset fails", async () => {
+    await upsertChannelAccountWithSecrets("slack", {
+      ...makeSlackAccount(),
+      displayName: "Slack Old",
+      agentId: "agent-old",
+      botToken: "xoxb-old",
+      appToken: "xapp-old",
+    });
+    await flushPendingChannelSecretWrites();
+    const now = "2026-05-26T00:00:00.000Z";
+    addRoute("slack", {
+      accountId: "slack-account",
+      chatId: "C-route",
+      chatType: "channel",
+      agentId: "agent-old",
+      conversationId: "conv-old",
+      enabled: true,
+      outboundEnabled: true,
+      detached: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const beforeRoutesText = readFileSync(
+      getChannelRoutingPath("slack"),
+      "utf-8",
+    );
+    const beforeRoutes = getRoutesForChannel("slack", "slack-account");
+    __testOverrideSaveRoutes(() => {
+      throw new Error("route save failed");
+    });
+
+    await expect(
+      updateChannelAccountLiveWithSecrets("slack", "slack-account", {
+        agentId: "agent-new",
+        botToken: "xoxb-new",
+        appToken: "xapp-new",
+      }),
+    ).rejects.toThrow(/Account changes were rolled back/);
+
+    const afterRoutesText = readFileSync(
+      getChannelRoutingPath("slack"),
+      "utf-8",
+    );
+    expect(afterRoutesText).toBe(beforeRoutesText);
+    expect(getRoutesForChannel("slack", "slack-account")).toEqual(beforeRoutes);
+    const persisted = readAccountsFile(channelsRoot, "slack") as {
+      accounts: Array<Record<string, unknown>>;
+    };
+    expect(persisted.accounts[0]).toMatchObject({
+      accountId: "slack-account",
+      displayName: "Slack Old",
+      agentId: "agent-old",
+    });
+    expect(getChannelAccount("slack", "slack-account")).toEqual(
+      expect.objectContaining({
+        agentId: "agent-old",
+        botToken: "xoxb-old",
+        appToken: "xapp-old",
+      }),
+    );
+    expect(
+      secrets.get(buildChannelSecretName("slack", "slack-account", "botToken")),
+    ).toBe("xoxb-old");
+    expect(
+      secrets.get(buildChannelSecretName("slack", "slack-account", "appToken")),
+    ).toBe("xapp-old");
   });
 
   test("secret-aware deletes compensate partial keyring deletion failures", async () => {
@@ -369,6 +602,99 @@ describe("channel credential transaction boundaries", () => {
     ).toBe(false);
   });
 
+  test("live account start failure rolls back secret-aware enablement", async () => {
+    writeFailingSchemaChannel(channelsRoot);
+    await upsertChannelAccountWithSecrets("schemasecret", makeSchemaAccount());
+    await flushPendingChannelSecretWrites();
+
+    await expect(
+      startChannelAccountLive("schemasecret", "schema-account"),
+    ).rejects.toThrow("adapter start failed");
+
+    expect(getChannelAccount("schemasecret", "schema-account")).toEqual(
+      expect.objectContaining({
+        enabled: false,
+        config: expect.objectContaining({ api_key: "schema-secret" }),
+      }),
+    );
+    const persisted = readAccountsFile(channelsRoot, "schemasecret") as {
+      accounts: Array<Record<string, unknown>>;
+    };
+    expect(persisted.accounts[0]).toMatchObject({
+      accountId: "schema-account",
+      enabled: false,
+      __letta_secret_refs: { "config.api_key": true },
+    });
+    expect(JSON.stringify(persisted)).not.toContain("schema-secret");
+    expect(
+      secrets.get(
+        buildChannelSecretName(
+          "schemasecret",
+          "schema-account",
+          "config.api_key",
+        ),
+      ),
+    ).toBe("schema-secret");
+  });
+
+  test("live account delete rolls account and secrets back when route cleanup fails", async () => {
+    await createChannelAccountLiveWithSecrets(
+      "slack",
+      {
+        enabled: false,
+        mode: "socket",
+        botToken: "xoxb-secret",
+        appToken: "xapp-secret",
+        dmPolicy: "pairing",
+        agentId: "agent-1",
+      },
+      { accountId: "slack-account" },
+    );
+    await flushPendingChannelSecretWrites();
+    const now = "2026-05-26T00:00:00.000Z";
+    addRoute("slack", {
+      accountId: "slack-account",
+      chatId: "C-route",
+      chatType: "channel",
+      agentId: "agent-route",
+      conversationId: "conv-route",
+      enabled: true,
+      outboundEnabled: true,
+      detached: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const beforeRoutesText = readFileSync(
+      getChannelRoutingPath("slack"),
+      "utf-8",
+    );
+    const beforeRoutes = getRoutesForChannel("slack", "slack-account");
+    __testOverrideSaveRoutes(() => {
+      throw new Error("route cleanup failed");
+    });
+
+    await expect(
+      removeChannelAccountLive("slack", "slack-account"),
+    ).rejects.toThrow(/Account changes were rolled back/);
+
+    expect(readFileSync(getChannelRoutingPath("slack"), "utf-8")).toBe(
+      beforeRoutesText,
+    );
+    expect(getRoutesForChannel("slack", "slack-account")).toEqual(beforeRoutes);
+    expect(getChannelAccount("slack", "slack-account")).toEqual(
+      expect.objectContaining({
+        botToken: "xoxb-secret",
+        appToken: "xapp-secret",
+      }),
+    );
+    expect(
+      secrets.get(buildChannelSecretName("slack", "slack-account", "botToken")),
+    ).toBe("xoxb-secret");
+    expect(
+      secrets.get(buildChannelSecretName("slack", "slack-account", "appToken")),
+    ).toBe("xapp-secret");
+  });
+
   test("live account delete preserves auxiliary account state when credential deletion fails", async () => {
     await createChannelAccountLiveWithSecrets(
       "slack",
@@ -393,6 +719,7 @@ describe("channel credential transaction boundaries", () => {
       conversationId: "conv-route",
       enabled: true,
       outboundEnabled: true,
+      detached: false,
       createdAt: now,
       updatedAt: now,
     });

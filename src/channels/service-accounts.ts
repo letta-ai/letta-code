@@ -1,16 +1,31 @@
 import { randomUUID } from "node:crypto";
 import {
+  captureChannelSecretSnapshots,
+  getMutationSecretFieldPaths,
+} from "./account-secret-transactions";
+import {
   getChannelAccount,
   getChannelAccountWithSecrets,
   removeChannelAccountWithSecrets,
+  restoreChannelAccountWithSecretsIfCurrent,
   upsertChannelAccount,
   upsertChannelAccountWithSecrets,
 } from "./accounts";
-import { assertAccountHasRequiredCredentials } from "./credential-utils";
+import { getActiveChannelCredentialsStoreMode } from "./credential-store";
+import {
+  assertAccountHasRequiredCredentials,
+  getAccountSecretFieldPaths,
+} from "./credential-utils";
 import { loadPairingStore, removePairingStateForAccount } from "./pairing";
 import type { ChannelAccountPatch } from "./plugin-types";
 import { ensureChannelRegistry, getChannelRegistry } from "./registry";
-import { loadRoutes, removeRoutesForAccount } from "./routing";
+import {
+  getRoutesForChannel,
+  loadRoutes,
+  removeRouteInMemory,
+  removeRoutesForAccount,
+  setRouteInMemory,
+} from "./routing";
 import {
   createAccountFromPatch,
   mergeAccountPatch,
@@ -35,6 +50,30 @@ import {
   isTelegramChannelAccount,
   isWhatsAppChannelAccount,
 } from "./types";
+
+function snapshotRoutesForAccount(channelId: string, accountId: string) {
+  return getRoutesForChannel(channelId, accountId).map((route) => ({
+    ...route,
+  }));
+}
+
+function restoreRoutesForAccountInMemory(
+  channelId: string,
+  accountId: string,
+  routes: ReturnType<typeof snapshotRoutesForAccount>,
+): void {
+  for (const route of getRoutesForChannel(channelId, accountId)) {
+    removeRouteInMemory(
+      channelId,
+      route.chatId,
+      route.accountId,
+      route.threadId,
+    );
+  }
+  for (const route of routes) {
+    setRouteInMemory(channelId, route);
+  }
+}
 
 export function createChannelAccountLive(
   channelId: string,
@@ -105,10 +144,13 @@ export function updateChannelAccountLive(
   const updated = upsertChannelAccount(channelId, nextAccount);
 
   if (shouldResetRoutes) {
+    let routeSnapshot: ReturnType<typeof snapshotRoutesForAccount> = [];
     try {
       loadRoutes(channelId);
+      routeSnapshot = snapshotRoutesForAccount(channelId, accountId);
       removeRoutesForAccount(channelId, accountId);
     } catch (error) {
+      restoreRoutesForAccountInMemory(channelId, accountId, routeSnapshot);
       try {
         upsertChannelAccount(channelId, existing);
       } catch (rollbackError) {
@@ -159,15 +201,37 @@ export async function updateChannelAccountLiveWithSecrets(
     typeof nextAccount.agentId === "string" &&
     nextAccount.agentId !== existing.agentId;
 
+  const credentialsMode = await getActiveChannelCredentialsStoreMode();
+  const rollbackSecretSnapshots =
+    credentialsMode === "keyring"
+      ? await captureChannelSecretSnapshots(
+          channelId,
+          accountId,
+          existing,
+          getMutationSecretFieldPaths(existing, nextAccount),
+        )
+      : [];
   const updated = await upsertChannelAccountWithSecrets(channelId, nextAccount);
 
   if (shouldResetRoutes) {
+    let routeSnapshot: ReturnType<typeof snapshotRoutesForAccount> = [];
     try {
       loadRoutes(channelId);
+      routeSnapshot = snapshotRoutesForAccount(channelId, accountId);
       removeRoutesForAccount(channelId, accountId);
     } catch (error) {
+      restoreRoutesForAccountInMemory(channelId, accountId, routeSnapshot);
       try {
-        await upsertChannelAccountWithSecrets(channelId, existing);
+        const rolledBack = await restoreChannelAccountWithSecretsIfCurrent(
+          channelId,
+          accountId,
+          updated,
+          existing,
+          rollbackSecretSnapshots,
+        );
+        if (!rolledBack) {
+          throw new Error("account changed after the failed route reset");
+        }
       } catch (rollbackError) {
         throw new Error(
           `Failed to reset channel routes after updating account: ${getErrorMessage(
@@ -179,7 +243,12 @@ export async function updateChannelAccountLiveWithSecrets(
           )}`,
         );
       }
-      throw error;
+      throw new Error(
+        `Failed to reset channel routes after updating account: ${getErrorMessage(
+          error,
+          "route reset failed",
+        )}. Account changes were rolled back.`,
+      );
     }
   }
 
@@ -363,11 +432,21 @@ export async function startChannelAccountLive(
       }),
     ]);
   } catch (error) {
-    upsertChannelAccount(channelId, {
-      ...existing,
-      enabled: false,
-      updatedAt: new Date().toISOString(),
-    });
+    if (!existing.enabled) {
+      try {
+        await upsertChannelAccountWithSecrets(channelId, existing);
+      } catch (rollbackError) {
+        throw new Error(
+          `Failed to start ${channelId} account "${accountId}": ${getErrorMessage(
+            error,
+            "startup failed",
+          )}. Failed to restore disabled account: ${getErrorMessage(
+            rollbackError,
+            "rollback failed",
+          )}`,
+        );
+      }
+    }
     throw error;
   } finally {
     if (startupTimeout) {
@@ -420,18 +499,64 @@ export async function removeChannelAccountLive(
     return false;
   }
 
+  const credentialsMode = await getActiveChannelCredentialsStoreMode();
+  const rollbackSecretSnapshots =
+    credentialsMode === "keyring"
+      ? await captureChannelSecretSnapshots(
+          channelId,
+          accountId,
+          existing,
+          getAccountSecretFieldPaths(existing),
+        )
+      : [];
+
   await getChannelRegistry()?.stopChannelAccount(channelId, accountId);
   const removed = await removeChannelAccountWithSecrets(channelId, accountId);
   if (!removed) {
     return false;
   }
 
-  loadRoutes(channelId);
-  loadTargetStore(channelId);
-  loadPairingStore(channelId);
-  removeRoutesForAccount(channelId, accountId);
-  removeChannelTargetsForAccount(channelId, accountId);
-  removePairingStateForAccount(channelId, accountId);
+  let routeSnapshot: ReturnType<typeof snapshotRoutesForAccount> = [];
+  try {
+    loadRoutes(channelId);
+    routeSnapshot = snapshotRoutesForAccount(channelId, accountId);
+    loadTargetStore(channelId);
+    loadPairingStore(channelId);
+    removeRoutesForAccount(channelId, accountId);
+    removeChannelTargetsForAccount(channelId, accountId);
+    removePairingStateForAccount(channelId, accountId);
+  } catch (error) {
+    restoreRoutesForAccountInMemory(channelId, accountId, routeSnapshot);
+    try {
+      const rolledBack = await restoreChannelAccountWithSecretsIfCurrent(
+        channelId,
+        accountId,
+        null,
+        existing,
+        rollbackSecretSnapshots,
+      );
+      if (!rolledBack) {
+        throw new Error("account changed after the failed delete cleanup");
+      }
+    } catch (rollbackError) {
+      throw new Error(
+        `Deleted ${channelId} account "${accountId}" but failed cleanup: ${getErrorMessage(
+          error,
+          "cleanup failed",
+        )}; rollback also failed: ${getErrorMessage(
+          rollbackError,
+          "rollback failed",
+        )}`,
+      );
+    }
+    throw new Error(
+      `Failed to clean up ${channelId} account "${accountId}" after deletion: ${getErrorMessage(
+        error,
+        "cleanup failed",
+      )}. Account changes were rolled back.`,
+    );
+  }
+
   await refreshLoadedMessageChannelTool();
   return true;
 }

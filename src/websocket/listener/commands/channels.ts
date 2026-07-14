@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 import { getChannelPluginConfig } from "@/channels/account-config";
-import { removeUserPlugin } from "@/channels/custom/scaffolding";
+import { removeUserPluginBestEffort } from "@/channels/custom/scaffolding";
 import { getChannelPluginMetadata } from "@/channels/plugin-registry";
 import type { ChannelRegistryEvent } from "@/channels/registry-events";
 import { LEGACY_DEFAULT_CHANNEL_ID } from "@/channels/types";
@@ -697,9 +697,7 @@ export async function handleChannelsProtocolCommand(
         "listener_channels_command",
       );
       if (deleted) {
-        // Remove the plugin folder if this was a user-scaffolded channel
-        // so the display name can be reused.
-        removeUserPlugin(parsed.channel_id);
+        removeUserPluginBestEffort(parsed.channel_id);
 
         emitChannelAccountsUpdated(socket, safeSocketSend, {
           channelId: parsed.channel_id,

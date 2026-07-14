@@ -43,7 +43,7 @@
   "src/types/protocol_v2.ts": 2932,
   "src/websocket/listen-client-concurrency.test.ts": 3017,
   "src/websocket/listen-client-protocol.test.ts": 6721,
-  "src/websocket/listener/commands/channels.ts": 1386,
+  "src/websocket/listener/commands/channels.ts": 1384,
   "src/websocket/listener/commands/memory.ts": 1114,
   "src/websocket/listener/file-commands.ts": 1030,
   "src/websocket/listener/lifecycle.ts": 1766,
