@@ -37,6 +37,7 @@ import {
 import {
   createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
+  emitToolExecutionAbortedEvents,
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
   normalizeExecutionResultsForInterruptParity,
@@ -497,6 +498,17 @@ export async function handleApprovalStop(params: {
       channelTurnSources: runtime.activeChannelTurn?.sources,
       onFileWrite,
     });
+  } catch (error) {
+    // Execution threw before results exist, so the normal finished-events
+    // emission below never runs. Close the client_tool_start lifecycle
+    // events explicitly or observer UIs shimmer these tool calls forever.
+    emitToolExecutionAbortedEvents(socket, runtime, {
+      toolCallIds: lastExecutingToolCallIds,
+      runId: executionRunId,
+      agentId,
+      conversationId,
+    });
+    throw error;
   } finally {
     emitToolExecutionOutput.flush();
   }

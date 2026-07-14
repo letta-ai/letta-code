@@ -429,6 +429,34 @@ export function emitToolExecutionFinishedEvents(
   }
 }
 
+/**
+ * Close out `client_tool_start` lifecycle events when execution throws
+ * before results exist. Without a matching `client_tool_end`, observer UIs
+ * that pair start/end events shimmer the orphaned tool call forever.
+ */
+export function emitToolExecutionAbortedEvents(
+  socket: ListenerTransport,
+  runtime: ConversationRuntime,
+  params: {
+    toolCallIds: string[];
+    runId?: string | null;
+    agentId?: string;
+    conversationId?: string;
+  },
+): void {
+  for (const toolCallId of params.toolCallIds) {
+    const delta: ClientToolEndMessage = {
+      ...createLifecycleMessageBase("client_tool_end", params.runId),
+      tool_call_id: toolCallId,
+      status: "error",
+    };
+    emitCanonicalMessageDelta(socket, runtime, delta, {
+      agent_id: params.agentId,
+      conversation_id: params.conversationId,
+    });
+  }
+}
+
 export function createToolExecutionOutputEmitter(
   socket: ListenerTransport,
   runtime: ConversationRuntime,

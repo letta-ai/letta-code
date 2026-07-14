@@ -48,6 +48,7 @@ import { getConversationWorkingDirectory } from "./cwd";
 import {
   createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
+  emitToolExecutionAbortedEvents,
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
   normalizeToolReturnWireMessage,
@@ -775,6 +776,17 @@ export async function resolveRecoveredApprovalResponse(
             : undefined,
         channelTurnSources: executionChannelTurnSources,
       });
+    } catch (error) {
+      // Execution threw before results exist, so the finished-events
+      // emission below never runs. Close the client_tool_start lifecycle
+      // events explicitly or observer UIs shimmer these tool calls forever.
+      emitToolExecutionAbortedEvents(socket, runtime, {
+        toolCallIds: approvedToolCallIds,
+        runId: executionRunId,
+        agentId: recovered.agentId,
+        conversationId: recovered.conversationId,
+      });
+      throw error;
     } finally {
       emitToolExecutionOutput.flush();
     }
