@@ -525,6 +525,7 @@ export function buildLoopStatus(
     return {
       status: "WAITING_ON_INPUT",
       active_run_ids: [],
+      executing_tool_call_ids: [],
     };
   }
   const scope = getScopeForRuntime(runtime, params);
@@ -556,6 +557,13 @@ export function buildLoopStatus(
         : conversationRuntime?.activeRunId
           ? [conversationRuntime.activeRunId]
           : [],
+    // Gate on the *reported* status so downgrades (interrupted cache) also
+    // clear the executing set, and stale runtime state never leaks into
+    // frames emitted while the loop is not executing tools.
+    executing_tool_call_ids:
+      status === "EXECUTING_CLIENT_SIDE_TOOL" && conversationRuntime
+        ? [...conversationRuntime.turnLifecycle.executingToolCallIds]
+        : [],
   };
 }
 

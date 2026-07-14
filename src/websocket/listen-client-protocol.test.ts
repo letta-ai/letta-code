@@ -4550,6 +4550,7 @@ describe("listen-client v2 status builders", () => {
     expect(outbound[1].loop_status).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
+      executing_tool_call_ids: [],
     });
   });
 
@@ -4694,7 +4695,56 @@ describe("listen-client v2 status builders", () => {
     ).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
+      executing_tool_call_ids: [],
     });
+  });
+
+  test("loop status carries the executing tool call ids while executing client-side tools", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+
+    beginTestTurn(runtime, {
+      initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
+      executingToolCallIds: ["tool-call-1", "tool-call-2"],
+    });
+
+    const loopStatus = __listenClientTestUtils.buildLoopStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "conv-a",
+    });
+    expect(loopStatus.status).toBe("EXECUTING_CLIENT_SIDE_TOOL");
+    expect(loopStatus.executing_tool_call_ids).toEqual([
+      "tool-call-1",
+      "tool-call-2",
+    ]);
+  });
+
+  test("loop status reports an empty executing set outside client-side tool execution", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
+      listener,
+      "agent-1",
+      "conv-a",
+    );
+
+    // Lifecycle state can retain the last executing ids (e.g. while the
+    // continuation request is in flight); the wire snapshot must not leak
+    // them once the reported status is no longer EXECUTING_CLIENT_SIDE_TOOL.
+    beginTestTurn(runtime, {
+      initialStatus: "SENDING_API_REQUEST",
+      executingToolCallIds: ["tool-call-stale"],
+    });
+
+    const loopStatus = __listenClientTestUtils.buildLoopStatus(listener, {
+      agent_id: "agent-1",
+      conversation_id: "conv-a",
+    });
+    expect(loopStatus.status).toBe("SENDING_API_REQUEST");
+    expect(loopStatus.executing_tool_call_ids).toEqual([]);
   });
 
   test("scoped queue snapshots are not suppressed just because another conversation is processing", () => {

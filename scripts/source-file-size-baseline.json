@@ -40,13 +40,13 @@
   "src/tools/impl/message-channel.ts": 1187,
   "src/tools/manager.ts": 3293,
   "src/tools/tool-execution-context.test.ts": 1422,
-  "src/types/protocol_v2.ts": 2932,
+  "src/types/protocol_v2.ts": 2940,
   "src/websocket/listen-client-concurrency.test.ts": 3017,
-  "src/websocket/listen-client-protocol.test.ts": 6721,
+  "src/websocket/listen-client-protocol.test.ts": 6771,
   "src/websocket/listener/commands/channels.ts": 1390,
   "src/websocket/listener/commands/memory.ts": 1114,
   "src/websocket/listener/file-commands.ts": 1030,
   "src/websocket/listener/lifecycle.ts": 1766,
   "src/websocket/listener/protocol-inbound.ts": 2279,
-  "src/websocket/listener/protocol-outbound.ts": 1279
+  "src/websocket/listener/protocol-outbound.ts": 1287
 }
