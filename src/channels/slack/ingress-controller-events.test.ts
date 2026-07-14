@@ -444,6 +444,7 @@ test("slack adapter allows top-level app_mention events from opted-in bots", asy
   await handler({
     event: {
       channel: "C123",
+      user: "UDEPLOYBOT",
       bot_id: "BDEPLOY",
       subtype: "bot_message",
       text: "<@U0AS42PTEAX> deployment failed",
@@ -454,8 +455,7 @@ test("slack adapter allows top-level app_mention events from opted-in bots", asy
   expect(onMessage).toHaveBeenCalledWith(
     expect.objectContaining({
       chatId: "C123",
-      senderId: "BDEPLOY",
-      senderName: "Bot (BDEPLOY)",
+      senderId: "UDEPLOYBOT",
       text: "deployment failed",
       messageId: "1712800000.000108",
       threadId: "1712800000.000108",
@@ -508,7 +508,7 @@ test("slack adapter does not treat agent-thread participation as a bot mention",
   expect(onMessage).not.toHaveBeenCalled();
 });
 
-test("slack adapter allows unmentioned foreign bots in allowBots all mode", async () => {
+test("slack adapter allows explicitly mentioned foreign bot DMs when opted in", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -518,7 +518,7 @@ test("slack adapter allows unmentioned foreign bots in allowBots all mode", asyn
     appToken: "xapp-test-token-1234567890",
     dmPolicy: "pairing",
     allowedUsers: [],
-    allowBots: true,
+    allowBots: "mentions",
   });
 
   const onMessage = mock(async () => {});
@@ -533,26 +533,27 @@ test("slack adapter allows unmentioned foreign bots in allowBots all mode", asyn
 
   await handler({
     message: {
-      channel: "C123",
+      channel: "D123",
       bot_id: "BDEPLOY",
-      text: "deployment completed",
+      text: "<@U0AS42PTEAX> handoff requested",
       ts: "1712800000.000106",
-      thread_ts: "1712790000.000050",
       subtype: "bot_message",
     },
   });
 
   expect(onMessage).toHaveBeenCalledWith(
     expect.objectContaining({
-      chatId: "C123",
+      chatId: "D123",
       senderId: "BDEPLOY",
-      text: "deployment completed",
-      isMention: false,
+      text: "handoff requested",
+      threadId: null,
+      chatType: "direct",
+      isMention: true,
     }),
   );
 });
 
-test("slack adapter suppresses its own bot identity even when bots are allowed", async () => {
+test("slack adapter suppresses its own bot identity even when bot mentions are allowed", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -562,7 +563,7 @@ test("slack adapter suppresses its own bot identity even when bots are allowed",
     appToken: "xapp-test-token-1234567890",
     dmPolicy: "pairing",
     allowedUsers: [],
-    allowBots: true,
+    allowBots: "mentions",
   });
 
   const onMessage = mock(async () => {});
@@ -579,7 +580,7 @@ test("slack adapter suppresses its own bot identity even when bots are allowed",
     message: {
       channel: "C123",
       bot_id: "B0AS42PTEAX",
-      text: "our own status update",
+      text: "<@U0AS42PTEAX> our own status update",
       ts: "1712800000.000107",
       thread_ts: "1712790000.000050",
       subtype: "bot_message",

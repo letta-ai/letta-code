@@ -1,24 +1,16 @@
 import type { SlackAllowBotsMode } from "@/channels/types";
 
-export type SlackResolvedAllowBotsMode = "off" | "mentions" | "all";
+export type SlackResolvedAllowBotsMode = "off" | "mentions";
 
 export function isValidSlackAllowBotsConfigValue(
   value: unknown,
-): value is SlackAllowBotsMode | "off" | "all" | undefined {
-  return (
-    value === undefined ||
-    value === false ||
-    value === true ||
-    value === "off" ||
-    value === "mentions" ||
-    value === "all"
-  );
+): value is SlackAllowBotsMode | undefined {
+  return value === undefined || value === false || value === "mentions";
 }
 
 export function normalizeSlackAllowBotsMode(
   value: unknown,
 ): SlackAllowBotsMode {
-  if (value === true || value === "all") return true;
   if (value === "mentions") return "mentions";
   return false;
 }
@@ -26,7 +18,6 @@ export function normalizeSlackAllowBotsMode(
 export function resolveSlackAllowBotsMode(
   value: SlackAllowBotsMode | undefined,
 ): SlackResolvedAllowBotsMode {
-  if (value === true) return "all";
   if (value === "mentions") return "mentions";
   return "off";
 }
@@ -81,10 +72,10 @@ export function shouldAcceptSlackInboundBotMessage(params: {
   }
 
   // This is the loop-guard boundary Letta has today: suppress our own Slack
-  // app identity and gate foreign bots at ingress. There is no shared
-  // OpenClaw-style botLoopProtection state machine here.
+  // app identity and gate foreign bots at ingress. Foreign bots are accepted
+  // only on explicit mentions, even in DMs or agent-participated threads,
+  // because the requested use case is explicit agent handoff and Letta does
+  // not have OpenClaw's shared pair-loop guard yet.
   const mode = resolveSlackAllowBotsMode(params.allowBots);
-  if (mode === "off") return false;
-  if (mode === "mentions") return params.wasMentioned;
-  return true;
+  return mode === "mentions" && params.wasMentioned;
 }

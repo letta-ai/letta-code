@@ -18,7 +18,7 @@ const baseAccount: SlackChannelAccount = {
 };
 
 describe("slackAccountConfigAdapter allow_bots", () => {
-  test("accepts and normalizes bot ingress modes", () => {
+  test("accepts and normalizes safe bot ingress modes", () => {
     expect(
       slackAccountConfigAdapter.isValidConfig({ allow_bots: "mentions" }),
     ).toBe(true);
@@ -26,20 +26,20 @@ describe("slackAccountConfigAdapter allow_bots", () => {
       slackAccountConfigAdapter.toAccountPatch({ allow_bots: false }),
     ).toMatchObject({ allowBots: false });
     expect(
-      slackAccountConfigAdapter.toAccountPatch({ allow_bots: "off" }),
-    ).toMatchObject({ allowBots: false });
-    expect(
       slackAccountConfigAdapter.toAccountPatch({ allow_bots: "mentions" }),
     ).toMatchObject({ allowBots: "mentions" });
-    expect(
-      slackAccountConfigAdapter.toAccountPatch({ allow_bots: true }),
-    ).toMatchObject({ allowBots: true });
-    expect(
-      slackAccountConfigAdapter.toAccountPatch({ allow_bots: "all" }),
-    ).toMatchObject({ allowBots: true });
   });
 
-  test("rejects invalid bot ingress modes", () => {
+  test("rejects unsafe or invalid bot ingress modes", () => {
+    expect(slackAccountConfigAdapter.isValidConfig({ allow_bots: true })).toBe(
+      false,
+    );
+    expect(slackAccountConfigAdapter.isValidConfig({ allow_bots: "all" })).toBe(
+      false,
+    );
+    expect(slackAccountConfigAdapter.isValidConfig({ allow_bots: "off" })).toBe(
+      false,
+    );
     expect(
       slackAccountConfigAdapter.isValidConfig({ allow_bots: "threads" }),
     ).toBe(false);

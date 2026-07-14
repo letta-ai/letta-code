@@ -695,7 +695,7 @@ describe("channel service", () => {
         allowedUsers: [],
         agentId: null,
         defaultPermissionMode: "standard",
-        allow_bots: "all",
+        allow_bots: "mentions",
         createdAt: "2026-04-11T00:00:00.000Z",
         updatedAt: "2026-04-11T00:00:00.000Z",
       } as unknown as SlackChannelAccount,
@@ -704,8 +704,8 @@ describe("channel service", () => {
     const snapshot = getChannelAccountSnapshot("slack", "legacy-slack");
     expect(snapshot?.channelId).toBe("slack");
     if (snapshot?.channelId === "slack") {
-      expect(snapshot.allowBots).toBe(true);
-      expect(snapshot.config.allow_bots).toBe(true);
+      expect(snapshot.allowBots).toBe("mentions");
+      expect(snapshot.config.allow_bots).toBe("mentions");
     }
   });
 
@@ -900,7 +900,7 @@ describe("channel service", () => {
       config: {
         transcribe_voice: false,
         listen_mode: false,
-        allow_bots: true,
+        allow_bots: false,
       },
     });
 
@@ -909,11 +909,11 @@ describe("channel service", () => {
         accountId: "slack-voice",
         transcribeVoice: false,
         listenMode: false,
-        allowBots: true,
+        allowBots: false,
         config: expect.objectContaining({
           transcribe_voice: false,
           listen_mode: false,
-          allow_bots: true,
+          allow_bots: false,
         }),
       }),
     );
@@ -923,11 +923,11 @@ describe("channel service", () => {
         accountId: "slack-voice",
         transcribeVoice: false,
         listenMode: false,
-        allowBots: true,
+        allowBots: false,
         config: expect.objectContaining({
           transcribe_voice: false,
           listen_mode: false,
-          allow_bots: true,
+          allow_bots: false,
         }),
       }),
     );
