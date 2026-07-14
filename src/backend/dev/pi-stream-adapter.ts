@@ -38,7 +38,6 @@ import {
   reasoningForSettings,
   resolvePiModelForAgent,
 } from "./pi-model-factory";
-import { assertViablePiOutputBudget } from "./pi-output-budget";
 import type {
   LlmEndErrorInfo,
   LlmEndInfo,
@@ -783,7 +782,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         messageCount: context.messages.length,
         contextWindow: resolved.model.contextWindow,
       });
-      assertViablePiOutputBudget(resolved.model, context, options.maxTokens);
       const result = this.runStream(
         resolved.model as Model<string>,
         context,
