@@ -5,6 +5,7 @@
  */
 
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import { ONBOARDING_ORIGIN_TAG } from "@/agent/agent-tags";
 import type { Backend } from "@/backend";
 import { getServerUrl } from "@/backend/api/client";
 import { settingsManager } from "@/settings-manager";
@@ -195,6 +196,7 @@ export async function ensureDefaultAgents(
             ...(await buildCreateAgentOptionsForPersonality({
               personalityId: "tutorial",
               model,
+              tags: [ONBOARDING_ORIGIN_TAG],
             })),
             memoryPromptMode,
           }

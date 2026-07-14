@@ -1786,12 +1786,12 @@ export interface CreateAgentCommand {
   request_id: string;
   /** Built-in personality preset to create. */
   personality: "memo" | "tutorial" | "blank" | "linus" | "kawaii";
-  /** Model identifier (e.g. "sonnet", "gpt-4o"). Uses default if omitted. */
+  /** Optional model identifier and additional creation tags. */
   model?: string;
+  tags?: string[];
   /** Whether to pin the agent globally after creation. Defaults to true. */
   pin_global?: boolean;
 }
-
 export interface AgentListCommand {
   type: "agent_list";
   /** Echoed back in the response for request correlation. */

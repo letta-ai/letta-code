@@ -16,6 +16,7 @@ export {
   GIT_MEMORY_ENABLED_TAG,
   LETTA_CODE_ORIGIN_TAG,
   LETTA_CODE_SUBAGENT_TAG,
+  ONBOARDING_ORIGIN_TAG,
 } from "./agent/agent-tags";
 export {
   buildCreateAgentRequestForPersonality,
