@@ -1,6 +1,10 @@
 import path from "node:path";
 import { isConfirmedUnusableDirectory } from "@/helpers/usable-directory";
-import { loadRemoteSettings, saveRemoteSettings } from "./remote-settings";
+import {
+  loadRemoteSettings,
+  saveRemoteSettings,
+  saveRemoteSettingsSync,
+} from "./remote-settings";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerRuntime } from "./types";
 
@@ -35,7 +39,7 @@ export function getConversationWorkingDirectory(
   if (isConfirmedUnusableDirectory(stored)) {
     runtime.workingDirectoryByConversation.delete(scopeKey);
     bumpWorkingDirectoryRevision(runtime);
-    persistCwdMap(runtime.workingDirectoryByConversation);
+    persistCwdMapSync(runtime.workingDirectoryByConversation);
     return runtime.bootWorkingDirectory;
   }
 
@@ -63,7 +67,7 @@ export function pruneStaleConversationWorkingDirectories(
     runtime.workingDirectoryByConversation.delete(scopeKey);
   }
   bumpWorkingDirectoryRevision(runtime);
-  persistCwdMap(runtime.workingDirectoryByConversation);
+  persistCwdMapSync(runtime.workingDirectoryByConversation);
   return true;
 }
 
@@ -108,6 +112,10 @@ export function loadPersistedCwdMap(): Map<string, string> {
 
 export function persistCwdMap(map: Map<string, string>): void {
   saveRemoteSettings({ cwdMap: Object.fromEntries(map) });
+}
+
+function persistCwdMapSync(map: Map<string, string>): void {
+  saveRemoteSettingsSync({ cwdMap: Object.fromEntries(map) });
 }
 
 export function setConversationWorkingDirectory(

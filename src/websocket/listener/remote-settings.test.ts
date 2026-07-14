@@ -4,10 +4,12 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  flushRemoteSettingsWrites,
   getRemoteSettingsPath,
   loadRemoteSettings,
   resetRemoteSettingsCache,
   saveRemoteSettings,
+  saveRemoteSettingsSync,
 } from "./remote-settings";
 
 describe("remote settings cwd repair", () => {
@@ -16,6 +18,7 @@ describe("remote settings cwd repair", () => {
 
   afterEach(async () => {
     resetRemoteSettingsCache();
+    await flushRemoteSettingsWrites();
     if (originalHome === undefined) {
       delete process.env.HOME;
     } else {
@@ -74,7 +77,7 @@ describe("remote settings cwd repair", () => {
     });
   });
 
-  test("persists each update before returning", async () => {
+  test("coalesces asynchronous updates while preserving merged settings", async () => {
     tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
     process.env.HOME = path.join(tempRoot, "home");
 
@@ -84,12 +87,41 @@ describe("remote settings cwd repair", () => {
     saveRemoteSettings({
       cwdMap: { "conversation:live": "/repository/root" },
     });
+    await flushRemoteSettingsWrites();
 
     const persisted = JSON.parse(
       readFileSync(getRemoteSettingsPath(), "utf-8"),
     );
     expect(persisted.cwdMap).toEqual({
       "conversation:live": "/repository/root",
+    });
+  });
+
+  test("synchronous cwd repair fences a pending permission snapshot", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
+    process.env.HOME = path.join(tempRoot, "home");
+
+    saveRemoteSettings({
+      cwdMap: { "conversation:stale": "/deleted/worktree" },
+    });
+    saveRemoteSettings({
+      permissionModeMap: {
+        "conversation:live": { mode: "unrestricted" },
+      },
+    });
+    saveRemoteSettingsSync({
+      cwdMap: { "conversation:live": "/repository/root" },
+    });
+    await flushRemoteSettingsWrites();
+
+    const persisted = JSON.parse(
+      readFileSync(getRemoteSettingsPath(), "utf-8"),
+    );
+    expect(persisted).toEqual({
+      cwdMap: { "conversation:live": "/repository/root" },
+      permissionModeMap: {
+        "conversation:live": { mode: "unrestricted" },
+      },
     });
   });
 });

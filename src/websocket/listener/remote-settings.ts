@@ -5,7 +5,14 @@
  * restarts. Mirrors the in-memory Map keys used by cwd.ts and permissionMode.ts.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { isConfirmedUnusableDirectory } from "@/helpers/usable-directory";
@@ -23,6 +30,9 @@ export interface RemoteSettings {
 
 // Module-level cache to avoid repeated disk reads and enable cheap merges.
 let _cache: RemoteSettings | null = null;
+let _settingsGeneration = 0;
+let _settledGeneration = 0;
+let _writeLoop: Promise<void> | null = null;
 
 function getRemoteSettingsHome(): string {
   return process.env.HOME || homedir();
@@ -81,7 +91,7 @@ export function loadRemoteSettings(): RemoteSettings {
 
   _cache = loaded;
   if (repairedCwdMap) {
-    persistRemoteSettingsSync(loaded);
+    persistCurrentSettingsSync();
   }
   return _cache;
 }
@@ -96,13 +106,78 @@ function persistRemoteSettingsSync(settings: RemoteSettings): void {
   }
 }
 
+async function persistPendingRemoteSettings(): Promise<void> {
+  while (_settledGeneration < _settingsGeneration) {
+    const generation = _settingsGeneration;
+    const serialized = JSON.stringify(_cache ?? {}, null, 2);
+    const settingsPath = getRemoteSettingsPath();
+    const tempPath = `${settingsPath}.${process.pid}.${generation}.tmp`;
+
+    try {
+      await mkdir(path.dirname(settingsPath), { recursive: true });
+      await writeFile(tempPath, serialized);
+
+      // A synchronous repair increments the generation before touching disk.
+      // Since this check and rename are one JavaScript turn, the older staged
+      // snapshot can only publish before the repair (which then wins) or be
+      // discarded after it.
+      if (generation === _settingsGeneration) {
+        renameSync(tempPath, settingsPath);
+      } else {
+        await rm(tempPath, { force: true });
+      }
+    } catch {
+      await rm(tempPath, { force: true }).catch(() => {});
+    } finally {
+      _settledGeneration = Math.max(_settledGeneration, generation);
+    }
+  }
+}
+
+function scheduleRemoteSettingsWrite(): void {
+  if (_writeLoop) {
+    return;
+  }
+
+  _writeLoop = persistPendingRemoteSettings().finally(() => {
+    _writeLoop = null;
+    if (_settledGeneration < _settingsGeneration) {
+      scheduleRemoteSettingsWrite();
+    }
+  });
+}
+
+function persistCurrentSettingsSync(): void {
+  const generation = ++_settingsGeneration;
+  persistRemoteSettingsSync(_cache ?? {});
+  _settledGeneration = Math.max(_settledGeneration, generation);
+}
+
 /**
- * Merge updates and persist before returning.
- *
- * Keeping every write synchronous prevents an older queued snapshot from
- * landing after a cwd repair and resurrecting a stale mapping.
+ * Merge updates and queue the newest snapshot for serialized persistence.
  */
 export function saveRemoteSettings(updates: Partial<RemoteSettings>): void {
+  if (_cache === null) {
+    loadRemoteSettings();
+  }
+
+  const nextSettings = {
+    ..._cache,
+    ...updates,
+  };
+  if (JSON.stringify(nextSettings) === JSON.stringify(_cache)) {
+    return;
+  }
+
+  _cache = nextSettings;
+  _settingsGeneration++;
+  scheduleRemoteSettingsWrite();
+}
+
+/**
+ * Persist a repair before returning and fence all older queued snapshots.
+ */
+export function saveRemoteSettingsSync(updates: Partial<RemoteSettings>): void {
   if (_cache === null) {
     loadRemoteSettings();
   }
@@ -111,7 +186,13 @@ export function saveRemoteSettings(updates: Partial<RemoteSettings>): void {
     ..._cache,
     ...updates,
   };
-  persistRemoteSettingsSync(_cache);
+  persistCurrentSettingsSync();
+}
+
+export async function flushRemoteSettingsWrites(): Promise<void> {
+  while (_writeLoop) {
+    await _writeLoop;
+  }
 }
 
 /**
@@ -119,6 +200,8 @@ export function saveRemoteSettings(updates: Partial<RemoteSettings>): void {
  */
 export function resetRemoteSettingsCache(): void {
   _cache = null;
+  const generation = ++_settingsGeneration;
+  _settledGeneration = Math.max(_settledGeneration, generation);
 }
 
 /**
