@@ -61,11 +61,13 @@ export function isBase64ImageContentPart(
   );
 }
 
-async function normalizeMessageContentImages(
-  content: MessageCreate["content"],
+async function normalizeMessageContentImages<
+  T extends MessageCreate["content"],
+>(
+  content: T,
   resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
   failureMode: ImageNormalizationFailureMode = "strict",
-): Promise<MessageCreate["content"]> {
+): Promise<T> {
   if (typeof content === "string") {
     return content;
   }
@@ -125,7 +127,43 @@ async function normalizeMessageContentImages(
       part !== null,
   );
 
-  return didChange ? filteredParts : content;
+  return (didChange ? filteredParts : content) as T;
+}
+
+async function normalizeApprovalImages(
+  message: ApprovalCreate,
+  resize: typeof resizeImageIfNeeded,
+  failureMode: ImageNormalizationFailureMode,
+): Promise<ApprovalCreate> {
+  if (!Array.isArray(message.approvals)) {
+    return message;
+  }
+
+  let didChange = false;
+  const approvals = await Promise.all(
+    message.approvals.map(async (approval) => {
+      if (!("tool_return" in approval)) {
+        return approval;
+      }
+
+      const toolReturn = await normalizeMessageContentImages(
+        approval.tool_return,
+        resize,
+        failureMode,
+      );
+      if (toolReturn === approval.tool_return) {
+        return approval;
+      }
+
+      didChange = true;
+      return {
+        ...approval,
+        tool_return: toolReturn,
+      };
+    }),
+  );
+
+  return didChange ? { ...message, approvals } : message;
 }
 
 export async function normalizeMessageImageParts<
@@ -139,14 +177,26 @@ export async function normalizeMessageImageParts<
 
   const normalizedMessages = await Promise.all(
     messages.map(async (message) => {
+      const failureMode = getImageFailureMode(
+        message,
+        options.failureModesByMessageOtid,
+      );
       if (!("content" in message)) {
-        return message;
+        const normalizedApproval = await normalizeApprovalImages(
+          message,
+          resize,
+          failureMode,
+        );
+        if (normalizedApproval !== message) {
+          didChange = true;
+        }
+        return normalizedApproval as T;
       }
 
       const normalizedContent = await normalizeMessageContentImages(
         message.content,
         resize,
-        getImageFailureMode(message, options.failureModesByMessageOtid),
+        failureMode,
       );
       if (normalizedContent !== message.content) {
         didChange = true;
@@ -208,20 +258,35 @@ export function assertSupportedBase64ImageMediaTypes(
   messages: Array<ApprovalCreate | MessageCreate>,
 ): void {
   for (const message of messages) {
-    if (!("content" in message) || typeof message.content === "string") {
+    if ("content" in message) {
+      assertSupportedBase64ImageContent(message.content);
       continue;
     }
 
-    for (const part of message.content) {
-      if (!isBase64ImageContentPart(part)) {
+    for (const approval of message.approvals ?? []) {
+      if (!("tool_return" in approval)) {
         continue;
       }
+      assertSupportedBase64ImageContent(approval.tool_return);
+    }
+  }
+}
 
-      if (!isSupportedBase64ImageMediaType(part.source.media_type)) {
-        throw new Error(
-          `Unsupported base64 image media type after normalization: ${part.source.media_type}`,
-        );
-      }
+function assertSupportedBase64ImageContent(
+  content: MessageCreate["content"],
+): void {
+  if (typeof content === "string") {
+    return;
+  }
+
+  for (const part of content) {
+    if (
+      isBase64ImageContentPart(part) &&
+      !isSupportedBase64ImageMediaType(part.source.media_type)
+    ) {
+      throw new Error(
+        `Unsupported base64 image media type after normalization: ${part.source.media_type}`,
+      );
     }
   }
 }

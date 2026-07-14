@@ -239,6 +239,22 @@ export function buildConversationMessagesCreateRequestBody(
     ConversationMessageCreateParams["client_skills"]
   > = [],
 ) {
+  return buildRequestBodyFromPreparedMessages(
+    conversationId,
+    normalizeOutgoingApprovalMessages(messages, opts.approvalNormalization),
+    opts,
+    clientTools,
+    clientSkills,
+  );
+}
+
+function buildRequestBodyFromPreparedMessages(
+  conversationId: string,
+  messages: Array<MessageCreate | ApprovalCreate>,
+  opts: SendMessageStreamOptions,
+  clientTools: ClientTool[],
+  clientSkills: NonNullable<ConversationMessageCreateParams["client_skills"]>,
+) {
   const isDefaultConversation = conversationId === "default";
   if (isDefaultConversation && !opts.agentId) {
     throw new Error(
@@ -247,10 +263,7 @@ export function buildConversationMessagesCreateRequestBody(
   }
 
   return {
-    messages: normalizeOutgoingApprovalMessages(
-      messages,
-      opts.approvalNormalization,
-    ),
+    messages,
     streaming: true,
     stream_tokens: opts.streamTokens ?? true,
     include_pings: true,
@@ -306,9 +319,16 @@ export async function sendMessageStreamWithBackend(
 ): Promise<Stream<LettaStreamingResponse>> {
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const requestStartedAtMs = Date.now();
-  const normalizedMessages = await normalizeMessageImageParts(messages, {
-    failureModesByMessageOtid: opts.imageFailureModesByMessageOtid,
-  });
+  const canonicalMessages = normalizeOutgoingApprovalMessages(
+    messages,
+    opts.approvalNormalization,
+  );
+  const normalizedMessages = await normalizeMessageImageParts(
+    canonicalMessages,
+    {
+      failureModesByMessageOtid: opts.imageFailureModesByMessageOtid,
+    },
+  );
   assertSupportedBase64ImageMediaTypes(normalizedMessages);
 
   const preparedToolContext = opts.preparedToolContext
@@ -344,7 +364,7 @@ export async function sendMessageStreamWithBackend(
   const previousResponseId = canUsePreviousResponseState
     ? responseStateIdsByScope.get(responseStateScope)
     : undefined;
-  const requestBody = buildConversationMessagesCreateRequestBody(
+  const requestBody = buildRequestBodyFromPreparedMessages(
     conversationId,
     normalizedMessages,
     opts,

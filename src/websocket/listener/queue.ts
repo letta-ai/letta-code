@@ -16,6 +16,7 @@ import {
   dispatchChannelTurnLifecycleEvent,
   finishActiveChannelTurn,
 } from "./channel-turn-session";
+import { getInboundImageFailureMode } from "./image-policy";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
   emitListenerStatus,
@@ -335,12 +336,26 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasTaskNotification = false;
   let hasCronPrompt = false;
   let hasModContinue = false;
+  let batchImageFailureMode: "strict" | "drop" | null = null;
   for (const item of queuedItems) {
     if (
       !isCoalescable(item.kind) ||
       !hasSameQueueScope(firstQueuedItem, item)
     ) {
       break;
+    }
+
+    if (item.kind === "message") {
+      const itemImageFailureMode = getInboundImageFailureMode(
+        runtime.queuedMessagesByItemId.get(item.id),
+      );
+      if (
+        batchImageFailureMode !== null &&
+        itemImageFailureMode !== batchImageFailureMode
+      ) {
+        break;
+      }
+      batchImageFailureMode = itemImageFailureMode;
     }
 
     queueLen += 1;

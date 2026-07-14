@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  ApprovalCreate,
+  LettaStreamingResponse,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import sharp from "sharp";
 import type { Backend } from "@/backend";
@@ -50,7 +53,7 @@ function getFirstImageMediaType(message: MessageCreate): string | null {
 }
 
 async function sendThroughRecordingBackend(
-  messages: MessageCreate[],
+  messages: Array<MessageCreate | ApprovalCreate>,
   options: {
     imageFailureModesByMessageOtid?: Record<string, "strict" | "drop">;
   } = {},
@@ -320,6 +323,101 @@ describe("outbound image normalization", () => {
       role: "user",
       content: [{ type: "text", text: "channel attachment" }],
       otid: "cm-channel-image",
+    });
+  });
+
+  test("normalizes images nested in approval tool returns before persistence", async () => {
+    const oversized = await sharp({
+      create: {
+        width: 3200,
+        height: 1800,
+        channels: 3,
+        background: { r: 40, g: 90, b: 180 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const requestBody = await sendThroughRecordingBackend([
+      {
+        type: "approval",
+        otid: "approval-with-image",
+        approvals: [
+          {
+            type: "tool",
+            tool_call_id: "tool-image",
+            status: "success",
+            tool_return: [
+              { type: "text", text: "tool screenshot" },
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/tiff",
+                  data: oversized.toString("base64"),
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const message = requestBody.messages?.[0];
+    if (!message || !("approvals" in message)) {
+      throw new Error("Expected an approval backend request message");
+    }
+    const approval = message.approvals?.[0];
+    if (
+      !approval ||
+      !("tool_return" in approval) ||
+      typeof approval.tool_return === "string"
+    ) {
+      throw new Error("Expected a multimodal approval tool return");
+    }
+    const imagePart = approval.tool_return.find(
+      (part) => part.type === "image",
+    );
+    if (
+      !imagePart ||
+      imagePart.type !== "image" ||
+      imagePart.source.type !== "base64"
+    ) {
+      throw new Error("Expected a normalized approval image");
+    }
+
+    const metadata = await sharp(
+      Buffer.from(imagePart.source.data, "base64"),
+    ).metadata();
+    expect(imagePart.source.media_type).toBe("image/png");
+    expect(metadata.width).toBeLessThanOrEqual(MAX_IMAGE_WIDTH);
+    expect(metadata.height).toBeLessThanOrEqual(MAX_IMAGE_HEIGHT);
+  });
+
+  test("canonicalizes legacy approval tool returns before image traversal", async () => {
+    const requestBody = await sendThroughRecordingBackend([
+      {
+        type: "approval",
+        otid: "approval-with-legacy-null",
+        approvals: [
+          {
+            type: "approval",
+            approve: true,
+            tool_call_id: "tool-legacy-null",
+            tool_return: null,
+          },
+        ],
+      } as unknown as ApprovalCreate,
+    ]);
+
+    const message = requestBody.messages?.[0];
+    if (!message || !("approvals" in message)) {
+      throw new Error("Expected a canonical approval backend request message");
+    }
+    expect(message.approvals?.[0]).toMatchObject({
+      type: "tool",
+      tool_call_id: "tool-legacy-null",
+      tool_return: "",
+      status: "success",
     });
   });
 });
