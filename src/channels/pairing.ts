@@ -50,6 +50,20 @@ function getStore(channelId: string): PairingStore {
   return store;
 }
 
+export type PairingStateForAccountSnapshot = Pick<
+  PairingStore,
+  "pending" | "approved"
+>;
+
+function clonePairingState(
+  state: PairingStateForAccountSnapshot,
+): PairingStateForAccountSnapshot {
+  return {
+    pending: state.pending.map((pending) => ({ ...pending })),
+    approved: state.approved.map((approved) => ({ ...approved })),
+  };
+}
+
 // ── Load/save ─────────────────────────────────────────────────────
 
 export function loadPairingStore(channelId: string): void {
@@ -127,6 +141,67 @@ export function isUserApproved(
       u.senderId === userId &&
       normalizeAccountId(u.accountId) === normalizedAccountId,
   );
+}
+
+export function snapshotPairingStateForAccount(
+  channelId: string,
+  accountId: string,
+): PairingStateForAccountSnapshot {
+  const store = getStore(channelId);
+  const normalizedAccountId = normalizeAccountId(accountId);
+  return clonePairingState({
+    pending: store.pending.filter(
+      (pending) =>
+        normalizeAccountId(pending.accountId) === normalizedAccountId,
+    ),
+    approved: store.approved.filter(
+      (approved) =>
+        normalizeAccountId(approved.accountId) === normalizedAccountId,
+    ),
+  });
+}
+
+export function restorePairingStateForAccountSnapshot(
+  channelId: string,
+  accountId: string,
+  snapshot: PairingStateForAccountSnapshot,
+  options: { persist?: boolean } = {},
+): void {
+  const store = getStore(channelId);
+  const previousState = clonePairingState(store);
+  const normalizedAccountId = normalizeAccountId(accountId);
+  store.pending = [
+    ...store.pending.filter(
+      (pending) =>
+        normalizeAccountId(pending.accountId) !== normalizedAccountId,
+    ),
+    ...snapshot.pending.map((pending) => ({
+      ...pending,
+      accountId: normalizeAccountId(pending.accountId),
+    })),
+  ];
+  store.approved = [
+    ...store.approved.filter(
+      (approved) =>
+        normalizeAccountId(approved.accountId) !== normalizedAccountId,
+    ),
+    ...snapshot.approved.map((approved) => ({
+      ...approved,
+      accountId: normalizeAccountId(approved.accountId),
+    })),
+  ];
+
+  if (options.persist === false) {
+    return;
+  }
+
+  try {
+    savePairingStore(channelId);
+  } catch (error) {
+    store.pending = previousState.pending;
+    store.approved = previousState.approved;
+    throw error;
+  }
 }
 
 /**
@@ -329,9 +404,17 @@ export function removePairingStateForAccount(
     return { pendingRemoved, approvedRemoved };
   }
 
+  const previousPending = store.pending;
+  const previousApproved = store.approved;
   store.pending = nextPending;
   store.approved = nextApproved;
-  savePairingStore(channelId);
+  try {
+    savePairingStore(channelId);
+  } catch (error) {
+    store.pending = previousPending;
+    store.approved = previousApproved;
+    throw error;
+  }
   return { pendingRemoved, approvedRemoved };
 }
 

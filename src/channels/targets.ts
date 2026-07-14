@@ -22,6 +22,13 @@ function getStore(channelId: string): ChannelTargetStore {
   return store;
 }
 
+function cloneTarget(target: ChannelBindableTarget): ChannelBindableTarget {
+  return {
+    ...target,
+    accountId: normalizeAccountId(target.accountId),
+  };
+}
+
 export function loadTargetStore(channelId: string): void {
   if (loadTargetStoreOverride) {
     loadTargetStoreOverride(channelId);
@@ -71,6 +78,41 @@ export function listChannelTargets(
       normalizedAccountId === undefined ||
       normalizeAccountId(target.accountId) === normalizedAccountId,
   );
+}
+
+export function snapshotChannelTargetsForAccount(
+  channelId: string,
+  accountId: string,
+): ChannelBindableTarget[] {
+  return listChannelTargets(channelId, accountId).map(cloneTarget);
+}
+
+export function restoreChannelTargetsForAccountSnapshot(
+  channelId: string,
+  accountId: string,
+  targets: ChannelBindableTarget[],
+  options: { persist?: boolean } = {},
+): void {
+  const store = getStore(channelId);
+  const previousTargets = store.targets;
+  const normalizedAccountId = normalizeAccountId(accountId);
+  store.targets = [
+    ...store.targets.filter(
+      (target) => normalizeAccountId(target.accountId) !== normalizedAccountId,
+    ),
+    ...targets.map(cloneTarget),
+  ];
+
+  if (options.persist === false) {
+    return;
+  }
+
+  try {
+    saveTargetStore(channelId);
+  } catch (error) {
+    store.targets = previousTargets;
+    throw error;
+  }
 }
 
 export function getChannelTarget(
@@ -165,8 +207,14 @@ export function removeChannelTargetsForAccount(
   if (removed === 0) {
     return 0;
   }
+  const previousTargets = store.targets;
   store.targets = nextTargets;
-  saveTargetStore(channelId);
+  try {
+    saveTargetStore(channelId);
+  } catch (error) {
+    store.targets = previousTargets;
+    throw error;
+  }
   return removed;
 }
 

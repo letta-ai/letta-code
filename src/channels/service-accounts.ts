@@ -17,7 +17,12 @@ import {
   assertAccountHasRequiredCredentials,
   getAccountSecretFieldPaths,
 } from "./credential-utils";
-import { loadPairingStore, removePairingStateForAccount } from "./pairing";
+import {
+  loadPairingStore,
+  removePairingStateForAccount,
+  restorePairingStateForAccountSnapshot,
+  snapshotPairingStateForAccount,
+} from "./pairing";
 import type { ChannelAccountPatch } from "./plugin-types";
 import { ensureChannelRegistry, getChannelRegistry } from "./registry";
 import {
@@ -25,6 +30,7 @@ import {
   loadRoutes,
   removeRouteInMemory,
   removeRoutesForAccount,
+  saveRoutes,
   setRouteInMemory,
 } from "./routing";
 import {
@@ -42,7 +48,12 @@ import {
   toAccountSnapshot,
 } from "./service-snapshots";
 import type { ChannelAccountSnapshot } from "./service-types";
-import { loadTargetStore, removeChannelTargetsForAccount } from "./targets";
+import {
+  loadTargetStore,
+  removeChannelTargetsForAccount,
+  restoreChannelTargetsForAccountSnapshot,
+  snapshotChannelTargetsForAccount,
+} from "./targets";
 import type { ChannelAccount } from "./types";
 import {
   isDiscordChannelAccount,
@@ -58,10 +69,11 @@ function snapshotRoutesForAccount(channelId: string, accountId: string) {
   }));
 }
 
-function restoreRoutesForAccountInMemory(
+function restoreRoutesForAccount(
   channelId: string,
   accountId: string,
   routes: ReturnType<typeof snapshotRoutesForAccount>,
+  options: { persist?: boolean } = {},
 ): void {
   for (const route of getRoutesForChannel(channelId, accountId)) {
     removeRouteInMemory(
@@ -73,6 +85,9 @@ function restoreRoutesForAccountInMemory(
   }
   for (const route of routes) {
     setRouteInMemory(channelId, route);
+  }
+  if (options.persist === true) {
+    saveRoutes(channelId);
   }
 }
 
@@ -152,7 +167,7 @@ export function updateChannelAccountLive(
       routeSnapshot = snapshotRoutesForAccount(channelId, accountId);
       removeRoutesForAccount(channelId, accountId);
     } catch (error) {
-      restoreRoutesForAccountInMemory(channelId, accountId, routeSnapshot);
+      restoreRoutesForAccount(channelId, accountId, routeSnapshot);
       try {
         upsertChannelAccount(channelId, existing);
       } catch (rollbackError) {
@@ -228,7 +243,7 @@ export async function updateChannelAccountLiveWithSecrets(
       routeSnapshot = snapshotRoutesForAccount(channelId, accountId);
       removeRoutesForAccount(channelId, accountId);
     } catch (error) {
-      restoreRoutesForAccountInMemory(channelId, accountId, routeSnapshot);
+      restoreRoutesForAccount(channelId, accountId, routeSnapshot);
       try {
         const rolledBack = await restoreChannelAccountWithSecretsIfCurrent(
           channelId,
@@ -566,16 +581,69 @@ export async function removeChannelAccountLive(
   }
 
   let routeSnapshot: ReturnType<typeof snapshotRoutesForAccount> = [];
+  let targetSnapshot: ReturnType<typeof snapshotChannelTargetsForAccount> = [];
+  let pairingSnapshot: ReturnType<typeof snapshotPairingStateForAccount> = {
+    pending: [],
+    approved: [],
+  };
+  let routeSnapshotCaptured = false;
+  let targetSnapshotCaptured = false;
+  let pairingSnapshotCaptured = false;
+  let routesCleaned = false;
+  let targetsCleaned = false;
   try {
     loadRoutes(channelId);
     routeSnapshot = snapshotRoutesForAccount(channelId, accountId);
+    routeSnapshotCaptured = true;
     loadTargetStore(channelId);
+    targetSnapshot = snapshotChannelTargetsForAccount(channelId, accountId);
+    targetSnapshotCaptured = true;
     loadPairingStore(channelId);
+    pairingSnapshot = snapshotPairingStateForAccount(channelId, accountId);
+    pairingSnapshotCaptured = true;
     removeRoutesForAccount(channelId, accountId);
+    routesCleaned = true;
     removeChannelTargetsForAccount(channelId, accountId);
+    targetsCleaned = true;
     removePairingStateForAccount(channelId, accountId);
   } catch (error) {
-    restoreRoutesForAccountInMemory(channelId, accountId, routeSnapshot);
+    const rollbackErrors: unknown[] = [];
+    if (routeSnapshotCaptured) {
+      try {
+        restoreRoutesForAccount(channelId, accountId, routeSnapshot, {
+          persist: routesCleaned,
+        });
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+        restoreRoutesForAccount(channelId, accountId, routeSnapshot);
+      }
+    }
+    if (targetSnapshotCaptured) {
+      try {
+        restoreChannelTargetsForAccountSnapshot(
+          channelId,
+          accountId,
+          targetSnapshot,
+          { persist: targetsCleaned },
+        );
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+        restoreChannelTargetsForAccountSnapshot(
+          channelId,
+          accountId,
+          targetSnapshot,
+          { persist: false },
+        );
+      }
+    }
+    if (pairingSnapshotCaptured) {
+      restorePairingStateForAccountSnapshot(
+        channelId,
+        accountId,
+        pairingSnapshot,
+        { persist: false },
+      );
+    }
     try {
       const rolledBack = await restoreChannelAccountWithSecretsIfCurrent(
         channelId,
@@ -588,14 +656,18 @@ export async function removeChannelAccountLive(
         throw new Error("account changed after the failed delete cleanup");
       }
     } catch (rollbackError) {
+      rollbackErrors.push(rollbackError);
+    }
+    if (rollbackErrors.length > 0) {
       throw new Error(
         `Deleted ${channelId} account "${accountId}" but failed cleanup: ${getErrorMessage(
           error,
           "cleanup failed",
-        )}; rollback also failed: ${getErrorMessage(
-          rollbackError,
-          "rollback failed",
-        )}`,
+        )}; rollback also failed: ${rollbackErrors
+          .map((rollbackError) =>
+            getErrorMessage(rollbackError, "rollback failed"),
+          )
+          .join("; ")}`,
       );
     }
     throw new Error(
