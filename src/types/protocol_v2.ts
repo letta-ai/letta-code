@@ -423,9 +423,7 @@ export interface GitContext {
   recent_branches: string[];
 }
 
-/**
- * Bottom-bar and device execution context state.
- */
+/** Bottom-bar and device execution context state. */
 export interface DeviceStatus {
   current_connection_id: string | null;
   connection_name: string | null;
@@ -433,6 +431,8 @@ export interface DeviceStatus {
   is_processing: boolean;
   current_permission_mode: DevicePermissionMode;
   current_working_directory: string | null;
+  /** Monotonic signal for cwd changes and rejected stale cwd requests. */
+  cwd_revision?: number;
   git_context: GitContext | null;
   letta_code_version: string | null;
   current_toolset: ToolsetName | null;

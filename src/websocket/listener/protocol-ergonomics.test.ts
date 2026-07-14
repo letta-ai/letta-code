@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type WebSocket from "ws";
@@ -269,6 +269,15 @@ describe("listener protocol ergonomics", () => {
       expect(
         Object.fromEntries(runtime.workingDirectoryByConversation),
       ).toEqual({
+        "conversation:conv-live": liveDir,
+      });
+      const persistedSettings = JSON.parse(
+        await readFile(
+          path.join(fakeHome, ".letta", "remote-settings.json"),
+          "utf-8",
+        ),
+      );
+      expect(persistedSettings.cwdMap).toEqual({
         "conversation:conv-live": liveDir,
       });
     } finally {

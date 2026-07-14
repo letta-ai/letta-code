@@ -17,6 +17,7 @@ import {
 } from "./approval";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
+  bumpWorkingDirectoryRevision,
   getConversationWorkingDirectory,
   setConversationWorkingDirectory,
 } from "./cwd";
@@ -608,6 +609,7 @@ export async function handleCwdChange(
     });
   } catch (error) {
     if (isMissingWorkingDirectoryError(error)) {
+      bumpWorkingDirectoryRevision(runtime.listener);
       runtime.reminderState.hasSentSessionContext = false;
       runtime.reminderState.pendingSessionContextReason = "cwd_changed";
 

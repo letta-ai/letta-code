@@ -1,5 +1,5 @@
 import path from "node:path";
-import { isUsableDirectory } from "@/helpers/usable-directory";
+import { isConfirmedUnusableDirectory } from "@/helpers/usable-directory";
 import { loadRemoteSettings, saveRemoteSettings } from "./remote-settings";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerRuntime } from "./types";
@@ -32,8 +32,9 @@ export function getConversationWorkingDirectory(
   // worktree that was cleaned up). Serving it would throw ENOENT on realpath
   // /process.chdir. Fall back to the boot dir and prune the dead entry so we
   // don't repeatedly serve it.
-  if (!isUsableDirectory(stored)) {
+  if (isConfirmedUnusableDirectory(stored)) {
     runtime.workingDirectoryByConversation.delete(scopeKey);
+    bumpWorkingDirectoryRevision(runtime);
     persistCwdMap(runtime.workingDirectoryByConversation);
     return runtime.bootWorkingDirectory;
   }
@@ -49,7 +50,7 @@ export function pruneStaleConversationWorkingDirectories(
     scopeKey,
     workingDirectory,
   ] of runtime.workingDirectoryByConversation) {
-    if (!isUsableDirectory(workingDirectory)) {
+    if (isConfirmedUnusableDirectory(workingDirectory)) {
       staleScopeKeys.push(scopeKey);
     }
   }
@@ -61,8 +62,15 @@ export function pruneStaleConversationWorkingDirectories(
   for (const scopeKey of staleScopeKeys) {
     runtime.workingDirectoryByConversation.delete(scopeKey);
   }
+  bumpWorkingDirectoryRevision(runtime);
   persistCwdMap(runtime.workingDirectoryByConversation);
   return true;
+}
+
+export function bumpWorkingDirectoryRevision(runtime: ListenerRuntime): number {
+  const revision = (runtime.workingDirectoryRevision ?? 0) + 1;
+  runtime.workingDirectoryRevision = revision;
+  return revision;
 }
 
 export function getExportedCwdMap(
@@ -115,6 +123,7 @@ export function setConversationWorkingDirectory(
     runtime.workingDirectoryByConversation.set(scopeKey, workingDirectory);
   }
 
+  bumpWorkingDirectoryRevision(runtime);
   persistCwdMap(runtime.workingDirectoryByConversation);
 }
 
@@ -130,6 +139,7 @@ export function seedConversationWorkingDirectory(
   }
 
   runtime.workingDirectoryByConversation.set(scopeKey, workingDirectory);
+  bumpWorkingDirectoryRevision(runtime);
   persistCwdMap(runtime.workingDirectoryByConversation);
   return true;
 }

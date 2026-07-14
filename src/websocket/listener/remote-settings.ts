@@ -6,10 +6,9 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
-import { isUsableDirectory } from "@/helpers/usable-directory";
+import { isConfirmedUnusableDirectory } from "@/helpers/usable-directory";
 import type { PermissionMode } from "@/permissions/mode";
 
 /** Persisted permission mode state for a single conversation. */
@@ -66,7 +65,7 @@ export function loadRemoteSettings(): RemoteSettings {
   if (loaded.cwdMap) {
     const validCwdMap: Record<string, string> = {};
     for (const [key, value] of Object.entries(loaded.cwdMap)) {
-      if (typeof value === "string" && isUsableDirectory(value)) {
+      if (typeof value === "string" && !isConfirmedUnusableDirectory(value)) {
         validCwdMap[key] = value;
       }
     }
@@ -98,8 +97,10 @@ function persistRemoteSettingsSync(settings: RemoteSettings): void {
 }
 
 /**
- * Merge updates into the in-memory cache and persist asynchronously.
- * Silently swallows write failures.
+ * Merge updates and persist before returning.
+ *
+ * Keeping every write synchronous prevents an older queued snapshot from
+ * landing after a cwd repair and resurrecting a stale mapping.
  */
 export function saveRemoteSettings(updates: Partial<RemoteSettings>): void {
   if (_cache === null) {
@@ -110,14 +111,7 @@ export function saveRemoteSettings(updates: Partial<RemoteSettings>): void {
     ..._cache,
     ...updates,
   };
-
-  const snapshot = _cache;
-  const settingsPath = getRemoteSettingsPath();
-  void mkdir(path.dirname(settingsPath), { recursive: true })
-    .then(() => writeFile(settingsPath, JSON.stringify(snapshot, null, 2)))
-    .catch(() => {
-      // Silently ignore write failures.
-    });
+  persistRemoteSettingsSync(_cache);
 }
 
 /**

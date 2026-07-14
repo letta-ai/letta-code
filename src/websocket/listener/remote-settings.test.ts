@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,6 +7,7 @@ import {
   getRemoteSettingsPath,
   loadRemoteSettings,
   resetRemoteSettingsCache,
+  saveRemoteSettings,
 } from "./remote-settings";
 
 describe("remote settings cwd repair", () => {
@@ -69,6 +71,25 @@ describe("remote settings cwd repair", () => {
     resetRemoteSettingsCache();
     expect(loadRemoteSettings().cwdMap).toEqual({
       "conversation:live": liveDirectory,
+    });
+  });
+
+  test("persists each update before returning", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
+    process.env.HOME = path.join(tempRoot, "home");
+
+    saveRemoteSettings({
+      cwdMap: { "conversation:stale": "/deleted/worktree" },
+    });
+    saveRemoteSettings({
+      cwdMap: { "conversation:live": "/repository/root" },
+    });
+
+    const persisted = JSON.parse(
+      readFileSync(getRemoteSettingsPath(), "utf-8"),
+    );
+    expect(persisted.cwdMap).toEqual({
+      "conversation:live": "/repository/root",
     });
   });
 });

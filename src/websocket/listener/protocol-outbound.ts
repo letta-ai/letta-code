@@ -444,7 +444,6 @@ export function buildDeviceStatus(
       return "auto" as const;
     }
   })();
-  // Read mode from the persistent ListenerRuntime map (outlives ConversationRuntime).
   const conversationPermissionModeState = getConversationPermissionModeState(
     listener,
     scopedAgentId,
@@ -500,6 +499,7 @@ export function buildDeviceStatus(
           boot_working_directory: listener.bootWorkingDirectory,
         }
       : {}),
+    cwd_revision: listener.workingDirectoryRevision ?? 0,
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
     supported_commands: FROZEN_SUPPORTED_COMMANDS,
     ...buildModCommandsField(listener),
