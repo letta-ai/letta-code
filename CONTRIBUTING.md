@@ -37,3 +37,11 @@ letta
 ```
 
 Whenever you change source files, rerun `bun run build` before using the linked `letta` binary so it picks up your edits.
+
+## Checking types
+
+Run the TypeScript type checker before submitting a PR:
+
+```bash
+bun run typecheck
+```
