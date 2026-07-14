@@ -12,9 +12,15 @@ import {
 type TelemetryTestState = {
   events: unknown[];
   messageCount: number;
+  toolCallCount: number;
   currentAgentId: string | null;
   surface: TelemetrySurface;
   sessionEndTracked: boolean;
+  inflightFlush: Promise<void> | null;
+  MAX_BATCH_SIZE: number;
+  toolUsageAggregate: unknown | null;
+  errorSuppressionStates: Map<string, unknown>;
+  nextErrorSuppressionSummaryMs: number | null;
   isCloudUser: () => boolean;
 };
 
@@ -84,6 +90,7 @@ describe("telemetry flush auth", () => {
   const originalIsCloudUser = telemetryState.isCloudUser;
   const originalLettaApiKey = process.env.LETTA_API_KEY;
   const originalTelemetryDisabled = process.env.LETTA_TELEMETRY_DISABLED;
+  const originalLettaCodeTelem = process.env.LETTA_CODE_TELEM;
   const originalDoNotTrack = process.env.DO_NOT_TRACK;
   const originalLettaBaseUrl = process.env.LETTA_BASE_URL;
   const originalLettaDesktopDebugPanel = process.env.LETTA_DESKTOP_MODE;
@@ -117,11 +124,18 @@ describe("telemetry flush auth", () => {
     telemetry.cleanup();
     telemetryState.events = [];
     telemetryState.messageCount = 0;
+    telemetryState.toolCallCount = 0;
     telemetryState.currentAgentId = null;
     telemetryState.surface = "letta_code_tui";
     telemetryState.sessionEndTracked = false;
+    telemetryState.inflightFlush = null;
+    telemetryState.MAX_BATCH_SIZE = 50;
+    telemetryState.toolUsageAggregate = null;
+    telemetryState.errorSuppressionStates = new Map();
+    telemetryState.nextErrorSuppressionSummaryMs = null;
     deleteEnvVarCaseInsensitive("LETTA_API_KEY");
     deleteEnvVarCaseInsensitive("LETTA_TELEMETRY_DISABLED");
+    deleteEnvVarCaseInsensitive("LETTA_CODE_TELEM");
     deleteEnvVarCaseInsensitive("DO_NOT_TRACK");
     deleteEnvVarCaseInsensitive("LETTA_BASE_URL");
     deleteEnvVarCaseInsensitive("LETTA_DESKTOP_MODE");
@@ -139,6 +153,7 @@ describe("telemetry flush auth", () => {
     telemetryState.isCloudUser = originalIsCloudUser;
     restoreEnvVar("LETTA_API_KEY", originalLettaApiKey);
     restoreEnvVar("LETTA_TELEMETRY_DISABLED", originalTelemetryDisabled);
+    restoreEnvVar("LETTA_CODE_TELEM", originalLettaCodeTelem);
     restoreEnvVar("DO_NOT_TRACK", originalDoNotTrack);
     restoreEnvVar("LETTA_BASE_URL", originalLettaBaseUrl);
     restoreEnvVar("LETTA_DESKTOP_MODE", originalLettaDesktopDebugPanel);
@@ -174,6 +189,20 @@ describe("telemetry flush auth", () => {
     telemetry.trackUserInput("hello", "user", "model-1");
 
     expect(telemetryState.events).toHaveLength(0);
+  });
+
+  test("LETTA_CODE_TELEM=0 disables runtime telemetry", async () => {
+    setEnvVar("LETTA_CODE_TELEM", "0");
+
+    const fetchMock = mock(async () => new Response(null, { status: 200 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    telemetry.trackUserInput("hello", "user", "model-1");
+    telemetry.trackToolUsage("Bash", true, 1, 1);
+    await telemetry.flush();
+
+    expect(telemetryState.events).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   test("flush falls back to secure settings token when env var is absent", async () => {
