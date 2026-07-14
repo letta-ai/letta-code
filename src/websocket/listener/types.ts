@@ -210,6 +210,8 @@ export type ListenerRuntime = {
   reminderState: SharedReminderState;
   bootWorkingDirectory: string;
   workingDirectoryByConversation: Map<string, string>;
+  /** Monotonic signal for cwd changes and rejected stale cwd requests. */
+  workingDirectoryRevision?: number;
   /** Per-conversation permission mode state. Mirrors workingDirectoryByConversation. */
   permissionModeByConversation: Map<
     string,

@@ -4,6 +4,7 @@ import type {
   DiscordChannelMode,
   DmPolicy,
   SignalGroupMode,
+  SlackAllowBotsMode,
   SlackChannelMode,
   TelegramGroupMode,
   WhatsAppGroupMode,
@@ -42,6 +43,7 @@ export interface ChannelConfigSnapshot {
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
   listenMode?: boolean;
+  allowBots?: SlackAllowBotsMode;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;
@@ -121,6 +123,7 @@ export interface ChannelAccountSnapshot {
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
   listenMode?: boolean;
+  allowBots?: SlackAllowBotsMode;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;

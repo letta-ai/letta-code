@@ -9,6 +9,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { migratePermissionMode } from "@/permissions/mode";
+import { normalizeSlackAllowBotsMode } from "./slack/bot-policy";
 import type {
   ChannelConfig,
   ChannelDefaultPermissionMode,
@@ -170,6 +171,7 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
       transcribeVoice: parsed.transcribe_voice === true,
       listenMode: parsed.listen_mode === true,
+      allowBots: normalizeSlackAllowBotsMode(parsed.allow_bots),
     };
   },
 };

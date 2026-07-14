@@ -31,6 +31,8 @@ type SlackEventHandler = (args: {
     item_user?: string;
     reaction?: string;
     event_ts?: string;
+    bot_id?: string;
+    subtype?: string;
   };
 }) => Promise<void>;
 
@@ -62,6 +64,7 @@ export class FakeSlackApp {
         team: "Test Workspace",
         user: "letta_code_charles_le",
         user_id: "U0AS42PTEAX",
+        bot_id: "B0AS42PTEAX",
       })),
     },
     users: {
@@ -237,6 +240,14 @@ export class FakeSlackWriteClient {
 export const resolveSlackInboundAttachmentsMock = mock(
   async (): Promise<ChannelMessageAttachment[]> => [],
 );
+export const downloadSlackAttachmentByIdMock = mock(
+  async (): Promise<ChannelMessageAttachment> => ({
+    id: "FTEST",
+    name: "attachment.bin",
+    kind: "file",
+    localPath: "/tmp/attachment.bin",
+  }),
+);
 export const resolveSlackThreadStarterMock = mock(
   async (): Promise<{
     text: string;
@@ -296,6 +307,10 @@ mock.module("./media", () => ({
   resolveSlackThreadHistory: resolveSlackThreadHistoryMock,
 }));
 
+mock.module("./attachment-download", () => ({
+  downloadSlackAttachmentById: downloadSlackAttachmentByIdMock,
+}));
+
 const adapterModule = await import("@/channels/slack/adapter");
 const accountDisplayModule = await import("@/channels/slack/account-display");
 export const createSlackAdapter = adapterModule.createSlackAdapter;
@@ -325,6 +340,13 @@ export function installSlackAdapterTestHooks(): void {
     FakeSlackWriteClient.setStatusHandler = null;
     resolveSlackInboundAttachmentsMock.mockReset();
     resolveSlackInboundAttachmentsMock.mockImplementation(async () => []);
+    downloadSlackAttachmentByIdMock.mockReset();
+    downloadSlackAttachmentByIdMock.mockImplementation(async () => ({
+      id: "FTEST",
+      name: "attachment.bin",
+      kind: "file",
+      localPath: "/tmp/attachment.bin",
+    }));
     resolveSlackThreadStarterMock.mockReset();
     resolveSlackThreadStarterMock.mockImplementation(async () => null);
     resolveSlackThreadHistoryMock.mockReset();

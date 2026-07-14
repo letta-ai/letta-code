@@ -1071,7 +1071,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               "generating-mod-envs",
               {
                 agentId,
-                args,
                 allowDisabledModelInvocation: true,
               },
             );
@@ -1562,7 +1561,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               "customizing-statusline",
               {
                 agentId,
-                args,
                 allowDisabledModelInvocation: true,
               },
             );
@@ -3791,16 +3789,17 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               return { submitted: false };
             }
 
-            const args = trimmed.slice(`/${matchedSkill.id}`.length).trim();
+            const userRequest = trimmed
+              .slice(`/${matchedSkill.id}`.length)
+              .trim();
             setCommandRunning(true);
             try {
-              const { loadRenderedSkillContent, wrapSkillContent } =
+              const { loadRenderedSkillContent, wrapSkillPrompt } =
                 await import("@/tools/impl/skill");
               const skillContent = await loadRenderedSkillContent(
                 matchedSkill.id,
                 {
                   agentId,
-                  args,
                   allowDisabledModelInvocation: true,
                 },
               );
@@ -3810,7 +3809,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   type: "message",
                   role: "user",
                   content: buildTextParts(
-                    wrapSkillContent(matchedSkill.id, skillContent),
+                    wrapSkillPrompt(matchedSkill.id, skillContent, userRequest),
                   ),
                   otid: randomUUID(),
                 },

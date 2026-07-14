@@ -19,10 +19,16 @@ import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
+import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
 import { ensureListenerModAdapter } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
 import { emitListenerTurnStart } from "./turn-events";
+import {
+  createTurnInputState,
+  ensureTurnInputMessageOtids,
+  type TurnInputState,
+} from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import {
   buildInboundUserTranscriptLines,
@@ -45,7 +51,7 @@ export type ListenerTurnSetupResult =
   | {
       kind: "ready";
       getCachedAgent: () => AgentState | null;
-      currentInput: Array<MessageCreate | ApprovalCreate>;
+      turnInput: TurnInputState;
       inboundUserTranscriptLines: Line[];
       pendingNormalizationInterruptedToolCallIds: string[];
       preparedToolContext: PreparedToolContext;
@@ -99,19 +105,7 @@ export async function prepareListenerTurn(params: {
     onStatusChange?.("processing", connectionId);
   }
 
-  const { normalizeInboundMessages } = await import("./queue");
-  const normalizedMessages = await normalizeInboundMessages(
-    msg.messages,
-    undefined,
-    {
-      imageFailureMode:
-        (msg.channelTurnSources?.length ?? 0) > 0 ? "drop" : "strict",
-    },
-  );
-  if (isInterrupted()) {
-    return { kind: "interrupted" };
-  }
-  trackListenerUserInput(normalizedMessages, "unknown");
+  trackListenerUserInput(msg.messages, "unknown");
 
   const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
   let queuedInterruptedToolCallIds: string[] = [];
@@ -120,25 +114,11 @@ export async function prepareListenerTurn(params: {
     messagesToSend.push(consumed.approvalMessage);
     queuedInterruptedToolCallIds = consumed.interruptedToolCallIds;
   }
-  messagesToSend.push(
-    ...normalizedMessages.map((message) =>
-      "content" in message && !message.otid
-        ? {
-            ...message,
-            // Reconcile optimistic transcript rows with the canonical echo.
-            otid:
-              "client_message_id" in message &&
-              typeof message.client_message_id === "string"
-                ? message.client_message_id
-                : crypto.randomUUID(),
-          }
-        : message,
-    ),
-  );
+  messagesToSend.push(...ensureTurnInputMessageOtids(msg.messages));
 
   let inboundUserTranscriptLines =
     buildInboundUserTranscriptLines(messagesToSend);
-  const firstMessage = normalizedMessages[0];
+  const firstMessage = msg.messages[0];
   const isApprovalMessage =
     firstMessage &&
     "type" in firstMessage &&
@@ -256,7 +236,14 @@ export async function prepareListenerTurn(params: {
     return { kind: "cancelled", reason: turnStartEmission.reason };
   }
 
-  const currentInput = turnStartEmission.input;
+  const currentInput = ensureTurnInputMessageOtids(turnStartEmission.input);
+  const turnInput = createTurnInputState(
+    currentInput,
+    getInboundImageFailureModes({
+      channelTurnSources: msg.channelTurnSources,
+      messages: currentInput,
+    }),
+  );
   if (currentInput !== messagesToSend) {
     inboundUserTranscriptLines = buildInboundUserTranscriptLines(currentInput);
   }
@@ -282,7 +269,7 @@ export async function prepareListenerTurn(params: {
   return {
     kind: "ready",
     getCachedAgent: () => cachedAgent,
-    currentInput,
+    turnInput,
     inboundUserTranscriptLines,
     pendingNormalizationInterruptedToolCallIds: [
       ...queuedInterruptedToolCallIds,

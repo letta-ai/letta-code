@@ -258,6 +258,7 @@ export async function handleCreateAgentCommand(
     const result = await createAgentForPersonality({
       personalityId: parsed.personality,
       model: parsed.model,
+      ...(parsed.tags && { tags: parsed.tags }),
     });
 
     // Pin the agent globally (favorites it) unless explicitly disabled

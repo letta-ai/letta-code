@@ -68,10 +68,50 @@ async function reactInSlack(ctx: ChannelMessageActionContext): Promise<string> {
     : `Reaction added on slack (message_id: ${result.messageId})`;
 }
 
+async function downloadSlackFile(
+  ctx: ChannelMessageActionContext,
+): Promise<string> {
+  const { request } = ctx;
+  if (!request.attachmentId?.trim()) {
+    return "Error: Slack download-file requires attachmentId.";
+  }
+  if (!request.messageId?.trim()) {
+    return "Error: Slack download-file requires messageId from the attachment's Slack context.";
+  }
+  if (typeof ctx.adapter.downloadAttachment !== "function") {
+    return "Error: Running Slack adapter does not support attachment downloads.";
+  }
+  const attachment = await ctx.adapter.downloadAttachment({
+    attachmentId: request.attachmentId,
+    chatId: request.chatId,
+    threadId: request.threadId ?? null,
+    messageId: request.messageId,
+  });
+  if (!attachment.localPath) {
+    return `Error: Slack attachment ${request.attachmentId} was not downloaded.`;
+  }
+
+  return `Slack attachment downloaded (local_path: ${attachment.localPath})`;
+}
+
 export const slackMessageActions: ChannelMessageActionAdapter = {
   describeMessageTool() {
     return {
-      actions: ["send", "react", "upload-file"],
+      actions: ["send", "react", "upload-file", "download-file"],
+      schema: {
+        properties: {
+          attachmentId: {
+            type: "string",
+            description:
+              "Slack attachment id for action='download-file'. Copy attachment_id from the channel notification.",
+          },
+          messageId: {
+            type: "string",
+            description:
+              "Target Slack message id for action='react', or the source message id containing attachmentId for action='download-file'.",
+          },
+        },
+      },
     };
   },
 
@@ -93,6 +133,8 @@ export const slackMessageActions: ChannelMessageActionAdapter = {
         return await sendSlackMessage(ctx);
       case "react":
         return await reactInSlack(ctx);
+      case "download-file":
+        return await downloadSlackFile(ctx);
       default:
         return `Error: Action "${ctx.request.action}" is not supported on slack.`;
     }

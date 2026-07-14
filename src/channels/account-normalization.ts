@@ -1,5 +1,6 @@
 import { migratePermissionMode } from "@/permissions/mode";
 import { isRecord } from "@/utils/type-guards";
+import { normalizeSlackAllowBotsMode } from "./slack/bot-policy";
 import type {
   ChannelAccount,
   ChannelDefaultPermissionMode,
@@ -31,6 +32,7 @@ export const SNAKE_TO_CAMEL: Record<string, string> = {
   account_uuid: "accountUuid",
   allowed_channels: "allowedChannels",
   allowed_groups: "allowedGroups",
+  allow_bots: "allowBots",
   auto_thread_on_mention: "autoThreadOnMention",
   base_url: "baseUrl",
   acknowledge_message_reaction: "acknowledgeMessageReaction",
@@ -171,6 +173,9 @@ export function normalizeLoadedAccount<T extends ChannelAccount>(
     delete (next as unknown as Record<string, unknown>).progressUi;
     (next as SlackChannelAccount).listenMode =
       (next as SlackChannelAccount).listenMode === true;
+    (next as SlackChannelAccount).allowBots = normalizeSlackAllowBotsMode(
+      (next as SlackChannelAccount).allowBots,
+    );
   }
   if (isDiscordChannelAccount(next)) {
     const migrated = migratePermissionMode(

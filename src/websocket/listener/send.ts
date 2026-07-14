@@ -30,6 +30,7 @@ import {
   MAX_PRE_STREAM_RECOVERY,
   PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
+import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
 import { ensureListenerModAdapter } from "./mod-adapter";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
@@ -46,6 +47,7 @@ import {
 } from "./recovery";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
+import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime } from "./types";
@@ -383,22 +385,26 @@ export async function resolveStaleApprovals(
     }
 
     try {
-      const continuationMessages: Array<MessageCreate | ApprovalCreate> = [
+      let continuationInput = createTurnInputState([
         {
           type: "approval",
           approvals: approvalResults,
           otid: crypto.randomUUID(),
         },
-      ];
+      ]);
       const consumedQueuedTurn = consumeQueuedTurn(runtime);
       if (consumedQueuedTurn) {
         const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-        continuationMessages.push(...queuedTurn.messages);
+        continuationInput = appendQueuedTurnToInput(
+          continuationInput,
+          queuedTurn,
+        );
         emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
       }
 
-      const continuationMessagesWithSkillContent =
-        injectQueuedSkillContent(continuationMessages);
+      const continuationMessagesWithSkillContent = injectQueuedSkillContent(
+        continuationInput.messages,
+      );
       const recoverySendResult = await sendApprovalContinuationWithRetry(
         recoveryConversationId,
         continuationMessagesWithSkillContent,
@@ -408,6 +414,12 @@ export async function resolveStaleApprovals(
           background: true,
           workingDirectory: recoveryWorkingDirectory,
           preparedToolContext: preparedToolContext.preparedToolContext,
+          ...(continuationInput.imageFailureModesByMessageOtid
+            ? {
+                imageFailureModesByMessageOtid:
+                  continuationInput.imageFailureModesByMessageOtid,
+              }
+            : {}),
         },
         socket,
         runtime,

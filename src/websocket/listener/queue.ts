@@ -10,17 +10,13 @@ import type {
 import { isCoalescable } from "@/queue/queue-runtime";
 import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import { resizeImageIfNeeded } from "@/utils/image-resize";
-import {
-  type ImageNormalizationFailureMode,
-  normalizeMessageContentImages as normalizeSharedMessageContentImages,
-} from "@/utils/message-image-normalization";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
 import {
   activateChannelTurn,
   dispatchChannelTurnLifecycleEvent,
   finishActiveChannelTurn,
 } from "./channel-turn-session";
+import { getInboundImageFailureMode } from "./image-policy";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
   emitListenerStatus,
@@ -33,7 +29,6 @@ import { resolveRuntimeScope } from "./scope";
 import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
-  InboundMessagePayload,
   IncomingMessage,
   StartListenerOptions,
 } from "./types";
@@ -179,52 +174,6 @@ async function buildChannelTurnProgressBuilder(agentId?: string | null) {
     });
     return createChannelTurnProgressBuilder();
   }
-}
-
-export async function normalizeMessageContentImages(
-  content: MessageCreate["content"],
-  resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
-  failureMode: ImageNormalizationFailureMode = "strict",
-): Promise<MessageCreate["content"]> {
-  return await normalizeSharedMessageContentImages(
-    content,
-    resize,
-    failureMode,
-  );
-}
-
-export async function normalizeInboundMessages(
-  messages: InboundMessagePayload[],
-  resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
-  options: {
-    imageFailureMode?: ImageNormalizationFailureMode;
-  } = {},
-): Promise<InboundMessagePayload[]> {
-  let didChange = false;
-
-  const normalizedMessages = await Promise.all(
-    messages.map(async (message) => {
-      if (!("content" in message)) {
-        return message;
-      }
-
-      const normalizedContent = await normalizeMessageContentImages(
-        message.content,
-        resize,
-        options.imageFailureMode ?? "strict",
-      );
-      if (normalizedContent !== message.content) {
-        didChange = true;
-        return {
-          ...message,
-          content: normalizedContent,
-        };
-      }
-      return message;
-    }),
-  );
-
-  return didChange ? normalizedMessages : messages;
 }
 
 function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
@@ -387,12 +336,26 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasTaskNotification = false;
   let hasCronPrompt = false;
   let hasModContinue = false;
+  let batchImageFailureMode: "strict" | "drop" | null = null;
   for (const item of queuedItems) {
     if (
       !isCoalescable(item.kind) ||
       !hasSameQueueScope(firstQueuedItem, item)
     ) {
       break;
+    }
+
+    if (item.kind === "message") {
+      const itemImageFailureMode = getInboundImageFailureMode(
+        runtime.queuedMessagesByItemId.get(item.id),
+      );
+      if (
+        batchImageFailureMode !== null &&
+        itemImageFailureMode !== batchImageFailureMode
+      ) {
+        break;
+      }
+      batchImageFailureMode = itemImageFailureMode;
     }
 
     queueLen += 1;

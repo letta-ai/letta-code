@@ -258,6 +258,7 @@ export function toAccountSnapshot(
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: account.transcribeVoice === true,
     listenMode: account.listenMode === true,
+    allowBots: account.allowBots ?? false,
     createdAt: account.createdAt,
     updatedAt: account.updatedAt,
   };
@@ -435,6 +436,7 @@ export function getChannelConfigSnapshot(
       account.defaultPermissionMode ?? DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: account.transcribeVoice === true,
     listenMode: account.listenMode === true,
+    allowBots: account.allowBots ?? false,
   };
 }
 

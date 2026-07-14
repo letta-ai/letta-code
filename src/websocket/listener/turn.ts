@@ -11,8 +11,6 @@ import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
   normalizeStreamErrorTypeToStopReason,
-  rebuildInputWithFreshDenials,
-  refreshInputOtidsForNewRequest,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import {
@@ -74,6 +72,11 @@ import { handleApprovalStop } from "./turn-approval";
 import { runListenerTurnCleanup } from "./turn-cleanup";
 import { completeSuccessfulListenerTurn } from "./turn-completion";
 import { releaseListenerTurnContext } from "./turn-context";
+import {
+  rebuildTurnInputWithFreshDenials,
+  refreshTurnInputOtidsForNewRequest,
+  updateTurnInputMessagesPreservingOtids,
+} from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { createTurnInputSender } from "./turn-send";
 import { prepareListenerTurn } from "./turn-setup";
@@ -232,7 +235,7 @@ export async function handleIncomingMessage(
       runtime.lastTerminalLoopErrorMessage = formattedError ?? setup.reason;
       return;
     }
-    let currentInput = setup.currentInput;
+    let turnInput = setup.turnInput;
     const inboundUserTranscriptLines = setup.inboundUserTranscriptLines;
     const providerFallback = createProviderFallbackState(
       setup.getCachedAgent(),
@@ -247,7 +250,12 @@ export async function handleIncomingMessage(
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
       preparedToolContext: preparedToolContext.preparedToolContext,
-      skipImageNormalization: true,
+      ...(turnInput.imageFailureModesByMessageOtid
+        ? {
+            imageFailureModesByMessageOtid:
+              turnInput.imageFailureModesByMessageOtid,
+          }
+        : {}),
       ...(providerFallback.overrideModel
         ? { overrideModel: providerFallback.overrideModel }
         : {}),
@@ -273,11 +281,16 @@ export async function handleIncomingMessage(
       onTerminal: noteFinalization,
     });
 
-    const currentInputWithSkillContent = injectQueuedSkillContent(currentInput);
+    const currentInputWithSkillContent = injectQueuedSkillContent(
+      turnInput.messages,
+    );
     const initialSendResult = await turnInputSender.send(
       currentInputWithSkillContent,
     );
-    currentInput = currentInputWithSkillContent;
+    turnInput = updateTurnInputMessagesPreservingOtids(
+      turnInput,
+      currentInputWithSkillContent,
+    );
     const initialStream = turnInputSender.accept(initialSendResult);
     if (!initialStream) {
       return;
@@ -287,7 +300,7 @@ export async function handleIncomingMessage(
     markAwaitingAcceptedApprovalContinuationRunId(
       runtime,
       turnLease,
-      currentInput,
+      turnInput.messages,
     );
     setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", {
       agent_id: agentId,
@@ -486,13 +499,13 @@ export async function handleIncomingMessage(
             const agent = await getBackend().retrieveAgent(agentId || "");
             const { pendingApprovals: existingApprovals } =
               await getResumeDataFromBackend(agent, requestedConversationId);
-            currentInput = rebuildInputWithFreshDenials(
-              currentInput,
+            turnInput = rebuildTurnInputWithFreshDenials(
+              turnInput,
               existingApprovals ?? [],
               "Auto-denied: stale approval from interrupted session",
             );
           } catch {
-            currentInput = rebuildInputWithFreshDenials(currentInput, [], "");
+            turnInput = rebuildTurnInputWithFreshDenials(turnInput, [], "");
           }
           if (finishIfInterrupted(lastRunId || runtime.activeRunId)) {
             break;
@@ -502,12 +515,16 @@ export async function handleIncomingMessage(
             agent_id: agentId,
             conversation_id: conversationId,
           });
-          const retryInputWithSkillContent =
-            injectQueuedSkillContent(currentInput);
+          const retryInputWithSkillContent = injectQueuedSkillContent(
+            turnInput.messages,
+          );
           const retrySendResult = await turnInputSender.send(
             retryInputWithSkillContent,
           );
-          currentInput = retryInputWithSkillContent;
+          turnInput = updateTurnInputMessagesPreservingOtids(
+            turnInput,
+            retryInputWithSkillContent,
+          );
           const retryStream = turnInputSender.accept(retrySendResult);
           if (!retryStream) {
             return;
@@ -517,7 +534,7 @@ export async function handleIncomingMessage(
           markAwaitingAcceptedApprovalContinuationRunId(
             runtime,
             turnLease,
-            currentInput,
+            turnInput.messages,
           );
           setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", {
             agent_id: agentId,
@@ -545,15 +562,15 @@ export async function handleIncomingMessage(
           });
 
           if (attempt >= EMPTY_RESPONSE_MAX_RETRIES) {
-            currentInput = [
-              ...currentInput,
+            turnInput = updateTurnInputMessagesPreservingOtids(turnInput, [
+              ...turnInput.messages,
               {
                 type: "message" as const,
                 role: "system" as const,
                 content:
                   "<system-reminder>The previous response was empty. Please provide a response with either text content or a tool call.</system-reminder>",
               },
-            ];
+            ]);
           }
 
           emitRetryDelta(socket, runtime, {
@@ -571,18 +588,22 @@ export async function handleIncomingMessage(
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
-          currentInput = refreshInputOtidsForNewRequest(currentInput);
+          turnInput = refreshTurnInputOtidsForNewRequest(turnInput);
 
           setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
             agent_id: agentId,
             conversation_id: conversationId,
           });
-          const retryInputWithSkillContent =
-            injectQueuedSkillContent(currentInput);
+          const retryInputWithSkillContent = injectQueuedSkillContent(
+            turnInput.messages,
+          );
           const retrySendResult = await turnInputSender.send(
             retryInputWithSkillContent,
           );
-          currentInput = retryInputWithSkillContent;
+          turnInput = updateTurnInputMessagesPreservingOtids(
+            turnInput,
+            retryInputWithSkillContent,
+          );
           const retryStream = turnInputSender.accept(retrySendResult);
           if (!retryStream) {
             return;
@@ -592,7 +613,7 @@ export async function handleIncomingMessage(
           markAwaitingAcceptedApprovalContinuationRunId(
             runtime,
             turnLease,
-            currentInput,
+            turnInput.messages,
           );
           setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", {
             agent_id: agentId,
@@ -648,18 +669,22 @@ export async function handleIncomingMessage(
           if (turnAbortSignal.aborted) {
             throw new Error("Cancelled by user");
           }
-          currentInput = refreshInputOtidsForNewRequest(currentInput);
+          turnInput = refreshTurnInputOtidsForNewRequest(turnInput);
 
           setTurnLoopStatus(runtime, turnLease, "SENDING_API_REQUEST", {
             agent_id: agentId,
             conversation_id: conversationId,
           });
-          const retryInputWithSkillContent =
-            injectQueuedSkillContent(currentInput);
+          const retryInputWithSkillContent = injectQueuedSkillContent(
+            turnInput.messages,
+          );
           const retrySendResult = await turnInputSender.send(
             retryInputWithSkillContent,
           );
-          currentInput = retryInputWithSkillContent;
+          turnInput = updateTurnInputMessagesPreservingOtids(
+            turnInput,
+            retryInputWithSkillContent,
+          );
           const retryStream = turnInputSender.accept(retrySendResult);
           if (!retryStream) {
             return;
@@ -669,7 +694,7 @@ export async function handleIncomingMessage(
           markAwaitingAcceptedApprovalContinuationRunId(
             runtime,
             turnLease,
-            currentInput,
+            turnInput.messages,
           );
           setTurnLoopStatus(runtime, turnLease, "PROCESSING_API_RESPONSE", {
             agent_id: agentId,
@@ -736,7 +761,7 @@ export async function handleIncomingMessage(
         dequeuedBatchId: activeDequeuedBatchId,
         runId,
         msgRunIds,
-        currentInput,
+        turnInput,
         pendingNormalizationInterruptedToolCallIds,
         turnToolContextId,
         turnLease,
@@ -768,7 +793,7 @@ export async function handleIncomingMessage(
         return;
       }
 
-      currentInput = approvalResult.currentInput;
+      turnInput = approvalResult.turnInput;
       activeDequeuedBatchId = approvalResult.dequeuedBatchId;
       pendingNormalizationInterruptedToolCallIds =
         approvalResult.pendingNormalizationInterruptedToolCallIds;

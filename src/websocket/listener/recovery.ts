@@ -1,10 +1,6 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type {
-  ApprovalCreate,
-  LettaStreamingResponse,
-} from "@letta-ai/letta-client/resources/agents/messages";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   type ApprovalDecision,
   executeApprovalBatch,
@@ -25,6 +21,7 @@ import {
 import { getBackend } from "@/backend";
 import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
 import { getChannelRegistry } from "@/channels/registry";
+import type { ChannelTurnSource } from "@/channels/types";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { formatPermissionDenial } from "@/permissions/format-denial";
@@ -44,10 +41,12 @@ import {
   recoverActiveChannelTurn,
 } from "./channel-turn-session";
 import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
+import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
   createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
+  emitToolExecutionAbortedEvents,
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
   normalizeToolReturnWireMessage,
@@ -68,6 +67,7 @@ import {
 } from "./runtime";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import type { ListenerTransport } from "./transport";
+import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 import { finishListenerTurn } from "./turn-terminal";
@@ -737,30 +737,33 @@ export async function resolveRecoveredApprovalResponse(
         shouldEmit: () => runtime.turnLifecycle.isCurrent(recoveryLease),
       },
     );
-    await ensureSecretsHydrated(runtime.listener, recovered.agentId);
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      return true;
-    }
-    const preparedToolContext = await prepareToolExecutionContext({
-      agentId: recovered.agentId,
-      conversationId: recovered.conversationId,
-      workingDirectory,
-      permissionModeState: getOrCreateConversationPermissionModeStateRef(
-        runtime.listener,
-        recovered.agentId,
-        recovered.conversationId,
-      ),
-      modEvents: ensureListenerModAdapter(runtime.listener).events,
-    });
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      return true;
-    }
-    runtime.currentToolset = preparedToolContext.toolset;
-    runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
-    runtime.currentLoadedTools =
-      preparedToolContext.preparedToolContext.loadedToolNames;
     let approvalResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
     try {
+      // Hydration and tool-context preparation sit inside the try: they run
+      // after the client_tool_start events above, so a throw here would
+      // otherwise leave those lifecycle events orphaned.
+      await ensureSecretsHydrated(runtime.listener, recovered.agentId);
+      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        return true;
+      }
+      const preparedToolContext = await prepareToolExecutionContext({
+        agentId: recovered.agentId,
+        conversationId: recovered.conversationId,
+        workingDirectory,
+        permissionModeState: getOrCreateConversationPermissionModeStateRef(
+          runtime.listener,
+          recovered.agentId,
+          recovered.conversationId,
+        ),
+        modEvents: ensureListenerModAdapter(runtime.listener).events,
+      });
+      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        return true;
+      }
+      runtime.currentToolset = preparedToolContext.toolset;
+      runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
+      runtime.currentLoadedTools =
+        preparedToolContext.preparedToolContext.loadedToolNames;
       approvalResults = await executeApprovals(decisions, undefined, {
         abortSignal: recoveryLease.signal,
         onStreamingOutput: emitToolExecutionOutput,
@@ -775,6 +778,28 @@ export async function resolveRecoveredApprovalResponse(
             : undefined,
         channelTurnSources: executionChannelTurnSources,
       });
+    } catch (error) {
+      // Execution threw before results exist, so the finished-events
+      // emission below never runs. Close the client_tool_start lifecycle
+      // events explicitly or observer UIs shimmer these tool calls forever.
+      // Flush buffered tool output first so no progress frame lands after
+      // the terminal end events. Gate only on lease ownership: unlike the
+      // normal turn path, recovered approvals do not unwind through the
+      // turn.ts interrupt emission, so an aborted recovery that throws has
+      // no other owner for these terminal events (the outer catch below
+      // finalizes the lease without emitting ends). isCurrent stays true
+      // while the lease is cancelling, so abort+throw still emits exactly
+      // once; only a replacement owner suppresses emission.
+      emitToolExecutionOutput.flush();
+      if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        emitToolExecutionAbortedEvents(socket, runtime, {
+          toolCallIds: approvedToolCallIds,
+          runId: executionRunId,
+          agentId: recovered.agentId,
+          conversationId: recovered.conversationId,
+        });
+      }
+      throw error;
     } finally {
       emitToolExecutionOutput.flush();
     }
@@ -803,19 +828,24 @@ export async function resolveRecoveredApprovalResponse(
     }
     emitRuntimeStateUpdates(runtime, scope);
 
-    const continuationMessages: Array<MessageCreate | ApprovalCreate> = [
+    let continuationInput = createTurnInputState([
       {
         type: "approval",
         approvals: approvalResults,
         otid: crypto.randomUUID(),
       },
-    ];
+    ]);
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
+    let queuedChannelTurnSources: ChannelTurnSource[] | undefined;
     const consumedQueuedTurn = consumeQueuedTurn(runtime);
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
       continuationBatchId = dequeuedBatch.batchId;
-      continuationMessages.push(...queuedTurn.messages);
+      continuationInput = appendQueuedTurnToInput(
+        continuationInput,
+        queuedTurn,
+      );
+      queuedChannelTurnSources = queuedTurn.channelTurnSources;
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
     }
 
@@ -828,7 +858,10 @@ export async function resolveRecoveredApprovalResponse(
         type: "message",
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
-        messages: continuationMessages,
+        messages: continuationInput.messages,
+        ...(queuedChannelTurnSources?.length
+          ? { channelTurnSources: queuedChannelTurnSources }
+          : {}),
       },
       socket,
       runtime,

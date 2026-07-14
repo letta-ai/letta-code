@@ -12,6 +12,7 @@ const dirs = [
   "src/cli",
   "src/cron",
   "src/experiments",
+  "src/helpers",
   "src/hooks",
   "src/lsp",
   "src/mods",

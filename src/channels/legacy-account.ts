@@ -115,6 +115,7 @@ export function makeDefaultLegacyAccount(
     defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: config.transcribeVoice === true,
     listenMode: config.listenMode === true,
+    allowBots: config.allowBots ?? false,
     createdAt: now,
     updatedAt: now,
   };

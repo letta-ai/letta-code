@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type WebSocket from "ws";
 import { getGitContext } from "@/cli/helpers/git-context";
+import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
 import {
   isCheckoutBranchCommand,
   isSearchBranchesCommand,
@@ -26,7 +27,7 @@ export function handleGitBranchCommand(
   if (isSearchBranchesCommand(parsed)) {
     runDetachedListenerTask("search_branches", async () => {
       try {
-        const cwd = parsed.cwd ?? runtime.bootWorkingDirectory;
+        const cwd = parsed.cwd ?? getBootWorkingDirectory(runtime);
         const maxResults = parsed.max_results ?? 20;
         const execFileAsync = promisify(execFile);
 
@@ -95,7 +96,7 @@ export function handleGitBranchCommand(
   if (isCheckoutBranchCommand(parsed)) {
     runDetachedListenerTask("checkout_branch", async () => {
       try {
-        const cwd = parsed.cwd ?? runtime.bootWorkingDirectory;
+        const cwd = parsed.cwd ?? getBootWorkingDirectory(runtime);
         const execFileAsync = promisify(execFile);
 
         const args = parsed.create

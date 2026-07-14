@@ -51,6 +51,7 @@ import {
 } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
+  getBootWorkingDirectory,
   getConversationWorkingDirectory,
   setConversationWorkingDirectory,
 } from "./cwd";
@@ -85,12 +86,7 @@ import {
   emitRetryDelta,
   emitStateSync,
 } from "./protocol-outbound";
-import {
-  consumeQueuedTurn,
-  normalizeInboundMessages,
-  normalizeMessageContentImages,
-  scheduleQueuePump,
-} from "./queue";
+import { consumeQueuedTurn, scheduleQueuePump } from "./queue";
 import {
   getApprovalToolCallDesyncErrorText,
   recoverApprovalStateForSync,
@@ -244,7 +240,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       },
     },
     bootWorkingDirectory: {
-      get: () => listener.bootWorkingDirectory,
+      get: () => getBootWorkingDirectory(listener),
       set: (value: string) => {
         listener.bootWorkingDirectory = value;
       },
@@ -483,8 +479,6 @@ export const __listenClientTestUtils = {
   shouldAttemptPostStopApprovalRecovery,
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
-  normalizeMessageContentImages,
-  normalizeInboundMessages,
   consumeQueuedTurn,
   handleIncomingMessage,
   handleApprovalResponseInput,

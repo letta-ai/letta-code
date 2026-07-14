@@ -43,7 +43,7 @@ import {
   getActiveChannelTurnProgressContext,
 } from "./channel-turn-session";
 import { SYSTEM_REMINDER_RE } from "./constants";
-import { getConversationWorkingDirectory } from "./cwd";
+import { getConversationWorkingDirectory, getExportedCwdMap } from "./cwd";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { listListenerModCommands } from "./mod-commands";
 import { getConversationPermissionModeState } from "./permission-mode";
@@ -444,7 +444,6 @@ export function buildDeviceStatus(
       return "auto" as const;
     }
   })();
-  // Read mode from the persistent ListenerRuntime map (outlives ConversationRuntime).
   const conversationPermissionModeState = getConversationPermissionModeState(
     listener,
     scopedAgentId,
@@ -496,10 +495,11 @@ export function buildDeviceStatus(
       : null,
     ...(params === undefined
       ? {
-          cwd_map: Object.fromEntries(listener.workingDirectoryByConversation),
+          cwd_map: getExportedCwdMap(listener),
           boot_working_directory: listener.bootWorkingDirectory,
         }
       : {}),
+    cwd_revision: listener.workingDirectoryRevision ?? 0,
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
     supported_commands: FROZEN_SUPPORTED_COMMANDS,
     ...buildModCommandsField(listener),
@@ -525,6 +525,7 @@ export function buildLoopStatus(
     return {
       status: "WAITING_ON_INPUT",
       active_run_ids: [],
+      executing_tool_call_ids: [],
     };
   }
   const scope = getScopeForRuntime(runtime, params);
@@ -556,6 +557,13 @@ export function buildLoopStatus(
         : conversationRuntime?.activeRunId
           ? [conversationRuntime.activeRunId]
           : [],
+    // Gate on the *reported* status so downgrades (interrupted cache) also
+    // clear the executing set, and stale runtime state never leaks into
+    // frames emitted while the loop is not executing tools.
+    executing_tool_call_ids:
+      status === "EXECUTING_CLIENT_SIDE_TOOL" && conversationRuntime
+        ? [...conversationRuntime.turnLifecycle.executingToolCallIds]
+        : [],
   };
 }
 
