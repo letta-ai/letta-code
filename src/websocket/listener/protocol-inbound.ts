@@ -1221,13 +1221,12 @@ export function isCreateAgentCommand(
   value: unknown,
 ): value is CreateAgentCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    personality?: unknown;
-    model?: unknown;
-    pin_global?: unknown;
-  };
+  /**
+   * Treat inbound values as untrusted protocol data.
+   * Each supported field is validated before narrowing the command type.
+   * Optional tags must contain only strings.
+   */
+  const c = value as Record<string, unknown>;
   return (
     c.type === "create_agent" &&
     typeof c.request_id === "string" &&
@@ -1237,6 +1236,7 @@ export function isCreateAgentCommand(
       c.personality === "linus" ||
       c.personality === "kawaii") &&
     (c.model === undefined || typeof c.model === "string") &&
+    (c.tags === undefined || isStringArray(c.tags)) &&
     (c.pin_global === undefined || typeof c.pin_global === "boolean")
   );
 }

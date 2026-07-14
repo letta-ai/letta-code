@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   GIT_MEMORY_ENABLED_TAG,
   LETTA_CODE_ORIGIN_TAG,
+  ONBOARDING_ORIGIN_TAG,
 } from "@/agent/agent-tags";
 import {
   buildCreateAgentRequestForPersonality,
@@ -69,11 +70,12 @@ describe("buildCreateAgentRequestForPersonality", () => {
   test("appends extra tags after the Letta Code tags", async () => {
     const request = await buildCreateAgentRequestForPersonality({
       personalityId: "memo",
-      extraTags: ["favorite:user:user-1"],
+      extraTags: [ONBOARDING_ORIGIN_TAG, "favorite:user:user-1"],
     });
     expect(request.tags).toEqual([
       LETTA_CODE_ORIGIN_TAG,
       GIT_MEMORY_ENABLED_TAG,
+      ONBOARDING_ORIGIN_TAG,
       "favorite:user:user-1",
     ]);
   });
