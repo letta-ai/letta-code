@@ -270,13 +270,18 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   await settingsManager.initialize();
   await applyStartupPermissionMode({});
   telemetry.setSurface(getListenerTelemetrySurface());
-  telemetry.init();
+  telemetry.init({ handleSigint: false });
 
   // Register signal handlers so the listener can clean up child processes
   // (subagents, bash commands, PTY sessions) before exiting. Without these,
   // SIGTERM from the desktop app only kills the listener process itself,
   // orphaning its descendants which accumulate over time.
-  const handleShutdownSignal = async (): Promise<void> => {
+  let isShuttingDown = false;
+  const handleShutdownSignal = async (
+    signal: "SIGINT" | "SIGHUP" | "SIGTERM",
+  ): Promise<void> => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
     try {
       const { stopListenerClient, isListenerActive } = await import(
         "@/websocket/listen-client"
@@ -294,11 +299,13 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       // Best-effort cleanup — don't block exit
     }
     await flushRemoteSettingsWrites();
+    await flushListenerTelemetryEnd(`listener_${signal.toLowerCase()}`);
     process.exit(0);
   };
 
-  process.once("SIGTERM", handleShutdownSignal);
-  process.once("SIGINT", handleShutdownSignal);
+  process.once("SIGTERM", () => void handleShutdownSignal("SIGTERM"));
+  process.once("SIGINT", () => void handleShutdownSignal("SIGINT"));
+  process.once("SIGHUP", () => void handleShutdownSignal("SIGHUP"));
 
   const exitWithTelemetry = async (
     code: number,

@@ -5,30 +5,25 @@
  * restarts. Mirrors the in-memory Map keys used by cwd.ts and permissionMode.ts.
  */
 
-import { randomUUID } from "node:crypto";
 import {
   existsSync,
-  linkSync,
-  mkdirSync,
   readFileSync,
   renameSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
-import {
-  link,
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { isConfirmedUnusableDirectory } from "@/helpers/usable-directory";
 import type { PermissionMode } from "@/permissions/mode";
+import {
+  flushAbandonedRemoteSettingsLock,
+  releaseRemoteSettingsLock,
+  releaseRemoteSettingsLockSync,
+  tryAcquireRemoteSettingsLock,
+  tryAcquireRemoteSettingsLockSync,
+} from "./remote-settings-lock";
 
 /** Persisted permission mode state for a single conversation. */
 export interface PersistedPermissionModeState {
@@ -64,15 +59,11 @@ let _settledGeneration = 0;
 let _pendingPatches: PendingRemoteSettingsPatch[] = [];
 let _writeLoop: Promise<void> | null = null;
 let _retryTimer: ReturnType<typeof setTimeout> | null = null;
-let _lockCleanupTimer: ReturnType<typeof setTimeout> | null = null;
-let _ownsRemoteSettingsLock = false;
 
 const REMOTE_SETTINGS_RETRY_DELAY_MS = 250;
-const REMOTE_SETTINGS_STALE_LOCK_MS = 30_000;
 const REMOTE_SETTINGS_FLUSH_TIMEOUT_MS = 1_000;
 const REMOTE_SETTINGS_FLUSH_RETRY_MIN_MS = 10;
 const REMOTE_SETTINGS_FLUSH_RETRY_JITTER_MS = 30;
-const REMOTE_SETTINGS_LOCK_OWNER = `${process.pid}-${randomUUID()}`;
 
 function getRemoteSettingsHome(): string {
   return process.env.HOME || homedir();
@@ -158,261 +149,25 @@ function hasErrorCode(error: unknown, code: string): boolean {
   );
 }
 
-function getRemoteSettingsLockPath(): string {
-  return `${getRemoteSettingsPath()}.lock`;
+function getRemoteSettingsLockPath(settingsPath: string): string {
+  return `${settingsPath}.lock`;
 }
 
-function isLockOwnerProcessAlive(owner: string): boolean {
-  const separatorIndex = owner.indexOf("-");
-  const ownerPid = Number(
-    separatorIndex === -1 ? owner : owner.slice(0, separatorIndex),
-  );
-  if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0) {
-    return false;
-  }
-
+function readCurrentRemoteSettingsSync(
+  settingsPath: string,
+): RemoteSettings | null {
   try {
-    process.kill(ownerPid, 0);
-    return true;
-  } catch (error) {
-    return hasErrorCode(error, "EPERM");
-  }
-}
-
-function isRemoteSettingsLockStaleSync(lockPath: string): boolean {
-  try {
-    if (isLockOwnerProcessAlive(readFileSync(lockPath, "utf-8"))) {
-      return false;
-    }
-  } catch {
-    // An interrupted acquisition may not have written an owner file.
-  }
-  try {
-    return (
-      Date.now() - statSync(lockPath).mtimeMs > REMOTE_SETTINGS_STALE_LOCK_MS
-    );
-  } catch {
-    return false;
-  }
-}
-
-async function isRemoteSettingsLockStale(lockPath: string): Promise<boolean> {
-  try {
-    if (isLockOwnerProcessAlive(await readFile(lockPath, "utf-8"))) {
-      return false;
-    }
-  } catch {
-    // An interrupted acquisition may not have written an owner file.
-  }
-  try {
-    return (
-      Date.now() - (await stat(lockPath)).mtimeMs >
-      REMOTE_SETTINGS_STALE_LOCK_MS
-    );
-  } catch {
-    return false;
-  }
-}
-
-function reclaimAbandonedOwnLockSync(lockPath: string): boolean {
-  if (_ownsRemoteSettingsLock) return false;
-  try {
-    if (readFileSync(lockPath, "utf-8") !== REMOTE_SETTINGS_LOCK_OWNER) {
-      return false;
-    }
-    rmSync(lockPath, { force: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function reclaimAbandonedOwnLock(lockPath: string): Promise<boolean> {
-  if (_ownsRemoteSettingsLock) return false;
-  try {
-    if ((await readFile(lockPath, "utf-8")) !== REMOTE_SETTINGS_LOCK_OWNER) {
-      return false;
-    }
-    await rm(lockPath, { force: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function scheduleAbandonedOwnLockCleanup(): void {
-  if (_lockCleanupTimer) return;
-  _lockCleanupTimer = setTimeout(() => {
-    _lockCleanupTimer = null;
-    if (_ownsRemoteSettingsLock) return;
-
-    const lockPath = getRemoteSettingsLockPath();
-    if (reclaimAbandonedOwnLockSync(lockPath)) return;
-    try {
-      if (readFileSync(lockPath, "utf-8") === REMOTE_SETTINGS_LOCK_OWNER) {
-        scheduleAbandonedOwnLockCleanup();
-      }
-    } catch (error) {
-      if (!hasErrorCode(error, "ENOENT")) {
-        scheduleAbandonedOwnLockCleanup();
-      }
-    }
-  }, REMOTE_SETTINGS_RETRY_DELAY_MS);
-  _lockCleanupTimer.unref();
-}
-
-function tryAcquireRemoteSettingsLockSync(): boolean {
-  const lockPath = getRemoteSettingsLockPath();
-  try {
-    mkdirSync(path.dirname(lockPath), { recursive: true });
-  } catch {
-    return false;
-  }
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const candidatePath = `${lockPath}.${REMOTE_SETTINGS_LOCK_OWNER}.${randomUUID()}.candidate`;
-    let acquisitionError: unknown;
-    try {
-      writeFileSync(candidatePath, REMOTE_SETTINGS_LOCK_OWNER, { flag: "wx" });
-      linkSync(candidatePath, lockPath);
-    } catch (error) {
-      acquisitionError = error;
-    }
-    try {
-      rmSync(candidatePath, { force: true });
-    } catch {
-      // Best-effort cleanup; candidate names are unique per attempt.
-    }
-    if (acquisitionError === undefined) {
-      _ownsRemoteSettingsLock = true;
-      return true;
-    }
-    if (
-      hasErrorCode(acquisitionError, "EEXIST") &&
-      reclaimAbandonedOwnLockSync(lockPath)
-    ) {
-      continue;
-    }
-    if (
-      attempt > 0 ||
-      !hasErrorCode(acquisitionError, "EEXIST") ||
-      !isRemoteSettingsLockStaleSync(lockPath)
-    ) {
-      return false;
-    }
-    const stalePath = `${lockPath}.${REMOTE_SETTINGS_LOCK_OWNER}.${Date.now()}.stale`;
-    try {
-      renameSync(lockPath, stalePath);
-      rmSync(stalePath, { recursive: true, force: true });
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
-
-async function tryAcquireRemoteSettingsLock(): Promise<boolean> {
-  const lockPath = getRemoteSettingsLockPath();
-  try {
-    await mkdir(path.dirname(lockPath), { recursive: true });
-  } catch {
-    return false;
-  }
-
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const candidatePath = `${lockPath}.${REMOTE_SETTINGS_LOCK_OWNER}.${randomUUID()}.candidate`;
-    let acquisitionError: unknown;
-    try {
-      await writeFile(candidatePath, REMOTE_SETTINGS_LOCK_OWNER, {
-        flag: "wx",
-      });
-      await link(candidatePath, lockPath);
-    } catch (error) {
-      acquisitionError = error;
-    }
-    await rm(candidatePath, { force: true }).catch(() => {});
-    if (acquisitionError === undefined) {
-      _ownsRemoteSettingsLock = true;
-      return true;
-    }
-    if (
-      hasErrorCode(acquisitionError, "EEXIST") &&
-      (await reclaimAbandonedOwnLock(lockPath))
-    ) {
-      continue;
-    }
-    if (
-      attempt > 0 ||
-      !hasErrorCode(acquisitionError, "EEXIST") ||
-      !(await isRemoteSettingsLockStale(lockPath))
-    ) {
-      return false;
-    }
-    const stalePath = `${lockPath}.${REMOTE_SETTINGS_LOCK_OWNER}.${Date.now()}.stale`;
-    try {
-      await rename(lockPath, stalePath);
-      await rm(stalePath, { recursive: true, force: true });
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
-
-function releaseRemoteSettingsLockSync(): void {
-  let released = false;
-  try {
-    if (
-      readFileSync(getRemoteSettingsLockPath(), "utf-8") !==
-      REMOTE_SETTINGS_LOCK_OWNER
-    ) {
-      return;
-    }
-    rmSync(getRemoteSettingsLockPath(), { force: true });
-    released = true;
-  } catch {
-    // A later local writer reclaims this token; other processes wait for stale recovery.
-  } finally {
-    _ownsRemoteSettingsLock = false;
-  }
-  if (!released) scheduleAbandonedOwnLockCleanup();
-}
-
-async function releaseRemoteSettingsLock(): Promise<void> {
-  let released = false;
-  try {
-    if (
-      (await readFile(getRemoteSettingsLockPath(), "utf-8")) !==
-      REMOTE_SETTINGS_LOCK_OWNER
-    ) {
-      released = true;
-    } else {
-      await rm(getRemoteSettingsLockPath(), { force: true });
-      released = true;
-    }
-  } catch {
-    // Retry a failed removal without blocking unrelated settings persistence.
-  } finally {
-    _ownsRemoteSettingsLock = false;
-  }
-  if (!released) scheduleAbandonedOwnLockCleanup();
-}
-
-function readCurrentRemoteSettingsSync(): RemoteSettings | null {
-  try {
-    return JSON.parse(
-      readFileSync(getRemoteSettingsPath(), "utf-8"),
-    ) as RemoteSettings;
+    return JSON.parse(readFileSync(settingsPath, "utf-8")) as RemoteSettings;
   } catch (error) {
     return hasErrorCode(error, "ENOENT") ? {} : null;
   }
 }
 
-async function readCurrentRemoteSettings(): Promise<RemoteSettings | null> {
+async function readCurrentRemoteSettings(
+  settingsPath: string,
+): Promise<RemoteSettings | null> {
   try {
-    return JSON.parse(
-      await readFile(getRemoteSettingsPath(), "utf-8"),
-    ) as RemoteSettings;
+    return JSON.parse(await readFile(settingsPath, "utf-8")) as RemoteSettings;
   } catch (error) {
     return hasErrorCode(error, "ENOENT") ? {} : null;
   }
@@ -558,14 +313,15 @@ function persistRemoteSettingsSync(generation: number): boolean {
     settleRemoteSettingsGeneration(generation);
     return true;
   }
-  if (!tryAcquireRemoteSettingsLockSync()) {
-    return false;
-  }
-
   const settingsPath = getRemoteSettingsPath();
+  const lock = tryAcquireRemoteSettingsLockSync(
+    getRemoteSettingsLockPath(settingsPath),
+  );
+  if (!lock) return false;
+
   const tempPath = `${settingsPath}.${process.pid}.${generation}.sync.tmp`;
   try {
-    const current = readCurrentRemoteSettingsSync();
+    const current = readCurrentRemoteSettingsSync(settingsPath);
     if (current === null) return false;
     const settings = applyPendingRemoteSettingsPatches(current, generation);
     writeFileSync(tempPath, JSON.stringify(settings, null, 2));
@@ -581,7 +337,7 @@ function persistRemoteSettingsSync(generation: number): boolean {
     } catch {
       // Best-effort cleanup; a later retry overwrites the same temp path.
     }
-    releaseRemoteSettingsLockSync();
+    releaseRemoteSettingsLockSync(lock);
   }
 }
 
@@ -592,16 +348,17 @@ async function persistPendingRemoteSettings(): Promise<void> {
       settleRemoteSettingsGeneration(generation);
       continue;
     }
-    if (!(await tryAcquireRemoteSettingsLock())) {
-      return;
-    }
-
     const settingsPath = getRemoteSettingsPath();
+    const lock = await tryAcquireRemoteSettingsLock(
+      getRemoteSettingsLockPath(settingsPath),
+    );
+    if (!lock) return;
+
     const tempPath = `${settingsPath}.${process.pid}.${generation}.tmp`;
     let published = false;
 
     try {
-      const current = await readCurrentRemoteSettings();
+      const current = await readCurrentRemoteSettings(settingsPath);
       if (current === null) return;
       const settings = applyPendingRemoteSettingsPatches(current, generation);
       await writeFile(tempPath, JSON.stringify(settings, null, 2));
@@ -621,7 +378,7 @@ async function persistPendingRemoteSettings(): Promise<void> {
       if (!published) {
         await rm(tempPath, { force: true }).catch(() => {});
       }
-      await releaseRemoteSettingsLock();
+      await releaseRemoteSettingsLock(lock);
     }
   }
 }
@@ -711,20 +468,32 @@ export function saveRemoteSettingsSync(updates: Partial<RemoteSettings>): void {
 }
 
 export async function flushRemoteSettingsWrites(): Promise<boolean> {
+  const deadline = Date.now() + REMOTE_SETTINGS_FLUSH_TIMEOUT_MS;
   clearRemoteSettingsRetry();
   while (_writeLoop) {
-    await _writeLoop;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return false;
+
+    const writeLoop = _writeLoop;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const completed = await Promise.race([
+      writeLoop.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => resolve(false), remainingMs);
+      }),
+    ]);
+    if (timeout) clearTimeout(timeout);
+    if (!completed) return false;
     clearRemoteSettingsRetry();
   }
 
   if (_settledGeneration >= _settingsGeneration) {
-    return true;
+    return flushAbandonedRemoteSettingsLock(deadline);
   }
 
-  const deadline = Date.now() + REMOTE_SETTINGS_FLUSH_TIMEOUT_MS;
   while (true) {
     if (persistRemoteSettingsSync(_settingsGeneration)) {
-      return true;
+      return flushAbandonedRemoteSettingsLock(deadline);
     }
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) break;
@@ -745,10 +514,6 @@ export async function flushRemoteSettingsWrites(): Promise<boolean> {
  */
 export function resetRemoteSettingsCache(): void {
   clearRemoteSettingsRetry();
-  if (_lockCleanupTimer) {
-    clearTimeout(_lockCleanupTimer);
-    _lockCleanupTimer = null;
-  }
   _cache = null;
   const generation = ++_settingsGeneration;
   _pendingPatches = [];

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -170,6 +171,51 @@ describe("remote settings cwd repair", () => {
     expect(
       JSON.parse(await readFile(getRemoteSettingsPath(), "utf-8")),
     ).toEqual(updates);
+  });
+
+  test("recovers a dead process lock before persisting", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
+    process.env.HOME = path.join(tempRoot, "home");
+
+    const lockPath = `${getRemoteSettingsPath()}.lock`;
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, "99999999-dead-owner");
+
+    saveRemoteSettings({
+      cwdMap: { "conversation:live": "/repository/root" },
+    });
+    expect(await flushRemoteSettingsWrites()).toBe(true);
+    expect(
+      JSON.parse(await readFile(getRemoteSettingsPath(), "utf-8")),
+    ).toEqual({ cwdMap: { "conversation:live": "/repository/root" } });
+  });
+
+  test("takes over an abandoned stale-lock recovery claim", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
+    process.env.HOME = path.join(tempRoot, "home");
+
+    const lockPath = `${getRemoteSettingsPath()}.lock`;
+    const deadToken = "99999999-dead-owner";
+    const tokenHash = createHash("sha256").update(deadToken).digest("hex");
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(lockPath, deadToken);
+    await writeFile(
+      `${lockPath}.recover.${tokenHash}.0`,
+      "99999998-dead-recovery-owner",
+    );
+
+    saveRemoteSettings({
+      permissionModeMap: { "conversation:live": { mode: "acceptEdits" } },
+    });
+    expect(await flushRemoteSettingsWrites()).toBe(true);
+    expect(
+      JSON.parse(await readFile(getRemoteSettingsPath(), "utf-8")),
+    ).toEqual({
+      cwdMap: {},
+      permissionModeMap: {
+        "conversation:live": { mode: "acceptEdits" },
+      },
+    });
   });
 
   test("merges entry patches with settings written by another listener", async () => {
