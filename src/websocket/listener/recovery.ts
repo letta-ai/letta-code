@@ -48,6 +48,7 @@ import { getConversationWorkingDirectory } from "./cwd";
 import {
   createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
+  emitToolExecutionAbortedEvents,
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
   normalizeToolReturnWireMessage,
@@ -737,30 +738,33 @@ export async function resolveRecoveredApprovalResponse(
         shouldEmit: () => runtime.turnLifecycle.isCurrent(recoveryLease),
       },
     );
-    await ensureSecretsHydrated(runtime.listener, recovered.agentId);
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      return true;
-    }
-    const preparedToolContext = await prepareToolExecutionContext({
-      agentId: recovered.agentId,
-      conversationId: recovered.conversationId,
-      workingDirectory,
-      permissionModeState: getOrCreateConversationPermissionModeStateRef(
-        runtime.listener,
-        recovered.agentId,
-        recovered.conversationId,
-      ),
-      modEvents: ensureListenerModAdapter(runtime.listener).events,
-    });
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      return true;
-    }
-    runtime.currentToolset = preparedToolContext.toolset;
-    runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
-    runtime.currentLoadedTools =
-      preparedToolContext.preparedToolContext.loadedToolNames;
     let approvalResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
     try {
+      // Hydration and tool-context preparation sit inside the try: they run
+      // after the client_tool_start events above, so a throw here would
+      // otherwise leave those lifecycle events orphaned.
+      await ensureSecretsHydrated(runtime.listener, recovered.agentId);
+      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        return true;
+      }
+      const preparedToolContext = await prepareToolExecutionContext({
+        agentId: recovered.agentId,
+        conversationId: recovered.conversationId,
+        workingDirectory,
+        permissionModeState: getOrCreateConversationPermissionModeStateRef(
+          runtime.listener,
+          recovered.agentId,
+          recovered.conversationId,
+        ),
+        modEvents: ensureListenerModAdapter(runtime.listener).events,
+      });
+      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        return true;
+      }
+      runtime.currentToolset = preparedToolContext.toolset;
+      runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
+      runtime.currentLoadedTools =
+        preparedToolContext.preparedToolContext.loadedToolNames;
       approvalResults = await executeApprovals(decisions, undefined, {
         abortSignal: recoveryLease.signal,
         onStreamingOutput: emitToolExecutionOutput,
@@ -775,6 +779,28 @@ export async function resolveRecoveredApprovalResponse(
             : undefined,
         channelTurnSources: executionChannelTurnSources,
       });
+    } catch (error) {
+      // Execution threw before results exist, so the finished-events
+      // emission below never runs. Close the client_tool_start lifecycle
+      // events explicitly or observer UIs shimmer these tool calls forever.
+      // Flush buffered tool output first so no progress frame lands after
+      // the terminal end events. Gate only on lease ownership: unlike the
+      // normal turn path, recovered approvals do not unwind through the
+      // turn.ts interrupt emission, so an aborted recovery that throws has
+      // no other owner for these terminal events (the outer catch below
+      // finalizes the lease without emitting ends). isCurrent stays true
+      // while the lease is cancelling, so abort+throw still emits exactly
+      // once; only a replacement owner suppresses emission.
+      emitToolExecutionOutput.flush();
+      if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        emitToolExecutionAbortedEvents(socket, runtime, {
+          toolCallIds: approvedToolCallIds,
+          runId: executionRunId,
+          agentId: recovered.agentId,
+          conversationId: recovered.conversationId,
+        });
+      }
+      throw error;
     } finally {
       emitToolExecutionOutput.flush();
     }
