@@ -769,7 +769,7 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("letta/auto-memory");
   });
 
-  test("local backend subagents inherit the active parent model", async () => {
+  test("local backend reflection inherits the active parent model by default", async () => {
     const result = await resolveSubagentModel({
       subagentType: "reflection",
       recommendedModel: "inherit",
@@ -779,6 +779,31 @@ describe("resolveSubagentModel", () => {
     });
 
     expect(result).toBe("chatgpt-plus-pro/gpt-5.5");
+  });
+
+  test("local backend honors a configured reflection model override", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      recommendedModel: "minimax-m3",
+      parentModelHandle: "chatgpt-plus-pro/gpt-5.5",
+      backendMode: "local",
+      availableHandles: new Set(["minimax-m3"]),
+    });
+
+    expect(result).toBe("minimax/MiniMax-M3");
+  });
+
+  test("environment reflection override takes precedence over subagent config", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      recommendedModel: "inherit",
+      reflectionModelOverride: "minimax-m3",
+      parentModelHandle: "chatgpt-plus-pro/gpt-5.5",
+      backendMode: "local",
+      availableHandles: new Set(["minimax/MiniMax-M3"]),
+    });
+
+    expect(result).toBe("minimax/MiniMax-M3");
   });
 
   test("local backend inherits parent model for non-reflection subagents", async () => {

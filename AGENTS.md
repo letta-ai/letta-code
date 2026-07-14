@@ -219,6 +219,7 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 |----------|--------|
 | `LETTA_DEBUG=1` | Verbose debug output (default in `bun run dev`) |
 | `LETTA_DEBUG=0` | Suppress debug output even in dev mode |
+| `LETTA_REFLECTION_MODEL=<handle>` | Override the model used by automatic reflection/sleep-time subagents |
 | `LETTA_LOCAL_BACKEND_EXPERIMENTAL=1` | Enable local in-process backend |
 | `LETTA_LOCAL_BACKEND_EXECUTOR=deterministic` | Use fake deterministic executor (for tests) |
 
