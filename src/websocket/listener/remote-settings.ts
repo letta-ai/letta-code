@@ -64,6 +64,7 @@ let _settledGeneration = 0;
 let _pendingPatches: PendingRemoteSettingsPatch[] = [];
 let _writeLoop: Promise<void> | null = null;
 let _retryTimer: ReturnType<typeof setTimeout> | null = null;
+let _lockCleanupTimer: ReturnType<typeof setTimeout> | null = null;
 let _ownsRemoteSettingsLock = false;
 
 const REMOTE_SETTINGS_RETRY_DELAY_MS = 250;
@@ -239,6 +240,27 @@ async function reclaimAbandonedOwnLock(lockPath: string): Promise<boolean> {
   }
 }
 
+function scheduleAbandonedOwnLockCleanup(): void {
+  if (_lockCleanupTimer) return;
+  _lockCleanupTimer = setTimeout(() => {
+    _lockCleanupTimer = null;
+    if (_ownsRemoteSettingsLock) return;
+
+    const lockPath = getRemoteSettingsLockPath();
+    if (reclaimAbandonedOwnLockSync(lockPath)) return;
+    try {
+      if (readFileSync(lockPath, "utf-8") === REMOTE_SETTINGS_LOCK_OWNER) {
+        scheduleAbandonedOwnLockCleanup();
+      }
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT")) {
+        scheduleAbandonedOwnLockCleanup();
+      }
+    }
+  }, REMOTE_SETTINGS_RETRY_DELAY_MS);
+  _lockCleanupTimer.unref();
+}
+
 function tryAcquireRemoteSettingsLockSync(): boolean {
   const lockPath = getRemoteSettingsLockPath();
   try {
@@ -338,6 +360,7 @@ async function tryAcquireRemoteSettingsLock(): Promise<boolean> {
 }
 
 function releaseRemoteSettingsLockSync(): void {
+  let released = false;
   try {
     if (
       readFileSync(getRemoteSettingsLockPath(), "utf-8") !==
@@ -346,27 +369,33 @@ function releaseRemoteSettingsLockSync(): void {
       return;
     }
     rmSync(getRemoteSettingsLockPath(), { force: true });
+    released = true;
   } catch {
     // A later local writer reclaims this token; other processes wait for stale recovery.
   } finally {
     _ownsRemoteSettingsLock = false;
   }
+  if (!released) scheduleAbandonedOwnLockCleanup();
 }
 
 async function releaseRemoteSettingsLock(): Promise<void> {
+  let released = false;
   try {
     if (
       (await readFile(getRemoteSettingsLockPath(), "utf-8")) !==
       REMOTE_SETTINGS_LOCK_OWNER
     ) {
-      return;
+      released = true;
+    } else {
+      await rm(getRemoteSettingsLockPath(), { force: true });
+      released = true;
     }
   } catch {
+    // Retry a failed removal without blocking unrelated settings persistence.
+  } finally {
     _ownsRemoteSettingsLock = false;
-    return;
   }
-  await rm(getRemoteSettingsLockPath(), { force: true }).catch(() => {});
-  _ownsRemoteSettingsLock = false;
+  if (!released) scheduleAbandonedOwnLockCleanup();
 }
 
 function readCurrentRemoteSettingsSync(): RemoteSettings | null {
@@ -716,6 +745,10 @@ export async function flushRemoteSettingsWrites(): Promise<boolean> {
  */
 export function resetRemoteSettingsCache(): void {
   clearRemoteSettingsRetry();
+  if (_lockCleanupTimer) {
+    clearTimeout(_lockCleanupTimer);
+    _lockCleanupTimer = null;
+  }
   _cache = null;
   const generation = ++_settingsGeneration;
   _pendingPatches = [];
