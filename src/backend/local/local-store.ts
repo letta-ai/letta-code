@@ -1520,11 +1520,13 @@ export class LocalStore {
     }
     this.ensureAgent(agentId);
     const conversationId = this.nextConversationId();
-    const conversation = createLocalConversationRecord(
-      conversationId,
-      agentId,
-      this.conversationSeq,
-      body,
+    const conversation = this.withConversationModelDefaults(
+      createLocalConversationRecord(
+        conversationId,
+        agentId,
+        this.conversationSeq,
+        body,
+      ),
     );
     const key = this.conversationKey(conversation.id, agentId);
     this.conversations.set(key, conversation);
@@ -1553,11 +1555,7 @@ export class LocalStore {
         body,
         currentIsoTimestamp(),
       );
-      const projected = this.applyConversationModelDefaults(
-        updated,
-        body,
-        created,
-      );
+      const projected = this.withConversationModelDefaults(updated);
       this.conversations.set(
         this.conversationKey(conversationId, created.agent_id),
         projected,
@@ -1565,10 +1563,8 @@ export class LocalStore {
       this.persistConversationState(conversationId, created.agent_id);
       return projected;
     }
-    const updated = this.applyConversationModelDefaults(
+    const updated = this.withConversationModelDefaults(
       updateLocalConversationRecord(current, body, currentIsoTimestamp()),
-      body,
-      current,
     );
     this.conversations.set(
       this.conversationKey(conversationId, current.agent_id),
@@ -1578,19 +1574,15 @@ export class LocalStore {
     return updated;
   }
 
-  private applyConversationModelDefaults(
+  private withConversationModelDefaults(
     conversation: StoredConversation,
-    body: ConversationUpdateBody,
-    previousConversation: StoredConversation,
   ): StoredConversation {
-    const requestedModel = (body as Record<string, unknown>).model;
+    const requestedModel = conversation.model;
     if (typeof requestedModel !== "string") return conversation;
     const normalizedRequestedModel = normalizeLocalModelHandle(
       requestedModel,
       isRecord(conversation.model_settings) ? conversation.model_settings : {},
     );
-    if (previousConversation.model === normalizedRequestedModel)
-      return conversation;
     const defaults = this.modelSettingsDefaultsForModel(
       normalizedRequestedModel,
     );
@@ -1600,9 +1592,10 @@ export class LocalStore {
       : {};
     return {
       ...conversation,
+      model: normalizedRequestedModel,
       model_settings: {
-        ...existingSettings,
         ...defaults,
+        ...existingSettings,
       },
     };
   }
@@ -3005,7 +2998,9 @@ export class LocalStore {
     const existing = this.conversations.get(key);
     if (existing && options.forceRefresh !== true) return existing;
 
-    const normalizedInput = normalizeStoredLocalModelRecord(input);
+    const normalizedInput = this.withConversationModelDefaults(
+      normalizeStoredLocalModelRecord(input),
+    );
     const timing = transcriptTimingForConversationDir(conversationDir);
     const requiresFullTimestampRepair =
       isSyntheticLocalTimestamp(normalizedInput.created_at) ||
