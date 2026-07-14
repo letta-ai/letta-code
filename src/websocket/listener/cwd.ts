@@ -1,8 +1,10 @@
 import path from "node:path";
 import { isConfirmedUnusableDirectory } from "@/helpers/usable-directory";
+import { getFallbackWorkingDirectory } from "@/runtime-context";
 import {
   loadRemoteSettings,
   saveRemoteSettings,
+  saveRemoteSettingsCwdAssignment,
   saveRemoteSettingsSync,
 } from "./remote-settings";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
@@ -26,10 +28,11 @@ export function getConversationWorkingDirectory(
   agentId?: string | null,
   conversationId?: string | null,
 ): string {
+  const bootWorkingDirectory = getBootWorkingDirectory(runtime);
   const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
   const stored = runtime.workingDirectoryByConversation.get(scopeKey);
   if (stored === undefined) {
-    return runtime.bootWorkingDirectory;
+    return bootWorkingDirectory;
   }
 
   // A persisted cwd can become stale if its directory was deleted (e.g. a
@@ -40,10 +43,29 @@ export function getConversationWorkingDirectory(
     runtime.workingDirectoryByConversation.delete(scopeKey);
     bumpWorkingDirectoryRevision(runtime);
     persistCwdMapSync(runtime.workingDirectoryByConversation);
-    return runtime.bootWorkingDirectory;
+    return bootWorkingDirectory;
   }
 
   return stored;
+}
+
+/**
+ * Repair a boot cwd that disappeared while the listener was running. This can
+ * happen when Desktop renames/deletes its default folder or when the directory
+ * is changed externally. Runtime-context fallback resolution avoids returning
+ * a path that would surface ENOENT/ENOTDIR to a user turn.
+ */
+export function getBootWorkingDirectory(runtime: ListenerRuntime): string {
+  if (!isConfirmedUnusableDirectory(runtime.bootWorkingDirectory)) {
+    return runtime.bootWorkingDirectory;
+  }
+
+  const fallback = getFallbackWorkingDirectory();
+  if (fallback !== runtime.bootWorkingDirectory) {
+    runtime.bootWorkingDirectory = fallback;
+    bumpWorkingDirectoryRevision(runtime);
+  }
+  return runtime.bootWorkingDirectory;
 }
 
 export function pruneStaleConversationWorkingDirectories(
@@ -80,6 +102,7 @@ export function bumpWorkingDirectoryRevision(runtime: ListenerRuntime): number {
 export function getExportedCwdMap(
   runtime: ListenerRuntime,
 ): Record<string, string> {
+  getBootWorkingDirectory(runtime);
   pruneStaleConversationWorkingDirectories(runtime);
   return Object.fromEntries(runtime.workingDirectoryByConversation);
 }
@@ -125,14 +148,15 @@ export function setConversationWorkingDirectory(
   workingDirectory: string,
 ): void {
   const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
-  if (workingDirectory === runtime.bootWorkingDirectory) {
+  if (workingDirectory === getBootWorkingDirectory(runtime)) {
     runtime.workingDirectoryByConversation.delete(scopeKey);
+    persistCwdMap(runtime.workingDirectoryByConversation);
   } else {
     runtime.workingDirectoryByConversation.set(scopeKey, workingDirectory);
+    saveRemoteSettingsCwdAssignment(scopeKey, workingDirectory);
   }
 
   bumpWorkingDirectoryRevision(runtime);
-  persistCwdMap(runtime.workingDirectoryByConversation);
 }
 
 export function seedConversationWorkingDirectory(
@@ -141,12 +165,19 @@ export function seedConversationWorkingDirectory(
   conversationId: string,
   workingDirectory: string,
 ): boolean {
+  const resolvedWorkingDirectory =
+    workingDirectory === runtime.bootWorkingDirectory
+      ? getBootWorkingDirectory(runtime)
+      : workingDirectory;
   const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
   if (runtime.workingDirectoryByConversation.has(scopeKey)) {
     return false;
   }
 
-  runtime.workingDirectoryByConversation.set(scopeKey, workingDirectory);
+  runtime.workingDirectoryByConversation.set(
+    scopeKey,
+    resolvedWorkingDirectory,
+  );
   bumpWorkingDirectoryRevision(runtime);
   persistCwdMap(runtime.workingDirectoryByConversation);
   return true;

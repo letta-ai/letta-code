@@ -65,6 +65,7 @@ interface RemoteSettingsPatch {
 interface PendingRemoteSettingsPatch {
   generation: number;
   patch: RemoteSettingsPatch;
+  repairJournalId?: string;
 }
 
 // Module-level cache to avoid repeated disk reads and enable cheap merges.
@@ -148,8 +149,11 @@ export function loadRemoteSettings(): RemoteSettings {
       { cwdMap: originalCwdMap },
       { cwdMap: loaded.cwdMap },
     );
-    writeCwdRepairJournal(getRemoteSettingsPath(), repairPatch);
-    queueRemoteSettingsPatch(repairPatch);
+    const repairJournalId = writeCwdRepairJournal(
+      getRemoteSettingsPath(),
+      repairPatch,
+    );
+    queueRemoteSettingsPatch(repairPatch, false, repairJournalId ?? undefined);
     persistCurrentSettingsSync();
   } else if (migratedLegacyCwdMap) {
     queueRemoteSettingsPatch({ initializeCwdMap: loaded.cwdMap });
@@ -255,14 +259,14 @@ function applyCwdRepairJournals(
 function writeCwdRepairJournal(
   settingsPath: string,
   patch: RemoteSettingsPatch,
-): void {
-  if (!patch.cwdMap) return;
+): string | null {
+  if (!patch.cwdMap) return null;
   const cwdDeletes = Object.fromEntries(
     Object.entries(patch.cwdMap).flatMap(([key, mutation]) =>
       mutation.kind === "delete" ? [[key, mutation.expected]] : [],
     ),
   );
-  if (Object.keys(cwdDeletes).length === 0) return;
+  if (Object.keys(cwdDeletes).length === 0) return null;
 
   const id = randomUUID();
   const journalPath = path.join(
@@ -274,10 +278,12 @@ function writeCwdRepairJournal(
     mkdirSync(path.dirname(settingsPath), { recursive: true });
     writeFileSync(tempPath, JSON.stringify({ cwdDeletes, id }, null, 2));
     renameSync(tempPath, journalPath);
+    return id;
   } catch {
     if (process.env.LETTA_DEBUG) {
       console.warn("[Remote Settings] Unable to persist cwd repair journal");
     }
+    return null;
   } finally {
     try {
       rmSync(tempPath, { force: true });
@@ -400,6 +406,7 @@ function isRemoteSettingsPatchEmpty(patch: RemoteSettingsPatch): boolean {
 function queueRemoteSettingsPatch(
   patch: RemoteSettingsPatch,
   forceGeneration = false,
+  repairJournalId?: string,
 ): number | null {
   if (isRemoteSettingsPatchEmpty(patch) && !forceGeneration) {
     return null;
@@ -407,7 +414,7 @@ function queueRemoteSettingsPatch(
 
   const generation = ++_settingsGeneration;
   if (!isRemoteSettingsPatchEmpty(patch)) {
-    _pendingPatches.push({ generation, patch });
+    _pendingPatches.push({ generation, patch, repairJournalId });
   }
   return generation;
 }
@@ -448,11 +455,24 @@ function applyPendingRemoteSettingsPatches(
       result.cwdMap = { ...pending.patch.initializeCwdMap };
     }
     if (pending.patch.cwdMap) {
-      result.cwdMap = applySettingsMapPatch(
-        result.cwdMap,
-        pending.patch.cwdMap,
-        (left, right) => left === right,
-      );
+      const repairAlreadyApplied =
+        pending.repairJournalId !== undefined &&
+        Array.isArray(result.cwdRepairJournalIds) &&
+        result.cwdRepairJournalIds.includes(pending.repairJournalId);
+      const cwdMapPatch = repairAlreadyApplied
+        ? Object.fromEntries(
+            Object.entries(pending.patch.cwdMap).filter(
+              ([, mutation]) => mutation.kind === "set",
+            ),
+          )
+        : pending.patch.cwdMap;
+      if (Object.keys(cwdMapPatch).length > 0) {
+        result.cwdMap = applySettingsMapPatch(
+          result.cwdMap,
+          cwdMapPatch,
+          (left, right) => left === right,
+        );
+      }
     }
     if (pending.patch.permissionModeMap) {
       result.permissionModeMap = applySettingsMapPatch(
@@ -632,6 +652,36 @@ export function saveRemoteSettings(updates: Partial<RemoteSettings>): void {
 }
 
 /**
+ * Queue an explicit cwd assignment even when it matches this process's cache.
+ * Another listener may have published a conditional repair journal after our
+ * cache was loaded; the unconditional set records that this user assignment is
+ * newer than that repair when both are merged under the settings lock.
+ */
+export function saveRemoteSettingsCwdAssignment(
+  scopeKey: string,
+  workingDirectory: string,
+): void {
+  if (_cache === null) {
+    loadRemoteSettings();
+  }
+
+  const previous = _cache ?? {};
+  _cache = {
+    ...previous,
+    cwdMap: {
+      ...previous.cwdMap,
+      [scopeKey]: workingDirectory,
+    },
+  };
+  queueRemoteSettingsPatch({
+    cwdMap: {
+      [scopeKey]: { kind: "set", value: workingDirectory },
+    },
+  });
+  scheduleRemoteSettingsWrite();
+}
+
+/**
  * Attempt immediate repair persistence and fence older queued snapshots.
  * Transient failures stay queued for the asynchronous retry loop.
  */
@@ -642,12 +692,12 @@ export function saveRemoteSettingsSync(updates: Partial<RemoteSettings>): void {
 
   const previous = _cache ?? {};
   const patch = buildRemoteSettingsPatch(previous, updates);
-  writeCwdRepairJournal(getRemoteSettingsPath(), patch);
+  const repairJournalId = writeCwdRepairJournal(getRemoteSettingsPath(), patch);
   _cache = {
     ...previous,
     ...updates,
   };
-  queueRemoteSettingsPatch(patch, true);
+  queueRemoteSettingsPatch(patch, true, repairJournalId ?? undefined);
   persistCurrentSettingsSync();
 }
 

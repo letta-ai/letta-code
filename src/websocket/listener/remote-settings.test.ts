@@ -11,12 +11,14 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   flushRemoteSettingsWrites,
   getRemoteSettingsPath,
   loadRemoteSettings,
   resetRemoteSettingsCache,
   saveRemoteSettings,
+  saveRemoteSettingsCwdAssignment,
   saveRemoteSettingsSync,
 } from "./remote-settings";
 
@@ -308,6 +310,108 @@ describe("remote settings cwd repair", () => {
         name.includes(".cwd-repair."),
       ),
     ).toBe(false);
+  });
+
+  test("orders an explicit same-path assignment after a pending repair", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
+    process.env.HOME = path.join(tempRoot, "home");
+    const settingsPath = getRemoteSettingsPath();
+    const reassignedDirectory = path.join(tempRoot, "reassigned");
+    const repairId = "repair-before-explicit-reassignment";
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    await mkdir(reassignedDirectory);
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        cwdMap: { "conversation:reassigned": reassignedDirectory },
+      }),
+    );
+
+    loadRemoteSettings();
+    await writeFile(
+      `${settingsPath}.cwd-repair.${repairId}.json`,
+      JSON.stringify({
+        cwdDeletes: { "conversation:reassigned": reassignedDirectory },
+        id: repairId,
+      }),
+    );
+    saveRemoteSettingsCwdAssignment(
+      "conversation:reassigned",
+      reassignedDirectory,
+    );
+
+    expect(await flushRemoteSettingsWrites()).toBe(true);
+    resetRemoteSettingsCache();
+    expect(loadRemoteSettings().cwdMap).toEqual({
+      "conversation:reassigned": reassignedDirectory,
+    });
+  });
+
+  test("does not replay a queued repair after another writer applies its journal", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
+    process.env.HOME = path.join(tempRoot, "home");
+    const settingsPath = getRemoteSettingsPath();
+    const reassignedDirectory = path.join(tempRoot, "reassigned-by-writer-b");
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    await mkdir(reassignedDirectory);
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        cwdMap: { "conversation:shared": reassignedDirectory },
+      }),
+    );
+    loadRemoteSettings();
+
+    // Writer A journals a repair but cannot acquire the settings lock.
+    await mkdir(`${settingsPath}.lock`);
+    saveRemoteSettingsSync({ cwdMap: {} });
+    const journalName = (await readdir(path.dirname(settingsPath))).find(
+      (name) => name.includes(".cwd-repair."),
+    );
+    expect(journalName).toBeDefined();
+    if (!journalName) throw new Error("expected repair journal");
+    const journal = JSON.parse(
+      await readFile(
+        path.join(path.dirname(settingsPath), journalName),
+        "utf-8",
+      ),
+    ) as { id: string };
+
+    // A real second process applies that journal and then commits an explicit
+    // assignment to the same path before Writer A gets the lock.
+    await rm(`${settingsPath}.lock`, { recursive: true });
+    const moduleUrl = pathToFileURL(
+      path.join(import.meta.dir, "remote-settings.ts"),
+    ).href;
+    const writerB = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `
+          const settings = await import(${JSON.stringify(moduleUrl)});
+          settings.loadRemoteSettings();
+          settings.saveRemoteSettingsCwdAssignment(
+            "conversation:shared",
+            ${JSON.stringify(reassignedDirectory)},
+          );
+          if (!(await settings.flushRemoteSettingsWrites())) process.exit(2);
+        `,
+      ],
+      {
+        env: { ...process.env, HOME: process.env.HOME ?? "" },
+        stderr: "pipe",
+        stdout: "pipe",
+      },
+    );
+    const writerBExitCode = await writerB.exited;
+    const writerBStderr = await new Response(writerB.stderr).text();
+    expect(writerBExitCode, writerBStderr).toBe(0);
+
+    expect(await flushRemoteSettingsWrites()).toBe(true);
+    expect(JSON.parse(await readFile(settingsPath, "utf-8"))).toMatchObject({
+      cwdMap: { "conversation:shared": reassignedDirectory },
+      cwdRepairJournalIds: [journal.id],
+    });
   });
 
   test("replays a fully written repair temp after a pre-rename crash", async () => {

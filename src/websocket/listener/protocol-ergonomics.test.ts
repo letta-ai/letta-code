@@ -352,4 +352,20 @@ describe("listener protocol ergonomics", () => {
       await rm(tempRoot, { recursive: true, force: true });
     }
   });
+
+  test("repairs a deleted boot cwd before reporting or using it", () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+    const missingBootDirectory = path.join(
+      tmpdir(),
+      `letta-missing-boot-${crypto.randomUUID()}`,
+    );
+    runtime.bootWorkingDirectory = missingBootDirectory;
+
+    const status = __listenClientTestUtils.buildDeviceStatus(runtime);
+
+    expect(status.current_working_directory).not.toBe(missingBootDirectory);
+    expect(status.boot_working_directory).toBe(runtime.bootWorkingDirectory);
+    expect(status.current_working_directory).toBe(runtime.bootWorkingDirectory);
+    expect(runtime.workingDirectoryRevision).toBe(1);
+  });
 });
