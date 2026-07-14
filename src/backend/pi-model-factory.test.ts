@@ -624,6 +624,20 @@ describe("pi model factory", () => {
     }
   });
 
+  test("normalizes wrapped OpenCode Go catalog handles", async () => {
+    const resolved = await resolvePiModelForAgent(
+      "openai/opencode-go/deepseek-v4-flash",
+      { provider_type: "openai" },
+    );
+
+    expect(resolved.provider).toBe("opencode-go");
+    expect(resolved.model).toMatchObject({
+      id: "deepseek-v4-flash",
+      provider: "opencode-go",
+      baseUrl: "https://opencode.ai/zen/go/v1",
+    });
+  });
+
   test("does not let local no-key placeholders mask LM Studio env API keys", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-lmstudio-env-key-"));
     try {
