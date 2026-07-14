@@ -81,9 +81,9 @@ export function resolveGlobalModDirectories(
   const envDirs = getModsDirectoryFromEnv(env);
   return {
     globalModsDirectory:
-      envDirs.globalModsDirectory ?? getGlobalModsDirectory(homeDirectory),
+      envDirs.globalModsDirectory || getGlobalModsDirectory(homeDirectory),
     legacyGlobalExtensionsDirectory:
-      envDirs.legacyGlobalExtensionsDirectory ??
+      envDirs.legacyGlobalExtensionsDirectory ||
       getLegacyGlobalExtensionsDirectory(homeDirectory),
   };
 }

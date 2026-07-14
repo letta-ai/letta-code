@@ -141,4 +141,52 @@ describe("mod paths", () => {
       rmSync(root, { force: true, recursive: true });
     }
   });
+
+  test("resolveDefaultGlobalModsDirectory falls back to default when env vars are empty or whitespace-only", () => {
+    const root = createTempDir();
+    try {
+      expect(
+        resolveDefaultGlobalModsDirectory(root, {
+          [LETTA_MODS_DIR_ENV]: "",
+        }),
+      ).toBe(getGlobalModsDirectory(root));
+
+      expect(
+        resolveDefaultGlobalModsDirectory(root, {
+          [LETTA_MODS_DIR_ENV]: "   ",
+        }),
+      ).toBe(getGlobalModsDirectory(root));
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("resolveGlobalModDirectories falls back to defaults when env vars are empty or whitespace-only", () => {
+    const root = createTempDir();
+    try {
+      const emptyResult = resolveGlobalModDirectories(root, {
+        [LETTA_MODS_DIR_ENV]: "",
+        [LEGACY_LETTA_EXTENSIONS_DIR_ENV]: "",
+      });
+      expect(emptyResult.globalModsDirectory).toBe(
+        getGlobalModsDirectory(root),
+      );
+      expect(emptyResult.legacyGlobalExtensionsDirectory).toBe(
+        getLegacyGlobalExtensionsDirectory(root),
+      );
+
+      const whitespaceResult = resolveGlobalModDirectories(root, {
+        [LETTA_MODS_DIR_ENV]: "   ",
+        [LEGACY_LETTA_EXTENSIONS_DIR_ENV]: "   ",
+      });
+      expect(whitespaceResult.globalModsDirectory).toBe(
+        getGlobalModsDirectory(root),
+      );
+      expect(whitespaceResult.legacyGlobalExtensionsDirectory).toBe(
+        getLegacyGlobalExtensionsDirectory(root),
+      );
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
 });
