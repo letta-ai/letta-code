@@ -10,7 +10,7 @@ import type {
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugLog, isDebugEnabled } from "@/utils/debug";
 import {
   rejectPendingApprovalResolvers,
   resolvePendingApprovalResolver,
@@ -63,6 +63,11 @@ function trackListenerError(
     error,
     context,
   });
+}
+
+function isMissingWorkingDirectoryError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 /**
@@ -602,6 +607,26 @@ export async function handleCwdChange(
       conversationId,
     });
   } catch (error) {
+    if (isMissingWorkingDirectoryError(error)) {
+      runtime.reminderState.hasSentSessionContext = false;
+      runtime.reminderState.pendingSessionContextReason = "cwd_changed";
+
+      debugLog(
+        "listener",
+        `Rejected stale working directory change to ${msg.cwd}; restoring ${currentWorkingDirectory}`,
+      );
+      emitDeviceStatusUpdate(socket, runtime, {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      });
+      restartWorktreeWatcher({
+        runtime: runtime.listener,
+        agentId,
+        conversationId,
+      });
+      return;
+    }
+
     emitLoopErrorNotice(socket, runtime, {
       message:
         error instanceof Error
