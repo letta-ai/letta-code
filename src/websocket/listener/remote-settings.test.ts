@@ -310,6 +310,36 @@ describe("remote settings cwd repair", () => {
     ).toBe(false);
   });
 
+  test("replays a fully written repair temp after a pre-rename crash", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
+    process.env.HOME = path.join(tempRoot, "home");
+    const settingsPath = getRemoteSettingsPath();
+    const recreatedDirectory = path.join(tempRoot, "recreated-before-replay");
+    const repairId = "repair-temp-before-rename";
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    await mkdir(recreatedDirectory);
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        cwdMap: { "conversation:stale": recreatedDirectory },
+      }),
+    );
+    await writeFile(
+      `${settingsPath}.cwd-repair.${repairId}.json.123.tmp`,
+      JSON.stringify({
+        cwdDeletes: { "conversation:stale": recreatedDirectory },
+        id: repairId,
+      }),
+    );
+
+    resetRemoteSettingsCache();
+    expect(loadRemoteSettings().cwdMap).toEqual({});
+    expect(await flushRemoteSettingsWrites()).toBe(true);
+    expect(JSON.parse(await readFile(settingsPath, "utf-8")).cwdMap).toEqual(
+      {},
+    );
+  });
+
   test("merges entry patches with settings written by another listener", async () => {
     tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-settings-"));
     const fakeHome = path.join(tempRoot, "home");

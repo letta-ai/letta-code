@@ -184,7 +184,9 @@ function readCwdRepairJournals(settingsPath: string): CwdRepairJournal[] {
   let names: string[];
   try {
     names = readdirSync(directory).filter(
-      (name) => name.startsWith(prefix) && name.endsWith(".json"),
+      (name) =>
+        name.startsWith(prefix) &&
+        (name.endsWith(".json") || name.endsWith(".tmp")),
     );
   } catch {
     return [];
