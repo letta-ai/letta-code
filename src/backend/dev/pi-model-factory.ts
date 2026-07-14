@@ -58,6 +58,9 @@ function normalizeOpenAICompatibleLocalModelHandle(
 ): string | undefined {
   if (!model?.startsWith("openai/")) return model;
   const nestedHandle = model.slice("openai/".length);
+  if (resolveRegisteredPiProviderFromModelHandle(nestedHandle)) {
+    return nestedHandle;
+  }
   const nestedProvider = resolveProviderFromModelHandle(nestedHandle);
   if (!nestedProvider) return model;
   const nestedSpec = getPiProviderSpec(nestedProvider);
