@@ -1,10 +1,6 @@
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
-import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type {
-  ApprovalCreate,
-  LettaStreamingResponse,
-} from "@letta-ai/letta-client/resources/agents/messages";
+import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   type ApprovalDecision,
   executeApprovalBatch,
@@ -71,6 +67,7 @@ import {
 } from "./runtime";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
 import type { ListenerTransport } from "./transport";
+import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 import { finishListenerTurn } from "./turn-terminal";
@@ -831,23 +828,23 @@ export async function resolveRecoveredApprovalResponse(
     }
     emitRuntimeStateUpdates(runtime, scope);
 
-    let continuationMessages: Array<MessageCreate | ApprovalCreate> = [
+    let continuationInput = createTurnInputState([
       {
         type: "approval",
         approvals: approvalResults,
         otid: crypto.randomUUID(),
       },
-    ];
+    ]);
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
     let queuedChannelTurnSources: ChannelTurnSource[] | undefined;
     const consumedQueuedTurn = consumeQueuedTurn(runtime);
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
       continuationBatchId = dequeuedBatch.batchId;
-      continuationMessages = appendQueuedTurnToInput(
-        continuationMessages,
+      continuationInput = appendQueuedTurnToInput(
+        continuationInput,
         queuedTurn,
-      ).input;
+      );
       queuedChannelTurnSources = queuedTurn.channelTurnSources;
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
     }
@@ -861,7 +858,7 @@ export async function resolveRecoveredApprovalResponse(
         type: "message",
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
-        messages: continuationMessages,
+        messages: continuationInput.messages,
         ...(queuedChannelTurnSources?.length
           ? { channelTurnSources: queuedChannelTurnSources }
           : {}),

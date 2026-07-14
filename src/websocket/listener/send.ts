@@ -20,7 +20,6 @@ import {
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
-import type { ImageFailureModesByMessageOtid } from "@/utils/message-image-normalization";
 import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import {
   rememberPendingApprovalBatchIds,
@@ -48,6 +47,7 @@ import {
 } from "./recovery";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
+import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime } from "./types";
@@ -385,28 +385,26 @@ export async function resolveStaleApprovals(
     }
 
     try {
-      let continuationMessages: Array<MessageCreate | ApprovalCreate> = [
+      let continuationInput = createTurnInputState([
         {
           type: "approval",
           approvals: approvalResults,
           otid: crypto.randomUUID(),
         },
-      ];
-      let queuedImageFailureModes: ImageFailureModesByMessageOtid | undefined;
+      ]);
       const consumedQueuedTurn = consumeQueuedTurn(runtime);
       if (consumedQueuedTurn) {
         const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-        const appended = appendQueuedTurnToInput(
-          continuationMessages,
+        continuationInput = appendQueuedTurnToInput(
+          continuationInput,
           queuedTurn,
         );
-        continuationMessages = appended.input;
-        queuedImageFailureModes = appended.imageFailureModesByMessageOtid;
         emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
       }
 
-      const continuationMessagesWithSkillContent =
-        injectQueuedSkillContent(continuationMessages);
+      const continuationMessagesWithSkillContent = injectQueuedSkillContent(
+        continuationInput.messages,
+      );
       const recoverySendResult = await sendApprovalContinuationWithRetry(
         recoveryConversationId,
         continuationMessagesWithSkillContent,
@@ -416,8 +414,11 @@ export async function resolveStaleApprovals(
           background: true,
           workingDirectory: recoveryWorkingDirectory,
           preparedToolContext: preparedToolContext.preparedToolContext,
-          ...(queuedImageFailureModes
-            ? { imageFailureModesByMessageOtid: queuedImageFailureModes }
+          ...(continuationInput.imageFailureModesByMessageOtid
+            ? {
+                imageFailureModesByMessageOtid:
+                  continuationInput.imageFailureModesByMessageOtid,
+              }
             : {}),
         },
         socket,
