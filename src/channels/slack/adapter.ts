@@ -69,6 +69,7 @@ export function createSlackAdapter(
   let writeClientPromise: Promise<SlackWriteClient> | null = null;
   let running = false;
   let botUserId: string | null = null;
+  let botId: string | null = null;
   let adapter: SlackChannelAdapter;
 
   const agentThreadTracker: AgentThreadTracker = createAgentThreadTracker();
@@ -81,6 +82,7 @@ export function createSlackAdapter(
     config,
     getAdapter: () => adapter,
     getBotUserId: () => botUserId,
+    getBotId: () => botId,
     agentThreadTracker,
     debounce,
   });
@@ -384,7 +386,11 @@ export function createSlackAdapter(
       if (running) return;
       const slackApp = await ensureApp();
       const auth = await slackApp.client.auth.test();
-      botUserId = isNonEmptyString(auth.user_id) ? auth.user_id : null;
+      const authRecord = auth as unknown as Record<string, unknown>;
+      botUserId = isNonEmptyString(authRecord.user_id)
+        ? authRecord.user_id
+        : null;
+      botId = isNonEmptyString(authRecord.bot_id) ? authRecord.bot_id : null;
       await slackApp.start();
       running = true;
       console.log(
@@ -402,6 +408,7 @@ export function createSlackAdapter(
       writeClient = null;
       writeClientPromise = null;
       botUserId = null;
+      botId = null;
       status.clear();
       approvals.clear();
       debounce.clear();

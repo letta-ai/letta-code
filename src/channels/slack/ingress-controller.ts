@@ -7,6 +7,10 @@ import type {
   SlackChannelAccount,
 } from "@/channels/types";
 import type { AgentThreadTracker } from "./agent-thread-tracker";
+import {
+  isSlackBotAuthoredInboundMessage,
+  shouldAcceptSlackInboundBotMessage,
+} from "./bot-policy";
 import type { SlackInboundDebounceController } from "./inbound-debounce";
 import type {
   SlackCommandPayload,
@@ -55,6 +59,7 @@ export function createSlackIngressController(params: {
   config: SlackChannelAccount;
   getAdapter: () => ChannelAdapter;
   getBotUserId: () => string | null;
+  getBotId: () => string | null;
   agentThreadTracker: AgentThreadTracker;
   debounce: SlackInboundDebounceController;
 }): SlackIngressController {
@@ -121,6 +126,30 @@ export function createSlackIngressController(params: {
     return userId;
   }
 
+  async function resolveInboundSenderName(
+    app: SlackApp,
+    userId: string | undefined,
+    botId: string | undefined,
+  ): Promise<string | undefined> {
+    if (isNonEmptyString(userId)) {
+      return resolveUserName(app, userId);
+    }
+    return isNonEmptyString(botId) ? `Bot (${botId})` : undefined;
+  }
+
+  function shouldAcceptInboundMessageByBotPolicy(input: {
+    message: Record<string, unknown>;
+    wasMentioned: boolean;
+  }): boolean {
+    return shouldAcceptSlackInboundBotMessage({
+      message: input.message,
+      allowBots: config.allowBots,
+      botUserId: params.getBotUserId(),
+      botId: params.getBotId(),
+      wasMentioned: input.wasMentioned,
+    });
+  }
+
   async function dispatchInbound(
     inbound: InboundChannelMessage,
     raw: SlackDebounceRawInput,
@@ -154,6 +183,16 @@ export function createSlackIngressController(params: {
 
       const text = isNonEmptyString(rawMessage.text) ? rawMessage.text : "";
       const wasMentioned = hasSlackMention(text, params.getBotUserId());
+      if (
+        !shouldAcceptInboundMessageByBotPolicy({
+          message: rawMessage,
+          wasMentioned,
+        })
+      ) {
+        return;
+      }
+      const senderId = firstNonEmptyString(rawMessage.user, rawMessage.bot_id);
+      if (!senderId) return;
       const attachments = await resolveSlackInboundAttachments({
         accountId: config.accountId,
         token: config.botToken,
@@ -166,12 +205,19 @@ export function createSlackIngressController(params: {
           ? (firstNonEmptyString(rawMessage.thread_ts) ?? null)
           : (firstNonEmptyString(rawMessage.thread_ts, rawMessage.ts) ?? null);
       rememberMessageThread(rawMessage.ts, threadId);
-      const senderName = await resolveUserName(app, rawMessage.user);
+      const senderName = await resolveInboundSenderName(
+        app,
+        rawMessage.user,
+        rawMessage.bot_id,
+      );
       const isAgentThread =
         chatType === "channel" &&
         isNonEmptyString(threadId) &&
         params.agentThreadTracker.has(channelId, threadId);
-      const effectiveMention = wasMentioned || isAgentThread;
+      const isBotAuthored = isSlackBotAuthoredInboundMessage(rawMessage);
+      const effectiveMention = isBotAuthored
+        ? wasMentioned
+        : wasMentioned || isAgentThread;
 
       if (chatType === "direct") {
         const seenKey = `${channelId}:${rawMessage.ts}`;
@@ -182,7 +228,7 @@ export function createSlackIngressController(params: {
             channel: "slack",
             accountId: config.accountId,
             chatId: channelId,
-            senderId: rawMessage.user,
+            senderId,
             senderTeamId: resolveSlackSenderTeamId(rawMessage),
             senderName,
             text: wasMentioned ? normalizeSlackText(text) : text,
@@ -211,7 +257,7 @@ export function createSlackIngressController(params: {
           channel: "slack",
           accountId: config.accountId,
           chatId: channelId,
-          senderId: rawMessage.user,
+          senderId,
           senderTeamId: resolveSlackSenderTeamId(rawMessage),
           senderName,
           chatLabel: channelId,
@@ -232,35 +278,55 @@ export function createSlackIngressController(params: {
     });
 
     app.event("app_mention", async ({ event }) => {
+      const rawEvent = asRecord(event);
+      const channelId = rawEvent?.channel;
+      const ts = rawEvent?.ts;
+      const senderId = firstNonEmptyString(rawEvent?.user, rawEvent?.bot_id);
       if (
         !params.getAdapter().onMessage ||
-        !isNonEmptyString(event.channel) ||
-        !isNonEmptyString(event.user) ||
-        !isNonEmptyString(event.ts)
+        !rawEvent ||
+        !isNonEmptyString(channelId) ||
+        !isNonEmptyString(ts) ||
+        !senderId
       ) {
         return;
       }
-      const seenKey = `${event.channel}:${event.ts}`;
       if (
-        markIngressMessageSeen(event.channel, event.ts) &&
+        !shouldAcceptInboundMessageByBotPolicy({
+          message: rawEvent,
+          wasMentioned: true,
+        })
+      ) {
+        return;
+      }
+      const threadId = firstNonEmptyString(rawEvent.thread_ts, ts) ?? ts;
+      const seenKey = `${channelId}:${ts}`;
+      if (
+        markIngressMessageSeen(channelId, ts) &&
         !params.debounce.consumeAppMentionRetry(seenKey)
       ) {
         return;
       }
-      rememberMessageThread(event.ts, event.thread_ts ?? event.ts);
+      rememberMessageThread(ts, threadId);
       await dispatchInbound(
         {
           channel: "slack",
           accountId: config.accountId,
-          chatId: event.channel,
-          senderId: event.user,
-          senderTeamId: resolveSlackSenderTeamId(event),
-          senderName: await resolveUserName(app, event.user),
-          chatLabel: event.channel,
-          text: normalizeSlackText(event.text ?? ""),
-          timestamp: slackTimestampToMillis(event.ts),
-          messageId: event.ts,
-          threadId: event.thread_ts ?? event.ts,
+          chatId: channelId,
+          senderId,
+          senderTeamId: resolveSlackSenderTeamId(rawEvent),
+          senderName: await resolveInboundSenderName(
+            app,
+            firstNonEmptyString(rawEvent.user),
+            firstNonEmptyString(rawEvent.bot_id),
+          ),
+          chatLabel: channelId,
+          text: normalizeSlackText(
+            isNonEmptyString(rawEvent.text) ? rawEvent.text : "",
+          ),
+          timestamp: slackTimestampToMillis(ts),
+          messageId: ts,
+          threadId,
           chatType: "channel",
           isMention: true,
           attachments: await resolveSlackInboundAttachments({
@@ -271,7 +337,7 @@ export function createSlackIngressController(params: {
           }),
           raw: event,
         },
-        event as SlackDebounceRawInput,
+        rawEvent as SlackDebounceRawInput,
         "app_mention",
         true,
         "channel mention",

@@ -73,7 +73,6 @@ export function normalizeSlackText(text: string): string {
 
 const IGNORED_SLACK_MESSAGE_SUBTYPES = new Set([
   "assistant_app_thread",
-  "bot_message",
   "channel_archive",
   "channel_convert_to_private",
   "channel_convert_to_public",
@@ -106,7 +105,8 @@ const WRAPPER_SLACK_MESSAGE_SUBTYPES = new Set([
 ]);
 
 export type SlackProcessableInboundMessage = Record<string, unknown> & {
-  user: string;
+  user?: string;
+  bot_id?: string;
   ts: string;
 };
 
@@ -114,8 +114,8 @@ export function isProcessableSlackInboundMessage(
   rawMessage: Record<string, unknown>,
 ): rawMessage is SlackProcessableInboundMessage {
   if (
-    isNonEmptyString(rawMessage.bot_id) ||
-    !isNonEmptyString(rawMessage.user) ||
+    (!isNonEmptyString(rawMessage.user) &&
+      !isNonEmptyString(rawMessage.bot_id)) ||
     !isNonEmptyString(rawMessage.ts) ||
     rawMessage.hidden === true
   ) {

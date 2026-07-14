@@ -369,6 +369,226 @@ test("slack adapter ignores live bot_message events as runnable input", async ()
   expect(resolveSlackInboundAttachmentsMock).not.toHaveBeenCalled();
 });
 
+test("slack adapter allows explicitly mentioned foreign bots when opted in", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    allowBots: "mentions",
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      bot_id: "BDEPLOY",
+      text: "<@U0AS42PTEAX> deployment failed",
+      ts: "1712800000.000104",
+      thread_ts: "1712790000.000050",
+      subtype: "bot_message",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "slack",
+      chatId: "C123",
+      senderId: "BDEPLOY",
+      senderName: "Bot (BDEPLOY)",
+      text: "deployment failed",
+      messageId: "1712800000.000104",
+      threadId: "1712790000.000050",
+      chatType: "channel",
+      isMention: true,
+    }),
+  );
+});
+
+test("slack adapter allows top-level app_mention events from opted-in bots", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    allowBots: "mentions",
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.eventHandlers.get("app_mention");
+  if (!handler) {
+    throw new Error("Expected app_mention handler");
+  }
+
+  await handler({
+    event: {
+      channel: "C123",
+      bot_id: "BDEPLOY",
+      subtype: "bot_message",
+      text: "<@U0AS42PTEAX> deployment failed",
+      ts: "1712800000.000108",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      chatId: "C123",
+      senderId: "BDEPLOY",
+      senderName: "Bot (BDEPLOY)",
+      text: "deployment failed",
+      messageId: "1712800000.000108",
+      threadId: "1712800000.000108",
+      isMention: true,
+    }),
+  );
+});
+
+test("slack adapter does not treat agent-thread participation as a bot mention", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    allowBots: "mentions",
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await adapter.sendMessage({
+    channel: "slack",
+    chatId: "C123",
+    threadId: "1712790000.000050",
+    text: "agent reply",
+  });
+
+  await handler({
+    message: {
+      channel: "C123",
+      bot_id: "BDEPLOY",
+      text: "deployment completed",
+      ts: "1712800000.000105",
+      thread_ts: "1712790000.000050",
+      subtype: "bot_message",
+    },
+  });
+
+  expect(onMessage).not.toHaveBeenCalled();
+});
+
+test("slack adapter allows unmentioned foreign bots in allowBots all mode", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    allowBots: true,
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      bot_id: "BDEPLOY",
+      text: "deployment completed",
+      ts: "1712800000.000106",
+      thread_ts: "1712790000.000050",
+      subtype: "bot_message",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      chatId: "C123",
+      senderId: "BDEPLOY",
+      text: "deployment completed",
+      isMention: false,
+    }),
+  );
+});
+
+test("slack adapter suppresses its own bot identity even when bots are allowed", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    allowBots: true,
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      bot_id: "B0AS42PTEAX",
+      text: "our own status update",
+      ts: "1712800000.000107",
+      thread_ts: "1712790000.000050",
+      subtype: "bot_message",
+    },
+  });
+
+  expect(onMessage).not.toHaveBeenCalled();
+});
+
 test("slack adapter forwards reaction events into the routed Slack thread", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
