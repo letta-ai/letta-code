@@ -270,16 +270,16 @@ describe("listen-client parseServerMessage", () => {
             type: "create_agent",
             request_id: `create-${personality}`,
             personality,
+            tags: ["origin:onboarding"],
           },
           socket as unknown as WebSocket,
         );
-
         settingsManager.pinAgent = originalPinAgent;
-
         expect(createAgentForPersonalityMock).toHaveBeenCalledTimes(1);
         expect(createAgentForPersonalityMock).toHaveBeenCalledWith({
           personalityId: personality,
           model: undefined,
+          tags: ["origin:onboarding"],
         });
         expect(pinAgentMock).toHaveBeenCalledWith(`agent-${personality}`);
 
