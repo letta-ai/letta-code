@@ -343,6 +343,76 @@ describe("mod engine", () => {
     }
   });
 
+  test("loads managed package entries from the legacy extensions directory", async () => {
+    const root = createTempDir();
+    try {
+      const globalMods = path.join(root, "global-mods");
+      const legacyExtensions = path.join(root, "legacy-extensions");
+      const packageRoot = path.join(
+        legacyExtensions,
+        "packages",
+        "npm",
+        "@caren",
+        "legacy-mod",
+      );
+      const packagePath = path.join(packageRoot, "mods", "command.ts");
+      mkdirSync(path.dirname(packagePath), { recursive: true });
+      writeFileSync(
+        packagePath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "legacy-packaged-hello",
+            description: "Legacy packaged hello",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          letta: {
+            manifestVersion: 1,
+            mods: ["./mods/command.ts"],
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(legacyExtensions, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/legacy-mod",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/legacy-mod",
+              entries: ["./mods/command.ts"],
+            },
+          ],
+        }),
+      );
+
+      const engine = createModEngine({
+        cacheDirectory: path.join(root, "mod-cache"),
+        globalModsDirectory: globalMods,
+        legacyGlobalExtensionsDirectory: legacyExtensions,
+        getClient: async () => ({}) as unknown as Letta,
+      });
+      await engine.reload();
+      const snapshot = engine.getSnapshot();
+
+      expect(getModErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
+      expect(snapshot.loadedPaths).toEqual([packagePath]);
+      expect(snapshot.commands["legacy-packaged-hello"]).toMatchObject({
+        description: "Legacy packaged hello",
+        owner: { path: packagePath, scope: "legacy_global" },
+      });
+
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("reports invalid managed package entries without loading them", async () => {
     const root = createTempDir();
     try {

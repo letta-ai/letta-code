@@ -318,8 +318,24 @@ export function resolveLocalModSources(
       path.resolve(globalModsDirectory) &&
     existsSync(legacyGlobalExtensionsDirectory)
   ) {
+    const legacyManagedPackages = resolveManagedModPackages(
+      legacyGlobalExtensionsDirectory,
+    );
     sources.push({
-      files: listModFiles(legacyGlobalExtensionsDirectory),
+      ...(legacyManagedPackages.diagnostics.length > 0
+        ? { diagnostics: legacyManagedPackages.diagnostics }
+        : {}),
+      files: [
+        ...listModFiles(legacyGlobalExtensionsDirectory),
+        ...legacyManagedPackages.files,
+      ],
+      ...(legacyManagedPackages.packages.length > 0
+        ? {
+            managedPackageRoots: legacyManagedPackages.packages.map(
+              (pkg) => pkg.root,
+            ),
+          }
+        : {}),
       legacyMigrationTargetRoot: globalModsDirectory,
       root: legacyGlobalExtensionsDirectory,
       scope: "legacy_global",

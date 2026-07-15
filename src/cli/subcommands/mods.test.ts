@@ -293,6 +293,48 @@ describe("mods subcommand", () => {
     );
   });
 
+  test("lists managed packages from legacy extensions directory", () => {
+    const root = createTempDir();
+    const harnessMods = join(root, "mods");
+    const legacyExtensions = join(root, "extensions");
+    mkdirSync(harnessMods, { recursive: true });
+    mkdirSync(legacyExtensions, { recursive: true });
+    writeManagedPackage({
+      capabilities: ["commands"],
+      modsRoot: harnessMods,
+      source: "npm:@caren/global-mod",
+      root: "packages/npm/@caren/global-mod",
+    });
+    writeManagedPackage({
+      capabilities: ["tools"],
+      modsRoot: legacyExtensions,
+      source: "npm:@caren/legacy-mod",
+      root: "packages/npm/@caren/legacy-mod",
+    });
+
+    const result = listMods({
+      globalModsDirectory: harnessMods,
+      legacyGlobalExtensionsDirectory: legacyExtensions,
+    });
+
+    expect(result.packages).toMatchObject([
+      {
+        capabilities: ["commands"],
+        source: "npm:@caren/global-mod",
+      },
+      {
+        capabilities: ["tools"],
+        source: "npm:@caren/legacy-mod",
+      },
+    ]);
+    expect(formatModsList(result)).toContain(
+      "  enabled  npm:@caren/global-mod@0.1.0    commands",
+    );
+    expect(formatModsList(result)).toContain(
+      "  enabled  npm:@caren/legacy-mod@0.1.0    tools",
+    );
+  });
+
   test("lists package registry diagnostics", () => {
     const root = createTempDir();
     const harnessMods = join(root, "mods");
