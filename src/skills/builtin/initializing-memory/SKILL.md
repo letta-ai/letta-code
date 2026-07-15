@@ -239,7 +239,7 @@ The goal is to extract user personality, preferences, coding patterns, and proje
 #### Prerequisites
 
 - `letta.js` must be built (`bun run build`) — subagents spawn via this binary
-- Use `subagent_type: "history-analyzer"` — cheaper model (sonnet), has `bypassPermissions`, creates its own worktree
+- Use `subagent_type: "history-analyzer"` — inherits the session's selected model, has `bypassPermissions`, creates its own worktree
 - The `history-analyzer` subagent has data format docs inlined (Claude/Codex JSONL field mappings, jq queries)
 
 #### Steps

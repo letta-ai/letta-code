@@ -108,6 +108,19 @@ function isInheritModel(model: string | null | undefined): boolean {
   return model?.trim().toLowerCase() === "inherit";
 }
 
+// Server-side router aliases. A subagent recommending one of these means
+// "let the system pick", so it must not override a parent's selected model.
+const ROUTER_ALIAS_HANDLES = new Set([
+  "letta/auto",
+  "letta/auto-fast",
+  "letta/auto-chat",
+  "letta/auto-memory",
+]);
+
+function isRouterAliasHandle(handle: string): boolean {
+  return ROUTER_ALIAS_HANDLES.has(handle);
+}
+
 export async function resolveSubagentModel(options: {
   userModel?: string;
   recommendedModel?: string;
@@ -209,7 +222,13 @@ export async function resolveSubagentModel(options: {
         return parentModelHandle;
       }
 
-      if (await isAvailable(recommendedHandle)) {
+      // A recommended router alias (e.g. a subagent pinned to `model: auto`)
+      // means "let the system pick" - it must not beat a parent that has an
+      // explicitly selected model. Inherit the parent's model instead.
+      if (
+        !isRouterAliasHandle(recommendedHandle) &&
+        (await isAvailable(recommendedHandle))
+      ) {
         return recommendedHandle;
       }
     }
