@@ -16,9 +16,8 @@ import {
 } from "@/mods/package-registry";
 import { scaffoldLocalModPackage } from "@/mods/package-scaffolder";
 import {
-  getGlobalModsDirectory,
-  getLegacyGlobalExtensionsDirectory,
   resolveDefaultGlobalModsDirectory,
+  resolveGlobalModDirectories,
 } from "@/mods/paths";
 
 interface ModFileSection {
@@ -125,11 +124,14 @@ export function listMods(options: ListModsOptions = {}): ModsList {
   const agentModsDirectory =
     options.agentModsDirectory ??
     (options.agentId ? getAgentModsDirectory(options.agentId) : null);
+  const resolved = resolveGlobalModDirectories();
   const globalModsDirectory =
-    options.globalModsDirectory ?? getGlobalModsDirectory();
+    options.globalModsDirectory ?? resolved.globalModsDirectory;
   const legacyGlobalExtensionsDirectory =
     options.legacyGlobalExtensionsDirectory ??
-    (options.globalModsDirectory ? null : getLegacyGlobalExtensionsDirectory());
+    (options.globalModsDirectory
+      ? null
+      : resolved.legacyGlobalExtensionsDirectory);
   const sources = resolveLocalModSources({
     ...(agentModsDirectory ? { agentModsDirectory } : {}),
     globalModsDirectory,

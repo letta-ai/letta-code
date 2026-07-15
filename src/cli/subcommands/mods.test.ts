@@ -293,6 +293,39 @@ describe("mods subcommand", () => {
     );
   });
 
+  test("lists installed packages from LETTA_MODS_DIR env var directory", () => {
+    const root = createTempDir();
+    const envMods = join(root, "env-mods");
+    mkdirSync(envMods, { recursive: true });
+    writeFileSync(join(envMods, "global.ts"), "export {};\n");
+    writeManagedPackage({
+      capabilities: ["commands"],
+      modsRoot: envMods,
+    });
+
+    process.env.LETTA_MODS_DIR = envMods;
+    // Override LETTA_EXTENSIONS_DIR to a temp path so the test never
+    // touches ~/.letta/extensions/ on the developer's machine.
+    process.env.LETTA_EXTENSIONS_DIR = join(root, "no-such-extensions");
+    try {
+      // No explicit globalModsDirectory — should fall back to env var
+      const result = listMods();
+
+      expect(result.harness.files).toEqual([join(envMods, "global.ts")]);
+      expect(result.packages).toMatchObject([
+        {
+          capabilities: ["commands"],
+          enabled: true,
+          source: "npm:@caren/my-mod",
+          version: "0.1.0",
+        },
+      ]);
+    } finally {
+      delete process.env.LETTA_MODS_DIR;
+      delete process.env.LETTA_EXTENSIONS_DIR;
+    }
+  });
+
   test("lists package registry diagnostics", () => {
     const root = createTempDir();
     const harnessMods = join(root, "mods");

@@ -343,6 +343,122 @@ describe("mod engine", () => {
     }
   });
 
+  test("loads managed packages from LETTA_MODS_DIR env var directory", async () => {
+    const root = createTempDir();
+    try {
+      const envMods = path.join(root, "env-mods");
+      const packageRoot = path.join(
+        envMods,
+        "packages",
+        "npm",
+        "@caren",
+        "env-mod",
+      );
+      const packagePath = path.join(packageRoot, "mods", "command.ts");
+      mkdirSync(path.dirname(packagePath), { recursive: true });
+      writeFileSync(
+        packagePath,
+        `export default function(letta) {
+          letta.commands.register({
+            id: "env-packaged-hello",
+            description: "Env packaged hello",
+            run() { return { type: "handled" }; },
+          });
+        }`,
+      );
+      writeFileSync(
+        path.join(packageRoot, "package.json"),
+        JSON.stringify({
+          letta: {
+            manifestVersion: 1,
+            mods: ["./mods/command.ts"],
+          },
+        }),
+      );
+      writeFileSync(
+        path.join(envMods, "packages.json"),
+        JSON.stringify({
+          packages: [
+            {
+              source: "npm:@caren/env-mod",
+              version: "0.1.0",
+              enabled: true,
+              root: "packages/npm/@caren/env-mod",
+              entries: ["./mods/command.ts"],
+            },
+          ],
+        }),
+      );
+
+      process.env.LETTA_MODS_DIR = envMods;
+      // Override LETTA_EXTENSIONS_DIR to a temp path so the test never
+      // touches ~/.letta/extensions/ on the developer's machine.
+      process.env.LETTA_EXTENSIONS_DIR = path.join(root, "no-such-extensions");
+      try {
+        // Create engine WITHOUT explicit globalModsDirectory so the env var is used.
+        const engine = createModEngine({
+          cacheDirectory: path.join(root, "mod-cache"),
+          getClient: async () => ({}) as unknown as Letta,
+        });
+        await engine.reload();
+        const snapshot = engine.getSnapshot();
+
+        expect(getModErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
+        expect(snapshot.loadedPaths).toEqual([packagePath]);
+        expect(snapshot.commands["env-packaged-hello"]).toMatchObject({
+          description: "Env packaged hello",
+          owner: { path: packagePath, scope: "global" },
+        });
+
+        engine.dispose();
+      } finally {
+        delete process.env.LETTA_MODS_DIR;
+        delete process.env.LETTA_EXTENSIONS_DIR;
+      }
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("legacy extension diagnostic migration target respects LETTA_MODS_DIR", async () => {
+    const root = createTempDir();
+    try {
+      const customMods = path.join(root, "custom-mods");
+      const legacyExt = path.join(root, "legacy-ext");
+      mkdirSync(legacyExt, { recursive: true });
+      writeFileSync(
+        path.join(legacyExt, "old-mod.ts"),
+        `export default function(letta) {}`,
+      );
+
+      process.env.LETTA_MODS_DIR = customMods;
+      process.env.LETTA_EXTENSIONS_DIR = legacyExt;
+      try {
+        const engine = createModEngine({
+          cacheDirectory: path.join(root, "mod-cache"),
+          getClient: async () => ({}) as unknown as Letta,
+        });
+        await engine.reload();
+        const snapshot = engine.getSnapshot();
+
+        const legacyDiag = snapshot.diagnostics.find(
+          (d) => d.phase === "legacy_extension",
+        );
+        expect(legacyDiag).toBeDefined();
+        expect(legacyDiag?.error?.message).toContain(
+          `Move it to ${customMods}`,
+        );
+
+        engine.dispose();
+      } finally {
+        delete process.env.LETTA_MODS_DIR;
+        delete process.env.LETTA_EXTENSIONS_DIR;
+      }
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("reports invalid managed package entries without loading them", async () => {
     const root = createTempDir();
     try {
