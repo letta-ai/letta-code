@@ -254,6 +254,7 @@ export async function prepareListenerTurn(params: {
     externalToolScopeIds: msg.externalToolScopeIds,
     workingDirectory,
     permissionModeState,
+    skillSources: runtime.skillSources,
     cachedAgent,
     channelTurnSources: msg.channelTurnSources,
     modEvents: ensureListenerModAdapter(runtime.listener).events,

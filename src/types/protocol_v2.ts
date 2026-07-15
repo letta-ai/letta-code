@@ -822,7 +822,6 @@ export interface RuntimeStartExternalToolsGroup {
   scope_id?: string;
   tools: readonly ExternalToolDefinitionPayload[];
 }
-
 export interface RuntimeStartCommand {
   type: "runtime_start";
   /** Echoed back in the response for request correlation. */
@@ -839,6 +838,7 @@ export interface RuntimeStartCommand {
   cwd?: string | null;
   /** Initial permission mode for this runtime scope. */
   mode?: DevicePermissionMode;
+  skill_sources?: readonly ("bundled" | "global" | "agent" | "project")[];
   /** Optional client metadata for diagnostics/future protocol negotiation. */
   client_info?: RuntimeStartClientInfo;
   /** Whether to probe backend state for stale pending approvals before replaying state. Defaults to true. */
