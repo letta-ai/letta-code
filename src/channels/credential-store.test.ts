@@ -26,7 +26,10 @@ import {
   buildChannelSecretName,
   getActiveChannelCredentialsStoreMode,
 } from "@/channels/credential-store";
-import type { SlackChannelAccount } from "@/channels/types";
+import type {
+  SlackChannelAccount,
+  TelegramChannelAccount,
+} from "@/channels/types";
 
 function readAccountsFile(root: string, channelId: string): unknown {
   return JSON.parse(
@@ -48,6 +51,27 @@ function makeSlackAccount(): SlackChannelAccount {
     allowedUsers: [],
     createdAt: "2026-05-26T00:00:00.000Z",
     updatedAt: "2026-05-26T00:00:00.000Z",
+  };
+}
+
+function makeTelegramAccountWithSecretRef(): Record<string, unknown> {
+  return {
+    channel: "telegram",
+    accountId: "telegram-account",
+    enabled: true,
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    binding: {
+      agentId: null,
+      conversationId: null,
+    },
+    transcribe_voice: false,
+    rich_private_chat_default: true,
+    createdAt: "2026-05-26T00:00:00.000Z",
+    updatedAt: "2026-05-26T00:00:00.000Z",
+    __letta_secret_refs: {
+      token: true,
+    },
   };
 }
 
@@ -141,6 +165,40 @@ describe("channel credential storage", () => {
     expect(persistedText).not.toContain("xoxb-secret");
     expect(persistedText).not.toContain("xapp-secret");
     expect(persistedText).toContain("__letta_secret_refs");
+  });
+
+  test("keyring mode preserves unresolved Telegram token refs on restart", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    mkdirSync(join(channelsRoot, "telegram"), { recursive: true });
+    const accountsPath = join(channelsRoot, "telegram", "accounts.json");
+    writeFileSync(
+      accountsPath,
+      `${JSON.stringify(
+        { accounts: [makeTelegramAccountWithSecretRef()] },
+        null,
+        2,
+      )}\n`,
+    );
+    const beforeHydration = readFileSync(accountsPath, "utf-8");
+
+    await hydrateChannelAccountSecrets("telegram");
+
+    expect(readFileSync(accountsPath, "utf-8")).toBe(beforeHydration);
+    const persisted = readAccountsFile(channelsRoot, "telegram") as {
+      accounts: Array<Record<string, unknown>>;
+    };
+    expect(persisted.accounts[0]).toMatchObject({
+      __letta_secret_refs: {
+        token: true,
+      },
+    });
+    expect(persisted.accounts[0]).not.toHaveProperty("token", "");
+
+    const hydrated = (await getChannelAccountWithSecrets(
+      "telegram",
+      "telegram-account",
+    )) as TelegramChannelAccount | null;
+    expect(hydrated?.token).toBe("__letta_channel_secret_present__");
   });
 
   test("deleting an account removes keyring secrets", async () => {
