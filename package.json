@@ -32,6 +32,7 @@
     },
     "./app-server-client": {
       "types": "./dist/types/app-server-client.d.ts",
+      "browser": "./dist/app-server-client.js",
       "import": "./dist/app-server-client.js"
     },
     "./protocol": {
@@ -39,16 +40,25 @@
     },
     "./agent-presets": {
       "types": "./dist/types/agent-presets.d.ts",
+      "browser": "./dist/agent-presets.js",
+      "import": "./dist/agent-presets.js",
+      "default": "./dist/agent-presets.js"
+    },
+    "./dist/agent-presets.js": {
+      "types": "./dist/types/agent-presets.d.ts",
+      "browser": "./dist/agent-presets.js",
       "import": "./dist/agent-presets.js",
       "default": "./dist/agent-presets.js"
     },
     "./channels": {
       "types": "./dist/types/channels-public.d.ts",
+      "browser": "./dist/channels-public.js",
       "import": "./dist/channels-public.js",
       "default": "./dist/channels-public.js"
     },
     "./channels/slack": {
       "types": "./dist/types/channels-slack.d.ts",
+      "browser": "./dist/channels-slack.js",
       "import": "./dist/channels-slack.js",
       "default": "./dist/channels-slack.js"
     }
