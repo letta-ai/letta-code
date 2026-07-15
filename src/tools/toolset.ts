@@ -11,6 +11,9 @@ import type { ChannelTurnSource, SupportedChannelId } from "@/channels/types";
 import { experimentManager } from "@/experiments/manager";
 import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
+import type { ModAdapter } from "@/mods/mod-adapter";
+import type { ModPermissionDefinition } from "@/mods/permission-registry";
+import type { ModToolDefinition } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
 import {
   type InheritedChannelContextPayload,
@@ -32,11 +35,11 @@ import {
   loadTools,
   OPENAI_DEFAULT_TOOLS,
   OPENAI_PASCAL_TOOLS,
-  type PermissionModeState,
   type PreparedToolExecutionContext,
   prepareToolExecutionContextForModel,
   prepareToolExecutionContextForSpecificTools,
 } from "./manager";
+import type { PermissionModeState } from "./permission-mode-state";
 import type { ToolName } from "./tool-definitions";
 
 // Toolset definitions from manager.ts (single source of truth)
@@ -109,6 +112,28 @@ export type PreparedScopeToolContext = {
   agent: AgentState | null;
 };
 
+function mergeModAdapterCapabilities(
+  adapters: ModAdapter[] | undefined,
+  context: ModContext,
+): {
+  permissions?: Map<string, ModPermissionDefinition>;
+  tools?: Map<string, ModToolDefinition>;
+} {
+  if (!adapters) return {};
+
+  const permissions = new Map<string, ModPermissionDefinition>();
+  const tools = new Map<string, ModToolDefinition>();
+  for (const adapter of adapters) {
+    for (const [id, permission] of adapter.getAvailablePermissions(context)) {
+      permissions.set(id, permission);
+    }
+    for (const [name, tool] of adapter.getAvailableTools(context)) {
+      tools.set(name, tool);
+    }
+  }
+  return { permissions, tools };
+}
+
 function getPreferredAgentModelHandle(
   agent: ScopeModelCarrier | null | undefined,
 ): string | null {
@@ -171,6 +196,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
   modContext?: ModContext;
   modEvents?: ModEvents;
+  modAdapters?: ModAdapter[];
   runtimeContext?: Partial<RuntimeContextSnapshot>;
   agent?: AgentState | null;
 }): Promise<PreparedScopeToolContext> {
@@ -187,6 +213,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     channelToolScope,
     modContext,
     modEvents,
+    modAdapters,
     runtimeContext,
     agent,
   } = params;
@@ -209,6 +236,10 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       toolset: derivedToolset,
       workingDirectory,
     });
+    const modCapabilities = mergeModAdapterCapabilities(
+      modAdapters,
+      scopedModContext,
+    );
     const preparedToolContext = await prepareToolExecutionContextForModel(
       effectiveModel ?? undefined,
       {
@@ -220,6 +251,8 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
         channelToolScope,
         modContext: scopedModContext,
         modEvents,
+        modPermissions: modCapabilities.permissions,
+        modTools: modCapabilities.tools,
         runtimeContext,
       },
     );
@@ -243,6 +276,10 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     toolset: toolsetPreference,
     workingDirectory,
   });
+  const modCapabilities = mergeModAdapterCapabilities(
+    modAdapters,
+    scopedModContext,
+  );
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     filterBuiltInToolNamesByClientAllowlist(
       getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
@@ -258,6 +295,8 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       channelToolScope,
       modContext: scopedModContext,
       modEvents,
+      modPermissions: modCapabilities.permissions,
+      modTools: modCapabilities.tools,
       runtimeContext,
     },
   );
@@ -431,6 +470,7 @@ export async function prepareToolExecutionContextForScope(params: {
   channelTurnSources?: import("@/channels/types").ChannelTurnSource[];
   modContext?: ModContext;
   modEvents?: ModEvents;
+  modAdapters?: ModAdapter[];
 }): Promise<PreparedScopeToolContext> {
   const {
     agentId,
@@ -447,6 +487,7 @@ export async function prepareToolExecutionContextForScope(params: {
     channelTurnSources: explicitChannelTurnSources,
     modContext,
     modEvents,
+    modAdapters,
   } = params;
 
   const backend = getBackend();
@@ -520,6 +561,7 @@ export async function prepareToolExecutionContextForScope(params: {
     permissionModeState,
     modContext,
     modEvents,
+    modAdapters,
     agent: agent as AgentState,
     runtimeContext: {
       agentId,

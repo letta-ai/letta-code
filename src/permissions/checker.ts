@@ -15,7 +15,7 @@ import {
   modToolApprovalPolicy,
 } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
-import type { PermissionModeState } from "@/tools/manager";
+import type { PermissionModeState } from "@/tools/permission-mode-state";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import { evaluateCrossAgentGuard, extractFilePath } from "./cross-agent-guard";

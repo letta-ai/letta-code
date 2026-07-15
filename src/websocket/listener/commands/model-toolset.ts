@@ -30,7 +30,10 @@ import type {
   UpdateModelResponseMessage,
   UpdateToolsetResponseMessage,
 } from "@/types/protocol_v2";
-import { ensureListenerModAdapter } from "@/websocket/listener/mod-adapter";
+import {
+  createListenerModEvents,
+  ensureListenerModAdaptersForAgent,
+} from "@/websocket/listener/mod-adapter";
 import {
   isListModelsCommand,
   isUpdateModelCommand,
@@ -458,6 +461,10 @@ export async function applyModelUpdateForRuntime(params: {
 
   try {
     await ensureCorrectMemoryTool(agentId, model.handle);
+    const modAdapters = await ensureListenerModAdaptersForAgent(
+      listener,
+      agentId,
+    );
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
@@ -466,7 +473,8 @@ export async function applyModelUpdateForRuntime(params: {
         providerTypeFromModelSettings(modelSettings) ??
         inferProviderTypeFromRegistryHandle(model.handle) ??
         null,
-      modEvents: ensureListenerModAdapter(listener).events,
+      modAdapters,
+      modEvents: createListenerModEvents(modAdapters),
     });
     nextToolset = preparedToolContext.toolset;
     nextLoadedTools = preparedToolContext.preparedToolContext.loadedToolNames;
@@ -553,10 +561,15 @@ export async function applyToolsetUpdateForRuntime(params: {
 
   try {
     settingsManager.setToolsetPreference(agentId, toolsetPreference);
+    const modAdapters = await ensureListenerModAdaptersForAgent(
+      listener,
+      agentId,
+    );
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
-      modEvents: ensureListenerModAdapter(listener).events,
+      modAdapters,
+      modEvents: createListenerModEvents(modAdapters),
     });
     nextToolset = preparedToolContext.toolset;
     scopedRuntime.currentToolset = preparedToolContext.toolset;
