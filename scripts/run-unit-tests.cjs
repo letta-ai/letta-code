@@ -82,12 +82,12 @@ for (const entry of isolatedTests) {
   }
 }
 
-function runTests(files, timeoutMs) {
+function runTests(files, timeoutMs, env = {}) {
   execFileSync("bun", ["test", ...files, "--timeout", String(timeoutMs)], {
     stdio: "inherit",
     // Unit tests must never emit product telemetry or make test fixtures look
-    // like real users. Override any inherited opt-in from the parent shell.
-    env: { ...process.env, LETTA_CODE_TELEM: "0" },
+    // like real users. Only isolated telemetry contract tests may opt back in.
+    env: { ...process.env, LETTA_CODE_TELEM: "0", ...env },
   });
 }
 
@@ -119,7 +119,7 @@ let exitCode = 0;
 // the ordinary unit batch or inherit another suite's cwd/env/module registry.
 for (const entry of isolatedTests) {
   try {
-    runTests([entry.path], entry.timeoutMs);
+    runTests([entry.path], entry.timeoutMs, entry.env);
   } catch (error) {
     exitCode = error.status ?? 1;
   }
