@@ -1,3 +1,21 @@
+export type {
+  ResolveSlackAppMentionIngressPolicyParams,
+  ResolveSlackMessageIngressPolicyParams,
+  SlackAppMentionEventLike,
+  SlackAppMentionIngressAccepted,
+  SlackAppMentionIngressPolicy,
+  SlackInboundMessageEventLike,
+  SlackIngressIgnored,
+  SlackIngressIgnoreReason,
+  SlackMessageIngressAccepted,
+  SlackMessageIngressPolicy,
+} from "./channels/slack/ingress-policy";
+export {
+  isProcessableSlackInboundMessage,
+  resolveSlackAppMentionIngressPolicy,
+  resolveSlackMessageIngressPolicy,
+  shouldSkipSlackMessageByLastSeen,
+} from "./channels/slack/ingress-policy";
 export {
   resolveSlackConcreteActivity,
   SLACK_ASSISTANT_STARTUP_STATUS,
