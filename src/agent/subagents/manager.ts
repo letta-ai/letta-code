@@ -200,6 +200,11 @@ interface BuildSubagentArgsOptions {
   promptTransport?: "argv" | "stdin";
   extraTools?: string[];
   parentAgentId?: string | null;
+  /**
+   * Replace the subagent's configured persona: pass `--system-custom <text>`
+   * to the child instead of `--system <type>`. Only applies to new agents.
+   */
+  systemPromptOverride?: string;
 }
 
 /**
@@ -237,8 +242,14 @@ export function buildSubagentArgs(
     // Don't pass --system (existing agent keeps its prompt)
     // Don't pass --model (existing agent keeps its model)
   } else {
-    // Create new agent (original behavior)
-    args.push("--new-agent", "--system", type);
+    // Create new agent (original behavior). A systemPromptOverride replaces the
+    // configured persona with a caller-supplied prompt via `--system-custom`
+    // (mutually exclusive with `--system`).
+    if (options.systemPromptOverride) {
+      args.push("--new-agent", "--system-custom", options.systemPromptOverride);
+    } else {
+      args.push("--new-agent", "--system", type);
+    }
     const subagentTags = [`type:${type}`];
     if (options.parentAgentId) {
       subagentTags.push(`parent:${options.parentAgentId}`);
@@ -326,7 +337,6 @@ async function executeSubagent(
   config: SubagentConfig,
   model: string | null,
   userPrompt: string,
-  baseURL: string,
   subagentId: string,
   isRetry = false,
   signal?: AbortSignal,
@@ -336,6 +346,7 @@ async function executeSubagent(
   parentAgentIdOverride?: string,
   transcriptPath?: string,
   memoryScope?: SubagentMemoryScope,
+  systemPromptOverride?: string,
 ): Promise<SubagentResult> {
   // Check if already aborted before starting
   if (signal?.aborted) {
@@ -387,6 +398,7 @@ async function executeSubagent(
           config.fork && inheritedChannelContext
             ? ["MessageChannel"]
             : undefined,
+        systemPromptOverride,
       },
     );
 
@@ -559,7 +571,6 @@ async function executeSubagent(
             config,
             primaryModel,
             userPrompt,
-            baseURL,
             subagentId,
             true, // Mark as retry to prevent infinite loops
             signal,
@@ -652,25 +663,6 @@ async function executeSubagent(
 }
 
 /**
- * Get the base URL for constructing agent links
- */
-function getBaseURL(): string {
-  const settings = settingsManager.getSettings();
-
-  const baseURL =
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    "https://api.letta.com";
-
-  // Convert API URL to web UI URL if using hosted service
-  if (baseURL === "https://api.letta.com") {
-    return "https://app.letta.com";
-  }
-
-  return baseURL;
-}
-
-/**
  * Build a system reminder prefix for deployed agents
  */
 function buildDeploySystemReminder(
@@ -757,6 +749,7 @@ export async function spawnSubagent(
   transcriptPath?: string,
   parentConversationId?: string,
   memoryScope?: SubagentMemoryScope,
+  systemPromptOverride?: string,
 ): Promise<SubagentResult> {
   const allConfigs = await getAllSubagentConfigs();
   const config = allConfigs[type];
@@ -814,8 +807,6 @@ export async function spawnSubagent(
         subagentType: type,
         backendMode,
       });
-  const baseURL = getBaseURL();
-
   // Build the prompt with system reminder for deployed agents
   let finalPrompt = prompt;
   if (isDeployingExisting && resolvedParentAgentId) {
@@ -857,7 +848,6 @@ export async function spawnSubagent(
     config,
     model,
     finalPrompt,
-    baseURL,
     subagentId,
     false,
     signal,
@@ -867,6 +857,7 @@ export async function spawnSubagent(
     resolvedParentAgentId,
     transcriptPath,
     memoryScope,
+    systemPromptOverride,
   );
 
   return result;

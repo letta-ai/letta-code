@@ -85,12 +85,7 @@ import {
   emitRetryDelta,
   emitStateSync,
 } from "./protocol-outbound";
-import {
-  consumeQueuedTurn,
-  normalizeInboundMessages,
-  normalizeMessageContentImages,
-  scheduleQueuePump,
-} from "./queue";
+import { consumeQueuedTurn, scheduleQueuePump } from "./queue";
 import {
   getApprovalToolCallDesyncErrorText,
   recoverApprovalStateForSync,
@@ -483,8 +478,6 @@ export const __listenClientTestUtils = {
   shouldAttemptPostStopApprovalRecovery,
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
-  normalizeMessageContentImages,
-  normalizeInboundMessages,
   consumeQueuedTurn,
   handleIncomingMessage,
   handleApprovalResponseInput,

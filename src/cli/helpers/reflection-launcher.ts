@@ -149,6 +149,14 @@ export interface ReflectionLaunchOptions {
   model?: string;
   instruction?: string;
   systemPrompt?: string;
+  /**
+   * Replace the reflection task prompt entirely (advanced). The caller owns the
+   * transcript/memory mechanics the default prompt provides ($TRANSCRIPT_PATH,
+   * $MEMORY_DIR, the commit contract).
+   */
+  reflectionPromptOverride?: string;
+  /** Replace the reflection subagent's system prompt/persona (advanced). */
+  reflectionSystemPromptOverride?: string;
   skipPendingWorktreeReminderScan?: boolean;
   completionConversationId?: string | (() => string);
   recompileByConversation: Map<string, Promise<void>>;
@@ -401,6 +409,7 @@ export async function queuePendingReflectionWorktreeReminders(params: {
 export async function prepareReflectionMemoryWorktreeLaunch(params: {
   agentId: string;
   instruction?: string;
+  reflectionPromptOverride?: string;
 }): Promise<{
   worktree: ReflectionMemoryWorktree;
   reflectionPrompt: string;
@@ -410,11 +419,15 @@ export async function prepareReflectionMemoryWorktreeLaunch(params: {
     parentMemoryDir: memoryDir,
   });
   try {
-    const parentMemory = await buildParentMemorySnapshot(worktree.worktreeDir);
-    const reflectionPrompt = buildReflectionSubagentPrompt({
-      instruction: params.instruction,
-      parentMemory,
-    });
+    // An override replaces the whole task prompt; the caller is then responsible
+    // for referencing $TRANSCRIPT_PATH / $MEMORY_DIR, so we skip the (otherwise
+    // wasted) parent-memory snapshot in that case.
+    const reflectionPrompt =
+      params.reflectionPromptOverride ??
+      buildReflectionSubagentPrompt({
+        instruction: params.instruction,
+        parentMemory: await buildParentMemorySnapshot(worktree.worktreeDir),
+      });
     return { worktree, reflectionPrompt };
   } catch (error) {
     await finalizeReflectionMemoryWorktree(worktree, {
@@ -548,6 +561,7 @@ export async function launchReflectionSubagent(
       await prepareReflectionMemoryWorktreeLaunch({
         agentId,
         instruction: options.instruction,
+        reflectionPromptOverride: options.reflectionPromptOverride,
       });
     preparedWorktree = worktree;
 
@@ -571,6 +585,7 @@ export async function launchReflectionSubagent(
       prompt: reflectionPrompt,
       description,
       model: options.model,
+      systemPromptOverride: options.reflectionSystemPromptOverride,
       silentCompletion: true,
       transcriptPath: autoPayload.payloadPath,
       memoryScope: buildReflectionMemoryScope(worktree),

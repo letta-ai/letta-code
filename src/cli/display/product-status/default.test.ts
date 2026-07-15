@@ -138,7 +138,7 @@ describe("defaultProductStatusPanel", () => {
   });
 
   test("renders clickable link when agentUrl is provided and not tmux", () => {
-    const agentUrl = "https://app.letta.com/chat/agent-reflection";
+    const agentUrl = "https://chat.letta.com/chat/agent-reflection";
     const panel = createDefaultProductStatusPanel({ agentUrl });
     const lines = renderModPanelLines(
       panel,
@@ -163,7 +163,7 @@ describe("defaultProductStatusPanel", () => {
   });
 
   test("does not render URL as plain text in tmux", () => {
-    const agentUrl = "https://app.letta.com/chat/agent-reflection";
+    const agentUrl = "https://chat.letta.com/chat/agent-reflection";
     const originalTmux = process.env.TMUX;
     process.env.TMUX = "1";
     try {

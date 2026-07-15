@@ -480,7 +480,7 @@ describe("waitForBackgroundSubagentLink", () => {
 
     setTimeout(() => {
       updateSubagent("subagent-link-1", {
-        agentURL: "https://app.letta.com/chat/agent-123",
+        agentURL: "https://chat.letta.com/chat/agent-123",
       });
     }, 20);
 
@@ -508,7 +508,7 @@ describe("waitForBackgroundSubagentLink", () => {
     setTimeout(() => {
       updateSubagent("subagent-link-3", {
         agentId: "agent-123",
-        agentURL: "https://app.letta.com/chat/agent-123",
+        agentURL: "https://chat.letta.com/chat/agent-123",
       });
     }, 20);
 

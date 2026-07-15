@@ -247,7 +247,12 @@ export async function handleIncomingMessage(
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
       preparedToolContext: preparedToolContext.preparedToolContext,
-      skipImageNormalization: true,
+      ...(setup.imageFailureModesByMessageOtid
+        ? {
+            imageFailureModesByMessageOtid:
+              setup.imageFailureModesByMessageOtid,
+          }
+        : {}),
       ...(providerFallback.overrideModel
         ? { overrideModel: providerFallback.overrideModel }
         : {}),

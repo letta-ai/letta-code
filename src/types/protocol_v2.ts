@@ -520,6 +520,14 @@ export interface QueueMessage {
 export interface LoopState {
   status: LoopStatus;
   active_run_ids: string[];
+  /**
+   * Tool call ids currently executing client-side. Populated only while
+   * `status` is `EXECUTING_CLIENT_SIDE_TOOL`; empty otherwise. Lets
+   * observer UIs render an authoritative executing set that self-heals on
+   * every status frame instead of pairing client_tool_start/end lifecycle
+   * events, which are unrecoverable if a frame is lost.
+   */
+  executing_tool_call_ids: string[];
 }
 
 export interface DeviceStatusUpdateMessage extends RuntimeEnvelope {
@@ -1778,12 +1786,12 @@ export interface CreateAgentCommand {
   request_id: string;
   /** Built-in personality preset to create. */
   personality: "memo" | "tutorial" | "blank" | "linus" | "kawaii";
-  /** Model identifier (e.g. "sonnet", "gpt-4o"). Uses default if omitted. */
+  /** Optional model identifier and additional creation tags. */
   model?: string;
+  tags?: string[];
   /** Whether to pin the agent globally after creation. Defaults to true. */
   pin_global?: boolean;
 }
-
 export interface AgentListCommand {
   type: "agent_list";
   /** Echoed back in the response for request correlation. */

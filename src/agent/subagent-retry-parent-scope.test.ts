@@ -10,7 +10,7 @@ const managerSource = readFileSync(
 describe("executeSubagent provider fallback wiring", () => {
   test("forwards parentAgentIdOverride through the provider retry call", () => {
     const retryCallMatch = managerSource.match(
-      /return executeSubagent\(\s*type,\s*config,\s*primaryModel,\s*userPrompt,\s*baseURL,\s*subagentId,\s*true,\s*\/\/ Mark as retry to prevent infinite loops\s*signal,\s*undefined,\s*\/\/ existingAgentId\s*undefined,\s*\/\/ existingConversationId\s*maxTurns,\s*parentAgentIdOverride,\s*transcriptPath,\s*\);/s,
+      /return executeSubagent\(\s*type,\s*config,\s*primaryModel,\s*userPrompt,\s*subagentId,\s*true,\s*\/\/ Mark as retry to prevent infinite loops\s*signal,\s*undefined,\s*\/\/ existingAgentId\s*undefined,\s*\/\/ existingConversationId\s*maxTurns,\s*parentAgentIdOverride,\s*transcriptPath,\s*\);/s,
     );
 
     expect(retryCallMatch).toBeTruthy();

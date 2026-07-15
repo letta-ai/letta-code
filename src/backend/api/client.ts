@@ -1,6 +1,7 @@
 import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
-import { LETTA_CLOUD_API_URL, refreshAccessToken } from "@/auth/oauth";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { isDebugEnabled } from "@/utils/debug";
@@ -213,7 +214,7 @@ export async function getClient() {
         const deviceId = settingsManager.getOrCreateDeviceId();
         const deviceName = hostname();
 
-        const tokens = await refreshAccessToken(
+        const tokens = await refreshAccessTokenSingleFlight(
           settings.refreshToken,
           deviceId,
           deviceName,

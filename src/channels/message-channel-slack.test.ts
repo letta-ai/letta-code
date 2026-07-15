@@ -477,6 +477,159 @@ describe("MessageChannel Slack", () => {
     });
   });
 
+  test("downloads a scoped Slack attachment through the routed adapter", async () => {
+    const registry = new ChannelRegistry();
+    const downloadAttachment = mock(async () => ({
+      id: "FLARGE",
+      name: "LandscapeTransmission.zip",
+      mimeType: "application/zip",
+      sizeBytes: 43_714_492,
+      kind: "file" as const,
+      localPath:
+        "/tmp/channels/slack/inbound/account-1/LandscapeTransmission.zip",
+    }));
+    const adapter = {
+      id: "slack:account-1",
+      channelId: "slack",
+      accountId: "account-1",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "unused" }),
+      sendDirectReply: async () => {},
+      downloadAttachment,
+    };
+
+    registry.registerAdapter(adapter);
+    setRouteInMemory("slack", {
+      accountId: "account-1",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-thread",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    const result = await message_channel({
+      action: "download-file",
+      channel: "slack",
+      chat_id: "C123",
+      threadId: "1712790000.000050",
+      attachmentId: "FLARGE",
+      messageId: "1712800000.000100",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-thread",
+      },
+    });
+
+    expect(result).toBe(
+      "Slack attachment downloaded (local_path: /tmp/channels/slack/inbound/account-1/LandscapeTransmission.zip)",
+    );
+    expect(downloadAttachment).toHaveBeenCalledWith({
+      attachmentId: "FLARGE",
+      chatId: "C123",
+      threadId: "1712790000.000050",
+      messageId: "1712800000.000100",
+    });
+  });
+
+  test("does not infer the active route thread for channel-history attachment downloads", async () => {
+    const registry = new ChannelRegistry();
+    const downloadAttachment = mock(async () => ({
+      id: "FHISTORY",
+      name: "history.zip",
+      kind: "file" as const,
+      localPath: "/tmp/history.zip",
+    }));
+    const adapter = {
+      id: "slack:account-1",
+      channelId: "slack",
+      accountId: "account-1",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "unused" }),
+      sendDirectReply: async () => {},
+      downloadAttachment,
+    };
+    registry.registerAdapter(adapter);
+    setRouteInMemory("slack", {
+      accountId: "account-1",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712800000.000100",
+      agentId: "agent-1",
+      conversationId: "conv-thread",
+      enabled: true,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z",
+    });
+
+    await message_channel({
+      action: "download-file",
+      channel: "slack",
+      chat_id: "C123",
+      attachmentId: "FHISTORY",
+      messageId: "1712700000.000010",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-thread",
+      },
+    });
+
+    expect(downloadAttachment).toHaveBeenCalledWith({
+      attachmentId: "FHISTORY",
+      chatId: "C123",
+      threadId: null,
+      messageId: "1712700000.000010",
+    });
+  });
+
+  test("rejects Slack attachment downloads through proactive targets", async () => {
+    const registry = new ChannelRegistry();
+    const downloadAttachment = mock(async () => ({
+      id: "FLARGE",
+      kind: "file" as const,
+      localPath: "/tmp/large.zip",
+    }));
+    const adapter = {
+      id: "slack:account-1",
+      channelId: "slack",
+      accountId: "account-1",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "unused" }),
+      sendDirectReply: async () => {},
+      downloadAttachment,
+    };
+    registry.registerAdapter(adapter);
+
+    const result = await message_channel({
+      action: "download-file",
+      channel: "slack",
+      target: "#private-channel",
+      attachmentId: "FLARGE",
+      messageId: "1712800000.000100",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "conv-thread",
+      },
+    });
+
+    expect(result).toBe(
+      "Error: Slack download-file requires chat_id from a routed channel context; target is not supported.",
+    );
+    expect(downloadAttachment).not.toHaveBeenCalled();
+  });
+
   test("supports proactive Slack sends to explicit cached targets without consulting routes", async () => {
     installChannelStateTestOverrides();
     const registry = new ChannelRegistry();

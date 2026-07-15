@@ -8,6 +8,9 @@
 /** Marks an agent as created/managed by Letta Code. */
 export const LETTA_CODE_ORIGIN_TAG = "origin:letta-code";
 
+/** Marks an agent as created by a first-run onboarding flow. */
+export const ONBOARDING_ORIGIN_TAG = "origin:onboarding";
+
 /** Marks an agent as a Letta Code subagent (excluded from prompt management). */
 export const LETTA_CODE_SUBAGENT_TAG = "role:subagent";
 

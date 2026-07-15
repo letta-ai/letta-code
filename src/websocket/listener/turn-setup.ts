@@ -18,7 +18,9 @@ import { buildListenReminderContext } from "@/reminders/listen-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
+import type { ImageFailureModesByMessageOtid } from "@/utils/message-image-normalization";
 import { detectShellContext } from "@/utils/shell-context";
+import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
 import { ensureListenerModAdapter } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
@@ -46,6 +48,7 @@ export type ListenerTurnSetupResult =
       kind: "ready";
       getCachedAgent: () => AgentState | null;
       currentInput: Array<MessageCreate | ApprovalCreate>;
+      imageFailureModesByMessageOtid?: ImageFailureModesByMessageOtid;
       inboundUserTranscriptLines: Line[];
       pendingNormalizationInterruptedToolCallIds: string[];
       preparedToolContext: PreparedToolContext;
@@ -99,19 +102,7 @@ export async function prepareListenerTurn(params: {
     onStatusChange?.("processing", connectionId);
   }
 
-  const { normalizeInboundMessages } = await import("./queue");
-  const normalizedMessages = await normalizeInboundMessages(
-    msg.messages,
-    undefined,
-    {
-      imageFailureMode:
-        (msg.channelTurnSources?.length ?? 0) > 0 ? "drop" : "strict",
-    },
-  );
-  if (isInterrupted()) {
-    return { kind: "interrupted" };
-  }
-  trackListenerUserInput(normalizedMessages, "unknown");
+  trackListenerUserInput(msg.messages, "unknown");
 
   const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
   let queuedInterruptedToolCallIds: string[] = [];
@@ -121,7 +112,7 @@ export async function prepareListenerTurn(params: {
     queuedInterruptedToolCallIds = consumed.interruptedToolCallIds;
   }
   messagesToSend.push(
-    ...normalizedMessages.map((message) =>
+    ...msg.messages.map((message) =>
       "content" in message && !message.otid
         ? {
             ...message,
@@ -136,9 +127,14 @@ export async function prepareListenerTurn(params: {
     ),
   );
 
+  const imageFailureModesByMessageOtid = getInboundImageFailureModes({
+    channelTurnSources: msg.channelTurnSources,
+    messages: messagesToSend,
+  });
+
   let inboundUserTranscriptLines =
     buildInboundUserTranscriptLines(messagesToSend);
-  const firstMessage = normalizedMessages[0];
+  const firstMessage = msg.messages[0];
   const isApprovalMessage =
     firstMessage &&
     "type" in firstMessage &&
@@ -283,6 +279,7 @@ export async function prepareListenerTurn(params: {
     kind: "ready",
     getCachedAgent: () => cachedAgent,
     currentInput,
+    imageFailureModesByMessageOtid,
     inboundUserTranscriptLines,
     pendingNormalizationInterruptedToolCallIds: [
       ...queuedInterruptedToolCallIds,

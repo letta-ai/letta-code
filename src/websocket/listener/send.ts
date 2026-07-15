@@ -20,6 +20,7 @@ import {
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
+import type { ImageFailureModesByMessageOtid } from "@/utils/message-image-normalization";
 import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import {
   rememberPendingApprovalBatchIds,
@@ -30,6 +31,7 @@ import {
   MAX_PRE_STREAM_RECOVERY,
   PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
+import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
 import { ensureListenerModAdapter } from "./mod-adapter";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
@@ -383,17 +385,23 @@ export async function resolveStaleApprovals(
     }
 
     try {
-      const continuationMessages: Array<MessageCreate | ApprovalCreate> = [
+      let continuationMessages: Array<MessageCreate | ApprovalCreate> = [
         {
           type: "approval",
           approvals: approvalResults,
           otid: crypto.randomUUID(),
         },
       ];
+      let queuedImageFailureModes: ImageFailureModesByMessageOtid | undefined;
       const consumedQueuedTurn = consumeQueuedTurn(runtime);
       if (consumedQueuedTurn) {
         const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-        continuationMessages.push(...queuedTurn.messages);
+        const appended = appendQueuedTurnToInput(
+          continuationMessages,
+          queuedTurn,
+        );
+        continuationMessages = appended.input;
+        queuedImageFailureModes = appended.imageFailureModesByMessageOtid;
         emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
       }
 
@@ -408,6 +416,9 @@ export async function resolveStaleApprovals(
           background: true,
           workingDirectory: recoveryWorkingDirectory,
           preparedToolContext: preparedToolContext.preparedToolContext,
+          ...(queuedImageFailureModes
+            ? { imageFailureModesByMessageOtid: queuedImageFailureModes }
+            : {}),
         },
         socket,
         runtime,

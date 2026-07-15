@@ -33,6 +33,16 @@ export type AppServerMessageHandler = (
 /** Called synchronously before a protocol command is written to the control socket. */
 export type AppServerSendHandler = (command: WsProtocolCommand) => void;
 
+export interface AppServerDisconnectEvent {
+  channel: AppServerChannel;
+  event: unknown;
+}
+
+/** Called once when either websocket closes before client.close(). */
+export type AppServerDisconnectHandler = (
+  disconnect: AppServerDisconnectEvent,
+) => void;
+
 export type AppServerExternalToolCallHandler = (
   request: ExternalToolCallRequestMessage,
 ) => Promise<ExternalToolCallResult> | ExternalToolCallResult;
@@ -299,7 +309,10 @@ export class AppServerClient {
   private readonly pending = new Map<string, PendingRequest>();
   private readonly messageHandlers = new Set<AppServerMessageHandler>();
   private readonly sendHandlers = new Set<AppServerSendHandler>();
+  private readonly disconnectHandlers = new Set<AppServerDisconnectHandler>();
   private readonly activeTurnRuntimes = new Set<string>();
+  private explicitlyClosed = false;
+  private disconnectNotified = false;
   private nextRequestNumber = 0;
 
   constructor(options: AppServerClientOptions) {
@@ -326,10 +339,12 @@ export class AppServerClient {
     attachSocketListener(this.stream, "message", (event) => {
       this.handleMessage(event, "stream");
     });
-    const rejectPending = () =>
-      this.rejectAllPending("App-server socket closed");
-    attachSocketListener(this.control, "close", rejectPending);
-    attachSocketListener(this.stream, "close", rejectPending);
+    attachSocketListener(this.control, "close", (event) => {
+      this.handleDisconnect("control", event);
+    });
+    attachSocketListener(this.stream, "close", (event) => {
+      this.handleDisconnect("stream", event);
+    });
   }
 
   async connect(): Promise<this> {
@@ -341,6 +356,8 @@ export class AppServerClient {
   }
 
   close(): void {
+    if (this.explicitlyClosed) return;
+    this.explicitlyClosed = true;
     this.rejectAllPending("App-server client closed");
     this.control.close();
     this.stream.close();
@@ -354,6 +371,11 @@ export class AppServerClient {
   onSend(handler: AppServerSendHandler): () => void {
     this.sendHandlers.add(handler);
     return () => this.sendHandlers.delete(handler);
+  }
+
+  onDisconnect(handler: AppServerDisconnectHandler): () => void {
+    this.disconnectHandlers.add(handler);
+    return () => this.disconnectHandlers.delete(handler);
   }
 
   nextRequestId(prefix = "req"): string {
@@ -740,6 +762,15 @@ export class AppServerClient {
       clearTimeout(pending.timeout);
       this.pending.delete(requestId);
       pending.reject(new Error(reason));
+    }
+  }
+
+  private handleDisconnect(channel: AppServerChannel, event: unknown): void {
+    this.rejectAllPending("App-server socket closed");
+    if (this.explicitlyClosed || this.disconnectNotified) return;
+    this.disconnectNotified = true;
+    for (const handler of this.disconnectHandlers) {
+      handler({ channel, event });
     }
   }
 }

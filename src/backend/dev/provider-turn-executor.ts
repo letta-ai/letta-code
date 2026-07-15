@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
-import type { AssistantMessageEvent, Usage } from "@earendil-works/pi-ai";
+import type {
+  AssistantMessage,
+  AssistantMessageEvent,
+  Usage,
+} from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   contextTokensFromLocalUsage,
   estimateLocalContextTokens,
 } from "@/backend/local/local-context-estimate";
-import type { LocalMessage } from "@/backend/local/local-message";
+import type {
+  LocalAssistantMessage,
+  LocalMessage,
+} from "@/backend/local/local-message";
 import type {
   LocalAgentRecord,
   StoredMessage,
@@ -266,15 +273,51 @@ function errorFromAssistantEvent(part: AssistantMessageEvent): Error {
   return new Error(part.error.errorMessage ?? "Unknown local provider error");
 }
 
-function otidForContentIndex(
+type StreamedMessageType = "assistant_message" | "reasoning_message";
+
+function contentMatchesMessageType(
+  content: LocalAssistantMessage["content"][number] | undefined,
+  messageType: StreamedMessageType,
+): boolean {
+  if (!content || typeof content !== "object" || !("type" in content)) {
+    return false;
+  }
+  return messageType === "assistant_message"
+    ? content.type === "text"
+    : content.type === "thinking";
+}
+
+function contiguousContentStartIndex(
+  partial: AssistantMessage,
+  contentIndex: number,
+  messageType: StreamedMessageType,
+): number {
+  let startIndex = contentIndex;
+  while (
+    startIndex > 0 &&
+    contentMatchesMessageType(partial.content[startIndex - 1], messageType)
+  ) {
+    startIndex -= 1;
+  }
+  return startIndex;
+}
+
+function otidForContentSegment(
   otids: Map<number, string>,
   prefix: string,
   contentIndex: number,
+  partial: AssistantMessage,
+  messageType: StreamedMessageType,
 ): string {
-  const existing = otids.get(contentIndex);
+  const segmentStartIndex = contiguousContentStartIndex(
+    partial,
+    contentIndex,
+    messageType,
+  );
+  const existing = otids.get(segmentStartIndex);
   if (existing) return existing;
-  const otid = `${prefix}-${contentIndex}-${randomUUID()}`;
-  otids.set(contentIndex, otid);
+  const otid = `${prefix}-${segmentStartIndex}-${randomUUID()}`;
+  otids.set(segmentStartIndex, otid);
   return otid;
 }
 
@@ -312,10 +355,12 @@ function createProviderLettaStream(
           if (part.type === "text_delta") {
             yield {
               message_type: "assistant_message",
-              otid: otidForContentIndex(
+              otid: otidForContentSegment(
                 assistantOtids,
                 "provider-assistant",
                 part.contentIndex,
+                part.partial,
+                "assistant_message",
               ),
               content: [{ type: "text", text: part.delta }],
             } as LettaStreamingResponse;
@@ -325,10 +370,12 @@ function createProviderLettaStream(
           if (part.type === "thinking_delta") {
             yield {
               message_type: "reasoning_message",
-              otid: otidForContentIndex(
+              otid: otidForContentSegment(
                 reasoningOtids,
                 "provider-reasoning",
                 part.contentIndex,
+                part.partial,
+                "reasoning_message",
               ),
               reasoning: part.delta,
             } as LettaStreamingResponse;
@@ -364,7 +411,9 @@ function createProviderLettaStream(
               stop_reason:
                 sawToolCall || part.reason === "toolUse"
                   ? "requires_approval"
-                  : "end_turn",
+                  : part.reason === "length"
+                    ? "max_tokens_exceeded"
+                    : "end_turn",
             } as LettaStreamingResponse;
             continue;
           }

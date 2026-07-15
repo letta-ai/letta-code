@@ -270,16 +270,16 @@ describe("listen-client parseServerMessage", () => {
             type: "create_agent",
             request_id: `create-${personality}`,
             personality,
+            tags: ["origin:onboarding"],
           },
           socket as unknown as WebSocket,
         );
-
         settingsManager.pinAgent = originalPinAgent;
-
         expect(createAgentForPersonalityMock).toHaveBeenCalledTimes(1);
         expect(createAgentForPersonalityMock).toHaveBeenCalledWith({
           personalityId: personality,
           model: undefined,
+          tags: ["origin:onboarding"],
         });
         expect(pinAgentMock).toHaveBeenCalledWith(`agent-${personality}`);
 
@@ -4550,6 +4550,7 @@ describe("listen-client v2 status builders", () => {
     expect(outbound[1].loop_status).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
+      executing_tool_call_ids: [],
     });
   });
 
@@ -4694,6 +4695,7 @@ describe("listen-client v2 status builders", () => {
     ).toEqual({
       status: "WAITING_ON_APPROVAL",
       active_run_ids: [],
+      executing_tool_call_ids: [],
     });
   });
 

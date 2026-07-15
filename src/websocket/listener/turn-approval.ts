@@ -22,6 +22,10 @@ import type {
   ControlRequest,
 } from "@/types/protocol_v2";
 import {
+  type ImageFailureModesByMessageOtid,
+  mergeImageFailureModesByMessageOtid,
+} from "@/utils/message-image-normalization";
+import {
   clearPendingApprovalBatchIds,
   collectApprovalResultToolCallIds,
   collectDecisionToolCallIds,
@@ -34,9 +38,11 @@ import {
   buildApprovalSuggestionPayload,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
+import { appendQueuedTurnToInput } from "./continuation-input";
 import {
   createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
+  emitToolExecutionAbortedEvents,
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
   normalizeExecutionResultsForInterruptParity,
@@ -497,6 +503,25 @@ export async function handleApprovalStop(params: {
       channelTurnSources: runtime.activeChannelTurn?.sources,
       onFileWrite,
     });
+  } catch (error) {
+    // Execution threw before results exist, so the normal finished-events
+    // emission below never runs. Close the client_tool_start lifecycle
+    // events explicitly or observer UIs shimmer these tool calls forever.
+    // Flush buffered tool output first so no progress frame lands after
+    // the terminal end events. Skip emission when this owner lost the
+    // turn lease (a replacement runtime owns terminal state now) or when
+    // an interrupt is in flight (the interrupt path emits finished events
+    // from the interrupted-results cache).
+    emitToolExecutionOutput.flush();
+    if (!shouldInterrupt()) {
+      emitToolExecutionAbortedEvents(socket, runtime, {
+        toolCallIds: lastExecutingToolCallIds,
+        runId: executionRunId,
+        agentId,
+        conversationId,
+      });
+    }
+    throw error;
   } finally {
     emitToolExecutionOutput.flush();
   }
@@ -535,7 +560,7 @@ export async function handleApprovalStop(params: {
     return interruptTermination();
   }
 
-  const nextInput: Array<MessageCreate | ApprovalCreate> = [
+  let nextInput: Array<MessageCreate | ApprovalCreate> = [
     {
       type: "approval",
       approvals: persistedExecutionResults,
@@ -543,11 +568,14 @@ export async function handleApprovalStop(params: {
     },
   ];
   let continuationBatchId = dequeuedBatchId;
+  let queuedImageFailureModes: ImageFailureModesByMessageOtid | undefined;
   const consumedQueuedTurn = consumeQueuedTurn(runtime);
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
     continuationBatchId = dequeuedBatch.batchId;
-    nextInput.push(...queuedTurn.messages);
+    const appended = appendQueuedTurnToInput(nextInput, queuedTurn);
+    nextInput = appended.input;
+    queuedImageFailureModes = appended.imageFailureModesByMessageOtid;
     emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
   }
 
@@ -563,11 +591,19 @@ export async function handleApprovalStop(params: {
   });
   let sendResult: ApprovalContinuationSendResult;
   try {
+    const sendOptions = buildSendOptions() ?? {};
+    const imageFailureModesByMessageOtid = mergeImageFailureModesByMessageOtid(
+      sendOptions.imageFailureModesByMessageOtid,
+      queuedImageFailureModes,
+    );
     sendResult = await sendApprovalContinuationWithRetry(
       conversationId,
       nextInputWithSkillContent,
       {
-        ...buildSendOptions(),
+        ...sendOptions,
+        ...(imageFailureModesByMessageOtid
+          ? { imageFailureModesByMessageOtid }
+          : {}),
         ...(continuationWasFullyAutoHandled
           ? { allowResponseStateReuse: true }
           : {}),
