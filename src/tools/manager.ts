@@ -2496,8 +2496,6 @@ async function executeModTool(
         toolStatus === "success",
         duration,
         responseSize,
-        toolStatus === "error" ? "tool_error" : undefined,
-        stderr ? stderr.join("\n") : undefined,
       );
 
       const hookFeedback = await collectPostToolHookFeedback(
@@ -2559,14 +2557,7 @@ async function executeModTool(
         phase: "tool.run",
       });
 
-      telemetry.trackToolUsage(
-        toolName,
-        false,
-        duration,
-        errorMessage.length,
-        errorType,
-        errorMessage,
-      );
+      telemetry.trackToolUsage(toolName, false, duration, errorMessage.length);
 
       const hookFeedback = await collectPostToolHookFeedback(
         {
@@ -3006,8 +2997,6 @@ async function executeToolInner(
         toolStatus === "success",
         duration,
         responseSize,
-        toolStatus === "error" ? "tool_error" : undefined,
-        stderr ? stderr.join("\n") : undefined,
       );
 
       const hookFeedback = await collectPostToolHookFeedback(
@@ -3066,8 +3055,6 @@ async function executeToolInner(
         false,
         duration,
         errorMessage.length,
-        errorType,
-        errorMessage,
       );
 
       const hookFeedback = await collectPostToolHookFeedback(

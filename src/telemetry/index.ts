@@ -5,6 +5,20 @@ import { getServerHealth } from "@/backend/api/health";
 import { submitTelemetryMetadata } from "@/backend/api/metadata";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { settingsManager } from "@/settings-manager";
+import {
+  consumeErrorSuppressionSummary,
+  consumeToolUsageAggregate,
+  createErrorFingerprint,
+  createErrorSuppressionState,
+  ERROR_SUPPRESSION_SUMMARY_INTERVAL_MS,
+  type ErrorSuppressionState,
+  hasDueErrorSuppressionSummary,
+  MAX_ERROR_FINGERPRINTS,
+  recordToolUsageAggregate,
+  type ToolUsageAggregateState,
+  type ToolUsageToolSummary,
+  updateErrorSuppressionAgentScope,
+} from "@/telemetry/aggregation";
 import { debugLogFile } from "@/utils/debug";
 import { isLoopbackHostname, parseUrl } from "@/utils/url";
 import { getVersion } from "@/version";
@@ -70,8 +84,12 @@ export interface ToolUsageData {
   success: boolean;
   duration: number;
   response_length?: number;
-  error_type?: string;
-  stderr?: string;
+  call_count?: number;
+  success_count?: number;
+  error_count?: number;
+  tools?: ToolUsageToolSummary[];
+  overflow_tool_call_count?: number;
+  tool_name_limit?: number;
 }
 
 export interface ErrorData {
@@ -83,6 +101,7 @@ export interface ErrorData {
   run_id?: string;
   recent_chunks?: Record<string, unknown>[];
   debug_log_tail?: string;
+  suppressed_count?: number;
 }
 
 export interface UserInputData {
@@ -142,6 +161,17 @@ export interface ReflectionArenaVoteData {
   version?: string;
   platform?: string;
 }
+
+type TelemetryEventData =
+  | Record<string, unknown>
+  | SessionStartData
+  | SessionEndData
+  | ToolUsageData
+  | ErrorData
+  | UserInputData
+  | ReflectionStartData
+  | ReflectionEndData
+  | ReflectionArenaVoteData;
 
 export function isLettaCodeDesktopRuntime(
   env: NodeJS.ProcessEnv = process.env,
@@ -237,6 +267,8 @@ function isNonActionableError(message: string): boolean {
   );
 }
 
+export type TelemetryAggregateFlushReason = "flush" | "session_end" | "drain";
+
 class TelemetryManager {
   private events: TelemetryEvent[] = [];
   private sessionId: string;
@@ -250,8 +282,10 @@ class TelemetryManager {
   private initialized = false;
   private flushInterval: NodeJS.Timeout | null = null;
   private serverVersion: string | null = null;
-  /** Deduplicates concurrent flushes (prevents the 429 double-flush race on shutdown). */
   private inflightFlush: Promise<void> | null = null;
+  private toolUsageAggregate: ToolUsageAggregateState | null = null;
+  private errorSuppressionStates = new Map<string, ErrorSuppressionState>();
+  private nextErrorSuppressionSummaryMs: number | null = null;
 
   private async resolveTelemetryApiKey(): Promise<string | undefined> {
     if (process.env.LETTA_API_KEY) {
@@ -291,7 +325,6 @@ class TelemetryManager {
 
   private readonly FLUSH_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
   private readonly MAX_BATCH_SIZE = 50;
-  /** Max time to drain queued events on exit (bounded so we never hang the shell). */
   private readonly DRAIN_TIMEOUT_MS = 3_000;
   private sessionStatsGetter?: () => {
     totalWallMs: number;
@@ -442,33 +475,29 @@ class TelemetryManager {
     // risking hangs on exit.
   }
 
-  /**
-   * Track a telemetry event
-   */
-  private track(
+  private track(type: TelemetryEvent["type"], data: TelemetryEventData) {
+    this.enqueueEvent(type, data);
+  }
+
+  private enqueueEvent(
     type: TelemetryEvent["type"],
-    data:
-      | Record<string, unknown>
-      | SessionStartData
-      | SessionEndData
-      | ToolUsageData
-      | ErrorData
-      | UserInputData
-      | ReflectionStartData
-      | ReflectionEndData
-      | ReflectionArenaVoteData,
+    data: TelemetryEventData,
+    options: { autoFlush?: boolean; agentId?: string | null } = {},
   ) {
     if (!this.isTelemetryEnabled()) {
       return;
     }
 
+    const agentId = Object.hasOwn(options, "agentId")
+      ? options.agentId
+      : this.currentAgentId;
     const event: TelemetryEvent = {
       type,
       timestamp: new Date().toISOString(),
       data: {
         ...data,
         session_id: this.sessionId,
-        agent_id: this.currentAgentId || undefined,
+        agent_id: agentId || undefined,
         surface: this.surface,
         backend: resolveTelemetryBackend(),
       },
@@ -477,7 +506,10 @@ class TelemetryManager {
     this.events.push(event);
 
     // Flush if batch size is reached
-    if (this.events.length >= this.MAX_BATCH_SIZE) {
+    if (
+      options.autoFlush !== false &&
+      this.events.length >= this.MAX_BATCH_SIZE
+    ) {
       this.flush().catch((err) => {
         if (process.env.LETTA_DEBUG) {
           console.error("Telemetry flush error:", err);
@@ -543,30 +575,18 @@ class TelemetryManager {
     this.sessionStatsGetter = getter;
   }
 
-  /**
-   * Get the current session ID
-   */
   getSessionId(): string {
     return this.sessionId;
   }
 
-  /**
-   * Get the current message count
-   */
   getMessageCount(): number {
     return this.messageCount;
   }
 
-  /**
-   * Get the current tool call count
-   */
   getToolCallCount(): number {
     return this.toolCallCount;
   }
 
-  /**
-   * Track session start
-   */
   trackSessionStart() {
     // Extract agent ID from startup args if --agent or -a is provided
     const args = process.argv.slice(2);
@@ -587,6 +607,74 @@ class TelemetryManager {
       node_version: process.version,
     };
     this.track("session_start", data);
+  }
+
+  private flushToolUsageAggregate(): void {
+    const event = consumeToolUsageAggregate(this.toolUsageAggregate);
+    this.toolUsageAggregate = null;
+    if (event) {
+      this.enqueueEvent("tool_usage", event.data as ToolUsageData, {
+        autoFlush: false,
+        agentId: event.agentId,
+      });
+    }
+  }
+
+  private flushErrorSuppressionSummaries(): boolean {
+    let emitted = false;
+    for (const state of this.errorSuppressionStates.values()) {
+      const event = consumeErrorSuppressionSummary(state);
+      if (!event) {
+        continue;
+      }
+      this.enqueueEvent("error", event.data as ErrorData, {
+        autoFlush: false,
+        agentId: event.agentId,
+      });
+      emitted = true;
+    }
+    return emitted;
+  }
+
+  private evictOldestErrorSuppressionState(): void {
+    const oldestFingerprint = this.errorSuppressionStates.keys().next().value;
+    if (oldestFingerprint) {
+      this.errorSuppressionStates.delete(oldestFingerprint);
+    }
+  }
+
+  private flushPendingTelemetryAggregates(
+    reason: TelemetryAggregateFlushReason,
+  ): void {
+    if (!this.isTelemetryEnabled()) {
+      return;
+    }
+    this.flushToolUsageAggregate();
+
+    const forceErrorSummary = reason === "session_end";
+    if (
+      !forceErrorSummary &&
+      !hasDueErrorSuppressionSummary(
+        this.nextErrorSuppressionSummaryMs,
+        this.errorSuppressionStates,
+      )
+    ) {
+      return;
+    }
+    if (this.flushErrorSuppressionSummaries() || forceErrorSummary) {
+      this.nextErrorSuppressionSummaryMs = null;
+    }
+  }
+
+  private hasPendingTelemetry(): boolean {
+    return (
+      this.events.length > 0 ||
+      (this.toolUsageAggregate?.callCount ?? 0) > 0 ||
+      hasDueErrorSuppressionSummary(
+        this.nextErrorSuppressionSummaryMs,
+        this.errorSuppressionStates,
+      )
+    );
   }
 
   /**
@@ -646,35 +734,30 @@ class TelemetryManager {
       context_tokens: sessionStats?.usage.contextTokens,
       step_count: sessionStats?.usage.stepCount,
     };
+    this.flushPendingTelemetryAggregates("session_end");
     this.track("session_end", data);
   }
 
-  /**
-   * Track tool usage
-   */
   trackToolUsage(
     toolName: string,
     success: boolean,
     duration: number,
     responseLength?: number,
-    errorType?: string,
-    stderr?: string,
   ) {
     this.toolCallCount++;
-    const data: ToolUsageData = {
-      tool_name: toolName,
+    if (!this.isTelemetryEnabled()) {
+      return;
+    }
+    this.toolUsageAggregate = recordToolUsageAggregate(
+      this.toolUsageAggregate,
+      this.currentAgentId,
+      toolName,
       success,
       duration,
-      response_length: responseLength,
-      error_type: errorType,
-      stderr,
-    };
-    this.track("tool_usage", data);
+      responseLength,
+    );
   }
 
-  /**
-   * Track errors
-   */
   trackError(
     errorType: string,
     errorMessage: string,
@@ -686,6 +769,10 @@ class TelemetryManager {
       recentChunks?: Record<string, unknown>[];
     },
   ) {
+    if (!this.isTelemetryEnabled()) {
+      return;
+    }
+
     // Skip error telemetry for self-hosted users to avoid spamming cloud analytics
     if (!this.isCloudUser()) {
       return;
@@ -694,6 +781,29 @@ class TelemetryManager {
     // Skip non-actionable errors that create noise
     if (isNonActionableError(errorMessage)) {
       return;
+    }
+
+    const fingerprint = createErrorFingerprint({
+      errorType,
+      errorMessage,
+      context,
+      httpStatus: options?.httpStatus,
+      modelId: options?.modelId,
+    });
+    const now = Date.now();
+    const existing = this.errorSuppressionStates.get(fingerprint);
+    if (existing) {
+      existing.suppressedCount += 1;
+      updateErrorSuppressionAgentScope(existing, this.currentAgentId);
+      this.errorSuppressionStates.delete(fingerprint);
+      this.errorSuppressionStates.set(fingerprint, existing);
+      this.nextErrorSuppressionSummaryMs ??=
+        now + ERROR_SUPPRESSION_SUMMARY_INTERVAL_MS;
+      return;
+    }
+
+    if (this.errorSuppressionStates.size >= MAX_ERROR_FINGERPRINTS) {
+      this.evictOldestErrorSuppressionState();
     }
 
     const data: ErrorData = {
@@ -706,7 +816,12 @@ class TelemetryManager {
       recent_chunks: options?.recentChunks,
       debug_log_tail: debugLogFile.getTail(),
     };
-    this.track("error", data);
+
+    this.errorSuppressionStates.set(
+      fingerprint,
+      createErrorSuppressionState(data, this.currentAgentId),
+    );
+    this.enqueueEvent("error", data);
   }
 
   /**
@@ -796,11 +911,20 @@ class TelemetryManager {
   }
 
   /** Concurrent callers share one in-flight POST (prevents 429 double-flush race on shutdown). */
-  async flush(): Promise<void> {
-    if (this.inflightFlush) {
-      return this.inflightFlush;
+  async flush(reason: TelemetryAggregateFlushReason = "flush"): Promise<void> {
+    if (!this.isTelemetryEnabled()) {
+      return;
     }
-    if (this.events.length === 0 || !this.isTelemetryEnabled()) {
+    if (this.inflightFlush) {
+      await this.inflightFlush;
+      if (!this.hasPendingTelemetry()) {
+        return;
+      }
+      return this.flush(reason);
+    }
+
+    this.flushPendingTelemetryAggregates(reason);
+    if (this.events.length === 0) {
       return;
     }
 
@@ -842,12 +966,12 @@ class TelemetryManager {
     }
     const deadline = Date.now() + this.DRAIN_TIMEOUT_MS;
     // Loop in case new events arrive mid-drain (e.g. trackError from uncaughtException).
-    while (this.events.length > 0 || this.inflightFlush) {
+    while (this.hasPendingTelemetry() || this.inflightFlush) {
       if (Date.now() >= deadline) {
         return;
       }
       try {
-        await this.flush();
+        await this.flush("drain");
       } catch {
         // Swallow — already logged inside performFlush; don't block exit.
         return;
