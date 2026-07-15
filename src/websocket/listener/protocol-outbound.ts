@@ -72,6 +72,10 @@ import type {
 } from "./types";
 
 type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
+type PartialRuntimeScope = {
+  agent_id?: string | null;
+  conversation_id?: string | null;
+};
 
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
 const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
@@ -329,14 +333,8 @@ function getListenerRuntime(runtime: RuntimeCarrier): ListenerRuntime | null {
 
 function getScopeForRuntime(
   runtime: RuntimeCarrier,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
-): {
-  agent_id?: string | null;
-  conversation_id?: string | null;
-} {
+  scope?: PartialRuntimeScope,
+): PartialRuntimeScope {
   if (runtime && "listener" in runtime) {
     return {
       agent_id: scope?.agent_id ?? runtime.agentId,
@@ -696,10 +694,7 @@ export function emitProtocolV2Message(
 export function emitDeviceStatusUpdate(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
+  scope?: PartialRuntimeScope,
 ): void {
   const deviceStatus = buildDeviceStatus(runtime, scope);
   recordDeviceStatus(socket, getScopeForRuntime(runtime, scope), deviceStatus);
@@ -949,11 +944,14 @@ export function emitQueueUpdateIfOpen(
 export function emitDeviceStatusUpdateIfChanged(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
-  scope: RuntimeScope,
+  scope?: PartialRuntimeScope,
   options?: { force?: boolean },
 ): boolean {
-  const deviceStatus = buildDeviceStatus(runtime, scope);
-  if (!shouldEmitDeviceStatus(socket, scope, deviceStatus, options?.force)) {
+  const resolvedScope = getScopeForRuntime(runtime, scope);
+  const deviceStatus = buildDeviceStatus(runtime, resolvedScope);
+  if (
+    !shouldEmitDeviceStatus(socket, resolvedScope, deviceStatus, options?.force)
+  ) {
     return false;
   }
   const message: Omit<
@@ -963,7 +961,7 @@ export function emitDeviceStatusUpdateIfChanged(
     type: "update_device_status",
     device_status: deviceStatus,
   };
-  emitProtocolV2Message(socket, runtime, message, scope);
+  emitProtocolV2Message(socket, runtime, message, resolvedScope);
   return true;
 }
 

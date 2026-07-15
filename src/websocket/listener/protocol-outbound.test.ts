@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import type { StreamDeltaMessage } from "@/types/protocol_v2";
-import { emitDequeuedUserMessage } from "@/websocket/listener/protocol-outbound";
+import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
+import { createRuntime as createListenerRuntime } from "@/websocket/listener/lifecycle";
+import {
+  emitDequeuedUserMessage,
+  emitDeviceStatusUpdateIfChanged,
+} from "@/websocket/listener/protocol-outbound";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -183,5 +188,38 @@ describe("emitDequeuedUserMessage", () => {
     emitDequeuedUserMessage(socket as never, runtime, incoming, batch);
 
     expect(socket.sentPayloads).toHaveLength(0);
+  });
+});
+
+describe("emitDeviceStatusUpdateIfChanged", () => {
+  test("normalizes runtime scopes without cross-scope leakage", () => {
+    const listener = createListenerRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "default");
+    const otherRuntime = getOrCreateScopedRuntime(
+      listener,
+      "agent-2",
+      "default",
+    );
+    const socket = new MockSocket();
+    const otherSocket = new MockSocket();
+
+    expect(emitDeviceStatusUpdateIfChanged(socket as never, runtime, {})).toBe(
+      true,
+    );
+    expect(
+      emitDeviceStatusUpdateIfChanged(socket as never, runtime, {
+        agent_id: "agent-1",
+        conversation_id: "default",
+      }),
+    ).toBe(false);
+    expect(
+      emitDeviceStatusUpdateIfChanged(socket as never, otherRuntime, {}),
+    ).toBe(true);
+    expect(
+      emitDeviceStatusUpdateIfChanged(otherSocket as never, runtime, {}),
+    ).toBe(true);
+
+    expect(socket.sentPayloads).toHaveLength(2);
+    expect(otherSocket.sentPayloads).toHaveLength(1);
   });
 });
