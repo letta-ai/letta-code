@@ -85,6 +85,9 @@ for (const entry of isolatedTests) {
 function runTests(files, timeoutMs) {
   execFileSync("bun", ["test", ...files, "--timeout", String(timeoutMs)], {
     stdio: "inherit",
+    // Unit tests must never emit product telemetry or make test fixtures look
+    // like real users. Override any inherited opt-in from the parent shell.
+    env: { ...process.env, LETTA_CODE_TELEM: "0" },
   });
 }
 
