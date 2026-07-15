@@ -306,7 +306,7 @@ describe("channel slash commands", () => {
       "Usage: /feedback <message>",
     );
     expect(buildChannelFeedbackUsageMessage("slack")).toContain(
-      "Usage: @agent /feedback <message>",
+      "Usage: /feedback <message>",
     );
     expect(buildChannelFeedbackTooLongMessage("discord")).toContain(
       "Maximum is 10,000 characters",

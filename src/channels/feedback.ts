@@ -30,17 +30,11 @@ function channelDisplayName(channelId: string): string {
   }
 }
 
-function feedbackCommandUsage(channelId: string): string {
-  return channelId === "slack"
-    ? "@agent /feedback <message>"
-    : "/feedback <message>";
-}
-
 export function buildChannelFeedbackUsageMessage(channelId: string): string {
   const displayName = channelDisplayName(channelId);
   return [
     `${displayName} received /feedback without a message.`,
-    `Usage: ${feedbackCommandUsage(channelId)}`,
+    "Usage: /feedback <message>",
   ].join("\n\n");
 }
 
@@ -56,8 +50,8 @@ export function buildChannelFeedbackNoRouteMessage(channelId: string): string {
   const displayName = channelDisplayName(channelId);
   const instruction =
     channelId === "slack"
-      ? `Mention the app with a normal message in this chat or thread first so it can connect, then try ${feedbackCommandUsage(channelId)}.`
-      : `Send a normal message first and follow the pairing instructions, then try ${feedbackCommandUsage(channelId)}.`;
+      ? "Mention the app with a normal message in this chat or thread first so it can connect, then send /feedback <message> while mentioning the app."
+      : "Send a normal message first and follow the pairing instructions, then try /feedback <message>.";
   return [
     `${displayName} cannot submit /feedback until this chat is connected to a Letta agent conversation.`,
     instruction,
