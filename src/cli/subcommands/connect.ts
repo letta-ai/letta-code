@@ -270,7 +270,16 @@ export async function runConnectSubcommand(
       }
 
       const loginMethod = readStringOption(parsed.values.method);
+      let connectionOptions: ProviderConnectionOptions;
+      try {
+        connectionOptions = connectionOptionsFromArgs(parsed.values);
+      } catch (error) {
+        io.stderr(getErrorMessage(error));
+        return 1;
+      }
       await io.runLocalOAuthConnectFlow(provider.byokProvider, {
+        baseURL: connectionOptions.baseURL,
+        timeout: connectionOptions.timeout,
         onStatus: (status) => io.stdout(status),
         onPrompt: async (prompt) => {
           if (prompt.allowEmpty && !io.isTTY()) return "";
