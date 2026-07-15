@@ -26,8 +26,66 @@ import {
   parseChannelSlashCommand,
   tryHandleChannelSlashCommand,
 } from "@/channels/commands";
+import {
+  __testOverrideSubmitChannelFeedback,
+  buildChannelFeedbackFailedMessage,
+  buildChannelFeedbackNoRouteMessage,
+  buildChannelFeedbackSubmittedMessage,
+  buildChannelFeedbackTooLongMessage,
+  buildChannelFeedbackUsageMessage,
+  CHANNEL_FEEDBACK_MESSAGE_MAX,
+} from "@/channels/feedback";
 import { buildSlackModelPickerBlocks } from "@/channels/slack/model-picker-blocks";
-import type { ChannelAdapter, InboundChannelMessage } from "@/channels/types";
+import type {
+  ChannelAdapter,
+  ChannelRoute,
+  InboundChannelMessage,
+} from "@/channels/types";
+
+type CapturedDirectReply = {
+  chatId: string;
+  text: string;
+  options?: Parameters<ChannelAdapter["sendDirectReply"]>[2];
+};
+
+function createReplyCapturingAdapter(
+  replies: CapturedDirectReply[],
+  channelId = "telegram",
+): ChannelAdapter {
+  return {
+    id: channelId,
+    channelId,
+    name: channelId,
+    async start() {},
+    async stop() {},
+    isRunning: () => true,
+    async sendMessage() {
+      return { messageId: "sent-1" };
+    },
+    async sendDirectReply(chatId, text, options) {
+      replies.push({ chatId, text, ...(options ? { options } : {}) });
+    },
+  };
+}
+
+function makeRoute(params: {
+  channel: string;
+  accountId: string;
+  chatId: string;
+  threadId?: string | null;
+}): ChannelRoute {
+  return {
+    accountId: params.accountId,
+    chatId: params.chatId,
+    chatType: params.threadId ? "channel" : "direct",
+    threadId: params.threadId ?? null,
+    agentId: `agent-${params.channel}`,
+    conversationId: `conv-${params.channel}`,
+    enabled: true,
+    createdAt: "2026-05-18T00:00:00.000Z",
+    updatedAt: "2026-05-18T00:00:00.000Z",
+  };
+}
 
 describe("channel slash commands", () => {
   test("parses channel slash commands with bot suffixes and args", () => {
@@ -139,6 +197,7 @@ describe("channel slash commands", () => {
       "resume",
       "cancel",
       "chat",
+      "feedback",
       "model",
       "reflection",
     ]) {
@@ -151,7 +210,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).not.toContain("MessageChannel");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection.",
     );
 
     const slackText = buildChannelHelpMessage("slack");
@@ -169,6 +228,7 @@ describe("channel slash commands", () => {
     expect(slackText).toContain(
       "@agent /model <handle-or-id> - switch this thread's model",
     );
+    expect(slackText).toContain("@agent /feedback <message>");
     expect(slackText).toContain("@agent /detach");
     expect(slackText).toContain("@agent /reload");
     expect(slackText).toContain(
@@ -239,6 +299,276 @@ describe("channel slash commands", () => {
     expect(buildChannelAlreadyActiveMessage("telegram")).toContain(
       "already active",
     );
+  });
+
+  test("builds feedback command messages", () => {
+    expect(buildChannelFeedbackUsageMessage("telegram")).toContain(
+      "Usage: /feedback <message>",
+    );
+    expect(buildChannelFeedbackUsageMessage("slack")).toContain(
+      "Usage: @agent /feedback <message>",
+    );
+    expect(buildChannelFeedbackTooLongMessage("discord")).toContain(
+      "Maximum is 10,000 characters",
+    );
+    expect(buildChannelFeedbackNoRouteMessage("custom")).toContain(
+      "connected to a Letta agent conversation",
+    );
+    expect(buildChannelFeedbackSubmittedMessage("signal")).toContain(
+      "feedback submitted",
+    );
+    expect(buildChannelFeedbackFailedMessage("whatsapp")).toContain(
+      "could not submit feedback right now",
+    );
+  });
+
+  test("submits feedback through the shared route for first-party and custom channels", async () => {
+    const cases: Array<{
+      channel: string;
+      text: string;
+      expectedMessage: string;
+      isMention?: boolean;
+      threadId?: string | null;
+    }> = [
+      {
+        channel: "slack",
+        text: "/feedback Slack feedback",
+        expectedMessage: "Slack feedback",
+        isMention: true,
+        threadId: "thread-secret-slack",
+      },
+      {
+        channel: "telegram",
+        text: "/feedback Telegram feedback\nwith detail",
+        expectedMessage: "Telegram feedback\nwith detail",
+      },
+      {
+        channel: "discord",
+        text: "/feedback Discord feedback",
+        expectedMessage: "Discord feedback",
+      },
+      {
+        channel: "whatsapp",
+        text: "/feedback WhatsApp feedback",
+        expectedMessage: "WhatsApp feedback",
+      },
+      {
+        channel: "signal",
+        text: "/feedback Signal feedback",
+        expectedMessage: "Signal feedback",
+      },
+      {
+        channel: "custom",
+        text: "/feedback Custom feedback",
+        expectedMessage: "Custom feedback",
+      },
+      {
+        channel: "acme-support",
+        text: "/feedback Dynamic plugin feedback",
+        expectedMessage: "Dynamic plugin feedback",
+      },
+    ];
+    const payloads: Record<string, unknown>[] = [];
+    __testOverrideSubmitChannelFeedback(async (payload) => {
+      payloads.push(payload);
+    });
+
+    try {
+      for (const entry of cases) {
+        const replies: CapturedDirectReply[] = [];
+        const adapter = createReplyCapturingAdapter(replies, entry.channel);
+        const accountId = `acct-${entry.channel}`;
+        const chatId = `chat-secret-${entry.channel}`;
+        const route = makeRoute({
+          channel: entry.channel,
+          accountId,
+          chatId,
+          threadId: entry.threadId ?? null,
+        });
+        const msg: InboundChannelMessage = {
+          channel: entry.channel,
+          accountId,
+          chatId,
+          senderId: `sender-secret-${entry.channel}`,
+          senderName: "sender-name-secret",
+          text: entry.text,
+          timestamp: Date.now(),
+          messageId: `message-secret-${entry.channel}`,
+          threadId: entry.threadId ?? null,
+          chatType: entry.threadId ? "channel" : "direct",
+          ...(entry.isMention !== undefined
+            ? { isMention: entry.isMention }
+            : {}),
+          raw: { token: "raw-secret-token" },
+          threadContext: {
+            history: [
+              { senderId: "history-sender", text: "transcript-secret" },
+            ],
+          },
+        };
+
+        await expect(
+          tryHandleChannelSlashCommand(adapter, msg, {
+            statusContext: {
+              adapterRunning: true,
+              accountConfigured: true,
+              accountEnabled: true,
+              route,
+            },
+          }),
+        ).resolves.toBe(true);
+
+        expect(replies).toHaveLength(1);
+        expect(replies[0]?.text).toContain("feedback submitted");
+      }
+    } finally {
+      __testOverrideSubmitChannelFeedback(null);
+    }
+
+    expect(payloads).toHaveLength(cases.length);
+    for (const [index, payload] of payloads.entries()) {
+      const entry = cases[index];
+      expect(Object.keys(payload).sort()).toEqual([
+        "account_id",
+        "agent_id",
+        "channel",
+        "conversation_id",
+        "feature",
+        "message",
+        "platform",
+        "version",
+      ]);
+      expect(payload).toMatchObject({
+        message: entry?.expectedMessage,
+        feature: "letta-code-channel-feedback",
+        channel: entry?.channel,
+        account_id: `acct-${entry?.channel}`,
+        agent_id: `agent-${entry?.channel}`,
+        conversation_id: `conv-${entry?.channel}`,
+        platform: process.platform,
+      });
+    }
+
+    const serializedPayloads = JSON.stringify(payloads);
+    expect(serializedPayloads).not.toContain("sender-secret");
+    expect(serializedPayloads).not.toContain("sender-name-secret");
+    expect(serializedPayloads).not.toContain("chat-secret");
+    expect(serializedPayloads).not.toContain("thread-secret");
+    expect(serializedPayloads).not.toContain("message-secret");
+    expect(serializedPayloads).not.toContain("raw-secret-token");
+    expect(serializedPayloads).not.toContain("transcript-secret");
+    expect(serializedPayloads).not.toContain("run_id");
+    expect(serializedPayloads).not.toContain("settings");
+    expect(serializedPayloads).not.toContain("cwd");
+  });
+
+  test("validates feedback input and requires a connected route before submission", async () => {
+    let submissions = 0;
+    __testOverrideSubmitChannelFeedback(async () => {
+      submissions += 1;
+    });
+
+    try {
+      const route = makeRoute({
+        channel: "telegram",
+        accountId: "acct-telegram",
+        chatId: "chat-telegram",
+      });
+      const validationCases = [
+        {
+          text: "/feedback   ",
+          route,
+          expected: "Usage: /feedback <message>",
+        },
+        {
+          text: `/feedback ${"x".repeat(CHANNEL_FEEDBACK_MESSAGE_MAX + 1)}`,
+          route,
+          expected: "Maximum is 10,000 characters",
+        },
+        {
+          text: "/feedback useful but unpaired",
+          route: null,
+          expected: "cannot submit /feedback until this chat is connected",
+        },
+      ];
+
+      for (const validationCase of validationCases) {
+        const replies: CapturedDirectReply[] = [];
+        const adapter = createReplyCapturingAdapter(replies);
+        const msg: InboundChannelMessage = {
+          channel: "telegram",
+          accountId: "acct-telegram",
+          chatId: "chat-telegram",
+          senderId: "sender-telegram",
+          text: validationCase.text,
+          timestamp: Date.now(),
+          messageId: "msg-telegram",
+        };
+
+        await expect(
+          tryHandleChannelSlashCommand(adapter, msg, {
+            statusContext: {
+              adapterRunning: true,
+              accountConfigured: true,
+              accountEnabled: true,
+              route: validationCase.route,
+            },
+          }),
+        ).resolves.toBe(true);
+
+        expect(replies).toHaveLength(1);
+        expect(replies[0]?.text).toContain(validationCase.expected);
+      }
+    } finally {
+      __testOverrideSubmitChannelFeedback(null);
+    }
+
+    expect(submissions).toBe(0);
+  });
+
+  test("sanitizes feedback submission failures", async () => {
+    __testOverrideSubmitChannelFeedback(async () => {
+      throw new Error("secret-token raw backend exception");
+    });
+
+    try {
+      const replies: CapturedDirectReply[] = [];
+      const adapter = createReplyCapturingAdapter(replies, "discord");
+      const route = makeRoute({
+        channel: "discord",
+        accountId: "acct-discord",
+        chatId: "chat-discord",
+      });
+      const msg: InboundChannelMessage = {
+        channel: "discord",
+        accountId: "acct-discord",
+        chatId: "chat-discord",
+        senderId: "sender-discord",
+        text: "/feedback submission should fail",
+        timestamp: Date.now(),
+        messageId: "msg-discord",
+      };
+
+      await expect(
+        tryHandleChannelSlashCommand(adapter, msg, {
+          statusContext: {
+            adapterRunning: true,
+            accountConfigured: true,
+            accountEnabled: true,
+            route,
+          },
+        }),
+      ).resolves.toBe(true);
+
+      expect(replies).toHaveLength(1);
+      expect(replies[0]?.text).toBe(
+        "Discord could not submit feedback right now. Please try again later.",
+      );
+      expect(replies[0]?.text).not.toContain("secret-token");
+      expect(replies[0]?.text).not.toContain("raw backend exception");
+    } finally {
+      __testOverrideSubmitChannelFeedback(null);
+    }
   });
 
   test("builds cancel command messages", () => {
@@ -429,7 +759,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram received /compact now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands: /help, /status, /pause, /resume, /cancel, /chat, /model, /reflection.",
+      "Supported slash commands: /help, /status, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection.",
     );
     expect(text).toContain("without a leading slash");
 
@@ -439,6 +769,7 @@ describe("channel slash commands", () => {
     );
     expect(slackSlashText).toContain("Supported Slack mention commands:");
     expect(slackSlashText).toContain("@agent /model <handle-or-id>");
+    expect(slackSlashText).toContain("@agent /feedback <message>");
 
     const bangCommand = parseChannelBangCommand("!pause");
     expect(bangCommand).not.toBeNull();

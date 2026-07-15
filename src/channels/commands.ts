@@ -1,4 +1,5 @@
 import type { ListModelsResponseModelEntry } from "@/types/protocol_v2";
+import { handleChannelFeedbackCommand } from "./feedback";
 import { getChannelDisplayName } from "./plugin-registry";
 import type {
   ChannelAdapter,
@@ -115,6 +116,11 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     name: "chat",
     kind: "direct",
     summary: "Show the Letta web chat link for this channel route.",
+  },
+  {
+    name: "feedback",
+    kind: "direct",
+    summary: "Send feedback about Letta Code from this routed chat.",
   },
   {
     name: "model",
@@ -256,6 +262,7 @@ const SLACK_MENTION_SLASH_COMMAND_EXAMPLES = [
   "@agent /model <handle-or-id>",
   "@agent /cancel",
   "@agent /chat",
+  "@agent /feedback <message>",
   "@agent /reflection",
   "@agent /detach",
   "@agent /new",
@@ -310,6 +317,7 @@ export function buildChannelHelpMessage(channelId: string): string {
       "@agent /status - show route and listener status",
       "@agent /cancel - cancel the current turn",
       "@agent /chat - show the web chat link",
+      "@agent /feedback <message> - send feedback to the Letta team from this routed thread",
       "@agent /reflection - start a memory reflection pass",
       "@agent /detach - stop replying in this thread until mentioned again",
       "@agent /new - start a fresh conversation for this thread",
@@ -877,6 +885,12 @@ export async function tryHandleChannelSlashCommand(
             msg,
             command,
             handler: options.handlers?.chat,
+          });
+        case "feedback":
+          return handleChannelFeedbackCommand({
+            msg,
+            command,
+            route: options.statusContext?.route,
           });
         case "detach":
           if (!isSlackMentionControl) {
