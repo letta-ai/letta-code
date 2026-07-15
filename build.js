@@ -5,12 +5,61 @@
  * Bundles TypeScript source into a single JavaScript file
  */
 
-import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  cpSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+function walkFiles(root) {
+  const entries = readdirSync(root);
+  const files = [];
+  for (const entry of entries) {
+    const path = join(root, entry);
+    const stat = statSync(path);
+    if (stat.isDirectory()) {
+      files.push(...walkFiles(path));
+      continue;
+    }
+    files.push(path);
+  }
+  return files;
+}
+
+function toDeclarationSpecifier(fromFile, targetRoot, aliasPath) {
+  const targetPath = join(targetRoot, aliasPath);
+  const relativePath = relative(dirname(fromFile), targetPath).replaceAll(
+    "\\",
+    "/",
+  );
+  return relativePath.startsWith(".") ? relativePath : `./${relativePath}`;
+}
+
+function rewriteDeclarationAliases(typesRoot) {
+  for (const file of walkFiles(typesRoot)) {
+    if (!file.endsWith(".d.ts")) {
+      continue;
+    }
+    const source = readFileSync(file, "utf-8");
+    const rewritten = source.replace(
+      /(["'])@\/([^"']+)\1/g,
+      (_match, quote, aliasPath) =>
+        `${quote}${toDeclarationSpecifier(file, typesRoot, aliasPath)}${quote}`,
+    );
+    if (rewritten !== source) {
+      writeFileSync(file, rewritten);
+    }
+  }
+}
 
 // Read version from package.json
 const pkg = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf-8"));
@@ -110,6 +159,30 @@ await Bun.build({
   },
 });
 
+await Bun.build({
+  entrypoints: ["./src/channels-public.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "channels-public.js",
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/channels-slack.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "channels-slack.js",
+  },
+});
+
 // Copy bundled skills to skills/ directory for shipping
 const bundledSkillsSrc = join(__dirname, "src/skills/builtin");
 const bundledSkillsDst = join(__dirname, "skills");
@@ -126,6 +199,7 @@ if (existsSync(bundledSkillsSrc)) {
 // Generate type declarations for wire types export
 console.log("📝 Generating type declarations...");
 await Bun.$`bunx tsc -p tsconfig.types.json`;
+rewriteDeclarationAliases(join(__dirname, "dist/types"));
 console.log("   Output: dist/types/protocol.d.ts");
 
 console.log("✅ Build complete!");
