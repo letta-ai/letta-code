@@ -182,6 +182,8 @@ export interface ChannelPluginAccountPatch {
   richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+  messagePrefix?: string;
+  waitingBehavior?: import("./types").WhatsAppWaitingBehavior;
 }
 
 export type ChannelAccountPatch = ChannelCommonAccountPatch &
