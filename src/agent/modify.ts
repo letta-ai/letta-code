@@ -59,6 +59,11 @@ function buildModelSettings(
     modelHandle.startsWith("lc-anthropic/") ||
     modelHandle.startsWith("claude-pro-max/") ||
     modelHandle.startsWith("minimax/");
+  const isMoonshot =
+    explicitProviderType === "moonshot" ||
+    explicitProviderType === "moonshotai" ||
+    modelHandle.startsWith("moonshot/") ||
+    modelHandle.startsWith("moonshotai/");
   const isZai =
     explicitProviderType === "zai" || modelHandle.startsWith("zai/");
   const isXai =
@@ -77,7 +82,16 @@ function buildModelSettings(
 
   let settings: ModelSettings;
 
-  if (isOpenAI || isOpenRouter) {
+  if (isMoonshot) {
+    const moonshotSettings: Record<string, unknown> = {
+      provider_type: "moonshot",
+      parallel_tool_calls: true,
+    };
+    if (typeof updateArgs?.reasoning_effort === "string") {
+      moonshotSettings.reasoning_effort = updateArgs.reasoning_effort;
+    }
+    settings = moonshotSettings;
+  } else if (isOpenAI || isOpenRouter) {
     const openaiSettings: OpenAIModelSettings = {
       provider_type: "openai",
       parallel_tool_calls: true,
