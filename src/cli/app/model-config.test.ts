@@ -72,4 +72,16 @@ describe("model config helpers", () => {
       ),
     ).toBe("max");
   });
+
+  test("does not expose unsupported Moonshot reasoning tiers", () => {
+    expect(
+      deriveReasoningEffort(
+        {
+          provider_type: "moonshot",
+          reasoning_effort: "low",
+        } as never,
+        null,
+      ),
+    ).toBeNull();
+  });
 });

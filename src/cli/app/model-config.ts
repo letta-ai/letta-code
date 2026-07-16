@@ -44,17 +44,7 @@ export function deriveReasoningEffort(
     if (providerType === "moonshot" || providerType === "moonshotai") {
       const effort = (modelSettings as { reasoning_effort?: string | null })
         .reasoning_effort;
-      if (
-        effort === "none" ||
-        effort === "minimal" ||
-        effort === "low" ||
-        effort === "medium" ||
-        effort === "high" ||
-        effort === "xhigh" ||
-        effort === "max"
-      ) {
-        return effort;
-      }
+      if (effort === "max") return effort;
     }
 
     // Anthropic/Bedrock: effort field
