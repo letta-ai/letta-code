@@ -9,17 +9,20 @@ import type {
   OutboundChannelMessage,
   WhatsAppChannelAccount,
 } from "@/channels/types";
+import { resolveInboundChatId } from "./inbound-identity";
 import {
+  allowedUsersIncludes,
   isGroupJid,
   isLidJid,
+  isPhoneJid,
   isSelfChat,
   isStatusOrBroadcastJid,
-  phoneDigitsToJid,
-  resolveLidToPhoneJid,
+  normalizeMaybePhoneJid,
   resolveSendJid,
   senderIdFromJid,
   stripDeviceSuffix,
 } from "./jid";
+import { LidDesk } from "./lid-desk";
 import {
   buildWhatsAppOutboundPayload,
   collectWhatsAppAttachments,
@@ -41,6 +44,13 @@ type EventEmitterLike = {
   on?: (event: string, handler: (payload: unknown) => void) => void;
 };
 
+type WhatsAppMessageKey = {
+  remoteJid?: string | null;
+  id?: string | null;
+  fromMe?: boolean | null;
+  participant?: string | null;
+};
+
 type WhatsAppSocket = {
   ev?: EventEmitterLike;
   ws?: { close?: () => void };
@@ -52,6 +62,10 @@ type WhatsAppSocket = {
     options?: Record<string, unknown>,
   ) => Promise<{ key?: { id?: string }; message?: unknown }>;
   sendPresenceUpdate?: (presence: string, jid?: string) => Promise<void>;
+  readMessages?: (keys: WhatsAppMessageKey[]) => Promise<void>;
+  onWhatsApp?: (
+    phoneNumber: string,
+  ) => Promise<{ exists?: boolean; jid?: string; lid?: string }[] | undefined | null>;
   groupMetadata?: (jid: string) => Promise<{ subject?: string }>;
 };
 
@@ -188,9 +202,37 @@ function getLifecycleErrorReplyKey(source: ChannelTurnSource): string | null {
   return `${source.chatId}:${source.messageId ?? ""}`;
 }
 
+/**
+ * Adapter type returned by {@link createWhatsAppAdapter}.
+ *
+ * Extends the base {@link ChannelAdapter} with WhatsApp-specific outbound
+ * bootstrap — methods that proactive-send callers use to resolve LID
+ * mappings for contacts with no prior inbound.
+ */
+export type WhatsAppAdapter = ChannelAdapter & {
+  /**
+   * Attempt to bootstrap an outbound route for a phone-number chatId that has
+   * no prior inbound.
+   *
+   * Calls `lidDesk.lookupLidForPhone` (which delegates to Baileys'
+   * `sock.onWhatsApp` on cache miss). If the contact is on WhatsApp and has a
+   * LID, the mapping is persisted in the desk so subsequent `sendMessage` /
+   * `sendDirectReply` calls resolve correctly via `resolveSendJid`.
+   *
+   * Returns `true` if the contact is reachable (either already cached or
+   * successfully resolved). Returns `false` if the number is not on WhatsApp,
+   * the socket is unavailable, the rate limit is exceeded, or the lookup
+   * throws.
+   *
+   * This method does NOT touch the route store — it only populates the LID
+   * desk. Route creation remains the registry's responsibility.
+   */
+  tryBootstrapOutboundRoute(chatId: string): Promise<boolean>;
+};
+
 export function createWhatsAppAdapter(
   account: WhatsAppChannelAccount,
-): ChannelAdapter {
+): WhatsAppAdapter {
   let sock: WhatsAppSocket | null = null;
   let running = false;
   let stopping = false;
@@ -207,7 +249,12 @@ export function createWhatsAppAdapter(
   const sentMessageIds = new Set<string>();
   const seenMessageIds = new Set<string>();
   const lidToJid = new Map<string, string>();
+  const jidToLid = new Map<string, string>();
   const messageStore = new Map<string, unknown>();
+
+  const authDir = getWhatsAppAuthDir(account.accountId);
+  const lidDesk = new LidDesk(authDir);
+  lidDesk.load();
 
   function rememberSeen(id: string): boolean {
     if (seenMessageIds.has(id)) return true;
@@ -348,31 +395,6 @@ export function createWhatsAppAdapter(
     });
   }
 
-  function resolveInboundChatId(
-    remoteJid: string,
-    selfChat: boolean,
-    msg: WhatsAppMessage,
-  ): string {
-    const normalizedRemote = stripDeviceSuffix(remoteJid);
-    if (selfChat) {
-      if (selfPhoneJid) return selfPhoneJid;
-      const digits = senderIdFromJid(remoteJid);
-      return phoneDigitsToJid(digits) || normalizedRemote;
-    }
-    if (isLidJid(normalizedRemote)) {
-      const resolved = resolveLidToPhoneJid({
-        lidJid: normalizedRemote,
-        message: msg,
-        sock,
-      });
-      if (resolved) {
-        lidToJid.set(normalizedRemote, resolved);
-        return resolved;
-      }
-    }
-    return normalizedRemote;
-  }
-
   async function getGroupLabel(groupJid: string): Promise<string | undefined> {
     try {
       return (await sock?.groupMetadata?.(groupJid))?.subject;
@@ -415,10 +437,25 @@ export function createWhatsAppAdapter(
       const timestamp = timestampToMs(msg.messageTimestamp);
       if (isHistory || timestamp < connectedAtMs - 1000) continue;
 
+      // Mine PN↔LID mappings from inbound message metadata.
+      if (lidDesk.mineFromMessage(msg)) {
+        lidDesk.save();
+        // Sync ephemeral maps from the desk's authoritative maps.
+        for (const [lid, jid] of lidDesk.getLidToJidMap())
+          lidToJid.set(lid, jid);
+        for (const [jid, lid] of lidDesk.getJidToLidMap())
+          jidToLid.set(jid, lid);
+      }
+
       const group = isGroupJid(remoteJid);
       const chatId = group
         ? stripDeviceSuffix(remoteJid)
-        : resolveInboundChatId(remoteJid, selfChat, msg);
+        : resolveInboundChatId(
+            { selfPhoneJid, lidDesk },
+            remoteJid,
+            selfChat,
+            msg,
+          );
       if (rememberSeen(`${chatId}:${messageId}`)) continue;
 
       const text = extractWhatsAppText(msg.message);
@@ -457,6 +494,13 @@ export function createWhatsAppAdapter(
           });
       if (!groupAllowed) continue;
 
+      // LID-aware DM allowlist check (supplements registry-level filtering).
+      if (!group && !selfChat && account.dmPolicy === "allowlist") {
+        if (!allowedUsersIncludes(account.allowedUsers, senderId, lidDesk)) {
+          continue;
+        }
+      }
+
       const chatLabel = group
         ? await getGroupLabel(chatId)
         : selfChat
@@ -485,6 +529,17 @@ export function createWhatsAppAdapter(
       console.log(
         `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${preview(body)}"`,
       );
+
+      // Mark the message as read (replaces chatModify markRead).
+      try {
+        await sock?.readMessages?.([msg.key ?? {}]);
+      } catch (err) {
+        console.warn(
+          `[WhatsApp:${account.accountId}] readMessages failed:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+
       await adapter.onMessage?.(inbound);
     }
   }
@@ -499,13 +554,46 @@ export function createWhatsAppAdapter(
       chatId,
       selfPhoneJid,
       selfLid,
-      lidToJid,
-      sock,
+      lidToJid: lidDesk.getLidToJidMap(),
     });
     return await sock.sendMessage(targetJid, payload, options);
   }
 
-  const adapter: ChannelAdapter = {
+  /**
+   * Attempt to bootstrap an outbound route for a phone-number chatId.
+   *
+   * Resolves the LID on demand via `lidDesk.lookupLidForPhone` (which calls
+   * `sock.onWhatsApp` on cache miss). If successful, the mapping is persisted
+   * in the desk and subsequent sends will resolve via `resolveSendJid`.
+   *
+   * Returns false for non-phone chatIds (LIDs, groups, broadcast), since
+   * those don't need on-demand lookup.
+   */
+  async function tryBootstrapOutboundRoute(chatId: string): Promise<boolean> {
+    const normalized = stripDeviceSuffix(chatId);
+
+    // Only phone JIDs need bootstrap. LIDs, groups, and broadcast JIDs
+    // either already have a mapping or are not resolvable via onWhatsApp.
+    if (
+      isLidJid(normalized) ||
+      isGroupJid(normalized) ||
+      isStatusOrBroadcastJid(normalized)
+    ) {
+      return false;
+    }
+
+    // Normalize raw digits or phone JIDs to a canonical phone JID.
+    const phoneJid = normalizeMaybePhoneJid(normalized);
+    if (!phoneJid || !isPhoneJid(phoneJid)) return false;
+
+    // Already cached in the desk — no lookup needed.
+    if (lidDesk.resolvePn(phoneJid)) return true;
+
+    const lid = await lidDesk.lookupLidForPhone(phoneJid, sock ?? undefined);
+    return lid !== null;
+  }
+
+  const adapter: WhatsAppAdapter = {
     id: `${CHANNEL_ID}:${account.accountId}`,
     channelId: CHANNEL_ID,
     accountId: account.accountId,
@@ -545,8 +633,7 @@ export function createWhatsAppAdapter(
         chatId: msg.chatId,
         selfPhoneJid,
         selfLid,
-        lidToJid,
-        sock,
+        lidToJid: lidDesk.getLidToJidMap(),
       });
       if (msg.reaction || msg.removeReaction) {
         const target = msg.targetMessageId ?? msg.replyToMessageId;
@@ -583,8 +670,7 @@ export function createWhatsAppAdapter(
         chatId,
         selfPhoneJid,
         selfLid,
-        lidToJid,
-        sock,
+        lidToJid: lidDesk.getLidToJidMap(),
       });
       const result = await sendToWhatsApp(
         targetJid,
@@ -639,6 +725,8 @@ export function createWhatsAppAdapter(
         }),
       );
     },
+
+    tryBootstrapOutboundRoute,
   };
 
   return adapter;
