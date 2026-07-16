@@ -28,7 +28,8 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
   {
     id: "tutorial",
     label: "Tutor",
-    description: "A tutor-guide that teaches Letta through real work",
+    description:
+      "I help with getting started with Letta. I can answer any questions about Letta, and also help you create and configure agents.",
   },
   {
     id: "blank",

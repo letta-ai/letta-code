@@ -89,6 +89,16 @@ describe("personality helpers", () => {
     );
   });
 
+  test("tutorial description explains the onboarding role", () => {
+    const tutorialOption = PERSONALITY_OPTIONS.find(
+      (option) => option.id === "tutorial",
+    );
+
+    expect(tutorialOption?.description).toBe(
+      "I help with getting started with Letta. I can answer any questions about Letta, and also help you create and configure agents.",
+    );
+  });
+
   test("default create-agent personalities include memo, tutorial, blank, linus, and kawaii", () => {
     expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
       "memo",
