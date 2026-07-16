@@ -293,6 +293,7 @@ export interface ChannelAdapter {
     chatId: string;
     threadId?: string | null;
     messageId: string;
+    signal?: AbortSignal;
   }): Promise<ChannelMessageAttachment>;
 
   /**

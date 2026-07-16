@@ -535,6 +535,7 @@ describe("MessageChannel Slack", () => {
       chatId: "C123",
       threadId: "1712790000.000050",
       messageId: "1712800000.000100",
+      signal: expect.any(AbortSignal),
     });
   });
 
@@ -588,6 +589,7 @@ describe("MessageChannel Slack", () => {
       chatId: "C123",
       threadId: null,
       messageId: "1712700000.000010",
+      signal: expect.any(AbortSignal),
     });
   });
 
