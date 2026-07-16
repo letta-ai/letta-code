@@ -839,7 +839,10 @@ export async function spawnSubagent(
     const forkAgentURL = buildAgentReference(existingAgentId, {
       conversationId: existingConversationId,
     });
-    updateSubagent(subagentId, { agentURL: forkAgentURL });
+    updateSubagent(subagentId, {
+      agentURL: forkAgentURL,
+      conversationId: existingConversationId,
+    });
   }
 
   // Execute subagent - state updates are handled via the state store

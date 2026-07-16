@@ -667,6 +667,9 @@ export interface SubagentSnapshot {
   prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agent_url: string | null;
+  /** The subagent's own conversation id (for dual-view routing; local agents
+   * have a bare-id agent_url with no ?conversation= param to parse). */
+  conversation_id?: string | null;
   model?: string;
   is_background?: boolean;
   silent?: boolean;

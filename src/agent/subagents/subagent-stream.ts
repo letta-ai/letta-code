@@ -61,10 +61,17 @@ function handleInitEvent(
     const agentURL = buildAgentReference(event.agent_id, {
       conversationId: event.conversation_id,
     });
-    updateSubagent(subagentId, { agentId: event.agent_id, agentURL });
+    updateSubagent(subagentId, {
+      agentId: event.agent_id,
+      agentURL,
+      conversationId: event.conversation_id ?? null,
+    });
   }
   if (event.conversation_id) {
     state.conversationId = event.conversation_id;
+    if (!event.agent_id) {
+      updateSubagent(subagentId, { conversationId: event.conversation_id });
+    }
   }
 }
 
