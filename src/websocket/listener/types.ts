@@ -5,6 +5,7 @@ import type {
   ApprovalDecision,
   ApprovalResult,
 } from "@/agent/approval-execution";
+import type { SkillSource } from "@/agent/skill-sources";
 import type { ChannelTurnSource } from "@/channels/types";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
@@ -142,6 +143,8 @@ export type ConversationRuntime = {
   key: string;
   agentId: string | null;
   conversationId: string;
+  /** Runtime-scoped SDK override. Undefined uses the process defaults. */
+  skillSources: SkillSource[] | undefined;
   activeChannelTurn: ActiveChannelTurn | null;
   turnLifecycle: TurnLifecycle;
   messageQueue: Promise<void>;
@@ -221,6 +224,8 @@ export type ListenerRuntime = {
     string,
     import("@/websocket/listener/permission-mode").ConversationPermissionModeState
   >;
+  /** Per-conversation skill overrides survive idle ConversationRuntime eviction. */
+  skillSourcesByConversation: Map<string, SkillSource[]>;
   /** Per-conversation reminder state survives ConversationRuntime eviction. */
   reminderStateByConversation: Map<string, SharedReminderState>;
   /** Per-conversation context tracker survives ConversationRuntime eviction. */
