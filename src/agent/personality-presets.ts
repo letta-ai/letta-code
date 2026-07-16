@@ -259,8 +259,12 @@ export function getDefaultHumanContent(): string {
 export function getPersonalityHumanContent(
   personalityId: PersonalityId,
 ): string {
-  if (personalityId === "memo" || personalityId === "tutorial") {
+  if (personalityId === "memo") {
     return getPromptBody("human_memo.mdx");
+  }
+
+  if (personalityId === "tutorial") {
+    return getPromptBody("human_tutorial.mdx");
   }
 
   if (personalityId === "linus") {
@@ -307,13 +311,15 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
               ? "persona_linus.mdx"
               : "persona.mdx";
   const humanTemplatePromptAssetName =
-    personalityId === "memo" || personalityId === "tutorial"
+    personalityId === "memo"
       ? "human_memo.mdx"
-      : personalityId === "kawaii"
-        ? "human_kawaii.mdx"
-        : personalityId === "linus"
-          ? "human_linus.mdx"
-          : "human.mdx";
+      : personalityId === "tutorial"
+        ? "human_tutorial.mdx"
+        : personalityId === "kawaii"
+          ? "human_kawaii.mdx"
+          : personalityId === "linus"
+            ? "human_linus.mdx"
+            : "human.mdx";
 
   return {
     persona: {

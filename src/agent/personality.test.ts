@@ -78,6 +78,17 @@ describe("personality helpers", () => {
     expect(getPersonalityHumanContent("codex")).toBe(defaultHuman);
   });
 
+  test("tutorial uses its dedicated human block", () => {
+    const tutorialHuman = getPersonalityHumanContent("tutorial");
+    const definitions = getPersonalityBlockDefinitions("tutorial");
+
+    expect(tutorialHuman).toContain("## What they work on");
+    expect(tutorialHuman).not.toBe(getPersonalityHumanContent("memo"));
+    expect(definitions.human.templatePromptAssetName).toBe(
+      "human_tutorial.mdx",
+    );
+  });
+
   test("default create-agent personalities include memo, tutorial, blank, linus, and kawaii", () => {
     expect(DEFAULT_CREATE_AGENT_PERSONALITIES).toEqual([
       "memo",

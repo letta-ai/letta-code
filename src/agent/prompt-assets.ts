@@ -5,6 +5,7 @@ import humanPrompt from "./prompts/human.mdx";
 import humanKawaiiPrompt from "./prompts/human_kawaii.mdx";
 import humanLinusPrompt from "./prompts/human_linus.mdx";
 import humanMemoPrompt from "./prompts/human_memo.mdx";
+import humanTutorialPrompt from "./prompts/human_tutorial.mdx";
 import interruptRecoveryAlert from "./prompts/interrupt_recovery_alert.txt";
 import lettaMemfsPrompt from "./prompts/letta.md";
 import lettaNoMemfsPrompt from "./prompts/letta_no_memfs.md";
@@ -43,6 +44,7 @@ export const MEMORY_PROMPTS: Record<string, string> = {
   "human_kawaii.mdx": humanKawaiiPrompt,
   "human_linus.mdx": humanLinusPrompt,
   "human_memo.mdx": humanMemoPrompt,
+  "human_tutorial.mdx": humanTutorialPrompt,
   "project.mdx": projectPrompt,
 
   "memory_filesystem.mdx": memoryFilesystemPrompt,
