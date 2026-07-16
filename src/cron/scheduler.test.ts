@@ -10,7 +10,12 @@ import {
 } from "@/cron/cron-file";
 import { cronMatchesTime } from "@/cron/parse-interval";
 import { getCronRunLogPath, readCronRunLogEntries } from "@/cron/run-log";
-import { handleMissedOneShot, wrapCronPrompt } from "@/cron/scheduler";
+import {
+  formatCronPrompt,
+  getIntendedCronOccurrence,
+  handleMissedOneShot,
+  wrapCronPrompt,
+} from "@/cron/scheduler";
 
 // ── Test setup ──────────────────────────────────────────────────────
 
@@ -46,6 +51,28 @@ function makeInput(overrides: Partial<AddTaskInput> = {}): AddTaskInput {
     recurring: true,
     ...overrides,
   };
+}
+
+function pad(value: number, width: number): string {
+  return String(value).padStart(width, "0");
+}
+
+function expectedLocalTimezoneSuffix(): string {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (!timezone) return "local";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+    return timezone;
+  } catch {
+    return "local";
+  }
+}
+
+function formatExpectedLocalIso(date: Date): string {
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const absOffset = Math.abs(offsetMinutes);
+  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1, 2)}-${pad(date.getDate(), 2)}T${pad(date.getHours(), 2)}:${pad(date.getMinutes(), 2)}:${pad(date.getSeconds(), 2)}.${pad(date.getMilliseconds(), 3)}${sign}${pad(Math.floor(absOffset / 60), 2)}:${pad(absOffset % 60, 2)}[${expectedLocalTimezoneSuffix()}]`;
 }
 
 // ── shouldFireTask logic tests ──────────────────────────────────────
@@ -128,21 +155,100 @@ describe("per-minute deduplication", () => {
 // ── Task lifecycle tests ────────────────────────────────────────────
 
 describe("task lifecycle", () => {
-  test("cron prompt is visible user message text", () => {
-    const { task } = addTask(makeInput());
+  test("delayed recurring prompt keeps Scheduled for at matched minute and Current time later", () => {
+    const { task } = addTask(
+      makeInput({ cron: "5 0 * * *", timezone: "America/St_Johns" }),
+    );
+    const taskAtFire = { ...task, fire_count: 7 };
+    const intendedOccurrence = getIntendedCronOccurrence(
+      taskAtFire,
+      new Date("2026-06-01T02:35:17.999Z"),
+    );
+    const schedulerNow = new Date("2026-06-01T02:35:42.123Z");
 
-    expect(wrapCronPrompt(task)).toBe(
+    expect(
+      wrapCronPrompt(taskAtFire, { intendedOccurrence, schedulerNow }),
+    ).toBe(
       [
         'Scheduled task "Test task" is firing.',
         "Description: A test cron task",
-        "This is fire #1 (cron: */5 * * * *).",
+        "Timezone: America/St_Johns",
+        "Scheduled for: 2026-06-01T00:05:00.000-02:30[America/St_Johns]",
+        "Current time: 2026-06-01T00:05:42.123-02:30[America/St_Johns]",
+        "This is fire #8 (cron: 5 0 * * *).",
         "",
         "You are running autonomously: no user is watching this turn and questions will not be answered. Deliver results through your available channels or record them in memory, and work until the task is done or genuinely blocked.",
         "",
         "Prompt: echo hello",
       ].join("\n"),
     );
-    expect(wrapCronPrompt(task)).not.toContain("<system-reminder>");
+    expect(
+      wrapCronPrompt(taskAtFire, { intendedOccurrence, schedulerNow }),
+    ).not.toContain("<system-reminder>");
+  });
+
+  test("cron prompt includes intended one-shot occurrence near local midnight", () => {
+    const scheduledFor = new Date("2026-01-01T18:20:30.456Z");
+    const { task } = addTask(
+      makeInput({
+        recurring: false,
+        scheduled_for: scheduledFor,
+        timezone: "Asia/Kathmandu",
+      }),
+    );
+    const schedulerNow = new Date("2026-01-01T18:19:45.000Z");
+    const intendedOccurrence = getIntendedCronOccurrence(task, schedulerNow);
+
+    expect(wrapCronPrompt(task, { intendedOccurrence, schedulerNow })).toBe(
+      [
+        'Scheduled task "Test task" is firing.',
+        "Description: A test cron task",
+        "Timezone: Asia/Kathmandu",
+        "Scheduled for: 2026-01-02T00:05:30.456+05:45[Asia/Kathmandu]",
+        "Current time: 2026-01-02T00:04:45.000+05:45[Asia/Kathmandu]",
+        "This is a one-off scheduled task.",
+        "",
+        "You are running autonomously: no user is watching this turn and questions will not be answered. Deliver results through your available channels or record them in memory, and work until the task is done or genuinely blocked.",
+        "",
+        "Prompt: echo hello",
+      ].join("\n"),
+    );
+  });
+
+  test("cron prompt falls back to local time for legacy invalid timezones", () => {
+    const { task } = addTask(
+      makeInput({ cron: "5 0 * * *", timezone: "Not/A_Zone" }),
+    );
+    const matchedAt = new Date("2026-06-01T02:35:17.999Z");
+    const schedulerNow = new Date("2026-06-01T02:35:42.123Z");
+    const intendedOccurrence = getIntendedCronOccurrence(task, matchedAt);
+
+    const prompt = wrapCronPrompt(task, { intendedOccurrence, schedulerNow });
+
+    expect(prompt).toContain(
+      "Timezone: Not/A_Zone (invalid; using local time)",
+    );
+    expect(prompt).toContain(
+      `Scheduled for: ${formatExpectedLocalIso(intendedOccurrence)}`,
+    );
+    expect(prompt).toContain(
+      `Current time: ${formatExpectedLocalIso(schedulerNow)}`,
+    );
+  });
+
+  test("WS wrapper and TUI shared formatter produce identical prompt text", () => {
+    const { task } = addTask(
+      makeInput({ cron: "30 23 * * *", timezone: "Europe/Paris" }),
+    );
+    const timing = {
+      intendedOccurrence: getIntendedCronOccurrence(
+        task,
+        new Date("2026-03-27T22:30:59.999Z"),
+      ),
+      schedulerNow: new Date("2026-03-27T22:31:08.250Z"),
+    };
+
+    expect(formatCronPrompt(task, timing)).toBe(wrapCronPrompt(task, timing));
   });
 
   test("new recurring task starts with fire_count 0", () => {

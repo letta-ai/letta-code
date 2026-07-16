@@ -6,6 +6,9 @@
 # WebSocket listener and protocol code
 /src/websocket/ @cpacker @4shub @kl2806 @carenthomas @christinatong01 @jnjpng
 
+# Channel integrations and shared channel runtime
+/src/channels/ @cpacker @just-cameron
+
 # Headless mode runtime
 /src/headless.ts @cpacker @4shub @kl2806 @devanshrj @sarahwooders @jnjpng @carenthomas
 

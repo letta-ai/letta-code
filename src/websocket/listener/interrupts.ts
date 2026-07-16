@@ -43,6 +43,12 @@ type StreamingToolOutputState = {
   timer: ReturnType<typeof setTimeout> | null;
 };
 
+type ClientToolExecutionInfo = {
+  toolCallId: string;
+  toolName?: string;
+  toolArgs?: string;
+};
+
 function truncateInterruptToolReturn(text: string): string {
   const { content } = truncateByChars(
     text,
@@ -375,16 +381,22 @@ export function emitToolExecutionStartedEvents(
   socket: ListenerTransport,
   runtime: ConversationRuntime,
   params: {
-    toolCallIds: string[];
+    toolCallIds?: string[];
+    toolCalls?: ClientToolExecutionInfo[];
     runId?: string | null;
     agentId?: string;
     conversationId?: string;
   },
 ): void {
-  for (const toolCallId of params.toolCallIds) {
+  const toolCalls: ClientToolExecutionInfo[] =
+    params.toolCalls ??
+    (params.toolCallIds ?? []).map((toolCallId) => ({ toolCallId }));
+  for (const toolCall of toolCalls) {
     const delta: ClientToolStartMessage = {
       ...createLifecycleMessageBase("client_tool_start", params.runId),
-      tool_call_id: toolCallId,
+      tool_call_id: toolCall.toolCallId,
+      ...(toolCall.toolName ? { tool_name: toolCall.toolName } : {}),
+      ...(toolCall.toolArgs ? { tool_args: toolCall.toolArgs } : {}),
     };
     emitCanonicalMessageDelta(socket, runtime, delta, {
       agent_id: params.agentId,
@@ -417,6 +429,34 @@ export function emitToolExecutionFinishedEvents(
   }
 }
 
+/**
+ * Close out `client_tool_start` lifecycle events when execution throws
+ * before results exist. Without a matching `client_tool_end`, observer UIs
+ * that pair start/end events shimmer the orphaned tool call forever.
+ */
+export function emitToolExecutionAbortedEvents(
+  socket: ListenerTransport,
+  runtime: ConversationRuntime,
+  params: {
+    toolCallIds: string[];
+    runId?: string | null;
+    agentId?: string;
+    conversationId?: string;
+  },
+): void {
+  for (const toolCallId of params.toolCallIds) {
+    const delta: ClientToolEndMessage = {
+      ...createLifecycleMessageBase("client_tool_end", params.runId),
+      tool_call_id: toolCallId,
+      status: "error",
+    };
+    emitCanonicalMessageDelta(socket, runtime, delta, {
+      agent_id: params.agentId,
+      conversation_id: params.conversationId,
+    });
+  }
+}
+
 export function createToolExecutionOutputEmitter(
   socket: ListenerTransport,
   runtime: ConversationRuntime,
@@ -424,6 +464,7 @@ export function createToolExecutionOutputEmitter(
     runId?: string | null;
     agentId?: string;
     conversationId?: string;
+    shouldEmit?: () => boolean;
   },
 ): ToolExecutionOutputEmitter {
   const outputByToolCallId = new Map<string, StreamingToolOutputState>();
@@ -432,7 +473,7 @@ export function createToolExecutionOutputEmitter(
     toolCallId: string,
     outputState: StreamingToolOutputState,
   ) => {
-    if (!outputState.dirty) {
+    if (!outputState.dirty || params.shouldEmit?.() === false) {
       return;
     }
 
@@ -455,7 +496,7 @@ export function createToolExecutionOutputEmitter(
         message_type: "tool_return_message",
         id: outputState.messageId,
         date: new Date().toISOString(),
-        run_id: params.runId ?? runtime.activeRunId ?? undefined,
+        run_id: params.runId ?? undefined,
         status: "success",
         tool_call_id: toolCallId,
         tool_return: toolReturn,
@@ -492,7 +533,7 @@ export function createToolExecutionOutputEmitter(
     chunk: string,
     isStderr: boolean = false,
   ) => {
-    if (!toolCallId || chunk.length === 0) {
+    if (!toolCallId || chunk.length === 0 || params.shouldEmit?.() === false) {
       return;
     }
 

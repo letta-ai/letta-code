@@ -110,20 +110,20 @@ function toolResultToStoredReturnValue(
 
 function projectThinkingContent(
   message: LocalAssistantMessage,
-  content: ThinkingContent,
-  contentIndex: number,
+  reasoning: string,
+  contentStartIndex: number,
   date: string,
   agentId: string,
   conversationId: string,
 ): StoredMessage | undefined {
-  if (content.thinking.length === 0) return undefined;
+  if (reasoning.length === 0) return undefined;
   return {
-    id: `${message.id}:reasoning:${contentIndex}`,
+    id: `${message.id}:reasoning:${contentStartIndex}`,
     date,
     agent_id: agentId,
     conversation_id: conversationId,
     message_type: "reasoning_message",
-    reasoning: content.thinking,
+    reasoning,
   } as StoredMessage;
 }
 
@@ -210,6 +210,7 @@ export function projectLocalMessageToStoredMessages(
         message_type: "user_message",
         role: "user",
         content: userContentToStoredContent(message.content),
+        ...(message.otid ? { otid: message.otid } : {}),
       } as StoredMessage,
     ];
   }
@@ -228,6 +229,8 @@ export function projectLocalMessageToStoredMessages(
   const messages: StoredMessage[] = [];
   let pendingTextContent: unknown[] = [];
   let pendingTextStartIndex = -1;
+  let pendingReasoningContent: string[] = [];
+  let pendingReasoningStartIndex = -1;
 
   const flushPendingText = () => {
     if (pendingTextContent.length === 0) return;
@@ -247,6 +250,22 @@ export function projectLocalMessageToStoredMessages(
     pendingTextStartIndex = -1;
   };
 
+  const flushPendingReasoning = () => {
+    if (pendingReasoningContent.length > 0) {
+      const reasoningMessage = projectThinkingContent(
+        message,
+        pendingReasoningContent.join("\n\n"),
+        pendingReasoningStartIndex,
+        date,
+        agentId,
+        conversationId,
+      );
+      if (reasoningMessage) messages.push(reasoningMessage);
+    }
+    pendingReasoningContent = [];
+    pendingReasoningStartIndex = -1;
+  };
+
   for (
     let contentIndex = 0;
     contentIndex < message.content.length;
@@ -257,20 +276,18 @@ export function projectLocalMessageToStoredMessages(
 
     if (isThinkingContent(content)) {
       flushPendingText();
-      const reasoningMessage = projectThinkingContent(
-        message,
-        content,
-        contentIndex,
-        date,
-        agentId,
-        conversationId,
-      );
-      if (reasoningMessage) messages.push(reasoningMessage);
+      if (content.thinking.length > 0) {
+        if (pendingReasoningStartIndex === -1) {
+          pendingReasoningStartIndex = contentIndex;
+        }
+        pendingReasoningContent.push(content.thinking);
+      }
       continue;
     }
 
     if (isLocalToolCallContent(content)) {
       flushPendingText();
+      flushPendingReasoning();
       messages.push(
         projectToolCallContent(message, content, date, agentId, conversationId),
       );
@@ -278,12 +295,14 @@ export function projectLocalMessageToStoredMessages(
     }
 
     if (isTextContent(content)) {
+      flushPendingReasoning();
       if (pendingTextStartIndex === -1) pendingTextStartIndex = contentIndex;
       pendingTextContent.push({ type: "text", text: content.text });
     }
   }
 
   flushPendingText();
+  flushPendingReasoning();
   return messages;
 }
 

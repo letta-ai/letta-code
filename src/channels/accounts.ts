@@ -13,6 +13,7 @@ import {
   getChannelSecret,
   setChannelSecret,
 } from "./credential-store";
+import { normalizeSlackAllowBotsMode } from "./slack/bot-policy";
 import type {
   ChannelAccount,
   ChannelDefaultPermissionMode,
@@ -45,6 +46,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   account_uuid: "accountUuid",
   allowed_channels: "allowedChannels",
   allowed_groups: "allowedGroups",
+  allow_bots: "allowBots",
   auto_thread_on_mention: "autoThreadOnMention",
   base_url: "baseUrl",
   acknowledge_message_reaction: "acknowledgeMessageReaction",
@@ -57,7 +59,6 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   remove_stale_routes: "removeStaleRoutes",
   rich_draft_streaming: "richDraftStreaming",
   rich_private_chat_default: "richPrivateChatDefault",
-  show_completed_reaction: "showCompletedReaction",
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
@@ -156,16 +157,6 @@ function markSecretRef(account: ChannelAccount, fieldPath: string): void {
     ...getSecretRefs(account),
     [fieldPath]: true,
   };
-}
-
-function unmarkSecretRef(account: ChannelAccount, fieldPath: string): void {
-  const refs = getSecretRefs(account);
-  delete refs[fieldPath];
-  if (Object.keys(refs).length === 0) {
-    delete (account as ChannelAccountWithSecretRefs)[CHANNEL_SECRET_REFS_KEY];
-    return;
-  }
-  (account as ChannelAccountWithSecretRefs)[CHANNEL_SECRET_REFS_KEY] = refs;
 }
 
 function applySecretPlaceholders(account: ChannelAccount): void {
@@ -321,10 +312,15 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
       DEFAULT_SLACK_PERMISSION_MODE;
     (next as SlackChannelAccount).transcribeVoice =
       (next as SlackChannelAccount).transcribeVoice === true;
-    (next as SlackChannelAccount).showCompletedReaction =
-      (next as SlackChannelAccount).showCompletedReaction !== false;
+    delete (next as unknown as Record<string, unknown>).show_completed_reaction;
+    delete (next as unknown as Record<string, unknown>).showCompletedReaction;
+    delete (next as unknown as Record<string, unknown>).progress_ui;
+    delete (next as unknown as Record<string, unknown>).progressUi;
     (next as SlackChannelAccount).listenMode =
       (next as SlackChannelAccount).listenMode === true;
+    (next as SlackChannelAccount).allowBots = normalizeSlackAllowBotsMode(
+      (next as SlackChannelAccount).allowBots,
+    );
   }
   if (isDiscordChannelAccount(next)) {
     const migrated = migratePermissionMode(
@@ -474,8 +470,8 @@ function makeDefaultLegacyAccount(
     agentId: null,
     defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: config.transcribeVoice === true,
-    showCompletedReaction: config.showCompletedReaction !== false,
     listenMode: config.listenMode === true,
+    allowBots: config.allowBots ?? false,
     createdAt: now,
     updatedAt: now,
   };
@@ -597,7 +593,6 @@ export async function hydrateChannelAccountSecrets(
   }
 
   let migratedPlaintextSecrets = false;
-  let removedMissingSecretRefs = false;
 
   for (const account of store.accounts) {
     for (const fieldPath of getSecretFieldPaths(account)) {
@@ -620,17 +615,13 @@ export async function hydrateChannelAccountSecrets(
           );
           if (storedValue) {
             setSecretValueOnAccount(account, fieldPath, storedValue);
-          } else {
-            unmarkSecretRef(account, fieldPath);
-            setSecretValueOnAccount(account, fieldPath, "");
-            removedMissingSecretRefs = true;
           }
         }
       }
     }
   }
 
-  if (migratedPlaintextSecrets || removedMissingSecretRefs) {
+  if (migratedPlaintextSecrets) {
     saveChannelAccounts(channelId);
     await flushPendingChannelSecretWrites();
   }

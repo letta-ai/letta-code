@@ -49,6 +49,10 @@ export {
   safeAppendCronRunLogForTask,
 } from "./run-log";
 export {
+  type CronPromptTiming,
+  formatCronPrompt,
+  formatTimezoneQualifiedIso,
+  getIntendedCronOccurrence,
   handleMissedOneShot,
   shouldFireTask,
   wrapCronPrompt,

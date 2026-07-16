@@ -1,7 +1,7 @@
 import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
-import { LETTA_CLOUD_API_URL, refreshAccessToken } from "@/auth/oauth";
-import { experimentManager } from "@/experiments/manager";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { isDebugEnabled } from "@/utils/debug";
@@ -125,9 +125,26 @@ export {
   type MemfsGitProxyRewriteConfig,
 } from "./memfs-git-proxy";
 
-export function getClientDefaultHeaders(): Record<string, string> {
-  const nodeExperiment = experimentManager.getSnapshot("node");
+const NODE_HEADER_ENABLED_VALUES = new Set(["1", "true", "yes"]);
 
+/**
+ * Resolve the `x-letta-node` runtime routing header from the LETTA_NODE env
+ * var only. The old "node" experiment is retired: persisted
+ * `experiments.node` settings overrides are ignored so a stale opt-out can no
+ * longer silently pin an installation's traffic to the Python core runtime
+ * (LET-9516). When LETTA_NODE is unset, no header is sent and the server
+ * routes letta-code traffic to the TS runtime by default.
+ */
+function getNodeRoutingHeader(): Record<string, string> {
+  const raw = process.env.LETTA_NODE;
+  if (raw === undefined || raw.trim() === "") {
+    return {};
+  }
+  const enabled = NODE_HEADER_ENABLED_VALUES.has(raw.trim().toLowerCase());
+  return { "x-letta-node": enabled ? "1" : "0" };
+}
+
+export function getClientDefaultHeaders(): Record<string, string> {
   return {
     "X-Letta-Source": "letta-code",
     "User-Agent": `letta-code/${packageJson.version}`,
@@ -136,11 +153,7 @@ export function getClientDefaultHeaders(): Record<string, string> {
     // restore it on other browsers/sessions. The cloud middleware
     // ignores this header on non-message routes.
     "X-Letta-Environment-Device-Id": settingsManager.getOrCreateDeviceId(),
-    ...(nodeExperiment.source === "override"
-      ? { "x-letta-node": nodeExperiment.enabled ? "1" : "0" }
-      : nodeExperiment.enabled
-        ? { "x-letta-node": "1" }
-        : {}),
+    ...getNodeRoutingHeader(),
     ...(process.env.LETTA_MEMFS_BACKEND === "hosted"
       ? { "x-letta-memfs-backend": "hosted" }
       : {}),
@@ -201,7 +214,7 @@ export async function getClient() {
         const deviceId = settingsManager.getOrCreateDeviceId();
         const deviceName = hostname();
 
-        const tokens = await refreshAccessToken(
+        const tokens = await refreshAccessTokenSingleFlight(
           settings.refreshToken,
           deviceId,
           deviceName,

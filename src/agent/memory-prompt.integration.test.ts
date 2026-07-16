@@ -50,26 +50,12 @@ describeIntegration("memory prompt integration", () => {
       expect(fetched.system).not.toContain("# Memory");
       expect(fetched.system).not.toContain("MemFS");
 
-      const enableAgain = await updateAgentSystemPromptMemfs(
-        created.agent.id,
-        true,
-      );
+      const enableAgain = await updateAgentSystemPromptMemfs(created.agent.id);
       expect(enableAgain.success).toBe(true);
       fetched = await client.agents.retrieve(created.agent.id);
       expect(fetched.system).toBe(customPrompt);
 
-      const disable = await updateAgentSystemPromptMemfs(
-        created.agent.id,
-        false,
-      );
-      expect(disable.success).toBe(true);
-      fetched = await client.agents.retrieve(created.agent.id);
-      expect(fetched.system).toBe(customPrompt);
-
-      const reEnable = await updateAgentSystemPromptMemfs(
-        created.agent.id,
-        true,
-      );
+      const reEnable = await updateAgentSystemPromptMemfs(created.agent.id);
       expect(reEnable.success).toBe(true);
       fetched = await client.agents.retrieve(created.agent.id);
       expect(fetched.system).toBe(customPrompt);

@@ -33,7 +33,6 @@ describe("listen reflection runtime state", () => {
     expect(runtime.reminderState).toBe(persistedReminderState);
     expect(runtime.contextTracker).toBe(persistedContextTracker);
 
-    runtime.isProcessing = false;
     runtime.pendingTurns = 0;
     runtime.queuePumpActive = false;
     runtime.queuePumpScheduled = false;
@@ -41,11 +40,6 @@ describe("listen reflection runtime state", () => {
     runtime.pendingInterruptedResults = null;
     runtime.pendingInterruptedContext = null;
     runtime.pendingInterruptedToolCallIds = null;
-    runtime.activeExecutingToolCallIds = [];
-    runtime.activeRunId = null;
-    runtime.activeRunStartedAt = null;
-    runtime.activeAbortController = null;
-    runtime.cancelRequested = false;
     runtime.queuedMessagesByItemId.clear();
 
     expect(evictConversationRuntimeIfIdle(runtime)).toBe(true);

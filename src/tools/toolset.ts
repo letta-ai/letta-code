@@ -1,5 +1,6 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { resolveModel } from "@/agent/model";
+import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
 import { getBackend } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { MessageChannelToolDiscoveryScope } from "@/channels/message-tool";
@@ -10,6 +11,9 @@ import type { ChannelTurnSource, SupportedChannelId } from "@/channels/types";
 import { experimentManager } from "@/experiments/manager";
 import { buildModInvocationContext } from "@/mods/context";
 import type { ModEvents } from "@/mods/event-emitter";
+import type { ModAdapter } from "@/mods/mod-adapter";
+import type { ModPermissionDefinition } from "@/mods/permission-registry";
+import type { ModToolDefinition } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
 import {
   type InheritedChannelContextPayload,
@@ -31,11 +35,11 @@ import {
   loadTools,
   OPENAI_DEFAULT_TOOLS,
   OPENAI_PASCAL_TOOLS,
-  type PermissionModeState,
   type PreparedToolExecutionContext,
   prepareToolExecutionContextForModel,
   prepareToolExecutionContextForSpecificTools,
 } from "./manager";
+import type { PermissionModeState } from "./permission-mode-state";
 import type { ToolName } from "./tool-definitions";
 
 // Toolset definitions from manager.ts (single source of truth)
@@ -108,20 +112,26 @@ export type PreparedScopeToolContext = {
   agent: AgentState | null;
 };
 
-function buildModelHandleFromLlmConfig(
-  llmConfig:
-    | {
-        model?: string | null;
-        model_endpoint_type?: string | null;
-      }
-    | null
-    | undefined,
-): string | null {
-  if (!llmConfig) return null;
-  if (llmConfig.model_endpoint_type && llmConfig.model) {
-    return `${llmConfig.model_endpoint_type}/${llmConfig.model}`;
+function mergeModAdapterCapabilities(
+  adapters: ModAdapter[] | undefined,
+  context: ModContext,
+): {
+  permissions?: Map<string, ModPermissionDefinition>;
+  tools?: Map<string, ModToolDefinition>;
+} {
+  if (!adapters) return {};
+
+  const permissions = new Map<string, ModPermissionDefinition>();
+  const tools = new Map<string, ModToolDefinition>();
+  for (const adapter of adapters) {
+    for (const [id, permission] of adapter.getAvailablePermissions(context)) {
+      permissions.set(id, permission);
+    }
+    for (const [name, tool] of adapter.getAvailableTools(context)) {
+      tools.set(name, tool);
+    }
   }
-  return llmConfig.model ?? null;
+  return { permissions, tools };
 }
 
 function getPreferredAgentModelHandle(
@@ -131,7 +141,7 @@ function getPreferredAgentModelHandle(
   if (typeof agent.model === "string" && agent.model.length > 0) {
     return agent.model;
   }
-  return buildModelHandleFromLlmConfig(agent.llm_config);
+  return resolveModelHandleFromLlmConfig(agent.llm_config);
 }
 
 function getToolNamesForToolset(
@@ -186,6 +196,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   channelToolScope?: MessageChannelToolDiscoveryScope | null;
   modContext?: ModContext;
   modEvents?: ModEvents;
+  modAdapters?: ModAdapter[];
   runtimeContext?: Partial<RuntimeContextSnapshot>;
   agent?: AgentState | null;
 }): Promise<PreparedScopeToolContext> {
@@ -202,6 +213,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     channelToolScope,
     modContext,
     modEvents,
+    modAdapters,
     runtimeContext,
     agent,
   } = params;
@@ -224,6 +236,10 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       toolset: derivedToolset,
       workingDirectory,
     });
+    const modCapabilities = mergeModAdapterCapabilities(
+      modAdapters,
+      scopedModContext,
+    );
     const preparedToolContext = await prepareToolExecutionContextForModel(
       effectiveModel ?? undefined,
       {
@@ -235,6 +251,8 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
         channelToolScope,
         modContext: scopedModContext,
         modEvents,
+        modPermissions: modCapabilities.permissions,
+        modTools: modCapabilities.tools,
         runtimeContext,
       },
     );
@@ -258,6 +276,10 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     toolset: toolsetPreference,
     workingDirectory,
   });
+  const modCapabilities = mergeModAdapterCapabilities(
+    modAdapters,
+    scopedModContext,
+  );
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     filterBuiltInToolNamesByClientAllowlist(
       getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
@@ -273,6 +295,8 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       channelToolScope,
       modContext: scopedModContext,
       modEvents,
+      modPermissions: modCapabilities.permissions,
+      modTools: modCapabilities.tools,
       runtimeContext,
     },
   );
@@ -446,6 +470,7 @@ export async function prepareToolExecutionContextForScope(params: {
   channelTurnSources?: import("@/channels/types").ChannelTurnSource[];
   modContext?: ModContext;
   modEvents?: ModEvents;
+  modAdapters?: ModAdapter[];
 }): Promise<PreparedScopeToolContext> {
   const {
     agentId,
@@ -462,6 +487,7 @@ export async function prepareToolExecutionContextForScope(params: {
     channelTurnSources: explicitChannelTurnSources,
     modContext,
     modEvents,
+    modAdapters,
   } = params;
 
   const backend = getBackend();
@@ -535,9 +561,11 @@ export async function prepareToolExecutionContextForScope(params: {
     permissionModeState,
     modContext,
     modEvents,
+    modAdapters,
     agent: agent as AgentState,
     runtimeContext: {
       agentId,
+      agentName: (agent as AgentState).name ?? null,
       conversationId: scopedConversationId,
       workingDirectory,
       ...(channelToolScope.channels.length > 0 ? { channelToolScope } : {}),
@@ -672,56 +700,6 @@ export async function detachMemoryTools(agentId: string): Promise<boolean> {
       `Warning: Failed to detach memory tools: ${err instanceof Error ? err.message : String(err)}`,
     );
     return false;
-  }
-}
-
-/**
- * Re-attach the appropriate memory tool to an agent.
- * Used when disabling memfs (filesystem-backed memory).
- * Forces attachment even if agent had no memory tool before.
- *
- * @param agentId - Agent to attach memory tool to
- * @param modelIdentifier - Model handle to determine which memory tool to use
- */
-export async function reattachMemoryTool(
-  agentId: string,
-  modelIdentifier: string,
-): Promise<void> {
-  void resolveModel(modelIdentifier);
-  if (!getBackend().capabilities.serverSideToolManagement) {
-    return;
-  }
-  const client = await getClient();
-
-  try {
-    const agentWithTools = await client.agents.retrieve(agentId, {
-      include: ["agent.tools"],
-    });
-    const currentTools = agentWithTools.tools || [];
-    const mapByName = new Map(currentTools.map((t) => [t.name, t.id]));
-
-    // Determine which memory tool we want
-    const desiredMemoryTool = "memory";
-
-    // Already has the tool?
-    if (mapByName.has(desiredMemoryTool)) {
-      return;
-    }
-
-    // Find the tool on the server
-    const resp = await client.tools.list({ name: desiredMemoryTool });
-    const toolId = resp.items[0]?.id;
-    if (!toolId) {
-      console.warn(`Memory tool "${desiredMemoryTool}" not found on server`);
-      return;
-    }
-
-    // Attach it
-    await client.agents.tools.attach(toolId, { agent_id: agentId });
-  } catch (err) {
-    console.warn(
-      `Warning: Failed to reattach memory tool: ${err instanceof Error ? err.message : String(err)}`,
-    );
   }
 }
 

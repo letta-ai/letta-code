@@ -29,6 +29,7 @@ function createModContext(agentName = "Amelia"): ModContext {
   return {
     app: { version: "test" },
     backgroundAgents: [],
+    subagents: { list: () => [] },
     contextWindow: {
       currentUsage: null,
       remainingPercentage: null,

@@ -38,7 +38,7 @@ export type ExperimentId =
   | "conversation_titles"
   | "desktop_conversation_bootstrap"
   | "diffs"
-  | "node"
+  | "reflection_arena"
   | "tui_cron";
 
 export type ExperimentSource = "override" | "env" | "default";
@@ -423,9 +423,7 @@ export interface GitContext {
   recent_branches: string[];
 }
 
-/**
- * Bottom-bar and device execution context state.
- */
+/** Bottom-bar and device execution context state. */
 export interface DeviceStatus {
   current_connection_id: string | null;
   connection_name: string | null;
@@ -433,6 +431,8 @@ export interface DeviceStatus {
   is_processing: boolean;
   current_permission_mode: DevicePermissionMode;
   current_working_directory: string | null;
+  /** Monotonic signal for cwd changes and rejected stale cwd requests. */
+  cwd_revision?: number;
   git_context: GitContext | null;
   letta_code_version: string | null;
   current_toolset: ToolsetName | null;
@@ -520,6 +520,14 @@ export interface QueueMessage {
 export interface LoopState {
   status: LoopStatus;
   active_run_ids: string[];
+  /**
+   * Tool call ids currently executing client-side. Populated only while
+   * `status` is `EXECUTING_CLIENT_SIDE_TOOL`; empty otherwise. Lets
+   * observer UIs render an authoritative executing set that self-heals on
+   * every status frame instead of pairing client_tool_start/end lifecycle
+   * events, which are unrecoverable if a frame is lost.
+   */
+  executing_tool_call_ids: string[];
 }
 
 export interface DeviceStatusUpdateMessage extends RuntimeEnvelope {
@@ -557,6 +565,8 @@ export interface UmiLifecycleMessageBase {
 export interface ClientToolStartMessage extends UmiLifecycleMessageBase {
   message_type: "client_tool_start";
   tool_call_id: string;
+  tool_name?: string;
+  tool_args?: string;
 }
 
 export interface ClientToolEndMessage extends UmiLifecycleMessageBase {
@@ -784,6 +794,12 @@ export interface RuntimeStartCreateAgentOptions {
   body: AgentCreateParams;
   /** Whether to pin the created agent globally. Defaults to true. */
   pin_global?: boolean;
+  /**
+   * Whether to set up the memory filesystem for the created agent (tag
+   * stamp + settings + repo clone). Defaults to true; false creates a
+   * worker-style agent whose memory scope is provided per session.
+   */
+  memfs?: boolean;
 }
 
 export interface RuntimeStartCreateConversationOptions {
@@ -1279,6 +1295,8 @@ export interface MemoryFileEntry {
   content: string;
   size: number;
   references?: string[];
+  kind?: "markdown" | "image";
+  mime_type?: string | null;
 }
 
 export interface ListMemoryResponseMessage {
@@ -1379,6 +1397,12 @@ export interface ListModelsCommand {
   type: "list_models";
   /** Echoed back in the response for request correlation. */
   request_id: string;
+  /**
+   * Bypass the listener's availability cache and refetch from the backend.
+   * Sent by user-initiated refreshes so they can never be answered with a
+   * stale-but-within-TTL snapshot.
+   */
+  force?: boolean;
 }
 
 export type ConnectProviderStorageTarget = "local";
@@ -1765,12 +1789,12 @@ export interface CreateAgentCommand {
   request_id: string;
   /** Built-in personality preset to create. */
   personality: "memo" | "tutorial" | "blank" | "linus" | "kawaii";
-  /** Model identifier (e.g. "sonnet", "gpt-4o"). Uses default if omitted. */
+  /** Optional model identifier and additional creation tags. */
   model?: string;
+  tags?: string[];
   /** Whether to pin the agent globally after creation. Defaults to true. */
   pin_global?: boolean;
 }
-
 export interface AgentListCommand {
   type: "agent_list";
   /** Echoed back in the response for request correlation. */
@@ -1831,6 +1855,16 @@ export interface ConversationCreateCommand {
   request_id: string;
   /** Body forwarded to the Letta conversations create API. */
   body: ConversationCreateParams;
+  /**
+   * Set by cloud-api when relaying the command: the authenticated WS
+   * subscriber's cloud user id. The listener echoes it back as the
+   * `X-Letta-Acting-User-Id` HTTP header on the outbound
+   * conversations.create call so cloud attributes the new conversation
+   * to the human who actually created it — not the user whose API key
+   * spawned the sandbox / desktop runtime. Absent for self-hosted or
+   * direct (non-relayed) flows.
+   */
+  acting_user_id?: string;
 }
 
 export interface ConversationUpdateCommand {
@@ -1864,6 +1898,12 @@ export interface ConversationForkCommand {
   request_id: string;
   conversation_id: string;
   body?: ConversationForkBody;
+  /**
+   * Set by cloud-api when relaying the command — see
+   * `ConversationCreateCommand.acting_user_id`. The fork produces a new
+   * conversation, so it is attributed the same way.
+   */
+  acting_user_id?: string;
 }
 
 export interface ConversationMessagesListCommand {
@@ -2798,6 +2838,7 @@ export type WsProtocolCommand =
 export type WsProtocolCommandType = WsProtocolCommand["type"];
 
 export type WsProtocolMessage =
+  | ControlRequest
   | DeviceStatusUpdateMessage
   | LoopStatusUpdateMessage
   | QueueUpdateMessage

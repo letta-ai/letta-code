@@ -10,13 +10,14 @@ import type {
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugLog, isDebugEnabled } from "@/utils/debug";
 import {
   rejectPendingApprovalResolvers,
   resolvePendingApprovalResolver,
 } from "./approval";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
+  bumpWorkingDirectoryRevision,
   getConversationWorkingDirectory,
   setConversationWorkingDirectory,
 } from "./cwd";
@@ -29,13 +30,11 @@ import {
   emitDeviceStatusUpdate,
   emitInterruptedStatusDelta,
   emitRuntimeStateUpdates,
-  setLoopStatus,
 } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { resolveRecoveredApprovalResponse } from "./recovery";
 import {
-  clearActiveRunState,
   getActiveRuntime,
   getPendingControlRequestCount,
   getPendingControlRequests,
@@ -44,6 +43,7 @@ import {
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
+import { setCommandLoopStatus } from "./turn-status";
 import type {
   ChangeCwdMessage,
   ConversationRuntime,
@@ -64,6 +64,11 @@ function trackListenerError(
     error,
     context,
   });
+}
+
+function isMissingWorkingDirectoryError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 /**
@@ -224,14 +229,7 @@ export async function handleApprovalResponseInput(
       params.runtime.agent_id,
       params.runtime.conversation_id,
     );
-  if (targetRuntime.cancelRequested && !targetRuntime.isProcessing) {
-    targetRuntime.cancelRequested = false;
-    deps.scheduleQueuePump(
-      targetRuntime,
-      params.socket,
-      params.opts as StartListenerOptions,
-      params.processQueuedTurn,
-    );
+  if (targetRuntime.cancelRequested) {
     return false;
   }
   if (
@@ -273,7 +271,7 @@ export async function handleChangeDeviceStateInput(
     getActiveRuntime: typeof getActiveRuntime;
     getOrCreateScopedRuntime: typeof getOrCreateScopedRuntime;
     getPendingControlRequestCount: typeof getPendingControlRequestCount;
-    setLoopStatus: typeof setLoopStatus;
+    setCommandLoopStatus: typeof setCommandLoopStatus;
     handleModeChange: typeof handleModeChange;
     handleCwdChange: typeof handleCwdChange;
     emitDeviceStatusUpdate: typeof emitDeviceStatusUpdate;
@@ -284,7 +282,7 @@ export async function handleChangeDeviceStateInput(
     getActiveRuntime,
     getOrCreateScopedRuntime,
     getPendingControlRequestCount,
-    setLoopStatus,
+    setCommandLoopStatus,
     handleModeChange,
     handleCwdChange,
     emitDeviceStatusUpdate,
@@ -315,11 +313,15 @@ export async function handleChangeDeviceStateInput(
     scope.conversation_id,
   );
   const shouldTrackCommand =
-    !scopedRuntime.isProcessing &&
+    scopedRuntime.turnLifecycle.kind === "idle" &&
     resolvedDeps.getPendingControlRequestCount(listener, scope) === 0;
 
   if (shouldTrackCommand) {
-    resolvedDeps.setLoopStatus(scopedRuntime, "EXECUTING_COMMAND", scope);
+    resolvedDeps.setCommandLoopStatus(
+      scopedRuntime,
+      "EXECUTING_COMMAND",
+      scope,
+    );
   }
 
   try {
@@ -347,7 +349,11 @@ export async function handleChangeDeviceStateInput(
     }
   } finally {
     if (shouldTrackCommand) {
-      resolvedDeps.setLoopStatus(scopedRuntime, "WAITING_ON_INPUT", scope);
+      resolvedDeps.setCommandLoopStatus(
+        scopedRuntime,
+        "WAITING_ON_INPUT",
+        scope,
+      );
       resolvedDeps.scheduleQueuePump(
         scopedRuntime,
         params.socket,
@@ -379,8 +385,6 @@ export async function handleAbortMessageInput(
     getRecoveredApprovalStateForScope: typeof getRecoveredApprovalStateForScope;
     stashRecoveredApprovalInterrupts: typeof stashRecoveredApprovalInterrupts;
     rejectPendingApprovalResolvers: typeof rejectPendingApprovalResolvers;
-    setLoopStatus: typeof setLoopStatus;
-    clearActiveRunState: typeof clearActiveRunState;
     emitRuntimeStateUpdates: typeof emitRuntimeStateUpdates;
     emitInterruptedStatusDelta: typeof emitInterruptedStatusDelta;
     scheduleQueuePump: typeof scheduleQueuePump;
@@ -398,8 +402,6 @@ export async function handleAbortMessageInput(
     getRecoveredApprovalStateForScope,
     stashRecoveredApprovalInterrupts,
     rejectPendingApprovalResolvers,
-    setLoopStatus,
-    clearActiveRunState,
     emitRuntimeStateUpdates,
     emitInterruptedStatusDelta,
     scheduleQueuePump,
@@ -431,25 +433,25 @@ export async function handleAbortMessageInput(
     scope.agent_id,
     scope.conversation_id,
   );
-  const hasActiveTurn = scopedRuntime.isProcessing;
+  const hasActiveTurn = scopedRuntime.turnLifecycle.kind === "active";
 
   if (!hasActiveTurn && !hasPendingApprovals) {
     return false;
   }
 
-  const interruptedRunId = scopedRuntime.activeRunId;
-  scopedRuntime.cancelRequested = true;
+  const cancellation = scopedRuntime.turnLifecycle.requestCancellation();
+  const interruptedRunId = cancellation.runId;
   const pendingRequestsSnapshot = hasPendingApprovals
     ? resolvedDeps.getPendingControlRequests(listener, scope)
     : [];
 
   if (
-    scopedRuntime.activeExecutingToolCallIds.length > 0 &&
+    cancellation.executingToolCallIds.length > 0 &&
     (!scopedRuntime.pendingInterruptedResults ||
       scopedRuntime.pendingInterruptedResults.length === 0)
   ) {
     scopedRuntime.pendingInterruptedResults =
-      scopedRuntime.activeExecutingToolCallIds.map((toolCallId) => ({
+      cancellation.executingToolCallIds.map((toolCallId) => ({
         type: "tool",
         tool_call_id: toolCallId,
         tool_return: INTERRUPTED_BY_USER,
@@ -461,7 +463,7 @@ export async function handleAbortMessageInput(
       continuationEpoch: scopedRuntime.continuationEpoch,
     };
     scopedRuntime.pendingInterruptedToolCallIds = [
-      ...scopedRuntime.activeExecutingToolCallIds,
+      ...cancellation.executingToolCallIds,
     ];
   }
 
@@ -469,7 +471,7 @@ export async function handleAbortMessageInput(
   // (e.g., background Task tools that spawn subagents)
   if (
     hasActiveTurn &&
-    scopedRuntime.activeExecutingToolCallIds.length === 0 &&
+    cancellation.executingToolCallIds.length === 0 &&
     !scopedRuntime.pendingInterruptedContext
   ) {
     scopedRuntime.pendingInterruptedContext = {
@@ -479,13 +481,6 @@ export async function handleAbortMessageInput(
     };
     // Set empty results array so hasInterruptedCacheForScope can detect the interrupt
     scopedRuntime.pendingInterruptedResults = [];
-  }
-
-  if (
-    scopedRuntime.activeAbortController &&
-    !scopedRuntime.activeAbortController.signal.aborted
-  ) {
-    scopedRuntime.activeAbortController.abort();
   }
 
   const recoveredApprovalState = resolvedDeps.getRecoveredApprovalStateForScope(
@@ -507,10 +502,6 @@ export async function handleAbortMessageInput(
   }
 
   if (hasActiveTurn) {
-    scopedRuntime.lastStopReason = "cancelled";
-    scopedRuntime.isProcessing = false;
-    resolvedDeps.clearActiveRunState(scopedRuntime);
-    resolvedDeps.setLoopStatus(scopedRuntime, "WAITING_ON_INPUT", scope);
     resolvedDeps.emitRuntimeStateUpdates(scopedRuntime, scope);
     resolvedDeps.emitInterruptedStatusDelta(params.socket, scopedRuntime, {
       runId: interruptedRunId,
@@ -543,10 +534,6 @@ export async function handleAbortMessageInput(
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
     });
-  }
-
-  if (!hasActiveTurn) {
-    scopedRuntime.cancelRequested = false;
   }
 
   const cancelConversationId = scopedRuntime.conversationId;
@@ -621,6 +608,27 @@ export async function handleCwdChange(
       conversationId,
     });
   } catch (error) {
+    if (isMissingWorkingDirectoryError(error)) {
+      bumpWorkingDirectoryRevision(runtime.listener);
+      runtime.reminderState.hasSentSessionContext = false;
+      runtime.reminderState.pendingSessionContextReason = "cwd_changed";
+
+      debugLog(
+        "listener",
+        `Rejected stale working directory change to ${msg.cwd}; restoring ${currentWorkingDirectory}`,
+      );
+      emitDeviceStatusUpdate(socket, runtime, {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      });
+      restartWorktreeWatcher({
+        runtime: runtime.listener,
+        agentId,
+        conversationId,
+      });
+      return;
+    }
+
     emitLoopErrorNotice(socket, runtime, {
       message:
         error instanceof Error

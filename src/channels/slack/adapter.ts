@@ -1,941 +1,104 @@
-import { readFile } from "node:fs/promises";
-import { basename, extname } from "node:path";
 import type SlackApp from "@slack/bolt";
-import { listChannelSlashCommands } from "@/channels/commands";
-import {
-  createInboundDebouncer,
-  type InboundDebouncer,
-} from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
-import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
+import { buildSlackModelPickerBlocks } from "@/channels/slack/model-picker-blocks";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
+  ChannelMessageAttachment,
+  ChannelModelPickerData,
   ChannelTurnLifecycleEvent,
+  ChannelTurnProgressEvent,
   ChannelTurnSource,
-  InboundChannelMessage,
   OutboundChannelMessage,
   SlackChannelAccount,
 } from "@/channels/types";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
-  resolveSlackChannelHistory,
-  resolveSlackInboundAttachments,
-  resolveSlackThreadHistory,
-  resolveSlackThreadStarter,
-} from "./media";
+  type AgentThreadTracker,
+  createAgentThreadTracker,
+} from "./agent-thread-tracker";
+import { createSlackApprovalController } from "./approval-controller";
+import { downloadSlackAttachmentById } from "./attachment-download";
+import type { SlackAttachmentReadClient } from "./attachment-types";
+import { uploadSlackFile } from "./file-upload";
+import {
+  createSlackInboundDebounceController,
+  type SlackInboundDebounceController,
+} from "./inbound-debounce";
+import { createSlackIngressController } from "./ingress-controller";
+import type { SlackWriteClient } from "./internal-types";
+import {
+  buildSlackChatFootnote,
+  buildSlackReplyBlocksWithFootnote,
+  formatSlackControlRequestBlocks,
+  formatSlackLifecycleErrorMessage,
+  resolveSlackConcreteActivity,
+  SLACK_ASSISTANT_STARTUP_STATUS,
+  SLACK_ASSISTANT_WORKING_STATUS,
+  shouldPostSlackTerminalError,
+} from "./presentation";
 import { loadSlackBoltModule } from "./runtime";
+import { createSlackStatusController } from "./status-controller";
+import { prepareSlackInboundMessage } from "./thread-context";
+import {
+  asSlackBlocks,
+  isNonEmptyString,
+  isSlackFlatChannelThreadOpener,
+  normalizeSlackReactionName,
+  resolveSlackAppConstructor,
+  resolveSlackChatType,
+  resolveSlackOutboundThreadTs,
+  resolveSlackSourceThreadTs,
+} from "./utils";
 import { createSlackWebApiClient } from "./web-api-client";
 
-type SlackAppConstructor = typeof import("@slack/bolt").App;
-type SlackBoltModule = typeof import("@slack/bolt") & {
-  default?: unknown;
-};
-type SlackWriteClient = {
-  chat: {
-    postMessage: (args: {
-      channel: string;
-      text: string;
-      thread_ts?: string;
-    }) => Promise<{ ts?: string }>;
-  };
-  reactions: {
-    add: (args: {
-      channel: string;
-      timestamp: string;
-      name: string;
-    }) => Promise<unknown>;
-    remove: (args: {
-      channel: string;
-      timestamp: string;
-      name: string;
-    }) => Promise<unknown>;
-  };
-  files: {
-    getUploadURLExternal: (args: {
-      filename: string;
-      length: number;
-    }) => Promise<{
-      ok?: boolean;
-      upload_url?: string;
-      file_id?: string;
-      error?: string;
-    }>;
-    completeUploadExternal: (args: {
-      files: Array<{ id: string; title: string }>;
-      channel_id: string;
-      initial_comment?: string;
-      thread_ts?: string;
-    }) => Promise<{ ok?: boolean; error?: string }>;
-  };
-};
-type SlackReactionEvent = {
-  item?: {
-    type?: string;
-    channel?: string;
-    ts?: string;
-  };
-  user?: string;
-  item_user?: string;
-  reaction?: string;
-  event_ts?: string;
-};
-
-type SlackCommandPayload = {
-  command?: string;
-  text?: string;
-  user_id?: string;
-  user_name?: string;
-  channel_id?: string;
-  channel_name?: string;
-  trigger_id?: string;
-};
-
-type Constructor = abstract new (...args: never[]) => unknown;
-
-function isConstructorFunction<T extends Constructor>(
-  value: unknown,
-): value is T {
-  return typeof value === "function";
-}
-
-function resolveSlackAppModule(value: unknown): SlackAppConstructor | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const app = Reflect.get(value, "App");
-  return isConstructorFunction<SlackAppConstructor>(app) ? app : null;
-}
-const INITIAL_SLACK_THREAD_HISTORY_LIMIT = 20;
-
-function resolveSlackAppConstructor(mod: SlackBoltModule): SlackAppConstructor {
-  const defaultExport =
-    mod && typeof mod === "object" ? Reflect.get(mod, "default") : undefined;
-  const nestedDefault =
-    defaultExport && typeof defaultExport === "object"
-      ? Reflect.get(defaultExport, "default")
-      : undefined;
-
-  const App =
-    resolveSlackAppModule(mod) ??
-    resolveSlackAppModule(defaultExport) ??
-    resolveSlackAppModule(nestedDefault) ??
-    (isConstructorFunction<SlackAppConstructor>(defaultExport)
-      ? defaultExport
-      : null);
-
-  if (!App) {
-    throw new Error(
-      'Installed Slack runtime did not export constructor "App".',
-    );
-  }
-  return App;
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
-}
-
-function firstNonEmptyString(...values: unknown[]): string | undefined {
-  return values.find(isNonEmptyString);
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : null;
-}
-
-function normalizeSlackText(text: string): string {
-  return text.replace(/^(?:\s*<@[A-Z0-9]+>\s*)+/, "").trim();
-}
-
-const IGNORED_SLACK_MESSAGE_SUBTYPES = new Set([
-  "assistant_app_thread",
-  "bot_message",
-  "channel_archive",
-  "channel_convert_to_private",
-  "channel_convert_to_public",
-  "channel_join",
-  "channel_leave",
-  "channel_name",
-  "channel_posting_permissions",
-  "channel_purpose",
-  "channel_topic",
-  "channel_unarchive",
-  "document_mention",
-  "ekm_access_denied",
-  "file_comment",
-  "group_archive",
-  "group_join",
-  "group_leave",
-  "group_name",
-  "group_purpose",
-  "group_topic",
-  "group_unarchive",
-  "pinned_item",
-  "reminder_add",
-  "unpinned_item",
-]);
-
-const WRAPPER_SLACK_MESSAGE_SUBTYPES = new Set([
-  "message_changed",
-  "message_deleted",
-  "message_replied",
-]);
-
-type SlackProcessableInboundMessage = Record<string, unknown> & {
-  user: string;
-  ts: string;
-};
-
-function isProcessableSlackInboundMessage(
-  rawMessage: Record<string, unknown>,
-): rawMessage is SlackProcessableInboundMessage {
-  if (isNonEmptyString(rawMessage.bot_id)) {
-    return false;
-  }
-
-  if (!isNonEmptyString(rawMessage.user) || !isNonEmptyString(rawMessage.ts)) {
-    return false;
-  }
-
-  // Slack uses subtypes for both real user-authored messages (for example
-  // thread broadcasts and file shares) and bookkeeping/admin wrappers. Don't
-  // blanket-drop all subtype messages; instead ignore the known non-user
-  // variants and let genuine user messages keep flowing into the routed thread.
-  if (rawMessage.hidden === true) {
-    return false;
-  }
-
-  const subtype = isNonEmptyString(rawMessage.subtype)
-    ? rawMessage.subtype
-    : null;
-  if (!subtype) {
-    return true;
-  }
-
-  if (IGNORED_SLACK_MESSAGE_SUBTYPES.has(subtype)) {
-    return false;
-  }
-
-  return !(
-    WRAPPER_SLACK_MESSAGE_SUBTYPES.has(subtype) &&
-    asRecord(rawMessage.message) !== null
-  );
-}
-
-function slackTimestampToMillis(timestamp: string): number {
-  return Math.round(Number.parseFloat(timestamp) * 1000);
-}
-
-function resolveSlackChatType(chatId: string): "direct" | "channel" {
-  return chatId.startsWith("D") ? "direct" : "channel";
-}
-
-function normalizeSlackReactionName(value: string): string {
-  return value.trim().replace(/^:+|:+$/g, "");
-}
-
-const SLACK_INGRESS_DEDUPE_TTL_MS = 60_000;
-const SLACK_INGRESS_DEDUPE_MAX = 2_000;
-const SLACK_LIFECYCLE_STATE_TTL_MS = 6 * 60 * 60 * 1000;
-const SLACK_LIFECYCLE_STATE_MAX = 2_000;
-const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
-
-type SlackLifecycleState = "queued" | "completed" | "error" | "cancelled";
-
-function resolveUploadMimeType(filePath: string): string | undefined {
-  switch (extname(filePath).toLowerCase()) {
-    case ".png":
-      return "image/png";
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".gif":
-      return "image/gif";
-    case ".webp":
-      return "image/webp";
-    case ".pdf":
-      return "application/pdf";
-    case ".txt":
-      return "text/plain";
-    case ".md":
-      return "text/markdown";
-    default:
-      return undefined;
-  }
-}
-
-async function uploadSlackFile(
-  slackClient: SlackWriteClient,
-  msg: OutboundChannelMessage,
-): Promise<{ messageId: string }> {
-  if (!msg.mediaPath) {
-    throw new Error("mediaPath is required for Slack file uploads.");
-  }
-
-  const buffer = await readFile(msg.mediaPath);
-  const uploadFileName = msg.fileName ?? basename(msg.mediaPath);
-  const uploadTitle = msg.title ?? uploadFileName;
-  const uploadMimeType = resolveUploadMimeType(uploadFileName);
-  const uploadUrlResp = await slackClient.files.getUploadURLExternal({
-    filename: uploadFileName,
-    length: buffer.length,
-  });
-
-  if (
-    !uploadUrlResp.ok ||
-    !uploadUrlResp.upload_url ||
-    !uploadUrlResp.file_id
-  ) {
-    throw new Error(
-      `Failed to get Slack upload URL: ${uploadUrlResp.error ?? "unknown error"}`,
-    );
-  }
-
-  const uploadResp = await fetch(uploadUrlResp.upload_url, {
-    method: "POST",
-    ...(uploadMimeType ? { headers: { "Content-Type": uploadMimeType } } : {}),
-    body: buffer,
-  });
-  if (!uploadResp.ok) {
-    throw new Error(`Failed to upload Slack file: HTTP ${uploadResp.status}`);
-  }
-
-  const completeResp = await slackClient.files.completeUploadExternal({
-    files: [{ id: uploadUrlResp.file_id, title: uploadTitle }],
-    channel_id: msg.chatId,
-    ...(msg.text.trim() ? { initial_comment: msg.text } : {}),
-    ...((msg.threadId ?? msg.replyToMessageId)
-      ? { thread_ts: msg.threadId ?? msg.replyToMessageId }
-      : {}),
-  });
-
-  if (!completeResp.ok) {
-    throw new Error(
-      `Failed to complete Slack upload: ${completeResp.error ?? "unknown error"}`,
-    );
-  }
-
-  return { messageId: uploadUrlResp.file_id };
-}
-
-function resolveSlackUserDisplayName(userInfo: unknown): string | undefined {
-  const user = asRecord(asRecord(userInfo)?.user);
-  const profile = asRecord(user?.profile);
-  return firstNonEmptyString(
-    profile?.display_name,
-    profile?.real_name,
-    user?.name,
-  );
-}
-
-function truncateSlackThreadLabel(text: string, maxLength = 80): string | null {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return null;
-  }
-  if (normalized.length <= maxLength) {
-    return normalized;
-  }
-  return `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
-}
-
-function buildSlackThreadLabel(
-  msg: InboundChannelMessage,
-  starterText?: string,
-): string | undefined {
-  if (msg.chatType !== "channel") {
-    return undefined;
-  }
-
-  const roomLabel =
-    isNonEmptyString(msg.chatLabel) && msg.chatLabel !== msg.chatId
-      ? ` in ${msg.chatLabel}`
-      : "";
-  const preview = truncateSlackThreadLabel(starterText ?? msg.text);
-  if (preview) {
-    return `Slack thread${roomLabel}: ${preview}`;
-  }
-  return roomLabel ? `Slack thread${roomLabel}` : `Slack thread ${msg.chatId}`;
-}
-
-function buildSlackChannelContextLabel(
-  msg: InboundChannelMessage,
-): string | undefined {
-  if (msg.chatType !== "channel") {
-    return undefined;
-  }
-
-  const roomLabel =
-    isNonEmptyString(msg.chatLabel) && msg.chatLabel !== msg.chatId
-      ? ` in ${msg.chatLabel}`
-      : "";
-
-  return roomLabel
-    ? `Slack channel context${roomLabel} before thread start`
-    : `Slack channel context before thread start`;
-}
-
-export async function resolveSlackAccountDisplayName(
-  botToken: string,
-  appToken: string,
-): Promise<string | undefined> {
-  const bolt = await loadSlackBoltModule();
-  const App = resolveSlackAppConstructor(bolt);
-  const app = new App({
-    token: botToken,
-    appToken,
-    socketMode: true,
-  });
-  const auth = await app.client.auth.test({ token: botToken });
-  if (isNonEmptyString(auth.user_id)) {
-    try {
-      const userInfo = await app.client.users.info({
-        token: botToken,
-        user: auth.user_id,
-      });
-      const displayName = resolveSlackUserDisplayName(userInfo);
-      if (displayName) {
-        return displayName;
-      }
-    } catch {}
-  }
-  return isNonEmptyString(auth.user) ? auth.user : undefined;
-}
-
-const APP_MENTION_RETRY_TTL_MS = 60_000;
-
-type SlackDebounceSource = "message" | "app_mention";
-
-type SlackDebounceRawInput = {
-  channel: string;
-  ts?: string;
-  event_ts?: string;
-  thread_ts?: string;
-  parent_user_id?: string;
-  user?: string;
-  bot_id?: string;
-};
-
-/**
- * Build the key used to group inbound Slack messages for debounced stacking.
- *
- * Keying mirrors openclaw (four cases):
- *  - DM → channel-scoped (short DMs from same user stack together)
- *  - Thread reply (`thread_ts` set) → thread-scoped
- *  - Probable thread reply (`parent_user_id` set, no `thread_ts` yet — Slack
- *    sometimes emits these before thread resolution completes) → "maybe-thread"
- *  - Top-level channel message → message-ts-scoped (each top-level post is
- *    its own potential thread-starter; don't merge across posts)
- *
- * Returns `null` when there is no identifiable sender, which forces the
- * debouncer to dispatch the item immediately.
- */
-export function buildSlackDebounceKey(
-  rawMessage: SlackDebounceRawInput,
-  accountId: string,
-): string | null {
-  const senderId = rawMessage.user ?? rawMessage.bot_id ?? null;
-  if (!senderId) return null;
-  const messageTs = rawMessage.ts ?? rawMessage.event_ts;
-  const isDm = rawMessage.channel.startsWith("D");
-  const scope = rawMessage.thread_ts
-    ? `${rawMessage.channel}:${rawMessage.thread_ts}`
-    : rawMessage.parent_user_id && messageTs
-      ? `${rawMessage.channel}:maybe-thread:${messageTs}`
-      : messageTs && !isDm
-        ? `${rawMessage.channel}:${messageTs}`
-        : rawMessage.channel;
-  return `slack:${accountId}:${scope}:${senderId}`;
-}
-
-/**
- * Build the key that groups top-level (non-thread) channel messages from the
- * same sender. Used to pre-flush pending debounced buffers when a
- * non-debounceable message (e.g. one with an attachment) arrives for the
- * same conversation, so ordering is preserved.
- *
- * DMs and thread replies intentionally return `null` — their debounce keys
- * already naturally align without this pre-flush step.
- */
-export function buildTopLevelSlackConversationKey(
-  rawMessage: SlackDebounceRawInput,
-  accountId: string,
-): string | null {
-  if (rawMessage.thread_ts || rawMessage.parent_user_id) return null;
-  if (rawMessage.channel.startsWith("D")) return null;
-  const senderId = rawMessage.user ?? rawMessage.bot_id;
-  if (!senderId) return null;
-  return `slack:${accountId}:${rawMessage.channel}:${senderId}`;
-}
-
-export function resolveSlackInboundDebounceMs(
-  config: Pick<SlackChannelAccount, "inboundDebounceMs">,
-): number {
-  const raw = process.env.LETTA_SLACK_INBOUND_DEBOUNCE_MS;
-  if (typeof raw === "string" && raw.trim() !== "") {
-    const envOverride = Number(raw);
-    if (Number.isFinite(envOverride) && envOverride >= 0) {
-      return Math.trunc(envOverride);
-    }
-  }
-  const fromConfig = config.inboundDebounceMs;
-  if (
-    typeof fromConfig === "number" &&
-    Number.isFinite(fromConfig) &&
-    fromConfig >= 0
-  ) {
-    return Math.trunc(fromConfig);
-  }
-  return 0;
+export interface SlackChannelAdapter extends ChannelAdapter {
+  downloadAttachment(params: {
+    attachmentId: string;
+    chatId: string;
+    threadId?: string | null;
+    messageId: string;
+  }): Promise<ChannelMessageAttachment>;
 }
 
 export function createSlackAdapter(
   config: SlackChannelAccount,
-): ChannelAdapter {
+): SlackChannelAdapter {
   let app: SlackApp | null = null;
   let writeClient: SlackWriteClient | null = null;
+  let writeClientPromise: Promise<SlackWriteClient> | null = null;
   let running = false;
   let botUserId: string | null = null;
-  const knownThreadIdsByMessageId = new Map<string, string | null>();
-  const knownUserDisplayNames = new Map<string, string>();
-  const seenIngressMessageKeys = new Map<string, number>();
-  const lifecycleStateByMessageKey = new Map<
-    string,
-    { state: SlackLifecycleState; updatedAt: number }
-  >();
-  const lifecycleOperationByMessageKey = new Map<string, Promise<void>>();
+  let botId: string | null = null;
+  let adapter: SlackChannelAdapter;
 
-  // ── Inbound debounce (optional) ───────────────────────────────
-  // When `inboundDebounceMs > 0`, short back-to-back messages from the same
-  // sender in the same chat/thread stack into a single combined dispatch.
-  const debounceMs = resolveSlackInboundDebounceMs(config);
-  const pendingTopLevelDebounceKeys = new Map<string, Set<string>>();
-  const appMentionRetryKeys = new Map<string, number>();
-  const appMentionDispatchedKeys = new Map<string, number>();
-
-  function pruneAppMentionMaps(now: number): void {
-    for (const [k, exp] of appMentionRetryKeys) {
-      if (exp <= now) appMentionRetryKeys.delete(k);
-    }
-    for (const [k, exp] of appMentionDispatchedKeys) {
-      if (exp <= now) appMentionDispatchedKeys.delete(k);
-    }
-  }
-
-  function rememberAppMentionRetry(seenKey: string): void {
-    const now = Date.now();
-    pruneAppMentionMaps(now);
-    appMentionRetryKeys.set(seenKey, now + APP_MENTION_RETRY_TTL_MS);
-  }
-
-  function consumeAppMentionRetry(seenKey: string): boolean {
-    const now = Date.now();
-    pruneAppMentionMaps(now);
-    if (!appMentionRetryKeys.has(seenKey)) return false;
-    appMentionRetryKeys.delete(seenKey);
-    return true;
-  }
-
-  type SlackDebounceEntry = {
-    inbound: InboundChannelMessage;
-    raw: SlackDebounceRawInput;
-    opts: { source: SlackDebounceSource; wasMentioned: boolean };
-  };
-
-  const debouncer: InboundDebouncer<SlackDebounceEntry> =
-    createInboundDebouncer<SlackDebounceEntry>({
-      debounceMs,
-      buildKey: ({ raw }) => buildSlackDebounceKey(raw, config.accountId),
-      shouldDebounce: ({ inbound }) =>
-        !inbound.attachments?.length && !inbound.reaction,
-      onFlush: async (entries) => {
-        const last = entries[entries.length - 1];
-        if (!last) return;
-
-        // Prune the flushed debounce key from the top-level conversation map.
-        const flushedKey = buildSlackDebounceKey(last.raw, config.accountId);
-        const conversationKey = buildTopLevelSlackConversationKey(
-          last.raw,
-          config.accountId,
-        );
-        if (flushedKey && conversationKey) {
-          const pending = pendingTopLevelDebounceKeys.get(conversationKey);
-          if (pending) {
-            pending.delete(flushedKey);
-            if (pending.size === 0) {
-              pendingTopLevelDebounceKeys.delete(conversationKey);
-            }
-          }
-        }
-
-        // Resolve the message-vs-app_mention race for the last entry's ts.
-        if (isNonEmptyString(last.inbound.messageId)) {
-          const seenKey = `${last.inbound.chatId}:${last.inbound.messageId}`;
-          pruneAppMentionMaps(Date.now());
-          if (last.opts.source === "app_mention") {
-            appMentionDispatchedKeys.set(
-              seenKey,
-              Date.now() + APP_MENTION_RETRY_TTL_MS,
-            );
-          } else if (
-            last.opts.source === "message" &&
-            appMentionDispatchedKeys.has(seenKey)
-          ) {
-            // An app_mention already dispatched for this ts; drop the
-            // redundant message event to avoid double dispatch.
-            appMentionDispatchedKeys.delete(seenKey);
-            appMentionRetryKeys.delete(seenKey);
-            return;
-          }
-          appMentionRetryKeys.delete(seenKey);
-        }
-
-        // Merge buffered entries into a single dispatch.
-        const combinedText =
-          entries.length === 1
-            ? last.inbound.text
-            : entries
-                .map((entry) => entry.inbound.text)
-                .filter((text) => text && text.length > 0)
-                .join("\n");
-        const combinedMentioned = entries.some(
-          (entry) =>
-            entry.opts.wasMentioned === true ||
-            entry.inbound.isMention === true,
-        );
-        const merged: InboundChannelMessage = {
-          ...last.inbound,
-          text: combinedText,
-          isMention: combinedMentioned,
-        };
-
-        if (!adapter.onMessage) return;
-        try {
-          await adapter.onMessage(merged);
-        } catch (error) {
-          console.error(
-            "[Slack] Error handling debounced inbound message:",
-            error,
-          );
-        }
-      },
-      onError: (err) => {
-        console.error(
-          "[Slack] Inbound debounce flush failed:",
-          err instanceof Error ? err.message : err,
-        );
-      },
+  const agentThreadTracker: AgentThreadTracker = createAgentThreadTracker();
+  const debounce: SlackInboundDebounceController =
+    createSlackInboundDebounceController({
+      config,
+      getOnMessage: () => adapter.onMessage,
     });
-
-  async function dispatchInboundThroughDebouncer(
-    entry: SlackDebounceEntry,
-  ): Promise<void> {
-    const { raw, inbound } = entry;
-    const debounceKey = buildSlackDebounceKey(raw, config.accountId);
-    const conversationKey = buildTopLevelSlackConversationKey(
-      raw,
-      config.accountId,
-    );
-    const canDebounce =
-      debounceMs > 0 &&
-      !inbound.attachments?.length &&
-      !inbound.reaction &&
-      Boolean(debounceKey);
-
-    // Non-debounceable message: first flush any pending debounced buffers for
-    // the same (channel, sender) so ordering is preserved.
-    if (!canDebounce && conversationKey) {
-      const pending = pendingTopLevelDebounceKeys.get(conversationKey);
-      if (pending && pending.size > 0) {
-        for (const pendingKey of Array.from(pending)) {
-          try {
-            await debouncer.flushKey(pendingKey);
-          } catch {}
-        }
-      }
-    }
-    if (canDebounce && debounceKey && conversationKey) {
-      const pending =
-        pendingTopLevelDebounceKeys.get(conversationKey) ?? new Set<string>();
-      pending.add(debounceKey);
-      pendingTopLevelDebounceKeys.set(conversationKey, pending);
-    }
-    await debouncer.enqueue(entry);
-  }
-
-  function buildIngressMessageKey(
-    channelId: string | undefined,
-    messageId: string | undefined,
-  ): string | null {
-    if (!isNonEmptyString(channelId) || !isNonEmptyString(messageId)) {
-      return null;
-    }
-    return `${channelId}:${messageId}`;
-  }
-
-  function pruneSeenIngressMessageKeys(now: number = Date.now()): void {
-    for (const [key, expiresAt] of seenIngressMessageKeys) {
-      if (expiresAt <= now) {
-        seenIngressMessageKeys.delete(key);
-      }
-    }
-
-    if (seenIngressMessageKeys.size <= SLACK_INGRESS_DEDUPE_MAX) {
-      return;
-    }
-
-    const oldestEntries = Array.from(seenIngressMessageKeys.entries()).sort(
-      (a, b) => a[1] - b[1],
-    );
-    const overflowCount =
-      seenIngressMessageKeys.size - SLACK_INGRESS_DEDUPE_MAX;
-    for (let index = 0; index < overflowCount; index += 1) {
-      const entry = oldestEntries[index];
-      if (entry) {
-        seenIngressMessageKeys.delete(entry[0]);
-      }
-    }
-  }
-
-  function getLifecycleMessageKey(source: ChannelTurnSource): string | null {
-    if (
-      source.channel !== "slack" ||
-      !isNonEmptyString(source.chatId) ||
-      !isNonEmptyString(source.messageId)
-    ) {
-      return null;
-    }
-    return `${source.chatId}:${source.messageId}`;
-  }
-
-  function getLifecycleReplyKey(source: ChannelTurnSource): string | null {
-    if (source.channel !== "slack" || !isNonEmptyString(source.chatId)) {
-      return null;
-    }
-    const replyToMessageId = source.threadId ?? source.messageId;
-    if (!isNonEmptyString(replyToMessageId)) {
-      return null;
-    }
-    return `${source.chatId}:${replyToMessageId}`;
-  }
-
-  function formatSlackLifecycleErrorMessage(errorText: string): string {
-    return formatChannelLifecycleErrorMessage(errorText, {
-      codeBlock: true,
-      maxLength: SLACK_LIFECYCLE_ERROR_TEXT_MAX,
-    });
-  }
-
-  function pruneLifecycleState(now: number = Date.now()): void {
-    for (const [key, entry] of lifecycleStateByMessageKey) {
-      if (entry.updatedAt + SLACK_LIFECYCLE_STATE_TTL_MS <= now) {
-        lifecycleStateByMessageKey.delete(key);
-      }
-    }
-
-    if (lifecycleStateByMessageKey.size <= SLACK_LIFECYCLE_STATE_MAX) {
-      return;
-    }
-
-    const oldestEntries = Array.from(lifecycleStateByMessageKey.entries()).sort(
-      (a, b) => a[1].updatedAt - b[1].updatedAt,
-    );
-    const overflowCount =
-      lifecycleStateByMessageKey.size - SLACK_LIFECYCLE_STATE_MAX;
-    for (let index = 0; index < overflowCount; index += 1) {
-      const entry = oldestEntries[index];
-      if (entry) {
-        lifecycleStateByMessageKey.delete(entry[0]);
-      }
-    }
-  }
-
-  async function sendLifecycleReaction(
-    source: ChannelTurnSource,
-    emoji: string,
-    removeReaction = false,
-  ): Promise<void> {
-    if (!isNonEmptyString(source.messageId)) {
-      return;
-    }
-    await ensureApp();
-    const slackClient = await ensureWriteClient();
-    if (removeReaction) {
-      await slackClient.reactions.remove({
-        channel: source.chatId,
-        timestamp: source.messageId,
-        name: emoji,
-      });
-      return;
-    }
-    await slackClient.reactions.add({
-      channel: source.chatId,
-      timestamp: source.messageId,
-      name: emoji,
-    });
-  }
-
-  async function sendLifecycleErrorReply(
-    source: ChannelTurnSource,
-    errorText: string,
-  ): Promise<void> {
-    const replyToMessageId = source.threadId ?? source.messageId;
-    if (!isNonEmptyString(replyToMessageId)) {
-      return;
-    }
-
-    await ensureApp();
-    const slackClient = await ensureWriteClient();
-    const response = await slackClient.chat.postMessage({
-      channel: source.chatId,
-      text: formatSlackLifecycleErrorMessage(errorText),
-      thread_ts: replyToMessageId,
-    });
-    rememberMessageThread(response.ts, replyToMessageId);
-  }
-
-  function scheduleLifecycleTransition(
-    source: ChannelTurnSource,
-    nextState: SlackLifecycleState,
-  ): Promise<void> | null {
-    const key = getLifecycleMessageKey(source);
-    if (!key) {
-      return null;
-    }
-
-    const previous =
-      lifecycleOperationByMessageKey.get(key) ?? Promise.resolve();
-    const operation = previous
-      .catch(() => {})
-      .then(async () => {
-        pruneLifecycleState();
-        const currentState = lifecycleStateByMessageKey.get(key)?.state;
-        if (currentState === nextState) {
-          lifecycleStateByMessageKey.set(key, {
-            state: nextState,
-            updatedAt: Date.now(),
-          });
-          return;
-        }
-
-        if (nextState === "queued") {
-          if (!currentState) {
-            await sendLifecycleReaction(source, "eyes");
-            lifecycleStateByMessageKey.set(key, {
-              state: nextState,
-              updatedAt: Date.now(),
-            });
-          }
-          return;
-        }
-
-        if (currentState === "queued") {
-          try {
-            await sendLifecycleReaction(source, "eyes", true);
-          } catch {}
-        }
-
-        if (
-          nextState !== "completed" ||
-          config.showCompletedReaction !== false
-        ) {
-          await sendLifecycleReaction(
-            source,
-            nextState === "completed" ? "white_check_mark" : "x",
-          );
-        }
-        lifecycleStateByMessageKey.set(key, {
-          state: nextState,
-          updatedAt: Date.now(),
-        });
-      })
-      .catch((error) => {
-        console.warn(
-          `[Slack] Failed to update lifecycle reaction for ${key}:`,
-          error instanceof Error ? error.message : error,
-        );
-      })
-      .finally(() => {
-        if (lifecycleOperationByMessageKey.get(key) === operation) {
-          lifecycleOperationByMessageKey.delete(key);
-        }
-      });
-
-    lifecycleOperationByMessageKey.set(key, operation);
-    return operation;
-  }
-
-  function markIngressMessageSeen(
-    channelId: string | undefined,
-    messageId: string | undefined,
-  ): boolean {
-    const key = buildIngressMessageKey(channelId, messageId);
-    if (!key) {
-      return false;
-    }
-
-    const now = Date.now();
-    pruneSeenIngressMessageKeys(now);
-
-    if (seenIngressMessageKeys.has(key)) {
-      return true;
-    }
-
-    seenIngressMessageKeys.set(key, now + SLACK_INGRESS_DEDUPE_TTL_MS);
-    return false;
-  }
-
-  function hasSlackMention(text: string, userId: string | null): boolean {
-    if (!isNonEmptyString(text) || !isNonEmptyString(userId)) {
-      return false;
-    }
-
-    return text.includes(`<@${userId}>`) || text.includes(`<@${userId}|`);
-  }
-
-  function rememberMessageThread(
-    messageId: string | undefined,
-    threadId: string | null,
-  ): void {
-    if (!isNonEmptyString(messageId)) {
-      return;
-    }
-    knownThreadIdsByMessageId.set(messageId, threadId);
-  }
-
-  async function resolveUserName(
-    slackApp: SlackApp,
-    userId: string | undefined,
-  ): Promise<string | undefined> {
-    if (!isNonEmptyString(userId)) {
-      return undefined;
-    }
-
-    const cached = knownUserDisplayNames.get(userId);
-    if (cached) {
-      return cached;
-    }
-
-    try {
-      const userInfo = await slackApp.client.users.info({ user: userId });
-      const displayName = resolveSlackUserDisplayName(userInfo);
-      if (displayName) {
-        knownUserDisplayNames.set(userId, displayName);
-        return displayName;
-      }
-    } catch {}
-
-    knownUserDisplayNames.set(userId, userId);
-    return userId;
-  }
+  const ingress = createSlackIngressController({
+    config,
+    getAdapter: () => adapter,
+    getBotUserId: () => botUserId,
+    getBotId: () => botId,
+    agentThreadTracker,
+    debounce,
+  });
+  const status = createSlackStatusController({
+    ensureApp,
+    ensureWriteClient,
+    resolveKnownThreadRoot: ingress.resolveKnownThreadRoot,
+  });
+  const approvals = createSlackApprovalController({
+    config,
+    getAdapter: () => adapter,
+    ensureWriteClient,
+  });
 
   async function ensureApp(): Promise<SlackApp> {
-    if (app) {
-      return app;
-    }
-
+    if (app) return app;
     const bolt = await loadSlackBoltModule();
     const App = resolveSlackAppConstructor(bolt);
     const instance = new App({
@@ -943,674 +106,347 @@ export function createSlackAdapter(
       appToken: config.appToken,
       socketMode: true,
     });
-
     instance.error(async (error) => {
       console.error("[Slack] Unhandled app error:", error);
     });
-
-    instance.message(async ({ message }) => {
-      if (!adapter.onMessage) {
-        return;
-      }
-
-      const rawMessage = asRecord(message);
-      if (!rawMessage) {
-        return;
-      }
-
-      const channelId = rawMessage.channel;
-      if (!isNonEmptyString(channelId)) {
-        return;
-      }
-
-      if (!isProcessableSlackInboundMessage(rawMessage)) {
-        return;
-      }
-
-      const text = isNonEmptyString(rawMessage.text) ? rawMessage.text : "";
-      const wasMentioned = hasSlackMention(text, botUserId);
-      const attachments = await resolveSlackInboundAttachments({
-        accountId: config.accountId,
-        token: config.botToken,
-        rawEvent: message,
-        transcribeVoice: config.transcribeVoice === true,
-      });
-      const chatType = resolveSlackChatType(channelId);
-      const threadId =
-        chatType === "channel"
-          ? (firstNonEmptyString(rawMessage.thread_ts, rawMessage.ts) ?? null)
-          : null;
-      rememberMessageThread(rawMessage.ts, threadId);
-      const senderName = await resolveUserName(instance, rawMessage.user);
-
-      if (chatType === "direct") {
-        const seenKey = `${channelId}:${rawMessage.ts}`;
-        const wasSeen = markIngressMessageSeen(channelId, rawMessage.ts);
-        if (!wasSeen) {
-          // Prime an app_mention retry allowance so a near-simultaneous
-          // app_mention for the same ts is not dropped while this message
-          // is in-flight through the debouncer.
-          rememberAppMentionRetry(seenKey);
-        } else {
-          // Already dispatched — drop the duplicate. DMs can't fire an
-          // app_mention event, so there's no retry-key case to honor here.
-          return;
-        }
-
-        const inbound: InboundChannelMessage = {
-          channel: "slack",
-          accountId: config.accountId,
-          chatId: channelId,
-          senderId: rawMessage.user,
-          senderName,
-          text,
-          timestamp: slackTimestampToMillis(rawMessage.ts),
-          messageId: rawMessage.ts,
-          threadId: null,
-          chatType: "direct",
-          isMention: wasMentioned,
-          attachments,
-          raw: message,
-        };
-
-        try {
-          await dispatchInboundThroughDebouncer({
-            inbound,
-            raw: rawMessage as SlackDebounceRawInput,
-            opts: { source: "message", wasMentioned },
-          });
-        } catch (error) {
-          console.error("[Slack] Error handling DM message:", error);
-        }
-        return;
-      }
-
-      if (!isNonEmptyString(rawMessage.thread_ts)) {
-        return;
-      }
-
-      const seenKey = `${channelId}:${rawMessage.ts}`;
-      const wasSeen = markIngressMessageSeen(channelId, rawMessage.ts);
-      if (!wasSeen) {
-        rememberAppMentionRetry(seenKey);
-      } else {
-        // Already seen. If an app_mention for the same ts arrives later it
-        // will consume the retry key in its own handler; a duplicate
-        // `message` event has nothing to redeem.
-        return;
-      }
-
-      const inbound: InboundChannelMessage = {
-        channel: "slack",
-        accountId: config.accountId,
-        chatId: channelId,
-        senderId: rawMessage.user,
-        senderName,
-        chatLabel: channelId,
-        text: wasMentioned ? normalizeSlackText(text) : text,
-        timestamp: slackTimestampToMillis(rawMessage.ts),
-        messageId: rawMessage.ts,
-        threadId,
-        chatType: "channel",
-        isMention: wasMentioned,
-        attachments,
-        raw: message,
-      };
-
-      try {
-        await dispatchInboundThroughDebouncer({
-          inbound,
-          raw: rawMessage as SlackDebounceRawInput,
-          opts: { source: "message", wasMentioned },
-        });
-      } catch (error) {
-        console.error(
-          "[Slack] Error handling threaded channel message:",
-          error,
-        );
-      }
-    });
-
-    instance.event("app_mention", async ({ event }) => {
-      if (!adapter.onMessage) {
-        return;
-      }
-
-      if (
-        !isNonEmptyString(event.channel) ||
-        !isNonEmptyString(event.user) ||
-        !isNonEmptyString(event.ts)
-      ) {
-        return;
-      }
-
-      const seenKey = `${event.channel}:${event.ts}`;
-      const wasSeen = markIngressMessageSeen(event.channel, event.ts);
-      if (wasSeen) {
-        // A prior `message` event already claimed this ts. Allow the
-        // app_mention through exactly once if a retry key was primed;
-        // otherwise drop.
-        if (!consumeAppMentionRetry(seenKey)) {
-          return;
-        }
-      }
-
-      rememberMessageThread(event.ts, event.thread_ts ?? event.ts);
-
-      const inbound: InboundChannelMessage = {
-        channel: "slack",
-        accountId: config.accountId,
-        chatId: event.channel,
-        senderId: event.user,
-        senderName: await resolveUserName(instance, event.user),
-        chatLabel: event.channel,
-        text: normalizeSlackText(event.text ?? ""),
-        timestamp: slackTimestampToMillis(event.ts),
-        messageId: event.ts,
-        threadId: event.thread_ts ?? event.ts,
-        chatType: "channel",
-        isMention: true,
-        attachments: await resolveSlackInboundAttachments({
-          accountId: config.accountId,
-          token: config.botToken,
-          rawEvent: event,
-          transcribeVoice: config.transcribeVoice === true,
-        }),
-        raw: event,
-      };
-
-      try {
-        await dispatchInboundThroughDebouncer({
-          inbound,
-          raw: event as SlackDebounceRawInput,
-          opts: { source: "app_mention", wasMentioned: true },
-        });
-      } catch (error) {
-        console.error("[Slack] Error handling channel mention:", error);
-      }
-    });
-
-    const handleNativeChannelSlashCommand = async ({
-      command,
-      ack,
-    }: {
-      command: SlackCommandPayload;
-      ack: () => Promise<void>;
-    }) => {
-      await ack();
-
-      if (!adapter.onMessage) {
-        return;
-      }
-
-      const payload = command;
-      if (
-        !isNonEmptyString(payload.command) ||
-        !isNonEmptyString(payload.channel_id) ||
-        !isNonEmptyString(payload.user_id)
-      ) {
-        return;
-      }
-
-      const commandArgs = isNonEmptyString(payload.text)
-        ? payload.text.trim()
-        : "";
-      const commandText = commandArgs
-        ? `${payload.command} ${commandArgs}`
-        : payload.command;
-
-      const inbound: InboundChannelMessage = {
-        channel: "slack",
-        accountId: config.accountId,
-        chatId: payload.channel_id,
-        senderId: payload.user_id,
-        senderName: firstNonEmptyString(payload.user_name, payload.user_id),
-        chatLabel: firstNonEmptyString(
-          payload.channel_name,
-          payload.channel_id,
-        ),
-        text: commandText,
-        timestamp: Date.now(),
-        messageId: firstNonEmptyString(payload.trigger_id, payload.command),
-        threadId: null,
-        chatType: resolveSlackChatType(payload.channel_id),
-        isMention: false,
-        raw: command,
-      };
-
-      try {
-        await adapter.onMessage(inbound);
-      } catch (error) {
-        console.error(
-          `[Slack] Error handling ${payload.command} command:`,
-          error,
-        );
-      }
-    };
-
-    for (const definition of listChannelSlashCommands()) {
-      for (const commandName of [
-        definition.name,
-        ...(definition.aliases ?? []),
-      ]) {
-        instance.command(`/${commandName}`, handleNativeChannelSlashCommand);
-      }
-    }
-
-    const handleReactionEvent = async (
-      event: SlackReactionEvent,
-      action: "added" | "removed",
-    ) => {
-      if (!adapter.onMessage) {
-        return;
-      }
-
-      const item = asRecord(event.item);
-      const chatId = item?.channel;
-      const targetMessageId = item?.ts;
-      if (
-        item?.type !== "message" ||
-        !isNonEmptyString(chatId) ||
-        !isNonEmptyString(targetMessageId) ||
-        !isNonEmptyString(event.user) ||
-        !isNonEmptyString(event.reaction)
-      ) {
-        return;
-      }
-
-      if (event.user === botUserId) {
-        return;
-      }
-
-      const chatType = resolveSlackChatType(chatId);
-      const threadId =
-        chatType === "channel"
-          ? (knownThreadIdsByMessageId.get(targetMessageId) ?? targetMessageId)
-          : null;
-
-      const inbound: InboundChannelMessage = {
-        channel: "slack",
-        accountId: config.accountId,
-        chatId,
-        senderId: event.user,
-        senderName: await resolveUserName(instance, event.user),
-        chatLabel: chatId,
-        text: `Slack reaction ${action}: :${event.reaction}:`,
-        timestamp: slackTimestampToMillis(
-          firstNonEmptyString(event.event_ts, targetMessageId) ??
-            targetMessageId,
-        ),
-        messageId: firstNonEmptyString(event.event_ts, targetMessageId),
-        threadId,
-        chatType,
-        isMention: false,
-        reaction: {
-          action,
-          emoji: event.reaction,
-          targetMessageId,
-          targetSenderId: isNonEmptyString(event.item_user)
-            ? event.item_user
-            : undefined,
-        },
-        raw: event,
-      };
-
-      try {
-        await adapter.onMessage(inbound);
-      } catch (error) {
-        console.error(`[Slack] Error handling reaction ${action}:`, error);
-      }
-    };
-
-    instance.event("reaction_added", async ({ event }) => {
-      await handleReactionEvent(event as SlackReactionEvent, "added");
-    });
-
-    instance.event("reaction_removed", async ({ event }) => {
-      await handleReactionEvent(event as SlackReactionEvent, "removed");
-    });
-
+    ingress.register(instance);
+    approvals.register(instance);
     app = instance;
     return instance;
   }
 
   async function ensureWriteClient(): Promise<SlackWriteClient> {
-    if (writeClient) {
-      return writeClient;
-    }
-
-    writeClient = await createSlackWebApiClient<SlackWriteClient>(
+    if (writeClient) return writeClient;
+    writeClientPromise ??= createSlackWebApiClient<SlackWriteClient>(
       config.botToken,
-      {
-        retryConfig: {
-          retries: 0,
-        },
-      },
-    );
-    return writeClient;
+      { retryConfig: { retries: 0 } },
+    ).then((client) => {
+      writeClient = client;
+      return client;
+    });
+    try {
+      return await writeClientPromise;
+    } catch (error) {
+      writeClientPromise = null;
+      throw error;
+    }
   }
 
-  const adapter: ChannelAdapter = {
+  async function downloadAttachment(params: {
+    attachmentId: string;
+    chatId: string;
+    threadId?: string | null;
+    messageId: string;
+  }): Promise<ChannelMessageAttachment> {
+    const slackApp = await ensureApp();
+    return await downloadSlackAttachmentById({
+      accountId: config.accountId,
+      token: config.botToken,
+      attachmentId: params.attachmentId,
+      channelId: params.chatId,
+      threadTs: params.threadId,
+      messageTs: params.messageId,
+      client: slackApp.client as unknown as SlackAttachmentReadClient,
+    });
+  }
+
+  async function sendLifecycleErrorReply(
+    source: ChannelTurnSource,
+    errorText: string,
+  ): Promise<void> {
+    const threadTs = resolveSlackSourceThreadTs(source);
+    const text = formatSlackLifecycleErrorMessage(errorText);
+    const footnote = buildSlackChatFootnote(source);
+    const blocks = footnote
+      ? buildSlackReplyBlocksWithFootnote(text, footnote)
+      : undefined;
+    await ensureApp();
+    const client = await ensureWriteClient();
+    const response = await client.chat.postMessage({
+      channel: source.chatId,
+      text,
+      ...(blocks ? { blocks } : {}),
+      ...(threadTs ? { thread_ts: threadTs } : {}),
+    });
+    ingress.rememberMessageThread(response.ts, threadTs ?? null);
+  }
+
+  async function handleTurnLifecycleEvent(
+    event: ChannelTurnLifecycleEvent,
+  ): Promise<void> {
+    if (!running) return;
+    if (event.type === "queued") {
+      if (
+        isSlackFlatChannelThreadOpener(event.source) &&
+        isNonEmptyString(event.source.messageId) &&
+        !agentThreadTracker.has(event.source.chatId, event.source.messageId)
+      ) {
+        await status.activate(
+          event.source,
+          SLACK_ASSISTANT_STARTUP_STATUS,
+          SLACK_ASSISTANT_STARTUP_STATUS,
+        );
+      }
+      return;
+    }
+
+    const sources = status.getUniqueSources(event.sources);
+    if (event.type === "processing") {
+      await Promise.all(sources.map(status.clearStale));
+      return;
+    }
+    if (event.stopReason === "requires_approval") return;
+
+    await Promise.all(sources.map(status.deactivate));
+    if (!shouldPostSlackTerminalError(event.stopReason)) return;
+    const errorText = event.error?.trim() ?? "";
+    trackBoundaryError({
+      context: "slack channel turn",
+      errorType: "slack_channel_turn_error",
+      error: errorText || event.stopReason,
+      runId: event.runId ?? undefined,
+    });
+    const uniqueReplySources = new Map<string, ChannelTurnSource>();
+    for (const source of sources) {
+      const key = status.getLifecycleErrorReplyKey(source);
+      if (key && !uniqueReplySources.has(key)) {
+        uniqueReplySources.set(key, source);
+      }
+    }
+    await Promise.all(
+      Array.from(uniqueReplySources.values()).map(async (source) => {
+        try {
+          await sendLifecycleErrorReply(source, errorText);
+        } catch (error) {
+          console.warn(
+            `[Slack] Failed to post lifecycle error for ${source.chatId}:`,
+            error instanceof Error ? error.message : error,
+          );
+        }
+      }),
+    );
+  }
+
+  async function sendMessage(
+    msg: OutboundChannelMessage,
+  ): Promise<{ messageId: string }> {
+    await ensureApp();
+    const client = await ensureWriteClient();
+    if (msg.reaction) {
+      const targetMessageId = msg.targetMessageId ?? msg.replyToMessageId;
+      if (!targetMessageId) {
+        throw new Error(
+          "Slack reactions require message_id (or reply_to_message_id) to identify the target message.",
+        );
+      }
+      const emoji = normalizeSlackReactionName(msg.reaction);
+      if (!emoji) throw new Error("Slack reaction emoji cannot be empty.");
+      const reactionArgs = {
+        channel: msg.chatId,
+        timestamp: targetMessageId,
+        name: emoji,
+      };
+      if (msg.removeReaction) await client.reactions.remove(reactionArgs);
+      else await client.reactions.add(reactionArgs);
+      return { messageId: targetMessageId };
+    }
+
+    if (msg.mediaPath) {
+      const result = await uploadSlackFile(client, msg);
+      const threadId = msg.threadId ?? msg.replyToMessageId ?? null;
+      if (
+        resolveSlackChatType(msg.chatId) === "channel" &&
+        isNonEmptyString(threadId)
+      ) {
+        agentThreadTracker.remember(msg.chatId, threadId);
+      }
+      status.markAutoClearedForMessage(msg);
+      return result;
+    }
+
+    const threadTs = resolveSlackOutboundThreadTs({
+      chatId: msg.chatId,
+      threadId: msg.threadId,
+      replyToMessageId: msg.replyToMessageId,
+    });
+    const footnote =
+      isNonEmptyString(msg.agentId) && isNonEmptyString(msg.conversationId)
+        ? buildSlackChatFootnote({
+            agentId: msg.agentId,
+            conversationId: msg.conversationId,
+          })
+        : "";
+    const blocks = footnote
+      ? buildSlackReplyBlocksWithFootnote(msg.text, footnote)
+      : undefined;
+    const response = await client.chat.postMessage({
+      channel: msg.chatId,
+      text: msg.text,
+      ...(blocks ? { blocks } : {}),
+      ...(threadTs ? { thread_ts: threadTs } : {}),
+    });
+    const outboundThreadId =
+      threadTs ??
+      (resolveSlackChatType(msg.chatId) === "channel"
+        ? (response.ts ?? null)
+        : null);
+    ingress.rememberMessageThread(response.ts, outboundThreadId);
+    if (
+      resolveSlackChatType(msg.chatId) === "channel" &&
+      isNonEmptyString(outboundThreadId)
+    ) {
+      agentThreadTracker.remember(msg.chatId, outboundThreadId);
+    }
+    status.markAutoClearedForMessage(msg);
+    return { messageId: response.ts ?? "" };
+  }
+
+  async function sendDirectReply(
+    chatId: string,
+    text: string,
+    options?: {
+      replyToMessageId?: string;
+      threadId?: string | null;
+      modelPicker?: ChannelModelPickerData;
+    },
+  ): Promise<void> {
+    await ensureApp();
+    const client = await ensureWriteClient();
+    const threadTs = resolveSlackOutboundThreadTs({
+      chatId,
+      threadId: options?.threadId,
+      replyToMessageId: options?.replyToMessageId,
+    });
+    const pickerBlocks = options?.modelPicker
+      ? buildSlackModelPickerBlocks(options.modelPicker)
+      : undefined;
+    const response = await client.chat.postMessage({
+      channel: chatId,
+      text,
+      ...(pickerBlocks ? { blocks: asSlackBlocks(pickerBlocks) } : {}),
+      ...(threadTs ? { thread_ts: threadTs } : {}),
+    });
+    const outboundThreadId =
+      threadTs ??
+      (resolveSlackChatType(chatId) === "channel"
+        ? (response.ts ?? null)
+        : null);
+    ingress.rememberMessageThread(response.ts, outboundThreadId);
+    if (
+      resolveSlackChatType(chatId) === "channel" &&
+      isNonEmptyString(outboundThreadId)
+    ) {
+      agentThreadTracker.remember(chatId, outboundThreadId);
+    }
+    status.markAutoClearedForMessage({
+      chatId,
+      threadId: options?.threadId ?? null,
+      replyToMessageId: options?.replyToMessageId,
+    });
+  }
+
+  async function handleControlRequestEvent(
+    event: ChannelControlRequestEvent,
+  ): Promise<void> {
+    await ensureApp();
+    const client = await ensureWriteClient();
+    const text = formatChannelControlRequestPrompt(event);
+    const blocks = formatSlackControlRequestBlocks(event);
+    const threadTs = resolveSlackSourceThreadTs(event.source);
+    const response = await client.chat.postMessage({
+      channel: event.source.chatId,
+      text,
+      ...(blocks ? { blocks } : {}),
+      ...(threadTs ? { thread_ts: threadTs } : {}),
+    });
+    const outboundThreadId =
+      threadTs ??
+      (resolveSlackChatType(event.source.chatId) === "channel"
+        ? (response.ts ?? null)
+        : null);
+    ingress.rememberMessageThread(response.ts, outboundThreadId);
+    if (event.kind === "generic_tool_approval" && response.ts) {
+      approvals.rememberPrompt(event, response.ts);
+    }
+    if (
+      resolveSlackChatType(event.source.chatId) === "channel" &&
+      isNonEmptyString(outboundThreadId)
+    ) {
+      agentThreadTracker.remember(event.source.chatId, outboundThreadId);
+    }
+    status.markAutoCleared(event.source);
+  }
+
+  adapter = {
     id: `slack:${config.accountId}`,
     channelId: "slack",
     accountId: config.accountId,
     name: "Slack",
-
     async start(): Promise<void> {
-      if (running) {
-        return;
-      }
-
+      if (running) return;
       const slackApp = await ensureApp();
       const auth = await slackApp.client.auth.test();
-      botUserId = isNonEmptyString(auth.user_id) ? auth.user_id : null;
+      const authRecord = auth as unknown as Record<string, unknown>;
+      botUserId = isNonEmptyString(authRecord.user_id)
+        ? authRecord.user_id
+        : null;
+      botId = isNonEmptyString(authRecord.bot_id) ? authRecord.bot_id : null;
       await slackApp.start();
       running = true;
-
       console.log(
         `[Slack] App started for workspace ${auth.team ?? "unknown"} (dm_policy: ${config.dmPolicy})`,
       );
     },
-
     async stop(): Promise<void> {
-      if (!app || !running) {
-        return;
-      }
+      if (!app || !running) return;
+      await Promise.all(
+        status.getUniqueSources(status.activeSources()).map(status.deactivate),
+      );
       await app.stop();
       running = false;
       app = null;
       writeClient = null;
+      writeClientPromise = null;
       botUserId = null;
-      seenIngressMessageKeys.clear();
-      lifecycleStateByMessageKey.clear();
-      lifecycleOperationByMessageKey.clear();
-      pendingTopLevelDebounceKeys.clear();
-      appMentionRetryKeys.clear();
-      appMentionDispatchedKeys.clear();
+      botId = null;
+      status.clear();
+      approvals.clear();
+      debounce.clear();
+      ingress.clear();
+      agentThreadTracker.clear();
       console.log("[Slack] App stopped");
     },
-
-    isRunning(): boolean {
-      return running;
-    },
-
-    async handleTurnLifecycleEvent(
-      event: ChannelTurnLifecycleEvent,
+    isRunning: () => running,
+    handleTurnLifecycleEvent,
+    async handleTurnProgressEvent(
+      event: ChannelTurnProgressEvent,
     ): Promise<void> {
-      if (!running) {
-        return;
-      }
-
-      if (event.type === "queued") {
-        await scheduleLifecycleTransition(event.source, "queued");
-        return;
-      }
-
-      if (event.type === "processing") {
-        return;
-      }
-
-      const nextState: SlackLifecycleState =
-        event.outcome === "completed"
-          ? "completed"
-          : event.outcome === "cancelled"
-            ? "cancelled"
-            : "error";
-
+      if (!running) return;
+      const activity = resolveSlackConcreteActivity(event);
+      if (!activity) return;
       await Promise.all(
-        event.sources.map((source) =>
-          scheduleLifecycleTransition(source, nextState),
-        ),
-      );
-
-      const errorText = event.outcome === "error" ? event.error?.trim() : null;
-      if (!errorText) {
-        return;
-      }
-
-      const uniqueReplySources = new Map<string, ChannelTurnSource>();
-      for (const source of event.sources) {
-        const key = getLifecycleReplyKey(source);
-        if (!key || uniqueReplySources.has(key)) {
-          continue;
-        }
-        uniqueReplySources.set(key, source);
-      }
-
-      await Promise.all(
-        Array.from(uniqueReplySources.values()).map(async (source) => {
-          try {
-            await sendLifecycleErrorReply(source, errorText);
-          } catch (error) {
-            console.warn(
-              `[Slack] Failed to post lifecycle error for ${source.chatId}:`,
-              error instanceof Error ? error.message : error,
-            );
-          }
-        }),
+        status
+          .getUniqueSources(event.sources)
+          .map((source) =>
+            status.activate(source, SLACK_ASSISTANT_WORKING_STATUS, activity),
+          ),
       );
     },
-
-    async sendMessage(
-      msg: OutboundChannelMessage,
-    ): Promise<{ messageId: string }> {
-      await ensureApp();
-      const slackClient = await ensureWriteClient();
-      if (msg.reaction) {
-        const targetMessageId = msg.targetMessageId ?? msg.replyToMessageId;
-        if (!targetMessageId) {
-          throw new Error(
-            "Slack reactions require message_id (or reply_to_message_id) to identify the target message.",
-          );
-        }
-        const emoji = normalizeSlackReactionName(msg.reaction);
-        if (!emoji) {
-          throw new Error("Slack reaction emoji cannot be empty.");
-        }
-        if (msg.removeReaction) {
-          await slackClient.reactions.remove({
-            channel: msg.chatId,
-            timestamp: targetMessageId,
-            name: emoji,
-          });
-        } else {
-          await slackClient.reactions.add({
-            channel: msg.chatId,
-            timestamp: targetMessageId,
-            name: emoji,
-          });
-        }
-        return { messageId: targetMessageId };
-      }
-
-      if (msg.mediaPath) {
-        return uploadSlackFile(slackClient, msg);
-      }
-
-      const response = await slackClient.chat.postMessage({
-        channel: msg.chatId,
-        text: msg.text,
-        ...((msg.threadId ?? msg.replyToMessageId)
-          ? { thread_ts: msg.threadId ?? msg.replyToMessageId }
-          : {}),
-      });
-
-      rememberMessageThread(
-        response.ts,
-        msg.threadId ?? msg.replyToMessageId ?? response.ts ?? null,
-      );
-
-      return { messageId: response.ts ?? "" };
-    },
-
-    async sendDirectReply(
-      chatId: string,
-      text: string,
-      options?: { replyToMessageId?: string },
-    ): Promise<void> {
-      await ensureApp();
-      const slackClient = await ensureWriteClient();
-      const response = await slackClient.chat.postMessage({
-        channel: chatId,
-        text,
-        ...(options?.replyToMessageId
-          ? { thread_ts: options.replyToMessageId }
-          : {}),
-      });
-      rememberMessageThread(
-        response.ts,
-        options?.replyToMessageId ?? response.ts ?? null,
-      );
-    },
-
-    async handleControlRequestEvent(
-      event: ChannelControlRequestEvent,
-    ): Promise<void> {
-      await ensureApp();
-      const slackClient = await ensureWriteClient();
-      const response = await slackClient.chat.postMessage({
-        channel: event.source.chatId,
-        text: formatChannelControlRequestPrompt(event),
-        ...((event.source.threadId ?? event.source.messageId)
-          ? { thread_ts: event.source.threadId ?? event.source.messageId }
-          : {}),
-      });
-      rememberMessageThread(
-        response.ts,
-        event.source.threadId ?? event.source.messageId ?? response.ts ?? null,
-      );
-    },
-
-    async prepareInboundMessage(
-      msg: InboundChannelMessage,
-      options?: { isFirstRouteTurn?: boolean },
-    ): Promise<InboundChannelMessage> {
-      if (
-        msg.channel !== "slack" ||
-        msg.chatType !== "channel" ||
-        !isNonEmptyString(msg.threadId) ||
-        !isNonEmptyString(msg.messageId)
-      ) {
-        return msg;
-      }
-
-      const isFirstRouteTurn = options?.isFirstRouteTurn === true;
-      const shouldHydrateExistingThreadContext = msg.threadId !== msg.messageId;
-      const shouldHydrateChannelBootstrapContext =
-        isFirstRouteTurn &&
-        msg.isMention === true &&
-        msg.threadId === msg.messageId;
-
-      if (
-        !shouldHydrateExistingThreadContext &&
-        !shouldHydrateChannelBootstrapContext
-      ) {
-        return msg;
-      }
-
-      const slackApp = await ensureApp();
-      const starter =
-        shouldHydrateExistingThreadContext && isFirstRouteTurn
-          ? await resolveSlackThreadStarter({
-              channelId: msg.chatId,
-              threadTs: msg.threadId,
-              client: slackApp.client,
-            })
-          : null;
-      const resolvedHistory = shouldHydrateExistingThreadContext
-        ? await resolveSlackThreadHistory({
-            channelId: msg.chatId,
-            threadTs: msg.threadId,
-            client: slackApp.client,
-            currentMessageTs: msg.messageId,
-            limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
-          })
-        : await resolveSlackChannelHistory({
-            channelId: msg.chatId,
-            beforeTs: msg.messageId,
-            client: slackApp.client,
-            limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
-          });
-      // Existing routed thread turns already deliver human messages into the
-      // Letta conversation. Bot-authored Slack messages are intentionally not
-      // runnable input, so rehydrate those skipped entries as context on the
-      // next human turn instead of waking the agent for every bot event.
-      const history =
-        shouldHydrateExistingThreadContext && !isFirstRouteTurn
-          ? resolvedHistory.filter((entry) => isNonEmptyString(entry.botId))
-          : resolvedHistory;
-
-      if (!starter && history.length === 0) {
-        return msg;
-      }
-
-      const uniqueUserIds = new Set<string>();
-      if (isNonEmptyString(starter?.userId)) {
-        uniqueUserIds.add(starter.userId);
-      }
-      for (const entry of history) {
-        if (isNonEmptyString(entry.userId)) {
-          uniqueUserIds.add(entry.userId);
-        }
-      }
-
-      await Promise.all(
-        Array.from(uniqueUserIds).map(async (userId) => {
-          await resolveUserName(slackApp, userId);
-        }),
-      );
-
-      const resolveThreadSenderName = (
-        userId?: string,
-        botId?: string,
-      ): string | undefined => {
-        if (isNonEmptyString(userId)) {
-          return knownUserDisplayNames.get(userId) ?? userId;
-        }
-        if (isNonEmptyString(botId)) {
-          return `Bot (${botId})`;
-        }
-        return undefined;
-      };
-
-      return {
-        ...msg,
-        threadContext: {
-          label: shouldHydrateExistingThreadContext
-            ? buildSlackThreadLabel(msg, starter?.text)
-            : buildSlackChannelContextLabel(msg),
-          ...(starter
-            ? {
-                starter: {
-                  messageId: starter.ts,
-                  senderId: starter.userId ?? starter.botId,
-                  senderName: resolveThreadSenderName(
-                    starter.userId,
-                    starter.botId,
-                  ),
-                  text: starter.text,
-                },
-              }
-            : {}),
-          ...(history.length > 0
-            ? {
-                history: history.map((entry) => ({
-                  messageId: entry.ts,
-                  senderId: entry.userId ?? entry.botId,
-                  senderName: resolveThreadSenderName(
-                    entry.userId,
-                    entry.botId,
-                  ),
-                  text: entry.text,
-                })),
-              }
-            : {}),
-        },
-      };
-    },
-
+    sendMessage,
+    downloadAttachment,
+    sendDirectReply,
+    handleControlRequestEvent,
+    prepareInboundMessage: (msg, options) =>
+      prepareSlackInboundMessage({
+        msg,
+        options,
+        config,
+        ensureApp,
+        resolveUserName: ingress.resolveUserName,
+        getKnownUserDisplayName: ingress.getKnownUserDisplayName,
+      }),
     onMessage: undefined,
+    onControlResponse: undefined,
   };
-
   return adapter;
 }

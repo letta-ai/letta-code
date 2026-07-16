@@ -78,6 +78,31 @@ export const computeThing = (x: string): number => { ... }
 
 ---
 
+### Source files stay below 1,000 lines
+
+**Rule:** New source and test files must not exceed 1,000 lines. Existing
+oversized files are pinned in `scripts/source-file-size-baseline.json`: they may
+shrink, but they may not grow. Lower the baseline in the same change whenever an
+oversized file gets smaller, and remove its entry once it reaches the limit.
+
+**Why:** Agents commonly inspect large files in slices and miss distant state,
+cleanup, or fallback paths. Responsibility-sized modules make the whole behavior
+readable in one pass and give tests an obvious home.
+
+---
+
+### Import from the owner, not an implementation barrel
+
+**Rule:** Import a symbol from the module that defines it. Do not turn concrete
+implementation entrypoints such as channel adapters into convenience barrels.
+Scoped ownership rules are enforced by `scripts/check-module-ownership.js`.
+
+**Why:** Forwarding exports hide where behavior lives, inflate dependency graphs,
+and make agents open orchestration files when they need a small helper. Public
+package entrypoints may still re-export their intentional API surface.
+
+---
+
 ### Layer boundaries — no upward imports
 
 **Rule:** Files may only import from the same layer or layers below them. Violations are caught by `scripts/check-layer-boundaries.js` in pre-commit and CI.
@@ -130,7 +155,7 @@ utils/         ← bottom: no domain deps
 Practical rules:
 - Prefer dependency injection or object-level stubbing over module-level mocking.
 - Don't mock broad shared modules (`settings-manager`, telemetry, etc.).
-- If a test file must use `mock.module()`, run it as a standalone `bun test` invocation separate from the main worker pool (see `scripts/run-unit-tests.cjs` for the pattern).
+- If a test file must use `mock.module()`, register it with a reason in `scripts/isolated-unit-tests.json`; `scripts/run-unit-tests.cjs` will run it in a standalone Bun process, and the mock-isolation check rejects unregistered top-level mocks.
 - If a test passes alone but fails in `bun test src/`, suspect mock leakage first.
 
 ---
@@ -169,17 +194,24 @@ Test files live **next to their source** (`local-store.test.ts` next to `local-s
 | Run all unit tests | `bun test $(find src -name "*.test.ts" \| grep -v integration-tests)` |
 | Dev mode | `bun run dev` (sets `LETTA_DEBUG=1` by default) |
 
-`bun run fix` only auto-fixes biome violations (format + lint autofixes). Circular deps, boundary violations, exported-function style, and TypeScript errors need manual fixes.
+`bun run fix` only auto-fixes biome violations (format + lint autofixes). The
+architectural checks and TypeScript errors need manual fixes. The pre-commit hook
+also rejects staged parent-relative imports (`../`); use the `@/` alias.
 
 ### Check Suite (what each check does)
 
-1. **relative-imports** — greps staged `.ts/.tsx` files for `from "../`; fails if found
-2. **cycles** — `madge --circular src/`; must be exactly 0
-3. **boundaries** — `scripts/check-layer-boundaries.js`; checks import direction per layer
-4. **exported-functions** — `scripts/check-exported-functions.js`; flags `export const fn =`
-5. **test-mock-isolation** — `scripts/check-test-mock-isolation.js`; flags unsafe `mock.module` patterns
-6. **biome** — format + lint across all files
-7. **typescript** — full `tsc --noEmit`
+1. **cycles** — `madge --circular src/`; must be exactly 0
+2. **boundaries** — `scripts/check-layer-boundaries.js`; checks import direction per layer
+3. **exported-functions** — `scripts/check-exported-functions.js`; flags `export const fn =`
+4. **filename-casing** — `scripts/check-filename-casing.js`; enforces source naming conventions
+5. **source-file-size** — `scripts/check-source-file-size.js`; enforces the 1,000-line ceiling and ratchet
+6. **module-ownership** — `scripts/check-module-ownership.js`; protects orchestration modules from barrel imports/exports
+7. **test-mock-isolation** — `scripts/check-test-mock-isolation.js`; flags unsafe `mock.module` patterns
+8. **test-coverage** — `scripts/check-test-coverage.cjs`; checks source/test coverage policy
+9. **skill-frontmatter** — checks every `SKILL.md` has a non-empty `name:` header
+10. **bundled-skill-scripts** — validates scripts shipped with bundled skills
+11. **biome** — format + lint across source files
+12. **typescript** — full `tsc --noEmit`
 
 ### Environment Variables
 

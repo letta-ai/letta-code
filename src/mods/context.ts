@@ -1,4 +1,6 @@
 import { getModelInfo } from "@/agent/model";
+import { resolveModelHandleFromLlmConfig } from "@/agent/model-handles";
+import { getSubagentLifecycleContext } from "@/agent/subagent-state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { getVersion } from "@/version";
 import type { ModContext, ModModelContext } from "./types";
@@ -14,16 +16,6 @@ interface AgentContextSource {
   } | null;
 }
 
-function buildModelHandleFromLlmConfig(
-  llmConfig: AgentContextSource["llm_config"] | null | undefined,
-): string | null {
-  if (!llmConfig) return null;
-  if (llmConfig.model_endpoint_type && llmConfig.model) {
-    return `${llmConfig.model_endpoint_type}/${llmConfig.model}`;
-  }
-  return llmConfig.model ?? null;
-}
-
 function resolveModelContext(options: {
   agent?: AgentContextSource | null;
   base?: ModContext | null;
@@ -32,7 +24,7 @@ function resolveModelContext(options: {
   const modelHandle =
     options.modelIdentifier ??
     options.agent?.model ??
-    buildModelHandleFromLlmConfig(options.agent?.llm_config) ??
+    resolveModelHandleFromLlmConfig(options.agent?.llm_config) ??
     options.base?.model.id ??
     null;
   const modelInfo = modelHandle ? getModelInfo(modelHandle) : null;
@@ -112,5 +104,6 @@ export function buildModInvocationContext(
       memoryDir: null,
     },
     backgroundAgents: base?.backgroundAgents ?? [],
+    subagents: base?.subagents ?? getSubagentLifecycleContext(),
   };
 }

@@ -65,7 +65,7 @@ describe("resolveStartupTarget", () => {
         pinnedCount: 0,
       }),
     );
-    expect(result).toEqual({ action: "create" });
+    expect(result).toEqual({ action: "create", trigger: "fresh-start" });
   });
 
   test("dir with local LRU + valid agent → resumes local with conversation", () => {
@@ -219,7 +219,7 @@ describe("resolveStartupTarget", () => {
 
   test("true fresh user (no local, no global, no pinned) → create", () => {
     const result = resolveStartupTarget(makeInput());
-    expect(result).toEqual({ action: "create" });
+    expect(result).toEqual({ action: "create", trigger: "fresh-start" });
   });
 
   test("no LRU but pinned agents exist → select", () => {
@@ -241,7 +241,7 @@ describe("resolveStartupTarget", () => {
         forceNew: true,
       }),
     );
-    expect(result).toEqual({ action: "create" });
+    expect(result).toEqual({ action: "create", trigger: "force-new" });
   });
 
   test("needsModelPicker + no valid agents → select (not create)", () => {
@@ -304,7 +304,7 @@ describe("resolveStartupTarget", () => {
         pinnedCount: 0,
       }),
     );
-    expect(result).toEqual({ action: "create" });
+    expect(result).toEqual({ action: "create", trigger: "fresh-start" });
   });
 
   test("same local/global ID invalid + pinned → select", () => {

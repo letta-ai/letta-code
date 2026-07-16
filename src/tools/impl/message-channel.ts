@@ -27,6 +27,10 @@ import type {
   OutboundChannelMessage,
   SupportedChannelId,
 } from "@/channels/types";
+import type {
+  MessageChannelArgs,
+  NormalizedMessageChannelInput,
+} from "./message-channel-types";
 
 const TELEGRAM_CHANNEL_ID = "telegram";
 const SIGNAL_CHANNEL_ID = "signal";
@@ -795,44 +799,6 @@ export function formatOutboundChannelMessage(
   return formatter(normalizedText);
 }
 
-interface MessageChannelArgs {
-  channel: string;
-  action: string;
-  chat_id?: string;
-  target?: string;
-  accountId?: string;
-  message?: string;
-  replyTo?: string;
-  threadId?: string;
-  messageId?: string;
-  emoji?: string;
-  remove?: boolean;
-  media?: string;
-  filename?: string;
-  title?: string;
-  /** Injected by executeTool() — NOT read from global context. */
-  parentScope?: { agentId: string; conversationId: string };
-  /** Injected by executeTool() for channel-originated turns. */
-  channelTurnSources?: ChannelTurnSource[];
-}
-
-interface NormalizedMessageChannelInput {
-  channel: SupportedChannelId;
-  action: ChannelMessageActionName;
-  chatId?: string;
-  target?: string;
-  accountId?: string;
-  message?: string;
-  replyToMessageId?: string;
-  threadId?: string | null;
-  messageId?: string;
-  emoji?: string;
-  remove?: boolean;
-  mediaPath?: string;
-  filename?: string;
-  title?: string;
-}
-
 interface ResolvedMessageChannelExecutionContext {
   request: ChannelMessageActionRequest;
   route: ChannelRoute;
@@ -933,6 +899,7 @@ function normalizeMessageChannelInput(
     replyToMessageId: firstNonEmptyString(args.replyTo),
     threadId: firstNonEmptyString(args.threadId) ?? null,
     messageId: firstNonEmptyString(args.messageId),
+    attachmentId: firstNonEmptyString(args.attachmentId),
     emoji: firstNonEmptyString(args.emoji),
     remove: firstDefinedBoolean(args.remove),
     mediaPath: firstNonEmptyString(args.media),
@@ -954,6 +921,7 @@ function buildMessageChannelRequest(
     replyToMessageId: input.replyToMessageId,
     threadId: threadId ?? input.threadId ?? null,
     messageId: input.messageId,
+    attachmentId: input.attachmentId,
     emoji: input.emoji,
     remove: input.remove,
     mediaPath: input.mediaPath,
@@ -1041,11 +1009,12 @@ function inferThreadIdFromChannelTurnSources(params: {
       continue;
     }
 
-    threadIds.add(
-      source.threadId ??
-        (params.input.channel === "slack" ? source.messageId : null) ??
-        null,
-    );
+    const sourceThreadId = source.threadId ?? null;
+    const fallbackThreadId =
+      params.input.channel === "slack" && source.chatType !== "direct"
+        ? source.messageId
+        : null;
+    threadIds.add(sourceThreadId ?? fallbackThreadId ?? null);
   }
 
   return threadIds.size === 1 ? [...threadIds][0] : undefined;
@@ -1117,6 +1086,13 @@ export async function message_channel(
   if (typeof input === "string") {
     return input;
   }
+  if (
+    input.channel === "slack" &&
+    input.action === "download-file" &&
+    input.target
+  ) {
+    return "Error: Slack download-file requires chat_id from a routed channel context; target is not supported.";
+  }
 
   try {
     let executionContext: ResolvedMessageChannelExecutionContext | string;
@@ -1157,11 +1133,15 @@ export async function message_channel(
         accountId: resolvedAccountId,
         channelTurnSources: args.channelTurnSources,
       });
+      const requestThreadId =
+        input.action === "download-file"
+          ? input.threadId
+          : (inferredThreadId ?? route.threadId ?? input.threadId);
       executionContext = {
         request: buildMessageChannelRequest(
           input,
           input.chatId,
-          inferredThreadId ?? input.threadId,
+          requestThreadId,
         ),
         route,
         adapter,

@@ -21,6 +21,12 @@ describe("available models backend wiring", () => {
     expect(result.source).toBe("network");
     expect(Array.from(result.handles)).toEqual(["dev/fake-headless"]);
     expect(result.providerTypes.get("dev/fake-headless")).toBe("openai");
+    expect(result.models).toEqual([
+      expect.objectContaining({
+        handle: "dev/fake-headless",
+        providerType: "openai",
+      }),
+    ]);
     expect(await getModelProviderType("dev/fake-headless")).toBe("openai");
   });
 });

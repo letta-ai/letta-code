@@ -45,6 +45,8 @@ describe("interactive reflection transcript wiring", () => {
     const source = readFileSync(submitHandlerPath, "utf-8");
 
     expect(source).toContain('triggerSource: "compaction-event"');
+    expect(source).toContain("skipPendingWorktreeReminderScan: true");
+    expect(source).not.toContain("queuePendingReflectionWorktreeReminders");
     expect(source).not.toContain("pendingReflectionTrigger = true");
   });
 

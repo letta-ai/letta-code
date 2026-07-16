@@ -1,10 +1,27 @@
 /**
  * Model resolution and handling utilities
  */
-import modelsData from "@/models.json";
-import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-constants";
+import { getDefaultModel, models, resolveModel } from "./model-catalog";
+import {
+  CHATGPT_OAUTH_LLM_CONFIG_PROVIDER,
+  LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX,
+  LOCAL_MODEL_HANDLE_PREFIXES,
+  type ModelConfigSnapshot,
+  modelPortionFromHandle as modelPortion,
+  normalizeModelHandleForRegistry,
+} from "./model-handles";
 
-export const models = modelsData.models;
+// Pure catalog lookups live in model-catalog.ts (bundled into the
+// agent-presets package export); re-exported here so CLI code keeps a single
+// import surface for model utilities.
+export { getDefaultModel, models, resolveModel };
+export {
+  mapModelHandleToLlmConfigPatch,
+  normalizeKnownModelHandle,
+  normalizeModelHandleForRegistry,
+  resolveModelHandleFromLlmConfig,
+} from "./model-handles";
 
 export type ModelReasoningEffort =
   | "none"
@@ -14,15 +31,6 @@ export type ModelReasoningEffort =
   | "high"
   | "xhigh"
   | "max";
-
-type ModelConfigSnapshot = {
-  model?: string | null;
-  model_endpoint_type?: string | null;
-  reasoning_effort?: string | null;
-  enable_reasoner?: boolean | null;
-  context_window?: number | null;
-  service_tier?: string | null;
-};
 
 const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "none",
@@ -41,16 +49,6 @@ const LOCAL_REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "high",
 ];
 
-const LOCAL_MODEL_HANDLE_PREFIXES = [
-  "ollama/",
-  "ollama-cloud/",
-  "lmstudio/",
-  "llama.cpp/",
-  "llama-cpp/",
-];
-
-const LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX = "openai-codex/";
-const CHATGPT_OAUTH_LLM_CONFIG_PROVIDER = "chatgpt_oauth";
 export const CHATGPT_FAST_SERVICE_TIER = "priority";
 
 export function isLocalModelHandle(modelHandle: string): boolean {
@@ -73,31 +71,6 @@ function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
     typeof value === "string" &&
     REASONING_EFFORT_ORDER.includes(value as ModelReasoningEffort)
   );
-}
-
-export function normalizeModelHandleForRegistry(
-  modelHandle: string | null | undefined,
-): string | null {
-  if (!modelHandle) return null;
-  const [provider, ...modelParts] = modelHandle.split("/");
-  const model = modelParts.join("/");
-  if (provider === CHATGPT_OAUTH_LLM_CONFIG_PROVIDER && model.length > 0) {
-    return `${OPENAI_CODEX_PROVIDER_NAME}/${model}`;
-  }
-  if (
-    provider === LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX.slice(0, -1) &&
-    model.length > 0 &&
-    !model.endsWith("-fast")
-  ) {
-    return `${OPENAI_CODEX_PROVIDER_NAME}/${model}`;
-  }
-  return modelHandle;
-}
-
-function modelPortion(modelHandle: string): string | null {
-  const slashIndex = modelHandle.indexOf("/");
-  if (slashIndex === -1) return null;
-  return modelHandle.slice(slashIndex + 1);
 }
 
 export function isLocalChatGptOAuthModelHandle(modelHandle: string): boolean {
@@ -190,45 +163,6 @@ export function getReasoningTierOptionsForHandle(
     const modelId = byEffort.get(effort);
     return modelId ? [{ effort, modelId }] : [];
   });
-}
-
-/**
- * Resolve a model by ID or handle
- * @param modelIdentifier - Can be either a model ID (e.g., "opus-4.5") or a full handle (e.g., "anthropic/claude-opus-4-5")
- * @returns The model handle if found, null otherwise
- */
-export function resolveModel(modelIdentifier: string): string | null {
-  const byId = models.find((m) => m.id === modelIdentifier);
-  if (byId) return byId.handle;
-
-  const byHandle = models.find((m) => m.handle === modelIdentifier);
-  if (byHandle) return byHandle.handle;
-
-  // For self-hosted servers: if it looks like a handle (contains /), pass it through
-  // This allows using models not in models.json (e.g., from server's /v1/models)
-  if (modelIdentifier.includes("/")) {
-    return modelIdentifier;
-  }
-
-  return null;
-}
-
-/**
- * Get the default model handle
- */
-export function getDefaultModel(): string {
-  // Prefer Auto when available in models.json.
-  const autoModel = resolveModel("auto");
-  if (autoModel) return autoModel;
-
-  const defaultModel = models.find((m) => m.isDefault);
-  if (defaultModel) return defaultModel.handle;
-
-  const firstModel = models[0];
-  if (!firstModel) {
-    throw new Error("No models available in models.json");
-  }
-  return firstModel.handle;
 }
 
 /**

@@ -13,14 +13,15 @@ import type { MessageCreateParams as ConversationMessageCreateParams } from "@le
 import { type Backend, getBackend } from "@/backend";
 import {
   type ClientTool,
-  type PermissionModeState,
   type PreparedToolExecutionContext,
   prepareCurrentToolExecutionContext,
   waitForToolsetReady,
 } from "@/tools/manager";
+import type { PermissionModeState } from "@/tools/permission-mode-state";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import {
   assertSupportedBase64ImageMediaTypes,
+  type ImageFailureModesByMessageOtid,
   normalizeMessageImageParts,
 } from "@/utils/message-image-normalization";
 import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
@@ -202,8 +203,12 @@ export type SendMessageStreamOptions = {
    * the client, with no human approval/denial in the loop.
    */
   allowResponseStateReuse?: boolean;
-  /** Skip shared image normalization when the caller already did it. */
-  skipImageNormalization?: boolean;
+  /**
+   * Per-message failure policy for best-effort channel attachments. Images are
+   * always normalized; entries here only choose whether a failed conversion is
+   * dropped instead of failing the request.
+   */
+  imageFailureModesByMessageOtid?: ImageFailureModesByMessageOtid;
   /**
    * Cloud user id of the human who pressed "send" (multi-user
    * sandbox scenario). When set, `sendMessageStream` echoes this on
@@ -234,6 +239,22 @@ export function buildConversationMessagesCreateRequestBody(
     ConversationMessageCreateParams["client_skills"]
   > = [],
 ) {
+  return buildRequestBodyFromPreparedMessages(
+    conversationId,
+    normalizeOutgoingApprovalMessages(messages, opts.approvalNormalization),
+    opts,
+    clientTools,
+    clientSkills,
+  );
+}
+
+function buildRequestBodyFromPreparedMessages(
+  conversationId: string,
+  messages: Array<MessageCreate | ApprovalCreate>,
+  opts: SendMessageStreamOptions,
+  clientTools: ClientTool[],
+  clientSkills: NonNullable<ConversationMessageCreateParams["client_skills"]>,
+) {
   const isDefaultConversation = conversationId === "default";
   if (isDefaultConversation && !opts.agentId) {
     throw new Error(
@@ -242,10 +263,7 @@ export function buildConversationMessagesCreateRequestBody(
   }
 
   return {
-    messages: normalizeOutgoingApprovalMessages(
-      messages,
-      opts.approvalNormalization,
-    ),
+    messages,
     streaming: true,
     stream_tokens: opts.streamTokens ?? true,
     include_pings: true,
@@ -301,9 +319,16 @@ export async function sendMessageStreamWithBackend(
 ): Promise<Stream<LettaStreamingResponse>> {
   const requestStartTime = isTimingsEnabled() ? performance.now() : undefined;
   const requestStartedAtMs = Date.now();
-  const normalizedMessages = opts.skipImageNormalization
-    ? messages
-    : await normalizeMessageImageParts(messages);
+  const canonicalMessages = normalizeOutgoingApprovalMessages(
+    messages,
+    opts.approvalNormalization,
+  );
+  const normalizedMessages = await normalizeMessageImageParts(
+    canonicalMessages,
+    {
+      failureModesByMessageOtid: opts.imageFailureModesByMessageOtid,
+    },
+  );
   assertSupportedBase64ImageMediaTypes(normalizedMessages);
 
   const preparedToolContext = opts.preparedToolContext
@@ -339,7 +364,7 @@ export async function sendMessageStreamWithBackend(
   const previousResponseId = canUsePreviousResponseState
     ? responseStateIdsByScope.get(responseStateScope)
     : undefined;
-  const requestBody = buildConversationMessagesCreateRequestBody(
+  const requestBody = buildRequestBodyFromPreparedMessages(
     conversationId,
     normalizedMessages,
     opts,

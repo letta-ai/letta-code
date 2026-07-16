@@ -4,10 +4,6 @@
     "skill": {
       "type": "string",
       "description": "The skill name. E.g., \"commit\", \"review-pr\", or \"pdf\""
-    },
-    "args": {
-      "type": "string",
-      "description": "Optional arguments for the skill"
     }
   },
   "required": ["skill"],

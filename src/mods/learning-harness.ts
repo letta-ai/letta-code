@@ -465,6 +465,7 @@ function createAssertionModContext(repoRoot: string): ModContext {
   return {
     app: { version: "mod-learning-eval" },
     backgroundAgents: [],
+    subagents: { list: () => [] },
     contextWindow: {
       currentUsage: null,
       remainingPercentage: null,
@@ -843,7 +844,8 @@ function buildHeadlessArgs(
     "-p",
     prompt,
     "--new-agent",
-    "--no-memfs",
+    "--memfs-startup",
+    "skip",
     "--no-system-info-reminder",
     "--yolo",
     "--output-format",

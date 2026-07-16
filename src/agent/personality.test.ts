@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   buildCreateAgentOptionsForPersonality,
-  DEFAULT_CREATE_AGENT_PERSONALITIES,
   detectPersonalityFromPersonaFile,
   enableMemfsForCreatedAgent,
+  replaceBodyPreservingFrontmatter,
+} from "@/agent/personality";
+import {
+  DEFAULT_CREATE_AGENT_PERSONALITIES,
   getDefaultHumanContent,
   getPersonalityBlockDefinitions,
   getPersonalityBlockValues,
@@ -11,9 +14,8 @@ import {
   getPersonalityHumanContent,
   ONBOARDING_PERSONALITIES,
   PERSONALITY_OPTIONS,
-  replaceBodyPreservingFrontmatter,
   resolvePersonalityId,
-} from "@/agent/personality";
+} from "@/agent/personality-presets";
 import { configureBackendMode } from "@/backend";
 import { __testOverrideGetClient } from "@/backend/api/client";
 import { settingsManager } from "@/settings-manager";

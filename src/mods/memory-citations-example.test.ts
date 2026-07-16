@@ -20,6 +20,7 @@ function createContext(memoryDir: string): ModContext {
   return {
     app: { version: "test" },
     backgroundAgents: [],
+    subagents: { list: () => [] },
     contextWindow: {
       currentUsage: null,
       remainingPercentage: null,

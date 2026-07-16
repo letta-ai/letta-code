@@ -60,7 +60,7 @@ describe("formatChannelLifecycleErrorMessage", () => {
           run_id: "run-123",
         },
       }),
-      "View agent: \x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\ (run: run-123)",
+      "View agent: \x1b]8;;https://chat.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\ (run: run-123)",
     ].join("\n");
 
     const message = formatChannelLifecycleErrorMessage(rawError);
@@ -94,13 +94,28 @@ describe("formatChannelLifecycleErrorMessage", () => {
       ),
     ).not.toContain("```");
   });
+
+  test("appends explicit run IDs to generic channel errors", () => {
+    expect(
+      formatChannelLifecycleErrorMessage("Unexpected stop reason: error", {
+        codeBlock: true,
+        runId: "run-456",
+      }),
+    ).toBe(
+      "Turn failed:\n" +
+        "```\n" +
+        "Something went wrong while processing that message. Please try again.\n" +
+        "```\n\n" +
+        "Run ID: run-456",
+    );
+  });
 });
 
 describe("sanitizeChannelLifecycleErrorText", () => {
   test("removes terminal hyperlink lines from generic channel errors", () => {
     const rawError =
       "Usage limit reached.\n" +
-      "View agent: \x1b]8;;https://app.letta.com/chat/agent-1\x1b\\agent-1\x1b]8;;\x1b\\ (run: run-abc)";
+      "View agent: \x1b]8;;https://chat.letta.com/chat/agent-1\x1b\\agent-1\x1b]8;;\x1b\\ (run: run-abc)";
 
     expect(sanitizeChannelLifecycleErrorText(rawError)).toBe(
       "Usage limit reached.",

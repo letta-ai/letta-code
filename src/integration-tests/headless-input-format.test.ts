@@ -49,7 +49,8 @@ async function runBidirectionalOnce(
         "--output-format",
         "stream-json",
         "--new-agent",
-        "--no-memfs",
+        "--memfs-startup",
+        "skip",
         "-m",
         "sonnet-4.6-low",
         "--yolo",
@@ -674,13 +675,33 @@ describe("input-format stream-json", () => {
         expect(result).toBeDefined();
         expect(result?.subtype).toBe("success");
 
-        const autoApprovals = objects.filter(
-          (o) =>
-            o.type === "auto_approval" &&
-            "tool_call" in o &&
-            o.tool_call?.name === "Agent",
-        );
-        expect(autoApprovals.length).toBeGreaterThan(0);
+        // The Agent tool runs locally, so its invocation surfaces as a
+        // canonical tool_call_message (approval events are no longer emitted).
+        const agentToolCalls = objects.filter((o) => {
+          const m = o as {
+            type?: string;
+            message_type?: string;
+            tool_call?: { name?: string };
+          };
+          return (
+            m.type === "message" &&
+            m.message_type === "tool_call_message" &&
+            m.tool_call?.name === "Agent"
+          );
+        });
+        expect(agentToolCalls.length).toBeGreaterThan(0);
+
+        // Approval-flow events are stripped from stream-json output so the
+        // stream matches other coding agents.
+        expect(objects.some((o) => o.type === "auto_approval")).toBe(false);
+        expect(
+          objects.some(
+            (o) =>
+              o.type === "message" &&
+              "message_type" in o &&
+              o.message_type === "approval_request_message",
+          ),
+        ).toBe(false);
 
         const resultText = result?.result ?? "";
         const normalizedResultText = resultText.replaceAll("\\", "/");

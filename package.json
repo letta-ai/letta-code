@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.27.20",
+  "version": "0.28.8",
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
   "packageManager": "bun@1.3.0",
@@ -16,6 +16,12 @@
     "vendor",
     "dist/app-server-client.js",
     "dist/app-server-client.js.map",
+    "dist/agent-presets.js",
+    "dist/agent-presets.js.map",
+    "dist/channels-public.js",
+    "dist/channels-public.js.map",
+    "dist/channels-slack.js",
+    "dist/channels-slack.js.map",
     "dist/types",
     "docs"
   ],
@@ -26,10 +32,35 @@
     },
     "./app-server-client": {
       "types": "./dist/types/app-server-client.d.ts",
+      "browser": "./dist/app-server-client.js",
       "import": "./dist/app-server-client.js"
     },
     "./protocol": {
       "types": "./dist/types/protocol.d.ts"
+    },
+    "./agent-presets": {
+      "types": "./dist/types/agent-presets.d.ts",
+      "browser": "./dist/agent-presets.js",
+      "import": "./dist/agent-presets.js",
+      "default": "./dist/agent-presets.js"
+    },
+    "./dist/agent-presets.js": {
+      "types": "./dist/types/agent-presets.d.ts",
+      "browser": "./dist/agent-presets.js",
+      "import": "./dist/agent-presets.js",
+      "default": "./dist/agent-presets.js"
+    },
+    "./channels": {
+      "types": "./dist/types/channels-public.d.ts",
+      "browser": "./dist/channels-public.js",
+      "import": "./dist/channels-public.js",
+      "default": "./dist/channels-public.js"
+    },
+    "./channels/slack": {
+      "types": "./dist/types/channels-slack.d.ts",
+      "browser": "./dist/channels-slack.js",
+      "import": "./dist/channels-slack.js",
+      "default": "./dist/channels-slack.js"
     }
   },
   "repository": {
@@ -44,7 +75,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.79.6",
+    "@earendil-works/pi-ai": "^0.80.6",
     "@letta-ai/letta-client": "^1.10.2",
     "@pierre/diffs": "1.2.2",
     "@scarf/scarf": "^1.4.0",
@@ -89,8 +120,11 @@
     "check:boundaries": "node scripts/check-layer-boundaries.js",
     "check:exported-functions": "node scripts/check-exported-functions.js",
     "check:filename-casing": "node scripts/check-filename-casing.js",
+    "check:file-size": "node scripts/check-source-file-size.js",
+    "check:module-ownership": "node scripts/check-module-ownership.js",
     "check:test-mock-isolation": "bun run scripts/check-test-mock-isolation.js",
     "check:test-coverage": "node scripts/check-test-coverage.cjs",
+    "check:skill-frontmatter": "node scripts/check-skill-frontmatter.js",
     "check:bundled-skill-scripts": "node scripts/check-bundled-skill-scripts.js",
     "check": "bun run scripts/check.js",
     "dev": "node scripts/dev.cjs",
@@ -105,5 +139,27 @@
     "*.{ts,tsx,js,jsx,json}": [
       "bunx --bun @biomejs/biome@2.2.5 check --write"
     ]
+  },
+  "typesVersions": {
+    "*": {
+      "agent-presets": [
+        "./dist/types/agent-presets.d.ts"
+      ],
+      "app-server-protocol": [
+        "./dist/types/app-server-protocol.d.ts"
+      ],
+      "app-server-client": [
+        "./dist/types/app-server-client.d.ts"
+      ],
+      "channels": [
+        "./dist/types/channels-public.d.ts"
+      ],
+      "channels/slack": [
+        "./dist/types/channels-slack.d.ts"
+      ],
+      "protocol": [
+        "./dist/types/protocol.d.ts"
+      ]
+    }
   }
 }

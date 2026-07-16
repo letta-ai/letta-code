@@ -1,19 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { renderSignalQrTerminal } from "./runtime";
 import {
+  normalizeSignalBaseUrl,
+  normalizeSignalPhoneInput,
+  parseSignalCsv,
+} from "./setup";
+import {
   extractSignalAccountsFromResponse,
   getSignalDockerRunCommand,
   getSignalQrLinkUrl,
   hasSignalSetupRestEndpoints,
-  normalizeSignalBaseUrl,
-  normalizeSignalPhoneInput,
   parseNativeSignalCliDaemonConfigDir,
   parseSignalCliDeletePath,
-  parseSignalCsv,
   parseSignalLinkAssociatedAccount,
   parseSignalLinkExistingAccount,
   parseSignalLinkUri,
-} from "./setup";
+} from "./setup-runtime";
 
 describe("Signal setup helpers", () => {
   test("normalizes base URLs for signal-cli-rest-api", () => {

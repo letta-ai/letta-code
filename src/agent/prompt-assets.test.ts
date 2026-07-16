@@ -3,10 +3,10 @@ import { describe, expect, test } from "bun:test";
 import {
   buildSystemPrompt,
   isKnownPreset,
-  resolveAndBuildSystemPrompt,
   SYSTEM_PROMPTS,
   shouldRecommendDefaultPrompt,
 } from "@/agent/prompt-assets";
+import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 
 describe("isKnownPreset", () => {
   test("returns true for known preset IDs", () => {
@@ -58,6 +58,15 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain("$MEMORY_DIR");
     expect(result).toContain("git commit");
     expect(result).not.toContain("git push");
+  });
+
+  test("memfs prompt documents direct edit commit safeguards", () => {
+    const result = buildSystemPrompt("letta", "memfs");
+
+    expect(result).toContain("description:");
+    expect(result).toContain("MemFS pre-commit hook");
+    expect(result).toContain('author_name="${AGENT_NAME:-$AGENT_ID}"');
+    expect(result).not.toContain('--author="$AGENT_NAME');
   });
 
   test("throws on unknown preset", () => {

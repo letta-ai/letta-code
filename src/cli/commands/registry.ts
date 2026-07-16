@@ -87,6 +87,15 @@ export const commands: Record<string, Command> = {
       return "Launching reflection agent...";
     },
   },
+  "/reflect-arena": {
+    desc: "Experimental blind A/B reflection model comparison",
+    args: "[--model-a MODEL] [--model-b MODEL] | resume <run-id> | choose <run-id> <1|2|tie> [notes]",
+    order: 50.1,
+    handler: () => {
+      // Handled specially in App.tsx
+      return "Preparing reflection arena...";
+    },
+  },
   "/skills": {
     desc: "Browse available skills",
     order: 28,
@@ -150,7 +159,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/memfs": {
-    desc: "Manage filesystem-backed memory (/memfs [enable|disable|sync|reset])",
+    desc: "Manage filesystem-backed memory (/memfs [enable|sync|reset])",
     args: "[enable|disable|sync|reset]",
     order: 27.5, // Advanced feature, near /toolset
     handler: () => {

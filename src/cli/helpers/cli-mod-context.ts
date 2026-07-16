@@ -1,3 +1,4 @@
+import { getSubagentLifecycleContext } from "@/agent/subagent-state";
 import type { ModContext } from "@/cli/mods/types";
 import { getVersion } from "@/version";
 
@@ -125,5 +126,6 @@ export function buildCliModContext(input: CliModContextBuildInput): ModContext {
       memoryDir: input.memfsDirectory ?? null,
     },
     backgroundAgents: input.backgroundAgents ?? [],
+    subagents: getSubagentLifecycleContext(),
   };
 }
