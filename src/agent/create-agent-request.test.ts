@@ -56,7 +56,7 @@ describe("buildCreateAgentRequestForPersonality", () => {
     }
   });
 
-  test("onboarding personalities include the onboarding block", async () => {
+  test("onboarding personalities include the Constellation onboarding block", async () => {
     const request = await buildCreateAgentRequestForPersonality({
       personalityId: "tutorial",
     });
@@ -65,6 +65,10 @@ describe("buildCreateAgentRequestForPersonality", () => {
       "human",
       "onboarding",
     ]);
+    expect(
+      request.memory_blocks.find((block) => block.label === "onboarding")
+        ?.value,
+    ).toContain("Offer to create one yourself.");
   });
 
   test("appends extra tags after the Letta Code tags", async () => {

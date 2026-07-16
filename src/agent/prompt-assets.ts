@@ -11,6 +11,7 @@ import lettaMemfsPrompt from "./prompts/letta.md";
 import lettaNoMemfsPrompt from "./prompts/letta_no_memfs.md";
 import memoryFilesystemPrompt from "./prompts/memory_filesystem.mdx";
 import onboardingPrompt from "./prompts/onboarding.mdx";
+import onboardingLocalPrompt from "./prompts/onboarding_local.mdx";
 import personaPrompt from "./prompts/persona.mdx";
 import personaBlankPrompt from "./prompts/persona_blank.mdx";
 import personaKawaiiPrompt from "./prompts/persona_kawaii.mdx";
@@ -49,6 +50,7 @@ export const MEMORY_PROMPTS: Record<string, string> = {
 
   "memory_filesystem.mdx": memoryFilesystemPrompt,
   "onboarding.mdx": onboardingPrompt,
+  "onboarding_local.mdx": onboardingLocalPrompt,
   "style.mdx": stylePrompt,
 };
 

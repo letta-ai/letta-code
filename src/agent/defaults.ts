@@ -197,6 +197,9 @@ export async function ensureDefaultAgents(
               personalityId: "tutorial",
               model,
               tags: [ONBOARDING_ORIGIN_TAG],
+              environment: backend.capabilities.localMemfs
+                ? "local"
+                : "constellation",
             })),
             memoryPromptMode,
           }

@@ -60,6 +60,7 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
 ];
 
 export type PersonalityId = PersonalityOption["id"];
+export type PersonalityEnvironment = "constellation" | "local";
 
 export const DEFAULT_CREATE_AGENT_PERSONALITIES = [
   "memo",
@@ -294,7 +295,10 @@ export function getPersonalityBlockValues(personalityId: PersonalityId): {
   };
 }
 
-export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
+export function getPersonalityBlockDefinitions(
+  personalityId: PersonalityId,
+  environment: PersonalityEnvironment = "constellation",
+): {
   persona: PersonalityBlockDefinition;
   human: PersonalityBlockDefinition;
   onboarding?: PersonalityBlockDefinition;
@@ -321,6 +325,8 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
           : personalityId === "linus"
             ? "human_linus.mdx"
             : "human.mdx";
+  const onboardingTemplatePromptAssetName =
+    environment === "local" ? "onboarding_local.mdx" : "onboarding.mdx";
 
   return {
     persona: {
@@ -338,10 +344,11 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
     ...(supportsOnboardingBlock(personalityId)
       ? {
           onboarding: {
-            value: getPromptBody("onboarding.mdx"),
-            description:
-              getEditablePromptFrontmatter("onboarding.mdx").description,
-            templatePromptAssetName: "onboarding.mdx",
+            value: getPromptBody(onboardingTemplatePromptAssetName),
+            description: getEditablePromptFrontmatter(
+              onboardingTemplatePromptAssetName,
+            ).description,
+            templatePromptAssetName: onboardingTemplatePromptAssetName,
           },
         }
       : {}),
@@ -369,8 +376,12 @@ export function buildPersonalityMemoryBlocks(
     value: string;
     description?: string | null;
   }>,
+  environment: PersonalityEnvironment = "constellation",
 ): PersonalityMemoryBlock[] {
-  const blockDefinitions = getPersonalityBlockDefinitions(personalityId);
+  const blockDefinitions = getPersonalityBlockDefinitions(
+    personalityId,
+    environment,
+  );
 
   const memoryBlocks = defaultMemoryBlocks.map((block) => {
     if (block.label === "persona") {

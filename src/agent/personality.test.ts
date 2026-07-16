@@ -137,7 +137,7 @@ describe("personality helpers", () => {
     }
   });
 
-  test("tutorial includes onboarding memory by default", async () => {
+  test("tutorial includes Constellation onboarding memory by default", async () => {
     expect(ONBOARDING_PERSONALITIES).toEqual(["tutorial"]);
 
     const options = await buildCreateAgentOptionsForPersonality({
@@ -151,6 +151,35 @@ describe("personality helpers", () => {
     expect(onboardingBlock?.value).toContain(
       "The person you are working with is new to Letta Code.",
     );
+    expect(onboardingBlock?.value).toContain("Offer to create one yourself.");
+    expect(
+      getPersonalityBlockDefinitions("tutorial").onboarding
+        ?.templatePromptAssetName,
+    ).toBe("onboarding.mdx");
+  });
+
+  test("local tutorial onboarding disables profile pictures and image generation", async () => {
+    configureBackendMode("local");
+
+    const options = await buildCreateAgentOptionsForPersonality({
+      personalityId: "tutorial",
+    });
+    const onboardingBlock = options.memoryBlocks?.find(
+      (block): block is { label: string; value: string } =>
+        "label" in block && block.label === "onboarding",
+    );
+
+    expect(onboardingBlock?.value).toContain("This agent is running locally.");
+    expect(onboardingBlock?.value).toContain(
+      "Do not offer or attempt to create, generate, or set a profile picture or other image in local mode.",
+    );
+    expect(onboardingBlock?.value).not.toContain(
+      "Offer to create one yourself.",
+    );
+    expect(
+      getPersonalityBlockDefinitions("tutorial", "local").onboarding
+        ?.templatePromptAssetName,
+    ).toBe("onboarding_local.mdx");
   });
 
   test("tutorial persona body drives proactive onboarding progression", () => {
