@@ -1,5 +1,9 @@
+import { getCurrentModelStatusForRuntime } from "@/websocket/listener/commands/model-toolset";
 import { getChannelAccount, LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
-import { tryHandleChannelSlashCommand } from "./commands";
+import {
+  type ChannelStatusContext,
+  tryHandleChannelSlashCommand,
+} from "./commands";
 import { isDiscordGuildChannelAllowed } from "./discord/channel-gating";
 import { createPairingCode, isUserApproved, loadPairingStore } from "./pairing";
 import type { ChannelCommandRouter } from "./registry-commands";
@@ -28,6 +32,43 @@ import {
   isWhatsAppChannelAccount,
 } from "./types";
 import { formatChannelNotification } from "./xml";
+
+type ModelStatusResolver = typeof getCurrentModelStatusForRuntime;
+
+export async function buildInboundChannelStatusContext(params: {
+  adapter: ChannelAdapter;
+  accountConfigured: boolean;
+  accountEnabled?: boolean;
+  channelId: string;
+  route: ChannelRoute | null;
+  resolveModelStatus?: ModelStatusResolver;
+}): Promise<ChannelStatusContext> {
+  const resolveModelStatus =
+    params.resolveModelStatus ?? getCurrentModelStatusForRuntime;
+  let activeModel: string | undefined;
+
+  if (params.route) {
+    try {
+      const status = await resolveModelStatus({
+        agentId: params.route.agentId,
+        conversationId: params.route.conversationId,
+      });
+      activeModel = status.modelHandle
+        ? `${status.modelLabel} (${status.modelHandle})`
+        : status.modelLabel;
+    } catch {
+      // Best-effort; status still works when model lookup is unavailable.
+    }
+  }
+
+  return {
+    adapterRunning: params.adapter.isRunning(),
+    accountConfigured: params.accountConfigured,
+    accountEnabled: params.accountEnabled,
+    route: params.route,
+    activeModel,
+  };
+}
 
 export function createChannelInboundRouter(deps: {
   controls: ChannelControlRequests;
@@ -79,12 +120,13 @@ export function createChannelInboundRouter(deps: {
 
     if (
       await tryHandleChannelSlashCommand(adapter, msg, {
-        statusContext: {
-          adapterRunning: adapter.isRunning(),
+        statusContext: await buildInboundChannelStatusContext({
+          adapter,
           accountConfigured: !!config,
           accountEnabled: config?.enabled,
+          channelId: msg.channel,
           route: getStatusRoute(),
-        },
+        }),
         handlers: {
           cancel: async (_command, commandMsg) =>
             deps.commands.handleCancelSlashCommand(commandMsg),
