@@ -23,6 +23,14 @@ npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
   --conversation-id "$CONVERSATION_ID" \
   --context-window-limit 64000
 
+# Agent rename and description update; values must be non-empty
+npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+  --target agent \
+  --agent-id "$AGENT_ID" \
+  --name "repo-maintainer" \
+  --description "Maintains repository configuration and review-ready PRs." \
+  --dry-run
+
 # Persistent model update, preserving current model_settings and merging a JSON patch
 cat >/tmp/model-settings.json <<'JSON'
 {
@@ -121,6 +129,8 @@ await fetch(`${baseUrl}/v1/agents/${agentId}`, {
     "Content-Type": "application/json",
   },
   body: JSON.stringify({
+    name: "repo-maintainer",
+    description: "Maintains repository configuration and review-ready PRs.",
     model: "openai/gpt-5.2",
     context_window_limit: 272000,
     model_settings: {

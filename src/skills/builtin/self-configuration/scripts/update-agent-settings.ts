@@ -13,6 +13,8 @@ Options:
   --agent-id <id>                     Defaults to AGENT_ID
   --conversation-id <id>              Defaults to CONVERSATION_ID
   --base-url <url>                    Defaults to LETTA_BASE_URL or https://api.letta.com
+  --name <name>                       Rename the agent (agent target only)
+  --description <text>                Update agent description (agent target only)
   --model <provider/model>            Model handle
   --context-window-limit <int|null>   Top-level context_window_limit
   --model-settings-file <json>        JSON object for model_settings
@@ -92,6 +94,13 @@ function requireString(value: unknown, message: string): string {
   return str;
 }
 
+function optionalNonEmptyString(args: Args, key: string): string | undefined {
+  if (args[key] === undefined) return undefined;
+  const value = String(args[key]);
+  if (!value.trim()) throw new Error(`--${key} must be non-empty`);
+  return value;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const target = String(args.target ?? "");
@@ -121,9 +130,14 @@ async function main() {
 
   if (
     target === "conversation" &&
-    (args["system-file"] || args["compaction-settings-file"])
+    (args.name !== undefined ||
+      args.description !== undefined ||
+      args["system-file"] !== undefined ||
+      args["compaction-settings-file"] !== undefined)
   ) {
-    throw new Error("system and compaction settings are agent-level only");
+    throw new Error(
+      "name, description, system, and compaction settings are agent-level only",
+    );
   }
 
   let current: JsonObject = {};
@@ -138,6 +152,11 @@ async function main() {
   }
 
   const patch: JsonObject = {};
+
+  const name = optionalNonEmptyString(args, "name");
+  if (name !== undefined) patch.name = name;
+  const description = optionalNonEmptyString(args, "description");
+  if (description !== undefined) patch.description = description;
 
   if (args.model) patch.model = String(args.model);
   if (args["context-window-limit"] !== undefined) {
@@ -196,6 +215,8 @@ async function main() {
     JSON.stringify(
       {
         id: updated.id,
+        name: updated.name,
+        description: updated.description,
         model: updated.model,
         context_window_limit: updated.context_window_limit,
         llm_config: updated.llm_config,

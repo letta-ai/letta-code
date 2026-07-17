@@ -102,7 +102,25 @@ npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
   --context-window-limit 64000
 ```
 
-Do not patch `llm_config` directly. Use `model`, `context_window_limit`, and `model_settings`. Then read back the agent or conversation and verify the returned `llm_config.context_window` and `model_settings`.
+### Name and description
+
+Name and description are agent-level metadata. Do not pass them with `--target conversation`. Values must be non-empty; the helper does not clear metadata by accident.
+
+```bash
+npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+  --target agent \
+  --agent-id "$AGENT_ID" \
+  --name "repo-maintainer" \
+  --dry-run
+
+npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+  --target agent \
+  --agent-id "$AGENT_ID" \
+  --description "Maintains repository configuration and review-ready PRs." \
+  --dry-run
+```
+
+Do not patch `llm_config` directly. Use `model`, `context_window_limit`, and `model_settings`. For metadata, use `name` and `description`. Then read back the agent or conversation and verify the returned `llm_config.context_window`, `model_settings`, and metadata fields.
 
 ### Model settings
 
