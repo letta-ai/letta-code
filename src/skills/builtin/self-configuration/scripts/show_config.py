@@ -1,19 +1,23 @@
 """
 Show relevant Letta Code self-configuration.
 
-Displays settings files, permissions, selected runtime preferences, environment
-keys, experiments, and per-agent settings across user/project/local scopes with
-source scope annotated. Secret values are not printed.
+Displays a secret-safe runtime report plus settings files, permissions, selected
+runtime preferences, environment keys, experiments, and per-agent settings across
+user/project/local scopes with source scope annotated. Secret values are not
+printed.
 
 Usage:
     python3 show_config.py
     python3 show_config.py --cwd /path/to/project
     python3 show_config.py --json
+    python3 show_config.py --section runtime --json
 """
 
 import argparse
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +39,9 @@ TOP_LEVEL_KEYS = [
     "windowTitle",
 ]
 
+VERSION_TIMEOUT_SECONDS = 2
+MAX_VERSION_TEXT = 200
+
 
 def get_settings_paths(working_directory: str) -> list[tuple[str, Path]]:
     """Return (scope, path) in precedence order (lowest to highest)."""
@@ -54,6 +61,99 @@ def load_settings(path: Path) -> dict[str, Any]:
             return parsed if isinstance(parsed, dict) else {}
     except (json.JSONDecodeError, OSError):
         return {}
+
+
+def effective_setting(all_settings: list[tuple[str, dict[str, Any]]], key: str) -> Any:
+    value = None
+    for _, settings in all_settings:
+        if key in settings:
+            value = settings[key]
+    return value
+
+
+def effective_env_value(
+    all_settings: list[tuple[str, dict[str, Any]]], key: str
+) -> str | None:
+    value = None
+    for _, settings in all_settings:
+        env = settings.get("env")
+        if isinstance(env, dict) and isinstance(env.get(key), str) and env.get(key):
+            value = env[key]
+    return value
+
+
+def env_or_settings(
+    all_settings: list[tuple[str, dict[str, Any]]], key: str
+) -> str | None:
+    return os.environ.get(key) or effective_env_value(all_settings, key)
+
+
+def first_line(text: str) -> str:
+    line = text.strip().splitlines()[0] if text.strip() else ""
+    return line[:MAX_VERSION_TEXT]
+
+
+def letta_version(letta_binary: str | None) -> str:
+    if not letta_binary:
+        return "<not found>"
+    try:
+        result = subprocess.run(
+            [letta_binary, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=VERSION_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return f"<timeout after {VERSION_TIMEOUT_SECONDS}s>"
+    except OSError as exc:
+        return f"<failed: {exc.__class__.__name__}>"
+
+    rendered = first_line(result.stdout) or first_line(result.stderr)
+    if result.returncode == 0:
+        return rendered or "<no output>"
+    if rendered:
+        return f"<failed exit {result.returncode}: {rendered}>"
+    return f"<failed exit {result.returncode}>"
+
+
+def normalize_saved_backend(value: Any) -> str | None:
+    return value if value in ("api", "local") else None
+
+
+def format_runtime(
+    working_directory: str,
+    all_settings: list[tuple[str, dict[str, Any]]],
+    as_json: bool,
+) -> dict[str, Any] | None:
+    """Show process/runtime facts without printing secret values."""
+    letta_binary = shutil.which("letta")
+    runtime = {
+        "cwd": str(Path(working_directory).resolve()),
+        "letta_binary": letta_binary,
+        "letta_version": letta_version(letta_binary),
+        "saved_backend": normalize_saved_backend(
+            effective_setting(all_settings, "preferredBackendMode")
+        ),
+        "agent_id": os.environ.get("AGENT_ID") or None,
+        "conversation_id": os.environ.get("CONVERSATION_ID") or None,
+        "base_url": env_or_settings(all_settings, "LETTA_BASE_URL"),
+        "settings_base_url": env_or_settings(all_settings, "LETTA_SETTINGS_BASE_URL"),
+        "backend_env": env_or_settings(all_settings, "LETTA_BACKEND"),
+        "api_key_present": bool(env_or_settings(all_settings, "LETTA_API_KEY")),
+        "memory_dir": os.environ.get("MEMORY_DIR") or None,
+    }
+
+    if as_json:
+        return runtime
+
+    print("=" * 60)
+    print("RUNTIME")
+    print("=" * 60)
+    for key, value in runtime.items():
+        print(f"  {key}: {render_safe_value(value)}")
+    print()
+    return None
 
 
 def format_permissions(
@@ -186,7 +286,9 @@ def format_agents(
     return None
 
 
-def format_settings_files(working_directory: str, as_json: bool) -> list[dict[str, Any]] | None:
+def format_settings_files(
+    working_directory: str, as_json: bool
+) -> list[dict[str, Any]] | None:
     rows = [
         {"scope": scope, "path": str(path), "exists": path.exists()}
         for scope, path in get_settings_paths(working_directory)
@@ -216,7 +318,7 @@ def main():
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument(
         "--section",
-        choices=["files", "permissions", "settings", "agents", "all"],
+        choices=["runtime", "files", "permissions", "settings", "agents", "all"],
         default="all",
         help="Which section to show (default: all)",
     )
@@ -224,12 +326,13 @@ def main():
     args = parser.parse_args()
 
     all_settings = [
-        (scope, load_settings(path))
-        for scope, path in get_settings_paths(args.cwd)
+        (scope, load_settings(path)) for scope, path in get_settings_paths(args.cwd)
     ]
 
     if args.json:
         output: dict[str, Any] = {}
+        if args.section in ("runtime", "all"):
+            output["runtime"] = format_runtime(args.cwd, all_settings, as_json=True)
         if args.section in ("files", "all"):
             output["files"] = format_settings_files(args.cwd, as_json=True)
         if args.section in ("permissions", "all"):
@@ -243,6 +346,8 @@ def main():
 
     print("\nLetta Code Self-Configuration")
     print(f"Working directory: {args.cwd}\n")
+    if args.section in ("runtime", "all"):
+        format_runtime(args.cwd, all_settings, as_json=False)
     if args.section in ("files", "all"):
         format_settings_files(args.cwd, as_json=False)
     if args.section in ("permissions", "all"):

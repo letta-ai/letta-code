@@ -146,10 +146,170 @@ function parseJsonOutput(stdout: string): Record<string, unknown> {
   return JSON.parse(stdout) as Record<string, unknown>;
 }
 
+function expectNoLeakedShowData(stdout: string): void {
+  expect(stdout).not.toContain("compiled system prompt");
+  expect(stdout).not.toContain("raw-provider-secret");
+  expect(stdout).not.toContain("provider_secret");
+  expect(stdout).not.toContain("irrelevant_server_field");
+}
+
 afterEach(() => {
   while (tempDirs.length > 0) {
     rmSync(tempDirs.pop() ?? "", { recursive: true, force: true });
   }
+});
+
+test("update-agent-settings agent show fetches and filters safe fields", async () => {
+  await withJsonServer(
+    (request) => {
+      if (request.method === "GET" && request.url === "/v1/agents/agent-test") {
+        return {
+          status: 200,
+          json: {
+            id: "agent-test",
+            agent_id: "agent-test",
+            name: "Repo Maintainer",
+            description: "Maintains repository settings",
+            model: "openai/gpt-5.2",
+            context_window_limit: 64000,
+            llm_config: {
+              context_window: 128000,
+              provider_secret: "raw-provider-secret",
+            },
+            model_settings: {
+              provider_type: "openai",
+              api_key: "raw-provider-secret",
+              nested: {
+                token: "raw-provider-secret",
+                keep: "safe",
+              },
+            },
+            compaction_settings: {
+              mode: "self_compact_sliding_window",
+              prompt: "keep compacting",
+              secret: "raw-provider-secret",
+            },
+            system: "compiled system prompt",
+            irrelevant: "irrelevant_server_field",
+          },
+        };
+      }
+      return { status: 500, json: { error: "unexpected request" } };
+    },
+    async (baseUrl, requests) => {
+      const result = await runScript(
+        updateAgentSettingsScript,
+        [
+          "--target",
+          "agent",
+          "--agent-id",
+          "agent-test",
+          "--show",
+          "--base-url",
+          baseUrl,
+        ],
+        { LETTA_API_KEY: "test-key" },
+      );
+
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(0);
+      expect(parseJsonOutput(result.stdout)).toEqual({
+        id: "agent-test",
+        name: "Repo Maintainer",
+        description: "Maintains repository settings",
+        model: "openai/gpt-5.2",
+        context_window_limit: 64000,
+        agent_id: "agent-test",
+        llm_config: { context_window: 128000 },
+        model_settings: {
+          provider_type: "openai",
+          api_key: "[redacted]",
+          nested: {
+            token: "[redacted]",
+            keep: "safe",
+          },
+        },
+        compaction_settings: {
+          mode: "self_compact_sliding_window",
+          prompt: "keep compacting",
+          secret: "[redacted]",
+        },
+      });
+      expectNoLeakedShowData(result.stdout);
+      expect(requests.map((request) => request.method)).toEqual(["GET"]);
+    },
+  );
+});
+
+test("update-agent-settings conversation show includes agent_id and filters llm_config", async () => {
+  await withJsonServer(
+    (request) => {
+      if (
+        request.method === "GET" &&
+        request.url === "/v1/conversations/conv-test"
+      ) {
+        return {
+          status: 200,
+          json: {
+            id: "conv-test",
+            agent_id: "agent-test",
+            model: "anthropic/claude-sonnet-4-20250514",
+            context_window_limit: null,
+            llm_config: {
+              context_window: 200000,
+              credentials: { token: "raw-provider-secret" },
+            },
+            system: "compiled system prompt",
+            irrelevant: "irrelevant_server_field",
+          },
+        };
+      }
+      return { status: 500, json: { error: "unexpected request" } };
+    },
+    async (baseUrl, requests) => {
+      const result = await runScript(
+        updateAgentSettingsScript,
+        [
+          "--target",
+          "conversation",
+          "--conversation-id",
+          "conv-test",
+          "--show",
+          "--base-url",
+          baseUrl,
+        ],
+        { LETTA_API_KEY: "test-key" },
+      );
+
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(0);
+      expect(parseJsonOutput(result.stdout)).toEqual({
+        id: "conv-test",
+        model: "anthropic/claude-sonnet-4-20250514",
+        context_window_limit: null,
+        agent_id: "agent-test",
+        llm_config: { context_window: 200000 },
+      });
+      expectNoLeakedShowData(result.stdout);
+      expect(requests.map((request) => request.method)).toEqual(["GET"]);
+    },
+  );
+});
+
+test("update-agent-settings show rejects mutation combinations", async () => {
+  const result = await runScript(updateAgentSettingsScript, [
+    "--target",
+    "agent",
+    "--agent-id",
+    "agent-test",
+    "--show",
+    "--model",
+    "openai/gpt-5.2",
+  ]);
+
+  expect(result.stdout).toBe("");
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("--show cannot be combined with --model");
 });
 
 test("update-agent-settings merge model dry run fetches current state without patching", async () => {

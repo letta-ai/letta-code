@@ -36,6 +36,30 @@ Decision rule: if the model should remember and reason about it, use memory. If 
 
 Never print secrets. If inspecting env settings, list keys unless the user explicitly asks for values and the values are safe to reveal.
 
+## Inspect effective state before changing it
+
+Local settings, server state, and the current process are different sources of truth. Inspect the layer you intend to change before writing it.
+
+Start with the secret-safe local/runtime report:
+
+```bash
+python3 <SKILL_DIR>/scripts/show_config.py --cwd "$PWD"
+```
+
+Before changing server state, read the relevant scopes without printing full system prompts or credentials:
+
+```bash
+npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+  --target agent --agent-id "$AGENT_ID" --show
+
+npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
+  --target conversation --conversation-id "$CONVERSATION_ID" --show
+```
+
+Do not infer an agent default from one conversation or infer a conversation override from the agent. Report both when diagnosing model or context differences.
+
+If CLI behavior does not match the docs, stop and inspect `command -v letta`, `type -a letta`, and `letta --version`. A stale or shadowed binary is a config bug, not a reason to guess.
+
 ## Memory and identity
 
 Use memory when the user wants you to remember, prefer, learn, or change your identity/personality.
@@ -72,7 +96,7 @@ export CONVERSATION_ID=conv-...   # only needed for conversation-scoped changes
 export LETTA_BASE_URL=https://api.letta.com   # optional; default is api.letta.com
 ```
 
-The scripts in this skill default to `AGENT_ID`, `CONVERSATION_ID`, and `LETTA_BASE_URL`. Pass explicit IDs when there is any doubt. Dry-run output is labeled: `offline_partial_patch` means no server state was fetched; `effective_merged_patch` means the script fetched current server state and shows the merged patch that would be sent.
+The scripts in this skill default to `AGENT_ID`, `CONVERSATION_ID`, and `LETTA_BASE_URL`. Pass explicit IDs when there is any doubt. `--show` fetches the selected agent or conversation and prints only safe effective fields. Dry-run output is labeled: `offline_partial_patch` means no server state was fetched; `effective_merged_patch` means the script fetched current server state and shows the merged patch that would be sent.
 
 ### Dry-runable update script
 
@@ -187,11 +211,12 @@ Settings scopes:
 
 Precedence is local > project > user. Permission rule lists are merged; scalar settings usually override. When editing JSON directly, preserve unknown fields, keep the file schema-valid, and inspect the effective config afterward instead of rewriting the whole file from a guessed shape.
 
-Inspect merged local config with:
+Inspect merged local config and the current runtime with:
 
 ```bash
 python3 <SKILL_DIR>/scripts/show_config.py --cwd "$PWD"
 python3 <SKILL_DIR>/scripts/show_config.py --cwd "$PWD" --json
+python3 <SKILL_DIR>/scripts/show_config.py --cwd "$PWD" --section runtime --json
 ```
 
 Selected global settings keys:
@@ -282,6 +307,33 @@ Use skills when the user wants you to become good at a repeatable workflow. Sour
 
 Load `creating-skills` to create or edit a skill. Load `acquiring-skills` when the user asks for a capability you do not already have.
 
+## Provider connections
+
+Provider connection is agent-executable through `letta connect`. This is separate from `LETTA_API_KEY`, which authenticates Letta API requests.
+
+Inspect the installed command shape first:
+
+```bash
+letta connect --help
+letta connect <provider> --help
+```
+
+Use the provider-specific command supported by the installed binary. Current examples include:
+
+```bash
+letta connect chatgpt
+letta connect codex --method device-code
+letta connect openai --api-key "$OPENAI_API_KEY"
+letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s
+letta connect bedrock --method profile --profile "$AWS_PROFILE" --region "$AWS_REGION"
+```
+
+Before connecting, verify whether the target agent/backend is API/Constellation or local. A provider saved to the wrong backend does not configure the current agent.
+
+Never print provider keys. Prefer existing secret/environment references over literal credentials in commands. Browser login, device-code confirmation, or account consent may require the user; stop at that authorization boundary and ask the user to complete it instead of claiming success.
+
+After connecting, verify the provider/model from the same backend and process that will run the agent. Do not infer success from a saved credential alone.
+
 ## Channels
 
 Use channels when the user wants to talk through Slack, Discord, Telegram, WhatsApp, or Signal.
@@ -331,7 +383,13 @@ letta --backend local
 letta --memfs
 ```
 
-Startup flags affect the current process. Persist durable defaults in settings or server fields instead.
+Startup flags affect a new process only. They do not rewrite an already-running listener. Persist durable defaults in settings or server fields instead.
+
+### Existing listeners and long-running processes
+
+Before starting, replacing, or stopping a listener, inspect existing Letta processes and determine ownership: interactive shell, Desktop, launchd/systemd, supervisor, or another agent.
+
+Do not start a second listener for the same channel accounts merely to apply new flags. Never stop or restart an existing listener without explicit coordination and user approval. Prefer changing the owned service configuration and then performing one approved restart.
 
 ## References
 
@@ -343,7 +401,7 @@ Startup flags affect the current process. Persist durable defaults in settings o
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/update-agent-settings.ts` | Dry-runable agent/conversation server patches |
+| `scripts/update-agent-settings.ts` | Show or patch agent/conversation server settings safely |
 | `scripts/update-compaction-prompt.ts` | Preserve existing compaction settings while replacing the prompt |
 | `scripts/add_permission.py` | Add allow/deny/ask/alwaysAsk rules to a chosen settings scope |
-| `scripts/show_config.py` | Show relevant settings without dumping secret values |
+| `scripts/show_config.py` | Show runtime/local settings without dumping secret values |

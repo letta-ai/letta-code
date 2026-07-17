@@ -4,6 +4,9 @@ import { existsSync, readFileSync } from "node:fs";
 type Args = Record<string, string | boolean>;
 type JsonObject = Record<string, unknown>;
 
+const SECRET_FIELD_PATTERN =
+  /api[_-]?key|access[_-]?key|secret|token|credential|password|authorization/i;
+
 function usage(): never {
   console.error(`Usage:
   npx tsx scripts/update-agent-settings.ts --target agent|conversation [options]
@@ -22,6 +25,7 @@ Options:
   --system-file <path>                Full replacement system prompt (agent target only)
   --compaction-settings-file <json>   JSON object for compaction_settings (agent target only)
   --merge-compaction-settings         Merge file into current compaction_settings; fetches current state
+  --show                              GET and print safe effective fields only
   --dry-run                           Print patch body without PATCHing
 `);
   process.exit(2);
@@ -36,9 +40,12 @@ function parseArgs(argv: string[]): Args {
       throw new Error(`Unexpected positional argument: ${arg}`);
     const key = arg.slice(2);
     if (
-      ["dry-run", "merge-model-settings", "merge-compaction-settings"].includes(
-        key,
-      )
+      [
+        "dry-run",
+        "merge-model-settings",
+        "merge-compaction-settings",
+        "show",
+      ].includes(key)
     ) {
       out[key] = true;
       continue;
@@ -101,18 +108,89 @@ function optionalNonEmptyString(args: Args, key: string): string | undefined {
   return value;
 }
 
+function redactSecretFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactSecretFields);
+  if (!value || typeof value !== "object") return value;
+
+  const output: JsonObject = {};
+  for (const [key, nested] of Object.entries(value as JsonObject)) {
+    output[key] = SECRET_FIELD_PATTERN.test(key)
+      ? "[redacted]"
+      : redactSecretFields(nested);
+  }
+  return output;
+}
+
+function safeLlmConfig(value: unknown): JsonObject | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const source = value as JsonObject;
+  if (source.context_window === undefined) return undefined;
+  return { context_window: source.context_window };
+}
+
+function safeServerFields(value: JsonObject): JsonObject {
+  const output: JsonObject = {};
+  for (const key of [
+    "id",
+    "name",
+    "description",
+    "model",
+    "context_window_limit",
+  ]) {
+    if (value[key] !== undefined) output[key] = value[key];
+  }
+
+  const agentId = value.agent_id ?? value.agentId;
+  if (agentId !== undefined) output.agent_id = agentId;
+
+  const llmConfig = safeLlmConfig(value.llm_config);
+  if (llmConfig) output.llm_config = llmConfig;
+  if (value.model_settings !== undefined) {
+    output.model_settings = redactSecretFields(value.model_settings);
+  }
+  if (value.compaction_settings !== undefined) {
+    output.compaction_settings = redactSecretFields(value.compaction_settings);
+  }
+  return output;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const target = String(args.target ?? "");
   if (target !== "agent" && target !== "conversation") usage();
 
   const dryRun = args["dry-run"] === true;
+  const show = args.show === true;
   const baseUrl = String(
     args["base-url"] || process.env.LETTA_BASE_URL || "https://api.letta.com",
   ).replace(/\/$/, "");
   const apiKey = process.env.LETTA_API_KEY;
   const mergeModelSettings = args["merge-model-settings"] === true;
   const mergeCompactionSettings = args["merge-compaction-settings"] === true;
+  const updateFlagNames = [
+    "name",
+    "description",
+    "model",
+    "context-window-limit",
+    "model-settings-file",
+    "merge-model-settings",
+    "system-file",
+    "compaction-settings-file",
+    "merge-compaction-settings",
+  ].filter((key) => args[key] !== undefined);
+
+  if (show) {
+    const invalidFlagNames = dryRun
+      ? [...updateFlagNames, "dry-run"]
+      : updateFlagNames;
+    if (invalidFlagNames.length > 0) {
+      throw new Error(
+        `--show cannot be combined with --${invalidFlagNames.join(", --")}`,
+      );
+    }
+  }
 
   if (mergeModelSettings && !args["model-settings-file"]) {
     throw new Error("--merge-model-settings requires --model-settings-file");
@@ -123,12 +201,14 @@ async function main() {
     );
   }
 
-  const needsCurrent = mergeModelSettings || mergeCompactionSettings;
+  const needsCurrent = show || mergeModelSettings || mergeCompactionSettings;
   if ((!dryRun || needsCurrent) && !apiKey) {
     throw new Error(
-      needsCurrent && dryRun
-        ? "Set LETTA_API_KEY for merge-preserving dry runs"
-        : "Set LETTA_API_KEY",
+      show
+        ? "Set LETTA_API_KEY for --show"
+        : needsCurrent && dryRun
+          ? "Set LETTA_API_KEY for merge-preserving dry runs"
+          : "Set LETTA_API_KEY",
     );
   }
   const headers = {
@@ -165,6 +245,11 @@ async function main() {
       `${baseUrl}/v1/${target === "agent" ? "agents" : "conversations"}/${id}`,
       { headers },
     );
+  }
+
+  if (show) {
+    console.log(JSON.stringify(safeServerFields(current), null, 2));
+    return;
   }
 
   const patch: JsonObject = {};
@@ -240,22 +325,7 @@ async function main() {
     },
   );
 
-  console.log(
-    JSON.stringify(
-      {
-        id: updated.id,
-        name: updated.name,
-        description: updated.description,
-        model: updated.model,
-        context_window_limit: updated.context_window_limit,
-        llm_config: updated.llm_config,
-        model_settings: updated.model_settings,
-        compaction_settings: updated.compaction_settings,
-      },
-      null,
-      2,
-    ),
-  );
+  console.log(JSON.stringify(safeServerFields(updated), null, 2));
 }
 
 main().catch((error) => {
