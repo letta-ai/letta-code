@@ -40,13 +40,6 @@ export function deriveReasoningEffort(
         return re;
     }
 
-    // Moonshot: top-level reasoning_effort field
-    if (providerType === "moonshot" || providerType === "moonshotai") {
-      const effort = (modelSettings as { reasoning_effort?: string | null })
-        .reasoning_effort;
-      if (effort === "max") return effort;
-    }
-
     // Anthropic/Bedrock: effort field
     if (providerType === "anthropic" || providerType === "bedrock") {
       const effort = (modelSettings as { effort?: string | null }).effort;

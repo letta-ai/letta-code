@@ -36,7 +36,6 @@ describe("browser-safe model preset export", () => {
       updateArgs: {
         context_window: 1048576,
         max_output_tokens: 131072,
-        reasoning_effort: "max",
       },
     });
     expect(openrouter).toMatchObject({
@@ -45,8 +44,9 @@ describe("browser-safe model preset export", () => {
       updateArgs: {
         context_window: 1048576,
         max_output_tokens: 131072,
-        reasoning_effort: "max",
       },
     });
+    expect(direct?.updateArgs?.reasoning_effort).toBeUndefined();
+    expect(openrouter?.updateArgs?.reasoning_effort).toBeUndefined();
   });
 });

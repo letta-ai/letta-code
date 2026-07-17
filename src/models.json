@@ -2348,7 +2348,6 @@
       "updateArgs": {
         "context_window": 1048576,
         "max_output_tokens": 131072,
-        "reasoning_effort": "max",
         "parallel_tool_calls": true
       }
     },
@@ -2360,7 +2359,6 @@
       "updateArgs": {
         "context_window": 1048576,
         "max_output_tokens": 131072,
-        "reasoning_effort": "max",
         "parallel_tool_calls": true
       }
     },
