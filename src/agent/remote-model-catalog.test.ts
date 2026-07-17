@@ -223,17 +223,30 @@ describe("refreshModelCatalog", () => {
     expect(models.length).toBe(before);
   });
 
-  test("keeps the current catalog when the payload has invalid rows", async () => {
+  test("rejects the entire payload when any row is invalid", async () => {
     const before = models.length;
     mockCatalogResponse({
       models: [remoteEntry(), { handle: 42 }],
     });
 
-    expect(await refreshModelCatalog({ force: true })).toBe(true);
-    // Invalid rows are dropped; the remaining valid payload still applies.
-    expect(models.length).toBe(1);
+    expect(await refreshModelCatalog({ force: true })).toBe(false);
+    expect(models.length).toBe(before);
     expect(models[0]?.id).toBe("auto");
-    expect(before).toBeGreaterThan(1);
+  });
+
+  test("rejects rows with invalid required mapping metadata", async () => {
+    const before = models.length;
+    mockCatalogResponse({
+      models: [
+        remoteEntry({
+          brand: 42,
+          maxContextWindow: "unbounded",
+        }),
+      ],
+    });
+
+    expect(await refreshModelCatalog({ force: true })).toBe(false);
+    expect(models.length).toBe(before);
   });
 
   test("keeps the current catalog on network failure", async () => {
@@ -264,8 +277,126 @@ describe("refreshModelCatalog", () => {
     restoreSnapshot(); // simulate a fresh process with only the bundled snapshot
     expect(models.find((m) => m.id === "persisted-model")).toBeUndefined();
 
-    expect(loadPersistedModelCatalog()).toBe(true);
+    expect(loadPersistedModelCatalog("http://localhost:9999")).toBe(true);
     expect(models.find((m) => m.id === "persisted-model")?.label).toBe("GPT-9");
+  });
+
+  test("does not load a cache written for another API server", async () => {
+    mockCatalogResponse({
+      models: [
+        remoteEntry(),
+        remoteEntry({
+          id: "server-a-model",
+          handle: "openai/server-a-model",
+          label: "Server A",
+          isDefault: false,
+          free: false,
+        }),
+      ],
+    });
+    expect(await refreshModelCatalog({ force: true })).toBe(true);
+
+    restoreSnapshot();
+    expect(loadPersistedModelCatalog("http://localhost:9998")).toBe(false);
+    expect(models.some((model) => model.id === "server-a-model")).toBe(false);
+  });
+
+  test("does not carry a live or persisted catalog across API servers", async () => {
+    mockCatalogResponse({
+      models: [
+        remoteEntry(),
+        remoteEntry({
+          id: "server-a-model",
+          handle: "openai/server-a-model",
+          label: "Server A",
+          isDefault: false,
+          free: false,
+        }),
+      ],
+    });
+    expect(await refreshModelCatalog({ force: true })).toBe(true);
+    expect(models.some((model) => model.id === "server-a-model")).toBe(true);
+
+    process.env.LETTA_BASE_URL = "http://localhost:9998";
+    mockCatalogResponse({ error: "Not Found" }, 404);
+
+    expect(await refreshModelCatalog({ force: true })).toBe(false);
+    expect(models.some((model) => model.id === "server-a-model")).toBe(false);
+    expect(models.length).toBe(snapshot.length);
+  });
+
+  test("does not let an old server's late response overwrite the active catalog", async () => {
+    let releaseServerA!: (response: Response) => void;
+    let markServerAStarted!: () => void;
+    const serverAResponse = new Promise<Response>((resolve) => {
+      releaseServerA = resolve;
+    });
+    const serverAStarted = new Promise<void>((resolve) => {
+      markServerAStarted = resolve;
+    });
+    globalThis.fetch = mock((input: Parameters<typeof fetch>[0]) => {
+      if (String(input).startsWith("http://localhost:9999/")) {
+        markServerAStarted();
+        return serverAResponse;
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            models: [
+              remoteEntry(),
+              remoteEntry({
+                id: "server-b-model",
+                handle: "openai/server-b-model",
+                label: "Server B",
+                isDefault: false,
+                free: false,
+              }),
+            ],
+          }),
+        ),
+      );
+    }) as unknown as typeof fetch;
+
+    const serverARefresh = refreshModelCatalog({ force: true });
+    await serverAStarted;
+    process.env.LETTA_BASE_URL = "http://localhost:9998";
+    expect(await refreshModelCatalog({ force: true })).toBe(true);
+
+    releaseServerA(
+      new Response(
+        JSON.stringify({
+          models: [
+            remoteEntry(),
+            remoteEntry({
+              id: "server-a-model",
+              handle: "openai/server-a-model",
+              label: "Server A",
+              isDefault: false,
+              free: false,
+            }),
+          ],
+        }),
+      ),
+    );
+    expect(await serverARefresh).toBe(false);
+    expect(models.some((model) => model.id === "server-a-model")).toBe(false);
+    expect(models.some((model) => model.id === "server-b-model")).toBe(true);
+  });
+
+  test("attaches a timeout signal to the catalog request", async () => {
+    let requestSignal: AbortSignal | null | undefined;
+    globalThis.fetch = mock(
+      (
+        _input: Parameters<typeof fetch>[0],
+        init?: Parameters<typeof fetch>[1],
+      ) => {
+        requestSignal = init?.signal;
+        return Promise.reject(new Error("network down"));
+      },
+    ) as unknown as typeof fetch;
+
+    expect(await refreshModelCatalog({ force: true })).toBe(false);
+    expect(requestSignal).toBeInstanceOf(AbortSignal);
   });
 
   test("throttles by TTL unless forced", async () => {
