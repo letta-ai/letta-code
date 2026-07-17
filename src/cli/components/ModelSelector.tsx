@@ -1002,7 +1002,9 @@ export function ModelSelector({
 
   const getCategoryLabel = (cat: ModelCategory) => {
     if (cat === "recents") return `Recents [${recentModels.length}]`;
-    if (cat === "supported") return `Letta API [${supportedModels.length}]`;
+    // "supported" has no provider-category filter (connected-BYOK models like
+    // ChatGPT handles appear too), so it must not be labeled "Letta API".
+    if (cat === "supported") return `Recommended [${supportedModels.length}]`;
     if (cat === "byok") return `BYOK [${byokModels.length}]`;
     if (cat === "byok-all") return `BYOK (all) [${byokAllModels.length}]`;
     if (cat === "server-recommended")
@@ -1025,7 +1027,7 @@ export function ModelSelector({
     if (cat === "supported") {
       return isFreeTier
         ? "Upgrade your account to access more models"
-        : "Recommended Letta API models currently available for this account";
+        : "Recommended models currently available for this account";
     }
     if (cat === "byok")
       return "Recommended models via your connected API keys (use /connect to add more)";
