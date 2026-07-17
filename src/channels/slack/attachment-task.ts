@@ -102,7 +102,6 @@ export async function runSlackAttachmentDownloadTask(params: {
         () => resolve({ outcome: "backgrounded", taskId }),
         yieldTimeMs,
       );
-      timeoutHandle.unref?.();
     },
   );
 

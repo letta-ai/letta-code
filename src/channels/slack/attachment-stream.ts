@@ -54,7 +54,6 @@ async function readWithIdleTimeout(
             ),
           );
         }, idleTimeoutMs);
-        timeoutHandle.unref?.();
         if (signal) {
           onAbort = () =>
             reject(
