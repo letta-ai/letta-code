@@ -39,7 +39,7 @@ Options:
   --clip-chars <int|null>          Optional summary character cap
   --sliding-window-percentage <n>  Optional fraction for sliding-window modes
   --prompt-acknowledgement         Set prompt_acknowledgement=true
-  --dry-run                        Print patch body without sending
+  --dry-run                        Fetch current settings and print patch body without PATCHing
 `);
   process.exit(2);
 }
@@ -90,10 +90,16 @@ async function main() {
   const dryRun = args["dry-run"] === true;
 
   const apiKey = process.env.LETTA_API_KEY;
-  if (!dryRun && !apiKey) throw new Error("Set LETTA_API_KEY");
+  if (!apiKey) {
+    throw new Error(
+      dryRun
+        ? "Set LETTA_API_KEY for merge-preserving dry runs"
+        : "Set LETTA_API_KEY",
+    );
+  }
 
   const agentId = String(args["agent-id"] || process.env.AGENT_ID || "");
-  if (!dryRun && !agentId) throw new Error("Set AGENT_ID or pass --agent-id");
+  if (!agentId) throw new Error("Set AGENT_ID or pass --agent-id");
 
   const baseUrl = String(
     args["base-url"] || process.env.LETTA_BASE_URL || "https://api.letta.com",
@@ -109,10 +115,13 @@ async function main() {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
   };
-  const currentSettings = dryRun
-    ? {}
-    : (((await requestJson(`${baseUrl}/v1/agents/${agentId}`, { headers }))
-        .compaction_settings ?? {}) as Record<string, unknown>);
+  const currentAgent = await requestJson(`${baseUrl}/v1/agents/${agentId}`, {
+    headers,
+  });
+  const currentSettings = (currentAgent.compaction_settings ?? {}) as Record<
+    string,
+    unknown
+  >;
 
   const nextSettings: Record<string, unknown> = { ...currentSettings, prompt };
 
@@ -141,7 +150,17 @@ async function main() {
   const patch = { compaction_settings: nextSettings };
 
   if (dryRun) {
-    console.log(JSON.stringify(patch, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          agent_id: agentId,
+          preview: "effective_merged_patch",
+          patch,
+        },
+        null,
+        2,
+      ),
+    );
     return;
   }
 

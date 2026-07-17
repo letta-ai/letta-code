@@ -18,11 +18,11 @@ Options:
   --model <provider/model>            Model handle
   --context-window-limit <int|null>   Top-level context_window_limit
   --model-settings-file <json>        JSON object for model_settings
-  --merge-model-settings              Merge file into current model_settings instead of replacing
+  --merge-model-settings              Merge file into current model_settings; fetches current state
   --system-file <path>                Full replacement system prompt (agent target only)
   --compaction-settings-file <json>   JSON object for compaction_settings (agent target only)
-  --merge-compaction-settings         Merge file into current compaction_settings instead of replacing
-  --dry-run                           Print patch body without sending
+  --merge-compaction-settings         Merge file into current compaction_settings; fetches current state
+  --dry-run                           Print patch body without PATCHing
 `);
   process.exit(2);
 }
@@ -111,7 +111,26 @@ async function main() {
     args["base-url"] || process.env.LETTA_BASE_URL || "https://api.letta.com",
   ).replace(/\/$/, "");
   const apiKey = process.env.LETTA_API_KEY;
-  if (!dryRun && !apiKey) throw new Error("Set LETTA_API_KEY");
+  const mergeModelSettings = args["merge-model-settings"] === true;
+  const mergeCompactionSettings = args["merge-compaction-settings"] === true;
+
+  if (mergeModelSettings && !args["model-settings-file"]) {
+    throw new Error("--merge-model-settings requires --model-settings-file");
+  }
+  if (mergeCompactionSettings && !args["compaction-settings-file"]) {
+    throw new Error(
+      "--merge-compaction-settings requires --compaction-settings-file",
+    );
+  }
+
+  const needsCurrent = mergeModelSettings || mergeCompactionSettings;
+  if ((!dryRun || needsCurrent) && !apiKey) {
+    throw new Error(
+      needsCurrent && dryRun
+        ? "Set LETTA_API_KEY for merge-preserving dry runs"
+        : "Set LETTA_API_KEY",
+    );
+  }
   const headers = {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json",
@@ -141,9 +160,6 @@ async function main() {
   }
 
   let current: JsonObject = {};
-  const needsCurrent =
-    !dryRun &&
-    (args["merge-model-settings"] || args["merge-compaction-settings"]);
   if (needsCurrent) {
     current = await requestJson(
       `${baseUrl}/v1/${target === "agent" ? "agents" : "conversations"}/${id}`,
@@ -167,7 +183,7 @@ async function main() {
 
   if (args["model-settings-file"]) {
     const next = readJsonObject(String(args["model-settings-file"]));
-    patch.model_settings = args["merge-model-settings"]
+    patch.model_settings = mergeModelSettings
       ? {
           ...((current.model_settings as JsonObject | undefined) ?? {}),
           ...next,
@@ -186,7 +202,7 @@ async function main() {
 
   if (args["compaction-settings-file"]) {
     const next = readJsonObject(String(args["compaction-settings-file"]));
-    patch.compaction_settings = args["merge-compaction-settings"]
+    patch.compaction_settings = mergeCompactionSettings
       ? {
           ...((current.compaction_settings as JsonObject | undefined) ?? {}),
           ...next,
@@ -198,7 +214,20 @@ async function main() {
     throw new Error("No settings requested; pass at least one update flag");
 
   if (dryRun) {
-    console.log(JSON.stringify({ target, id, patch }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          target,
+          id,
+          preview: needsCurrent
+            ? "effective_merged_patch"
+            : "offline_partial_patch",
+          patch,
+        },
+        null,
+        2,
+      ),
+    );
     return;
   }
 

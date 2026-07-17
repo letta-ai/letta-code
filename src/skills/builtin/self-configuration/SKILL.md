@@ -18,7 +18,7 @@ The important part is choosing the right layer. Do not smear a preference into d
 | Server agent fields | Default model, model settings, context limit, system prompt, compaction, agent name, description | Patch `/v1/agents/{agent_id}` |
 | Server conversation fields | Temporary model/context experiments for one conversation | Patch `/v1/conversations/{conversation_id}` |
 | Local settings | Permissions, environment variables, UI/runtime preferences, pinned agents, toolset overrides, reflection cadence | Edit `~/.letta/settings.json`, `./.letta/settings.json`, or `./.letta/settings.local.json` |
-| Mods | New deterministic tools, slash commands, providers, statusline behavior, or lifecycle behavior | Load `creating-mods`, `customizing-commands`, or `customizing-statusline` |
+| Mods | New deterministic tools, slash commands, providers, statusline behavior, or lightweight UI | Load `creating-mods`, `customizing-commands`, or `customizing-statusline` |
 | Skills | Reusable procedural knowledge or bundled scripts | Load `creating-skills` or `acquiring-skills` |
 | Channels | Slack/Discord/Telegram/WhatsApp/Signal accounts, pairing, routing, listener state | Use `letta channels` or channel commands |
 | Schedules | Reminders and recurring prompts | Load `scheduling-tasks` and use `letta cron` |
@@ -50,12 +50,11 @@ Common files:
 | `$MEMORY_DIR/skills/` | Agent-owned reusable skills |
 | `$MEMORY_DIR/relationships/` | Durable relationship and collaboration notes |
 
-After changing memory, sync it:
+After changing memory, inspect and commit the exact changed files. Push/sync according to the current harness reminder or the `syncing-memory-filesystem` skill; some environments sync committed memory automatically.
 
 ```bash
 cd "$MEMORY_DIR" && git status
 cd "$MEMORY_DIR" && git add <changed-files> && git commit --author="$AGENT_NAME <$AGENT_ID@letta.com>" -m "memory: <summary>"
-cd "$MEMORY_DIR" && git push
 ```
 
 Do not use API system-prompt replacement for ordinary learning. That can clobber the compiled prompt. Edit memory instead.
@@ -73,7 +72,7 @@ export CONVERSATION_ID=conv-...   # only needed for conversation-scoped changes
 export LETTA_BASE_URL=https://api.letta.com   # optional; default is api.letta.com
 ```
 
-The scripts in this skill default to `AGENT_ID`, `CONVERSATION_ID`, and `LETTA_BASE_URL`. Pass explicit IDs when there is any doubt.
+The scripts in this skill default to `AGENT_ID`, `CONVERSATION_ID`, and `LETTA_BASE_URL`. Pass explicit IDs when there is any doubt. Dry-run output is labeled: `offline_partial_patch` means no server state was fetched; `effective_merged_patch` means the script fetched current server state and shows the merged patch that would be sent.
 
 ### Dry-runable update script
 
@@ -124,7 +123,7 @@ Do not patch `llm_config` directly. Use `model`, `context_window_limit`, and `mo
 
 ### Model settings
 
-`model_settings` is usually replacement-style. Fetch the current object first and preserve fields you still need, or pass `--merge-model-settings`.
+`model_settings` is usually replacement-style. Fetch the current object first and preserve fields you still need, or pass `--merge-model-settings`. Merge dry runs fetch current state and require `LETTA_API_KEY` because they preview preserved fields, not just the local patch fragment.
 
 ```bash
 cat > /tmp/model-settings.json <<'JSON'
@@ -150,7 +149,7 @@ Provider reasoning fields differ. Read [`references/model-settings.md`](referenc
 
 Compaction controls how old messages are summarized when context is evicted. Bad compaction prompts lose work. Good ones preserve goals, files, commands, test results, blockers, and current state.
 
-Use the helper for prompt changes:
+Use the helper for prompt changes. Even `--dry-run` fetches current compaction settings so omitted fields are preserved in the preview.
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/update-compaction-prompt.ts \
@@ -186,7 +185,7 @@ Settings scopes:
 | `./.letta/settings.json` | Project/shared | Project settings committed with the repo |
 | `./.letta/settings.local.json` | Project-local | Personal project overrides, usually gitignored |
 
-Precedence is local > project > user. Permission rule lists are merged; scalar settings usually override.
+Precedence is local > project > user. Permission rule lists are merged; scalar settings usually override. When editing JSON directly, preserve unknown fields, keep the file schema-valid, and inspect the effective config afterward instead of rewriting the whole file from a guessed shape.
 
 Inspect merged local config with:
 
@@ -217,17 +216,20 @@ Selected global settings keys:
 
 Per-agent `agents[]` entries are keyed by `agentId` plus server. For api.letta.com, `baseUrl` may be omitted. For another server, preserve the server key.
 
+Base URL resolution is split between runtime API calls and settings lookup. Runtime API calls use `LETTA_BASE_URL` or an explicit script `--base-url`. Settings server keys resolve from `LETTA_SETTINGS_BASE_URL`, `env.LETTA_SETTINGS_BASE_URL`, `LETTA_BASE_URL`, `env.LETTA_BASE_URL`, then api.letta.com. Do not move `agents[]` entries across base URLs unless the user is deliberately migrating servers.
+
 Toolset values currently include `auto`, `default`, `codex`, `codex_snake`, `gemini`, `gemini_snake`, and `none`. Use `auto` unless the user explicitly wants a manual override.
 
 ## Permissions
 
-Permissions decide whether tool calls are allowed, denied, or require approval.
+Permissions decide whether tool calls are allowed, denied, or require approval. Valid modes are `standard`, `acceptEdits`, and `unrestricted`; legacy `default` maps to `standard`, while `bypassPermissions` and `fullAccess` map to `unrestricted`. The default mode is `unrestricted` unless startup flags or settings override it.
 
 Rule examples:
 
 ```json
 {
   "permissions": {
+    "mode": "standard",
     "allow": ["Bash(git diff:*)", "Read(src/**)"],
     "deny": ["Bash(rm -rf:*)"],
     "ask": ["Write(**/*.md)"],
@@ -264,7 +266,6 @@ Use mods when the user wants deterministic runtime behavior that cannot be repre
 - slash commands
 - statusline rendering
 - local model/provider adapters
-- turn/lifecycle behavior
 - permission overlays for mod-provided tools
 - lightweight UI panels
 
@@ -296,7 +297,7 @@ letta channels pair --channel <channel> --code <code> --agent <agent-id> --conve
 letta server --channels <channel>
 ```
 
-Channel state lives under `~/.letta/channels/<channel>/`. Account tokens may be stored using the configured `channelCredentialsStore`.
+Channel state lives under `~/.letta/channels/<channel>/` (`config.yaml`, `accounts.json`, routing/pairing files, and channel runtimes). Account tokens may be plaintext in `file` mode or keyring placeholders in `keyring`/`auto` mode. Configure storage with `channelCredentialsStore` (`file`, `keyring`, `auto`) or `LETTA_CHANNEL_CREDENTIALS_STORE`; do not treat keyring placeholders as usable secrets and do not print tokens.
 
 ## Schedules
 
