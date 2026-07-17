@@ -93,6 +93,9 @@ describe("ModelSelector custom BYOK provider detection", () => {
     expect(registryHandleForByokAlias("openai-sarah/gpt-5.5", aliases)).toBe(
       "openai/gpt-5.5",
     );
+    expect(registryHandleForByokAlias("lc-moonshot/kimi-k3", aliases)).toBe(
+      "moonshot/kimi-k3",
+    );
 
     const reasoningOptions = getReasoningTierOptionsForHandle(
       registryHandleForByokAlias("chatgpt-personal/gpt-5.5", aliases),

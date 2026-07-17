@@ -12,12 +12,14 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { extractTelemetryInputText } from "@/telemetry/input";
+import { installHeadlessStdoutGuard } from "@/utils/headless-stdout-guard";
 import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { detectShellContext } from "@/utils/shell-context";
 import { createSigintAbortSignal } from "@/utils/sigint-abort";
+import { reportSubagentStdoutLoss } from "@/utils/subagent-stdout-failure";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
@@ -958,24 +960,9 @@ export async function handleHeadlessCommand(
   const inputFormat = values["input-format"];
   const isBidirectionalMode = inputFormat === "stream-json";
 
-  // If headless output is being piped and the downstream closes early (e.g.
-  // `| head`), Node will throw EPIPE on stdout writes. Treat this as a normal
-  // termination rather than crashing with a stack trace.
-  //
-  // Note: this must be registered before any `console.log` in headless mode.
-  process.stdout.on("error", (err: unknown) => {
-    const code =
-      typeof err === "object" && err !== null && "code" in err
-        ? (err as { code?: unknown }).code
-        : undefined;
-
-    if (code === "EPIPE") {
-      process.exit(0);
-    }
-
-    // Re-throw unknown stdout errors so they surface during tests/debugging.
-    throw err;
-  });
+  // Handle stdout errors (early-closing pipes, lost subagent streams) before
+  // any `console.log` in headless mode.
+  installHeadlessStdoutGuard();
 
   // Get prompt from either positional args or stdin (unless in bidirectional mode)
   let prompt = positionals.slice(2).join(" ");
@@ -3632,7 +3619,12 @@ ${SYSTEM_REMINDER_CLOSE}
       usage,
       uuid: resultUuid,
     };
-    await writeWireMessageAsync(resultEvent);
+    if (!(await writeWireMessageAsync(resultEvent))) {
+      // stdout died before the result envelope went out; consumers (e.g. a
+      // parent subagent manager) must see a failure, not a clean empty exit.
+      reportSubagentStdoutLoss();
+      await exitHeadless(1, "headless_result_write_lost");
+    }
   } else {
     // text format (default)
     if (!resultText || resultText === "No assistant response found") {
