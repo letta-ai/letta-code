@@ -34,6 +34,7 @@ import {
 import type { PersonalityId } from "@/agent/personality-presets";
 import { shouldRecommendDefaultPrompt } from "@/agent/prompt-assets";
 import { reconcileExistingAgentState } from "@/agent/reconcile-existing-agent-state";
+import { prefetchModelCatalog } from "@/agent/remote-model-catalog";
 import { recordSessionEnd } from "@/agent/session-history";
 import { SessionStats } from "@/agent/stats";
 import {
@@ -364,9 +365,12 @@ export function App({
   systemInfoReminderEnabled = true,
   modsDisabled = false,
 }: AppProps) {
-  // Warm the model-access cache in the background so /model is fast on first open.
+  // Warm the model-access cache in the background so /model is fast on first
+  // open, and refresh the curated catalog from the cloud endpoint (bundled
+  // models.json stays as the offline/failure fallback).
   useEffect(() => {
     prefetchAvailableModelHandles();
+    prefetchModelCatalog();
   }, []);
 
   const [hasAvailableLocalModels, setHasAvailableLocalModels] = useState(

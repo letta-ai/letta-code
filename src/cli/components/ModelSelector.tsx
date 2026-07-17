@@ -14,6 +14,7 @@ import {
   models,
   normalizeModelHandleForRegistry,
 } from "@/agent/model";
+import { refreshModelCatalog } from "@/agent/remote-model-catalog";
 
 import {
   buildByokProviderAliases,
@@ -242,7 +243,15 @@ export function ModelSelector({
       }
 
       const cacheInfoBefore = getAvailableModelsCacheInfo();
-      const result = await getAvailableModelHandles({ forceRefresh });
+      // Refresh the curated catalog alongside availability so the preset
+      // list reflects cloud-canon data before this component re-renders
+      // (best-effort: on failure `models` keeps its current contents).
+      const [result] = await Promise.all([
+        getAvailableModelHandles({ forceRefresh }),
+        refreshModelCatalog(forceRefresh ? { force: true } : undefined).catch(
+          () => false,
+        ),
+      ]);
 
       if (!mountedRef.current) return;
 
