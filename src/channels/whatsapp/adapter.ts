@@ -22,6 +22,7 @@ import {
 } from "./jid";
 import {
   buildWhatsAppOutboundPayload,
+  checkAttachmentPolicy,
   collectWhatsAppAttachments,
   extractMentionedJids,
   extractReplyParticipant,
@@ -567,6 +568,21 @@ export function createWhatsAppAdapter(
         // Presence is best-effort.
       }
       const payload = buildWhatsAppOutboundPayload(msg);
+      if (msg.mediaPath) {
+        const policyError = checkAttachmentPolicy({
+          policy: {
+            attachmentFilter: account.attachmentFilter === true,
+            attachmentMimeTypes: account.attachmentMimeTypes ?? [],
+            attachmentAllowedRecipients:
+              account.attachmentAllowedRecipients ?? [],
+            attachmentAllowedPaths: account.attachmentAllowedPaths ?? [],
+            attachmentPathRecursive: account.attachmentPathRecursive === true,
+          },
+          mediaPath: msg.mediaPath,
+          recipientChatId: msg.chatId,
+        });
+        if (policyError) throw new Error(policyError);
+      }
       const result = await sendToWhatsApp(
         targetJid,
         payload,

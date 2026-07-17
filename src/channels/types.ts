@@ -647,6 +647,16 @@ export interface WhatsAppChannelConfig {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** When true, outbound media is checked against MIME/recipient/path allowlists. Default false. */
+  attachmentFilter?: boolean;
+  /** Allowed MIME types for outbound media. Empty denies all; ["*"] allows all. */
+  attachmentMimeTypes?: string[];
+  /** Allowed recipients for outbound media (phone numbers or JIDs). Empty denies all; ["*"] allows all. */
+  attachmentAllowedRecipients?: string[];
+  /** Allowed source directories for outbound media (absolute paths, directories only). */
+  attachmentAllowedPaths?: string[];
+  /** When true, files in subdirectories of allowed paths are also permitted. */
+  attachmentPathRecursive?: boolean;
 }
 
 export interface SignalChannelConfig {
@@ -826,6 +836,16 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** When true, outbound media is checked against MIME/recipient/path allowlists. Default false. */
+  attachmentFilter?: boolean;
+  /** Allowed MIME types for outbound media. Empty denies all; ["*"] allows all. */
+  attachmentMimeTypes?: string[];
+  /** Allowed recipients for outbound media (phone numbers or JIDs). Empty denies all; ["*"] allows all. */
+  attachmentAllowedRecipients?: string[];
+  /** Allowed source directories for outbound media (absolute paths, directories only). */
+  attachmentAllowedPaths?: string[];
+  /** When true, files in subdirectories of allowed paths are also permitted. */
+  attachmentPathRecursive?: boolean;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {
