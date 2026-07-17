@@ -41,7 +41,7 @@ describe("browser-safe model preset export", () => {
     });
     expect(openrouter).toMatchObject({
       handle: "openrouter/moonshotai/kimi-k3",
-      label: "Kimi K3 (OpenRouter)",
+      label: "Kimi K3",
       updateArgs: {
         context_window: 1048576,
         max_output_tokens: 131072,

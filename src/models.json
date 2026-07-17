@@ -2355,8 +2355,8 @@
     {
       "id": "kimi-k3-openrouter",
       "handle": "openrouter/moonshotai/kimi-k3",
-      "label": "Kimi K3 (OpenRouter)",
-      "description": "Moonshot AI's Kimi K3 model served through OpenRouter",
+      "label": "Kimi K3",
+      "description": "Moonshot AI's Kimi K3 model for long-context agentic coding and reasoning tasks",
       "updateArgs": {
         "context_window": 1048576,
         "max_output_tokens": 131072,
