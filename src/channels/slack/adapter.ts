@@ -58,6 +58,7 @@ export interface SlackChannelAdapter extends ChannelAdapter {
     chatId: string;
     threadId?: string | null;
     messageId: string;
+    signal?: AbortSignal;
   }): Promise<ChannelMessageAttachment>;
 }
 
@@ -137,6 +138,7 @@ export function createSlackAdapter(
     chatId: string;
     threadId?: string | null;
     messageId: string;
+    signal?: AbortSignal;
   }): Promise<ChannelMessageAttachment> {
     const slackApp = await ensureApp();
     return await downloadSlackAttachmentById({
@@ -147,6 +149,7 @@ export function createSlackAdapter(
       threadTs: params.threadId,
       messageTs: params.messageId,
       client: slackApp.client as unknown as SlackAttachmentReadClient,
+      signal: params.signal,
     });
   }
 
