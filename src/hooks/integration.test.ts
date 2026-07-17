@@ -166,6 +166,52 @@ describe.skipIf(isWindows)("Hooks Integration Tests", () => {
       expect(result.errored).toBe(false);
       expect(result.results).toHaveLength(0);
     });
+
+    test("matches the model-facing Agent alias for internal Task tool calls", async () => {
+      createHooksConfig({
+        PreToolUse: [
+          {
+            matcher: "Agent",
+            hooks: [{ type: "command", command: "cat" }],
+          },
+        ],
+      });
+
+      const result = await runPreToolUseHooks(
+        ["Agent", "Task"],
+        { description: "spawn subagent" },
+        "tool-agent-1",
+        tempDir,
+      );
+
+      expect(result.blocked).toBe(false);
+      expect(result.results).toHaveLength(1);
+      const payload = JSON.parse(result.results[0]?.stdout ?? "{}") as {
+        tool_name?: string;
+      };
+      expect(payload.tool_name).toBe("Agent");
+    });
+
+    test("keeps matching legacy Task matchers for Agent tool calls", async () => {
+      createHooksConfig({
+        PreToolUse: [
+          {
+            matcher: "Task",
+            hooks: [{ type: "command", command: "echo 'task matcher fired'" }],
+          },
+        ],
+      });
+
+      const result = await runPreToolUseHooks(
+        ["Agent", "Task"],
+        {},
+        undefined,
+        tempDir,
+      );
+
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0]?.stdout).toBe("task matcher fired");
+    });
   });
 
   // ============================================================================

@@ -307,6 +307,45 @@ describe("Hooks Loader", () => {
       expect(hooks).toHaveLength(1);
     });
 
+    test("matches any alias when tool names are passed as a list", () => {
+      const config: HooksConfig = {
+        PreToolUse: [
+          {
+            matcher: "Agent",
+            hooks: [{ type: "command", command: "agent hook" }],
+          },
+          {
+            matcher: "Task",
+            hooks: [{ type: "command", command: "task hook" }],
+          },
+          {
+            matcher: "Bash",
+            hooks: [{ type: "command", command: "bash hook" }],
+          },
+        ],
+      };
+
+      const hooks = getMatchingHooks(config, "PreToolUse", ["Agent", "Task"]);
+      expect(hooks).toHaveLength(2);
+      expect(asCommand(hooks[0])?.command).toBe("agent hook");
+      expect(asCommand(hooks[1])?.command).toBe("task hook");
+    });
+
+    test("does not duplicate hooks when a matcher matches several aliases", () => {
+      const config: HooksConfig = {
+        PreToolUse: [
+          {
+            matcher: "Agent|Task",
+            hooks: [{ type: "command", command: "either hook" }],
+          },
+        ],
+      };
+
+      const hooks = getMatchingHooks(config, "PreToolUse", ["Agent", "Task"]);
+      expect(hooks).toHaveLength(1);
+      expect(asCommand(hooks[0])?.command).toBe("either hook");
+    });
+
     test("returns hooks from multiple matchers in order", () => {
       const config: HooksConfig = {
         PreToolUse: [
