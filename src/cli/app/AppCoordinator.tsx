@@ -348,6 +348,7 @@ export function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
   conversationId: initialConversationId,
+  conversationSummary: initialConversationSummary = null,
   loadingState = "ready",
   continueSession = false,
   startupApproval = null,
@@ -402,12 +403,10 @@ export function App({
   }, [agentState]);
 
   const projectDirectory = process.cwd();
-
   const [conversationId, setConversationId] = useState(initialConversationId);
-  const [conversationSummary, setConversationSummary] = useState<string | null>(
-    null,
+  const [conversationSummary, setConversationSummary] = useState(
+    initialConversationSummary,
   );
-
   // Keep a ref to the current agentId for use in callbacks that need the latest value
   const agentIdRef = useRef(agentId);
   useEffect(() => {
@@ -4514,7 +4513,6 @@ export function App({
           output: "Processing queued conversation switch...",
           phase: "running",
         });
-
         // Execute the conversation switch asynchronously
         (async () => {
           setCommandRunning(true);
@@ -4528,19 +4526,21 @@ export function App({
                   action.conversationId,
                 );
 
+                const resumedSummary =
+                  resumeData.conversation?.summary?.trim() || undefined;
                 setConversationIdAndRef(action.conversationId);
                 setConversationAutoTitleEligibility(false);
-
+                setConversationSummary(resumedSummary ?? null);
                 pendingConversationSwitchRef.current = {
                   origin: "resume-selector",
                   conversationId: action.conversationId,
                   isDefault: action.conversationId === "default",
                   messageCount: resumeData.messageHistory.length,
+                  summary: resumedSummary,
                   messageHistory: resumeData.messageHistory,
                 };
 
                 settingsManager.persistSession(agentId, action.conversationId);
-
                 // Reset context tokens for new conversation
                 resetContextHistory(contextTrackerRef.current);
                 resetBootstrapReminderState();
