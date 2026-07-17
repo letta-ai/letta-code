@@ -34,6 +34,7 @@ import {
 import { settingsManager } from "@/settings-manager";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
+import { isSubagentStdoutLostError } from "@/utils/subagent-stdout-failure";
 import {
   getAllSubagentConfigs,
   type SubagentConfig,
@@ -59,6 +60,7 @@ import {
 } from "./subagent-model";
 import {
   type ExecutionState,
+  looksLikeTruncatedStreamJson,
   parseResultFromStdout,
   processStreamEvent,
 } from "./subagent-stream";
@@ -583,6 +585,32 @@ async function executeSubagent(
         }
       }
 
+      // The child lost its stdout stream before it could deliver the result
+      // envelope (it exits non-zero with a marker on stderr). The stream is
+      // gone but the payload is retryable — respawn once.
+      if (!isRetry && isSubagentStdoutLostError(stderr)) {
+        debugWarn(
+          "subagent",
+          `Subagent ${subagentId} lost stdout before its result envelope; retrying once`,
+        );
+        return executeSubagent(
+          type,
+          config,
+          model,
+          userPrompt,
+          subagentId,
+          true, // Mark as retry to prevent infinite loops
+          signal,
+          existingAgentId,
+          existingConversationId,
+          maxTurns,
+          parentAgentIdOverride,
+          transcriptPath,
+          memoryScope,
+          systemPromptOverride,
+        );
+      }
+
       const propagatedError = state.finalError?.trim();
       const fallbackError = stderr || `Subagent exited with code ${exitCode}`;
 
@@ -650,6 +678,34 @@ async function executeSubagent(
         `parseResultFromStdout failed for ${subagentId}: ${result.error}. ` +
           `stdout first 500 chars: ${stdout.slice(0, 500)}`,
       );
+      // A clean exit whose stream ends mid-line means the result envelope was
+      // truncated in transit even though the child believed it succeeded
+      // (observed under high parallel fan-out, #3257) — respawn once instead
+      // of dropping the response. Other parse failures (e.g. well-formed but
+      // unexpected output) are not retried: the child may have already
+      // performed side effects, so only unambiguous truncation is worth it.
+      if (!isRetry && looksLikeTruncatedStreamJson(stdout)) {
+        debugWarn(
+          "subagent",
+          `Subagent ${subagentId} stdout ends mid-line with no result envelope; retrying once`,
+        );
+        return executeSubagent(
+          type,
+          config,
+          model,
+          userPrompt,
+          subagentId,
+          true, // Mark as retry to prevent infinite loops
+          signal,
+          existingAgentId,
+          existingConversationId,
+          maxTurns,
+          parentAgentIdOverride,
+          transcriptPath,
+          memoryScope,
+          systemPromptOverride,
+        );
+      }
     }
     return result;
   } catch (error) {
