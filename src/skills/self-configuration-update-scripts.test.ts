@@ -323,6 +323,41 @@ test("update-compaction-prompt dry run fetches current settings and avoids patch
   );
 });
 
+test("model settings replacement dry run remains offline and reports a partial patch preview", async () => {
+  const modelSettingsFile = writeTempJson(
+    "self-config-replacement-model-",
+    "model.json",
+    {
+      provider_type: "openai",
+      parallel_tool_calls: false,
+    },
+  );
+
+  const result = await runScript(updateAgentSettingsScript, [
+    "--target",
+    "agent",
+    "--agent-id",
+    "agent-test",
+    "--model-settings-file",
+    modelSettingsFile,
+    "--dry-run",
+  ]);
+
+  expect(result.stderr).toBe("");
+  expect(result.exitCode).toBe(0);
+  expect(parseJsonOutput(result.stdout)).toEqual({
+    target: "agent",
+    id: "agent-test",
+    preview: "offline_partial_patch",
+    patch: {
+      model_settings: {
+        provider_type: "openai",
+        parallel_tool_calls: false,
+      },
+    },
+  });
+});
+
 test("metadata dry run remains offline and reports a partial patch preview", async () => {
   const result = await runScript(updateAgentSettingsScript, [
     "--target",
