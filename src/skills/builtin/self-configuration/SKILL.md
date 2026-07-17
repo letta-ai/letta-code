@@ -28,13 +28,15 @@ Decision rule: if the model should remember and reason about it, use memory. If 
 ## Safe workflow
 
 1. Identify scope: current conversation, current agent, project, or global user config.
-2. Inspect current state first. Do not overwrite unknown config from a stale assumption.
+2. Inspect current state first and save the relevant safe fields as a rollback patch. Do not copy secrets or full compiled prompts into backups.
 3. Prefer a dry run for API patches and scripts.
 4. Apply the smallest change that satisfies the request.
 5. Verify the effective state after the write.
 6. Tell the user what changed and whether a restart/new conversation is needed.
 
 Never print secrets. If inspecting env settings, list keys unless the user explicitly asks for values and the values are safe to reveal.
+
+If a broken model or prompt prevents the agent from completing a turn, recover out of band from another shell or client with the CLI/API. Do not depend on the broken model to repair itself.
 
 ## Inspect effective state before changing it
 
@@ -249,6 +251,8 @@ Toolset values currently include `auto`, `default`, `codex`, `codex_snake`, `gem
 
 Permissions decide whether tool calls are allowed, denied, or require approval. Valid modes are `standard`, `acceptEdits`, and `unrestricted`; legacy `default` maps to `standard`, while `bypassPermissions` and `fullAccess` map to `unrestricted`. The default mode is `unrestricted` unless startup flags or settings override it.
 
+The removed `memory` mode is invalid; memory access is governed by normal rules and cross-agent guards. `permissions.mode` supplies a persisted startup default, rule lists still take precedence, and channel accounts have their own `defaultPermissionMode`. Inspect all three when channel approvals differ from the interactive CLI.
+
 Rule examples:
 
 ```json
@@ -295,6 +299,17 @@ Use mods when the user wants deterministic runtime behavior that cannot be repre
 - lightweight UI panels
 
 Load `creating-mods` before implementing mods. Load `customizing-commands` for slash commands and `customizing-statusline` for statusline work.
+
+Inspect and control managed mod packages with:
+
+```bash
+letta mods list --agent "$AGENT_ID"
+letta mods disable <package-spec>
+letta mods enable <package-spec>
+letta mods remove <package-spec>
+```
+
+Run `/reload` in active sessions afterward. Loose source files and agent-scoped mods are not individually registry-toggleable; move, rename, or remove the file, or use `--no-mods` / `LETTA_DISABLE_MODS=1` to disable all mods for a new process.
 
 ## Skills
 
@@ -350,6 +365,8 @@ letta server --channels <channel>
 ```
 
 Channel state lives under `~/.letta/channels/<channel>/` (`config.yaml`, `accounts.json`, routing/pairing files, and channel runtimes). Account tokens may be plaintext in `file` mode or keyring placeholders in `keyring`/`auto` mode. Configure storage with `channelCredentialsStore` (`file`, `keyring`, `auto`) or `LETTA_CHANNEL_CREDENTIALS_STORE`; do not treat keyring placeholders as usable secrets and do not print tokens.
+
+Changing the credential-store mode does not migrate existing tokens. A file/keyring mismatch can make an otherwise configured listener fail with `invalid_auth`; verify where credentials are stored before changing the mode.
 
 ## Schedules
 
