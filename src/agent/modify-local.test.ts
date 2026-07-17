@@ -48,16 +48,14 @@ describe("local model updates", () => {
     });
   });
 
-  test("builds direct Moonshot K3 settings with top-level max reasoning", () => {
+  test("builds direct Moonshot K3 settings without client reasoning controls", () => {
     expect(
       __modifyTestUtils.buildModelSettings("moonshot/kimi-k3", {
-        reasoning_effort: "max",
         max_output_tokens: 131072,
       }),
     ).toMatchObject({
       provider_type: "moonshot",
       parallel_tool_calls: true,
-      reasoning_effort: "max",
       max_output_tokens: 131072,
     });
   });

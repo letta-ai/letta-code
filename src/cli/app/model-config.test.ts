@@ -61,24 +61,12 @@ describe("model config helpers", () => {
     ).toBe("max");
   });
 
-  test("derives Kimi K3 max from Moonshot model settings", () => {
+  test("does not expose Moonshot reasoning controls", () => {
     expect(
       deriveReasoningEffort(
         {
           provider_type: "moonshot",
           reasoning_effort: "max",
-        } as never,
-        null,
-      ),
-    ).toBe("max");
-  });
-
-  test("does not expose unsupported Moonshot reasoning tiers", () => {
-    expect(
-      deriveReasoningEffort(
-        {
-          provider_type: "moonshot",
-          reasoning_effort: "low",
         } as never,
         null,
       ),

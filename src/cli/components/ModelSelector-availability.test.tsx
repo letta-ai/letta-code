@@ -70,8 +70,8 @@ describe("ModelSelector availability gating", () => {
       "openrouter/moonshotai/kimi-k3",
     ]);
     expect(result.map((m) => m.updateArgs?.reasoning_effort)).toEqual([
-      "max",
-      "max",
+      undefined,
+      undefined,
     ]);
   });
 });
