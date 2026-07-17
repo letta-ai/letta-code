@@ -409,6 +409,13 @@ export async function applyModelUpdateForRuntime(params: {
     agentId,
     conversationId,
   });
+  // Switching to a different model (or a different context-window variant of
+  // the same model, e.g. base <-> 1M dual listings) resets the context window
+  // to the selected catalog entry's preset. Only a tier change within the
+  // same variant preserves the current window — and it preserves by
+  // RE-SENDING the current value explicitly, never by omitting the field:
+  // the server treats an omitted context_window_limit as "re-derive from the
+  // handle" and clamps it to a legacy global default (128k). See LET-9786.
   const shouldPreserveContextWindow =
     shouldPreserveContextWindowForModelSelection({
       currentModelHandle: currentModelScope.modelHandle,
@@ -416,9 +423,10 @@ export async function applyModelUpdateForRuntime(params: {
       selectedModelHandle: model.handle,
       selectedContextWindow,
     });
+  const currentContextWindow = currentModelScope.llmConfig?.context_window;
   const updateArgsForRequest = { ...updateArgs };
-  if (shouldPreserveContextWindow) {
-    delete updateArgsForRequest.context_window;
+  if (shouldPreserveContextWindow && typeof currentContextWindow === "number") {
+    updateArgsForRequest.context_window = currentContextWindow;
   }
 
   let modelSettings: Record<string, unknown> | null = null;
@@ -429,7 +437,6 @@ export async function applyModelUpdateForRuntime(params: {
       agentId,
       model.handle,
       updateArgsForRequest,
-      { avoidOverwritingExistingContextWindow: shouldPreserveContextWindow },
     );
     modelSettings =
       (updatedAgent.model_settings as
@@ -442,7 +449,6 @@ export async function applyModelUpdateForRuntime(params: {
       conversationId,
       model.handle,
       updateArgsForRequest,
-      { avoidOverwritingExistingContextWindow: shouldPreserveContextWindow },
     );
     modelSettings =
       ((

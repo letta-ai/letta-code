@@ -3469,11 +3469,13 @@ export function App({
 
       try {
         const { updateConversationLLMConfig } = await import("@/agent/modify");
+        // Carryover updateArgs include an explicit context_window whenever the
+        // active window is known (buildConversationModelCarryoverUpdate), so
+        // the new conversation inherits it rather than the catalog default.
         await updateConversationLLMConfig(
           targetConversationId,
           carryover.modelHandle,
           carryover.updateArgs,
-          { avoidOverwritingExistingContextWindow: true },
         );
       } catch (error) {
         debugWarn(

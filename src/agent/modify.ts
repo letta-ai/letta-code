@@ -304,24 +304,12 @@ function maxTokensForUpdatePayload(
  * @param agentId - The agent ID
  * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
  * @param updateArgs - Additional config args (context_window, reasoning_effort, enable_reasoner, etc.)
- * @param options - Optional update behavior overrides
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
-export interface UpdateAgentLLMConfigOptions {
-  /**
-   * When true, do not derive and send a default context_window_limit unless the
-   * caller explicitly supplied updateArgs.context_window. This is for updates to
-   * existing agent/conversation model settings where omitting the field lets the
-   * backend keep its current value.
-   */
-  avoidOverwritingExistingContextWindow?: boolean;
-}
-
 export async function updateAgentLLMConfig(
   agentId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
-  options?: UpdateAgentLLMConfigOptions,
 ): Promise<AgentState> {
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
@@ -333,14 +321,13 @@ export async function updateAgentLLMConfig(
   const explicitContextWindow = useBackendModelCatalog
     ? undefined
     : (updateArgs?.context_window as number | undefined);
-  const shouldAvoidOverwritingExistingContextWindow =
-    options?.avoidOverwritingExistingContextWindow === true;
-  // Resume refresh updates should not implicitly reset context window.
+  // Always send an explicit context_window_limit on model-bearing updates.
+  // The server treats an omitted limit as "re-derive from the handle", which
+  // clamps to a legacy global default (128k) — see LET-9786. Callers that want
+  // to preserve the current window must re-send it explicitly via
+  // updateArgs.context_window, never by omitting the field.
   const contextWindow =
-    explicitContextWindow ??
-    (!shouldAvoidOverwritingExistingContextWindow
-      ? await getModelContextWindow(modelHandle)
-      : undefined);
+    explicitContextWindow ?? (await getModelContextWindow(modelHandle));
   const hasModelSettings = Object.keys(modelSettings).length > 0;
   const maxTokens = maxTokensForUpdatePayload(updateArgs, {
     useBackendModelCatalog,
@@ -374,7 +361,6 @@ export async function updateConversationLLMConfig(
   conversationId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
-  options?: UpdateAgentLLMConfigOptions,
 ): Promise<Conversation> {
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
@@ -386,13 +372,10 @@ export async function updateConversationLLMConfig(
   const explicitContextWindow = useBackendModelCatalog
     ? undefined
     : (updateArgs?.context_window as number | undefined);
-  const shouldAvoidOverwritingExistingContextWindow =
-    options?.avoidOverwritingExistingContextWindow === true;
+  // See updateAgentLLMConfig: never omit context_window_limit on
+  // model-bearing updates (LET-9786).
   const contextWindow =
-    explicitContextWindow ??
-    (!shouldAvoidOverwritingExistingContextWindow
-      ? await getModelContextWindow(modelHandle)
-      : undefined);
+    explicitContextWindow ?? (await getModelContextWindow(modelHandle));
   const hasModelSettings = Object.keys(modelSettings).length > 0;
   const maxTokens = maxTokensForUpdatePayload(updateArgs, {
     useBackendModelCatalog,

@@ -428,6 +428,14 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           return;
         }
 
+        // Switching to a different model (or a different context-window
+        // variant of the same model, e.g. base <-> 1M dual listings) resets
+        // the context window to the selected catalog entry's preset. Only a
+        // tier change within the same variant preserves the current window —
+        // and it preserves by RE-SENDING the current value explicitly, never
+        // by omitting the field: the server treats an omitted
+        // context_window_limit as "re-derive from the handle" and clamps it
+        // to a legacy global default (128k). See LET-9786.
         const currentLlmConfig = llmConfigRef.current;
         const shouldPreserveContextWindow =
           shouldPreserveContextWindowForModelSelection({
@@ -437,11 +445,16 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             selectedModelHandle: modelHandle,
             selectedContextWindow,
           });
+        const currentContextWindow = currentLlmConfig?.context_window;
         const modelUpdateArgsForRequest = model.updateArgs
           ? { ...(model.updateArgs as Record<string, unknown>) }
           : undefined;
-        if (shouldPreserveContextWindow && modelUpdateArgsForRequest) {
-          delete modelUpdateArgsForRequest.context_window;
+        if (
+          shouldPreserveContextWindow &&
+          modelUpdateArgsForRequest &&
+          typeof currentContextWindow === "number"
+        ) {
+          modelUpdateArgsForRequest.context_window = currentContextWindow;
         }
 
         await withCommandLock(async () => {
@@ -472,10 +485,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               agentIdRef.current,
               modelHandle,
               modelUpdateArgsForRequest,
-              {
-                avoidOverwritingExistingContextWindow:
-                  shouldPreserveContextWindow,
-              },
             );
             conversationModelSettings = updatedAgent?.model_settings;
           } else {
@@ -486,10 +495,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               conversationIdRef.current,
               modelHandle,
               modelUpdateArgsForRequest,
-              {
-                avoidOverwritingExistingContextWindow:
-                  shouldPreserveContextWindow,
-              },
             );
             conversationModelSettings = (
               updatedConversation as {
@@ -529,16 +534,12 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           }
 
           const presetContextWindow = modelUpdateArgsForRequest?.context_window;
-          const preservedContextWindow = llmConfigRef.current?.context_window;
           const resolvedContextWindow =
             typeof conversationContextWindowLimit === "number"
               ? conversationContextWindowLimit
-              : shouldPreserveContextWindow &&
-                  typeof preservedContextWindow === "number"
-                ? preservedContextWindow
-                : typeof presetContextWindow === "number"
-                  ? presetContextWindow
-                  : undefined;
+              : typeof presetContextWindow === "number"
+                ? presetContextWindow
+                : undefined;
           const resolvedProviderType =
             providerTypeFromModelSettings(conversationModelSettings) ??
             providerTypeFromUpdateArgs(modelUpdateArgsForRequest) ??
