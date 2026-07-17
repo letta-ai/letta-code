@@ -373,8 +373,13 @@ export function createWhatsAppAdapter(
   // Voice notes, attachments, and reactions bypass the debounce (always
   // dispatched immediately). Disabled when inboundDebounceMs is 0/undefined.
 
-  const debouncer: InboundDebouncer<{ inbound: InboundChannelMessage }> =
-    createInboundDebouncer<{ inbound: InboundChannelMessage }>({
+  const debouncer: InboundDebouncer<{
+    inbound: InboundChannelMessage;
+    messageKey?: WhatsAppMessageKey;
+  }> = createInboundDebouncer<{
+    inbound: InboundChannelMessage;
+    messageKey?: WhatsAppMessageKey;
+  }>({
       debounceMs: Math.max(0, Math.min(account.inboundDebounceMs ?? 0, 10000)),
       buildKey: ({ inbound }) => `${account.accountId}:${inbound.chatId ?? ""}`,
       shouldDebounce: ({ inbound }) => {
@@ -383,6 +388,20 @@ export function createWhatsAppAdapter(
         return false;
       },
       onFlush: async (entries) => {
+        // Mark all batched messages as read in one call, after debounce.
+        const messageKeys = entries
+          .map((e) => e.messageKey)
+          .filter((k): k is WhatsAppMessageKey => Boolean(k));
+        if (messageKeys.length > 0) {
+          try {
+            await sock?.readMessages?.(messageKeys);
+          } catch (err) {
+            console.warn(
+              `[WhatsApp:${account.accountId}] readMessages (debounced) failed:`,
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
         const last = entries[entries.length - 1];
         if (!last || !adapter.onMessage) return;
         const combinedText = entries
@@ -531,6 +550,7 @@ export function createWhatsAppAdapter(
           if (recentDisconnects.length > RAPID_DISCONNECT_LIMIT) {
             running = false;
             stopping = true;
+            releaseSocketLease?.();
             const loopMessage = `WhatsApp disconnected ${recentDisconnects.length} times in ${RAPID_DISCONNECT_WINDOW_MS / 1000}s; stopping to avoid reconnect loop. Another client may be competing for this session. Restart the server to retry.`;
             setWhatsAppConnectionState(account.accountId, {
               status: "error",
@@ -631,6 +651,59 @@ export function createWhatsAppAdapter(
           );
       if (rememberSeen(`${chatId}:${messageId}`)) continue;
 
+      // Inbound reactions: surface user emoji reactions to the agent so it
+      // is aware of feedback on its messages. Reactions are dispatched
+      // immediately (no debounce, no read receipt) and never fall through
+      // to the regular text/media pipeline.
+      const reactionMessage = (msg.message as Record<string, unknown>)
+        ?.reactionMessage as
+        | { key?: WhatsAppMessageKey; text?: string }
+        | undefined;
+      if (reactionMessage && reactionMessage.key) {
+        const targetId = reactionMessage.key.id ?? "";
+        const emoji = reactionMessage.text ?? "";
+        const reactingUser =
+          msg.key?.participant ?? msg.key?.remoteJid ?? "";
+        // Resolve LID → phone JID for allowlist matching.
+        // The outer envelope's remoteJid may be a LID (e.g. 210565536456917@lid)
+        // while the allowlist stores phone numbers. Use lidDesk to map.
+        const lidToJidMap = lidDesk.getLidToJidMap();
+        const resolvedJid = lidToJidMap.get(reactingUser) ?? reactingUser;
+        const reactionSenderId = senderIdFromJid(resolvedJid);
+        const action = emoji ? "reacted" : "removed reaction from";
+        const display = emoji || "(removed)";
+        const reactionChatLabel = group
+          ? await getGroupLabel(chatId)
+          : selfChat
+            ? "Self (WhatsApp)"
+            : msg.pushName?.trim() || reactionSenderId;
+        const reactionInbound: InboundChannelMessage = {
+          channel: CHANNEL_ID,
+          accountId: account.accountId,
+          chatId,
+          senderId: resolvedJid,
+          senderName: msg.pushName?.trim() || reactionSenderId,
+          chatLabel: reactionChatLabel,
+          text: `[${display}] ${action} message ${targetId}`,
+          timestamp,
+          messageId,
+          chatType: group ? "channel" : "direct",
+          isMention: false,
+          raw: msg,
+        };
+        if (adapter.onMessage) {
+          try {
+            await adapter.onMessage(reactionInbound);
+          } catch (err) {
+            console.error(
+              `[WhatsApp:${account.accountId}] reaction dispatch failed:`,
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
+        continue;
+      }
+
       const text = extractWhatsAppText(msg.message);
       const attachmentResult = await collectWhatsAppAttachments({
         accountId: account.accountId,
@@ -703,17 +776,34 @@ export function createWhatsAppAdapter(
         `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${preview(body)}"`,
       );
 
-      // Mark the message as read (replaces chatModify markRead).
-      try {
-        await sock?.readMessages?.([msg.key ?? {}]);
-      } catch (err) {
-        console.warn(
-          `[WhatsApp:${account.accountId}] readMessages failed:`,
-          err instanceof Error ? err.message : err,
-        );
+      // Read receipt logic:
+      // - Debounced messages (text with no attachments, debounce enabled):
+      //   readMessages fires after debounce window in onFlush, covering all
+      //   batched messages in one call.
+      // - Immediate messages (attachments, empty text, or debounce disabled):
+      //   readMessages fires now in the inbound handler. We pass no
+      //   messageKey to the debouncer so onFlush doesn't double-fire.
+      const willDebounce =
+        (account.inboundDebounceMs ?? 0) > 0 &&
+        body.trim().length > 0 &&
+        attachmentResult.attachments.length === 0;
+
+      if (!willDebounce && msg.key) {
+        try {
+          await sock?.readMessages?.([msg.key]);
+        } catch (err) {
+          console.warn(
+            `[WhatsApp:${account.accountId}] readMessages failed:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
       }
 
-      await debouncer.enqueue({ inbound });
+      await debouncer.enqueue({
+        inbound,
+        // Only pass messageKey for debounced items — onFlush handles those.
+        messageKey: willDebounce ? msg.key : undefined,
+      });
     }
   }
 

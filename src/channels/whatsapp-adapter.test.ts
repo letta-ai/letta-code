@@ -205,7 +205,7 @@ describe("WhatsApp adapter helpers", () => {
 
 describe("WhatsApp adapter read receipts", () => {
   test("calls readMessages with message key on inbound DM", async () => {
-    const account = makeAccount({ accountId: "test-read-receipts" });
+    const account = makeAccount({ accountId: "test-read-receipts", inboundDebounceMs: 0 });
     const adapter = createWhatsAppAdapter(account);
     const onMessage = mock(async (_msg: InboundChannelMessage) => {});
     adapter.onMessage = onMessage;
@@ -238,7 +238,7 @@ describe("WhatsApp adapter read receipts", () => {
       throw new Error("Network error");
     });
 
-    const account = makeAccount({ accountId: "test-read-error" });
+    const account = makeAccount({ accountId: "test-read-error", inboundDebounceMs: 0 });
     const adapter = createWhatsAppAdapter(account);
     const onMessage = mock(async (_msg: InboundChannelMessage) => {});
     adapter.onMessage = onMessage;
@@ -264,7 +264,7 @@ describe("WhatsApp adapter read receipts", () => {
   test("calls readMessages for each message in a batch", async () => {
     mockReadMessages = mock(async () => {});
 
-    const account = makeAccount({ accountId: "test-read-batch" });
+    const account = makeAccount({ accountId: "test-read-batch", inboundDebounceMs: 0 });
     const adapter = createWhatsAppAdapter(account);
     const onMessage = mock(async (_msg: InboundChannelMessage) => {});
     adapter.onMessage = onMessage;
@@ -285,7 +285,42 @@ describe("WhatsApp adapter read receipts", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 100));
 
+    // With debounce disabled, each message fires its own read receipt.
     expect(mockReadMessages).toHaveBeenCalledTimes(2);
+
+    await adapter.stop();
+  });
+
+  test("debounced batch fires single readMessages with all keys after debounce window", async () => {
+    const account = makeAccount({
+      accountId: "test-read-debounced",
+      inboundDebounceMs: 100, // short for test speed
+    });
+    const adapter = createWhatsAppAdapter(account);
+    const onMessage = mock(async (_msg: InboundChannelMessage) => {});
+    adapter.onMessage = onMessage;
+
+    await startAdapterAndConnect(adapter);
+
+    // Same chatId for all messages so they batch under one debounce key.
+    const sharedChatId = "15551110000@s.whatsapp.net";
+    const msgs = [
+      makeInboundMessage({ messageId: "rr-debounced-1", remoteJid: sharedChatId }),
+      makeInboundMessage({ messageId: "rr-debounced-2", remoteJid: sharedChatId }),
+      makeInboundMessage({ messageId: "rr-debounced-3", remoteJid: sharedChatId }),
+    ];
+    emitMessagesUpsert(msgs);
+
+    // Before debounce window: no read receipt yet.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockReadMessages).not.toHaveBeenCalled();
+
+    // After debounce window: single batched readMessages call.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(mockReadMessages).toHaveBeenCalledTimes(1);
+    const keysArg = mockReadMessages.mock.calls[0]?.[0];
+    expect(Array.isArray(keysArg)).toBe(true);
+    expect(keysArg).toHaveLength(3);
 
     await adapter.stop();
   });
@@ -740,8 +775,19 @@ describe("WhatsApp reconnect guardrail", () => {
       }) => {
         capturedUpdate = params.onConnectionUpdate ?? null;
         return Promise.resolve({
+          // The ev.on no-op is intentional — this test only exercises the
+          // connection-update path, not inbound messages. Wire up the
+          // messages.upsert handler anyway so subsequent test files (and
+          // later describes in this file) that re-import the adapter still
+          // get a working `messagesUpsertHandler`.
           sock: {
-            ev: { on: () => {} },
+            ev: {
+              on: (event: string, handler: (event: unknown) => void) => {
+                if (event === "messages.upsert") {
+                  messagesUpsertHandler = handler;
+                }
+              },
+            },
             ws: { close: () => {} },
             user: { id: "12345@s.whatsapp.net", lid: null },
           },
@@ -801,5 +847,132 @@ describe("WhatsApp reconnect guardrail", () => {
     expect(state.lastError).toContain("Another client may be competing");
 
     clearWhatsAppConnectionState("guardrail-test");
+  });
+});
+
+// ── Inbound reaction tests (issue #18) ───────────────────────────────
+
+describe("WhatsApp adapter inbound reactions", () => {
+  function makeReactionMessage(overrides?: {
+    remoteJid?: string;
+    fromMe?: boolean;
+    participant?: string | null;
+    senderPn?: string | null;
+    targetMessageId?: string;
+    emoji?: string;
+    messageId?: string;
+    pushName?: string;
+  }) {
+    return {
+      key: {
+        remoteJid: overrides?.remoteJid ?? "15557654321@s.whatsapp.net",
+        id: overrides?.messageId ?? "reaction-msg-1",
+        fromMe: overrides?.fromMe ?? false,
+        participant: overrides?.participant ?? null,
+        senderPn: overrides?.senderPn ?? null,
+      },
+      message: {
+        reactionMessage: {
+          key: {
+            remoteJid: overrides?.remoteJid ?? "15557654321@s.whatsapp.net",
+            fromMe: false,
+            id: overrides?.targetMessageId ?? "original-msg-1",
+          },
+          text: overrides?.emoji ?? "👍",
+        },
+      },
+      messageTimestamp: Math.floor(Date.now() / 1000),
+      pushName: overrides?.pushName ?? "Test Reactor",
+    };
+  }
+
+  test("detects emoji reaction and dispatches as inbound message", async () => {
+    const account = makeAccount({ accountId: "test-reaction-emoji" });
+    const adapter = createWhatsAppAdapter(account);
+
+    const received: InboundChannelMessage[] = [];
+    adapter.onMessage = async (msg: InboundChannelMessage) => {
+      received.push(msg);
+    };
+
+    await startAdapterAndConnect(adapter);
+
+    const reactionMsg = makeReactionMessage({
+      remoteJid: "15557654321@s.whatsapp.net",
+      targetMessageId: "agent-msg-42",
+      emoji: "❤️",
+      messageId: "reaction-inbound-1",
+      pushName: "Alice",
+    });
+    emitMessagesUpsert([reactionMsg]);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(received).toHaveLength(1);
+    expect(received[0]!.text).toBe("[❤️] reacted message agent-msg-42");
+    expect(received[0]!.chatId).toBe("15557654321@s.whatsapp.net");
+    expect(received[0]!.senderId).toBe("15557654321@s.whatsapp.net");
+    expect(received[0]!.senderName).toBe("Alice");
+    expect(received[0]!.messageId).toBe("reaction-inbound-1");
+    expect(received[0]!.chatType).toBe("direct");
+    expect(received[0]!.isMention).toBe(false);
+
+    await adapter.stop();
+  });
+
+  test("detects reaction removal (empty text)", async () => {
+    const account = makeAccount({ accountId: "test-reaction-removal" });
+    const adapter = createWhatsAppAdapter(account);
+
+    const received: InboundChannelMessage[] = [];
+    adapter.onMessage = async (msg: InboundChannelMessage) => {
+      received.push(msg);
+    };
+
+    await startAdapterAndConnect(adapter);
+
+    const reactionMsg = makeReactionMessage({
+      remoteJid: "15557654321@s.whatsapp.net",
+      targetMessageId: "agent-msg-7",
+      emoji: "",
+      messageId: "reaction-removal-1",
+    });
+    emitMessagesUpsert([reactionMsg]);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(received).toHaveLength(1);
+    expect(received[0]!.text).toBe(
+      "[(removed)] removed reaction from message agent-msg-7",
+    );
+
+    await adapter.stop();
+  });
+
+  test("does not call readMessages for reactions", async () => {
+    const account = makeAccount({
+      accountId: "test-reaction-no-read",
+      inboundDebounceMs: 0,
+    });
+    const adapter = createWhatsAppAdapter(account);
+    const onMessage = mock(async (_msg: InboundChannelMessage) => {});
+    adapter.onMessage = onMessage;
+
+    await startAdapterAndConnect(adapter);
+
+    const reactionMsg = makeReactionMessage({
+      remoteJid: "15557654321@s.whatsapp.net",
+      targetMessageId: "agent-msg-99",
+      emoji: "🔥",
+      messageId: "reaction-no-read-1",
+    });
+    emitMessagesUpsert([reactionMsg]);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(mockReadMessages).not.toHaveBeenCalled();
+
+    await adapter.stop();
   });
 });

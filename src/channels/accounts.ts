@@ -55,6 +55,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   listen_mode: "listenMode",
   media_max_bytes: "mediaMaxBytes",
   mention_patterns: "mentionPatterns",
+  message_prefix: "messagePrefix",
   recipient_aliases: "recipientAliases",
   remove_stale_routes: "removeStaleRoutes",
   rich_draft_streaming: "richDraftStreaming",
@@ -62,6 +63,12 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
+  waiting_behavior: "waitingBehavior",
+  attachment_filter: "attachmentFilter",
+  attachment_mime_types: "attachmentMimeTypes",
+  attachment_allowed_recipients: "attachmentAllowedRecipients",
+  attachment_allowed_paths: "attachmentAllowedPaths",
+  attachment_path_recursive: "attachmentPathRecursive",
 };
 
 let warnedAboutDualKeys = false;
