@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   type ModelReasoningEffort,
+  preservableContextWindow,
   shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
 import { applyPersonalityToMemory } from "@/agent/personality";
@@ -435,7 +436,9 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
         // and it preserves by RE-SENDING the current value explicitly, never
         // by omitting the field: the server treats an omitted
         // context_window_limit as "re-derive from the handle" and clamps it
-        // to a legacy global default (128k). See LET-9786.
+        // to a legacy global default (128k). A current value that looks like
+        // that clamp is not preservable, so poisoned agents heal to the
+        // preset even on same-variant tier changes. See LET-9786.
         const currentLlmConfig = llmConfigRef.current;
         const shouldPreserveContextWindow =
           shouldPreserveContextWindowForModelSelection({
@@ -445,17 +448,19 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             selectedModelHandle: modelHandle,
             selectedContextWindow,
           });
-        const currentContextWindow = currentLlmConfig?.context_window;
+        const preservedContextWindow = shouldPreserveContextWindow
+          ? preservableContextWindow(
+              currentLlmConfig?.context_window,
+              modelHandle,
+            )
+          : undefined;
         const modelUpdateArgsForRequest = model.updateArgs
           ? { ...(model.updateArgs as Record<string, unknown>) }
           : undefined;
-        if (
-          shouldPreserveContextWindow &&
-          modelUpdateArgsForRequest &&
-          typeof currentContextWindow === "number"
-        ) {
-          modelUpdateArgsForRequest.context_window = currentContextWindow;
-        }
+        const updateOptions =
+          preservedContextWindow !== undefined
+            ? { contextWindowOverride: preservedContextWindow }
+            : undefined;
 
         await withCommandLock(async () => {
           const cmd =
@@ -485,6 +490,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               agentIdRef.current,
               modelHandle,
               modelUpdateArgsForRequest,
+              updateOptions,
             );
             conversationModelSettings = updatedAgent?.model_settings;
           } else {
@@ -495,6 +501,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               conversationIdRef.current,
               modelHandle,
               modelUpdateArgsForRequest,
+              updateOptions,
             );
             conversationModelSettings = (
               updatedConversation as {
@@ -537,9 +544,10 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           const resolvedContextWindow =
             typeof conversationContextWindowLimit === "number"
               ? conversationContextWindowLimit
-              : typeof presetContextWindow === "number"
-                ? presetContextWindow
-                : undefined;
+              : (preservedContextWindow ??
+                (typeof presetContextWindow === "number"
+                  ? presetContextWindow
+                  : undefined));
           const resolvedProviderType =
             providerTypeFromModelSettings(conversationModelSettings) ??
             providerTypeFromUpdateArgs(modelUpdateArgsForRequest) ??

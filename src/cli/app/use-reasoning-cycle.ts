@@ -14,6 +14,7 @@ import {
   isLocalModelHandle,
   type ModelReasoningEffort,
   normalizeModelHandleForRegistry,
+  preservableContextWindow,
 } from "@/agent/model";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
@@ -242,13 +243,19 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           const isDefaultConversation = conversationIdRef.current === "default";
           // Reasoning changes preserve the current context window (keeps 1M
           // dual-listing variants and custom /context-limit values intact) by
-          // RE-SENDING it explicitly. Omitting the field would make the
-          // server re-derive it from the handle and clamp it to a legacy
-          // global default (128k). See LET-9786.
-          const preservedContextWindow =
-            typeof llmConfigRef.current?.context_window === "number"
-              ? { context_window: llmConfigRef.current.context_window }
-              : {};
+          // RE-SENDING it explicitly via contextWindowOverride — omitting the
+          // field would make the server re-derive it from the handle and
+          // clamp it to a legacy global default (128k). A current value that
+          // looks like that server clamp is NOT preserved, so poisoned agents
+          // heal instead of re-poisoning themselves. See LET-9786.
+          const preservedContextWindow = preservableContextWindow(
+            llmConfigRef.current?.context_window,
+            desired.modelHandle,
+          );
+          const preserveOptions =
+            preservedContextWindow !== undefined
+              ? { contextWindowOverride: preservedContextWindow }
+              : undefined;
           let conversationModelSettings:
             | AgentState["model_settings"]
             | null
@@ -262,7 +269,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
               desired.modelHandle,
               {
                 reasoning_effort: desired.effort,
-                ...preservedContextWindow,
                 ...(desired.providerType
                   ? { provider_type: desired.providerType }
                   : {}),
@@ -270,6 +276,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
                   ? { service_tier: desired.serviceTier }
                   : {}),
               },
+              preserveOptions,
             );
           } else {
             const { updateConversationLLMConfig } = await import(
@@ -280,7 +287,6 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
               desired.modelHandle,
               {
                 reasoning_effort: desired.effort,
-                ...preservedContextWindow,
                 ...(desired.providerType
                   ? { provider_type: desired.providerType }
                   : {}),
@@ -288,6 +294,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
                   ? { service_tier: desired.serviceTier }
                   : {}),
               },
+              preserveOptions,
             );
             conversationModelSettings = (
               updatedConversation as {

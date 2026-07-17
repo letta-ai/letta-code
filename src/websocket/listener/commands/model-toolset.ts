@@ -6,6 +6,7 @@ import {
 import {
   getModelInfo,
   models,
+  preservableContextWindow,
   shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
 import {
@@ -415,7 +416,9 @@ export async function applyModelUpdateForRuntime(params: {
   // same variant preserves the current window — and it preserves by
   // RE-SENDING the current value explicitly, never by omitting the field:
   // the server treats an omitted context_window_limit as "re-derive from the
-  // handle" and clamps it to a legacy global default (128k). See LET-9786.
+  // handle" and clamps it to a legacy global default (128k). A current value
+  // that looks like that clamp is not preservable, so poisoned agents heal
+  // to the preset even on same-variant tier changes. See LET-9786.
   const shouldPreserveContextWindow =
     shouldPreserveContextWindowForModelSelection({
       currentModelHandle: currentModelScope.modelHandle,
@@ -423,11 +426,17 @@ export async function applyModelUpdateForRuntime(params: {
       selectedModelHandle: model.handle,
       selectedContextWindow,
     });
-  const currentContextWindow = currentModelScope.llmConfig?.context_window;
+  const preservedContextWindow = shouldPreserveContextWindow
+    ? preservableContextWindow(
+        currentModelScope.llmConfig?.context_window,
+        model.handle,
+      )
+    : undefined;
+  const updateOptions =
+    preservedContextWindow !== undefined
+      ? { contextWindowOverride: preservedContextWindow }
+      : undefined;
   const updateArgsForRequest = { ...updateArgs };
-  if (shouldPreserveContextWindow && typeof currentContextWindow === "number") {
-    updateArgsForRequest.context_window = currentContextWindow;
-  }
 
   let modelSettings: Record<string, unknown> | null = null;
   let appliedTo: "agent" | "conversation";
@@ -437,6 +446,7 @@ export async function applyModelUpdateForRuntime(params: {
       agentId,
       model.handle,
       updateArgsForRequest,
+      updateOptions,
     );
     modelSettings =
       (updatedAgent.model_settings as
@@ -449,6 +459,7 @@ export async function applyModelUpdateForRuntime(params: {
       conversationId,
       model.handle,
       updateArgsForRequest,
+      updateOptions,
     );
     modelSettings =
       ((

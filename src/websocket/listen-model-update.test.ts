@@ -234,14 +234,15 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     expect(source).toContain("updateConversationLLMConfig(");
     expect(source).toContain('appliedTo = "conversation"');
 
-    // Context-window preservation must RE-SEND the current value explicitly,
-    // never omit the field (an omitted context_window_limit makes the server
-    // re-derive and clamp it to a legacy 128k default — LET-9786).
+    // Context-window preservation must RE-SEND the current value explicitly
+    // (contextWindowOverride), never omit the field (an omitted
+    // context_window_limit makes the server re-derive and clamp it to a
+    // legacy 128k default — LET-9786), and must not preserve a value that
+    // looks like that server clamp (preservableContextWindow).
     expect(source).not.toContain("avoidOverwritingExistingContextWindow");
     expect(source).not.toContain("delete updateArgsForRequest.context_window");
-    expect(source).toContain(
-      "updateArgsForRequest.context_window = currentContextWindow;",
-    );
+    expect(source).toContain("preservableContextWindow(");
+    expect(source).toContain("contextWindowOverride: preservedContextWindow");
   });
 
   test("preserves registry provider type for BYOK model id updates", () => {

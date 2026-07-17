@@ -1,5 +1,8 @@
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
-import { getModelInfoForLlmConfig } from "@/agent/model";
+import {
+  getModelInfoForLlmConfig,
+  preservableContextWindow,
+} from "@/agent/model";
 import { normalizeKnownModelHandle } from "@/agent/model-handles";
 
 type CarryoverLlmConfig = LlmConfig & {
@@ -53,13 +56,18 @@ export function buildConversationModelCarryoverUpdate(params: {
     updateArgs.enable_reasoner = enableReasoner;
   }
 
+  // Carry the active conversation's window forward — unless it looks like
+  // the server's legacy 128k clamp (LET-9786), in which case fall back to the
+  // model preset so new conversations start healed rather than poisoned.
   const modelPresetContextWindow = updateArgs.context_window;
   const contextWindow =
-    typeof activeConversationContextWindowLimit === "number"
-      ? activeConversationContextWindowLimit
-      : typeof modelPresetContextWindow === "number"
-        ? modelPresetContextWindow
-        : undefined;
+    preservableContextWindow(
+      activeConversationContextWindowLimit,
+      modelHandle,
+    ) ??
+    (typeof modelPresetContextWindow === "number"
+      ? modelPresetContextWindow
+      : undefined);
   if (typeof contextWindow === "number") {
     updateArgs.context_window = contextWindow;
   }
