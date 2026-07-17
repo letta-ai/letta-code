@@ -216,11 +216,30 @@ function normalizeUserContent(
   const normalized = dropEmptyTextBlocks(content);
   return normalized.length > 0 ? normalized : undefined;
 }
+function hasUnsafeBareReasoningSignature(block: unknown): boolean {
+  if (!isRecord(block)) return false;
+  if (block.type !== "thinking") return false;
+  if (typeof block.thinkingSignature !== "string") return false;
 
+  try {
+    const signature = JSON.parse(block.thinkingSignature) as unknown;
+    return (
+      isRecord(signature) &&
+      signature.type === "reasoning" &&
+      typeof signature.id === "string" &&
+      signature.id.startsWith("rs_") &&
+      !("encrypted_content" in signature)
+    );
+  } catch {
+    return false;
+  }
+}
 function normalizeAssistantContent(
   content: LocalAssistantContent,
 ): LocalAssistantContent | undefined {
-  const normalized = dropEmptyTextBlocks(content);
+  const normalized = dropEmptyTextBlocks(content).filter(
+    (block) => !hasUnsafeBareReasoningSignature(block),
+  );
   return normalized.length > 0 ? normalized : undefined;
 }
 

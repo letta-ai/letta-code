@@ -863,6 +863,90 @@ describe("PiStreamAdapter", () => {
     }
   });
 
+  test("drops bare OpenAI reasoning signatures without encrypted_content", async () => {
+    let capturedContext: Context | undefined;
+
+    const stream: PiStreamFunction = (
+      _model: Model<string>,
+      context: Context,
+    ) => {
+      capturedContext = context;
+      const finalMessage = assistantMessage();
+
+      return streamFromEvents(
+        [{ type: "done", reason: "stop", message: finalMessage }],
+        finalMessage,
+      );
+    };
+
+    const adapter = new PiStreamAdapter({ stream });
+
+    for await (const _event of adapter.stream({
+      ...input(),
+      uiMessages: [
+        {
+          id: "ui-msg-user",
+          role: "user",
+          content: "hello",
+          timestamp: Date.now(),
+        },
+        {
+          id: "ui-msg-assistant",
+          role: "assistant",
+          content: [
+            {
+              type: "thinking",
+              thinking: "",
+              thinkingSignature:
+                '{"id":"rs_123","type":"reasoning","summary":[]}',
+            },
+            {
+              type: "toolCall",
+              id: "call-recall",
+              name: "Recall",
+              arguments: { query: "test" },
+            },
+          ],
+          api: "openai-responses",
+          provider: "openai",
+          model: "gpt-5.5",
+          usage: emptyLocalUsage(),
+          stopReason: "toolUse",
+          timestamp: Date.now(),
+        } as never,
+        {
+          id: "ui-msg-tool",
+          role: "toolResult",
+          toolCallId: "call-recall",
+          toolName: "Recall",
+          content: [{ type: "text", text: "result" }],
+          isError: false,
+          timestamp: Date.now(),
+        },
+      ],
+    })) {
+      // drain
+    }
+
+    expect(capturedContext).toBeDefined();
+
+    const assistant = capturedContext?.messages.find(
+      (message) => message.role === "assistant",
+    );
+
+    expect(assistant).toMatchObject({
+      role: "assistant",
+      content: [
+        {
+          type: "toolCall",
+          id: "call-recall",
+          name: "Recall",
+          arguments: { query: "test" },
+        },
+      ],
+    });
+  });
+
   test("forwards Bedrock provider options and restores AWS env overrides", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-stream-bedrock-"));
     const originalAccessKeyId = process.env.AWS_ACCESS_KEY_ID;
