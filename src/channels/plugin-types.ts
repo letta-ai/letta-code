@@ -182,8 +182,16 @@ export interface ChannelPluginAccountPatch {
   richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+<<<<<<< HEAD
   messagePrefix?: string;
   waitingBehavior?: import("./types").WhatsAppWaitingBehavior;
+=======
+  attachmentFilter?: boolean;
+  attachmentMimeTypes?: string[];
+  attachmentAllowedRecipients?: string[];
+  attachmentAllowedPaths?: string[];
+  attachmentPathRecursive?: boolean;
+>>>>>>> 150091b3 (feat(whatsapp): outbound attachment policy)
 }
 
 export type ChannelAccountPatch = ChannelCommonAccountPatch &

@@ -18,6 +18,11 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "message_prefix",
   "inbound_debounce_ms",
   "waiting_behavior",
+  "attachment_filter",
+  "attachment_mime_types",
+  "attachment_allowed_recipients",
+  "attachment_allowed_paths",
+  "attachment_path_recursive",
 ]);
 
 function isString(value: unknown): value is string {
@@ -83,7 +88,17 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
           (isNonNegativeNumber(config.inbound_debounce_ms) &&
             config.inbound_debounce_ms <= 10000)) &&
         (config.waiting_behavior === undefined ||
-          isWaitingBehavior(config.waiting_behavior))
+          isWaitingBehavior(config.waiting_behavior)) &&
+        (config.attachment_filter === undefined ||
+          isBoolean(config.attachment_filter)) &&
+        (config.attachment_mime_types === undefined ||
+          isStringArray(config.attachment_mime_types)) &&
+        (config.attachment_allowed_recipients === undefined ||
+          isStringArray(config.attachment_allowed_recipients)) &&
+        (config.attachment_allowed_paths === undefined ||
+          isStringArray(config.attachment_allowed_paths)) &&
+        (config.attachment_path_recursive === undefined ||
+          isBoolean(config.attachment_path_recursive))
       );
     },
 
@@ -124,6 +139,23 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         waitingBehavior: isWaitingBehavior(config.waiting_behavior)
           ? config.waiting_behavior
           : undefined,
+        attachmentFilter: isBoolean(config.attachment_filter)
+          ? config.attachment_filter
+          : undefined,
+        attachmentMimeTypes: isStringArray(config.attachment_mime_types)
+          ? [...config.attachment_mime_types]
+          : undefined,
+        attachmentAllowedRecipients: isStringArray(
+          config.attachment_allowed_recipients,
+        )
+          ? [...config.attachment_allowed_recipients]
+          : undefined,
+        attachmentAllowedPaths: isStringArray(config.attachment_allowed_paths)
+          ? [...config.attachment_allowed_paths]
+          : undefined,
+        attachmentPathRecursive: isBoolean(config.attachment_path_recursive)
+          ? config.attachment_path_recursive
+          : undefined,
       };
     },
 
@@ -140,6 +172,13 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         message_prefix: account.messagePrefix,
         inbound_debounce_ms: account.inboundDebounceMs,
         waiting_behavior: account.waitingBehavior,
+        attachment_filter: account.attachmentFilter === true,
+        attachment_mime_types: [...(account.attachmentMimeTypes ?? [])],
+        attachment_allowed_recipients: [
+          ...(account.attachmentAllowedRecipients ?? []),
+        ],
+        attachment_allowed_paths: [...(account.attachmentAllowedPaths ?? [])],
+        attachment_path_recursive: account.attachmentPathRecursive === true,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -157,6 +196,13 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         message_prefix: account.messagePrefix,
         inbound_debounce_ms: account.inboundDebounceMs,
         waiting_behavior: account.waitingBehavior,
+        attachment_filter: account.attachmentFilter === true,
+        attachment_mime_types: [...(account.attachmentMimeTypes ?? [])],
+        attachment_allowed_recipients: [
+          ...(account.attachmentAllowedRecipients ?? []),
+        ],
+        attachment_allowed_paths: [...(account.attachmentAllowedPaths ?? [])],
+        attachment_path_recursive: account.attachmentPathRecursive === true,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },

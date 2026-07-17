@@ -124,6 +124,12 @@ export function createAccountFromPatch(
       messagePrefix: normalizedPatch.messagePrefix,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       waitingBehavior: normalizedPatch.waitingBehavior,
+      attachmentFilter: normalizedPatch.attachmentFilter === true,
+      attachmentMimeTypes: normalizedPatch.attachmentMimeTypes ?? [],
+      attachmentAllowedRecipients:
+        normalizedPatch.attachmentAllowedRecipients ?? [],
+      attachmentAllowedPaths: normalizedPatch.attachmentAllowedPaths ?? [],
+      attachmentPathRecursive: normalizedPatch.attachmentPathRecursive === true,
       createdAt: now,
       updatedAt: now,
     };
@@ -291,6 +297,20 @@ export function mergeAccountPatch(
         normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
       waitingBehavior:
         normalizedPatch.waitingBehavior ?? existing.waitingBehavior,
+      attachmentFilter:
+        normalizedPatch.attachmentFilter ?? existing.attachmentFilter ?? false,
+      attachmentMimeTypes:
+        normalizedPatch.attachmentMimeTypes ?? existing.attachmentMimeTypes,
+      attachmentAllowedRecipients:
+        normalizedPatch.attachmentAllowedRecipients ??
+        existing.attachmentAllowedRecipients,
+      attachmentAllowedPaths:
+        normalizedPatch.attachmentAllowedPaths ??
+        existing.attachmentAllowedPaths,
+      attachmentPathRecursive:
+        normalizedPatch.attachmentPathRecursive ??
+        existing.attachmentPathRecursive ??
+        false,
       updatedAt: nextUpdatedAt,
     };
   }
