@@ -47,6 +47,7 @@ import {
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
   getResumeRefreshArgs,
+  preservableContextWindow,
   resolveModel,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
@@ -1591,11 +1592,22 @@ export async function handleHeadlessCommand(
           getResumeRefreshArgs(presetRefresh.updateArgs, agent);
 
         if (needsUpdate) {
+          // Resume refresh must not reset the context window; preserve it by
+          // re-sending the agent's current value explicitly (omitting it
+          // makes the server re-derive + clamp to a legacy 128k default —
+          // LET-9786). A current value that looks like that clamp is not
+          // preserved, letting the agent heal.
+          const preservedContextWindow = preservableContextWindow(
+            agent.llm_config?.context_window,
+            presetRefresh.modelHandle,
+          );
           agent = await updateAgentLLMConfig(
             agent.id,
             presetRefresh.modelHandle,
             resumeRefreshUpdateArgs,
-            { avoidOverwritingExistingContextWindow: true },
+            preservedContextWindow !== undefined
+              ? { contextWindowOverride: preservedContextWindow }
+              : undefined,
           );
         }
       }

@@ -14,6 +14,7 @@ import {
   isLocalModelHandle,
   type ModelReasoningEffort,
   normalizeModelHandleForRegistry,
+  preservableContextWindow,
 } from "@/agent/model";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
@@ -240,6 +241,21 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           // active, reasoning tier changes must update the agent itself so the next
           // agent sync doesn't snap back.
           const isDefaultConversation = conversationIdRef.current === "default";
+          // Reasoning changes preserve the current context window (keeps 1M
+          // dual-listing variants and custom /context-limit values intact) by
+          // RE-SENDING it explicitly via contextWindowOverride — omitting the
+          // field would make the server re-derive it from the handle and
+          // clamp it to a legacy global default (128k). A current value that
+          // looks like that server clamp is NOT preserved, so poisoned agents
+          // heal instead of re-poisoning themselves. See LET-9786.
+          const preservedContextWindow = preservableContextWindow(
+            llmConfigRef.current?.context_window,
+            desired.modelHandle,
+          );
+          const preserveOptions =
+            preservedContextWindow !== undefined
+              ? { contextWindowOverride: preservedContextWindow }
+              : undefined;
           let conversationModelSettings:
             | AgentState["model_settings"]
             | null
@@ -260,7 +276,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
                   ? { service_tier: desired.serviceTier }
                   : {}),
               },
-              { avoidOverwritingExistingContextWindow: true },
+              preserveOptions,
             );
           } else {
             const { updateConversationLLMConfig } = await import(
@@ -278,7 +294,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
                   ? { service_tier: desired.serviceTier }
                   : {}),
               },
-              { avoidOverwritingExistingContextWindow: true },
+              preserveOptions,
             );
             conversationModelSettings = (
               updatedConversation as {
