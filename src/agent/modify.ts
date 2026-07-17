@@ -465,10 +465,26 @@ export async function updateConversationLLMConfig(
     updateArgs,
     options,
     useBackendModelCatalog,
-    fetchCurrent: async () =>
-      contextWindowFromEntityRecord(
-        await backend.retrieveConversation(conversationId),
-      ),
+    fetchCurrent: async () => {
+      // A conversation without its own override has context_window_limit
+      // null and inherits from its agent — walk up so uncatalogued handles
+      // still never omit the field (LET-9786).
+      const conversation = await backend.retrieveConversation(conversationId);
+      const conversationContextWindow =
+        contextWindowFromEntityRecord(conversation);
+      if (conversationContextWindow !== undefined) {
+        return conversationContextWindow;
+      }
+      const agentId = isRecord(conversation)
+        ? conversation.agent_id
+        : undefined;
+      if (typeof agentId !== "string" || agentId.length === 0) {
+        return undefined;
+      }
+      return contextWindowFromEntityRecord(
+        await backend.retrieveAgent(agentId),
+      );
+    },
   });
   const hasModelSettings = Object.keys(modelSettings).length > 0;
   const maxTokens = maxTokensForUpdatePayload(updateArgs, {

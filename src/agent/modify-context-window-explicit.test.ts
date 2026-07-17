@@ -26,11 +26,18 @@ function makeBackend(opts?: {
   localModelCatalog?: boolean;
   listedModels?: Array<Record<string, unknown>>;
   currentContextWindow?: number;
+  /**
+   * When set, the conversation record has NO context_window_limit of its own
+   * (it inherits from the agent); the agent's llm_config carries this value.
+   */
+  agentInheritedContextWindow?: number;
 }) {
   const calls = {
     updateAgent: [] as UpdateCall[],
     updateConversation: [] as UpdateCall[],
   };
+  const agentContextWindow =
+    opts?.agentInheritedContextWindow ?? opts?.currentContextWindow;
   const backend = {
     capabilities: { localModelCatalog: opts?.localModelCatalog ?? false },
     listModels: async () =>
@@ -52,15 +59,17 @@ function makeBackend(opts?: {
     retrieveAgent: async () => ({
       id: "agent-1",
       llm_config:
-        opts?.currentContextWindow !== undefined
-          ? { context_window: opts.currentContextWindow }
+        agentContextWindow !== undefined
+          ? { context_window: agentContextWindow }
           : {},
     }),
     retrieveConversation: async () => ({
       id: "conv-1",
-      ...(opts?.currentContextWindow !== undefined
-        ? { context_window_limit: opts.currentContextWindow }
-        : {}),
+      agent_id: "agent-1",
+      context_window_limit:
+        opts?.agentInheritedContextWindow !== undefined
+          ? null
+          : (opts?.currentContextWindow ?? null),
     }),
   } as unknown as Backend;
   return { backend, calls };
@@ -160,6 +169,21 @@ describe("model updates always send an explicit context_window_limit", () => {
     });
     expect(currentCalls.updateAgent[0]?.body.context_window_limit).toBe(200000);
 
+    await updateConversationLLMConfig("conv-1", "custom-provider/my-model", {
+      reasoning_effort: "high",
+    });
+    expect(currentCalls.updateConversation[0]?.body.context_window_limit).toBe(
+      200000,
+    );
+  });
+
+  test("conversation inheriting its window from the agent walks up to the agent value", async () => {
+    // Re-review P1: conversation record has context_window_limit null (no
+    // override); the fallback must fetch the agent's value, not omit.
+    currentCalls = useBackend({
+      listedModels: [],
+      agentInheritedContextWindow: 200000,
+    });
     await updateConversationLLMConfig("conv-1", "custom-provider/my-model", {
       reasoning_effort: "high",
     });

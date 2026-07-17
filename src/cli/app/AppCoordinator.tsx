@@ -3469,13 +3469,16 @@ export function App({
 
       try {
         const { updateConversationLLMConfig } = await import("@/agent/modify");
-        // Carryover updateArgs include an explicit context_window whenever the
-        // active window is known (buildConversationModelCarryoverUpdate), so
-        // the new conversation inherits it rather than the catalog default.
+        // The preserved window rides as contextWindowOverride so it survives
+        // on local backends too (local catalog resolution ignores
+        // updateArgs.context_window); presets stay in updateArgs. LET-9786.
         await updateConversationLLMConfig(
           targetConversationId,
           carryover.modelHandle,
           carryover.updateArgs,
+          carryover.contextWindowOverride !== undefined
+            ? { contextWindowOverride: carryover.contextWindowOverride }
+            : undefined,
         );
       } catch (error) {
         debugWarn(
