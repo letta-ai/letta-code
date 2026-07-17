@@ -22,6 +22,24 @@ describe("model config helpers", () => {
     });
   });
 
+  test("maps Kimi K3 direct and OpenRouter handles to backend llm_config fields", () => {
+    expect(
+      mapHandleToLlmConfigPatch("moonshot/kimi-k3") as Record<string, unknown>,
+    ).toEqual({
+      model: "kimi-k3",
+      model_endpoint_type: "moonshot",
+    });
+    expect(
+      mapHandleToLlmConfigPatch("openrouter/moonshotai/kimi-k3") as Record<
+        string,
+        unknown
+      >,
+    ).toEqual({
+      model: "moonshotai/kimi-k3",
+      model_endpoint_type: "openrouter",
+    });
+  });
+
   test("extracts provider type from model settings and update args", () => {
     expect(
       providerTypeFromModelSettings({ provider_type: "chatgpt_oauth" }),
@@ -41,5 +59,29 @@ describe("model config helpers", () => {
         null,
       ),
     ).toBe("max");
+  });
+
+  test("derives Kimi K3 max from Moonshot model settings", () => {
+    expect(
+      deriveReasoningEffort(
+        {
+          provider_type: "moonshot",
+          reasoning_effort: "max",
+        } as never,
+        null,
+      ),
+    ).toBe("max");
+  });
+
+  test("does not expose unsupported Moonshot reasoning tiers", () => {
+    expect(
+      deriveReasoningEffort(
+        {
+          provider_type: "moonshot",
+          reasoning_effort: "low",
+        } as never,
+        null,
+      ),
+    ).toBeNull();
   });
 });

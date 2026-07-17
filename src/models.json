@@ -2340,6 +2340,31 @@
       }
     },
     {
+      "id": "kimi-k3",
+      "handle": "moonshot/kimi-k3",
+      "label": "Kimi K3",
+      "description": "Moonshot AI's Kimi K3 model for long-context agentic coding and reasoning tasks",
+      "isFeatured": true,
+      "updateArgs": {
+        "context_window": 1048576,
+        "max_output_tokens": 131072,
+        "reasoning_effort": "max",
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "kimi-k3-openrouter",
+      "handle": "openrouter/moonshotai/kimi-k3",
+      "label": "Kimi K3",
+      "description": "Moonshot AI's Kimi K3 model for long-context agentic coding and reasoning tasks",
+      "updateArgs": {
+        "context_window": 1048576,
+        "max_output_tokens": 131072,
+        "reasoning_effort": "max",
+        "parallel_tool_calls": true
+      }
+    },
+    {
       "id": "kimi-k2.7",
       "handle": "openrouter/moonshotai/kimi-k2.7-code",
       "label": "Kimi K2.7 Code",

@@ -23,4 +23,30 @@ describe("browser-safe model preset export", () => {
     });
     expect("available" in (preset ?? {})).toBe(false);
   });
+
+  test("includes Kimi K3 direct and OpenRouter presets with Cloud-aligned limits", () => {
+    const direct = MODEL_PRESETS.find((entry) => entry.id === "kimi-k3");
+    const openrouter = MODEL_PRESETS.find(
+      (entry) => entry.id === "kimi-k3-openrouter",
+    );
+
+    expect(direct).toMatchObject({
+      handle: "moonshot/kimi-k3",
+      label: "Kimi K3",
+      updateArgs: {
+        context_window: 1048576,
+        max_output_tokens: 131072,
+        reasoning_effort: "max",
+      },
+    });
+    expect(openrouter).toMatchObject({
+      handle: "openrouter/moonshotai/kimi-k3",
+      label: "Kimi K3",
+      updateArgs: {
+        context_window: 1048576,
+        max_output_tokens: 131072,
+        reasoning_effort: "max",
+      },
+    });
+  });
 });
