@@ -488,6 +488,7 @@ describe("getResumeData", () => {
     const sameDate = "2026-01-01T00:00:02.000Z";
     const conversationsRetrieve = mock(async () => ({
       in_context_message_ids: ["provider-msg-2"],
+      summary: "my-custom-conversation",
     }));
     const conversationsList = mock(async () => ({
       getPaginatedItems: () => [
@@ -544,6 +545,7 @@ describe("getResumeData", () => {
       "tool_return_message",
       "assistant_message",
     ]);
+    expect(resume.conversationSummary).toBe("my-custom-conversation");
   });
 
   test("default conversation backfill orders equal-timestamp local tool messages before assistant text", async () => {

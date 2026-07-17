@@ -35,6 +35,7 @@ type NavigationCommandContext = {
   setCommandRunning: (value: boolean) => void;
   setConversationAutoTitleEligibility: (enabled: boolean) => void;
   setConversationIdAndRef: (nextConversationId: string) => void;
+  setConversationSummary: (summary: string | null) => void;
   setLines: Dispatch<SetStateAction<Line[]>>;
   setSearchQuery: Dispatch<SetStateAction<string>>;
   setStaticItems: Dispatch<SetStateAction<StaticItem[]>>;
@@ -68,6 +69,7 @@ export async function handleNavigationCommand(
     setCommandRunning,
     setConversationAutoTitleEligibility,
     setConversationIdAndRef,
+    setConversationSummary,
     setLines,
     setSearchQuery,
     setStaticItems,
@@ -129,12 +131,14 @@ export async function handleNavigationCommand(
 
           setConversationIdAndRef(targetConvId);
           setConversationAutoTitleEligibility(false);
+          setConversationSummary(resumeData.conversationSummary ?? null);
 
           pendingConversationSwitchRef.current = {
             origin: "resume-direct",
             conversationId: targetConvId,
             isDefault: targetConvId === "default",
             messageCount: resumeData.messageHistory.length,
+            summary: resumeData.conversationSummary,
             messageHistory: resumeData.messageHistory,
           };
 

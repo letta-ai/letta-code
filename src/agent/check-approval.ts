@@ -46,6 +46,7 @@ export interface ResumeData {
   pendingApproval: ApprovalRequest | null; // Deprecated: use pendingApprovals
   pendingApprovals: ApprovalRequest[];
   messageHistory: Message[];
+  conversationSummary?: string;
 }
 
 export interface GetResumeDataOptions {
@@ -434,7 +435,10 @@ async function fetchResumeTail(
   conversationId: string,
   limit = BACKFILL_PAGE_LIMIT,
 ): Promise<{
-  conversation?: { in_context_message_ids?: string[] | null };
+  conversation?: {
+    in_context_message_ids?: string[] | null;
+    summary?: string | null;
+  };
   messages: Message[];
 }> {
   const tail = await getBackend().getConversationResumeTail(
@@ -505,6 +509,7 @@ export async function getResumeDataFromBackend(
 
     let inContextMessageIds: string[] | null | undefined;
     let messages: Message[] = [];
+    let conversationSummary: string | undefined;
 
     if (useConversationsApi) {
       if (shouldFetchTail) {
@@ -512,6 +517,7 @@ export async function getResumeDataFromBackend(
           const tail = await fetchResumeTail(agent.id, activeConversationId);
           messages = tail.messages;
           inContextMessageIds = tail.conversation?.in_context_message_ids;
+          conversationSummary = tail.conversation?.summary?.trim() || undefined;
         } catch (backfillError) {
           debugWarn(
             "check-approval",
@@ -524,6 +530,7 @@ export async function getResumeDataFromBackend(
         const conversation =
           await getBackend().retrieveConversation(activeConversationId);
         inContextMessageIds = conversation.in_context_message_ids;
+        conversationSummary = conversation.summary?.trim() || undefined;
       }
 
       const lastInContextId = inContextMessageIds?.at(-1);
@@ -536,6 +543,7 @@ export async function getResumeDataFromBackend(
           pendingApproval: null,
           pendingApprovals: [],
           messageHistory: prepareMessageHistory(messages),
+          ...(conversationSummary ? { conversationSummary } : {}),
         };
       }
 
@@ -545,6 +553,7 @@ export async function getResumeDataFromBackend(
         pendingApproval,
         pendingApprovals,
         messageHistory: prepareMessageHistory(messages),
+        ...(conversationSummary ? { conversationSummary } : {}),
       };
     }
 

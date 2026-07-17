@@ -2535,7 +2535,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /agents command - routed through navigation commands.
         const navigationCommandResult = await handleNavigationCommand(trimmed, {
           agentId,
           agentState,
@@ -2554,6 +2553,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           setCommandRunning,
           setConversationAutoTitleEligibility,
           setConversationIdAndRef,
+          setConversationSummary,
           setLines,
           setSearchQuery,
           setStaticItems,

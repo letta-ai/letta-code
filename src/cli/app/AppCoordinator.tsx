@@ -347,6 +347,7 @@ export function App({
   agentId: initialAgentId,
   agentState: initialAgentState,
   conversationId: initialConversationId,
+  conversationSummary: initialConversationSummary = null,
   loadingState = "ready",
   continueSession = false,
   startupApproval = null,
@@ -400,11 +401,9 @@ export function App({
   }, [agentState]);
 
   const projectDirectory = process.cwd();
-
-  // Track current conversation (always created fresh on startup)
   const [conversationId, setConversationId] = useState(initialConversationId);
-  const [conversationSummary, setConversationSummary] = useState<string | null>(
-    null,
+  const [conversationSummary, setConversationSummary] = useState(
+    initialConversationSummary,
   );
 
   // Keep a ref to the current agentId for use in callbacks that need the latest value
@@ -4543,15 +4542,16 @@ export function App({
                   agentState,
                   action.conversationId,
                 );
-
                 setConversationIdAndRef(action.conversationId);
                 setConversationAutoTitleEligibility(false);
+                setConversationSummary(resumeData.conversationSummary ?? null);
 
                 pendingConversationSwitchRef.current = {
                   origin: "resume-selector",
                   conversationId: action.conversationId,
                   isDefault: action.conversationId === "default",
                   messageCount: resumeData.messageHistory.length,
+                  summary: resumeData.conversationSummary,
                   messageHistory: resumeData.messageHistory,
                 };
 
