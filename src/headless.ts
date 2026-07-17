@@ -30,6 +30,7 @@ import {
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
   parseRetryAfterHeaderMs,
+  rebuildInputForApprovalResync,
   refreshInputOtidsForNewRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldRetryRunMetadataError,
@@ -3179,12 +3180,9 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       }
 
-      // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
-      // Fetch the actual pending approvals and process them before retrying.
       const invalidIdsDetected =
         isInvalidToolCallIdsError(detailFromRun) ||
         isInvalidToolCallIdsError(latestErrorText);
-
       if (invalidIdsDetected) {
         if (outputFormat === "stream-json") {
           const recoveryMsg: RecoveryMessage = {
@@ -3204,16 +3202,18 @@ ${SYSTEM_REMINDER_CLOSE}
         }
 
         try {
-          // Fetch and process actual pending approvals from server
-          await resolveAllPendingApprovals();
-          // After processing, continue to next iteration (fresh state)
+          currentInput = await rebuildInputForApprovalResync(
+            agent.id,
+            conversationId,
+            currentInput,
+          );
           continue;
         } catch {
-          // If fetch fails, exit with error
+          // If reconciliation fails, exit instead of retrying stale input.
           if (outputFormat === "stream-json") {
             const errorMsg: ErrorMessage = {
               type: "error",
-              message: "Failed to fetch pending approvals for resync",
+              message: "Failed to reconcile pending approvals for resync",
               stop_reason: stopReason,
               run_id: lastRunId ?? undefined,
               session_id: sessionId,
@@ -3221,7 +3221,7 @@ ${SYSTEM_REMINDER_CLOSE}
             };
             await writeWireMessageAsync(errorMsg);
           } else {
-            console.error("Failed to fetch pending approvals for resync");
+            console.error("Failed to reconcile pending approvals for resync");
           }
           await exitHeadless(1, "headless_approval_resync_failed");
         }
