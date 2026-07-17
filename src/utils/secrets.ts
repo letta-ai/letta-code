@@ -19,8 +19,10 @@ try {
 let SERVICE_NAME = "letta-code";
 const API_KEY_NAME = "letta-api-key";
 const REFRESH_TOKEN_NAME = "letta-refresh-token";
+const AVAILABILITY_PROBE_NAME = "__availability_probe__";
 
 const warnedSecretReadFailures = new Set<string>();
+let keychainUnavailableForProcess = false;
 let secretGetOverrideForTests:
   | ((options: { service: string; name: string }) => Promise<string | null>)
   | null = null;
@@ -35,6 +37,22 @@ function isDuplicateKeychainItemError(error: unknown): boolean {
     message.includes("already exists in the keychain") ||
     message.includes("code: -25299")
   );
+}
+
+export function isKeychainInteractionNotAllowed(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  return (
+    message.includes("User interaction is not allowed") ||
+    message.includes("ERR_SECRETS_INTERACTION_NOT_ALLOWED") ||
+    message.includes("code: -25308") ||
+    message.includes("-25308")
+  );
+}
+
+function markKeychainUnavailableForProcess(error: unknown): void {
+  if (isKeychainInteractionNotAllowed(error)) {
+    keychainUnavailableForProcess = true;
+  }
 }
 
 export async function getSecretValue(
@@ -56,7 +74,12 @@ export async function getSecretValue(
     warnedSecretReadFailures.delete(name);
     return value;
   } catch (error) {
+    markKeychainUnavailableForProcess(error);
     const message = `Failed to retrieve ${label} from secrets: ${error}`;
+    if (isKeychainInteractionNotAllowed(error)) {
+      debugWarn("secrets", message);
+      return null;
+    }
     if (!warnedSecretReadFailures.has(name)) {
       warnedSecretReadFailures.add(name);
       console.warn(message);
@@ -71,7 +94,7 @@ export async function setSecretValue(
   name: string,
   value: string,
 ): Promise<void> {
-  if (!secretsAvailable) {
+  if (!secretsAvailable || keychainUnavailableForProcess) {
     throw new Error("Secrets API unavailable");
   }
 
@@ -83,6 +106,7 @@ export async function setSecretValue(
     });
     return;
   } catch (error) {
+    markKeychainUnavailableForProcess(error);
     if (!isDuplicateKeychainItemError(error)) {
       throw error;
     }
@@ -106,7 +130,7 @@ export async function setSecretValue(
 }
 
 export async function deleteSecretValue(name: string): Promise<boolean> {
-  if (!secretsAvailable) {
+  if (!secretsAvailable || keychainUnavailableForProcess) {
     return false;
   }
 
@@ -116,6 +140,11 @@ export async function deleteSecretValue(name: string): Promise<boolean> {
       name,
     });
   } catch (error) {
+    markKeychainUnavailableForProcess(error);
+    if (isKeychainInteractionNotAllowed(error)) {
+      debugWarn("secrets", `Failed to delete secret ${name}: ${error}`);
+      return false;
+    }
     console.warn(`Failed to delete secret ${name}: ${error}`);
     return false;
   }
@@ -141,7 +170,7 @@ export interface SecureTokens {
  * Store API key in system secrets
  */
 export async function setApiKey(apiKey: string): Promise<void> {
-  if (!secretsAvailable) {
+  if (!secretsAvailable || keychainUnavailableForProcess) {
     // When secrets unavailable, let the settings manager handle fallback
     throw new Error("Secrets API unavailable");
   }
@@ -160,7 +189,7 @@ export async function getApiKey(): Promise<string | null> {
  * Store refresh token in system secrets
  */
 export async function setRefreshToken(refreshToken: string): Promise<void> {
-  if (!secretsAvailable) {
+  if (!secretsAvailable || keychainUnavailableForProcess) {
     // When secrets unavailable, let the settings manager handle fallback
     throw new Error("Secrets API unavailable");
   }
@@ -217,7 +246,7 @@ export async function setSecureTokens(tokens: SecureTokens): Promise<void> {
  * Remove API key from system secrets
  */
 export async function deleteApiKey(): Promise<void> {
-  if (secretsAvailable) {
+  if (secretsAvailable && !keychainUnavailableForProcess) {
     try {
       await secrets.delete({
         service: SERVICE_NAME,
@@ -237,7 +266,7 @@ export async function deleteApiKey(): Promise<void> {
  * Remove refresh token from system secrets
  */
 export async function deleteRefreshToken(): Promise<void> {
-  if (secretsAvailable) {
+  if (secretsAvailable && !keychainUnavailableForProcess) {
     try {
       await secrets.delete({
         service: SERVICE_NAME,
@@ -283,20 +312,47 @@ export async function isKeychainAvailable(): Promise<boolean> {
     return false;
   }
 
+  if (keychainUnavailableForProcess) {
+    return false;
+  }
+
   try {
-    // Non-mutating probe: if this call succeeds (even with null), keychain is usable.
+    // Read probe: if this call succeeds (even with null), keychain reads work.
     await secrets.get({
       service: SERVICE_NAME,
       name: API_KEY_NAME,
     });
+  } catch (error) {
+    markKeychainUnavailableForProcess(error);
+    return false;
+  }
+
+  const probeName = `${AVAILABILITY_PROBE_NAME}:${process.pid}`;
+  try {
+    // Write probe: macOS can allow reads while rejecting writes from
+    // non-interactive server shells with errSecInteractionNotAllowed (-25308).
+    // Treat that as secure storage unavailable so callers use file/env fallback
+    // instead of attempting token or channel credential migration and failing
+    // during startup.
+    await secrets.set({
+      service: SERVICE_NAME,
+      name: probeName,
+      value: "1",
+    });
+    await secrets.delete({
+      service: SERVICE_NAME,
+      name: probeName,
+    });
     return true;
-  } catch {
+  } catch (error) {
+    markKeychainUnavailableForProcess(error);
     return false;
   }
 }
 
 export function __resetSecretWarningStateForTests(): void {
   warnedSecretReadFailures.clear();
+  keychainUnavailableForProcess = false;
 }
 
 export function __setSecretGetOverrideForTests(
