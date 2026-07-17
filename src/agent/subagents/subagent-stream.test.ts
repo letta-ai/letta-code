@@ -34,6 +34,14 @@ describe("looksLikeTruncatedStreamJson", () => {
     expect(looksLikeTruncatedStreamJson(`${initLine}\n`)).toBe(false);
   });
 
+  test("does not flag a complete non-JSON line", () => {
+    // An invalid protocol line is not evidence of truncation when its line
+    // terminator arrived. Retrying here could duplicate subagent side effects.
+    expect(looksLikeTruncatedStreamJson(`${initLine}\nplain-text-log\n`)).toBe(
+      false,
+    );
+  });
+
   test("does not flag empty output", () => {
     expect(looksLikeTruncatedStreamJson("")).toBe(false);
     expect(looksLikeTruncatedStreamJson("\n\n")).toBe(false);

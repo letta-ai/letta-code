@@ -258,7 +258,7 @@ export function buildSubagentArgs(
     }
     args.push("--tags", subagentTags.join(","));
     // Newly spawned subagents are stateless (non-memfs). The headless
-    // entrypoint derives this from LETTA_CODE_AGENT_ROLE=subagent â€” no CLI
+    // entrypoint derives this from LETTA_CODE_AGENT_ROLE=subagent — no CLI
     // flag needed, and no user-facing opt-out exists.
     if (model) {
       args.push("--model", model);
@@ -380,7 +380,7 @@ async function executeSubagent(
       try {
         parentAgentId = getCurrentAgentId();
       } catch {
-        // Context not available â€” subagent will have no parent scope.
+        // Context not available — subagent will have no parent scope.
       }
     }
 
@@ -587,7 +587,7 @@ async function executeSubagent(
 
       // The child lost its stdout stream before it could deliver the result
       // envelope (it exits non-zero with a marker on stderr). The stream is
-      // gone but the payload is retryable â€” respawn once.
+      // gone but the payload is retryable — respawn once.
       if (!isRetry && isSubagentStdoutLostError(stderr)) {
         debugWarn(
           "subagent",
@@ -656,7 +656,7 @@ async function executeSubagent(
       };
     }
 
-    // No result or error captured during streaming â€” this is unusual
+    // No result or error captured during streaming — this is unusual
     debugWarn(
       "subagent",
       `Subagent ${subagentId} (agentId=${state.agentId}) exited cleanly (exitCode=${exitCode}) ` +
@@ -680,7 +680,7 @@ async function executeSubagent(
       );
       // A clean exit whose stream ends mid-line means the result envelope was
       // truncated in transit even though the child believed it succeeded
-      // (observed under high parallel fan-out, #3257) â€” respawn once instead
+      // (observed under high parallel fan-out, #3257) — respawn once instead
       // of dropping the response. Other parse failures (e.g. well-formed but
       // unexpected output) are not retried: the child may have already
       // performed side effects, so only unambiguous truncation is worth it.
@@ -747,13 +747,13 @@ function buildForkSystemReminder(
   if (subagentType === "recall") {
     const recallPrompt = recallPromptForBackend(backendMode);
     return `${SYSTEM_REMINDER_OPEN}
-You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference â€” you are NOT the primary agent and do not share its tools.
+You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference — you are NOT the primary agent and do not share its tools.
 
 **Your sole task is now to search previous conversation history and provide a report. Ignore any existing ongoing tasks.** Do not attempt to continue, finish, or act on anything the primary agent was in the middle of doing.
 
 Your toolset is limited to Bash, Read, and TaskOutput. You cannot edit files, run skills, dispatch further tasks, or take any action beyond searching messages and returning a report.
 
-You CANNOT ask questions mid-execution â€” all instructions are provided upfront.
+You CANNOT ask questions mid-execution — all instructions are provided upfront.
 Your final message will be returned to the caller.
 
 ${recallPrompt}
@@ -763,13 +763,13 @@ ${SYSTEM_REMINDER_CLOSE}
   }
 
   return `${SYSTEM_REMINDER_OPEN}
-You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference â€” you are NOT the primary agent and do not share its full toolset.
+You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference — you are NOT the primary agent and do not share its full toolset.
 
 **Your sole task is the one described in the user message below. Ignore any existing ongoing tasks from the inherited trajectory.** Do not attempt to continue, finish, or act on anything the primary agent was in the middle of doing.
 
 You have a scoped toolset that may differ from the primary agent's. Stay within it; don't assume you have the primary's full tool access.
 
-You CANNOT ask questions mid-execution â€” all instructions are provided upfront.
+You CANNOT ask questions mid-execution — all instructions are provided upfront.
 Your final message will be returned to the caller.
 ${SYSTEM_REMINDER_CLOSE}
 
@@ -834,7 +834,7 @@ export async function spawnSubagent(
     try {
       resolvedParentAgentId = getCurrentAgentId();
     } catch {
-      // Context unavailable â€” carry forward undefined.
+      // Context unavailable — carry forward undefined.
     }
   }
   let resolvedParentConversationId = parentConversationId;
@@ -842,7 +842,7 @@ export async function spawnSubagent(
     try {
       resolvedParentConversationId = getConversationId() ?? undefined;
     } catch {
-      // Context unavailable â€” carry forward undefined.
+      // Context unavailable — carry forward undefined.
     }
   }
   const { handle: parentModelHandle, agent: parentAgent } =
