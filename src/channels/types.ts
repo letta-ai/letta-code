@@ -506,6 +506,7 @@ export type SlackChannelMode = "socket";
 export type SlackAllowBotsMode = false | "mentions";
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
+export type WhatsAppWaitingBehavior = "off" | "typing_indicator";
 export type SignalGroupMode = "disabled" | "mention" | "open";
 
 export interface ChannelAccountBinding {
@@ -648,6 +649,22 @@ export interface WhatsAppChannelConfig {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** Optional prefix prepended to outbound agent text messages. */
+  messagePrefix?: string;
+  /** Optional debounce window (ms) for inbound messages. Default 0 (disabled). Clamped to 0..10000. */
+  inboundDebounceMs?: number;
+  /** UX feedback while the agent is generating a response. Default "off". */
+  waitingBehavior?: WhatsAppWaitingBehavior;
+  /** When true, outbound media is checked against MIME/recipient/path allowlists. Default false. */
+  attachmentFilter?: boolean;
+  /** Allowed MIME types for outbound media. Empty denies all; ["*"] allows all. */
+  attachmentMimeTypes?: string[];
+  /** Allowed recipients for outbound media (phone numbers or JIDs). Empty denies all; ["*"] allows all. */
+  attachmentAllowedRecipients?: string[];
+  /** Allowed source directories for outbound media (absolute paths, directories only). */
+  attachmentAllowedPaths?: string[];
+  /** When true, files in subdirectories of allowed paths are also permitted. */
+  attachmentPathRecursive?: boolean;
 }
 
 export interface SignalChannelConfig {
@@ -827,6 +844,22 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** Optional prefix prepended to outbound agent text messages. */
+  messagePrefix?: string;
+  /** Optional debounce window (ms) for inbound messages. Default 0 (disabled). Clamped to 0..10000. */
+  inboundDebounceMs?: number;
+  /** UX feedback while the agent is generating a response. Default "off". */
+  waitingBehavior?: WhatsAppWaitingBehavior;
+  /** When true, outbound media is checked against MIME/recipient/path allowlists. Default false. */
+  attachmentFilter?: boolean;
+  /** Allowed MIME types for outbound media. Empty denies all; ["*"] allows all. */
+  attachmentMimeTypes?: string[];
+  /** Allowed recipients for outbound media (phone numbers or JIDs). Empty denies all; ["*"] allows all. */
+  attachmentAllowedRecipients?: string[];
+  /** Allowed source directories for outbound media (absolute paths, directories only). */
+  attachmentAllowedPaths?: string[];
+  /** When true, files in subdirectories of allowed paths are also permitted. */
+  attachmentPathRecursive?: boolean;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {

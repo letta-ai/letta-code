@@ -1,3 +1,7 @@
+import {
+  createInboundDebouncer,
+  type InboundDebouncer,
+} from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
 import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
@@ -9,19 +13,23 @@ import type {
   OutboundChannelMessage,
   WhatsAppChannelAccount,
 } from "@/channels/types";
+import { resolveInboundChatId } from "./inbound-identity";
 import {
+  allowedUsersIncludes,
   isGroupJid,
   isLidJid,
+  isPhoneJid,
   isSelfChat,
   isStatusOrBroadcastJid,
-  phoneDigitsToJid,
-  resolveLidToPhoneJid,
+  normalizeMaybePhoneJid,
   resolveSendJid,
   senderIdFromJid,
   stripDeviceSuffix,
 } from "./jid";
+import { LidDesk } from "./lid-desk";
 import {
   buildWhatsAppOutboundPayload,
+  checkAttachmentPolicy,
   collectWhatsAppAttachments,
   extractMentionedJids,
   extractReplyParticipant,
@@ -36,9 +44,26 @@ const DEDUPE_MAX_SIZE = 5000;
 const RECONNECT_MAX_MS = 30_000;
 const MAX_MENTION_PATTERN_LENGTH = 256;
 const MENTION_MATCH_TEXT_MAX_LENGTH = 2000;
+const WHATSAPP_TYPING_REFRESH_MS = 12_000;
+const WHATSAPP_TYPING_MAX_MS = 5 * 60 * 1000;
+const RAPID_DISCONNECT_LIMIT = 5;
+const RAPID_DISCONNECT_WINDOW_MS = 60_000;
 
 type EventEmitterLike = {
   on?: (event: string, handler: (payload: unknown) => void) => void;
+};
+
+type WhatsAppMessageKey = {
+  remoteJid?: string | null;
+  id?: string | null;
+  fromMe?: boolean | null;
+  participant?: string | null;
+};
+
+type WhatsAppTypingEntry = {
+  sourceKeys: Set<string>;
+  timer: ReturnType<typeof setInterval>;
+  timeout: ReturnType<typeof setTimeout>;
 };
 
 type WhatsAppSocket = {
@@ -52,6 +77,12 @@ type WhatsAppSocket = {
     options?: Record<string, unknown>,
   ) => Promise<{ key?: { id?: string }; message?: unknown }>;
   sendPresenceUpdate?: (presence: string, jid?: string) => Promise<void>;
+  readMessages?: (keys: WhatsAppMessageKey[]) => Promise<void>;
+  onWhatsApp?: (
+    phoneNumber: string,
+  ) => Promise<
+    { exists?: boolean; jid?: string; lid?: string }[] | undefined | null
+  >;
   groupMetadata?: (jid: string) => Promise<{ subject?: string }>;
 };
 
@@ -188,9 +219,37 @@ function getLifecycleErrorReplyKey(source: ChannelTurnSource): string | null {
   return `${source.chatId}:${source.messageId ?? ""}`;
 }
 
+/**
+ * Adapter type returned by {@link createWhatsAppAdapter}.
+ *
+ * Extends the base {@link ChannelAdapter} with WhatsApp-specific outbound
+ * bootstrap — methods that proactive-send callers use to resolve LID
+ * mappings for contacts with no prior inbound.
+ */
+export type WhatsAppAdapter = ChannelAdapter & {
+  /**
+   * Attempt to bootstrap an outbound route for a phone-number chatId that has
+   * no prior inbound.
+   *
+   * Calls `lidDesk.lookupLidForPhone` (which delegates to Baileys'
+   * `sock.onWhatsApp` on cache miss). If the contact is on WhatsApp and has a
+   * LID, the mapping is persisted in the desk so subsequent `sendMessage` /
+   * `sendDirectReply` calls resolve correctly via `resolveSendJid`.
+   *
+   * Returns `true` if the contact is reachable (either already cached or
+   * successfully resolved). Returns `false` if the number is not on WhatsApp,
+   * the socket is unavailable, the rate limit is exceeded, or the lookup
+   * throws.
+   *
+   * This method does NOT touch the route store — it only populates the LID
+   * desk. Route creation remains the registry's responsibility.
+   */
+  tryBootstrapOutboundRoute(chatId: string): Promise<boolean>;
+};
+
 export function createWhatsAppAdapter(
   account: WhatsAppChannelAccount,
-): ChannelAdapter {
+): WhatsAppAdapter {
   let sock: WhatsAppSocket | null = null;
   let running = false;
   let stopping = false;
@@ -200,6 +259,7 @@ export function createWhatsAppAdapter(
   let selfLid: string | null = null;
   let connectedAtMs = 0;
   let connectionGeneration = 0;
+  let recentDisconnects: number[] = [];
   let releaseSocketLease: (() => void) | null = null;
   let downloadContentFromMessage:
     | ((message: unknown, type: string) => Promise<AsyncIterable<Uint8Array>>)
@@ -207,7 +267,165 @@ export function createWhatsAppAdapter(
   const sentMessageIds = new Set<string>();
   const seenMessageIds = new Set<string>();
   const lidToJid = new Map<string, string>();
+  const jidToLid = new Map<string, string>();
   const messageStore = new Map<string, unknown>();
+  const typingByChatId = new Map<string, WhatsAppTypingEntry>();
+
+  // ── Typing indicator helpers ────────────────────────────────────
+  // Per-chat entry with source-key refcount, refresh interval, and
+  // max-lifetime timeout. Only active when waitingBehavior ===
+  // "typing_indicator".
+
+  function getTypingSourceKey(source: ChannelTurnSource): string | null {
+    if (source.channel !== CHANNEL_ID) return null;
+    const chatId = source.chatId;
+    if (!chatId) return null;
+    return [
+      source.accountId ?? "",
+      chatId,
+      source.messageId ?? "",
+      source.agentId,
+      source.conversationId,
+    ].join(":");
+  }
+
+  function clearTypingForChat(chatId: string): void {
+    const entry = typingByChatId.get(chatId);
+    if (!entry) return;
+    clearInterval(entry.timer);
+    clearTimeout(entry.timeout);
+    typingByChatId.delete(chatId);
+  }
+
+  function clearAllTyping(): void {
+    for (const entry of typingByChatId.values()) {
+      clearInterval(entry.timer);
+      clearTimeout(entry.timeout);
+    }
+    typingByChatId.clear();
+  }
+
+  function startTypingForSource(source: ChannelTurnSource): void {
+    const chatId = source.chatId;
+    const sourceKey = getTypingSourceKey(source);
+    if (!chatId || !sourceKey) return;
+
+    const existing = typingByChatId.get(chatId);
+    if (existing) {
+      existing.sourceKeys.add(sourceKey);
+      return;
+    }
+
+    // Use chatId as-is for the typing jid — do NOT use LID resolution.
+    // PR 1 handles LID presence resolution separately.
+    try {
+      void sock?.sendPresenceUpdate?.("composing", chatId);
+    } catch {
+      // Best-effort; presence failures are non-fatal.
+    }
+    const timer = setInterval(() => {
+      if (!running) return;
+      try {
+        void sock?.sendPresenceUpdate?.("composing", chatId);
+      } catch {
+        // Best-effort.
+      }
+    }, WHATSAPP_TYPING_REFRESH_MS);
+    const timeout = setTimeout(() => {
+      clearTypingForChat(chatId);
+    }, WHATSAPP_TYPING_MAX_MS);
+    if (typeof (timer as { unref?: () => void }).unref === "function") {
+      (timer as { unref?: () => void }).unref?.();
+    }
+    if (typeof (timeout as { unref?: () => void }).unref === "function") {
+      (timeout as { unref?: () => void }).unref?.();
+    }
+    typingByChatId.set(chatId, {
+      sourceKeys: new Set([sourceKey]),
+      timer,
+      timeout,
+    });
+  }
+
+  function stopTypingForSource(source: ChannelTurnSource): void {
+    const chatId = source.chatId;
+    const sourceKey = getTypingSourceKey(source);
+    if (!chatId || !sourceKey) return;
+
+    const entry = typingByChatId.get(chatId);
+    if (!entry) return;
+    entry.sourceKeys.delete(sourceKey);
+    if (entry.sourceKeys.size === 0) {
+      clearTypingForChat(chatId);
+    }
+  }
+
+  function stopTypingPresence(chatId: string): void {
+    try {
+      void sock?.sendPresenceUpdate?.("paused", chatId);
+    } catch {
+      // Best-effort.
+    }
+  }
+
+  // ── Inbound debouncer ──────────────────────────────────────────
+  // Batches back-to-back messages into a single dispatch.
+  // Voice notes, attachments, and reactions bypass the debounce (always
+  // dispatched immediately). Disabled when inboundDebounceMs is 0/undefined.
+
+  const debouncer: InboundDebouncer<{
+    inbound: InboundChannelMessage;
+    messageKey?: WhatsAppMessageKey;
+  }> = createInboundDebouncer<{
+    inbound: InboundChannelMessage;
+    messageKey?: WhatsAppMessageKey;
+  }>({
+      debounceMs: Math.max(0, Math.min(account.inboundDebounceMs ?? 0, 10000)),
+      buildKey: ({ inbound }) => `${account.accountId}:${inbound.chatId ?? ""}`,
+      shouldDebounce: ({ inbound }) => {
+        if (inbound.attachments && inbound.attachments.length > 0) return false;
+        if (inbound.text && inbound.text.length > 0) return true;
+        return false;
+      },
+      onFlush: async (entries) => {
+        // Mark all batched messages as read in one call, after debounce.
+        const messageKeys = entries
+          .map((e) => e.messageKey)
+          .filter((k): k is WhatsAppMessageKey => Boolean(k));
+        if (messageKeys.length > 0) {
+          try {
+            await sock?.readMessages?.(messageKeys);
+          } catch (err) {
+            console.warn(
+              `[WhatsApp:${account.accountId}] readMessages (debounced) failed:`,
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
+        const last = entries[entries.length - 1];
+        if (!last || !adapter.onMessage) return;
+        const combinedText = entries
+          .map((e) => (e.inbound.text ?? "").trim())
+          .filter(Boolean)
+          .join("\n");
+        const merged: InboundChannelMessage = {
+          ...last.inbound,
+          text: combinedText,
+        };
+        try {
+          await adapter.onMessage(merged);
+        } catch (err) {
+          console.error(
+            `[WhatsApp:${account.accountId}] debounced dispatch failed:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
+      },
+    });
+
+  const authDir = getWhatsAppAuthDir(account.accountId);
+  const lidDesk = new LidDesk(authDir);
+  lidDesk.load();
 
   function rememberSeen(id: string): boolean {
     if (seenMessageIds.has(id)) return true;
@@ -292,6 +510,7 @@ export function createWhatsAppAdapter(
         if (generation !== connectionGeneration) return;
         if (update.connection === "open") {
           reconnectAttempts = 0;
+          recentDisconnects = [];
           selfPhoneJid = stripDeviceSuffix(sock?.user?.id ?? null) || null;
           selfLid = stripDeviceSuffix(sock?.user?.lid ?? null) || null;
           const mode = account.selfChatMode
@@ -321,6 +540,27 @@ export function createWhatsAppAdapter(
             );
             return;
           }
+          // Guardrail: detect rapid disconnect loops (e.g. session conflict
+          // that doesn't trigger the explicit conflict-disconnect path).
+          const now = Date.now();
+          recentDisconnects = recentDisconnects.filter(
+            (ts) => now - ts < RAPID_DISCONNECT_WINDOW_MS,
+          );
+          recentDisconnects.push(now);
+          if (recentDisconnects.length > RAPID_DISCONNECT_LIMIT) {
+            running = false;
+            stopping = true;
+            releaseSocketLease?.();
+            const loopMessage = `WhatsApp disconnected ${recentDisconnects.length} times in ${RAPID_DISCONNECT_WINDOW_MS / 1000}s; stopping to avoid reconnect loop. Another client may be competing for this session. Restart the server to retry.`;
+            setWhatsAppConnectionState(account.accountId, {
+              status: "error",
+              lastError: loopMessage,
+            });
+            console.warn(
+              `[WhatsApp:${account.accountId}] ${loopMessage}`,
+            );
+            return;
+          }
           scheduleReconnect(
             typeof error.message === "string" ? error.message : undefined,
           );
@@ -346,31 +586,6 @@ export function createWhatsAppAdapter(
         );
       });
     });
-  }
-
-  function resolveInboundChatId(
-    remoteJid: string,
-    selfChat: boolean,
-    msg: WhatsAppMessage,
-  ): string {
-    const normalizedRemote = stripDeviceSuffix(remoteJid);
-    if (selfChat) {
-      if (selfPhoneJid) return selfPhoneJid;
-      const digits = senderIdFromJid(remoteJid);
-      return phoneDigitsToJid(digits) || normalizedRemote;
-    }
-    if (isLidJid(normalizedRemote)) {
-      const resolved = resolveLidToPhoneJid({
-        lidJid: normalizedRemote,
-        message: msg,
-        sock,
-      });
-      if (resolved) {
-        lidToJid.set(normalizedRemote, resolved);
-        return resolved;
-      }
-    }
-    return normalizedRemote;
   }
 
   async function getGroupLabel(groupJid: string): Promise<string | undefined> {
@@ -415,11 +630,79 @@ export function createWhatsAppAdapter(
       const timestamp = timestampToMs(msg.messageTimestamp);
       if (isHistory || timestamp < connectedAtMs - 1000) continue;
 
+      // Mine PN↔LID mappings from inbound message metadata.
+      if (lidDesk.mineFromMessage(msg)) {
+        lidDesk.save();
+        // Sync ephemeral maps from the desk's authoritative maps.
+        for (const [lid, jid] of lidDesk.getLidToJidMap())
+          lidToJid.set(lid, jid);
+        for (const [jid, lid] of lidDesk.getJidToLidMap())
+          jidToLid.set(jid, lid);
+      }
+
       const group = isGroupJid(remoteJid);
       const chatId = group
         ? stripDeviceSuffix(remoteJid)
-        : resolveInboundChatId(remoteJid, selfChat, msg);
+        : resolveInboundChatId(
+            { selfPhoneJid, lidDesk },
+            remoteJid,
+            selfChat,
+            msg,
+          );
       if (rememberSeen(`${chatId}:${messageId}`)) continue;
+
+      // Inbound reactions: surface user emoji reactions to the agent so it
+      // is aware of feedback on its messages. Reactions are dispatched
+      // immediately (no debounce, no read receipt) and never fall through
+      // to the regular text/media pipeline.
+      const reactionMessage = (msg.message as Record<string, unknown>)
+        ?.reactionMessage as
+        | { key?: WhatsAppMessageKey; text?: string }
+        | undefined;
+      if (reactionMessage && reactionMessage.key) {
+        const targetId = reactionMessage.key.id ?? "";
+        const emoji = reactionMessage.text ?? "";
+        const reactingUser =
+          msg.key?.participant ?? msg.key?.remoteJid ?? "";
+        // Resolve LID → phone JID for allowlist matching.
+        // The outer envelope's remoteJid may be a LID (e.g. 210565536456917@lid)
+        // while the allowlist stores phone numbers. Use lidDesk to map.
+        const lidToJidMap = lidDesk.getLidToJidMap();
+        const resolvedJid = lidToJidMap.get(reactingUser) ?? reactingUser;
+        const reactionSenderId = senderIdFromJid(resolvedJid);
+        const action = emoji ? "reacted" : "removed reaction from";
+        const display = emoji || "(removed)";
+        const reactionChatLabel = group
+          ? await getGroupLabel(chatId)
+          : selfChat
+            ? "Self (WhatsApp)"
+            : msg.pushName?.trim() || reactionSenderId;
+        const reactionInbound: InboundChannelMessage = {
+          channel: CHANNEL_ID,
+          accountId: account.accountId,
+          chatId,
+          senderId: resolvedJid,
+          senderName: msg.pushName?.trim() || reactionSenderId,
+          chatLabel: reactionChatLabel,
+          text: `[${display}] ${action} message ${targetId}`,
+          timestamp,
+          messageId,
+          chatType: group ? "channel" : "direct",
+          isMention: false,
+          raw: msg,
+        };
+        if (adapter.onMessage) {
+          try {
+            await adapter.onMessage(reactionInbound);
+          } catch (err) {
+            console.error(
+              `[WhatsApp:${account.accountId}] reaction dispatch failed:`,
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
+        continue;
+      }
 
       const text = extractWhatsAppText(msg.message);
       const attachmentResult = await collectWhatsAppAttachments({
@@ -457,6 +740,13 @@ export function createWhatsAppAdapter(
           });
       if (!groupAllowed) continue;
 
+      // LID-aware DM allowlist check (supplements registry-level filtering).
+      if (!group && !selfChat && account.dmPolicy === "allowlist") {
+        if (!allowedUsersIncludes(account.allowedUsers, senderId, lidDesk)) {
+          continue;
+        }
+      }
+
       const chatLabel = group
         ? await getGroupLabel(chatId)
         : selfChat
@@ -485,7 +775,35 @@ export function createWhatsAppAdapter(
       console.log(
         `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${preview(body)}"`,
       );
-      await adapter.onMessage?.(inbound);
+
+      // Read receipt logic:
+      // - Debounced messages (text with no attachments, debounce enabled):
+      //   readMessages fires after debounce window in onFlush, covering all
+      //   batched messages in one call.
+      // - Immediate messages (attachments, empty text, or debounce disabled):
+      //   readMessages fires now in the inbound handler. We pass no
+      //   messageKey to the debouncer so onFlush doesn't double-fire.
+      const willDebounce =
+        (account.inboundDebounceMs ?? 0) > 0 &&
+        body.trim().length > 0 &&
+        attachmentResult.attachments.length === 0;
+
+      if (!willDebounce && msg.key) {
+        try {
+          await sock?.readMessages?.([msg.key]);
+        } catch (err) {
+          console.warn(
+            `[WhatsApp:${account.accountId}] readMessages failed:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
+      }
+
+      await debouncer.enqueue({
+        inbound,
+        // Only pass messageKey for debounced items — onFlush handles those.
+        messageKey: willDebounce ? msg.key : undefined,
+      });
     }
   }
 
@@ -499,13 +817,46 @@ export function createWhatsAppAdapter(
       chatId,
       selfPhoneJid,
       selfLid,
-      lidToJid,
-      sock,
+      lidToJid: lidDesk.getLidToJidMap(),
     });
     return await sock.sendMessage(targetJid, payload, options);
   }
 
-  const adapter: ChannelAdapter = {
+  /**
+   * Attempt to bootstrap an outbound route for a phone-number chatId.
+   *
+   * Resolves the LID on demand via `lidDesk.lookupLidForPhone` (which calls
+   * `sock.onWhatsApp` on cache miss). If successful, the mapping is persisted
+   * in the desk and subsequent sends will resolve via `resolveSendJid`.
+   *
+   * Returns false for non-phone chatIds (LIDs, groups, broadcast), since
+   * those don't need on-demand lookup.
+   */
+  async function tryBootstrapOutboundRoute(chatId: string): Promise<boolean> {
+    const normalized = stripDeviceSuffix(chatId);
+
+    // Only phone JIDs need bootstrap. LIDs, groups, and broadcast JIDs
+    // either already have a mapping or are not resolvable via onWhatsApp.
+    if (
+      isLidJid(normalized) ||
+      isGroupJid(normalized) ||
+      isStatusOrBroadcastJid(normalized)
+    ) {
+      return false;
+    }
+
+    // Normalize raw digits or phone JIDs to a canonical phone JID.
+    const phoneJid = normalizeMaybePhoneJid(normalized);
+    if (!phoneJid || !isPhoneJid(phoneJid)) return false;
+
+    // Already cached in the desk — no lookup needed.
+    if (lidDesk.resolvePn(phoneJid)) return true;
+
+    const lid = await lidDesk.lookupLidForPhone(phoneJid, sock ?? undefined);
+    return lid !== null;
+  }
+
+  const adapter: WhatsAppAdapter = {
     id: `${CHANNEL_ID}:${account.accountId}`,
     channelId: CHANNEL_ID,
     accountId: account.accountId,
@@ -520,6 +871,7 @@ export function createWhatsAppAdapter(
     },
 
     async stop() {
+      clearAllTyping();
       if (!running) return;
       stopping = true;
       running = false;
@@ -545,8 +897,7 @@ export function createWhatsAppAdapter(
         chatId: msg.chatId,
         selfPhoneJid,
         selfLid,
-        lidToJid,
-        sock,
+        lidToJid: lidDesk.getLidToJidMap(),
       });
       if (msg.reaction || msg.removeReaction) {
         const target = msg.targetMessageId ?? msg.replyToMessageId;
@@ -561,12 +912,38 @@ export function createWhatsAppAdapter(
         rememberSent(id, result);
         return { messageId: id };
       }
-      try {
-        await sock?.sendPresenceUpdate?.("composing", targetJid);
-      } catch {
-        // Presence is best-effort.
+      // Stop typing immediately before sending the reply. The refresh
+      // interval can otherwise fire a final "composing" presence between
+      // the reply landing and the "finished" lifecycle event arriving,
+      // causing a brief typing blip after the answer.
+      if (msg.chatId && typingByChatId.has(msg.chatId)) {
+        clearTypingForChat(msg.chatId);
+        stopTypingPresence(msg.chatId);
+      }
+      if (
+        account.messagePrefix &&
+        msg.text?.trim() &&
+        !msg.reaction &&
+        !msg.removeReaction
+      ) {
+        msg = { ...msg, text: account.messagePrefix + msg.text };
       }
       const payload = buildWhatsAppOutboundPayload(msg);
+      if (msg.mediaPath) {
+        const policyError = checkAttachmentPolicy({
+          policy: {
+            attachmentFilter: account.attachmentFilter === true,
+            attachmentMimeTypes: account.attachmentMimeTypes ?? [],
+            attachmentAllowedRecipients:
+              account.attachmentAllowedRecipients ?? [],
+            attachmentAllowedPaths: account.attachmentAllowedPaths ?? [],
+            attachmentPathRecursive: account.attachmentPathRecursive === true,
+          },
+          mediaPath: msg.mediaPath,
+          recipientChatId: msg.chatId,
+        });
+        if (policyError) throw new Error(policyError);
+      }
       const result = await sendToWhatsApp(
         targetJid,
         payload,
@@ -583,12 +960,14 @@ export function createWhatsAppAdapter(
         chatId,
         selfPhoneJid,
         selfLid,
-        lidToJid,
-        sock,
+        lidToJid: lidDesk.getLidToJidMap(),
       });
+      const prefixed = account.messagePrefix
+        ? account.messagePrefix + text
+        : text;
       const result = await sendToWhatsApp(
         targetJid,
-        { text },
+        { text: prefixed },
         buildQuotedOptions(targetJid, options?.replyToMessageId),
       );
       rememberSent(result.key?.id ?? "", result);
@@ -608,13 +987,40 @@ export function createWhatsAppAdapter(
     async handleTurnLifecycleEvent(
       event: ChannelTurnLifecycleEvent,
     ): Promise<void> {
-      if (!running || event.type !== "finished") return;
+      if (!running) return;
+
+      // "processing" = the agent turn has actually started. Start typing.
+      if (event.type === "processing") {
+        if (account.waitingBehavior !== "typing_indicator") return;
+        for (const source of event.sources) {
+          startTypingForSource(source);
+        }
+        return;
+      }
+
+      // "queued" = waiting for prior turns to finish; no typing yet.
+      if (event.type === "queued") return;
+
+      // "finished" = stop typing for all sources, then handle error replies.
+      const finishedSources = event.sources;
+      const chatsToStopPresence = new Set<string>();
+      for (const source of finishedSources) {
+        const wasActive = typingByChatId.has(source.chatId);
+        stopTypingForSource(source);
+        if (wasActive && !typingByChatId.has(source.chatId)) {
+          chatsToStopPresence.add(source.chatId);
+        }
+      }
+      // Best-effort: send "paused" presence to clear the typing indicator.
+      for (const chatId of chatsToStopPresence) {
+        stopTypingPresence(chatId);
+      }
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
       if (!errorText) return;
 
       const uniqueSources = new Map<string, ChannelTurnSource>();
-      for (const source of event.sources) {
+      for (const source of finishedSources) {
         const key = getLifecycleErrorReplyKey(source);
         if (!key || uniqueSources.has(key)) continue;
         uniqueSources.set(key, source);
@@ -639,6 +1045,8 @@ export function createWhatsAppAdapter(
         }),
       );
     },
+
+    tryBootstrapOutboundRoute,
   };
 
   return adapter;

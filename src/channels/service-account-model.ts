@@ -121,6 +121,15 @@ export function createAccountFromPatch(
       transcribeVoice: normalizedPatch.transcribeVoice === true,
       downloadMedia: normalizedPatch.downloadMedia === true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
+      messagePrefix: normalizedPatch.messagePrefix,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs,
+      waitingBehavior: normalizedPatch.waitingBehavior,
+      attachmentFilter: normalizedPatch.attachmentFilter === true,
+      attachmentMimeTypes: normalizedPatch.attachmentMimeTypes ?? [],
+      attachmentAllowedRecipients:
+        normalizedPatch.attachmentAllowedRecipients ?? [],
+      attachmentAllowedPaths: normalizedPatch.attachmentAllowedPaths ?? [],
+      attachmentPathRecursive: normalizedPatch.attachmentPathRecursive === true,
       createdAt: now,
       updatedAt: now,
     };
@@ -280,6 +289,28 @@ export function mergeAccountPatch(
       downloadMedia:
         normalizedPatch.downloadMedia ?? existing.downloadMedia ?? false,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
+      messagePrefix:
+        normalizedPatch.messagePrefix !== undefined
+          ? normalizedPatch.messagePrefix
+          : existing.messagePrefix,
+      inboundDebounceMs:
+        normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
+      waitingBehavior:
+        normalizedPatch.waitingBehavior ?? existing.waitingBehavior,
+      attachmentFilter:
+        normalizedPatch.attachmentFilter ?? existing.attachmentFilter ?? false,
+      attachmentMimeTypes:
+        normalizedPatch.attachmentMimeTypes ?? existing.attachmentMimeTypes,
+      attachmentAllowedRecipients:
+        normalizedPatch.attachmentAllowedRecipients ??
+        existing.attachmentAllowedRecipients,
+      attachmentAllowedPaths:
+        normalizedPatch.attachmentAllowedPaths ??
+        existing.attachmentAllowedPaths,
+      attachmentPathRecursive:
+        normalizedPatch.attachmentPathRecursive ??
+        existing.attachmentPathRecursive ??
+        false,
       updatedAt: nextUpdatedAt,
     };
   }

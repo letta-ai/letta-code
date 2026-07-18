@@ -192,7 +192,9 @@ export function acquireWhatsAppSessionLease(
         throw error;
       }
       const owner = readLeaseOwner(lockDir);
-      if (owner.pid && !isProcessAlive(owner.pid)) {
+      // If the owner is the current process (stale lock from a previous
+      // container run or in-process retry), clean it up and retry.
+      if (owner.pid && (owner.pid === pid || !isProcessAlive(owner.pid))) {
         rmSync(lockDir, { recursive: true, force: true });
         continue;
       }

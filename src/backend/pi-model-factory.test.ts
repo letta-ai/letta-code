@@ -624,6 +624,58 @@ describe("pi model factory", () => {
     }
   });
 
+  test("normalizes wrapped OpenCode Go catalog handles", async () => {
+    const resolved = await resolvePiModelForAgent(
+      "openai/opencode-go/deepseek-v4-flash",
+      { provider_type: "openai" },
+    );
+
+    expect(resolved.provider).toBe("opencode-go");
+    expect(resolved.model).toMatchObject({
+      id: "deepseek-v4-flash",
+      provider: "opencode-go",
+      baseUrl: "https://opencode.ai/zen/go/v1",
+    });
+  });
+
+  test("normalizes wrapped registered provider handles", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "pi-registered-provider-handle-"),
+    );
+    try {
+      registerPiProvider("bifrost-openai", {
+        api: "openai-completions",
+        apiKey: "test",
+        baseUrl: "http://bifrost.invalid/v1",
+        listModels: () => [
+          {
+            id: "opencode-go/deepseek-v4-flash",
+            name: "DeepSeek V4 Flash via Bifrost",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            maxTokens: 8192,
+          },
+        ],
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "openai/bifrost-openai/opencode-go/deepseek-v4-flash",
+        { provider_type: "openai" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.model).toMatchObject({
+        id: "opencode-go/deepseek-v4-flash",
+        provider: "bifrost-openai",
+        baseUrl: "http://bifrost.invalid/v1",
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("does not let local no-key placeholders mask LM Studio env API keys", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-lmstudio-env-key-"));
     try {
