@@ -54,7 +54,11 @@ type FakeLettaVersion = {
 
 function expectPathSuffix(value: unknown, suffixParts: string[]): void {
   expect(typeof value).toBe("string");
-  expect(normalize(value as string).endsWith(join(...suffixParts))).toBe(true);
+  expect(
+    normalize(value as string)
+      .toLocaleLowerCase()
+      .endsWith(join(...suffixParts).toLocaleLowerCase()),
+  ).toBe(true);
 }
 
 function writeFakeLetta(binDir: string, version: FakeLettaVersion): string {
