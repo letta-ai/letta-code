@@ -87,7 +87,16 @@ test("slack status event table: concrete descriptions replace in place and gener
     type: "progress",
     kind: "tool",
     state: "started",
-    message: "Preparing tool call",
+    message: "Preparing tool: exec_command",
+    toolName: "exec_command",
+    sources: [source],
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    kind: "tool",
+    state: "started",
+    message: "Preparing tool: Read",
+    toolName: "Read",
     sources: [source],
   });
   await adapter.handleTurnProgressEvent?.({
