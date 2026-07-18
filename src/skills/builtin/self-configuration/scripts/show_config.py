@@ -22,6 +22,17 @@ from pathlib import Path
 from typing import Any
 
 
+AGENT_SETTING_KEYS = (
+    "agentId",
+    "baseUrl",
+    "pinned",
+    "memfs",
+    "toolset",
+    "systemPromptPreset",
+    "systemPromptHash",
+    "systemPromptVersion",
+)
+
 TOP_LEVEL_KEYS = [
     "tokenStreaming",
     "reasoningTabCycleEnabled",
@@ -256,7 +267,11 @@ def format_agents(
             continue
         for agent in raw_agents:
             if isinstance(agent, dict):
-                agents.append({"scope": scope, **agent})
+                safe_agent = {"scope": scope}
+                for key in AGENT_SETTING_KEYS:
+                    if key in agent:
+                        safe_agent[key] = agent[key]
+                agents.append(safe_agent)
 
     if as_json:
         return agents
@@ -271,15 +286,7 @@ def format_agents(
             scope = agent.get("scope", "?")
             agent_id = agent.get("agentId", "?")
             print(f"\n  [{scope:7}] {agent_id}")
-            for key in (
-                "baseUrl",
-                "pinned",
-                "memfs",
-                "toolset",
-                "systemPromptPreset",
-                "systemPromptHash",
-                "systemPromptVersion",
-            ):
+            for key in AGENT_SETTING_KEYS[1:]:
                 if key in agent:
                     print(f"    {key}: {render_safe_value(agent[key])}")
     print()

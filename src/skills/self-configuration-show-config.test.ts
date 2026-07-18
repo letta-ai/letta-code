@@ -150,6 +150,52 @@ test("show_config runtime reports safe process and settings facts", async () => 
   expect(result.stdout).not.toContain("settings-secret");
 });
 
+test("show_config json agents omit arbitrary agent entry fields", async () => {
+  const root = makeTempDir("self-config-show-config-agents-");
+  const homeDir = join(root, "home");
+  const cwd = join(root, "project");
+  mkdirSync(cwd, { recursive: true });
+  writeJson(join(homeDir, ".letta", "settings.json"), {
+    agents: [
+      {
+        agentId: "agent-test",
+        baseUrl: "https://api.letta.com",
+        pinned: true,
+        memfs: false,
+        toolset: "auto",
+        systemPromptHash: "safe-hash",
+        apiKey: "settings-secret",
+        token: "settings-token",
+        customField: "custom-value",
+      },
+    ],
+  });
+
+  const result = await runShowConfig(
+    ["--cwd", cwd, "--section", "agents", "--json"],
+    { HOME: homeDir },
+  );
+
+  expect(result.stderr).toBe("");
+  expect(result.exitCode).toBe(0);
+  const output = parseJsonOutput(result.stdout);
+  expect(output.agents).toEqual([
+    {
+      scope: "user",
+      agentId: "agent-test",
+      baseUrl: "https://api.letta.com",
+      pinned: true,
+      memfs: false,
+      toolset: "auto",
+      systemPromptHash: "safe-hash",
+    },
+  ]);
+  expect(result.stdout).not.toContain("settings-secret");
+  expect(result.stdout).not.toContain("settings-token");
+  expect(result.stdout).not.toContain("custom-value");
+  expect(result.stdout).not.toContain("customField");
+});
+
 test("show_config runtime represents letta version failures safely", async () => {
   const root = makeTempDir("self-config-show-config-failure-");
   const homeDir = join(root, "home");

@@ -312,6 +312,168 @@ test("update-agent-settings show rejects mutation combinations", async () => {
   expect(result.stderr).toContain("--show cannot be combined with --model");
 });
 
+test("update-agent-settings show rejects irrelevant confirmation flags", async () => {
+  const result = await runScript(updateAgentSettingsScript, [
+    "--target",
+    "agent",
+    "--agent-id",
+    "agent-test",
+    "--show",
+    "--confirm-system-replacement",
+  ]);
+
+  expect(result.stdout).toBe("");
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain(
+    "--show cannot be combined with --confirm-system-replacement",
+  );
+});
+
+test("update-agent-settings rejects cross-agent server operations without escape hatch", async () => {
+  const result = await runScript(
+    updateAgentSettingsScript,
+    ["--target", "agent", "--agent-id", "agent-other", "--show"],
+    { AGENT_ID: "agent-current", LETTA_API_KEY: "test-key" },
+  );
+
+  expect(result.stdout).toBe("");
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("Refusing to target agent agent-other");
+  expect(result.stderr).toContain("AGENT_ID is agent-current");
+  expect(result.stderr).toContain("--allow-other-agent");
+});
+
+test("update-agent-settings allow-other-agent permits verified cross-agent show", async () => {
+  await withJsonServer(
+    (request) => {
+      if (
+        request.method === "GET" &&
+        request.url === "/v1/agents/agent-other"
+      ) {
+        return { status: 200, json: { id: "agent-other", name: "Other" } };
+      }
+      return { status: 500, json: { error: "unexpected request" } };
+    },
+    async (baseUrl, requests) => {
+      const result = await runScript(
+        updateAgentSettingsScript,
+        [
+          "--target",
+          "agent",
+          "--agent-id",
+          "agent-other",
+          "--show",
+          "--allow-other-agent",
+          "--base-url",
+          baseUrl,
+        ],
+        { AGENT_ID: "agent-current", LETTA_API_KEY: "test-key" },
+      );
+
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(0);
+      expect(parseJsonOutput(result.stdout)).toEqual({
+        id: "agent-other",
+        name: "Other",
+      });
+      expect(requests.map((request) => request.method)).toEqual(["GET"]);
+    },
+  );
+});
+
+test("update-agent-settings rejects cross-conversation live writes without escape hatch", async () => {
+  const result = await runScript(
+    updateAgentSettingsScript,
+    [
+      "--target",
+      "conversation",
+      "--conversation-id",
+      "conv-other",
+      "--model",
+      "openai/gpt-5.2",
+    ],
+    { CONVERSATION_ID: "conv-current", LETTA_API_KEY: "test-key" },
+  );
+
+  expect(result.stdout).toBe("");
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("Refusing to target conversation conv-other");
+  expect(result.stderr).toContain("CONVERSATION_ID is conv-current");
+});
+
+test("update-agent-settings live system replacement requires confirmation", async () => {
+  const systemFile = writeTempText(
+    "self-config-system-",
+    "system.txt",
+    "new system prompt\n",
+  );
+
+  const result = await runScript(
+    updateAgentSettingsScript,
+    [
+      "--target",
+      "agent",
+      "--agent-id",
+      "agent-test",
+      "--system-file",
+      systemFile,
+    ],
+    { LETTA_API_KEY: "test-key" },
+  );
+
+  expect(result.stdout).toBe("");
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain(
+    "Live --system-file writes require --confirm-system-replacement",
+  );
+});
+
+test("update-agent-settings confirmed system replacement sends live patch", async () => {
+  const systemFile = writeTempText(
+    "self-config-system-confirmed-",
+    "system.txt",
+    "new system prompt\n",
+  );
+
+  await withJsonServer(
+    (request, body) => {
+      if (
+        request.method === "PATCH" &&
+        request.url === "/v1/agents/agent-test"
+      ) {
+        expect(JSON.parse(body)).toEqual({ system: "new system prompt\n" });
+        return { status: 200, json: { id: "agent-test", name: "Updated" } };
+      }
+      return { status: 500, json: { error: "unexpected request" } };
+    },
+    async (baseUrl, requests) => {
+      const result = await runScript(
+        updateAgentSettingsScript,
+        [
+          "--target",
+          "agent",
+          "--agent-id",
+          "agent-test",
+          "--system-file",
+          systemFile,
+          "--confirm-system-replacement",
+          "--base-url",
+          baseUrl,
+        ],
+        { LETTA_API_KEY: "test-key" },
+      );
+
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(0);
+      expect(parseJsonOutput(result.stdout)).toEqual({
+        id: "agent-test",
+        name: "Updated",
+      });
+      expect(requests.map((request) => request.method)).toEqual(["PATCH"]);
+    },
+  );
+});
+
 test("update-agent-settings merge model dry run fetches current state without patching", async () => {
   const modelSettingsFile = writeTempJson("self-config-model-", "model.json", {
     reasoning: { reasoning_effort: "high" },
@@ -537,4 +699,123 @@ test("metadata dry run remains offline and reports a partial patch preview", asy
     preview: "offline_partial_patch",
     patch: { name: "offline-name" },
   });
+});
+
+test("update-compaction-prompt rejects cross-agent dry runs without escape hatch", async () => {
+  const promptFile = writeTempText(
+    "self-config-prompt-mismatch-",
+    "prompt.txt",
+    "new compaction prompt\n",
+  );
+
+  const result = await runScript(
+    updateCompactionPromptScript,
+    ["--agent-id", "agent-other", "--prompt-file", promptFile, "--dry-run"],
+    { AGENT_ID: "agent-current", LETTA_API_KEY: "test-key" },
+  );
+
+  expect(result.stdout).toBe("");
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("Refusing to target agent agent-other");
+  expect(result.stderr).toContain("AGENT_ID is agent-current");
+});
+
+test("update-compaction-prompt live writes require confirmation", async () => {
+  const promptFile = writeTempText(
+    "self-config-prompt-confirm-",
+    "prompt.txt",
+    "new compaction prompt\n",
+  );
+
+  const result = await runScript(
+    updateCompactionPromptScript,
+    ["--agent-id", "agent-test", "--prompt-file", promptFile],
+    { LETTA_API_KEY: "test-key" },
+  );
+
+  expect(result.stdout).toBe("");
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain(
+    "Live compaction prompt writes require --confirm-compaction-prompt",
+  );
+});
+
+test("update-compaction-prompt confirmed live write fetches then patches", async () => {
+  const promptFile = writeTempText(
+    "self-config-prompt-confirmed-",
+    "prompt.txt",
+    "new compaction prompt\n",
+  );
+
+  await withJsonServer(
+    (request, body) => {
+      if (request.method === "GET" && request.url === "/v1/agents/agent-test") {
+        return {
+          status: 200,
+          json: {
+            id: "agent-test",
+            compaction_settings: {
+              mode: "self_compact_sliding_window",
+              clip_chars: 50000,
+              prompt: "old prompt",
+            },
+          },
+        };
+      }
+      if (
+        request.method === "PATCH" &&
+        request.url === "/v1/agents/agent-test"
+      ) {
+        expect(JSON.parse(body)).toEqual({
+          compaction_settings: {
+            mode: "self_compact_sliding_window",
+            clip_chars: 50000,
+            prompt: "new compaction prompt\n",
+          },
+        });
+        return {
+          status: 200,
+          json: {
+            id: "agent-test",
+            compaction_settings: {
+              mode: "self_compact_sliding_window",
+              clip_chars: 50000,
+              prompt: "new compaction prompt\n",
+            },
+          },
+        };
+      }
+      return { status: 500, json: { error: "unexpected request" } };
+    },
+    async (baseUrl, requests) => {
+      const result = await runScript(
+        updateCompactionPromptScript,
+        [
+          "--agent-id",
+          "agent-test",
+          "--prompt-file",
+          promptFile,
+          "--confirm-compaction-prompt",
+          "--base-url",
+          baseUrl,
+        ],
+        { LETTA_API_KEY: "test-key" },
+      );
+
+      expect(result.stderr).toBe("");
+      expect(result.exitCode).toBe(0);
+      expect(parseJsonOutput(result.stdout)).toEqual({
+        id: "agent-test",
+        compaction_settings: {
+          mode: "self_compact_sliding_window",
+          clip_chars: 50000,
+          prompt: "new compaction prompt\n",
+        },
+      });
+      expect(requests.map((request) => request.method)).toEqual([
+        "GET",
+        "PATCH",
+      ]);
+    },
+  );
 });

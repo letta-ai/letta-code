@@ -25,6 +25,8 @@ Options:
   --system-file <path>                Full replacement system prompt (agent target only)
   --compaction-settings-file <json>   JSON object for compaction_settings (agent target only)
   --merge-compaction-settings         Merge file into current compaction_settings; fetches current state
+  --allow-other-agent                 Permit server operations on a different agent/conversation than the current env ID
+  --confirm-system-replacement        Required for live non-dry-run --system-file writes
   --show                              GET and print safe effective fields only
   --dry-run                           Print patch body without PATCHing
 `);
@@ -44,6 +46,8 @@ function parseArgs(argv: string[]): Args {
         "dry-run",
         "merge-model-settings",
         "merge-compaction-settings",
+        "allow-other-agent",
+        "confirm-system-replacement",
         "show",
       ].includes(key)
     ) {
@@ -163,6 +167,8 @@ async function main() {
 
   const dryRun = args["dry-run"] === true;
   const show = args.show === true;
+  const allowOtherAgent = args["allow-other-agent"] === true;
+  const confirmSystemReplacement = args["confirm-system-replacement"] === true;
   const baseUrl = String(
     args["base-url"] || process.env.LETTA_BASE_URL || "https://api.letta.com",
   ).replace(/\/$/, "");
@@ -182,14 +188,25 @@ async function main() {
   ].filter((key) => args[key] !== undefined);
 
   if (show) {
-    const invalidFlagNames = dryRun
-      ? [...updateFlagNames, "dry-run"]
-      : updateFlagNames;
+    const invalidFlagNames = [
+      ...updateFlagNames,
+      ...(dryRun ? ["dry-run"] : []),
+      ...(confirmSystemReplacement ? ["confirm-system-replacement"] : []),
+    ];
     if (invalidFlagNames.length > 0) {
       throw new Error(
         `--show cannot be combined with --${invalidFlagNames.join(", --")}`,
       );
     }
+  }
+
+  if (
+    confirmSystemReplacement &&
+    (dryRun || args["system-file"] === undefined)
+  ) {
+    throw new Error(
+      "--confirm-system-replacement is only valid for live --system-file writes",
+    );
   }
 
   if (mergeModelSettings && !args["model-settings-file"]) {
@@ -200,21 +217,6 @@ async function main() {
       "--merge-compaction-settings requires --compaction-settings-file",
     );
   }
-
-  const needsCurrent = show || mergeModelSettings || mergeCompactionSettings;
-  if ((!dryRun || needsCurrent) && !apiKey) {
-    throw new Error(
-      show
-        ? "Set LETTA_API_KEY for --show"
-        : needsCurrent && dryRun
-          ? "Set LETTA_API_KEY for merge-preserving dry runs"
-          : "Set LETTA_API_KEY",
-    );
-  }
-  const headers = {
-    Authorization: `Bearer ${apiKey}`,
-    "Content-Type": "application/json",
-  };
 
   const id =
     target === "agent"
@@ -238,6 +240,49 @@ async function main() {
       "name, description, system, and compaction settings are agent-level only",
     );
   }
+
+  if (
+    !dryRun &&
+    args["system-file"] !== undefined &&
+    !confirmSystemReplacement
+  ) {
+    throw new Error(
+      "Live --system-file writes require --confirm-system-replacement; use --dry-run to preview without confirmation",
+    );
+  }
+
+  const needsCurrent = show || mergeModelSettings || mergeCompactionSettings;
+  const usesServer = needsCurrent || !dryRun;
+  const currentId =
+    target === "agent" ? process.env.AGENT_ID : process.env.CONVERSATION_ID;
+  const currentIdName = target === "agent" ? "AGENT_ID" : "CONVERSATION_ID";
+  const idFlagName = target === "agent" ? "agent-id" : "conversation-id";
+  const targetMismatch = Boolean(currentId && id !== currentId);
+
+  if (allowOtherAgent && (!usesServer || !targetMismatch)) {
+    throw new Error(
+      "--allow-other-agent is only valid when a server operation targets a different agent/conversation than the current env ID",
+    );
+  }
+  if (targetMismatch && usesServer && !allowOtherAgent) {
+    throw new Error(
+      `Refusing to target ${target} ${id} because ${currentIdName} is ${currentId}. Pass --allow-other-agent only after verifying the cross-${target} operation is intentional. If ${currentIdName} is unset, explicit --${idFlagName} remains allowed for out-of-band recovery.`,
+    );
+  }
+
+  if (usesServer && !apiKey) {
+    throw new Error(
+      show
+        ? "Set LETTA_API_KEY for --show"
+        : needsCurrent && dryRun
+          ? "Set LETTA_API_KEY for merge-preserving dry runs"
+          : "Set LETTA_API_KEY",
+    );
+  }
+  const headers = {
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+  };
 
   let current: JsonObject = {};
   if (needsCurrent) {

@@ -14,7 +14,14 @@ function parseArgs(argv: string[]): Args {
       throw new Error(`Unexpected positional argument: ${arg}`);
     }
     const key = arg.slice(2);
-    if (["dry-run", "prompt-acknowledgement"].includes(key)) {
+    if (
+      [
+        "dry-run",
+        "prompt-acknowledgement",
+        "allow-other-agent",
+        "confirm-compaction-prompt",
+      ].includes(key)
+    ) {
       out[key] = true;
       continue;
     }
@@ -39,6 +46,8 @@ Options:
   --clip-chars <int|null>          Optional summary character cap
   --sliding-window-percentage <n>  Optional fraction for sliding-window modes
   --prompt-acknowledgement         Set prompt_acknowledgement=true
+  --allow-other-agent              Permit server operations on a different agent than AGENT_ID
+  --confirm-compaction-prompt      Required for live non-dry-run compaction prompt writes
   --dry-run                        Fetch current settings and print patch body without PATCHing
 `);
   process.exit(2);
@@ -88,6 +97,35 @@ async function main() {
   if (!args["prompt-file"]) usage();
 
   const dryRun = args["dry-run"] === true;
+  const allowOtherAgent = args["allow-other-agent"] === true;
+  const confirmCompactionPrompt = args["confirm-compaction-prompt"] === true;
+
+  if (confirmCompactionPrompt && dryRun) {
+    throw new Error(
+      "--confirm-compaction-prompt is only valid for live compaction prompt writes",
+    );
+  }
+  if (!dryRun && !confirmCompactionPrompt) {
+    throw new Error(
+      "Live compaction prompt writes require --confirm-compaction-prompt; use --dry-run to preview without confirmation",
+    );
+  }
+
+  const agentId = String(args["agent-id"] || process.env.AGENT_ID || "");
+  if (!agentId) throw new Error("Set AGENT_ID or pass --agent-id");
+
+  const currentAgentId = process.env.AGENT_ID;
+  const targetMismatch = Boolean(currentAgentId && agentId !== currentAgentId);
+  if (allowOtherAgent && !targetMismatch) {
+    throw new Error(
+      "--allow-other-agent is only valid when targeting a different agent than AGENT_ID",
+    );
+  }
+  if (targetMismatch && !allowOtherAgent) {
+    throw new Error(
+      `Refusing to target agent ${agentId} because AGENT_ID is ${currentAgentId}. Pass --allow-other-agent only after verifying the cross-agent operation is intentional. If AGENT_ID is unset, explicit --agent-id remains allowed for out-of-band recovery.`,
+    );
+  }
 
   const apiKey = process.env.LETTA_API_KEY;
   if (!apiKey) {
@@ -97,9 +135,6 @@ async function main() {
         : "Set LETTA_API_KEY",
     );
   }
-
-  const agentId = String(args["agent-id"] || process.env.AGENT_ID || "");
-  if (!agentId) throw new Error("Set AGENT_ID or pass --agent-id");
 
   const baseUrl = String(
     args["base-url"] || process.env.LETTA_BASE_URL || "https://api.letta.com",

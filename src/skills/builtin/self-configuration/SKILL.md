@@ -36,6 +36,12 @@ Decision rule: if the model should remember and reason about it, use memory. If 
 
 Never print secrets. If inspecting env settings, list keys unless the user explicitly asks for values and the values are safe to reveal.
 
+## Guardrails are not security boundaries
+
+These helper scripts reduce accidental harm. They are not a security boundary against an agent with unrestricted Bash, raw curl/SDK access, API credentials, or filesystem access. `LETTA_API_KEY` and the installed CLI may have authority over other agents visible to the same account/server.
+
+Never target another agent or conversation unless explicitly directed and verified. If `AGENT_ID` or `CONVERSATION_ID` is set, the server-setting helpers reject mismatched live/GET operations unless `--allow-other-agent` is present. If the current env ID is absent, explicit IDs remain usable for out-of-band recovery.
+
 If a broken model or prompt prevents the agent from completing a turn, recover out of band from another shell or client with the CLI/API. Do not depend on the broken model to repair itself.
 
 ## Inspect effective state before changing it
@@ -98,7 +104,7 @@ export CONVERSATION_ID=conv-...   # only needed for conversation-scoped changes
 export LETTA_BASE_URL=https://api.letta.com   # optional; default is api.letta.com
 ```
 
-The scripts in this skill default to `AGENT_ID`, `CONVERSATION_ID`, and `LETTA_BASE_URL`. Pass explicit IDs when there is any doubt. `--show` fetches the selected agent or conversation and prints only safe effective fields. Dry-run output is labeled: `offline_partial_patch` means no server state was fetched; `effective_merged_patch` means the script fetched current server state and shows the merged patch that would be sent.
+The scripts in this skill default to `AGENT_ID`, `CONVERSATION_ID`, and `LETTA_BASE_URL`. Pass explicit IDs when there is any doubt. `--show` fetches the selected agent or conversation and prints only safe effective fields. Server operations reject target IDs that differ from the current env ID unless `--allow-other-agent` is passed. Dry-run output is labeled: `offline_partial_patch` means no server state was fetched; `effective_merged_patch` means the script fetched current server state and shows the merged patch that would be sent.
 
 ### Dry-runable update script
 
@@ -173,9 +179,9 @@ Provider reasoning fields differ. Read [`references/model-settings.md`](referenc
 
 ### Compaction settings
 
-Compaction controls how old messages are summarized when context is evicted. Bad compaction prompts lose work. Good ones preserve goals, files, commands, test results, blockers, and current state.
+Compaction controls how old messages are summarized when context is evicted. Bad compaction prompts cause delayed, progressive context loss as future compactions discard useful state. Good ones preserve goals, files, commands, test results, blockers, and current state.
 
-Use the helper for prompt changes. Even `--dry-run` fetches current compaction settings so omitted fields are preserved in the preview.
+Use the helper for prompt changes. Even `--dry-run` fetches current compaction settings so omitted fields are preserved in the preview. Live writes require `--confirm-compaction-prompt`.
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/update-compaction-prompt.ts \
@@ -189,7 +195,7 @@ Read [`references/compaction-prompt-patterns.md`](references/compaction-prompt-p
 
 ### System prompt replacement
 
-This is a sharp tool. Use it only when the user explicitly asks to replace the server-side system prompt or when repairing a known server-side prompt state.
+This is a sharp tool. A bad system prompt can self-brick the agent. Use it only when the user explicitly asks to replace the server-side system prompt or when repairing a known server-side prompt state. Live writes require `--confirm-system-replacement`; dry runs do not.
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
@@ -249,9 +255,9 @@ Toolset values currently include `auto`, `default`, `codex`, `codex_snake`, `gem
 
 ## Permissions
 
-Permissions decide whether tool calls are allowed, denied, or require approval. Valid modes are `standard`, `acceptEdits`, and `unrestricted`; legacy `default` maps to `standard`, while `bypassPermissions` and `fullAccess` map to `unrestricted`. The default mode is `unrestricted` unless startup flags or settings override it.
+Permissions decide whether tool calls are allowed, denied, or require approval. User/global permission rules affect all agents using that settings file: `allow` can weaken review, while `deny` and `alwaysAsk` can brick workflows. Valid modes are `standard`, `acceptEdits`, and `unrestricted`; legacy `default` maps to `standard`, while `bypassPermissions` and `fullAccess` map to `unrestricted`. The default mode is `unrestricted` unless startup flags or settings override it.
 
-The removed `memory` mode is invalid; memory access is governed by normal rules and cross-agent guards. `permissions.mode` supplies a persisted startup default, rule lists still take precedence, and channel accounts have their own `defaultPermissionMode`. Inspect all three when channel approvals differ from the interactive CLI.
+The removed `memory` mode is invalid; memory access is governed by normal tool permissions plus the server/filesystem checks on the path used. These helper guardrails do not restrict raw Bash/API access. `permissions.mode` supplies a persisted startup default, rule lists still take precedence, and channel accounts have their own `defaultPermissionMode`. Inspect all three when channel approvals differ from the interactive CLI.
 
 Rule examples:
 
@@ -282,14 +288,15 @@ Add a rule with the helper:
 python3 <SKILL_DIR>/scripts/add_permission.py \
   --rule "Bash(git push:*)" \
   --type alwaysAsk \
-  --scope user
+  --scope user \
+  --confirm-user-scope
 ```
 
-Use project or local scope only when the current working directory is deliberately the project root.
+`add_permission.py` only adds rules. Remove rules manually for now. User/global writes require `--confirm-user-scope`; use `--dry-run` to preview. Use project or local scope only when the current working directory is deliberately the project root.
 
 ## Mods
 
-Use mods when the user wants deterministic runtime behavior that cannot be represented as a simple setting:
+Use mods when the user wants deterministic runtime behavior that cannot be represented as a simple setting. Managed mods are global for the user install, not per-agent:
 
 - new tools or command adapters
 - slash commands
@@ -303,7 +310,7 @@ Load `creating-mods` before implementing mods. Load `customizing-commands` for s
 Inspect and control managed mod packages with:
 
 ```bash
-letta mods list --agent "$AGENT_ID"
+letta mods list
 letta mods disable <package-spec>
 letta mods enable <package-spec>
 letta mods remove <package-spec>
@@ -320,11 +327,11 @@ Use skills when the user wants you to become good at a repeatable workflow. Sour
 3. Global skills: `~/.letta/skills/`
 4. Bundled skills
 
-Load `creating-skills` to create or edit a skill. Load `acquiring-skills` when the user asks for a capability you do not already have.
+Load `creating-skills` to create or edit a skill. Load `acquiring-skills` when the user asks for a capability you do not already have. Project, global, bundled, and agent-owned skills have different visibility; verify the target scope before changing skills another agent may load.
 
 ## Provider connections
 
-Provider connection is agent-executable through `letta connect`. This is separate from `LETTA_API_KEY`, which authenticates Letta API requests.
+Provider connection is agent-executable through `letta connect`. This is separate from `LETTA_API_KEY`, which authenticates Letta API requests. Provider connections may be visible to the same account/server; treat that as credential scope to verify, not as a critical exploit by itself.
 
 Inspect the installed command shape first:
 
@@ -345,7 +352,7 @@ letta connect bedrock --method profile --profile "$AWS_PROFILE" --region "$AWS_R
 
 Before connecting, verify whether the target agent/backend is API/Constellation or local. A provider saved to the wrong backend does not configure the current agent.
 
-Never print provider keys. Prefer existing secret/environment references over literal credentials in commands. Browser login, device-code confirmation, or account consent may require the user; stop at that authorization boundary and ask the user to complete it instead of claiming success.
+Never print provider keys. Prefer existing secret/environment references over literal credentials in commands. Literal secrets in argv can leak through shell history or process listings; avoid them unless the command has no safer input path and the user approved it. Browser login, device-code confirmation, or account consent requires human consent; stop at that authorization boundary and ask the user to complete it instead of claiming success.
 
 After connecting, verify the provider/model from the same backend and process that will run the agent. Do not infer success from a saved credential alone.
 
@@ -364,7 +371,7 @@ letta channels pair --channel <channel> --code <code> --agent <agent-id> --conve
 letta server --channels <channel>
 ```
 
-Channel state lives under `~/.letta/channels/<channel>/` (`config.yaml`, `accounts.json`, routing/pairing files, and channel runtimes). Account tokens may be plaintext in `file` mode or keyring placeholders in `keyring`/`auto` mode. Configure storage with `channelCredentialsStore` (`file`, `keyring`, `auto`) or `LETTA_CHANNEL_CREDENTIALS_STORE`; do not treat keyring placeholders as usable secrets and do not print tokens.
+Channel state lives under `~/.letta/channels/<channel>/` (`config.yaml`, `accounts.json`, routing/pairing files, and channel runtimes). Account tokens may be plaintext in `file` mode or keyring placeholders in `keyring`/`auto` mode. Configure storage with `channelCredentialsStore` (`file`, `keyring`, `auto`) or `LETTA_CHANNEL_CREDENTIALS_STORE`; do not treat keyring placeholders as usable secrets and do not print tokens. Channel configuration and pairing can route external messages to other agents/conversations; verify IDs and get human consent for interactive authorization.
 
 Changing the credential-store mode does not migrate existing tokens. A file/keyring mismatch can make an otherwise configured listener fail with `invalid_auth`; verify where credentials are stored before changing the mode.
 
@@ -379,7 +386,7 @@ letta cron list
 letta cron add --name "weekly-review" --description "Weekly project review" --prompt "Ask the user for the weekly project review." --cron "0 9 * * 1" --agent "$AGENT_ID" --conversation "$CONVERSATION_ID"
 ```
 
-Scheduled tasks fire only while a Letta session/listener is running. Verify agent and conversation binding explicitly when exact routing matters.
+Scheduled tasks fire only while a Letta session/listener is running. Cron bindings can target other agents/conversations visible to the account; verify agent and conversation IDs explicitly when exact routing matters.
 
 ## CLI startup flags
 
