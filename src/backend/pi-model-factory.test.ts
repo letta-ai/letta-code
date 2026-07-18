@@ -158,6 +158,68 @@ describe("pi model factory", () => {
     }
   });
 
+  test("routes ChatGPT OAuth through its configured proxy base URL", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-chatgpt-proxy-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "chatgpt_oauth",
+        providerName: "chatgpt-plus-pro",
+        apiKey: JSON.stringify({
+          access_token: "chatgpt-access-token",
+          id_token: "chatgpt-id-token",
+          refresh_token: "chatgpt-refresh-token",
+          account_id: "account-123",
+          expires_at: Date.now() + 60_000,
+        }),
+        baseURL: "https://proxy.example.test/backend-api",
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "chatgpt-plus-pro/gpt-5.6-sol",
+        { provider_type: "chatgpt_oauth" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.model.baseUrl).toBe(
+        "https://proxy.example.test/backend-api",
+      );
+      expect(resolved.model.api).toBe("openai-responses");
+      expect(resolved.headers).toMatchObject({
+        "chatgpt-account-id": "account-123",
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves Codex API semantics for API-key proxy routes", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-codex-api-proxy-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "openai-codex",
+        providerName: "openai-codex",
+        apiKey: "codex-api-key",
+        baseURL: "https://proxy.example.test/backend-api",
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "openai-codex/gpt-5.5",
+        { provider_type: "openai-codex" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.model.baseUrl).toBe(
+        "https://proxy.example.test/backend-api",
+      );
+      expect(resolved.model.api).toBe("openai-codex-responses");
+      expect(resolved.headers).not.toHaveProperty("chatgpt-account-id");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("resolves local ChatGPT OAuth GPT-5.6 with max reasoning", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-chatgpt-56-"));
     try {

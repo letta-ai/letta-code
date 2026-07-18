@@ -1,6 +1,5 @@
 import type {
   AssistantMessage,
-  AssistantMessageEvent,
   Context,
   Message,
   Model,
@@ -9,12 +8,7 @@ import type {
   TSchema,
   Usage,
 } from "@earendil-works/pi-ai";
-import {
-  isContextOverflow,
-  stream,
-  streamSimple,
-  Type,
-} from "@earendil-works/pi-ai/compat";
+import { isContextOverflow, Type } from "@earendil-works/pi-ai/compat";
 import type { LocalCompactionStats } from "@/backend/local/compaction";
 import {
   emptyLocalUsage,
@@ -38,6 +32,7 @@ import {
   reasoningForSettings,
   resolvePiModelForAgent,
 } from "./pi-model-factory";
+import { defaultPiStream, type PiStreamFunction } from "./pi-stream-function";
 import type {
   LlmEndErrorInfo,
   LlmEndInfo,
@@ -89,13 +84,7 @@ function localProviderRequestByteTarget(
   return Math.floor(limit * 0.75);
 }
 
-export type PiStreamFunction = (
-  model: Model<string>,
-  context: Context,
-  options?: SimpleStreamOptions & Record<string, unknown>,
-) => AsyncIterable<AssistantMessageEvent> & {
-  result(): Promise<AssistantMessage>;
-};
+export type { PiStreamFunction } from "./pi-stream-function";
 
 export interface PiStreamAdapterOptions {
   stream?: PiStreamFunction;
@@ -634,17 +623,6 @@ function elideImagePayloadsForProviderRetry(
   };
 }
 
-function defaultStream(
-  model: Model<string>,
-  context: Context,
-  options?: SimpleStreamOptions & Record<string, unknown>,
-) {
-  if (model.api === "bedrock-converse-stream") {
-    return stream(model, context, options);
-  }
-  return streamSimple(model, context, options);
-}
-
 export class PiStreamAdapter implements ProviderStreamAdapter {
   private readonly runStream: PiStreamFunction;
   private readonly abortSignal?: AbortSignal;
@@ -655,7 +633,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
   private readonly onLlmEnd?: PiStreamAdapterOptions["onLlmEnd"];
 
   constructor(options: PiStreamAdapterOptions = {}) {
-    this.runStream = options.stream ?? defaultStream;
+    this.runStream = options.stream ?? defaultPiStream;
     this.abortSignal = options.abortSignal;
     this.localProviderAuthStorageDir = options.localProviderAuthStorageDir;
     this.onContextWindowOverflow = options.onContextWindowOverflow;
@@ -704,6 +682,9 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       input.agent.model_settings,
       input.agent.model,
     );
+    const usesChatGPTResponsesProxy =
+      resolved.model.provider === "openai-codex" &&
+      resolved.model.api === "openai-responses";
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
@@ -713,7 +694,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       maxRetries: 0,
       sessionId: input.conversationId,
       ...(reasoning ? { reasoning } : {}),
-      ...(maxTokensForSettings(input.agent.model_settings)
+      ...(!usesChatGPTResponsesProxy &&
+      maxTokensForSettings(input.agent.model_settings)
         ? { maxTokens: maxTokensForSettings(input.agent.model_settings) }
         : {}),
       ...(serviceTierForSettings(resolved.model, input.agent.model_settings)
