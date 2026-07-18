@@ -3,12 +3,11 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
-  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, delimiter, dirname, join, normalize } from "node:path";
 
 const repoRoot = process.cwd();
 const showConfigScript = join(
@@ -31,6 +30,9 @@ const isolatedEnvKeys = [
   "LETTA_BACKEND",
   "MEMORY_DIR",
   "HOME",
+  "USERPROFILE",
+  "HOMEDRIVE",
+  "HOMEPATH",
 ];
 
 function makeTempDir(prefix: string): string {
@@ -44,10 +46,57 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-function writeFakeLetta(binDir: string, body: string): string {
+type FakeLettaVersion = {
+  stdout?: string;
+  stderr?: string;
+  exitCode: number;
+};
+
+function expectPathSuffix(value: unknown, suffixParts: string[]): void {
+  expect(typeof value).toBe("string");
+  expect(normalize(value as string).endsWith(join(...suffixParts))).toBe(true);
+}
+
+function writeFakeLetta(binDir: string, version: FakeLettaVersion): string {
   mkdirSync(binDir, { recursive: true });
-  const lettaPath = join(binDir, "letta");
-  writeFileSync(lettaPath, `#!/bin/sh\n${body}\n`, "utf8");
+  const isWindows = process.platform === "win32";
+  const executableName = isWindows ? "letta.cmd" : "letta";
+  const lettaPath = join(binDir, executableName);
+  if (isWindows) {
+    const versionLines = [
+      "@echo off",
+      'if "%~1"=="--version" (',
+      ...(version.stdout ? [`  echo ${version.stdout}`] : []),
+      ...(version.stderr ? [`  echo ${version.stderr} 1>&2`] : []),
+      `  exit /b ${version.exitCode}`,
+      ")",
+      "echo unexpected command %~1 1>&2",
+      "exit /b 42",
+      "",
+    ];
+    writeFileSync(lettaPath, versionLines.join("\r\n"), "utf8");
+    return lettaPath;
+  }
+
+  const stdoutLine = version.stdout
+    ? `printf ${JSON.stringify(`${version.stdout}\n`)}`
+    : "";
+  const stderrLine = version.stderr
+    ? `printf ${JSON.stringify(`${version.stderr}\n`)} >&2`
+    : "";
+  writeFileSync(
+    lettaPath,
+    `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  ${stdoutLine}
+  ${stderrLine}
+  exit ${version.exitCode}
+fi
+printf "unexpected command %s\\n" "$1" >&2
+exit 42
+`,
+    "utf8",
+  );
   chmodSync(lettaPath, 0o755);
   return lettaPath;
 }
@@ -63,6 +112,9 @@ async function runShowConfig(
   );
   for (const key of isolatedEnvKeys) delete childEnv[key];
   Object.assign(childEnv, env);
+  if (env.HOME !== undefined && env.USERPROFILE === undefined) {
+    childEnv.USERPROFILE = env.HOME;
+  }
 
   const proc = Bun.spawn({
     cmd: ["python3", showConfigScript, ...args],
@@ -95,10 +147,10 @@ test("show_config runtime reports safe process and settings facts", async () => 
   const cwd = join(root, "project");
   const binDir = join(root, "bin");
   const memoryDir = join(root, "memory");
-  const lettaPath = writeFakeLetta(
-    binDir,
-    'if [ "$1" = "--version" ]; then printf "letta-code 9.9.9\\n"; exit 0; fi\nprintf "unexpected command %s\\n" "$1" >&2\nexit 42',
-  );
+  const lettaPath = writeFakeLetta(binDir, {
+    stdout: "letta-code 9.9.9",
+    exitCode: 0,
+  });
 
   mkdirSync(cwd, { recursive: true });
   writeJson(join(homeDir, ".letta", "settings.json"), {
@@ -120,7 +172,7 @@ test("show_config runtime reports safe process and settings facts", async () => 
     ["--cwd", cwd, "--section", "runtime", "--json"],
     {
       HOME: homeDir,
-      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
       AGENT_ID: "agent-test",
       CONVERSATION_ID: "conv-test",
       LETTA_API_KEY: "runtime-secret",
@@ -133,9 +185,8 @@ test("show_config runtime reports safe process and settings facts", async () => 
   expect(result.stderr).toBe("");
   expect(result.exitCode).toBe(0);
   const output = parseJsonOutput(result.stdout);
-  expect(output.runtime).toEqual({
-    cwd: realpathSync(cwd),
-    letta_binary: lettaPath,
+  const runtime = output.runtime as Record<string, unknown>;
+  expect(runtime).toMatchObject({
     letta_version: "letta-code 9.9.9",
     saved_backend: "local",
     agent_id: "agent-test",
@@ -146,6 +197,12 @@ test("show_config runtime reports safe process and settings facts", async () => 
     api_key_present: true,
     memory_dir: memoryDir,
   });
+  expectPathSuffix(runtime.cwd, [basename(root), "project"]);
+  expectPathSuffix(runtime.letta_binary, [
+    basename(root),
+    "bin",
+    basename(lettaPath),
+  ]);
   expect(result.stdout).not.toContain("runtime-secret");
   expect(result.stdout).not.toContain("settings-secret");
 });
@@ -201,17 +258,17 @@ test("show_config runtime represents letta version failures safely", async () =>
   const homeDir = join(root, "home");
   const cwd = join(root, "project");
   const binDir = join(root, "bin");
-  writeFakeLetta(
-    binDir,
-    'if [ "$1" = "--version" ]; then printf "broken version check\\n" >&2; exit 7; fi\nexit 42',
-  );
+  writeFakeLetta(binDir, {
+    stderr: "broken version check",
+    exitCode: 7,
+  });
 
   mkdirSync(cwd, { recursive: true });
   const result = await runShowConfig(
     ["--cwd", cwd, "--section", "runtime", "--json"],
     {
       HOME: homeDir,
-      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
     },
   );
 

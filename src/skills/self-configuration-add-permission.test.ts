@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, normalize } from "node:path";
 
 const repoRoot = process.cwd();
 const addPermissionScript = join(
@@ -22,6 +22,11 @@ const addPermissionScript = join(
   "add_permission.py",
 );
 const tempDirs: string[] = [];
+
+function expectPathSuffix(value: unknown, suffixParts: string[]): void {
+  expect(typeof value).toBe("string");
+  expect(normalize(value as string).endsWith(join(...suffixParts))).toBe(true);
+}
 
 function makeTempDir(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -44,7 +49,13 @@ async function runAddPermission(
     ),
   );
   delete childEnv.HOME;
+  delete childEnv.USERPROFILE;
+  delete childEnv.HOMEDRIVE;
+  delete childEnv.HOMEPATH;
   Object.assign(childEnv, env);
+  if (env.HOME !== undefined && env.USERPROFILE === undefined) {
+    childEnv.USERPROFILE = env.HOME;
+  }
 
   const proc = Bun.spawn({
     cmd: ["python3", addPermissionScript, ...args],
@@ -130,13 +141,19 @@ test("add_permission dry run does not require user confirmation or write", async
 
   expect(result.stderr).toBe("");
   expect(result.exitCode).toBe(0);
-  expect(JSON.parse(result.stdout)).toEqual({
-    path: settingsPath,
+  const output = JSON.parse(result.stdout);
+  expect(output).toMatchObject({
     scope: "user",
     type: "allow",
     rule: "Bash(git diff:*)",
     would_add: true,
   });
+  expectPathSuffix(output.path, [
+    basename(root),
+    "home",
+    ".letta",
+    "settings.json",
+  ]);
   expect(() => readFileSync(settingsPath, "utf8")).toThrow();
 });
 
@@ -146,6 +163,7 @@ test("add_permission confirmed user write succeeds and preserves file mode", asy
   const settingsPath = join(homeDir, ".letta", "settings.json");
   writeJson(settingsPath, { permissions: { allow: [] } });
   chmodSync(settingsPath, 0o640);
+  const beforeMode = statSync(settingsPath).mode & 0o777;
 
   const result = await runAddPermission(
     [
@@ -165,5 +183,5 @@ test("add_permission confirmed user write succeeds and preserves file mode", asy
   expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({
     permissions: { allow: ["Bash(git diff:*)"] },
   });
-  expect(statSync(settingsPath).mode & 0o777).toBe(0o640);
+  expect(statSync(settingsPath).mode & 0o777).toBe(beforeMode);
 });
