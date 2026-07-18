@@ -38,16 +38,6 @@ export function formatSlackToolNameForDisplay(toolName: string): string {
   return toolName;
 }
 
-function isSlackShellTool(toolName: string): boolean {
-  const normalized = toolName.toLowerCase();
-  return (
-    normalized === "bash" ||
-    normalized === "exec_command" ||
-    normalized === "shell_command" ||
-    normalized === "shell"
-  );
-}
-
 export function resolveSlackConcreteActivity(
   event: ChannelTurnProgressEvent,
 ): string | null {
@@ -65,12 +55,7 @@ export function resolveSlackConcreteActivity(
     return null;
   }
 
-  for (const description of [
-    event.toolTitle,
-    event.toolDetails,
-    isSlackShellTool(event.toolName) ? event.message : undefined,
-    formatSlackToolNameForDisplay(event.toolName),
-  ]) {
+  for (const description of [event.toolTitle, event.toolDetails]) {
     if (!isNonEmptyString(description)) {
       continue;
     }
