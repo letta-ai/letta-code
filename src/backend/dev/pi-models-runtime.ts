@@ -17,11 +17,20 @@ import {
   InMemoryModelsStore,
 } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
-import { createLocalPiCredentialStore } from "@/backend/local/local-pi-credential-store";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import {
+  createLocalPiCredentialStore,
+  localNamesForProviderId,
+} from "@/backend/local/local-pi-credential-store";
 import {
   getLocalProviderRecordByName,
   localProviderApiKeyFromRecord,
 } from "@/backend/local/local-provider-auth-store";
+import {
+  type ChatGPTResponsesProxyRoute,
+  createChatGPTResponsesProxyProvider,
+  OPENAI_CODEX_PROVIDER_ID,
+} from "./pi-chatgpt-proxy-provider";
 import {
   createLlamaCppPiProvider,
   LLAMA_CPP_PI_PROVIDER_ID,
@@ -162,6 +171,24 @@ function connectionSignature(connection: LocalEndpointConnection): string {
   ].join(" ");
 }
 
+function chatGPTResponsesProxyRoute(
+  storageDir?: string,
+): ChatGPTResponsesProxyRoute | null {
+  for (const name of localNamesForProviderId(OPENAI_CODEX_PROVIDER_ID)) {
+    const record = getLocalProviderRecordByName(name, storageDir);
+    const baseURL = record?.base_url?.trim();
+    if (
+      record?.provider_type === "chatgpt_oauth" &&
+      record.auth.type === "oauth" &&
+      baseURL
+    ) {
+      return { baseURL, providerAlias: record.name };
+    }
+  }
+
+  return null;
+}
+
 /**
  * Per-local-backend pi-ai Models runtime: the source of truth for provider
  * registration, model lookup, refresh, and stream dispatch in the local turn
@@ -181,6 +208,7 @@ export class LocalPiModelsRuntime {
   private readonly fetchImpl?: typeof fetch;
   private readonly endpointSignatures = new Map<string, string>();
   private readonly modSignatures = new Map<string, string>();
+  private chatGPTProviderSignature: string | undefined;
   private readonly modelsStore = new InMemoryModelsStore();
   private readonly credentials: CredentialStore;
   private readonly dynamicBuiltinIds: ReadonlySet<string>;
@@ -370,6 +398,9 @@ export class LocalPiModelsRuntime {
           (provider) => provider.id === providerId,
         );
         if (builtin) this.models.setProvider(builtin);
+        if (providerId === OPENAI_CODEX_PROVIDER_ID) {
+          this.chatGPTProviderSignature = undefined;
+        }
       }
       return false;
     }
@@ -400,6 +431,24 @@ export class LocalPiModelsRuntime {
     );
     this.modSignatures.set(providerId, signature);
     return true;
+  }
+
+  private ensureChatGPTProvider(providerId: string): void {
+    if (providerId !== OPENAI_CODEX_PROVIDER_ID) return;
+
+    const route = chatGPTResponsesProxyRoute(this.storageDir);
+    const signature = route
+      ? `proxy\0${route.providerAlias}\0${route.baseURL}`
+      : "direct";
+    if (signature === this.chatGPTProviderSignature) return;
+
+    const upstream = openaiCodexProvider();
+    this.models.setProvider(
+      route
+        ? createChatGPTResponsesProxyProvider({ upstream, route })
+        : upstream,
+    );
+    this.chatGPTProviderSignature = signature;
   }
 
   private ensureEndpointProvider(providerId: string): void {
@@ -439,6 +488,7 @@ export class LocalPiModelsRuntime {
   private ensureManagedProviders(providerId?: string): void {
     if (providerId !== undefined) {
       if (!this.ensureModProvider(providerId)) {
+        this.ensureChatGPTProvider(providerId);
         this.ensureEndpointProvider(providerId);
       }
       return;
@@ -448,6 +498,9 @@ export class LocalPiModelsRuntime {
     );
     for (const id of modProviderIds) {
       this.ensureModProvider(id);
+    }
+    if (!modProviderIds.has(OPENAI_CODEX_PROVIDER_ID)) {
+      this.ensureChatGPTProvider(OPENAI_CODEX_PROVIDER_ID);
     }
     for (const id of MANAGED_ENDPOINT_PROVIDERS.keys()) {
       if (!modProviderIds.has(id)) this.ensureEndpointProvider(id);

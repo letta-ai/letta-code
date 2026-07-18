@@ -10,6 +10,7 @@ import {
   type LocalProviderTimeout,
   resolveLocalProviderTimeout,
 } from "@/backend/local/local-provider-timeout";
+import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
 import {
@@ -365,6 +366,16 @@ function numericSetting(value: unknown): number | undefined {
     : undefined;
 }
 
+function safeBaseURLTarget(baseURL: string | undefined): string {
+  if (!baseURL) return "<model-default>";
+  try {
+    const url = new URL(baseURL);
+    return `${url.host}${url.pathname}`;
+  } catch {
+    return "<invalid>";
+  }
+}
+
 function bedrockLocalProviderOptions(record: LocalProviderRecord | undefined): {
   providerOptions?: Record<string, unknown>;
   envOverrides?: Record<string, string | undefined>;
@@ -566,6 +577,14 @@ export async function resolvePiModelForAgent(
     Object.keys(overrides).length > 0
       ? withOverrides(hookedModel, overrides)
       : hookedModel;
+
+  debugLog(
+    "pi-model-factory",
+    "local provider route api=%s host_path=%s api_key_present=%s",
+    model.api,
+    safeBaseURLTarget(model.baseUrl),
+    connection.apiKey ? "true" : "false",
+  );
 
   return {
     provider,
