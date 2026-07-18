@@ -345,14 +345,13 @@ Use the provider-specific command supported by the installed binary. Current exa
 ```bash
 letta connect chatgpt
 letta connect codex --method device-code
-letta connect openai --api-key "$OPENAI_API_KEY"
 letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s
 letta connect bedrock --method profile --profile "$AWS_PROFILE" --region "$AWS_REGION"
 ```
 
 Before connecting, verify whether the target agent/backend is API/Constellation or local. A provider saved to the wrong backend does not configure the current agent.
 
-Never print provider keys. Prefer existing secret/environment references over literal credentials in commands. Literal secrets in argv can leak through shell history or process listings; avoid them unless the command has no safer input path and the user approved it. Browser login, device-code confirmation, or account consent requires human consent; stop at that authorization boundary and ask the user to complete it instead of claiming success.
+Never print provider keys. Shell expansion such as `--api-key "$OPENAI_API_KEY"` still puts the resolved secret in process argv, where process listings may expose it. Prefer the command's interactive secret prompt in a trusted TTY. If no safer input path exists, stop for explicit user approval rather than passing a provider secret autonomously. Browser login, device-code confirmation, or account consent also requires human consent; do not claim success before it completes.
 
 After connecting, verify the provider/model from the same backend and process that will run the agent. Do not infer success from a saved credential alone.
 
@@ -372,6 +371,8 @@ letta server --channels <channel>
 ```
 
 Channel state lives under `~/.letta/channels/<channel>/` (`config.yaml`, `accounts.json`, routing/pairing files, and channel runtimes). Account tokens may be plaintext in `file` mode or keyring placeholders in `keyring`/`auto` mode. Configure storage with `channelCredentialsStore` (`file`, `keyring`, `auto`) or `LETTA_CHANNEL_CREDENTIALS_STORE`; do not treat keyring placeholders as usable secrets and do not print tokens. Channel configuration and pairing can route external messages to other agents/conversations; verify IDs and get human consent for interactive authorization.
+
+`letta channels configure <channel>` is an interactive TTY wizard. Do not launch it as unattended work or claim setup succeeded while it is waiting for input; hand the authorization/setup step to the user.
 
 Changing the credential-store mode does not migrate existing tokens. A file/keyring mismatch can make an otherwise configured listener fail with `invalid_auth`; verify where credentials are stored before changing the mode.
 
