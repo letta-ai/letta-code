@@ -15,7 +15,7 @@ Options:
   --target <agent|conversation>       Required
   --agent-id <id>                     Defaults to AGENT_ID
   --conversation-id <id>              Defaults to CONVERSATION_ID
-  --base-url <url>                    Defaults to LETTA_BASE_URL or https://api.letta.com
+  --base-url <url>                    Defaults to LETTA_BASE_URL; required for server operations
   --name <name>                       Rename the agent (agent target only)
   --description <text>                Update agent description (agent target only)
   --model <provider/model>            Model handle
@@ -169,9 +169,7 @@ async function main() {
   const show = args.show === true;
   const allowOtherAgent = args["allow-other-agent"] === true;
   const confirmSystemReplacement = args["confirm-system-replacement"] === true;
-  const baseUrl = String(
-    args["base-url"] || process.env.LETTA_BASE_URL || "https://api.letta.com",
-  ).replace(/\/$/, "");
+  const configuredBaseUrl = args["base-url"] || process.env.LETTA_BASE_URL;
   const apiKey = process.env.LETTA_API_KEY;
   const mergeModelSettings = args["merge-model-settings"] === true;
   const mergeCompactionSettings = args["merge-compaction-settings"] === true;
@@ -269,6 +267,13 @@ async function main() {
       `Refusing to target ${target} ${id} because ${currentIdName} is ${currentId}. Pass --allow-other-agent only after verifying the cross-${target} operation is intentional. If ${currentIdName} is unset, explicit --${idFlagName} remains allowed for out-of-band recovery.`,
     );
   }
+
+  if (usesServer && !configuredBaseUrl) {
+    throw new Error(
+      "Set LETTA_BASE_URL or pass --base-url so the request targets the current Letta server",
+    );
+  }
+  const baseUrl = String(configuredBaseUrl ?? "").replace(/\/$/, "");
 
   if (usesServer && !apiKey) {
     throw new Error(

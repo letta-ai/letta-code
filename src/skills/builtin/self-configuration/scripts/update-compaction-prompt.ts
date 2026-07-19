@@ -40,7 +40,7 @@ function usage(): never {
 
 Options:
   --agent-id <id>                  Defaults to AGENT_ID
-  --base-url <url>                 Defaults to LETTA_BASE_URL or https://api.letta.com
+  --base-url <url>                 Defaults to LETTA_BASE_URL; required
   --mode <mode>                    sliding_window | all | self_compact_sliding_window | self_compact_all
   --model <provider/model>         Optional summarizer model
   --clip-chars <int|null>          Optional summary character cap
@@ -136,9 +136,13 @@ async function main() {
     );
   }
 
-  const baseUrl = String(
-    args["base-url"] || process.env.LETTA_BASE_URL || "https://api.letta.com",
-  ).replace(/\/$/, "");
+  const configuredBaseUrl = args["base-url"] || process.env.LETTA_BASE_URL;
+  if (!configuredBaseUrl) {
+    throw new Error(
+      "Set LETTA_BASE_URL or pass --base-url so the request targets the current Letta server",
+    );
+  }
+  const baseUrl = String(configuredBaseUrl).replace(/\/$/, "");
   const promptFile = String(args["prompt-file"]);
   if (!existsSync(promptFile)) {
     throw new Error(`Prompt file not found: ${promptFile}`);

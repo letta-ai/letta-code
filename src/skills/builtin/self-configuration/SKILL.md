@@ -101,10 +101,10 @@ Required environment for live API writes:
 export LETTA_API_KEY=...
 export AGENT_ID=agent-...
 export CONVERSATION_ID=conv-...   # only needed for conversation-scoped changes
-export LETTA_BASE_URL=https://api.letta.com   # optional; default is api.letta.com
+export LETTA_BASE_URL=...         # required; use the current server, not a hard-coded Cloud URL
 ```
 
-The scripts in this skill default to `AGENT_ID`, `CONVERSATION_ID`, and `LETTA_BASE_URL`. Pass explicit IDs when there is any doubt. `--show` fetches the selected agent or conversation and prints only safe effective fields. Server operations reject target IDs that differ from the current env ID unless `--allow-other-agent` is passed. Dry-run output is labeled: `offline_partial_patch` means no server state was fetched; `effective_merged_patch` means the script fetched current server state and shows the merged patch that would be sent.
+The scripts in this skill default to `AGENT_ID`, `CONVERSATION_ID`, and `LETTA_BASE_URL`. Server reads and writes require `LETTA_BASE_URL` or explicit `--base-url`; they never silently fall back to `api.letta.com`. Keep `LETTA_BASE_URL` paired with the `LETTA_API_KEY` supplied by the current runtime so local, self-hosted, and non-default Cloud environments are not accidentally redirected. Pass explicit IDs when there is any doubt. `--show` fetches the selected agent or conversation and prints only safe effective fields. Server operations reject target IDs that differ from the current env ID unless `--allow-other-agent` is passed. Dry-run output is labeled: `offline_partial_patch` means no server state was fetched; `effective_merged_patch` means the script fetched current server state and shows the merged patch that would be sent.
 
 ### Dry-runable update script
 
@@ -249,7 +249,7 @@ Selected global settings keys:
 
 Per-agent `agents[]` entries are keyed by `agentId` plus server. For api.letta.com, `baseUrl` may be omitted. For another server, preserve the server key.
 
-Base URL resolution is split between runtime API calls and settings lookup. Runtime API calls use `LETTA_BASE_URL` or an explicit script `--base-url`. Settings server keys resolve from `LETTA_SETTINGS_BASE_URL`, `env.LETTA_SETTINGS_BASE_URL`, `LETTA_BASE_URL`, `env.LETTA_BASE_URL`, then api.letta.com. Do not move `agents[]` entries across base URLs unless the user is deliberately migrating servers.
+Base URL resolution is split between runtime API calls and settings lookup. Runtime API calls require `LETTA_BASE_URL` or an explicit script `--base-url`; do not replace it with a hard-coded Cloud URL. Settings server keys resolve from `LETTA_SETTINGS_BASE_URL`, `env.LETTA_SETTINGS_BASE_URL`, `LETTA_BASE_URL`, `env.LETTA_BASE_URL`, then api.letta.com. Do not move `agents[]` entries across base URLs unless the user is deliberately migrating servers.
 
 Toolset values currently include `auto`, `default`, `codex`, `codex_snake`, `gemini`, `gemini_snake`, and `none`. Use `auto` unless the user explicitly wants a manual override.
 

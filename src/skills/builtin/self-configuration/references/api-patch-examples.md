@@ -1,6 +1,6 @@
 # API Patch Examples
 
-Raw curl and SDK calls bypass the helper guardrails. They are useful for recovery, but they are not safer. Verify the target agent/conversation ID, remember that `LETTA_API_KEY` may authorize other agents visible to the same account/server, and never paste literal secrets into commands or source files.
+Raw curl and SDK calls bypass the helper guardrails. They are useful for recovery, but they are not safer. Use `LETTA_BASE_URL` together with the current runtime's `LETTA_API_KEY`; never hard-code `api.letta.com` or let an SDK default redirect a local/self-hosted agent to Cloud. Verify the target agent/conversation ID, remember that the key may authorize other agents visible to the same account/server, and never paste literal secrets into commands or source files.
 
 ## General updater script
 
@@ -60,7 +60,8 @@ Bad compaction prompts cause delayed context loss. Confirm the target agent. The
 
 ```bash
 prompt_file=/tmp/compaction-prompt.txt
-current=$(curl -sS "$BASE_URL/v1/agents/$AGENT_ID" \
+base_url="${LETTA_BASE_URL%/}"
+current=$(curl -sS "$base_url/v1/agents/$AGENT_ID" \
   -H "Authorization: Bearer $LETTA_API_KEY")
 
 jq -n \
@@ -72,7 +73,7 @@ jq -n \
       clip_chars: 50000
   }) }' > /tmp/compaction-patch.json
 
-curl -sS -X PATCH "$BASE_URL/v1/agents/$AGENT_ID" \
+curl -sS -X PATCH "$base_url/v1/agents/$AGENT_ID" \
   -H "Authorization: Bearer $LETTA_API_KEY" \
   -H "Content-Type: application/json" \
   --data-binary @/tmp/compaction-patch.json
@@ -83,9 +84,12 @@ curl -sS -X PATCH "$BASE_URL/v1/agents/$AGENT_ID" \
 SDK calls use the same account token authority as raw API calls. Check IDs before update calls; do not hard-code provider keys or other secrets in the patch body.
 
 ```typescript
-import { Letta } from "@letta-ai/letta-client";
+import Letta from "@letta-ai/letta-client";
 
-const client = new Letta({ token: process.env.LETTA_API_KEY! });
+const client = new Letta({
+  apiKey: process.env.LETTA_API_KEY!,
+  baseURL: process.env.LETTA_BASE_URL!,
+});
 
 await client.agents.update(process.env.AGENT_ID!, {
   model: "openai/gpt-5.2",
@@ -106,7 +110,10 @@ The Python client also bypasses helper mismatch and confirmation checks. Use it 
 import os
 from letta_client import Letta
 
-client = Letta(token=os.environ["LETTA_API_KEY"])
+client = Letta(
+    api_key=os.environ["LETTA_API_KEY"],
+    base_url=os.environ["LETTA_BASE_URL"],
+)
 client.agents.update(
     agent_id=os.environ["AGENT_ID"],
     model="openai/gpt-5.2",
@@ -129,7 +136,7 @@ client.conversations.update(
 Fetch is raw API access. Recreate the same checks manually: current target ID, intended scope, no literal secrets, and an explicit human-approved plan for system or compaction prompt replacement.
 
 ```typescript
-const baseUrl = process.env.LETTA_BASE_URL ?? "https://api.letta.com";
+const baseUrl = process.env.LETTA_BASE_URL!;
 const agentId = process.env.AGENT_ID!;
 const apiKey = process.env.LETTA_API_KEY!;
 

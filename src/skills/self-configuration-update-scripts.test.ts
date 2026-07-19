@@ -329,6 +329,19 @@ test("update-agent-settings show rejects irrelevant confirmation flags", async (
   );
 });
 
+test("update-agent-settings refuses server operations without a base URL", async () => {
+  const result = await runScript(
+    updateAgentSettingsScript,
+    ["--target", "agent", "--agent-id", "agent-test", "--show"],
+    { LETTA_API_KEY: "test-key" },
+  );
+
+  expect(result.stdout).toBe("");
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("Set LETTA_BASE_URL or pass --base-url");
+  expect(result.stderr).toContain("current Letta server");
+});
+
 test("update-agent-settings rejects cross-agent server operations without escape hatch", async () => {
   const result = await runScript(
     updateAgentSettingsScript,
@@ -738,6 +751,25 @@ test("update-compaction-prompt live writes require confirmation", async () => {
   expect(result.stderr).toContain(
     "Live compaction prompt writes require --confirm-compaction-prompt",
   );
+});
+
+test("update-compaction-prompt refuses server operations without a base URL", async () => {
+  const promptFile = writeTempText(
+    "self-config-prompt-base-url-",
+    "prompt.txt",
+    "new compaction prompt\n",
+  );
+
+  const result = await runScript(
+    updateCompactionPromptScript,
+    ["--agent-id", "agent-test", "--prompt-file", promptFile, "--dry-run"],
+    { LETTA_API_KEY: "test-key" },
+  );
+
+  expect(result.stdout).toBe("");
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("Set LETTA_BASE_URL or pass --base-url");
+  expect(result.stderr).toContain("current Letta server");
 });
 
 test("update-compaction-prompt confirmed live write fetches then patches", async () => {
