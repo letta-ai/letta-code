@@ -179,7 +179,7 @@ USAGE
   letta environments ... List available remote environments (JSON-only)
   letta messages ...    Messages subcommands (JSON-only)
   letta mods ...        List and manage local mods
-  letta app-server ...  Run local app-server websocket transport
+  letta server ...      Run a remote environment, channels, or the App Server
   letta connect ...     Connect providers from terminal
   letta backend ...     Show or set the default backend
   letta setup           Re-run first-run setup
@@ -210,7 +210,7 @@ SUBCOMMANDS
   letta mods enable <package-spec>
   letta mods disable <package-spec>
   letta mods remove <package-spec>
-  letta app-server [--listen ws://127.0.0.1:4500]
+  letta server [--env-name <name> | --listen [url]] [options]
   letta connect <provider> [options]
   letta install <thing> [--agent <id> | -n <name>]
   letta skills list [--agent <id> | -n <name>]
