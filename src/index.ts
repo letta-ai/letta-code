@@ -215,7 +215,7 @@ SUBCOMMANDS
   letta install <thing> [--agent <id> | -n <name>]
   letta skills list [--agent <id> | -n <name>]
   letta skills delete <skill_name> --agent <id>
-  letta backend [api|local]
+  letta backend [cloud|local]
   letta local-backend migrate-transcripts [--storage-dir <path>] [--dry-run]
 
 BEHAVIOR
