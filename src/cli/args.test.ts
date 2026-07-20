@@ -150,8 +150,9 @@ describe("shared CLI arg schema", () => {
     expect(parsed.values["no-mods"]).toBe(true);
   });
 
-  test("validates backend mode values", () => {
+  test("normalizes cloud backend mode and preserves the api compatibility alias", () => {
     expect(parseBackendModeFlag(undefined)).toBeUndefined();
+    expect(parseBackendModeFlag("cloud")).toBe("api");
     expect(parseBackendModeFlag("api")).toBe("api");
     expect(parseBackendModeFlag("local")).toBe("local");
     expect(() => parseBackendModeFlag("server")).toThrow(
@@ -159,10 +160,14 @@ describe("shared CLI arg schema", () => {
     );
   });
 
-  test("extracts backend flag before routing subcommands", () => {
+  test("extracts and normalizes backend flags before routing subcommands", () => {
     expect(
       extractBackendFlag(["--backend", "local", "connect", "help"]),
     ).toEqual({ backend: "local", args: ["connect", "help"] });
+    expect(extractBackendFlag(["connect", "help", "--backend=cloud"])).toEqual({
+      backend: "api",
+      args: ["connect", "help"],
+    });
     expect(extractBackendFlag(["connect", "help", "--backend=api"])).toEqual({
       backend: "api",
       args: ["connect", "help"],
