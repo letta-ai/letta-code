@@ -5,7 +5,10 @@ import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
 import { type AppServerHandle, startAppServer } from "@/websocket/app-server";
 import { parseAppServerWebsocketAuthSettings } from "@/websocket/app-server-auth";
-import { __testSetSendMessageStreamImpl } from "@/websocket/app-server-openai";
+import {
+  __testResetConversationMap,
+  __testSetSendMessageStreamImpl,
+} from "@/websocket/app-server-openai";
 
 // Conformance tests: drive the /v1 routes through the real OpenAI SDK
 // instead of raw fetch, proving an unmodified OpenAI client round-trips
@@ -17,9 +20,15 @@ const TEST_AGENTS = [
   { id: "agent-local-222", name: "patch" },
 ];
 
+let conversationCounter = 0;
+
 function fakeBackend(): Backend {
   return {
     listAgents: async () => TEST_AGENTS,
+    createConversation: async (body: { agent_id: string }) => {
+      conversationCounter += 1;
+      return { id: `conv-sdk-${conversationCounter}`, agent_id: body.agent_id };
+    },
   } as unknown as Backend;
 }
 
@@ -55,6 +64,7 @@ describe("app-server OpenAI SDK conformance", () => {
 
   afterEach(async () => {
     __testSetSendMessageStreamImpl(null);
+    __testResetConversationMap();
     __testSetBackend(null);
     if (handle) {
       await handle.close();
