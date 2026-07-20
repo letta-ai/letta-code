@@ -1131,10 +1131,10 @@ export function AppView(props: AppViewProps) {
                     overlayCommand ??
                     commandRunner.start(
                       "/login",
-                      "Signed in with Letta. Switch to a cloud-hosted agent with /agents.",
+                      "Signed in with Letta. Switch agents with /agents.",
                     );
                   cmd.finish(
-                    "Signed in with Letta. Switch to a cloud-hosted agent with /agents.",
+                    "Signed in with Letta. Switch agents with /agents.",
                     true,
                   );
                 }}

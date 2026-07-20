@@ -15,7 +15,7 @@ interface LettaLoginViewProps {
 export function LettaLoginView({
   onComplete,
   onCancel,
-  successMessage = "Signed in with Letta. Switch to a cloud-hosted agent with /agents.",
+  successMessage = "Signed in with Letta. Switch agents with /agents.",
 }: LettaLoginViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);

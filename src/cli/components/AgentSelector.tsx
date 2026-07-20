@@ -795,7 +795,7 @@ export function AgentSelector({
   // Render Cloud upsell (shown when not logged in)
   const renderCloudUpsell = () => (
     <Box flexDirection="column" paddingLeft={2}>
-      <Text dimColor>Sign in with Letta to see cloud-hosted agents here.</Text>
+      <Text dimColor>Sign in with Letta to see your agents here.</Text>
       <Box height={1} />
       <Box flexDirection="column">
         <Text color={colors.selector.itemHighlighted}>{"> /login"}</Text>

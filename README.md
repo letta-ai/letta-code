@@ -52,7 +52,7 @@ You can also download the [**desktop app**](https://docs.letta.com/letta-code/de
 
 ## Letta Cloud
 
-Cloud-hosted agents keep their memory, identity, and conversations in Letta Cloud while the Letta Code harness can run on any connected computer: your laptop, [GitHub Actions](https://github.com/letta-ai/letta-code-action), a managed cloud sandbox, a remote VM, or a Mac Mini. You can chat with the same agents through [chat.letta.com](https://chat.letta.com/) or the desktop app.
+Agents stored in Letta Cloud keep their memory, identity, and conversations there while the Letta Code harness can run on any connected computer: your laptop, [GitHub Actions](https://github.com/letta-ai/letta-code-action), a managed cloud sandbox, a remote VM, or a Mac Mini. You can chat with the same agents through [chat.letta.com](https://chat.letta.com/) or the desktop app.
 
 ```mermaid
 graph TD
@@ -63,10 +63,10 @@ graph TD
     LettaCloud --> D["📦 Managed Sandbox"]
 ```
 
-Run `/login` from the CLI or sign in through the desktop app to access cloud-hosted agents.
+Run `/login` from the CLI or sign in through the desktop app to access agents in your Letta account.
 
 ### Remote environments
-Cloud-hosted agents can run across multiple machines. Any machine can be made into an available environment by running:
+Agents stored in Letta Cloud can run across multiple machines. Any machine can be made into an available environment by running:
 ```bash
 letta server
 letta server --env-name "work-laptop"

@@ -794,7 +794,7 @@ async function main(): Promise<void> {
     !explicitBackendMode &&
     specifiedAgentId &&
     inferredBackendModeFromAgentId === "api"
-      ? `Agent ${specifiedAgentId} is a cloud-hosted agent. Sign in with Letta to access it, or rerun without --agent to start locally.`
+      ? `Agent ${specifiedAgentId} requires Letta sign-in. Sign in with Letta to access it, or rerun without --agent to start locally.`
       : undefined;
   const specifiedModel = values.model ?? undefined;
   const systemPromptPreset = values.system ?? undefined;

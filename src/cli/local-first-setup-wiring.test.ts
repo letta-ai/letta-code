@@ -100,7 +100,7 @@ describe("local-first setup wiring", () => {
 
     expect(indexSource).toContain("const setupLocalModeDisabledReason =");
     expect(indexSource).toContain('inferredBackendModeFromAgentId === "api"');
-    expect(indexSource).toContain("is a cloud-hosted agent");
+    expect(indexSource).toContain("requires Letta sign-in");
     expect(indexSource).toContain("rerun without --agent to start locally");
     expect(indexSource).toContain(
       "localModeDisabledReason: setupLocalModeDisabledReason",
