@@ -21,11 +21,19 @@ There are two schedule runners, selected with the optional `--runner local|cloud
 - **`cloud`** (default for cloud agents): a durable Cloud schedule stored by the Letta API. It fires from the cloud and executes in the agent's managed cloud sandbox, so it survives local shutdown — the device, sandbox, or session that created it can disappear and the schedule still fires.
 - **`local`**: a device-local task in `~/.letta/crons.json`, executed by the Letta session on that device. It only fires while a session is running there, and it dies with the device's local state.
 
-You normally don't need the flag — the default does the right thing. Use `--runner local` only when the scheduled work must run on the specific machine you are on right now, e.g. it needs that device's filesystem, local services, or credentials (a Railway/VPS machine, a specific laptop). Local-backend agents (`agent-local-*`) and self-hosted servers always use the local runner.
+You normally don't need the flag — the default does the right thing. Local-backend agents (`agent-local-*`) and self-hosted servers always use the local runner.
+
+If the scheduled work must run on a **specific machine** (it needs that device's filesystem, local services, or credentials — e.g. a Railway/VPS machine), prefer a Cloud schedule targeting that device:
+
+```bash
+letta cron add ... --target-device <deviceId>
+```
+
+The deviceId comes from `letta environments list`. The schedule stays durable in the cloud; if the device is offline when it fires, execution falls back to the agent's cloud sandbox. Use `--runner local` (run on the target machine itself) only when that sandbox fallback is unacceptable — a local task never runs anywhere but its own device.
 
 Notes for the cloud runner:
 
-- The schedule executes in the agent's cloud sandbox, not on the device where you created it.
+- Untargeted schedules execute in the agent's cloud sandbox, not on the device where you created them; `--target-device` executes on the named device with sandbox fallback.
 - Recurring `--cron` expressions are currently interpreted in UTC (the CLI output includes a note about this). `--at` and `--every` are unaffected.
 - If creating a Cloud schedule fails, no schedule is created — there is no silent fallback to local storage. Retry, or pass `--runner local` deliberately.
 
@@ -62,6 +70,7 @@ letta cron add --name <short-name> --description <text> --prompt <text> <schedul
 | `--agent <id>` | Agent ID (defaults to `LETTA_AGENT_ID` from the current shell/session) |
 | `--conversation <id>` | Conversation ID (defaults to `LETTA_CONVERSATION_ID` from the current shell/session, otherwise `"default"`) |
 | `--runner <runner>` | `cloud` or `local` — see "Where Schedules Run" above (defaults to `cloud` for cloud agents) |
+| `--target-device <id>` | (cloud runner only) Execute on a registered remote device instead of the agent's sandbox; falls back to the sandbox if the device is offline |
 
 ### Listing Tasks
 

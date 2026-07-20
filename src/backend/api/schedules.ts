@@ -28,12 +28,19 @@ export interface CreateCloudScheduleInput {
   conversation_id?: string;
   messages: CloudScheduleMessage[];
   schedule: CloudScheduleSpec;
+  /**
+   * Optional execution target: a registered environment deviceId (e.g. a
+   * Railway/VPS listener). When the device is offline at fire time, the
+   * cloud worker falls back to the agent's managed sandbox.
+   */
+  target_device_id?: string;
 }
 
 export interface CreateCloudScheduleResponse {
   id: string;
   next_scheduled_at?: string;
   use_sandbox: boolean;
+  target_device_id?: string | null;
 }
 
 export interface CloudSchedule {
@@ -46,6 +53,7 @@ export interface CloudSchedule {
   schedule: CloudScheduleSpec;
   next_scheduled_time: string | null;
   use_sandbox: boolean;
+  target_device_id?: string | null;
   created_at?: string;
 }
 

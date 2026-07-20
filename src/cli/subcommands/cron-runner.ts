@@ -104,6 +104,8 @@ export interface BuildCloudScheduleParams {
   cron: string;
   recurring: boolean;
   scheduledFor?: Date;
+  /** Optional registered device to execute on (offline → sandbox fallback). */
+  targetDeviceId?: string;
 }
 
 export interface BuiltCloudSchedule {
@@ -115,6 +117,7 @@ export interface BuiltCloudSchedule {
     schedule:
       | { type: "recurring"; cron_expression: string }
       | { type: "one-time"; scheduled_at: number };
+    target_device_id?: string;
   };
   /** Caveats to surface in CLI output. */
   notes: string[];
@@ -127,6 +130,9 @@ export interface BuiltCloudSchedule {
  */
 export const CLOUD_CRON_UTC_NOTE =
   "Recurring Cloud schedules currently interpret cron expressions in UTC (timezone support is tracked in LET-9815).";
+
+export const CLOUD_DEVICE_FALLBACK_NOTE =
+  "If the target device is offline when the schedule fires, execution falls back to the agent's cloud sandbox.";
 
 export function buildCloudScheduleInput(
   params: BuildCloudScheduleParams,
@@ -145,6 +151,11 @@ export function buildCloudScheduleInput(
     schedule = { type: "one-time", scheduled_at: scheduledAt };
   }
 
+  const targetDeviceId = params.targetDeviceId?.trim();
+  if (targetDeviceId) {
+    notes.push(CLOUD_DEVICE_FALLBACK_NOTE);
+  }
+
   return {
     input: {
       name: params.name,
@@ -152,6 +163,7 @@ export function buildCloudScheduleInput(
       ...(params.conversationId && { conversation_id: params.conversationId }),
       messages: [{ role: "user", content: params.prompt }],
       schedule,
+      ...(targetDeviceId && { target_device_id: targetDeviceId }),
     },
     notes,
   };

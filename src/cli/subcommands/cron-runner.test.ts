@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildCloudScheduleInput,
   CLOUD_CRON_UTC_NOTE,
+  CLOUD_DEVICE_FALLBACK_NOTE,
   resolveCronRunner,
 } from "./cron-runner";
 
@@ -166,5 +167,37 @@ describe("buildCloudScheduleInput", () => {
     expect(built.input.conversation_id).toBe("default");
     expect(built.input.name).toBe("test-task");
     expect(built.input.description).toBe("a test task");
+  });
+
+  test("target device rides as target_device_id with a fallback note", () => {
+    const built = buildCloudScheduleInput({
+      ...base,
+      cron: "*/5 * * * *",
+      recurring: true,
+      targetDeviceId: "device-railway-1",
+    });
+    expect(built.input.target_device_id).toBe("device-railway-1");
+    expect(built.notes).toContain(CLOUD_DEVICE_FALLBACK_NOTE);
+  });
+
+  test("untargeted schedules omit target_device_id entirely", () => {
+    const built = buildCloudScheduleInput({
+      ...base,
+      cron: "*/5 * * * *",
+      recurring: true,
+    });
+    expect("target_device_id" in built.input).toBe(false);
+    expect(built.notes).not.toContain(CLOUD_DEVICE_FALLBACK_NOTE);
+  });
+
+  test("whitespace-only target device is treated as absent", () => {
+    const built = buildCloudScheduleInput({
+      ...base,
+      cron: "*/5 * * * *",
+      recurring: true,
+      targetDeviceId: "   ",
+    });
+    expect("target_device_id" in built.input).toBe(false);
+    expect(built.notes).not.toContain(CLOUD_DEVICE_FALLBACK_NOTE);
   });
 });

@@ -80,6 +80,10 @@ Add options:
                            local - this device's scheduler (~/.letta/crons.json);
                                    only fires while a session runs here (default
                                    for local-backend agents / self-hosted)
+  --target-device <id>   (cloud runner only) Execute on a registered remote
+                         device (deviceId from \`letta environments list\`)
+                         instead of the agent's cloud sandbox. Falls back to
+                         the sandbox if the device is offline at fire time.
 
 List/filter options:
   --agent <id>           Filter by agent ID
@@ -112,6 +116,7 @@ const CRON_OPTIONS = {
   limit: { type: "string" },
   "run-id": { type: "string" },
   runner: { type: "string" },
+  "target-device": { type: "string" },
 } as const;
 
 type CronArgValues = ReturnType<typeof parseCronArgs>["values"];
@@ -210,10 +215,12 @@ function extractPromptFromCloudSchedule(
 function formatCloudScheduleOutput(
   schedule: CloudSchedule,
 ): Record<string, unknown> {
+  const targetDeviceId = schedule.target_device_id ?? null;
   return {
     id: schedule.id,
     runner: "cloud",
-    execution_target: CLOUD_EXECUTION_TARGET,
+    execution_target: targetDeviceId ?? CLOUD_EXECUTION_TARGET,
+    ...(targetDeviceId && { target_device_id: targetDeviceId }),
     agent_id: schedule.agent_id,
     conversation_id: schedule.conversation_id ?? "default",
     name: schedule.name ?? null,
@@ -316,9 +323,22 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     return 1;
   }
 
+  const targetDeviceId = values["target-device"]?.trim() || undefined;
+
   const resolved = await getRunnerForAgent(values.runner, agentId);
   if ("error" in resolved) {
     console.error(`Error: ${resolved.error}`);
+    return 1;
+  }
+
+  // Device targets are a Cloud-schedule feature: the cloud worker delivers
+  // to the named device's listener (sandbox fallback when offline). A local
+  // task already runs on the device that owns it, so the flag is meaningless
+  // (and likely a mistake) for the local runner.
+  if (targetDeviceId && resolved.runner !== "cloud") {
+    console.error(
+      "Error: --target-device requires the cloud runner. Run `letta cron add` on the target device itself (with --runner local) to schedule there locally.",
+    );
     return 1;
   }
 
@@ -333,6 +353,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
       recurring,
       scheduledFor,
       note,
+      targetDeviceId,
     });
   }
 
@@ -393,6 +414,7 @@ interface CloudAddParams {
   recurring: boolean;
   scheduledFor?: Date;
   note?: string;
+  targetDeviceId?: string;
 }
 
 async function handleCloudAdd(params: CloudAddParams): Promise<number> {
@@ -406,6 +428,7 @@ async function handleCloudAdd(params: CloudAddParams): Promise<number> {
       cron: params.cron,
       recurring: params.recurring,
       scheduledFor: params.scheduledFor,
+      targetDeviceId: params.targetDeviceId,
     });
   } catch (err) {
     console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
@@ -415,10 +438,14 @@ async function handleCloudAdd(params: CloudAddParams): Promise<number> {
   try {
     const result = await createCloudSchedule(params.agentId, built.input);
 
+    const targetDeviceId =
+      result.target_device_id ?? built.input.target_device_id ?? null;
+
     const output: Record<string, unknown> = {
       id: result.id,
       runner: "cloud",
-      execution_target: CLOUD_EXECUTION_TARGET,
+      execution_target: targetDeviceId ?? CLOUD_EXECUTION_TARGET,
+      ...(targetDeviceId && { target_device_id: targetDeviceId }),
       agent_id: params.agentId,
       conversation_id: params.conversationId,
       recurring: params.recurring,
@@ -436,7 +463,9 @@ async function handleCloudAdd(params: CloudAddParams): Promise<number> {
 
     console.log(JSON.stringify(output, null, 2));
     console.error(
-      "Created Cloud schedule: it fires from the cloud and runs in this agent's managed cloud sandbox (survives local shutdown).",
+      targetDeviceId
+        ? `Created Cloud schedule: it fires from the cloud and runs on device "${targetDeviceId}" (sandbox fallback if offline).`
+        : "Created Cloud schedule: it fires from the cloud and runs in this agent's managed cloud sandbox (survives local shutdown).",
     );
     return 0;
   } catch (err) {
