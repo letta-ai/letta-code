@@ -4,6 +4,7 @@ import {
   CLOUD_CRON_UTC_NOTE,
   CLOUD_DEVICE_FALLBACK_NOTE,
   resolveCronRunner,
+  validateTargetDevice,
 } from "./cron-runner";
 
 describe("resolveCronRunner", () => {
@@ -199,5 +200,48 @@ describe("buildCloudScheduleInput", () => {
     });
     expect("target_device_id" in built.input).toBe(false);
     expect(built.notes).not.toContain(CLOUD_DEVICE_FALLBACK_NOTE);
+  });
+});
+
+describe("validateTargetDevice", () => {
+  test("registered remote device passes", () => {
+    const result = validateTargetDevice("device-railway-1", {
+      organizationId: "org-abc",
+    });
+    expect(result).toEqual({ ok: true });
+  });
+
+  test("unknown device (no local entry) passes through to server validation", () => {
+    const result = validateTargetDevice("device-unknown", null);
+    expect(result).toEqual({ ok: true });
+  });
+
+  test("synthetic Cloud row is rejected with omit guidance", () => {
+    const result = validateTargetDevice("__letta_cloud__", {
+      organizationId: "local",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("Omit --target-device");
+    }
+  });
+
+  test("synthetic local placeholder is rejected", () => {
+    const result = validateTargetDevice("local", null);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("letta remote");
+    }
+  });
+
+  test("desktop-local connection is rejected with letta remote guidance", () => {
+    const result = validateTargetDevice("07fca6a1-device", {
+      organizationId: "local",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("letta remote");
+      expect(result.error).toContain("desktop-local");
+    }
   });
 });
