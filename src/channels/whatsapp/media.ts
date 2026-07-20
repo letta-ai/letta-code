@@ -29,7 +29,8 @@ export const MIME_EXTENSION_MAP: Record<string, string> = {
   ".webm": "video/webm",
   ".pdf": "application/pdf",
   ".doc": "application/msword",
-  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".docx":
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   ".txt": "text/plain",
   ".csv": "text/csv",
   ".json": "application/json",
@@ -427,9 +428,6 @@ export function buildWhatsAppOutboundPayload(
   };
 }
 
-export const WHATSAPP_VOICE_MEMO_REQUIREMENT =
-  "WhatsApp voice memos require an Ogg/Opus file (.ogg, .oga, or .opus). Convert MP3/M4A/WAV audio to Ogg Opus before upload.";
-
 const WHATSAPP_IMAGE_EXTENSIONS = new Set([
   ".png",
   ".jpg",
@@ -439,12 +437,11 @@ const WHATSAPP_IMAGE_EXTENSIONS = new Set([
 ]);
 const WHATSAPP_VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm"]);
 const WHATSAPP_VOICE_MEMO_EXTENSIONS = new Set([".ogg", ".oga", ".opus"]);
-const WHATSAPP_AUDIO_EXTENSIONS = new Set([
-  ...WHATSAPP_VOICE_MEMO_EXTENSIONS,
-  ".mp3",
-  ".m4a",
-  ".wav",
-]);
+// (WHATSAPP_AUDIO_EXTENSIONS removed: the validator no longer gates on the
+// non-Opus audio distinction. .mp3/.m4a/.wav are routed to the document
+// branch by buildWhatsAppOutboundPayload's catch-all. Kept the comment
+// here so future readers know the audio set exists semantically but is
+// not enforced.)
 
 function getWhatsAppOutboundMediaExtension(
   msg: Pick<OutboundChannelMessage, "mediaPath" | "fileName">,
@@ -455,14 +452,13 @@ function getWhatsAppOutboundMediaExtension(
 }
 
 export function getWhatsAppOutboundMediaValidationError(
-  msg: Pick<OutboundChannelMessage, "mediaPath" | "fileName">,
+  _msg: Pick<OutboundChannelMessage, "mediaPath" | "fileName">,
 ): string | null {
-  const extension = getWhatsAppOutboundMediaExtension(msg);
-  if (
-    WHATSAPP_AUDIO_EXTENSIONS.has(extension) &&
-    !WHATSAPP_VOICE_MEMO_EXTENSIONS.has(extension)
-  ) {
-    return WHATSAPP_VOICE_MEMO_REQUIREMENT;
-  }
+  // Non-Opus audio (.mp3/.m4a/.wav) is now sent as a regular audio document
+  // attachment via the catch-all branch in buildWhatsAppOutboundPayload, not
+  // as a WhatsApp push-to-talk voice memo. The voice-memo path requires the
+  // agent to explicitly transcode to Ogg/Opus upstream; the channel itself
+  // no longer enforces that gate here. Keeping the parameter for forward
+  // compatibility with a future opt-in voice-memo flag.
   return null;
 }
