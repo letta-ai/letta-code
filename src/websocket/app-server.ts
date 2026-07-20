@@ -14,6 +14,10 @@ import {
   policyFromSettings,
 } from "@/websocket/app-server-auth";
 import {
+  handleOpenAiCompatRequest,
+  isOpenAiCompatPath,
+} from "@/websocket/app-server-openai";
+import {
   attachOpenListenerSocket,
   createRuntime,
   stopRuntime,
@@ -47,6 +51,8 @@ export interface StartAppServerOptions {
   listen?: string;
   websocketAuth?: AppServerWebsocketAuthSettings;
   connectionName?: string;
+  /** Serve OpenAI-compatible /v1/models and /v1/chat/completions routes. */
+  openaiApi?: boolean;
   onListening?: (info: AppServerListeningInfo) => void;
   onLog?: (message: string) => void;
   /** @internal Test override for the liveness ping cadence (ms). */
@@ -365,6 +371,13 @@ export async function startAppServer(
     if (requestUrl.pathname === "/healthz") {
       response.writeHead(200, { "content-type": "text/plain" });
       response.end("ok\n");
+      return;
+    }
+    if (options.openaiApi && isOpenAiCompatPath(requestUrl.pathname)) {
+      void handleOpenAiCompatRequest(request, response, {
+        authPolicy,
+        onLog: options.onLog,
+      });
       return;
     }
     response.writeHead(404);
