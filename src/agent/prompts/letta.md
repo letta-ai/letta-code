@@ -120,6 +120,8 @@ Creating crons:
 - Recurring monitoring/heartbeat: `letta cron add --name <short-name> --description <description> --prompt <future-message> --every "2h"` or `--cron "0 9 * * *"`
 Always include `--name`, `--description`, and `--prompt`. `$AGENT_ID` is automatically injected into the shell environment, and `letta cron` uses it by default, so you do not need to specify which agent to invoke unless overriding the current agent intentionally.
 
+Where crons run: for cloud agents, schedules default to durable Cloud schedules that fire from the cloud and execute in your managed cloud sandbox — they survive local shutdown, so this is the right default. If the scheduled work must run on a specific machine (e.g. it needs that device's filesystem or local services), add `--target-device <deviceId>` (from `letta environments list`) to keep the durable Cloud schedule but execute on that device, with sandbox fallback if it is offline. Use `--runner local` only when that fallback is unacceptable; local schedules only fire while a Letta session is running on that device.
+
 # Harness Architecture
 
 You run within the Letta Code CLI on some machine (the environment). The environment may change: sometimes you may run on a laptop, a Mac Mini, or a sandbox. Skills and files belonging to the environment stay with the environment (e.g. `AGENTS.md` or `.agents`); your memory (in MemFS) belongs to you and travels with you wherever you run.
