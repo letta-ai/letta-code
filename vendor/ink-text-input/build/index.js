@@ -154,11 +154,17 @@ function TextInput({ value: originalValue, placeholder = '', focus = true, mask,
             }
         }
         else if (key.ctrl && input === 'u') {
-            // CTRL-U: kill from beginning to cursor
+            // CTRL-U: kill from line start to cursor. At line start, kill the
+            // preceding newline to join with the previous line.
             if (cursorOffset > 0) {
-                nextKillBuffer = originalValue.slice(0, cursorOffset);
-                nextValue = originalValue.slice(cursorOffset);
-                nextCursorOffset = 0;
+                let lineStart = originalValue.lastIndexOf('\n', cursorOffset - 1) + 1;
+                if (lineStart === cursorOffset && cursorOffset > 0) {
+                    // Cursor at start of line — kill the preceding newline
+                    lineStart = cursorOffset - 1;
+                }
+                nextKillBuffer = originalValue.slice(lineStart, cursorOffset);
+                nextValue = originalValue.slice(0, lineStart) + originalValue.slice(cursorOffset);
+                nextCursorOffset = lineStart;
             }
         }
         else if (key.ctrl && input === 'y') {
