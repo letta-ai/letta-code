@@ -2,7 +2,7 @@
 
 Use provider mods when the user wants a **local agent** to use a model provider that is not built into `/connect` and `/model`.
 
-Important: provider mods are local-backend/local-agent only. They register local provider metadata for the TUI, headless local runtime, and desktop listener. They do not add providers for Constellation/cloud agents.
+Important: provider mods are local-backend/local-agent only. They register local provider metadata for the TUI, headless local runtime, and desktop listener. They do not add providers for cloud-hosted agents.
 
 For multi-capability mods that combine a provider with commands, tools, UI, or state, also read `architecture.md`.
 

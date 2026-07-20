@@ -118,7 +118,7 @@ Agents can inspect local mod diagnostics at:
 ## Rules
 
 - Do not create project mods.
-- Custom provider mods are local-backend/local-agent only. They do not add providers for Constellation/cloud agents.
+- Custom provider mods are local-backend/local-agent only. They do not add providers for cloud-hosted agents.
 - Provider mods may run in a provider-only listener context; keep provider registration independent from commands/tools/UI and guard everything else.
 - Direct mod files should not assume third-party npm packages are available. Use Node/Bun built-ins unless packaging is explicitly requested.
 - Do not do surprising side effects on startup; mods activate on app start and `/reload`.

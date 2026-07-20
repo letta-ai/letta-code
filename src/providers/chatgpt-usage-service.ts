@@ -739,7 +739,7 @@ async function cloudApiKey(input: {
       apiKey: null,
       error: {
         code: "unauthorized",
-        message: "Sign in to Letta Cloud to read ChatGPT usage.",
+        message: "Sign in with Letta to read ChatGPT usage.",
       },
     };
   }
@@ -815,7 +815,7 @@ async function readCloudChatGPTUsage(
       success: false,
       error: auth.error ?? {
         code: "unauthorized",
-        message: "Sign in to Letta Cloud to read ChatGPT usage.",
+        message: "Sign in with Letta to read ChatGPT usage.",
       },
     };
   }
@@ -871,10 +871,7 @@ async function readCloudChatGPTUsage(
         didTimeOut ? "network_error" : "unauthorized",
         didTimeOut
           ? "Letta Cloud ChatGPT usage request timed out."
-          : responseMessage(
-              raw,
-              "Sign in to Letta Cloud to read ChatGPT usage.",
-            ),
+          : responseMessage(raw, "Sign in with Letta to read ChatGPT usage."),
       );
     }
     if (response.status === 403) {

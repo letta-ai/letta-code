@@ -10,9 +10,7 @@ describe("local-first setup wiring", () => {
     const source = readSource("../auth/setup-ui.tsx");
 
     expect(source).toContain('const LOCAL_MODE_LABEL = "Proceed locally"');
-    expect(source).toContain(
-      'const AUTH_LOGIN_LABEL = "Login to Constellation"',
-    );
+    expect(source).toContain('const AUTH_LOGIN_LABEL = "Sign in with Letta"');
     expect(source).toContain(
       'initialMode === "device-code" || localModeDisabled ? 0 : 1',
     );
@@ -32,7 +30,7 @@ describe("local-first setup wiring", () => {
   });
 
   test("successful cloud login records the api backend preference", () => {
-    const source = readSource("../auth/ConstellationLoginView.tsx");
+    const source = readSource("../auth/LettaLoginView.tsx");
     const start = source.indexOf("settingsManager.updateSettings({");
     const end = source.indexOf("await settingsManager.flush();", start);
 
@@ -42,12 +40,10 @@ describe("local-first setup wiring", () => {
   });
 
   test("reauthentication paths do not trust stale stored credentials", () => {
-    const loginSource = readSource("../auth/ConstellationLoginView.tsx");
+    const loginSource = readSource("../auth/LettaLoginView.tsx");
     const setupSource = readSource("../auth/setup-ui.tsx");
     const setupRunnerSource = readSource("../auth/setup.ts");
-    const overlaySource = readSource(
-      "./components/ConstellationLoginOverlay.tsx",
-    );
+    const overlaySource = readSource("./components/LettaLoginOverlay.tsx");
     const indexSource = readSource("../index.ts");
 
     expect(loginSource).not.toContain("onAlreadyLoggedIn");
@@ -104,7 +100,7 @@ describe("local-first setup wiring", () => {
 
     expect(indexSource).toContain("const setupLocalModeDisabledReason =");
     expect(indexSource).toContain('inferredBackendModeFromAgentId === "api"');
-    expect(indexSource).toContain("is a Constellation agent");
+    expect(indexSource).toContain("is a cloud-hosted agent");
     expect(indexSource).toContain("rerun without --agent to start locally");
     expect(indexSource).toContain(
       "localModeDisabledReason: setupLocalModeDisabledReason",

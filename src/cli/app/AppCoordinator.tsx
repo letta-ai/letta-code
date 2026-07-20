@@ -305,7 +305,7 @@ function buildStartupCommandHints(options: {
   }
 
   if (!hasCloudCredentials) {
-    onboardingHints.push("→ **/login**     sign in to Constellation");
+    onboardingHints.push("→ **/login**     sign in with Letta");
   }
 
   const dedupedHints: string[] = [];

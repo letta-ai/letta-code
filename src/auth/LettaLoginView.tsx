@@ -6,17 +6,17 @@ import { Text } from "@/cli/components/Text";
 import { settingsManager } from "@/settings-manager";
 import { pollForToken, requestDeviceCode } from "./oauth";
 
-interface ConstellationLoginViewProps {
+interface LettaLoginViewProps {
   onComplete?: () => void;
   onCancel?: () => void;
   successMessage?: string;
 }
 
-export function ConstellationLoginView({
+export function LettaLoginView({
   onComplete,
   onCancel,
-  successMessage = "Signed in to Constellation. Switch to a Constellation agent with /agents.",
-}: ConstellationLoginViewProps) {
+  successMessage = "Signed in with Letta. Switch to a cloud-hosted agent with /agents.",
+}: LettaLoginViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
   const [userCode, setUserCode] = useState<string | null>(null);
