@@ -81,10 +81,11 @@ Add options:
                            local - this device's scheduler (~/.letta/crons.json);
                                    only fires while a session runs here (default
                                    for local-backend agents / self-hosted)
-  --target-device <id>   (cloud runner only) Execute on a registered remote
-                         device (deviceId from \`letta environments list\`)
-                         instead of the agent's cloud sandbox. Falls back to
-                         the sandbox if the device is offline at fire time.
+  --computer <id>        (cloud runner only) Execute on one of your
+                         connected computers (deviceId from
+                         \`letta environments list\`) instead of the agent's
+                         cloud sandbox. Falls back to the sandbox if the
+                         computer is offline at fire time.
 
 List/filter options:
   --agent <id>           Filter by agent ID
@@ -117,7 +118,7 @@ const CRON_OPTIONS = {
   limit: { type: "string" },
   "run-id": { type: "string" },
   runner: { type: "string" },
-  "target-device": { type: "string" },
+  computer: { type: "string" },
 } as const;
 
 type CronArgValues = ReturnType<typeof parseCronArgs>["values"];
@@ -202,7 +203,7 @@ function isRunnerFlagValid(value: string | undefined): boolean {
 }
 
 /**
- * Best-effort lookup of a --target-device id in the environments registry
+ * Best-effort lookup of a --computer deviceId in the environments registry
  * (through the same base URL the schedule request will use, so Desktop's
  * merged local+cloud view is what gets validated). Returns null when the
  * lookup fails or the device is unknown — the server-side registry check on
@@ -344,7 +345,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     return 1;
   }
 
-  const targetDeviceId = values["target-device"]?.trim() || undefined;
+  const targetDeviceId = values.computer?.trim() || undefined;
 
   const resolved = await getRunnerForAgent(values.runner, agentId);
   if ("error" in resolved) {
@@ -358,7 +359,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
   // (and likely a mistake) for the local runner.
   if (targetDeviceId && resolved.runner !== "cloud") {
     console.error(
-      "Error: --target-device requires the cloud runner. Run `letta cron add` on the target device itself (with --runner local) to schedule there locally.",
+      "Error: --computer requires the cloud runner. Run `letta cron add` on the target computer itself (with --runner local) to schedule there locally.",
     );
     return 1;
   }
@@ -500,7 +501,7 @@ async function handleCloudAdd(params: CloudAddParams): Promise<number> {
     console.log(JSON.stringify(output, null, 2));
     console.error(
       targetDeviceId
-        ? `Created Cloud schedule: it fires from the cloud and runs on device "${targetDeviceId}" (sandbox fallback if offline).`
+        ? `Created Cloud schedule: it fires from the cloud and runs on computer "${targetDeviceId}" (sandbox fallback if offline).`
         : "Created Cloud schedule: it fires from the cloud and runs in this agent's managed cloud sandbox (survives local shutdown).",
     );
     return 0;

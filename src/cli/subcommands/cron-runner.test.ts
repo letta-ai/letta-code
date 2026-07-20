@@ -191,7 +191,7 @@ describe("buildCloudScheduleInput", () => {
     expect(built.notes).not.toContain(CLOUD_DEVICE_FALLBACK_NOTE);
   });
 
-  test("whitespace-only target device is treated as absent", () => {
+  test("whitespace-only computer target is treated as absent", () => {
     const built = buildCloudScheduleInput({
       ...base,
       cron: "*/5 * * * *",
@@ -222,7 +222,7 @@ describe("validateTargetDevice", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("Omit --target-device");
+      expect(result.error).toContain("Omit --computer");
     }
   });
 
@@ -230,18 +230,18 @@ describe("validateTargetDevice", () => {
     const result = validateTargetDevice("local", null);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("letta remote");
+      expect(result.error).toContain("letta server");
     }
   });
 
-  test("desktop-local connection is rejected with letta remote guidance", () => {
+  test("desktop-local connection is rejected with connect guidance", () => {
     const result = validateTargetDevice("07fca6a1-device", {
       organizationId: "local",
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("letta remote");
-      expect(result.error).toContain("desktop-local");
+      expect(result.error).toContain("letta server");
+      expect(result.error).toContain("local desktop connection");
     }
   });
 });
