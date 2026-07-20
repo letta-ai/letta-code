@@ -176,7 +176,7 @@ type AppViewProps = {
       profileName?: string;
       conversationId?: string;
       commandId?: string;
-      backendMode?: import("@/cli/components/AgentSelector").AgentBackendMode;
+      backendMode?: import("@/agent/agent-id").AgentBackendMode;
     },
   ) => Promise<void>;
   handleApproveAlways: (
@@ -198,7 +198,7 @@ type AppViewProps = {
     name: string,
     opts?: {
       commandId?: string;
-      backendMode?: import("@/cli/components/AgentSelector").AgentBackendMode;
+      backendMode?: import("@/agent/agent-id").AgentBackendMode;
     },
   ) => Promise<void>;
   handleCycleReasoningEffort: () => void;

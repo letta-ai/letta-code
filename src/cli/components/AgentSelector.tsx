@@ -1,18 +1,18 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { isLocalAgentId } from "@/agent/agent-id";
-import {
-  getCurrentCloudFavoriteTag,
-  LOCAL_DESKTOP_FAVORITE_TAG,
-  unpinAgentForCurrentUser,
-} from "@/agent/favorites";
+import { type AgentBackendMode, isLocalAgentId } from "@/agent/agent-id";
+import { unpinAgentForCurrentUser } from "@/agent/favorites";
 import { getModelDisplayName } from "@/agent/model";
 import { getBackendForMode } from "@/backend/backend";
 import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
+import {
+  hasCloudCredentials,
+  listPinnedAgentsForCurrentUser,
+  type PinnedAgentData,
+} from "@/cli/helpers/pinned-agent-listing";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { DEFAULT_AGENT_NAME } from "@/constants";
-import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import { MarkdownDisplay } from "./MarkdownDisplay";
 import { OverlayShell } from "./OverlayShell";
@@ -20,9 +20,6 @@ import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { validateAgentName } from "./PinDialog";
 import { TabBar } from "./TabBar";
 import { Text } from "./Text";
-
-/** Backend mode to switch to when selecting an agent */
-export type AgentBackendMode = "local" | "api";
 
 interface AgentSelectorProps {
   currentAgentId: string;
@@ -54,13 +51,6 @@ type ViewState =
       isLocal: boolean;
     };
 
-interface PinnedAgentData {
-  agentId: string;
-  agent: AgentState | null;
-  error: string | null;
-  backendMode: AgentBackendMode;
-}
-
 const ALL_TABS: { id: TabId; label: string }[] = [
   { id: "pinned", label: "Pinned" },
   { id: "constellation", label: "Constellation" },
@@ -85,27 +75,6 @@ const TAB_EMPTY_STATES: Record<TabId, string> = {
 const DISPLAY_PAGE_SIZE = 5;
 const FETCH_PAGE_SIZE = 20;
 const NEW_AGENT_DEFAULT_BACKEND: AgentBackendMode = "api";
-
-export function getPinnedAgentBackendMode(agentId: string): AgentBackendMode {
-  return isLocalAgentId(agentId) ? "local" : "api";
-}
-
-/**
- * Check if the user has cloud credentials (API key or refresh token).
- * Used to determine whether the Constellation tab can fetch agents.
- */
-function hasCloudCredentials(): boolean {
-  const apiKey = process.env.LETTA_API_KEY;
-  if (apiKey) return true;
-  const settings = settingsManager.getSettings();
-  const cached = settingsManager.getCachedSecureTokens();
-  return Boolean(
-    cached.apiKey ||
-      cached.refreshToken ||
-      settings.refreshToken ||
-      settings.env?.LETTA_API_KEY,
-  );
-}
 
 /**
  * Format a relative time string from a date
@@ -263,95 +232,7 @@ export function AgentSelector({
   const loadPinnedAgents = useCallback(async () => {
     setPinnedLoading(true);
     try {
-      const pinnedIds = settingsManager.getPinnedAgents();
-      const pinnedIdSet = new Set(pinnedIds);
-      const localFavoriteAgents = listLocalAgentsFromDisk().filter((agent) =>
-        agent.tags.includes(LOCAL_DESKTOP_FAVORITE_TAG),
-      );
-      let cloudFavoriteAgents: AgentState[] = [];
-
-      if (hasCloudCredentials()) {
-        try {
-          const favoriteTag = await getCurrentCloudFavoriteTag();
-          if (favoriteTag) {
-            const { getClient } = await import("@/backend/api/client");
-            const client = await getClient();
-            const agentList = await client.agents.list({
-              limit: FETCH_PAGE_SIZE,
-              include: ["agent.blocks"],
-              order: "desc",
-              order_by: "last_run_completion",
-              tags: [favoriteTag],
-            });
-            cloudFavoriteAgents = agentList.items;
-          }
-        } catch {
-          // Keep legacy settings pins available if cloud favorite lookup fails.
-        }
-      }
-
-      let pinnedData: PinnedAgentData[] = [];
-
-      if (pinnedIds.length > 0) {
-        pinnedData = await Promise.all(
-          pinnedIds.map(async (agentId) => {
-            const backendMode = getPinnedAgentBackendMode(agentId);
-            try {
-              // Use the correct backend for this agent's mode
-              if (backendMode === "api" && !hasCloudCredentials()) {
-                return {
-                  agentId,
-                  agent: null,
-                  error: "Not signed in",
-                  backendMode,
-                };
-              }
-              const agentBackend = getBackendForMode(backendMode);
-              const agent = await agentBackend.retrieveAgent(agentId, {
-                include: ["agent.blocks"],
-              });
-              return {
-                agentId,
-                agent,
-                error: null,
-                backendMode,
-              };
-            } catch {
-              return {
-                agentId,
-                agent: null,
-                error: "Agent not found",
-                backendMode,
-              };
-            }
-          }),
-        );
-      }
-
-      const favoriteAgents: Array<{
-        agent: AgentState;
-        backendMode: AgentBackendMode;
-      }> = [
-        ...localFavoriteAgents.map((agent) => ({
-          agent,
-          backendMode: "local" as const,
-        })),
-        ...cloudFavoriteAgents.map((agent) => ({
-          agent,
-          backendMode: "api" as const,
-        })),
-      ];
-
-      const favoriteData: PinnedAgentData[] = favoriteAgents
-        .filter(({ agent }) => !pinnedIdSet.has(agent.id))
-        .map((agent) => ({
-          agentId: agent.agent.id,
-          agent: agent.agent,
-          error: null,
-          backendMode: agent.backendMode,
-        }));
-      pinnedData = [...pinnedData, ...favoriteData];
-
+      const pinnedData = await listPinnedAgentsForCurrentUser();
       const validPinnedData = pinnedData.filter((p) => p.agent !== null);
 
       if (validPinnedData.length === 0) {
