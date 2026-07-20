@@ -267,6 +267,28 @@ describe("Discord adapter bot ingress", () => {
     expect(deliveries).toHaveLength(0);
   });
 
+  test("does not accept suppressed mention markup in open guild channels", async () => {
+    const { client, deliveries } = await startAdapterWithDeliveries(
+      { "channel-open": "open" },
+      { allowBots: "mentions" },
+    );
+
+    await client.emitMessageCreate(
+      createDiscordMessage({
+        id: "msg-bot-suppressed-mention",
+        channelId: "channel-open",
+        content: "<@bot-user> mention-shaped text only",
+        mentioned: false,
+        authorId: "foreign-bot",
+        authorUsername: "workerbot",
+        authorGlobalName: "Worker Bot",
+        authorBot: true,
+      }),
+    );
+
+    expect(deliveries).toHaveLength(0);
+  });
+
   test("preserves human mention semantics when Discord reports a mention", async () => {
     const { client, deliveries } = await startAdapterWithDeliveries([
       "channel-mention",
@@ -343,6 +365,7 @@ describe("Discord adapter bot ingress", () => {
         channelId: "dm-1",
         guildId: null,
         content: "<@bot-user> hello in dm",
+        mentioned: true,
         authorId: "foreign-bot",
         authorUsername: "workerbot",
         authorGlobalName: "Worker Bot",
@@ -359,6 +382,28 @@ describe("Discord adapter bot ingress", () => {
       text: "<@bot-user> hello in dm",
       isMention: false,
     });
+  });
+
+  test("does not accept suppressed mention markup in Discord DMs", async () => {
+    const { client, deliveries } = await startAdapterWithDeliveries([], {
+      allowBots: "mentions",
+    });
+
+    await client.emitMessageCreate(
+      createDiscordMessage({
+        id: "msg-bot-dm-suppressed-mention",
+        channelId: "dm-1",
+        guildId: null,
+        content: "<@bot-user> mention-shaped text only",
+        mentioned: false,
+        authorId: "foreign-bot",
+        authorUsername: "workerbot",
+        authorGlobalName: "Worker Bot",
+        authorBot: true,
+      }),
+    );
+
+    expect(deliveries).toHaveLength(0);
   });
 
   test("does not treat thread participation as an implicit foreign bot mention", async () => {

@@ -498,16 +498,16 @@ export function createDiscordAdapter(
         const effectiveBotUserId = botUserId ?? client?.user?.id ?? null;
         const chatType = resolveDiscordChatType(message.guildId);
         const isThread = isThreadMessage(message);
-        const wasMentioned = chatType === "channel" && hasBotMention(message);
+        const hasParsedBotMention = hasBotMention(message);
+        const wasMentioned = chatType === "channel" && hasParsedBotMention;
         if (
           !shouldAcceptDiscordInboundBotMessage({
             message,
             allowBots: config.allowBots,
             botUserId: effectiveBotUserId,
-            wasExplicitlyMentioned: hasExplicitDiscordUserMention(
-              message,
-              effectiveBotUserId,
-            ),
+            wasExplicitlyMentioned:
+              hasParsedBotMention &&
+              hasExplicitDiscordUserMention(message, effectiveBotUserId),
           })
         ) {
           return;
