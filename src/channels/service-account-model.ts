@@ -96,6 +96,7 @@ export function createAccountFromPatch(
       allowedChannels: normalizedPatch.allowedChannels ?? [],
       autoThreadOnMention: normalizedPatch.autoThreadOnMention ?? false,
       threadPolicyByChannel: normalizedPatch.threadPolicyByChannel,
+      allowBots: normalizedPatch.allowBots ?? false,
       acknowledgeMessageReaction: normalizedPatch.acknowledgeMessageReaction,
       removeStaleRoutes: normalizedPatch.removeStaleRoutes,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
@@ -246,6 +247,7 @@ export function mergeAccountPatch(
         normalizedPatch.autoThreadOnMention ?? existing.autoThreadOnMention,
       threadPolicyByChannel:
         normalizedPatch.threadPolicyByChannel ?? existing.threadPolicyByChannel,
+      allowBots: normalizedPatch.allowBots ?? existing.allowBots ?? false,
       acknowledgeMessageReaction:
         normalizedPatch.acknowledgeMessageReaction ??
         existing.acknowledgeMessageReaction,

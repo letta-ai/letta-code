@@ -8,6 +8,10 @@ import type {
   OutboundChannelMessage,
 } from "@/channels/types";
 import {
+  hasExplicitDiscordUserMention,
+  shouldAcceptDiscordInboundBotMessage,
+} from "./bot-policy";
+import {
   isDiscordGuildChannelAllowed,
   resolveDiscordChannelMode,
 } from "./channel-gating";
@@ -487,16 +491,27 @@ export function createDiscordAdapter(
       client.on("messageCreate", async (message: DiscordMessage) => {
         if (!adapter.onMessage) return;
 
-        // Ignore bot messages (including self)
-        if (message.author.bot) return;
-
         const content = (message.content ?? "").trim();
         const userId = message.author.id;
         if (!userId) return;
 
+        const effectiveBotUserId = botUserId ?? client?.user?.id ?? null;
         const chatType = resolveDiscordChatType(message.guildId);
         const isThread = isThreadMessage(message);
         const wasMentioned = chatType === "channel" && hasBotMention(message);
+        if (
+          !shouldAcceptDiscordInboundBotMessage({
+            message,
+            allowBots: config.allowBots,
+            botUserId: effectiveBotUserId,
+            wasExplicitlyMentioned: hasExplicitDiscordUserMention(
+              message,
+              effectiveBotUserId,
+            ),
+          })
+        ) {
+          return;
+        }
 
         // ── DM handling ──────────────────────────────────────────
         if (chatType === "direct") {
@@ -528,7 +543,9 @@ export function createDiscordAdapter(
             await adapter.onMessage(inbound);
           } catch (error) {
             console.error("[Discord] Error handling DM:", error);
-            await notifyDiscordDeliveryError(message, error);
+            if (!message.author.bot) {
+              await notifyDiscordDeliveryError(message, error);
+            }
           }
           return;
         }
@@ -624,7 +641,9 @@ export function createDiscordAdapter(
           await adapter.onMessage(inbound);
         } catch (error) {
           console.error("[Discord] Error handling guild message:", error);
-          await notifyDiscordDeliveryError(message, error);
+          if (!message.author.bot) {
+            await notifyDiscordDeliveryError(message, error);
+          }
         }
       });
 

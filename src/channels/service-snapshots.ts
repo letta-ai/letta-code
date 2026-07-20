@@ -169,6 +169,7 @@ export function toAccountSnapshot(
       autoThreadOnMention: account.autoThreadOnMention ?? false,
       threadPolicyByChannel: account.threadPolicyByChannel ?? {},
       acknowledgeMessageReaction: account.acknowledgeMessageReaction ?? false,
+      allowBots: account.allowBots ?? false,
       removeStaleRoutes: account.removeStaleRoutes ?? false,
       inboundDebounceMs: account.inboundDebounceMs,
       createdAt: account.createdAt,
@@ -363,6 +364,7 @@ export function getChannelConfigSnapshot(
       autoThreadOnMention: account.autoThreadOnMention ?? false,
       threadPolicyByChannel: account.threadPolicyByChannel ?? {},
       acknowledgeMessageReaction: account.acknowledgeMessageReaction ?? false,
+      allowBots: account.allowBots ?? false,
       removeStaleRoutes: account.removeStaleRoutes ?? false,
       inboundDebounceMs: account.inboundDebounceMs,
     };
