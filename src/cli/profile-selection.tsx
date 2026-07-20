@@ -126,9 +126,12 @@ function ProfileSelectionUI({
         let agent = pinnedLru?.agent ?? null;
         if (!agent) {
           try {
-            agent = await getBackendForMode(
+            const backend = getBackendForMode(
               isLocalAgentId(lruAgentId) ? "local" : "api",
-            ).retrieveAgent(lruAgentId, { include: ["agent.blocks"] });
+            );
+            agent = await backend.retrieveAgent(lruAgentId, {
+              include: ["agent.blocks"],
+            });
           } catch {
             agent = null;
           }
