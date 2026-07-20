@@ -109,7 +109,7 @@ const SYNTHETIC_LOCAL_PLACEHOLDER_ID = "local";
 export type TargetDeviceValidity = { ok: true } | { ok: false; error: string };
 
 /**
- * Pre-validate a `--target-device` value against its resolved environment
+ * Pre-validate a `--computer` value against its resolved environment
  * entry, catching entries that appear in `letta environments list` but are
  * not valid Cloud-schedule targets. In Desktop/local-proxy contexts the list
  * merges desktop-local listener connections (organizationId "local" — they
@@ -129,7 +129,7 @@ export function validateTargetDevice(
     return {
       ok: false,
       error:
-        '"Cloud" is the default execution target, not a device. Omit --target-device to run in the agent\'s cloud sandbox.',
+        '"Cloud" is the default execution target, not a computer. Omit --computer to run in the agent\'s cloud sandbox.',
     };
   }
 
@@ -137,14 +137,14 @@ export function validateTargetDevice(
     return {
       ok: false,
       error:
-        '"local" is a placeholder entry, not a registered device. Run `letta remote` on the machine you want to target, then use its deviceId.',
+        '"local" is a placeholder entry, not a connected computer. Run `letta server` on the machine you want to target, then use its deviceId.',
     };
   }
 
   if (environment?.organizationId === "local") {
     return {
       ok: false,
-      error: `Device ${deviceId} is a desktop-local connection, not a registered remote. Cloud schedules can only target devices registered with the Letta API — run \`letta remote\` on that machine to register it.`,
+      error: `Device ${deviceId} is this computer's local desktop connection, not a computer connected to your Letta account. Cloud schedules can only target connected computers — run \`letta server\` on that machine (or enable remote access in the desktop app) to connect it.`,
     };
   }
 
@@ -161,7 +161,7 @@ export interface BuildCloudScheduleParams {
   cron: string;
   recurring: boolean;
   scheduledFor?: Date;
-  /** Optional registered device to execute on (offline → sandbox fallback). */
+  /** Optional connected computer to execute on (offline → sandbox fallback). */
   targetDeviceId?: string;
 }
 
@@ -189,7 +189,7 @@ export const CLOUD_CRON_UTC_NOTE =
   "Recurring Cloud schedules currently interpret cron expressions in UTC (timezone support is tracked in LET-9815).";
 
 export const CLOUD_DEVICE_FALLBACK_NOTE =
-  "If the target device is offline when the schedule fires, execution falls back to the agent's cloud sandbox.";
+  "If the target computer is offline when the schedule fires, execution falls back to the agent's cloud sandbox.";
 
 export function buildCloudScheduleInput(
   params: BuildCloudScheduleParams,
