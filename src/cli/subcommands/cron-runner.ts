@@ -94,6 +94,63 @@ export function resolveCronRunner(
   };
 }
 
+// ── Target device pre-validation ────────────────────────────────────
+
+/**
+ * Synthetic ids the Desktop environment proxy injects into
+ * `letta environments list` responses. Neither is a targetable device:
+ * - "__letta_cloud__": the synthetic "Cloud" row (the default sandbox target)
+ * - "local": the synthetic offline placeholder when no local device is registered
+ * Values mirror CLOUD_DEVICE_ID / LOCAL_CONNECTION_ID in the desktop app.
+ */
+const SYNTHETIC_CLOUD_DEVICE_ID = "__letta_cloud__";
+const SYNTHETIC_LOCAL_PLACEHOLDER_ID = "local";
+
+export type TargetDeviceValidity = { ok: true } | { ok: false; error: string };
+
+/**
+ * Pre-validate a `--target-device` value against its resolved environment
+ * entry, catching entries that appear in `letta environments list` but are
+ * not valid Cloud-schedule targets. In Desktop/local-proxy contexts the list
+ * merges desktop-local listener connections (organizationId "local" — they
+ * exist only in the local proxy, not the Letta API's environments registry)
+ * and a synthetic Cloud row. Targeting either would earn an unhelpful server
+ * 404; fail earlier with an actionable message instead.
+ *
+ * `environment` is null when the device wasn't found locally — that case is
+ * allowed through so the server's own registry check stays the backstop
+ * (the local list may be unavailable or incomplete).
+ */
+export function validateTargetDevice(
+  deviceId: string,
+  environment: { organizationId?: string } | null,
+): TargetDeviceValidity {
+  if (deviceId === SYNTHETIC_CLOUD_DEVICE_ID) {
+    return {
+      ok: false,
+      error:
+        '"Cloud" is the default execution target, not a device. Omit --target-device to run in the agent\'s cloud sandbox.',
+    };
+  }
+
+  if (deviceId === SYNTHETIC_LOCAL_PLACEHOLDER_ID) {
+    return {
+      ok: false,
+      error:
+        '"local" is a placeholder entry, not a registered device. Run `letta remote` on the machine you want to target, then use its deviceId.',
+    };
+  }
+
+  if (environment?.organizationId === "local") {
+    return {
+      ok: false,
+      error: `Device ${deviceId} is a desktop-local connection, not a registered remote. Cloud schedules can only target devices registered with the Letta API — run \`letta remote\` on that machine to register it.`,
+    };
+  }
+
+  return { ok: true };
+}
+
 // ── Cloud payload mapping ───────────────────────────────────────────
 
 export interface BuildCloudScheduleParams {

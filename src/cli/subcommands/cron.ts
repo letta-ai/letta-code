@@ -48,6 +48,7 @@ import {
   CLOUD_EXECUTION_TARGET,
   type CronRunner,
   resolveCronRunner,
+  validateTargetDevice,
 } from "./cron-runner";
 
 // ── Usage ───────────────────────────────────────────────────────────
@@ -200,6 +201,26 @@ function isRunnerFlagValid(value: string | undefined): boolean {
   return value === undefined || value === "local" || value === "cloud";
 }
 
+/**
+ * Best-effort lookup of a --target-device id in the environments registry
+ * (through the same base URL the schedule request will use, so Desktop's
+ * merged local+cloud view is what gets validated). Returns null when the
+ * lookup fails or the device is unknown — the server-side registry check on
+ * schedule create remains the backstop for those cases.
+ */
+async function lookupEnvironmentForTarget(
+  deviceId: string,
+): Promise<{ organizationId?: string } | null> {
+  try {
+    const { getEnvironmentConnection } = await import(
+      "@/backend/api/environments"
+    );
+    return await getEnvironmentConnection(deviceId);
+  } catch {
+    return null;
+  }
+}
+
 // ── Cloud output mapping ────────────────────────────────────────────
 
 function extractPromptFromCloudSchedule(
@@ -340,6 +361,21 @@ async function handleAdd(values: CronArgValues): Promise<number> {
       "Error: --target-device requires the cloud runner. Run `letta cron add` on the target device itself (with --runner local) to schedule there locally.",
     );
     return 1;
+  }
+
+  // Pre-validate the target against the environments list: it can contain
+  // entries that are not valid Cloud-schedule targets (synthetic Cloud row,
+  // desktop-local connections). Catch those with an actionable error before
+  // hitting the server's registry 404.
+  if (targetDeviceId) {
+    const validity = validateTargetDevice(
+      targetDeviceId,
+      await lookupEnvironmentForTarget(targetDeviceId),
+    );
+    if (!validity.ok) {
+      console.error(`Error: ${validity.error}`);
+      return 1;
+    }
   }
 
   if (resolved.runner === "cloud") {
