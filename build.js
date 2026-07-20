@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeLauncherContent } from "./scripts/launcher-shebang.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -104,14 +105,9 @@ await Bun.build({
   features: features,
 });
 
-// Add shebang to output file
+// Add Node-shebang launcher bootstrap to output file
 const outputPath = join(__dirname, "letta.js");
 let content = readFileSync(outputPath, "utf-8");
-
-// Remove any existing shebang first
-if (content.startsWith("#!")) {
-  content = content.slice(content.indexOf("\n") + 1);
-}
 
 // Patch secrets requirement back in for node build
 content = content.replace(
@@ -119,9 +115,7 @@ content = content.replace(
   `globalThis.Bun.secrets`,
 );
 
-const withShebang = `#!/usr/bin/env node
-${content}`;
-await Bun.write(outputPath, withShebang);
+await Bun.write(outputPath, normalizeLauncherContent(content));
 
 // Make executable
 if (process.platform !== "win32") {

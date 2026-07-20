@@ -297,6 +297,8 @@ jobs:
         run: node --version
 
       - name: CLI smoke test (Node 18)
+        env:
+          LETTA_CODE_SKIP_BUN_REEXEC: "1"
         run: node ./letta.js --help
 
   headless:
