@@ -1,6 +1,7 @@
 import {
   buildChannelAccessDeniedMessage,
   evaluateChannelSenderAccess,
+  floorOnlyChannelCommandGate,
   resolveChannelAccessScope,
   resolveChannelCommandGate,
 } from "./access-control";
@@ -52,14 +53,13 @@ export function createChannelInboundRouter(deps: {
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     const adapter = deps.getAdapter(msg.channel, accountId);
     if (!adapter) return;
-    if (await deps.controls.tryHandleInbound(adapter, msg)) {
-      return;
-    }
 
     const config = getChannelAccount(msg.channel, accountId);
 
     // Sender access gate: one decision for every surface (DMs, groups,
-    // and every channel's auto-route path). "pair" senders continue so
+    // and every channel's auto-route path), evaluated before control
+    // responses and slash commands so unauthorized senders cannot answer
+    // approval prompts or run commands. "pair" senders continue so
     // read-only slash commands still work before pairing completes; the
     // pairing-code flow below handles their normal messages.
     const senderAccess = config
@@ -84,6 +84,10 @@ export function createChannelInboundRouter(deps: {
           `[channels] Dropped ${msg.channel} group message from unauthorized sender ${msg.senderId} in chat ${msg.chatId}`,
         );
       }
+      return;
+    }
+
+    if (await deps.controls.tryHandleInbound(adapter, msg)) {
       return;
     }
 
@@ -142,11 +146,13 @@ export function createChannelInboundRouter(deps: {
         },
         enableBangCommands: msg.channel === "slack" && msg.isMention === true,
         commandGate: config
-          ? resolveChannelCommandGate({
-              account: config,
-              channelId: msg.channel,
-              senderId: msg.senderId,
-            })
+          ? senderAccess === "pair"
+            ? floorOnlyChannelCommandGate()
+            : resolveChannelCommandGate({
+                account: config,
+                channelId: msg.channel,
+                senderId: msg.senderId,
+              })
           : undefined,
       })
     ) {

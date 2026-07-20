@@ -290,6 +290,41 @@ describe("pending channel control requests", () => {
     });
   });
 
+  test("text control replies from other senders never resolve the prompt", async () => {
+    __testOverrideLoadChannelAccounts(() => []);
+    const registry = new ChannelRegistry();
+    const replies: Array<{ chatId: string; text: string }> = [];
+    const adapter = createAdapter(replies);
+    registry.registerAdapter(adapter);
+
+    const deliveries: unknown[] = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    const approvalResponses: unknown[] = [];
+    registry.setApprovalResponseHandler(async (params) => {
+      approvalResponses.push(params);
+      return true;
+    });
+
+    const baseEvent = createPendingControlRequestEvent();
+    await registry.registerPendingControlRequest({
+      ...baseEvent,
+      source: { ...baseEvent.source, senderId: "U123" },
+    });
+
+    // A different participant in the same chat/thread cannot answer the
+    // prompt; their reply falls through to normal ingress handling.
+    await adapter.onMessage?.(createInboundMessage("2", { senderId: "U999" }));
+    expect(approvalResponses).toHaveLength(0);
+    expect(deliveries).toHaveLength(0);
+
+    // The initiating sender's reply still resolves the pending prompt.
+    await adapter.onMessage?.(createInboundMessage("2"));
+    expect(approvalResponses).toHaveLength(1);
+    __testOverrideLoadChannelAccounts(null);
+  });
+
   test("native approval controls resolve the exact request and enforce the initiating sender", async () => {
     const registry = new ChannelRegistry();
     const adapter = createAdapter([]);

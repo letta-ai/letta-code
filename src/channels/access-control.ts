@@ -244,6 +244,23 @@ export interface ChannelCommandGate {
   isAdmin: boolean;
   /** Normalized extra commands non-admins may run (floor excluded). */
   allowedCommands: string[];
+  /** True when the sender still needs to pair; changes denial wording. */
+  pairingPending?: boolean;
+}
+
+/**
+ * Gate limiting a sender to the read-only floor. Applied to senders in
+ * the pairing handshake regardless of whether admin tiers are enabled,
+ * so a not-yet-paired DM sender cannot run mutating commands against a
+ * pre-existing route.
+ */
+export function floorOnlyChannelCommandGate(): ChannelCommandGate {
+  return {
+    enabled: true,
+    isAdmin: false,
+    allowedCommands: [],
+    pairingPending: true,
+  };
 }
 
 function normalizeCommandName(name: string): string {
@@ -272,12 +289,14 @@ export function resolveChannelCommandGate(params: {
   ].filter((entry) => entry.length > 0);
   const enabled = admins.length > 0;
   const allowedCommands = (params.account.userAllowedCommands ?? [])
-    .map(normalizeCommandName)
+    .map(canonicalizeChannelCommandName)
     .filter((name) => name.length > 0);
   return {
     enabled,
+    // Channel-aware matching so e.g. a WhatsApp admin configured as a
+    // phone number is recognized when messages arrive with a JID sender.
     isAdmin:
-      !enabled || (!!params.senderId && admins.includes(params.senderId)),
+      !enabled || allowlistMatches(params.channelId, admins, params.senderId),
     allowedCommands,
   };
 }
@@ -289,10 +308,10 @@ export function canRunChannelCommand(
   if (!gate.enabled || gate.isAdmin) {
     return true;
   }
-  const normalized = normalizeCommandName(commandName);
+  const canonical = canonicalizeChannelCommandName(commandName);
   return (
-    (CHANNEL_COMMAND_FLOOR as readonly string[]).includes(normalized) ||
-    gate.allowedCommands.includes(normalized)
+    (CHANNEL_COMMAND_FLOOR as readonly string[]).includes(canonical) ||
+    gate.allowedCommands.includes(canonical)
   );
 }
 
@@ -324,8 +343,11 @@ export function buildChannelCommandDeniedMessage(
   const runnable = runnableCommandsForUser(gate)
     .map((name) => `/${name}`)
     .join(", ");
+  const restriction = gate.pairingPending
+    ? "is available after pairing completes"
+    : "is limited to admins here";
   return [
-    `${channelDisplayName(channelId)}: /${normalizeCommandName(commandName)} is limited to admins here.`,
+    `${channelDisplayName(channelId)}: /${normalizeCommandName(commandName)} ${restriction}.`,
     `Commands you can run: ${runnable}. Use /whoami to see your access.`,
   ].join("\n");
 }
@@ -353,6 +375,11 @@ export function buildChannelWhoamiMessage(
       "Tier: unrestricted (no admin list configured for this account)",
       "Commands: all available",
     );
+  } else if (gate.pairingPending) {
+    const runnable = runnableCommandsForUser(gate)
+      .map((name) => `/${name}`)
+      .join(", ");
+    lines.push("Tier: pending pairing", `Commands you can run: ${runnable}`);
   } else if (gate.isAdmin) {
     lines.push("Tier: admin", "Commands: all available");
   } else {

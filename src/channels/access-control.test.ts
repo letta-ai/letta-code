@@ -6,6 +6,7 @@ import {
   canonicalizeChannelCommandName,
   canRunChannelCommand,
   evaluateChannelSenderAccess,
+  floorOnlyChannelCommandGate,
   resolveChannelAccessScope,
   resolveChannelCommandGate,
 } from "@/channels/access-control";
@@ -259,6 +260,62 @@ describe("channel command tiers", () => {
   test("reflect alias canonicalizes to reflection", () => {
     expect(canonicalizeChannelCommandName("reflect")).toBe("reflection");
     expect(canonicalizeChannelCommandName("/PAUSE")).toBe("pause");
+  });
+
+  test("userAllowedCommands entries are alias-canonicalized", () => {
+    const gate = resolveChannelCommandGate({
+      account: makeAccount({
+        adminUsers: ["admin-1"],
+        userAllowedCommands: ["reflect"],
+      }),
+      channelId: "testchan",
+      senderId: "user-1",
+    });
+    expect(canRunChannelCommand(gate, "reflection")).toBe(true);
+    expect(canRunChannelCommand(gate, "reflect")).toBe(true);
+  });
+
+  test("admin matching uses channel identity normalization", () => {
+    const whatsappGate = resolveChannelCommandGate({
+      account: makeAccount({ adminUsers: ["+1234567890"] }),
+      channelId: "whatsapp",
+      senderId: "1234567890",
+    });
+    expect(whatsappGate.isAdmin).toBe(true);
+
+    const signalGate = resolveChannelCommandGate({
+      account: makeAccount({ adminUsers: ["signal:+15551234567"] }),
+      channelId: "signal",
+      senderId: "+15551234567",
+    });
+    expect(signalGate.isAdmin).toBe(true);
+
+    const exactGate = resolveChannelCommandGate({
+      account: makeAccount({ adminUsers: ["+1234567890"] }),
+      channelId: "testchan",
+      senderId: "1234567890",
+    });
+    expect(exactGate.isAdmin).toBe(false);
+  });
+
+  test("pre-pairing floor gate blocks mutating commands regardless of admins", () => {
+    const gate = floorOnlyChannelCommandGate();
+    expect(gate.enabled).toBe(true);
+    expect(canRunChannelCommand(gate, "help")).toBe(true);
+    expect(canRunChannelCommand(gate, "status")).toBe(true);
+    expect(canRunChannelCommand(gate, "whoami")).toBe(true);
+    expect(canRunChannelCommand(gate, "cancel")).toBe(false);
+    expect(canRunChannelCommand(gate, "model")).toBe(false);
+    expect(canRunChannelCommand(gate, "pause")).toBe(false);
+
+    const denial = buildChannelCommandDeniedMessage("testchan", "cancel", gate);
+    expect(denial).toContain("available after pairing completes");
+
+    const whoami = buildChannelWhoamiMessage(
+      { channel: "testchan", senderId: "user-1", chatType: "direct" },
+      gate,
+    );
+    expect(whoami).toContain("Tier: pending pairing");
   });
 });
 
