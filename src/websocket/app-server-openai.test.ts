@@ -5,7 +5,10 @@ import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
 import { type AppServerHandle, startAppServer } from "@/websocket/app-server";
 import { parseAppServerWebsocketAuthSettings } from "@/websocket/app-server-auth";
-import { __testSetSendMessageStreamImpl } from "@/websocket/app-server-openai";
+import {
+  __testResetConversationMap,
+  __testSetSendMessageStreamImpl,
+} from "@/websocket/app-server-openai";
 
 const TEST_AGENTS = [
   {
@@ -20,9 +23,14 @@ const TEST_AGENTS = [
   },
 ];
 
-function fakeBackend(): Backend {
+function fakeBackend(created: string[] = []): Backend {
   return {
     listAgents: async () => TEST_AGENTS,
+    createConversation: async (body: { agent_id: string }) => {
+      const id = `conv-test-${created.length + 1}`;
+      created.push(id);
+      return { id, agent_id: body.agent_id };
+    },
   } as unknown as Backend;
 }
 
@@ -82,6 +90,7 @@ describe("app-server OpenAI-compatible API", () => {
 
   afterEach(async () => {
     __testSetSendMessageStreamImpl(null);
+    __testResetConversationMap();
     __testSetBackend(null);
     if (handle) {
       await handle.close();
@@ -178,8 +187,48 @@ describe("app-server OpenAI-compatible API", () => {
     expect(body.choices[0]?.finish_reason).toBe("stop");
     expect(body.usage.prompt_tokens).toBe(11);
     expect(body.usage.total_tokens).toBe(18);
-    expect(captured.conversation).toBe("default");
+    expect(captured.conversation).toBe("conv-test-1");
     expect(captured.agent).toBe("agent-local-111");
+  });
+
+  test("client chats map to distinct, sticky Letta conversations", async () => {
+    const created: string[] = [];
+    __testSetBackend(fakeBackend(created));
+    const conversationsUsed: string[] = [];
+    stubTurnStream(fakeTurnChunks(), (conversationId) => {
+      conversationsUsed.push(conversationId);
+    });
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const send = async (messages: unknown[]) =>
+      fetch(httpUrl(handle as AppServerHandle, "/v1/chat/completions"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "memo", messages }),
+      });
+
+    // Chat A, first message: creates a fresh conversation.
+    await send([{ role: "user", content: "first chat" }]);
+    // Chat A, second message: client resends the transcript, which now
+    // includes the reply ("Hello world") — must map back to the same
+    // conversation without creating a new one.
+    await send([
+      { role: "user", content: "first chat" },
+      { role: "assistant", content: "Hello world" },
+      { role: "user", content: "follow-up" },
+    ]);
+    // Chat B, first message: a different thread gets its own conversation.
+    await send([{ role: "user", content: "second chat" }]);
+
+    expect(conversationsUsed).toEqual([
+      "conv-test-1",
+      "conv-test-1",
+      "conv-test-2",
+    ]);
+    expect(created).toEqual(["conv-test-1", "conv-test-2"]);
   });
 
   test("POST /v1/chat/completions streams SSE chunks", async () => {

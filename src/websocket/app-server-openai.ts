@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { sendMessageStream } from "@/agent/message";
@@ -10,9 +10,10 @@ import {
 
 // OpenAI-compatible surface for the App Server. Each Letta agent is
 // advertised as a "model"; a chat completion request routes the last user
-// message into that agent's default conversation. The resent client-side
-// history is intentionally ignored — the agent's own server-side memory and
-// conversation state are authoritative.
+// message into a Letta conversation on that agent. The resent client-side
+// history is not replayed into the agent — server-side state is
+// authoritative — but it IS used as a fingerprint to keep each client-side
+// chat pinned to its own Letta conversation across stateless requests.
 const MODELS_PATH = "/v1/models";
 const CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
 const MAX_REQUEST_BODY_BYTES = 20 * 1024 * 1024;
@@ -33,6 +34,11 @@ export function __testSetSendMessageStreamImpl(
   impl: SendMessageStreamImpl | null,
 ): void {
   sendMessageStreamImpl = impl ?? sendMessageStream;
+}
+
+/** @internal Clears the transcript→conversation map between tests. */
+export function __testResetConversationMap(): void {
+  conversationIdByTranscript.clear();
 }
 
 interface OpenAiChatMessagePart {
@@ -197,6 +203,83 @@ async function resolveAgentForModel(
   );
 }
 
+// Conversation continuity across stateless chat-completions requests.
+// The protocol carries no thread id, so a client chat is identified by a
+// fingerprint of its transcript prefix (the user/assistant turns before
+// the message being sent). A first message has an empty prefix and starts
+// a fresh Letta conversation; after each completed turn we also store the
+// fingerprint of the transcript including the new reply, which is exactly
+// the prefix the client will resend on its next message in that chat.
+// Bounded FIFO map: long-idle chats fall out and start a new conversation.
+const MAX_TRACKED_TRANSCRIPTS = 4096;
+const conversationIdByTranscript = new Map<string, string>();
+
+interface TranscriptTurn {
+  role: string;
+  text: string;
+}
+
+function rememberConversation(key: string, conversationId: string): void {
+  conversationIdByTranscript.delete(key);
+  conversationIdByTranscript.set(key, conversationId);
+  while (conversationIdByTranscript.size > MAX_TRACKED_TRANSCRIPTS) {
+    const oldest = conversationIdByTranscript.keys().next().value;
+    if (oldest === undefined) break;
+    conversationIdByTranscript.delete(oldest);
+  }
+}
+
+function transcriptFingerprint(
+  agentId: string,
+  turns: TranscriptTurn[],
+): string {
+  const hash = createHash("sha256");
+  hash.update(agentId);
+  for (const turn of turns) {
+    hash.update("\0");
+    hash.update(turn.role);
+    hash.update("\0");
+    hash.update(turn.text);
+  }
+  return hash.digest("hex");
+}
+
+/** User/assistant turns with text content, in order; system turns are
+ * excluded because clients vary them independently of the thread. */
+function normalizeTranscript(messages: OpenAiChatMessage[]): TranscriptTurn[] {
+  const turns: TranscriptTurn[] = [];
+  for (const message of messages) {
+    if (message.role !== "user" && message.role !== "assistant") continue;
+    turns.push({
+      role: message.role,
+      text: extractTextContent(message.content),
+    });
+  }
+  return turns;
+}
+
+async function resolveConversationId(
+  agentId: string,
+  prefixKey: string,
+  onLog?: (message: string) => void,
+): Promise<string> {
+  const existing = conversationIdByTranscript.get(prefixKey);
+  if (existing) return existing;
+  try {
+    const conversation = await getBackend().createConversation({
+      agent_id: agentId,
+    });
+    return conversation.id;
+  } catch (error) {
+    onLog?.(
+      `OpenAI-compat failed to create conversation, using default: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return "default";
+  }
+}
+
 function chatCompletionChunk(
   id: string,
   created: number,
@@ -250,10 +333,11 @@ async function handleChatCompletions(
     return;
   }
 
-  const lastUserMessage = [...body.messages]
-    .reverse()
-    .find((message) => message.role === "user");
-  const userText = extractTextContent(lastUserMessage?.content);
+  const transcript = normalizeTranscript(body.messages);
+  const lastUserIndex = transcript.findLastIndex(
+    (turn) => turn.role === "user",
+  );
+  const userText = lastUserIndex >= 0 ? transcript[lastUserIndex]?.text : "";
   if (!userText) {
     sendOpenAiError(
       response,
@@ -276,6 +360,14 @@ async function handleChatCompletions(
     return;
   }
 
+  const prefixTurns = transcript.slice(0, lastUserIndex);
+  const prefixKey = transcriptFingerprint(agent.id, prefixTurns);
+  const conversationId = await resolveConversationId(
+    agent.id,
+    prefixKey,
+    options.onLog,
+  );
+
   const completionId = `chatcmpl-${randomUUID()}`;
   const created = Math.floor(Date.now() / 1000);
   const streaming = body.stream === true;
@@ -287,7 +379,7 @@ async function handleChatCompletions(
   let stream: AsyncIterable<LettaStreamingResponse>;
   try {
     stream = await sendMessageStreamImpl(
-      "default",
+      conversationId,
       [
         {
           role: "user",
@@ -380,6 +472,26 @@ async function handleChatCompletions(
   }
 
   if (clientClosed) return;
+
+  if (!streamError) {
+    // Map the prefix itself (so a regenerate of the same message reuses
+    // this conversation) and the transcript including the new reply (the
+    // prefix the client resends on its next message in this chat). The
+    // EMPTY prefix is shared by every brand-new chat and must never be
+    // remembered — doing so would funnel all new chats into one
+    // conversation.
+    if (prefixTurns.length > 0) {
+      rememberConversation(prefixKey, conversationId);
+    }
+    rememberConversation(
+      transcriptFingerprint(agent.id, [
+        ...prefixTurns,
+        { role: "user", text: userText },
+        { role: "assistant", text: fullText },
+      ]),
+      conversationId,
+    );
+  }
 
   if (streaming) {
     if (streamError) {
