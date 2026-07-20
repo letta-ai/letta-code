@@ -14,8 +14,14 @@ export const BUN_REEXEC_PRELUDE = String.raw`const __lettaCodeMaybeReexecBun = a
   const scriptPath = process.argv[1];
   if (!scriptPath) return;
 
-  const [{ accessSync, constants, realpathSync }, { delimiter, join }, { fileURLToPath }] =
+  const [
+    { spawnSync },
+    { accessSync, constants, realpathSync },
+    { delimiter, join },
+    { fileURLToPath },
+  ] =
     await Promise.all([
+      import("node:child_process"),
       import("node:fs"),
       import("node:path"),
       import("node:url"),
@@ -45,30 +51,29 @@ export const BUN_REEXEC_PRELUDE = String.raw`const __lettaCodeMaybeReexecBun = a
       } catch {
         return false;
       }
-  });
+    });
   if (!bunPath) return;
 
-  try {
-    // Replace this bootstrap instead of supervising a child process so
-    // long-running CLI/listener commands keep normal signal and process-tree
-    // semantics. The package requires Node >=22.19, which provides execve on
-    // supported Unix platforms.
-    process.execve(
-      bunPath,
-      [bunPath, scriptPath, ...process.argv.slice(2)],
-      { ...process.env, LETTA_CODE_BUN_REEXECED: "1" },
-    );
-  } catch {
-    // If the discovered executable cannot be launched, preserve the supported
-    // Node fallback instead of making the CLI unusable.
-  }
+  // Node 22 aborts on a native execve failure instead of throwing. Probe the
+  // discovered binary first so corrupt or wrong-architecture Bun installs
+  // preserve the Node fallback rather than crashing the CLI.
+  const probe = spawnSync(bunPath, ["--version"], {
+    stdio: "ignore",
+    timeout: 2000,
+  });
+  if (probe.error || probe.status !== 0) return;
+
+  // Replace this bootstrap instead of supervising a child process so
+  // long-running CLI/listener commands keep normal signal and process-tree
+  // semantics. The package requires Node >=22.19, which provides execve on
+  // supported Unix platforms.
+  process.execve(
+    bunPath,
+    [bunPath, scriptPath, ...process.argv.slice(2)],
+    { ...process.env, LETTA_CODE_BUN_REEXECED: "1" },
+  );
 };
 await __lettaCodeMaybeReexecBun();`;
-
-const BUN_PREFERRED_UNIX_LAUNCHER = [
-  "#!/bin/sh",
-  `":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null 2>&1 && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"`,
-].join("\n");
 
 const LEGACY_BUN_PREFERRED_UNIX_LAUNCHER = [
   "#!/bin/sh",
@@ -79,7 +84,6 @@ const NODE_BOOTSTRAP_LAUNCHER = `${NODE_LAUNCHER}\n${BUN_REEXEC_PRELUDE}`;
 
 const KNOWN_LAUNCHERS = [
   NODE_BOOTSTRAP_LAUNCHER,
-  BUN_PREFERRED_UNIX_LAUNCHER,
   LEGACY_BUN_PREFERRED_UNIX_LAUNCHER,
   NODE_LAUNCHER,
 ];
@@ -89,10 +93,6 @@ function splitFirstLines(content, count) {
   let offset = 0;
 
   for (let i = 0; i < count; i += 1) {
-    if (offset > content.length) {
-      return null;
-    }
-
     const newlineIndex = content.indexOf("\n", offset);
     if (newlineIndex === -1) {
       if (i !== count - 1) {
@@ -131,10 +131,6 @@ function stripGenericShebang(content) {
     return content;
   }
   return parsed.rest;
-}
-
-export function getLauncherForPlatform() {
-  return NODE_LAUNCHER;
 }
 
 export function stripLauncher(content) {

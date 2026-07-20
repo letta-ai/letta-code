@@ -5,7 +5,6 @@ import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { normalizeLauncherFile } from "./launcher-shebang.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = dirname(__dirname);
@@ -114,6 +113,7 @@ console.log("[patch] Ink runtime patched");
 try {
   const lettaPath = join(pkgRoot, "letta.js");
   if (existsSync(lettaPath)) {
+    const { normalizeLauncherFile } = await import("./launcher-shebang.js");
     const { changed } = normalizeLauncherFile(lettaPath);
     if (changed) {
       console.log("[patch] Configured letta launcher bootstrap");

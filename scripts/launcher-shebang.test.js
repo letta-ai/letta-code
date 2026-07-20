@@ -15,7 +15,6 @@ import { fileURLToPath } from "node:url";
 import {
   BUN_REEXEC_ENV,
   BUN_REEXEC_PRELUDE,
-  getLauncherForPlatform,
   NODE_LAUNCHER,
   normalizeLauncherContent,
   normalizeLauncherFile,
@@ -84,9 +83,6 @@ describe("launcher shebang normalization", () => {
     const body = "console.log('hello');\n";
     const normalized = normalizeLauncherContent(body);
 
-    expect(getLauncherForPlatform("linux")).toBe(NODE_LAUNCHER);
-    expect(getLauncherForPlatform("darwin")).toBe(NODE_LAUNCHER);
-    expect(getLauncherForPlatform("win32")).toBe(NODE_LAUNCHER);
     expect(normalized.split("\n")[0]).toBe(NODE_LAUNCHER);
     expect(normalized).toContain(BUN_REEXEC_PRELUDE);
   });
@@ -105,7 +101,7 @@ describe("launcher shebang normalization", () => {
     const body = "console.log('hello');\n";
     const oldShellLauncher = [
       "#!/bin/sh",
-      `":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null 2>&1 && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"`,
+      `":" //#; exec /usr/bin/env sh -c 'command -v bun >/dev/null && exec bun "$0" "$@" || exec node "$0" "$@"' "$0" "$@"`,
     ].join("\n");
 
     writeFileSync(filePath, `${oldShellLauncher}\n${body}`);
@@ -169,6 +165,22 @@ exit 37
     expect(result.stdout).toBe("node:--probe:value\n");
   });
 
+  unixTest("falls back to Node when Bun fails its runtime probe", () => {
+    const { binDir, scriptPath } = makeLauncherFixture(
+      "console.log('node:invalid-bun');\n",
+    );
+    writeExecutable(join(binDir, "bun"), "not an executable format\n");
+
+    const result = spawnSync(scriptPath, [], {
+      encoding: "utf-8",
+      env: { ...process.env, PATH: minimalUnixPath(binDir) },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("node:invalid-bun\n");
+  });
+
   unixTest(
     "does not recurse when the artifact is already running under Bun",
     () => {
@@ -193,6 +205,32 @@ exit 64
       expect(result.stdout).toBe("bun-body:true:unset\n");
     },
   );
+
+  unixTest("honors the re-exec marker under Node", () => {
+    const { binDir, scriptPath } = makeLauncherFixture(
+      "console.log(`node-marker:${process.env.LETTA_CODE_BUN_REEXECED}`);\n",
+    );
+    writeExecutable(
+      join(binDir, "bun"),
+      `#!/bin/sh
+printf "bun should not run\\n"
+exit 64
+`,
+    );
+
+    const result = spawnSync(scriptPath, [], {
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        PATH: minimalUnixPath(binDir),
+        [BUN_REEXEC_ENV]: "1",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("node-marker:1\n");
+  });
 
   unixTest(
     "can be forced to stay on Node for explicit Node compatibility smoke",
