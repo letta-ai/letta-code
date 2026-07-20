@@ -15,6 +15,10 @@ import {
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
 import {
+  findAgentsByExactName,
+  getCurrentCloudFavoriteTag,
+} from "./agent/favorites";
+import {
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
   getResumeRefreshArgs,
@@ -359,22 +363,6 @@ function getModelForToolLoading(
   return specifiedModel;
 }
 
-async function findLocalAgentsByName(name: string): Promise<AgentState[]> {
-  const backend = getBackendForMode("local");
-  const normalizedName = name.toLowerCase();
-  try {
-    const page = await backend.listAgents({
-      query_text: name,
-      limit: 100,
-    } as never);
-    return paginatedItems<AgentState>(page).filter(
-      (agent) => agent.name?.toLowerCase() === normalizedName,
-    );
-  } catch {
-    return [];
-  }
-}
-
 function getStartupTargetLookupOrderForCredentials({
   baseURL,
   explicitBackendMode,
@@ -437,18 +425,24 @@ async function resolveAgentByName(
       );
     }
 
-    if (backendMode === "local") {
-      const seen = new Set(matches.map((match) => match.id));
-      for (const agent of await findLocalAgentsByName(name)) {
-        if (!seen.has(agent.id)) {
-          matches.push({
-            id: agent.id,
-            name: agent.name ?? agent.id,
-            agent,
-            backendMode,
-          });
-          seen.add(agent.id);
-        }
+    const favoriteTag =
+      backendMode === "api" ? await getCurrentCloudFavoriteTag() : undefined;
+    const discoveredAgents =
+      backendMode === "local"
+        ? await findAgentsByExactName(backend, name)
+        : favoriteTag
+          ? await findAgentsByExactName(backend, name, [favoriteTag])
+          : [];
+    const seen = new Set(matches.map((match) => match.id));
+    for (const agent of discoveredAgents) {
+      if (!seen.has(agent.id)) {
+        matches.push({
+          id: agent.id,
+          name: agent.name ?? agent.id,
+          agent,
+          backendMode,
+        });
+        seen.add(agent.id);
       }
     }
 
@@ -456,12 +450,14 @@ async function resolveAgentByName(
     if (matches.length === 1) return matches[0] ?? null;
 
     // Multiple matches within this backend - pick most recently used.
-    const localSettings = settingsManager.getLocalProjectSettings();
-    const localMatch = matches.find((m) => m.id === localSettings.lastAgent);
+    const localMatch = matches.find(
+      (match) => match.id === settingsManager.getLocalLastAgentId(),
+    );
     if (localMatch) return localMatch;
 
-    const settings = settingsManager.getSettings();
-    const globalMatch = matches.find((m) => m.id === settings.lastAgent);
+    const globalMatch = matches.find(
+      (match) => match.id === settingsManager.getGlobalLastAgentId(),
+    );
     if (globalMatch) return globalMatch;
 
     // Fallback to first match (preserves pinned order for this backend).
@@ -1891,26 +1887,40 @@ async function main(): Promise<void> {
           return;
         }
 
-        // Step 1: Check recent session state for the active backend only.
-        // Cache the retrieved agent to avoid redundant re-fetch in init().
-        const rawLocalAgentId = settingsManager.getLocalLastAgentId(
-          process.cwd(),
-        );
+        // Check recent session state for the active backend.
+        const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
         const rawGlobalAgentId = settingsManager.getGlobalLastAgentId();
         const pinnedAgentIds =
           settingsManager.getPinnedAgentsForBackendMode(startupBackendMode);
-        const localAgentId =
-          startupBackendMode === "local" ? rawLocalAgentId : null;
         const globalAgentId =
           startupBackendMode === "api" ? rawGlobalAgentId : null;
+        const localSession = settingsManager.getLocalLastSession(process.cwd());
 
-        // Validate every pinned agent (not just a lone one) alongside the LRU
-        // agents, de-duping shared IDs. Validating all pins lets the decision
-        // below count only pins that exist in the active org, so stale or
-        // cross-org pins don't inflate the count and force the selector.
+        // Validate the project target before a large pin set can flood the API.
+        if (localAgentId) {
+          try {
+            const localAgent = await backend.retrieveAgent(localAgentId, {
+              include: ["agent.tags"],
+            });
+            setSelectedGlobalAgentId(localAgentId);
+            setValidatedAgent(localAgent);
+            if (localSession?.conversationId && !forceNewConversation) {
+              setSelectedConversationId(localSession.conversationId);
+            }
+            markMilestone("STARTUP_LRU_FETCH_DONE");
+            setLoadingState("assembling");
+            return;
+          } catch {
+            setFailedAgentMessage(
+              `Unable to locate recently used agent ${localAgentId}`,
+            );
+          }
+        }
+
+        // Validate pins so stale or cross-org records don't force the selector.
         const agentIdsToValidate = [
           ...new Set(
-            [...pinnedAgentIds, localAgentId, globalAgentId].filter(
+            [...pinnedAgentIds, globalAgentId].filter(
               (agentId): agentId is string => Boolean(agentId),
             ),
           ),
@@ -1930,9 +1940,7 @@ async function main(): Promise<void> {
           }
         }
 
-        // Base the pinned-agent decision on pins that actually exist in the
-        // active org: a single existing pin resumes directly, while stale or
-        // cross-org pins are ignored instead of forcing the selector.
+        // A single existing pin resumes directly; multiple pins open selection.
         const existingPinnedIds = pinnedAgentIds.filter((id) =>
           cachedAgents.has(id),
         );
@@ -1941,45 +1949,27 @@ async function main(): Promise<void> {
             ? (existingPinnedIds[0] ?? null)
             : null;
         const pinnedAgentExists = pinnedAgentId !== null;
-        let localAgentExists = false;
-        let globalAgentExists = false;
-        if (localAgentId) {
-          localAgentExists = cachedAgents.has(localAgentId);
-          if (!localAgentExists) {
-            setFailedAgentMessage(
-              `Unable to locate recently used agent ${localAgentId}`,
-            );
-          }
-        }
-        if (globalAgentId) {
-          globalAgentExists = cachedAgents.has(globalAgentId);
-        }
+        const globalAgentExists = globalAgentId
+          ? cachedAgents.has(globalAgentId)
+          : false;
         markMilestone("STARTUP_LRU_FETCH_DONE");
 
-        // Step 3: Resolve startup target using pure decision logic.
-        // pinnedCount is the raw configured count (drives the "any pins → show
-        // the selector" fallback); existingPinnedCount counts pins that resolve
-        // in the active org (drives single-resume / multi-pin select).
-        const pinnedCount = pinnedAgentIds.length;
-        const existingPinnedCount = existingPinnedIds.length;
+        // Resolve the remaining fallback target.
         const fallbackSession =
-          startupBackendMode === "local" &&
-          !localAgentExists &&
-          !globalAgentExists
+          startupBackendMode === "local" && !globalAgentExists
             ? await getLocalBackendStartupFallbackSession(backend)
             : null;
         const { resolveStartupTarget } = await import(
           "@/agent/resolve-startup-agent"
         );
-        const localSession = settingsManager.getLocalLastSession(process.cwd());
         const target = resolveStartupTarget({
           pinnedAgentId,
           pinnedAgentExists,
-          pinnedCount,
-          existingPinnedCount,
+          pinnedCount: pinnedAgentIds.length,
+          existingPinnedCount: existingPinnedIds.length,
           localAgentId,
           localConversationId: localSession?.conversationId ?? null,
-          localAgentExists,
+          localAgentExists: false,
           globalAgentId,
           globalAgentExists,
           fallbackAgentId: fallbackSession?.agentId ?? null,

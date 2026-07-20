@@ -61,6 +61,29 @@ export function getAgentTags(agent: Pick<AgentState, "tags">): string[] {
   return Array.isArray(agent.tags) ? agent.tags : [];
 }
 
+export async function findAgentsByExactName(
+  backend: Backend,
+  name: string,
+  tags?: string[],
+): Promise<AgentState[]> {
+  try {
+    const page = await backend.listAgents({
+      query_text: name,
+      limit: 100,
+      ...(tags?.length ? { tags } : {}),
+    } as never);
+    const items = Array.isArray(page)
+      ? page
+      : ((page as { items?: AgentState[] }).items ?? []);
+    const normalizedName = name.toLowerCase();
+    return items.filter(
+      (agent) => agent.name?.toLowerCase() === normalizedName,
+    );
+  } catch {
+    return [];
+  }
+}
+
 export function addFavoriteTag(tags: string[], favoriteTag: string): string[] {
   if (tags.includes(favoriteTag)) return tags;
   return [favoriteTag, ...tags];
