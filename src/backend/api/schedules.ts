@@ -4,8 +4,10 @@
  * These routes are served by the Letta API (cloud-api), not the OSS core
  * server. Cloud schedules are durable: the schedule definition lives in the
  * Letta API's database and fires from a cloud worker, which injects the
- * scheduled turn into the agent's managed cloud sandbox (`use_sandbox: true`).
- * They survive local process/device/sandbox termination, unlike runtime-local
+ * scheduled turn into the agent's managed cloud sandbox (`use_sandbox: true`)
+ * or, when `target_device_id` is set, into that registered device's live
+ * listener (sandbox fallback when the device is offline). Either way they
+ * survive local process/device/sandbox termination, unlike runtime-local
  * crons in ~/.letta/crons.json.
  */
 
@@ -92,9 +94,10 @@ export async function createCloudSchedule(
     schedulePath(agentId),
     {
       ...input,
-      // The only harness-capable execution target the cloud worker supports
-      // today is the agent's own managed sandbox. Named remote targets are
-      // future work (LET-9821).
+      // Cloud schedules created by the CLI always use harness delivery:
+      // execution runs in the agent's managed sandbox, or on the device named
+      // by `target_device_id` (LET-9821) with sandbox fallback when offline.
+      // The server requires use_sandbox for device targets either way.
       use_sandbox: true,
     },
   );
