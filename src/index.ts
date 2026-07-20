@@ -15,10 +15,6 @@ import {
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
 import {
-  findAgentsByExactName,
-  getCurrentCloudFavoriteTag,
-} from "./agent/favorites";
-import {
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
   getResumeRefreshArgs,
@@ -58,6 +54,7 @@ import {
 import { LETTA_CHAT_API_KEYS_URL } from "./cli/helpers/app-urls";
 import { formatErrorDetails } from "./cli/helpers/error-formatter";
 import { ensureFdPath, resolveFdPath } from "./cli/helpers/file-autocomplete";
+import { listPinnedAgentsForCurrentUser } from "./cli/helpers/pinned-agent-listing";
 import type { ApprovalRequest } from "./cli/helpers/stream";
 import { initTerminalTheme } from "./cli/helpers/terminal-theme";
 import { ProfileSelectionInline } from "./cli/profile-selection";
@@ -397,54 +394,22 @@ async function resolveAgentByName(
   backendMode: BackendMode;
 } | null> {
   const normalizedSearchName = name.toLowerCase();
+  const pinnedAgents = await listPinnedAgentsForCurrentUser(backendLookupOrder);
 
   for (const backendMode of backendLookupOrder) {
-    const backend = getBackendForMode(backendMode);
-    const pinnedAgents =
-      settingsManager.getPinnedAgentsForBackendMode(backendMode);
-
-    const matches: Array<{
-      id: string;
-      name: string;
-      agent: AgentState;
-      backendMode: BackendMode;
-    }> = [];
-
-    if (pinnedAgents.length > 0) {
-      await Promise.all(
-        pinnedAgents.map(async (id) => {
-          try {
-            const agent = await backend.retrieveAgent(id);
-            if (agent.name?.toLowerCase() === normalizedSearchName) {
-              matches.push({ id, name: agent.name, agent, backendMode });
-            }
-          } catch {
-            // Agent not found or error, skip
-          }
-        }),
-      );
-    }
-
-    const favoriteTag =
-      backendMode === "api" ? await getCurrentCloudFavoriteTag() : undefined;
-    const discoveredAgents =
-      backendMode === "local"
-        ? await findAgentsByExactName(backend, name)
-        : favoriteTag
-          ? await findAgentsByExactName(backend, name, [favoriteTag])
-          : [];
-    const seen = new Set(matches.map((match) => match.id));
-    for (const agent of discoveredAgents) {
-      if (!seen.has(agent.id)) {
-        matches.push({
-          id: agent.id,
-          name: agent.name ?? agent.id,
-          agent,
-          backendMode,
-        });
-        seen.add(agent.id);
-      }
-    }
+    const matches = pinnedAgents.flatMap((pinned) =>
+      pinned.backendMode === backendMode &&
+      pinned.agent?.name?.toLowerCase() === normalizedSearchName
+        ? [
+            {
+              id: pinned.agentId,
+              name: pinned.agent.name,
+              agent: pinned.agent,
+              backendMode,
+            },
+          ]
+        : [],
+    );
 
     if (matches.length === 0) continue;
     if (matches.length === 1) return matches[0] ?? null;
@@ -473,24 +438,10 @@ async function resolveAgentByName(
 async function getPinnedAgentNames(
   backendLookupOrder: BackendMode[],
 ): Promise<{ id: string; name: string }[]> {
-  const agents: { id: string; name: string }[] = [];
-  for (const backendMode of backendLookupOrder) {
-    const backend = getBackendForMode(backendMode);
-    const pinnedAgents =
-      settingsManager.getPinnedAgentsForBackendMode(backendMode);
-
-    await Promise.all(
-      pinnedAgents.map(async (id) => {
-        try {
-          const agent = await backend.retrieveAgent(id);
-          agents.push({ id, name: agent.name || "(unnamed)" });
-        } catch {
-          // Agent not found, skip
-        }
-      }),
-    );
-  }
-  return agents;
+  const pinnedAgents = await listPinnedAgentsForCurrentUser(backendLookupOrder);
+  return pinnedAgents.flatMap(({ agentId, agent }) =>
+    agent ? [{ id: agentId, name: agent.name || "(unnamed)" }] : [],
+  );
 }
 
 async function resolveConversationAcrossBackends(
@@ -1889,11 +1840,10 @@ async function main(): Promise<void> {
 
         // Check recent session state for the active backend.
         const localAgentId = settingsManager.getLocalLastAgentId(process.cwd());
-        const rawGlobalAgentId = settingsManager.getGlobalLastAgentId();
-        const pinnedAgentIds =
-          settingsManager.getPinnedAgentsForBackendMode(startupBackendMode);
         const globalAgentId =
-          startupBackendMode === "api" ? rawGlobalAgentId : null;
+          startupBackendMode === "api"
+            ? settingsManager.getGlobalLastAgentId()
+            : null;
         const localSession = settingsManager.getLocalLastSession(process.cwd());
 
         // Validate the project target before a large pin set can flood the API.
@@ -1917,26 +1867,23 @@ async function main(): Promise<void> {
           }
         }
 
-        // Validate pins so stale or cross-org records don't force the selector.
-        const agentIdsToValidate = [
-          ...new Set(
-            [...pinnedAgentIds, globalAgentId].filter(
-              (agentId): agentId is string => Boolean(agentId),
-            ),
+        const pinnedAgents = await listPinnedAgentsForCurrentUser([
+          startupBackendMode,
+        ]);
+        const pinnedAgentIds = pinnedAgents.map(({ agentId }) => agentId);
+        const cachedAgents = new Map(
+          pinnedAgents.flatMap(({ agentId, agent }) =>
+            agent ? [[agentId, agent] as const] : [],
           ),
-        ];
-        const validationResults = await Promise.allSettled(
-          agentIdsToValidate.map(async (agentId) => ({
-            agentId,
-            agent: await backend.retrieveAgent(agentId, {
-              include: ["agent.tags"],
-            }),
-          })),
         );
-        const cachedAgents = new Map<string, AgentState>();
-        for (const result of validationResults) {
-          if (result.status === "fulfilled") {
-            cachedAgents.set(result.value.agentId, result.value.agent);
+        if (globalAgentId && !cachedAgents.has(globalAgentId)) {
+          try {
+            const globalAgent = await backend.retrieveAgent(globalAgentId, {
+              include: ["agent.tags"],
+            });
+            cachedAgents.set(globalAgentId, globalAgent);
+          } catch {
+            // Continue to pinned agents or fresh-start fallback.
           }
         }
 
