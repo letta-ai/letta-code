@@ -1,7 +1,13 @@
+import {
+  buildChannelAccessDeniedMessage,
+  evaluateChannelSenderAccess,
+  resolveChannelAccessScope,
+  resolveChannelCommandGate,
+} from "./access-control";
 import { getChannelAccount, LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { tryHandleChannelSlashCommand } from "./commands";
 import { isDiscordGuildChannelAllowed } from "./discord/channel-gating";
-import { createPairingCode, isUserApproved, loadPairingStore } from "./pairing";
+import { createPairingCode } from "./pairing";
 import type { ChannelCommandRouter } from "./registry-commands";
 import type { ChannelControlRequests } from "./registry-controls";
 import type { ChannelRegistryEvent } from "./registry-events";
@@ -51,6 +57,35 @@ export function createChannelInboundRouter(deps: {
     }
 
     const config = getChannelAccount(msg.channel, accountId);
+
+    // Sender access gate: one decision for every surface (DMs, groups,
+    // and every channel's auto-route path). "pair" senders continue so
+    // read-only slash commands still work before pairing completes; the
+    // pairing-code flow below handles their normal messages.
+    const senderAccess = config
+      ? evaluateChannelSenderAccess({
+          account: config,
+          channelId: msg.channel,
+          senderId: msg.senderId,
+          chatType: msg.chatType,
+        })
+      : null;
+    if (senderAccess === "deny") {
+      if (msg.reaction) {
+        return;
+      }
+      if (resolveChannelAccessScope(msg.chatType) === "dm") {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          buildChannelAccessDeniedMessage(msg.channel),
+        );
+      } else {
+        console.log(
+          `[channels] Dropped ${msg.channel} group message from unauthorized sender ${msg.senderId} in chat ${msg.chatId}`,
+        );
+      }
+      return;
+    }
 
     if (
       deps.commands.shouldDropUnroutedSlackThreadInput(msg, accountId, config)
@@ -106,6 +141,13 @@ export function createChannelInboundRouter(deps: {
             deps.commands.handlePauseResumeSlashCommand("resume", msg),
         },
         enableBangCommands: msg.channel === "slack" && msg.isMention === true,
+        commandGate: config
+          ? resolveChannelCommandGate({
+              account: config,
+              channelId: msg.channel,
+              senderId: msg.senderId,
+            })
+          : undefined,
       })
     ) {
       return;
@@ -295,49 +337,32 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
-    // 1. Check pairing/allowlist policy
-    if (config.dmPolicy === "allowlist") {
-      if (!config.allowedUsers.includes(msg.senderId)) {
-        if (msg.reaction) {
-          return;
-        }
-        await adapter.sendDirectReply(
-          msg.chatId,
-          "You are not on the allowed users list for this bot.",
-        );
+    // 1. Pairing handshake: the sender access gate above already allowed
+    // allowlisted/approved senders and denied blocked ones; "pair" means
+    // this DM sender still needs a pairing code.
+    if (senderAccess === "pair") {
+      if (msg.reaction) {
         return;
       }
-    } else if (config.dmPolicy === "pairing") {
-      // Reload pairing store from disk on miss (allows standalone CLI pairing)
-      if (!isUserApproved(msg.channel, msg.senderId, accountId)) {
-        loadPairingStore(msg.channel);
-      }
-      if (!isUserApproved(msg.channel, msg.senderId, accountId)) {
-        if (msg.reaction) {
-          return;
-        }
-        // Generate pairing code
-        const code = createPairingCode(
-          msg.channel,
-          msg.senderId,
-          msg.chatId,
-          msg.senderName,
-          accountId,
-        );
-        deps.emitEvent({
-          type: "pairings_updated",
-          channelId: msg.channel,
-        });
-        await adapter.sendDirectReply(
-          msg.chatId,
-          buildPairingInstructions(msg.channel, code, {
-            agentId: getConfiguredAgentId(config),
-          }),
-        );
-        return;
-      }
+      const code = createPairingCode(
+        msg.channel,
+        msg.senderId,
+        msg.chatId,
+        msg.senderName,
+        accountId,
+      );
+      deps.emitEvent({
+        type: "pairings_updated",
+        channelId: msg.channel,
+      });
+      await adapter.sendDirectReply(
+        msg.chatId,
+        buildPairingInstructions(msg.channel, code, {
+          agentId: getConfiguredAgentId(config),
+        }),
+      );
+      return;
     }
-    // dm_policy === "open" → skip check
 
     // 2. Route lookup (reload from disk on miss — allows standalone CLI pairing)
     let route = getRouteFromStore(
