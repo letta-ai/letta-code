@@ -462,7 +462,7 @@ export interface PendingApprovalInfo {
 }
 
 export const STALE_APPROVAL_RECOVERY_DENIAL_REASON =
-  "This pending tool call was automatically closed by the client to recover from a disconnect: the tool never executed, and no user or policy denied it. Re-issue the tool call if you still need it.";
+  "This pending tool call was automatically closed by the agent harness to recover from a disconnect: the tool never executed, and it was not denied by the user or a permissions policy. Re-issue the tool call if you still need it.";
 
 export function buildFreshDenialApprovals(
   serverApprovals: PendingApprovalInfo[],
