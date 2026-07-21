@@ -53,6 +53,7 @@ import {
   withProjectedMessageDates,
 } from "./local-message-projection";
 import {
+  conversationContextWindowLimitFromBody,
   localLlmConfigModelPatch,
   modelHandleFromLegacyLlmConfig,
   normalizeLocalModelHandle,
@@ -215,6 +216,7 @@ function createLocalConversationRecord(
   const bodyRecord = body as Record<string, unknown>;
   const now = currentIsoTimestamp();
   const modelSettings = supportedConversationModelSettingsFromBody(bodyRecord);
+  const contextWindowLimit = conversationContextWindowLimitFromBody(bodyRecord);
   return {
     id: conversationId,
     agent_id: agentId,
@@ -237,8 +239,8 @@ function createLocalConversationRecord(
         }
       : {}),
     ...(modelSettings !== undefined ? { model_settings: modelSettings } : {}),
-    ...(typeof bodyRecord.context_window_limit === "number"
-      ? { context_window_limit: bodyRecord.context_window_limit }
+    ...(contextWindowLimit !== undefined
+      ? { context_window_limit: contextWindowLimit }
       : {}),
     ...(typeof bodyRecord.hidden === "boolean"
       ? { hidden: bodyRecord.hidden }
