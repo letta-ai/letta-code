@@ -437,6 +437,83 @@ describe("app-server OpenAI-compatible API", () => {
     expect(messageCounts).toEqual([1]);
   });
 
+  test("Idempotency-Key replays the original outcome without re-running", async () => {
+    __testSetBackend(fakeBackend());
+    let runs = 0;
+    __testSetRunTurnImpl(async ({ onAssistantText }) => {
+      runs += 1;
+      onAssistantText?.("Hello world");
+      return {
+        text: "Hello world",
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        error: null,
+      };
+    });
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const send = (key: string) =>
+      fetch(httpUrl(handle as AppServerHandle, "/v1/chat/completions"), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": key,
+        },
+        body: JSON.stringify({
+          model: "memo",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      });
+
+    const first = (await (await send("retry-1")).json()) as {
+      choices: Array<{ message: { content: string } }>;
+    };
+    const replay = (await (await send("retry-1")).json()) as {
+      choices: Array<{ message: { content: string } }>;
+    };
+    await send("retry-2");
+
+    expect(first.choices[0]?.message.content).toBe("Hello world");
+    expect(replay.choices[0]?.message.content).toBe("Hello world");
+    expect(runs).toBe(2);
+  });
+
+  test("failed idempotent outcomes are evicted so retries re-run", async () => {
+    __testSetBackend(fakeBackend());
+    let runs = 0;
+    __testSetRunTurnImpl(async () => {
+      runs += 1;
+      return {
+        text: "",
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        error: runs === 1 ? "transient failure" : null,
+      };
+    });
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const send = () =>
+      fetch(httpUrl(handle as AppServerHandle, "/v1/chat/completions"), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "retry-after-error",
+        },
+        body: JSON.stringify({
+          model: "memo",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      });
+
+    expect((await send()).status).toBe(500);
+    expect((await send()).status).toBe(200);
+    expect(runs).toBe(2);
+  });
+
   test("image_url parts pass through as Letta image content", async () => {
     __testSetBackend(fakeBackend());
     let capturedContent: unknown = null;
