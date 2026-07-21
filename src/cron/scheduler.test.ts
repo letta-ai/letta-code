@@ -4,9 +4,9 @@ import path from "node:path";
 import {
   type AddTaskInput,
   addTask,
-  type CronTask,
   deleteTask,
   getTask,
+  readCronFile,
   updateTask,
 } from "@/cron/cron-file";
 import { cronMatchesTime } from "@/cron/parse-interval";
@@ -53,46 +53,6 @@ function makeInput(overrides: Partial<AddTaskInput> = {}): AddTaskInput {
     recurring: true,
     ...overrides,
   };
-}
-
-function makePersistedTask(overrides: Partial<CronTask> = {}): CronTask {
-  const now = "2026-03-01T00:00:00.000Z";
-  return {
-    id: "cron_legacy_invalid",
-    agent_id: "agent-test-001",
-    conversation_id: "default",
-    name: "Legacy task",
-    description: "Persisted before semantic validation existed",
-    cron: "*/5 * * * *",
-    timezone: "UTC",
-    recurring: true,
-    prompt: "echo hello",
-    status: "active",
-    created_at: now,
-    expires_at: null,
-    last_fired_at: null,
-    fire_count: 0,
-    cancel_reason: null,
-    jitter_offset_ms: 0,
-    last_run_at: null,
-    last_run_outcome: null,
-    last_run_reason: null,
-    last_run_error: null,
-    last_missed_at: null,
-    missed_count: 0,
-    failed_count: 0,
-    scheduled_for: null,
-    fired_at: null,
-    missed_at: null,
-    ...overrides,
-  };
-}
-
-function writePersistedTasks(tasks: CronTask[]): void {
-  writeFileSync(
-    path.join(TEST_DIR, "crons.json"),
-    JSON.stringify({ version: 1, scheduler_owner: null, tasks }, null, 2),
-  );
 }
 
 function pad(value: number, width: number): string {
@@ -300,11 +260,22 @@ describe("task lifecycle", () => {
   });
 
   test("persisted invalid recurring tasks expose one durable failure", () => {
-    const task = makePersistedTask({ cron: "0-60 * * * *" });
-    writePersistedTasks([task]);
+    const { task } = addTask(makeInput());
+    const data = readCronFile();
+    const persistedTask = data.tasks.find(
+      (candidate) => candidate.id === task.id,
+    );
+    if (!persistedTask) throw new Error("expected persisted cron task");
+    persistedTask.cron = "0-60 * * * *";
+    writeFileSync(
+      path.join(TEST_DIR, "crons.json"),
+      JSON.stringify(data, null, 2),
+    );
+    const persisted = getTask(task.id);
+    if (!persisted) throw new Error("expected persisted cron task");
     const checkedAt = new Date("2026-03-26T14:30:00Z");
 
-    expect(handleTaskPreflight(task, checkedAt)).toBe(true);
+    expect(handleTaskPreflight(persisted, checkedAt)).toBe(true);
 
     const updated = getTask(task.id);
     expect(updated).toEqual(
@@ -331,7 +302,7 @@ describe("task lifecycle", () => {
       }),
     ]);
 
-    if (!updated) throw new Error("expected persisted cron task");
+    if (!updated) throw new Error("expected updated cron task");
     expect(handleTaskPreflight(updated, checkedAt)).toBe(true);
     expect(getTask(task.id)?.failed_count).toBe(1);
     expect(

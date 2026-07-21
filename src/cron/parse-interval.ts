@@ -207,44 +207,7 @@ function hasBareValueStep(fields: string[]): boolean {
   );
 }
 
-function expandOneBasedWildcardStep(
-  part: string,
-  min: number,
-  max: number,
-): number[] | null {
-  const match = part.match(/^\*\/(\d+)$/);
-  if (!match) return null;
-
-  const step = Number.parseInt(match[1] ?? "", 10);
-  if (!Number.isSafeInteger(step) || step <= 0) return [];
-
-  const values: number[] = [];
-  for (let value = min; value <= max; value++) {
-    if (value % step === 0) values.push(value);
-  }
-
-  return values;
-}
-
 type OneBasedCronField = "dayOfMonth" | "month";
-
-function parseOneBasedFieldPart(
-  part: string,
-  field: OneBasedCronField,
-): number[] | null {
-  const expression =
-    field === "dayOfMonth" ? `0 0 ${part} * *` : `0 0 * ${part} *`;
-  try {
-    const parsed = CronExpressionParser.parse(expression, { strict: false });
-    const values: number[] = [];
-    for (const value of parsed.fields[field].values) {
-      if (typeof value === "number") values.push(Number(value));
-    }
-    return values;
-  } catch {
-    return null;
-  }
-}
 
 function normalizeOneBasedWildcardSteps(
   field: string,
@@ -256,14 +219,26 @@ function normalizeOneBasedWildcardSteps(
   if (!parts.some((part) => /^\*\/\d+$/.test(part))) return field;
 
   const normalizedValues = new Set<number>();
-  for (const part of field.split(",")) {
-    if (part === "") return null;
-    const wildcardValues = expandOneBasedWildcardStep(part, min, max);
-    const values = wildcardValues ?? parseOneBasedFieldPart(part, fieldName);
-    if (!values || values.length === 0) return null;
-    for (const value of values) normalizedValues.add(value);
+  for (const part of parts) {
+    const wildcardStep = part.match(/^\*\/(\d+)$/);
+    if (wildcardStep) {
+      const step = Number.parseInt(wildcardStep[1] ?? "", 10);
+      for (let value = min; value <= max; value++) {
+        if (value % step === 0) normalizedValues.add(value);
+      }
+      continue;
+    }
+
+    const expression =
+      fieldName === "dayOfMonth" ? `0 0 ${part} * *` : `0 0 * ${part} *`;
+    const parsed = CronExpressionParser.parse(expression, { strict: false });
+    for (const value of parsed.fields[fieldName].values) {
+      if (typeof value === "number") normalizedValues.add(value);
+    }
   }
-  return [...normalizedValues].sort((a, b) => a - b).join(",");
+  return normalizedValues.size > 0
+    ? [...normalizedValues].sort((a, b) => a - b).join(",")
+    : null;
 }
 
 /**

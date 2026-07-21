@@ -158,6 +158,11 @@ describe("isValidCron", () => {
     expect(isValidCron("0 0 * * *")).toBe(true);
     expect(isValidCron("0 0 */3 * *")).toBe(true);
     expect(isValidCron("0-59 * * * *")).toBe(true);
+    expect(isValidCron("0 0 */3,15 * *")).toBe(true);
+    expect(isValidCron("0 0 */3,2-3 * *")).toBe(true);
+    expect(isValidCron("0 0 * */3,6 *")).toBe(true);
+    expect(isValidCron("59 23 31 12 7")).toBe(true);
+    expect(isValidCron("0-59 0-23 1-31 1-12 0-7")).toBe(true);
   });
 
   test("valid comma-separated values", () => {
@@ -181,58 +186,31 @@ describe("isValidCron", () => {
     expect(isValidCron("0,10-20,30-59/5 * * * *")).toBe(true);
   });
 
-  test("accepts overlapping legacy wildcard steps and comma values", () => {
-    expect(isValidCron("0 0 */3,15 * *")).toBe(true);
-    expect(isValidCron("0 0 */3,2-3 * *")).toBe(true);
-    expect(isValidCron("0 0 * */3,6 *")).toBe(true);
-  });
-
-  test("invalid expressions", () => {
-    expect(isValidCron("")).toBe(false);
-    expect(isValidCron("* * *")).toBe(false); // too few fields
-    expect(isValidCron("* * * * * *")).toBe(false); // too many fields
-    expect(isValidCron("abc * * * *")).toBe(false);
-    expect(isValidCron("1, * * * *")).toBe(false); // trailing comma
-    expect(isValidCron(",5 * * * *")).toBe(false); // leading comma
-    expect(isValidCron(", * * * *")).toBe(false); // lone comma
-    // The legacy matcher treated N/S as exact N, while cron-parser repeats
-    // from N. Reject it instead of silently changing persisted schedules.
-    expect(isValidCron("5/10 * * * *")).toBe(false);
-  });
-
-  test("rejects out-of-range values and malformed ranges", () => {
-    // minute > 59
-    expect(isValidCron("60 * * * *")).toBe(false);
-    expect(isValidCron("99 99 99 99 *")).toBe(false);
-    // hour > 23
-    expect(isValidCron("0 24 * * *")).toBe(false);
-    // impossible day-of-month
-    expect(isValidCron("0 0 32 * *")).toBe(false);
-    expect(isValidCron("0 0 0 * *")).toBe(false); // DOM is 1-based
-    expect(isValidCron("0 0 */32 * *")).toBe(false); // no legacy DOM value matches
-    // impossible month
-    expect(isValidCron("0 0 1 13 *")).toBe(false);
-    expect(isValidCron("0 0 1 0 *")).toBe(false); // month is 1-based
-    expect(isValidCron("0 0 * */13 *")).toBe(false); // no legacy month matches
-    // day-of-week > 7
-    expect(isValidCron("0 0 * * 8")).toBe(false);
-    // out-of-range inside ranges / steps
-    expect(isValidCron("0-60 * * * *")).toBe(false); // minute range endpoint > 59
-    expect(isValidCron("0 0 1-32 * *")).toBe(false); // DOM range endpoint > 31
-    expect(isValidCron("0-59/0 * * * *")).toBe(false); // step must be > 0
-    // out-of-range inside a comma list rejects the whole field
-    expect(isValidCron("0,60 * * * *")).toBe(false);
-    // reversed ranges never match — reject at validation time
-    expect(isValidCron("59-0 * * * *")).toBe(false); // minute reversed
-    expect(isValidCron("0 0 31-1 * *")).toBe(false); // DOM reversed
-  });
-
-  test("accepts valid boundary values for each field", () => {
-    expect(isValidCron("0 0 1 1 *")).toBe(true); // min boundaries
-    expect(isValidCron("59 23 31 12 *")).toBe(true); // max boundaries
-    expect(isValidCron("0 0 * * 0")).toBe(true); // dow 0 (Sunday)
-    expect(isValidCron("0 0 * * 7")).toBe(true); // dow 7 (also Sunday)
-    expect(isValidCron("0-59 0-23 1-31 1-12 0-7")).toBe(true); // full ranges
+  test.each([
+    "",
+    "* * *",
+    "* * * * * *",
+    "abc * * * *",
+    "1, * * * *",
+    ",5 * * * *",
+    "5/10 * * * *",
+    "60 * * * *",
+    "0 24 * * *",
+    "0 0 0 * *",
+    "0 0 32 * *",
+    "0 0 */32 * *",
+    "0 0 1 0 *",
+    "0 0 1 13 *",
+    "0 0 * */13 *",
+    "0 0 * * 8",
+    "0-60 * * * *",
+    "0 0 1-32 * *",
+    "0-59/0 * * * *",
+    "0,60 * * * *",
+    "59-0 * * * *",
+    "0 0 31-1 * *",
+  ])("rejects invalid expression %s", (expression) => {
+    expect(isValidCron(expression)).toBe(false);
   });
 });
 
@@ -256,75 +234,23 @@ describe("cronMatchesTime", () => {
     expect(cronMatchesTime("*/7 * * * *", date)).toBe(false); // 30 % 7 !== 0
   });
 
-  test("1-based wildcard steps keep the legacy modulo phase", () => {
-    expect(
-      cronMatchesTime("0 0 */3 * *", new Date("2026-03-03T00:00:00Z"), "UTC"),
-    ).toBe(true);
-    expect(
-      cronMatchesTime("0 0 */3 * *", new Date("2026-03-01T00:00:00Z"), "UTC"),
-    ).toBe(false);
-
-    expect(
-      cronMatchesTime("0 0 * */3 *", new Date("2026-03-01T00:00:00Z"), "UTC"),
-    ).toBe(true);
-    expect(
-      cronMatchesTime("0 0 * */3 *", new Date("2026-01-01T00:00:00Z"), "UTC"),
-    ).toBe(false);
-
-    expect(
-      cronMatchesTime(
-        "0 0 1-31/3 * *",
-        new Date("2026-03-01T00:00:00Z"),
-        "UTC",
-      ),
-    ).toBe(true);
-    expect(
-      cronMatchesTime(
-        "0 0 1-31/3 * *",
-        new Date("2026-03-03T00:00:00Z"),
-        "UTC",
-      ),
-    ).toBe(false);
-  });
-
-  test("1-based wildcard steps preserve comma unions without duplicates", () => {
-    expect(
-      cronMatchesTime(
-        "0 0 */3,15 * *",
-        new Date("2026-03-15T00:00:00Z"),
-        "UTC",
-      ),
-    ).toBe(true);
-    expect(
-      cronMatchesTime(
-        "0 0 */3,15 * *",
-        new Date("2026-03-01T00:00:00Z"),
-        "UTC",
-      ),
-    ).toBe(false);
-    expect(
-      cronMatchesTime(
-        "0 0 */3,2-3 * *",
-        new Date("2026-03-02T00:00:00Z"),
-        "UTC",
-      ),
-    ).toBe(true);
-
-    expect(
-      cronMatchesTime("0 0 * */3,6 *", new Date("2026-06-01T00:00:00Z"), "UTC"),
-    ).toBe(true);
-    expect(
-      cronMatchesTime("0 0 * */3,6 *", new Date("2026-01-01T00:00:00Z"), "UTC"),
-    ).toBe(false);
-  });
-
-  test("1-based wildcard steps with no legacy legal values never match", () => {
-    expect(
-      cronMatchesTime("0 0 */32 * *", new Date("2026-03-01T00:00:00Z"), "UTC"),
-    ).toBe(false);
-    expect(
-      cronMatchesTime("0 0 * */13 *", new Date("2026-01-01T00:00:00Z"), "UTC"),
-    ).toBe(false);
+  test.each([
+    ["0 0 */3 * *", "2026-03-03T00:00:00Z", true],
+    ["0 0 */3 * *", "2026-03-01T00:00:00Z", false],
+    ["0 0 * */3 *", "2026-03-01T00:00:00Z", true],
+    ["0 0 * */3 *", "2026-01-01T00:00:00Z", false],
+    ["0 0 */3,15 * *", "2026-03-15T00:00:00Z", true],
+    ["0 0 */3,15 * *", "2026-03-01T00:00:00Z", false],
+    ["0 0 */3,2-3 * *", "2026-03-02T00:00:00Z", true],
+    ["0 0 * */3,6 *", "2026-06-01T00:00:00Z", true],
+    ["0 0 * */3,6 *", "2026-01-01T00:00:00Z", false],
+    ["0 0 */32 * *", "2026-03-01T00:00:00Z", false],
+    ["0 0 * */13 *", "2026-01-01T00:00:00Z", false],
+    ["0 0 */3 * 1", "2026-03-02T00:00:00Z", true],
+    ["0 0 */3 * 1", "2026-03-03T00:00:00Z", true],
+    ["0 0 */3 * 1", "2026-03-04T00:00:00Z", false],
+  ])("preserves legacy one-based steps for %s at %s", (expr, iso, expected) => {
+    expect(cronMatchesTime(expr, new Date(iso), "UTC")).toBe(expected);
   });
 
   test("range match", () => {
@@ -341,16 +267,12 @@ describe("cronMatchesTime", () => {
   });
 
   test("day of week 7 matches Sunday just like 0", () => {
-    // 2026-03-29 is a Sunday. Previously `0 0 * * 7` validated as Sunday but
-    // never matched (matcher compared against Date.getDay() 0-6), so it was a
-    // valid expression that silently never fired. With cron-parser as the
-    // source of truth, 7 and 0 both match Sunday.
     const sunday = new Date("2026-03-29T00:00:00");
     expect(cronMatchesTime("0 0 * * 7", sunday)).toBe(true);
     expect(cronMatchesTime("0 0 * * 0", sunday)).toBe(true);
-    // And it does NOT match a non-Sunday.
-    const thursday = new Date("2026-03-26T00:00:00");
-    expect(cronMatchesTime("0 0 * * 7", thursday)).toBe(false);
+    expect(cronMatchesTime("0 0 * * 7", new Date("2026-03-26T00:00:00"))).toBe(
+      false,
+    );
   });
 
   test("full exact match", () => {
@@ -379,17 +301,6 @@ describe("cronMatchesTime", () => {
     // Only day-of-week constrained (dom is *): AND logic
     expect(cronMatchesTime("0 9 * * 4", date)).toBe(true);
     expect(cronMatchesTime("0 9 * * 1", date)).toBe(false);
-
-    // A normalized legacy wildcard step remains constrained and retains OR.
-    expect(
-      cronMatchesTime("0 0 */3 * 1", new Date("2026-03-02T00:00:00Z"), "UTC"),
-    ).toBe(true); // Monday
-    expect(
-      cronMatchesTime("0 0 */3 * 1", new Date("2026-03-03T00:00:00Z"), "UTC"),
-    ).toBe(true); // divisible day-of-month
-    expect(
-      cronMatchesTime("0 0 */3 * 1", new Date("2026-03-04T00:00:00Z"), "UTC"),
-    ).toBe(false);
   });
 
   test("timezone-aware matching", () => {

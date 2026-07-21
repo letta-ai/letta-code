@@ -715,13 +715,9 @@ export function updateTask(
     const task = data.tasks.find((t) => t.id === taskId);
     if (!task) return null;
     const originalCron = task.cron;
-    const originalRecurring = task.recurring;
     updater(task);
     const cronChanged = task.cron !== originalCron;
-    const recurringWasEnabled = !originalRecurring && task.recurring;
-    if (cronChanged || recurringWasEnabled) {
-      assertValidCronForPersistence(task.cron);
-    }
+    if (cronChanged) assertValidCronForPersistence(task.cron);
     if (cronChanged && task.last_run_reason === "invalid_cron") {
       task.last_run_at = null;
       task.last_run_outcome = null;
