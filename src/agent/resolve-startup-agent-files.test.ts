@@ -200,7 +200,7 @@ describe("startup resolution from settings files", () => {
     });
   });
 
-  test("pinned agent takes precedence over stale local last session", async () => {
+  test("project last session takes precedence over a pinned agent", async () => {
     await writeLocalSettings({
       lastAgent: "agent-last-used",
       lastSession: {
@@ -219,7 +219,40 @@ describe("startup resolution from settings files", () => {
 
     expect(target).toEqual({
       action: "resume",
-      agentId: "agent-pinned",
+      agentId: "agent-last-used",
+      conversationId: "conv-stale",
+    });
+  });
+
+  test("project last session takes precedence over multiple pinned agents", async () => {
+    await writeLocalSettings({
+      sessionsByServer: {
+        "api.letta.com": {
+          agentId: "agent-project-last",
+          conversationId: "conv-project-last",
+        },
+      },
+    });
+    await writeGlobalSettings({
+      agents: [
+        { agentId: "agent-pinned-1", pinned: true },
+        { agentId: "agent-pinned-2", pinned: true },
+      ],
+    });
+
+    const target = await resolveFromSettings({
+      existingAgentIds: [
+        "agent-project-last",
+        "agent-pinned-1",
+        "agent-pinned-2",
+      ],
+      includeLocalConversation: true,
+    });
+
+    expect(target).toEqual({
+      action: "resume",
+      agentId: "agent-project-last",
+      conversationId: "conv-project-last",
     });
   });
 

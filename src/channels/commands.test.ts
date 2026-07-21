@@ -210,7 +210,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).not.toContain("MessageChannel");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection.",
     );
 
     const slackText = buildChannelHelpMessage("slack");
@@ -699,15 +699,40 @@ describe("channel slash commands", () => {
     });
 
     expect(blocks).toBeDefined();
-    const selectBlock = blocks?.[1] as Record<string, unknown> | undefined;
-    const accessory = selectBlock?.accessory as
-      | { action_id?: string; type?: string; options?: unknown[] }
+    const currentBlock = blocks?.[0] as Record<string, unknown> | undefined;
+    const explanatoryBlock = blocks?.[1] as Record<string, unknown> | undefined;
+    const actionsBlock = blocks?.[2] as Record<string, unknown> | undefined;
+    const contextBlock = blocks?.[3] as Record<string, unknown> | undefined;
+    const elements = actionsBlock?.elements as
+      | Array<{
+          action_id?: string;
+          type?: string;
+          options?: Array<{ value?: string }>;
+        }>
       | undefined;
-    expect(selectBlock?.type).toBe("section");
-    expect(accessory?.type).toBe("static_select");
-    expect(accessory?.action_id).toBe("letta_channel_model_select");
-    expect(accessory?.options).toHaveLength(2);
-    expect(JSON.stringify(blocks)).toContain("Current conversation model");
+    const selectElement = elements?.[0];
+
+    expect(currentBlock?.type).toBe("section");
+    expect(JSON.stringify(currentBlock)).toContain(
+      "Current conversation model",
+    );
+    expect(explanatoryBlock).toMatchObject({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: "Choose a model for this routed conversation:",
+      },
+    });
+    expect(explanatoryBlock).not.toHaveProperty("accessory");
+    expect(actionsBlock?.type).toBe("actions");
+    expect(elements).toHaveLength(1);
+    expect(selectElement?.type).toBe("static_select");
+    expect(selectElement?.action_id).toBe("letta_channel_model_select");
+    expect(selectElement?.options?.map((option) => option.value)).toEqual([
+      "sonnet",
+      "gpt",
+    ]);
+    expect(contextBlock?.type).toBe("context");
     expect(JSON.stringify(blocks)).toContain("Claude Sonnet 4.6");
   });
 
@@ -759,7 +784,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram received /compact now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands: /help, /status, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection.",
+      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection.",
     );
     expect(text).toContain("without a leading slash");
 

@@ -92,7 +92,7 @@ export function getEmptyStateActionDescriptors(
           {
             id: "login" as const,
             label: "/login",
-            description: "Sign in to Letta Constellation",
+            description: "Sign in with Letta",
           },
         ]
       : []),

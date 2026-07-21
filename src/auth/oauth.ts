@@ -147,6 +147,120 @@ function extractOAuthTransportDetail(error: Error): string | null {
   return detail;
 }
 
+const DEVICE_CODE_REQUEST_MAX_ATTEMPTS = 2;
+const DEVICE_CODE_RETRY_DELAY_MS = 100;
+const TOKEN_POLL_RESPONSE_FAILURE_LIMIT = 2;
+const OAUTH_REQUEST_ID_HEADERS = [
+  "cf-ray",
+  "x-request-id",
+  "x-vercel-id",
+] as const;
+
+class OAuthTransientResponseError extends Error {
+  readonly responseKind: "malformed JSON" | "non-JSON" | "transient HTTP";
+  readonly status: number;
+
+  constructor(
+    action: string,
+    response: Response,
+    responseKind: "malformed JSON" | "non-JSON" | "transient HTTP",
+  ) {
+    const mediaType = getOAuthResponseMediaType(response);
+    const requestId = getOAuthResponseRequestId(response);
+    const mediaTypeText = mediaType ? `, media type ${mediaType}` : "";
+    const requestIdText = requestId ? `, request id ${requestId}` : "";
+    const supportHint = requestId
+      ? "Try again later; if this persists, contact Letta support with this request ID."
+      : "Try again later; if this persists, contact Letta support.";
+    const responseDescription =
+      responseKind === "transient HTTP"
+        ? "transient OAuth response"
+        : `${responseKind} OAuth response`;
+
+    super(
+      `Failed to ${action} from ${getOAuthAuthHost()}: received ${responseDescription} (HTTP ${response.status}${mediaTypeText}${requestIdText}). ${supportHint}`,
+    );
+    this.name = "OAuthTransientResponseError";
+    this.responseKind = responseKind;
+    this.status = response.status;
+  }
+}
+
+function getOAuthResponseMediaType(response: Response): string | null {
+  const contentType = response.headers.get("content-type")?.trim();
+  if (!contentType) {
+    return null;
+  }
+
+  return contentType.split(";", 1)[0]?.trim().toLowerCase() || null;
+}
+
+function isOAuthJsonMediaType(mediaType: string): boolean {
+  return mediaType === "application/json" || mediaType.endsWith("+json");
+}
+
+function sanitizeOAuthRequestId(value: string | null): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const sanitized = trimmed.replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 128);
+  return sanitized.length > 0 ? sanitized : null;
+}
+
+function getOAuthResponseRequestId(response: Response): string | null {
+  for (const header of OAUTH_REQUEST_ID_HEADERS) {
+    const value = sanitizeOAuthRequestId(response.headers.get(header));
+    if (value) {
+      return `${header}=${value}`;
+    }
+  }
+
+  return null;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function isTransientOAuthResponseStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+async function cancelOAuthResponseBody(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Best-effort only: never read or surface the body in OAuth errors.
+  }
+}
+
+async function parseOAuthJsonResponse(
+  response: Response,
+  action: string,
+): Promise<unknown> {
+  const mediaType = getOAuthResponseMediaType(response);
+  if (mediaType && !isOAuthJsonMediaType(mediaType)) {
+    await cancelOAuthResponseBody(response);
+    throw new OAuthTransientResponseError(action, response, "non-JSON");
+  }
+
+  try {
+    return await response.json();
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+
+    throw new OAuthTransientResponseError(action, response, "malformed JSON");
+  }
+}
+
+function waitForOAuthRetry(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function toOAuthActionError(
   action: string,
   error: unknown,
@@ -176,29 +290,59 @@ function toOAuthActionError(
  */
 export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
   const authHost = getOAuthAuthHost();
-  try {
-    const response = await fetch(
-      `${OAUTH_CONFIG.authBaseUrl}/api/oauth/device/code`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          client_id: OAUTH_CONFIG.clientId,
-        }),
-      },
-    );
 
-    if (!response.ok) {
-      const error = (await response.json()) as OAuthError;
-      throw new Error(
-        `Failed to request device code from ${authHost}: ${error.error_description || error.error}`,
+  for (
+    let attempt = 1;
+    attempt <= DEVICE_CODE_REQUEST_MAX_ATTEMPTS;
+    attempt++
+  ) {
+    try {
+      const response = await fetch(
+        `${OAUTH_CONFIG.authBaseUrl}/api/oauth/device/code`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            client_id: OAUTH_CONFIG.clientId,
+          }),
+        },
       );
-    }
 
-    return (await response.json()) as DeviceCodeResponse;
-  } catch (error) {
-    throw toOAuthActionError("request device code", error);
+      const result = await parseOAuthJsonResponse(
+        response,
+        "request device code",
+      );
+
+      if (!response.ok) {
+        if (isTransientOAuthResponseStatus(response.status)) {
+          throw new OAuthTransientResponseError(
+            "request device code",
+            response,
+            "transient HTTP",
+          );
+        }
+
+        const error = result as OAuthError;
+        throw new Error(
+          `Failed to request device code from ${authHost}: ${error.error_description || error.error}`,
+        );
+      }
+
+      return result as DeviceCodeResponse;
+    } catch (error) {
+      if (
+        error instanceof OAuthTransientResponseError &&
+        attempt < DEVICE_CODE_REQUEST_MAX_ATTEMPTS
+      ) {
+        await waitForOAuthRetry(DEVICE_CODE_RETRY_DELAY_MS);
+        continue;
+      }
+
+      throw toOAuthActionError("request device code", error);
+    }
   }
+
+  throw new Error("Failed to request device code from unreachable OAuth path");
 }
 
 /**
@@ -215,6 +359,7 @@ export async function pollForToken(
   const startTime = Date.now();
   const expiresInMs = expiresIn * 1000;
   let pollInterval = interval * 1000;
+  let consecutiveResponseFailures = 0;
 
   const sleep = async (ms: number) => {
     if (!signal) {
@@ -266,7 +411,10 @@ export async function pollForToken(
         },
       );
 
-      const result = await response.json();
+      const result = await parseOAuthJsonResponse(
+        response,
+        "poll for OAuth token",
+      );
 
       if (response.ok) {
         return result as TokenResponse;
@@ -276,12 +424,14 @@ export async function pollForToken(
 
       if (error.error === "authorization_pending") {
         // User hasn't authorized yet, keep polling
+        consecutiveResponseFailures = 0;
         continue;
       }
 
       if (error.error === "slow_down") {
         // We're polling too fast, increase interval by 5 seconds
         pollInterval += 5000;
+        consecutiveResponseFailures = 0;
         continue;
       }
 
@@ -293,8 +443,23 @@ export async function pollForToken(
         throw new Error("Device code expired");
       }
 
+      if (isTransientOAuthResponseStatus(response.status)) {
+        throw new OAuthTransientResponseError(
+          "poll for OAuth token",
+          response,
+          "transient HTTP",
+        );
+      }
+
       throw new Error(`OAuth error: ${error.error_description || error.error}`);
     } catch (error) {
+      if (error instanceof OAuthTransientResponseError) {
+        consecutiveResponseFailures += 1;
+        if (consecutiveResponseFailures <= TOKEN_POLL_RESPONSE_FAILURE_LIMIT) {
+          continue;
+        }
+      }
+
       trackBoundaryError({
         errorType: "oauth_token_poll_failed",
         error,

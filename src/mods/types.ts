@@ -149,7 +149,7 @@ export interface ModConversationHandle {
   /**
    * Update the model, reasoning effort, and/or context window for this
    * conversation (or the agent default with scope: "agent"). Only the fields you
-   * pass change; others are preserved. Works for local and constellation agents.
+   * pass change; others are preserved. Works for local and cloud agents.
    */
   updateLlmConfig: (options: ModUpdateLlmConfigOptions) => Promise<void>;
 }

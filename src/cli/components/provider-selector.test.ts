@@ -6,7 +6,7 @@ import {
   connectedProviderSummary,
   fieldValuesFromProviderPlaceholders,
   filterProviderConfigs,
-  hasConstellationProviderStoreCredentials,
+  hasCloudProviderStoreCredentials,
   isChatGPTUsageProvider,
   isProviderTargetLoading,
   nextProviderConnectionName,
@@ -130,9 +130,9 @@ describe("ProviderSelector local provider API keys", () => {
   });
 });
 
-describe("ProviderSelector Constellation auth gating", () => {
-  test("requires Constellation credentials before showing provider-store tabs", () => {
-    const loggedOut = hasConstellationProviderStoreCredentials(
+describe("ProviderSelector Letta Cloud auth gating", () => {
+  test("requires Letta Cloud credentials before showing provider-store tabs", () => {
+    const loggedOut = hasCloudProviderStoreCredentials(
       { env: {}, refreshToken: undefined },
       {},
     );
@@ -142,21 +142,21 @@ describe("ProviderSelector Constellation auth gating", () => {
     expect(shouldShowProviderStoreTabs(null)).toBe(false);
   });
 
-  test("accepts env, stored API key, or refresh token as Constellation auth", () => {
+  test("accepts env, stored API key, or refresh token as Letta Cloud auth", () => {
     expect(
-      hasConstellationProviderStoreCredentials(
+      hasCloudProviderStoreCredentials(
         { env: {}, refreshToken: undefined },
         { LETTA_API_KEY: "env-key" },
       ),
     ).toBe(true);
     expect(
-      hasConstellationProviderStoreCredentials(
+      hasCloudProviderStoreCredentials(
         { env: { LETTA_API_KEY: "stored-key" }, refreshToken: undefined },
         {},
       ),
     ).toBe(true);
     expect(
-      hasConstellationProviderStoreCredentials(
+      hasCloudProviderStoreCredentials(
         { env: {}, refreshToken: "refresh-token" },
         {},
       ),

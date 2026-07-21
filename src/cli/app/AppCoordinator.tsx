@@ -144,7 +144,7 @@ import {
 import {
   getIntendedCronOccurrence,
   getTask,
-  handleMissedOneShot,
+  handleTaskPreflight,
   isProcessAlive,
   readCronFile,
   safeAppendCronRunLogForTask,
@@ -306,7 +306,7 @@ function buildStartupCommandHints(options: {
   }
 
   if (!hasCloudCredentials) {
-    onboardingHints.push("→ **/login**     sign in to Constellation");
+    onboardingHints.push("→ **/login**     sign in with Letta");
   }
 
   const dedupedHints: string[] = [];
@@ -1541,8 +1541,7 @@ export function App({
       for (const task of activeTasks) {
         if (firedThisMinute.has(task.id)) continue;
 
-        // Handle missed one-shots
-        if (handleMissedOneShot(task, now)) continue;
+        if (handleTaskPreflight(task, now)) continue;
 
         if (shouldFireTask(task, now)) {
           firedThisMinute.add(task.id);
