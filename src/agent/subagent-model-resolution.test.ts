@@ -648,6 +648,46 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("anthropic/test-model");
   });
 
+  test("recommended auto router alias inherits parent model instead", async () => {
+    const result = await resolveSubagentModel({
+      recommendedModel: "auto",
+      parentModelHandle: "openai/gpt-5.4-mini",
+      availableHandles: new Set(["letta/auto", "openai/gpt-5.4-mini"]),
+    });
+
+    expect(result).toBe("openai/gpt-5.4-mini");
+  });
+
+  test("recommended auto-fast router alias inherits parent model instead", async () => {
+    const result = await resolveSubagentModel({
+      recommendedModel: "auto-fast",
+      parentModelHandle: "anthropic/parent-model",
+      availableHandles: new Set(["letta/auto-fast", "anthropic/parent-model"]),
+    });
+
+    expect(result).toBe("anthropic/parent-model");
+  });
+
+  test("recommended auto router alias is used when no parent model exists", async () => {
+    const result = await resolveSubagentModel({
+      recommendedModel: "auto",
+      availableHandles: new Set(["letta/auto"]),
+    });
+
+    expect(result).toBe("letta/auto");
+  });
+
+  test("free tier keeps auto-fast default despite parent model", async () => {
+    const result = await resolveSubagentModel({
+      recommendedModel: "auto",
+      billingTier: "free",
+      parentModelHandle: "openai/gpt-5.4-mini",
+      availableHandles: new Set(["letta/auto-fast", "openai/gpt-5.4-mini"]),
+    });
+
+    expect(result).toBe("letta/auto-fast");
+  });
+
   test("explicit user model overrides all other resolution", async () => {
     const result = await resolveSubagentModel({
       userModel: "lc-openrouter/custom-model",
