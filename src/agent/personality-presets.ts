@@ -169,10 +169,8 @@ export function buildDefaultMemoryFile(
   body: string,
   description?: string,
 ): string {
-  const normalizedBody = ensureTrailingNewline(body.trim());
-  if (!normalizedBody.trim()) {
-    throw new Error("Memory content cannot be empty");
-  }
+  const trimmedBody = body.trim();
+  const normalizedBody = trimmedBody ? ensureTrailingNewline(trimmedBody) : "";
 
   const frontmatter = getEditablePromptFrontmatter(templatePromptAssetName);
   if (description !== undefined) {
@@ -180,7 +178,17 @@ export function buildDefaultMemoryFile(
   }
 
   if (Object.keys(frontmatter).length === 0) {
+    if (!normalizedBody) {
+      throw new Error(
+        "Memory content cannot be empty without frontmatter (the file would be blank)",
+      );
+    }
     return normalizedBody;
+  }
+
+  if (!normalizedBody) {
+    // Frontmatter-only file (e.g. the blank personality's empty persona).
+    return `${serializeFrontmatter(frontmatter)}\n`;
   }
 
   return `${serializeFrontmatter(frontmatter)}\n\n${normalizedBody}`;
@@ -234,7 +242,8 @@ export function getPersonalityContent(personalityId: PersonalityId): string {
   }
 
   if (personalityId === "blank") {
-    return getPromptBody("persona_blank.mdx");
+    // Blank starter: the persona is truly empty — the user provides it.
+    return "";
   }
 
   if (personalityId === "kawaii") {
@@ -272,7 +281,7 @@ export function getPersonalityHumanContent(
   }
 
   if (personalityId === "blank") {
-    return getDefaultHumanContent();
+    return getPromptBody("human_blank.mdx");
   }
 
   return getDefaultHumanContent();
@@ -309,11 +318,13 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
   const humanTemplatePromptAssetName =
     personalityId === "memo" || personalityId === "tutorial"
       ? "human_memo.mdx"
-      : personalityId === "kawaii"
-        ? "human_kawaii.mdx"
-        : personalityId === "linus"
-          ? "human_linus.mdx"
-          : "human.mdx";
+      : personalityId === "blank"
+        ? "human_blank.mdx"
+        : personalityId === "kawaii"
+          ? "human_kawaii.mdx"
+          : personalityId === "linus"
+            ? "human_linus.mdx"
+            : "human.mdx";
 
   return {
     persona: {

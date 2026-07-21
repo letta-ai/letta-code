@@ -2,6 +2,7 @@
 
 import approvalRecoveryAlert from "./prompts/approval_recovery_alert.txt";
 import humanPrompt from "./prompts/human.mdx";
+import humanBlankPrompt from "./prompts/human_blank.mdx";
 import humanKawaiiPrompt from "./prompts/human_kawaii.mdx";
 import humanLinusPrompt from "./prompts/human_linus.mdx";
 import humanMemoPrompt from "./prompts/human_memo.mdx";
@@ -40,6 +41,7 @@ export const MEMORY_PROMPTS: Record<string, string> = {
   "persona_memo.mdx": personaMemoPrompt,
   "persona_tutorial.mdx": personaTutorialPrompt,
   "human.mdx": humanPrompt,
+  "human_blank.mdx": humanBlankPrompt,
   "human_kawaii.mdx": humanKawaiiPrompt,
   "human_linus.mdx": humanLinusPrompt,
   "human_memo.mdx": humanMemoPrompt,

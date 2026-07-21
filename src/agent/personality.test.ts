@@ -40,6 +40,13 @@ describe("personality helpers", () => {
     expect(updated).not.toContain("old persona content");
   });
 
+  test("replaceBodyPreservingFrontmatter allows a frontmatter-only body", () => {
+    const existing = `${VALID_FRONTMATTER}old persona content\n`;
+    const updated = replaceBodyPreservingFrontmatter(existing, "");
+
+    expect(updated).toBe(VALID_FRONTMATTER.trimEnd() + "\n");
+  });
+
   test("replaceBodyPreservingFrontmatter rejects missing frontmatter", () => {
     expect(() =>
       replaceBodyPreservingFrontmatter("no frontmatter", "new body"),
@@ -67,6 +74,12 @@ describe("personality helpers", () => {
   test("personality block values always include both persona and human", () => {
     for (const option of PERSONALITY_OPTIONS) {
       const values = getPersonalityBlockValues(option.id);
+      if (option.id === "blank") {
+        // The blank starter has an empty persona and a minimal human placeholder.
+        expect(values.persona).toBe("");
+        expect(values.human).toBe("Name: ?\n");
+        continue;
+      }
       expect(values.persona.trim().length).toBeGreaterThan(0);
       expect(values.human.trim().length).toBeGreaterThan(0);
     }
@@ -225,14 +238,24 @@ describe("personality helpers", () => {
     expect(definitions.human.description).toContain("senpai");
   });
 
-  test("blank personality uses persona_blank.mdx content", () => {
-    const content = getPersonalityContent("blank");
-    expect(content).toContain("blank starter personality");
-    expect(content).toContain("ask the user to provide a personality prompt");
+  test("blank personality has an empty persona", () => {
+    expect(getPersonalityContent("blank")).toBe("");
   });
 
-  test("blank personality uses the default human block", () => {
-    const defaultHuman = getDefaultHumanContent();
-    expect(getPersonalityHumanContent("blank")).toBe(defaultHuman);
+  test("blank personality has a minimal human placeholder", () => {
+    expect(getPersonalityHumanContent("blank")).toBe("Name: ?\n");
+  });
+
+  test("blank personality keeps purpose descriptions while using minimal block values", () => {
+    const definitions = getPersonalityBlockDefinitions("blank");
+
+    expect(definitions.persona.value).toBe("");
+    expect(definitions.persona.description).toBe(
+      "Who I am, what I value, and how I approach working with people. This evolves as I learn and grow.",
+    );
+    expect(definitions.human.value).toBe("Name: ?\n");
+    expect(definitions.human.description).toBe(
+      "Core memories about the person I am working with: who they are, what they care about, how they work, and what should matter in future conversations.",
+    );
   });
 });

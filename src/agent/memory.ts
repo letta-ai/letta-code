@@ -30,7 +30,9 @@ export function parseMdxFrontmatter(content: string): {
   const frontmatterRegex = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/;
   const match = content.match(frontmatterRegex);
 
-  if (!match || !match[1] || !match[2]) {
+  // match[2] (the body) may legitimately be empty (frontmatter-only files,
+  // e.g. the blank personality persona).
+  if (!match || !match[1] || match[2] === undefined) {
     return { frontmatter: {}, body: content };
   }
 
