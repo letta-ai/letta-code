@@ -15,7 +15,11 @@ import {
 } from "./secret-backends.js";
 
 const DEFAULT_SERVICE_NAME = "letta-code";
-let SERVICE_NAME = DEFAULT_SERVICE_NAME;
+const TEST_DEFAULT_SERVICE_NAME = `${DEFAULT_SERVICE_NAME}-test-${process.pid}`;
+let SERVICE_NAME =
+  process.env.NODE_ENV === "test"
+    ? TEST_DEFAULT_SERVICE_NAME
+    : DEFAULT_SERVICE_NAME;
 const API_KEY_NAME = "letta-api-key";
 const REFRESH_TOKEN_NAME = "letta-refresh-token";
 
@@ -44,13 +48,18 @@ function getBackendOrThrow(): SecretBackend {
   return backend;
 }
 
-export async function getSecretValue(
+type SecretReadResult = {
+  failed: boolean;
+  value: string | null;
+};
+
+async function readSecretValue(
   name: string,
   label: string,
-): Promise<string | null> {
+): Promise<SecretReadResult> {
   const backend = getSecretBackend();
   if (!backend && !secretGetOverrideForTests) {
-    return null;
+    return { failed: false, value: null };
   }
 
   try {
@@ -62,7 +71,7 @@ export async function getSecretValue(
       ? await secretGetOverrideForTests(options)
       : await backend?.get(options);
     warnedSecretReadFailures.delete(name);
-    return value ?? null;
+    return { failed: false, value: value ?? null };
   } catch (error) {
     const message = `Failed to retrieve ${label} from secrets: ${error}`;
     if (!warnedSecretReadFailures.has(name)) {
@@ -71,8 +80,15 @@ export async function getSecretValue(
     } else {
       debugWarn("secrets", message);
     }
-    return null;
+    return { failed: true, value: null };
   }
+}
+
+export async function getSecretValue(
+  name: string,
+  label: string,
+): Promise<string | null> {
+  return (await readSecretValue(name, label)).value;
 }
 
 export async function setSecretValue(
@@ -144,7 +160,13 @@ export async function deleteSecretValue(name: string): Promise<boolean> {
  * Override the keychain service name (useful for tests to avoid touching real credentials)
  */
 export function setServiceName(name: string): void {
-  SERVICE_NAME = name;
+  // A mis-isolated Bun test must never fall back to the live credential
+  // namespace. Test files still use unique names for correctness; this guard
+  // prevents cleanup races from deleting a developer's real credentials.
+  SERVICE_NAME =
+    process.env.NODE_ENV === "test" && name === DEFAULT_SERVICE_NAME
+      ? TEST_DEFAULT_SERVICE_NAME
+      : name;
 }
 
 // Note: On platforms without an OS secret backend, tokens are managed by the
@@ -153,6 +175,11 @@ export function setServiceName(name: string): void {
 export interface SecureTokens {
   apiKey?: string;
   refreshToken?: string;
+}
+
+export interface SecureTokensReadResult {
+  failed: boolean;
+  tokens: SecureTokens;
 }
 
 /**
@@ -187,18 +214,21 @@ export async function getRefreshToken(): Promise<string | null> {
  * Get both tokens from secrets
  */
 export async function getSecureTokens(): Promise<SecureTokens> {
-  const [apiKey, refreshToken] = await Promise.allSettled([
-    getApiKey(),
-    getRefreshToken(),
+  return (await getSecureTokensWithStatus()).tokens;
+}
+
+export async function getSecureTokensWithStatus(): Promise<SecureTokensReadResult> {
+  const [apiKey, refreshToken] = await Promise.all([
+    readSecretValue(API_KEY_NAME, "API key"),
+    readSecretValue(REFRESH_TOKEN_NAME, "refresh token"),
   ]);
 
   return {
-    apiKey:
-      apiKey.status === "fulfilled" ? apiKey.value || undefined : undefined,
-    refreshToken:
-      refreshToken.status === "fulfilled"
-        ? refreshToken.value || undefined
-        : undefined,
+    failed: apiKey.failed || refreshToken.failed,
+    tokens: {
+      apiKey: apiKey.value || undefined,
+      refreshToken: refreshToken.value || undefined,
+    },
   };
 }
 
@@ -257,13 +287,9 @@ export async function isKeychainAvailable(): Promise<boolean> {
   }
 
   try {
-    // Non-mutating probe: if this call succeeds (even with null), secure
-    // storage is usable. Do not cache failures; Linux DBus/keyring availability
-    // can change during the process lifetime.
-    return await backend.isAvailable({
-      service: SERVICE_NAME,
-      name: API_KEY_NAME,
-    });
+    // Availability is structural. Reading a live credential just to probe the
+    // backend creates unnecessary Keychain access and can trigger GUI prompts.
+    return await backend.isAvailable();
   } catch {
     return false;
   }

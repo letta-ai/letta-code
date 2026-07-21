@@ -67,6 +67,20 @@ describe("Secrets utilities", () => {
     expect(typeof available).toBe("boolean");
   });
 
+  test("never targets the live credential service during tests", async () => {
+    let observedService: string | undefined;
+    setServiceName(DEFAULT_SERVICE_NAME);
+    __setSecretGetOverrideForTests(async ({ service }) => {
+      observedService = service;
+      return null;
+    });
+
+    await getApiKey();
+
+    expect(observedService).toStartWith("letta-code-test-");
+    expect(observedService).not.toBe(DEFAULT_SERVICE_NAME);
+  });
+
   test.skipIf(!keychainAvailablePrecompute)(
     "can store and retrieve API key",
     async () => {

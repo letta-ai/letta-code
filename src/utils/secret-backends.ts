@@ -30,7 +30,7 @@ export interface SecretBackend {
   get(options: SecretLocator): Promise<string | null>;
   set(options: SecretSetOptions): Promise<void>;
   delete(options: SecretLocator): Promise<boolean>;
-  isAvailable(probe: SecretLocator): Promise<boolean>;
+  isAvailable(): Promise<boolean>;
 }
 
 export interface BunSecretsLike {
@@ -72,33 +72,71 @@ const BUN_PROJECT_ENV_KEYS = [
   "BUN_RUNTIME_TRANSPILER_CACHE_PATH",
 ] as const;
 
-const BUN_MACOS_KEYCHAIN_MIGRATION_SCRIPT = `
+const BUN_MACOS_KEYCHAIN_HELPER_SCRIPT = `
 const locator = {
   service: process.env.LETTA_SECRET_MIGRATION_SERVICE,
   name: process.env.LETTA_SECRET_MIGRATION_NAME,
 };
 
+const errorMessage = (error) =>
+  error instanceof Error ? error.message : String(error);
+
+const isDuplicateItemError = (error) => {
+  const message = errorMessage(error).toLowerCase();
+  return message.includes("already exists") || message.includes("-25299");
+};
+
+const setUnrestricted = async (value) => {
+  try {
+    await Bun.secrets.set({
+      ...locator,
+      value,
+      allowUnrestrictedAccess: true,
+    });
+    return;
+  } catch (error) {
+    if (!isDuplicateItemError(error)) throw error;
+  }
+
+  const previousValue = await Bun.secrets.get(locator);
+  await Bun.secrets.delete(locator);
+  try {
+    await Bun.secrets.set({
+      ...locator,
+      value,
+      allowUnrestrictedAccess: true,
+    });
+  } catch (retryError) {
+    if (previousValue !== null) {
+      try {
+        await Bun.secrets.set({ ...locator, value: previousValue });
+      } catch (restoreError) {
+        throw new Error(
+          "Failed to replace Keychain item: " + errorMessage(retryError) +
+          "; restoring the previous item also failed: " + errorMessage(restoreError),
+        );
+      }
+    }
+    throw retryError;
+  }
+};
+
 try {
   if (process.env.LETTA_SECRET_MIGRATION_OPERATION === "set") {
     const request = JSON.parse(await Bun.stdin.text());
-    await Bun.secrets.set({
-      ...locator,
-      value: Buffer.from(request.valueBase64, "base64").toString("utf8"),
-      allowUnrestrictedAccess: true,
-    });
+    await setUnrestricted(
+      Buffer.from(request.valueBase64, "base64").toString("utf8"),
+    );
     process.stdout.write(JSON.stringify({ ok: true }));
   } else if (process.env.LETTA_SECRET_MIGRATION_OPERATION === "delete") {
     const deleted = await Bun.secrets.delete(locator);
     process.stdout.write(JSON.stringify({ ok: true, deleted }));
   } else {
+    // Reads must stay non-mutating. Legacy restricted entries remain owned by
+    // Bun, so Node delegates access to Bun instead of recreating them on every
+    // startup. Rewriting here causes errSecDuplicateItem (-25299) and creates
+    // a delete/recreate race between concurrent listeners.
     const value = await Bun.secrets.get(locator);
-    if (value !== null) {
-      await Bun.secrets.set({
-        ...locator,
-        value,
-        allowUnrestrictedAccess: true,
-      });
-    }
     process.stdout.write(JSON.stringify({
       ok: true,
       valueBase64: value === null ? null : Buffer.from(value, "utf8").toString("base64"),
@@ -485,10 +523,7 @@ function createBunSecretBackend(
       });
     },
     delete: async (options) => bunSecrets.delete(options),
-    isAvailable: async (probe) => {
-      await bunSecrets.get(probe);
-      return true;
-    },
+    isAvailable: async () => true,
   };
 }
 
@@ -542,7 +577,7 @@ async function runBunMacKeychainOperation(
   try {
     result = await runSecretCommand(
       bunPath,
-      ["-e", BUN_MACOS_KEYCHAIN_MIGRATION_SCRIPT],
+      ["-e", BUN_MACOS_KEYCHAIN_HELPER_SCRIPT],
       {
         cwd: commandCwd,
         env: getBunSecretCommandEnv(runtime.env, operation, locator),
@@ -566,14 +601,14 @@ async function runBunMacKeychainOperation(
     if (!output) throw new Error("empty output");
     response = JSON.parse(output) as BunMacMigrationResponse;
   } catch {
-    throw commandError("Bun Keychain migration", operation, result);
+    throw commandError("Bun Keychain helper", operation, result);
   }
 
   if (result.code !== 0 || response.ok === false) {
     throw new Error(
       response.error ||
         result.stderr.toString("utf8").trim() ||
-        `Bun Keychain migration ${operation} failed`,
+        `Bun Keychain helper ${operation} failed`,
     );
   }
   return response;
@@ -681,13 +716,11 @@ function createMacKeyringBackend(): SecretBackend {
       if (macSecurityResultIsMissing(result)) return false;
       throw commandError("macOS Keychain", "delete", result);
     },
-    isAvailable: async (probe) => {
-      try {
-        await backend.get(probe);
-        return true;
-      } catch {
-        return false;
-      }
+    isAvailable: async () => {
+      const runtime = getRuntime();
+      return Boolean(
+        getBunExecutablePath(runtime) || getMacSecurityPath(runtime),
+      );
     },
   };
   return backend;
@@ -799,14 +832,7 @@ function createWindowsCredentialBackend(): SecretBackend {
     set: ({ service, name, value }) =>
       setWindowsCredential(service, name, value),
     delete: ({ service, name }) => deleteWindowsCredential(service, name),
-    isAvailable: async ({ service, name }) => {
-      try {
-        await getWindowsCredential(service, name);
-        return true;
-      } catch {
-        return false;
-      }
-    },
+    isAvailable: async () => Boolean(getPowerShellPath(getRuntime())),
   };
 }
 
@@ -922,21 +948,11 @@ function createLinuxSecretServiceBackend(): SecretBackend {
       }
       throw commandError("secret-tool", "clear", result);
     },
-    isAvailable: async (probe) => {
+    isAvailable: async () => {
       const runtime = getRuntime();
-      if (
-        !hasLinuxSecretServiceSession(runtime) ||
-        !getSecretToolPath(runtime)
-      ) {
-        return false;
-      }
-
-      try {
-        await lookupLinuxSecret(probe.service, probe.name);
-        return true;
-      } catch {
-        return false;
-      }
+      return Boolean(
+        hasLinuxSecretServiceSession(runtime) && getSecretToolPath(runtime),
+      );
     },
   };
 }
@@ -966,4 +982,8 @@ export function getSecretBackend(): SecretBackend | null {
 
 export function __getSelectedSecretBackendKindForTests(): SecretBackendKind | null {
   return getSecretBackend()?.kind ?? null;
+}
+
+export function __getBunMacKeychainHelperScriptForTests(): string {
+  return BUN_MACOS_KEYCHAIN_HELPER_SCRIPT;
 }

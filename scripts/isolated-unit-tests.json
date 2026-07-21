@@ -31,6 +31,11 @@
       "reason": "Mutates the settings singleton, keychain test overrides, HOME, and the secrets service name."
     },
     {
+      "path": "src/settings-manager.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Mutates the settings singleton, HOME, and real OS credential test entries."
+    },
+    {
       "path": "src/telemetry/flush-auth.test.ts",
       "timeoutMs": 15000,
       "env": { "LETTA_CODE_TELEM": "1" },

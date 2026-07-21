@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { __getBunMacKeychainHelperScriptForTests } from "@/utils/secret-backends";
 import {
   __getDefaultServiceNameForTests,
   __getExplicitNodeSecretBackendForTests,
@@ -80,10 +81,11 @@ async function computeInteropAvailable(): Promise<boolean> {
       service: INTEROP_SERVICE_NAME,
       name: INTEROP_PROBE_NAME,
     });
-    return await explicitNodeBackendForInterop.isAvailable({
+    await explicitNodeBackendForInterop.get({
       service: INTEROP_SERVICE_NAME,
       name: INTEROP_PROBE_NAME,
     });
+    return true;
   } catch {
     return false;
   }
@@ -168,24 +170,17 @@ describe("Secret backend selection", () => {
     expect(__getSelectedSecretBackendKindForTests()).toBe(null);
   });
 
-  test("does not cache transient negative availability failures", async () => {
-    let calls = 0;
+  test("checks Bun backend availability without reading a credential", async () => {
+    const get = mock(async () => {
+      throw new Error("availability must not read a credential");
+    });
     __setSecretRuntimeOverrideForTests({
       platform: "darwin",
-      bunSecrets: fakeBunSecrets({
-        get: async () => {
-          calls += 1;
-          if (calls === 1) {
-            throw new Error("transient keychain failure");
-          }
-          return null;
-        },
-      }),
+      bunSecrets: fakeBunSecrets({ get }),
     });
 
-    expect(await isKeychainAvailable()).toBe(false);
     expect(await isKeychainAvailable()).toBe(true);
-    expect(calls).toBe(2);
+    expect(get).not.toHaveBeenCalled();
   });
 
   test("honors LETTA_SKIP_KEYCHAIN_CHECK without probing", async () => {
@@ -241,6 +236,17 @@ describe("Secret backend selection", () => {
 });
 
 describe("Secret backend command protocols", () => {
+  test("keeps Bun Keychain reads non-mutating", () => {
+    const script = __getBunMacKeychainHelperScriptForTests();
+    const readBranchStart = script.indexOf("// Reads must stay non-mutating.");
+
+    expect(readBranchStart).toBeGreaterThan(-1);
+    const readBranch = script.slice(readBranchStart);
+    expect(readBranch).toContain("await Bun.secrets.get(locator)");
+    expect(readBranch).not.toContain("Bun.secrets.set");
+    expect(readBranch).not.toContain("Bun.secrets.delete");
+  });
+
   posixTest(
     "uses macOS security status and stdin without leaking values to argv",
     async () => {

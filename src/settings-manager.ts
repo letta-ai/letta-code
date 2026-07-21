@@ -24,11 +24,12 @@ import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 import {
   deleteSecureTokens,
-  getSecureTokens,
+  getSecureTokensWithStatus,
   isKeychainAvailable,
   type SecureTokens,
   setSecureTokens,
 } from "./utils/secrets.js";
+import { SecureTokenCache } from "./utils/secure-token-cache.js";
 
 /**
  * Reference to a session (agent + conversation pair).
@@ -342,7 +343,7 @@ class SettingsManager {
   // Keys explicitly changed by this process. Only these keys are written back,
   // preventing stale in-memory values from clobbering external updates.
   private dirtyKeys = new Set<string>();
-  private secureTokensCache: SecureTokens = {};
+  private secureTokenCache = new SecureTokenCache();
 
   // Mark keys as managed AND dirty (i.e. this process owns the value and it
   // should be written back on persist). The only call-site that should add to
@@ -356,16 +357,11 @@ class SettingsManager {
   }
 
   private updateSecureTokensCache(tokens: SecureTokens): void {
-    if (tokens.apiKey) {
-      this.secureTokensCache.apiKey = tokens.apiKey;
-    }
-    if (tokens.refreshToken) {
-      this.secureTokensCache.refreshToken = tokens.refreshToken;
-    }
+    this.secureTokenCache.update(tokens);
   }
 
   private clearSecureTokensCache(): void {
-    this.secureTokensCache = {};
+    this.secureTokenCache.clear();
   }
 
   private readJsonObjectSync(path: string): Record<string, unknown> {
@@ -480,6 +476,8 @@ class SettingsManager {
    * Check secrets support and warn user if not available
    */
   private async checkSecretsSupport(): Promise<void> {
+    if (process.env.LETTA_API_KEY) return;
+
     try {
       const available = await this.isKeychainAvailable();
       if (!available) {
@@ -498,7 +496,7 @@ class SettingsManager {
    * Migrate tokens from old storage location to secrets
    */
   private async migrateTokensToSecrets(): Promise<void> {
-    if (!this.settings) return;
+    if (!this.settings || process.env.LETTA_API_KEY) return;
 
     try {
       const tokensToMigrate: SecureTokens = {};
@@ -574,19 +572,15 @@ class SettingsManager {
    */
   async getSettingsWithSecureTokens(): Promise<Settings> {
     const baseSettings = this.getSettings();
-    const secureTokens: SecureTokens = { ...this.secureTokensCache };
-
+    const secureTokens = this.getCachedSecureTokens();
     // Bun 1.3.0 can crash when keychain reads happen while AsyncLocalStorage
     // runtime scope is active. Reuse cached tokens in that case and let callers
     // fall back to env/file-backed settings if no cache is available yet.
-    if (!getRuntimeContext()) {
-      const secretsAvailable = await this.isKeychainAvailable();
-      if (secretsAvailable) {
-        const storedTokens = await this.getSecureTokens();
-        secureTokens.apiKey = storedTokens.apiKey ?? secureTokens.apiKey;
-        secureTokens.refreshToken =
-          storedTokens.refreshToken ?? secureTokens.refreshToken;
-      }
+    if (!getRuntimeContext() && !process.env.LETTA_API_KEY) {
+      const storedTokens = await this.getSecureTokens();
+      secureTokens.apiKey = storedTokens.apiKey ?? secureTokens.apiKey;
+      secureTokens.refreshToken =
+        storedTokens.refreshToken ?? secureTokens.refreshToken;
     }
 
     // Fallback to tokens in settings file if secrets are not available
@@ -596,9 +590,9 @@ class SettingsManager {
         : secureTokens.refreshToken;
 
     const fallbackApiKey =
-      !secureTokens.apiKey && baseSettings.env?.LETTA_API_KEY
-        ? baseSettings.env.LETTA_API_KEY
-        : secureTokens.apiKey;
+      process.env.LETTA_API_KEY ??
+      secureTokens.apiKey ??
+      baseSettings.env?.LETTA_API_KEY;
 
     return {
       ...baseSettings,
@@ -636,7 +630,7 @@ class SettingsManager {
   }
 
   getCachedSecureTokens(): SecureTokens {
-    return { ...this.secureTokensCache };
+    return this.secureTokenCache.get();
   }
 
   /**
@@ -1932,24 +1926,25 @@ class SettingsManager {
    * Get secure tokens from secrets
    */
   async getSecureTokens(): Promise<SecureTokens> {
-    const available = await this.isKeychainAvailable();
-    if (!available) {
-      return {};
-    }
-
-    try {
-      const tokens = await getSecureTokens();
-      this.updateSecureTokensCache(tokens);
-      return tokens;
-    } catch (error) {
-      trackBoundaryError({
-        errorType: "secrets_retrieve_tokens_failed",
-        error,
-        context: "settings_secrets_retrieve",
-      });
-      console.warn("Failed to retrieve tokens from secrets:", error);
-      return {};
-    }
+    return this.secureTokenCache.hydrateOnce(
+      !process.env.LETTA_API_KEY,
+      async () => {
+        const available = await this.isKeychainAvailable();
+        if (!available) return null;
+        try {
+          const result = await getSecureTokensWithStatus();
+          return { complete: !result.failed, tokens: result.tokens };
+        } catch (error) {
+          trackBoundaryError({
+            errorType: "secrets_retrieve_tokens_failed",
+            error,
+            context: "settings_secrets_retrieve",
+          });
+          console.warn("Failed to retrieve tokens from secrets:", error);
+          return null;
+        }
+      },
+    );
   }
 
   /**
@@ -1994,6 +1989,7 @@ class SettingsManager {
 
     try {
       await deleteSecureTokens();
+      this.secureTokenCache.markHydrated();
     } catch (error) {
       trackBoundaryError({
         errorType: "secrets_delete_tokens_failed",
