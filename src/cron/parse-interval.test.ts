@@ -161,6 +161,8 @@ describe("isValidCron", () => {
     expect(isValidCron("0 0 */3,15 * *")).toBe(true);
     expect(isValidCron("0 0 */3,2-3 * *")).toBe(true);
     expect(isValidCron("0 0 * */3,6 *")).toBe(true);
+    expect(isValidCron("0 0 */32,15 * *")).toBe(true);
+    expect(isValidCron("0 0 * */13,6 *")).toBe(true);
     expect(isValidCron("59 23 31 12 7")).toBe(true);
     expect(isValidCron("0-59 0-23 1-31 1-12 0-7")).toBe(true);
   });
@@ -242,8 +244,11 @@ describe("cronMatchesTime", () => {
     ["0 0 */3,15 * *", "2026-03-15T00:00:00Z", true],
     ["0 0 */3,15 * *", "2026-03-01T00:00:00Z", false],
     ["0 0 */3,2-3 * *", "2026-03-02T00:00:00Z", true],
+    ["0 0 */32,15 * *", "2026-03-15T00:00:00Z", true],
+    ["0 0 */32,15 * *", "2026-03-16T00:00:00Z", false],
     ["0 0 * */3,6 *", "2026-06-01T00:00:00Z", true],
     ["0 0 * */3,6 *", "2026-01-01T00:00:00Z", false],
+    ["0 0 * */13,6 *", "2026-06-01T00:00:00Z", true],
     ["0 0 */32 * *", "2026-03-01T00:00:00Z", false],
     ["0 0 * */13 *", "2026-01-01T00:00:00Z", false],
     ["0 0 */3 * 1", "2026-03-02T00:00:00Z", true],
@@ -343,6 +348,18 @@ describe("cronMatchesTime", () => {
       due: true,
       previousHour: false,
     });
+  });
+
+  test("preserves wall-clock semantics across target-timezone DST", () => {
+    const timezone = "America/Los_Angeles";
+    const springForward = new Date("2026-03-08T10:00:00Z"); // 03:00 PDT
+    expect(cronMatchesTime("0 2 * * *", springForward, timezone)).toBe(false);
+    expect(cronMatchesTime("0 3 * * *", springForward, timezone)).toBe(true);
+
+    const firstOne = new Date("2026-11-01T08:00:00Z");
+    const secondOne = new Date("2026-11-01T09:00:00Z");
+    expect(cronMatchesTime("0 1 * * *", firstOne, timezone)).toBe(true);
+    expect(cronMatchesTime("0 1 * * *", secondOne, timezone)).toBe(true);
   });
 
   test("invalid timezone falls back to local time", () => {

@@ -321,15 +321,14 @@ const MS_PER_MINUTE = 60 * 1000;
  *
  * Delegates to cron-parser so that matching and validation share one source
  * of truth: an expression is "valid" iff cron-parser accepts it, and it
- * "matches" a minute iff cron-parser's next occurrence after the previous
- * minute lands within that minute. This removes the long-standing mismatch
- * where e.g. day-of-week `7` validated as Sunday but never matched
- * `Date.getDay()` (0-6).
+ * "matches" a minute iff cron-parser accepts that minute's wall-clock fields.
+ * This removes the long-standing mismatch where e.g. day-of-week `7`
+ * validated as Sunday but never matched `Date.getDay()` (0-6).
  *
- * When `timezone` is provided, the cron field semantics are interpreted in
- * that IANA timezone (cron-parser applies the offset/DST rules itself). An
- * invalid/unavailable timezone falls back to the process local timezone
- * rather than throwing, matching the previous behavior.
+ * When `timezone` is provided, the date is first projected into that IANA
+ * timezone. Matching the projected wall time preserves classic cron behavior:
+ * skipped spring-forward minutes do not fire, while repeated fall-back
+ * minutes may fire twice. Invalid timezones fall back to process local time.
  */
 export function cronMatchesTime(
   expr: string,
@@ -339,21 +338,16 @@ export function cronMatchesTime(
   const parserExpression = normalizeCronExpressionForParser(expr);
   if (!parserExpression) return false;
 
-  // Align to the start of the target minute (drop seconds/ms) so the window
-  // check is stable regardless of when within the minute `date` falls.
-  const minuteStart = new Date(
-    Math.floor(date.getTime() / MS_PER_MINUTE) * MS_PER_MINUTE,
-  );
+  const minuteStart = toWallClockMinute(date, timezone);
   const windowEnd = new Date(minuteStart.getTime() + MS_PER_MINUTE);
 
-  // Ask cron-parser for the first occurrence strictly after the previous
-  // minute; if the expression fires in `minuteStart`'s minute, that occurrence
-  // lands inside [minuteStart, windowEnd).
+  // Evaluate the target wall time on a UTC timeline so cron-parser supplies
+  // field/range/OR semantics without shifting nonexistent or repeated times.
   const previousMinute = new Date(minuteStart.getTime() - 1);
   try {
     const iterator = CronExpressionParser.parse(parserExpression, {
       currentDate: previousMinute,
-      tz: resolveTimezone(timezone),
+      tz: "UTC",
     });
     const next = iterator.next().toDate();
     return next >= minuteStart && next < windowEnd;
@@ -362,21 +356,46 @@ export function cronMatchesTime(
   }
 }
 
-/**
- * Return the IANA timezone to pass to cron-parser, or undefined to use the
- * process local timezone. Invalid/unavailable timezones fall back to local
- * (undefined) rather than throwing, preserving the previous behavior.
- */
-function resolveTimezone(timezone?: string | null): string | undefined {
-  if (!timezone) return undefined;
-  try {
-    // Throws on unknown IANA names — cheap way to validate before handing it
-    // to cron-parser, which would otherwise throw from deep in its internals.
-    Intl.DateTimeFormat("en-US", { timeZone: timezone });
-    return timezone;
-  } catch {
-    return undefined;
+function toWallClockMinute(date: Date, timezone?: string | null): Date {
+  if (timezone) {
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: timezone,
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+        hour: "numeric",
+        minute: "numeric",
+        hourCycle: "h23",
+      }).formatToParts(date);
+      const part = (type: "year" | "month" | "day" | "hour" | "minute") =>
+        Number.parseInt(
+          parts.find((item) => item.type === type)?.value ?? "",
+          10,
+        );
+      return new Date(
+        Date.UTC(
+          part("year"),
+          part("month") - 1,
+          part("day"),
+          part("hour") % 24,
+          part("minute"),
+        ),
+      );
+    } catch {
+      // Preserve the previous invalid-timezone fallback.
+    }
   }
+
+  return new Date(
+    Date.UTC(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate(),
+      date.getHours(),
+      date.getMinutes(),
+    ),
+  );
 }
 
 // ── Period estimation (for jitter) ──────────────────────────────────
