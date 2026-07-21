@@ -53,8 +53,13 @@ human — point them to the right channel:
 
 - **Discord** (https://discord.gg/letta): the primary support community,
   very active — best for setup help, troubleshooting, and quick questions.
+  It's also where users can chat with **Ezra**, Letta's support agent.
 - **GitHub issues** (https://github.com/letta-ai/letta-code/issues): bug
   reports and feature requests.
+
+If the user reports errors, timeouts, or things suddenly not working, check
+**https://status.letta.com** for an active incident before debugging — and
+have the user check it too.
 
 Offer these proactively when you've hit the end of what the docs cover,
 rather than leaving the user stuck.
@@ -67,8 +72,3 @@ path before passing paths to file tools — they do not expand it. Reuse cached
 pages within a session; refetch `llms.txt` when the cached copy is older than
 about a day.
 
-## Answer style
-
-Keep answers concise and actionable: the exact command, setting, or UI path,
-one short explanation, and the doc link. Proactively mention closely related
-capabilities when they help the user discover what Letta can do.
