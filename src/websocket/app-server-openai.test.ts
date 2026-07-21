@@ -1,13 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
 import { type AppServerHandle, startAppServer } from "@/websocket/app-server";
 import { parseAppServerWebsocketAuthSettings } from "@/websocket/app-server-auth";
 import {
   __testResetConversationMap,
-  __testSetSendMessageStreamImpl,
+  __testSetRunTurnImpl,
 } from "@/websocket/app-server-openai";
 
 const TEST_AGENTS = [
@@ -38,44 +37,18 @@ function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function fakeTurnChunks(): LettaStreamingResponse[] {
-  return [
-    {
-      message_type: "reasoning_message",
-      reasoning: "thinking...",
-    },
-    {
-      message_type: "assistant_message",
-      content: "Hello ",
-    },
-    {
-      message_type: "assistant_message",
-      content: [{ type: "text", text: "world" }],
-    },
-    {
-      message_type: "usage_statistics",
-      prompt_tokens: 11,
-      completion_tokens: 7,
-      total_tokens: 18,
-    },
-    {
-      message_type: "stop_reason",
-      stop_reason: "end_turn",
-    },
-  ] as unknown as LettaStreamingResponse[];
-}
-
-function stubTurnStream(
-  chunks: LettaStreamingResponse[],
-  onCall?: (conversationId: string, agentId: string | undefined) => void,
+function stubTurn(
+  onCall?: (conversationId: string, agentId: string) => void,
 ): void {
-  __testSetSendMessageStreamImpl(async (conversationId, _messages, opts) => {
-    onCall?.(conversationId, opts?.agentId);
-    return (async function* () {
-      for (const chunk of chunks) {
-        yield chunk;
-      }
-    })();
+  __testSetRunTurnImpl(async ({ agentId, conversationId, onAssistantText }) => {
+    onCall?.(conversationId, agentId);
+    onAssistantText?.("Hello ");
+    onAssistantText?.("world");
+    return {
+      text: "Hello world",
+      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+      error: null,
+    };
   });
 }
 
@@ -89,7 +62,7 @@ describe("app-server OpenAI-compatible API", () => {
   let handle: AppServerHandle | null = null;
 
   afterEach(async () => {
-    __testSetSendMessageStreamImpl(null);
+    __testSetRunTurnImpl(null);
     __testResetConversationMap();
     __testSetBackend(null);
     if (handle) {
@@ -151,9 +124,9 @@ describe("app-server OpenAI-compatible API", () => {
   test("POST /v1/chat/completions aggregates a turn (non-streaming)", async () => {
     __testSetBackend(fakeBackend());
     const captured = { conversation: "", agent: "" };
-    stubTurnStream(fakeTurnChunks(), (conversationId, agentId) => {
+    stubTurn((conversationId, agentId) => {
       captured.conversation = conversationId;
-      captured.agent = agentId ?? "";
+      captured.agent = agentId;
     });
     handle = await startAppServer({
       listen: "ws://127.0.0.1:0",
@@ -195,7 +168,7 @@ describe("app-server OpenAI-compatible API", () => {
     const created: string[] = [];
     __testSetBackend(fakeBackend(created));
     const conversationsUsed: string[] = [];
-    stubTurnStream(fakeTurnChunks(), (conversationId) => {
+    stubTurn((conversationId) => {
       conversationsUsed.push(conversationId);
     });
     handle = await startAppServer({
@@ -233,7 +206,7 @@ describe("app-server OpenAI-compatible API", () => {
 
   test("POST /v1/chat/completions streams SSE chunks", async () => {
     __testSetBackend(fakeBackend());
-    stubTurnStream(fakeTurnChunks());
+    stubTurn();
     handle = await startAppServer({
       listen: "ws://127.0.0.1:0",
       openaiApi: true,

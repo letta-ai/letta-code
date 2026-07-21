@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import OpenAI from "openai";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
@@ -7,7 +6,7 @@ import { type AppServerHandle, startAppServer } from "@/websocket/app-server";
 import { parseAppServerWebsocketAuthSettings } from "@/websocket/app-server-auth";
 import {
   __testResetConversationMap,
-  __testSetSendMessageStreamImpl,
+  __testSetRunTurnImpl,
 } from "@/websocket/app-server-openai";
 
 // Conformance tests: drive the /v1 routes through the real OpenAI SDK
@@ -33,23 +32,14 @@ function fakeBackend(): Backend {
 }
 
 function stubTurnStream(): void {
-  const chunks = [
-    { message_type: "assistant_message", content: "Hello " },
-    { message_type: "assistant_message", content: "world" },
-    {
-      message_type: "usage_statistics",
-      prompt_tokens: 11,
-      completion_tokens: 7,
-      total_tokens: 18,
-    },
-    { message_type: "stop_reason", stop_reason: "end_turn" },
-  ] as unknown as LettaStreamingResponse[];
-  __testSetSendMessageStreamImpl(async () => {
-    return (async function* () {
-      for (const chunk of chunks) {
-        yield chunk;
-      }
-    })();
+  __testSetRunTurnImpl(async ({ onAssistantText }) => {
+    onAssistantText?.("Hello ");
+    onAssistantText?.("world");
+    return {
+      text: "Hello world",
+      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+      error: null,
+    };
   });
 }
 
@@ -63,7 +53,7 @@ describe("app-server OpenAI SDK conformance", () => {
   let handle: AppServerHandle | null = null;
 
   afterEach(async () => {
-    __testSetSendMessageStreamImpl(null);
+    __testSetRunTurnImpl(null);
     __testResetConversationMap();
     __testSetBackend(null);
     if (handle) {
