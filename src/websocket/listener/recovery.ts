@@ -51,7 +51,10 @@ import {
   emitToolExecutionStartedEvents,
   normalizeToolReturnWireMessage,
 } from "./interrupts";
-import { ensureListenerModAdapter } from "./mod-adapter";
+import {
+  createListenerModEvents,
+  ensureListenerModAdaptersForAgent,
+} from "./mod-adapter";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitCanonicalMessageDelta,
@@ -746,6 +749,13 @@ export async function resolveRecoveredApprovalResponse(
       if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
         return true;
       }
+      const modAdapters = await ensureListenerModAdaptersForAgent(
+        runtime.listener,
+        recovered.agentId,
+      );
+      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        return true;
+      }
       const preparedToolContext = await prepareToolExecutionContext({
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
@@ -755,7 +765,8 @@ export async function resolveRecoveredApprovalResponse(
           recovered.agentId,
           recovered.conversationId,
         ),
-        modEvents: ensureListenerModAdapter(runtime.listener).events,
+        modAdapters,
+        modEvents: createListenerModEvents(modAdapters),
       });
       if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
         return true;

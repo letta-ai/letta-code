@@ -267,7 +267,15 @@ describe("ChannelRegistry command routing", () => {
     }> = [];
     const registry = new ChannelRegistry();
     const delivered: unknown[] = [];
+    const modelStatusCalls: unknown[] = [];
     registry.setMessageHandler((delivery) => delivered.push(delivery));
+    registry.setModelHandler(null, async (params) => {
+      modelStatusCalls.push(params);
+      return {
+        modelLabel: "GPT-5.6 Sol",
+        modelHandle: "openai/gpt-5.6-sol",
+      };
+    });
     registry.setReady();
     registry.registerAdapter({
       id: "telegram:acct-telegram",
@@ -313,6 +321,15 @@ describe("ChannelRegistry command routing", () => {
     );
     expect(replies[0]?.text).toContain("Agent: agent-status.");
     expect(replies[0]?.text).toContain("Conversation: conv-status.");
+    expect(replies[0]?.text).toContain(
+      "Model: GPT-5.6 Sol (openai/gpt-5.6-sol).",
+    );
+    expect(modelStatusCalls).toEqual([
+      {
+        agentId: "agent-status",
+        conversationId: "conv-status",
+      },
+    ]);
   });
 
   test("/pause and /resume update the current route without agent delivery", async () => {

@@ -232,10 +232,17 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
 
     // Conversation-scoped update for non-default
     expect(source).toContain("updateConversationLLMConfig(");
-    expect(source).toContain(
-      "avoidOverwritingExistingContextWindow: shouldPreserveContextWindow",
-    );
     expect(source).toContain('appliedTo = "conversation"');
+
+    // Context-window preservation must RE-SEND the current value explicitly
+    // (contextWindowOverride), never omit the field (an omitted
+    // context_window_limit makes the server re-derive and clamp it to a
+    // legacy 128k default — LET-9786), and must not preserve a value that
+    // looks like that server clamp (preservableContextWindow).
+    expect(source).not.toContain("avoidOverwritingExistingContextWindow");
+    expect(source).not.toContain("delete updateArgsForRequest.context_window");
+    expect(source).toContain("preservableContextWindow(");
+    expect(source).toContain("contextWindowOverride: preservedContextWindow");
   });
 
   test("preserves registry provider type for BYOK model id updates", () => {
@@ -526,7 +533,7 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
 });
 
 describe("listen-client channel model command wiring", () => {
-  test("wireChannelIngress routes channel /model through the model update helpers", () => {
+  test("wireChannelIngress routes channel model commands through the model update helpers", () => {
     const source = readListenerLifecycleSource();
 
     expect(source).toContain("registry.setModelHandler");

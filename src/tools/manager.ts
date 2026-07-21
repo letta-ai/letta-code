@@ -51,10 +51,6 @@ import type {
   ModToolStartEvent,
   ToolApprovalPolicy,
 } from "@/mods/types";
-import {
-  permissionMode as globalPermissionMode,
-  type PermissionMode,
-} from "@/permissions/mode";
 import type {
   PermissionDecision,
   PermissionRuleType,
@@ -78,6 +74,10 @@ import {
   type ModelFacingToolForm,
   serializeFunctionOnlyToolPayload,
 } from "./model-facing-tool";
+import {
+  getEffectivePermissionModeState,
+  type PermissionModeState,
+} from "./permission-mode-state";
 import {
   extractSecretEnvFromCommand,
   scrubSecretsFromString,
@@ -675,15 +675,6 @@ function getSwitchLock(): SwitchLockState {
 const toolRegistry = getRegistry();
 let toolExecutionContextCounter = 0;
 
-/**
- * Mutable, shared-by-reference permission mode state.
- * Listener mode populates this from ConversationRuntime; CLI mode uses a
- * wrapper around the global permissionMode singleton.
- */
-export type PermissionModeState = {
-  mode: PermissionMode;
-};
-
 type ToolExecutionContextSnapshot = {
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
@@ -1122,23 +1113,6 @@ function buildClientToolsFromSnapshot(
   return [...builtInTools, ...externalClientTools, ...modClientTools];
 }
 
-function getEffectivePermissionModeState(
-  permissionModeState?: PermissionModeState,
-): PermissionModeState {
-  // When no scoped state is provided (local/CLI mode), create a live proxy to
-  // the global singleton.
-  return (
-    permissionModeState ?? {
-      get mode() {
-        return globalPermissionMode.getMode();
-      },
-      set mode(value: PermissionMode) {
-        globalPermissionMode.setMode(value);
-      },
-    }
-  );
-}
-
 function capturePreparedToolExecutionContext(
   snapshot: {
     toolRegistry: ToolRegistry;
@@ -1256,6 +1230,8 @@ export async function prepareCurrentToolExecutionContext(options?: {
   channelTurnSources?: ChannelTurnSource[];
   modContext?: ModContext;
   modEvents?: ModEvents;
+  modPermissions?: Map<string, ModPermissionDefinition>;
+  modTools?: Map<string, ModToolDefinition>;
 }): Promise<PreparedToolExecutionContext> {
   await waitForToolsetReady();
   const currentToolNames = maybeAppendChannelTools(
@@ -1270,8 +1246,11 @@ export async function prepareCurrentToolExecutionContext(options?: {
       externalExecutor: getExternalToolExecutor(),
       modContext: options?.modContext,
       modEvents: options?.modEvents,
-      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
-      modTools: getAvailableModToolsRegistry(options?.modContext),
+      modPermissions:
+        options?.modPermissions ??
+        getAvailableModPermissionsRegistry(options?.modContext),
+      modTools:
+        options?.modTools ?? getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1288,6 +1267,8 @@ export async function prepareToolExecutionContextForSpecificTools(
     channelTurnSources?: ChannelTurnSource[];
     modContext?: ModContext;
     modEvents?: ModEvents;
+    modPermissions?: Map<string, ModPermissionDefinition>;
+    modTools?: Map<string, ModToolDefinition>;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1302,8 +1283,11 @@ export async function prepareToolExecutionContextForSpecificTools(
       externalExecutor: getExternalToolExecutor(),
       modContext: options?.modContext,
       modEvents: options?.modEvents,
-      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
-      modTools: getAvailableModToolsRegistry(options?.modContext),
+      modPermissions:
+        options?.modPermissions ??
+        getAvailableModPermissionsRegistry(options?.modContext),
+      modTools:
+        options?.modTools ?? getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );
@@ -1322,6 +1306,8 @@ export async function prepareToolExecutionContextForModel(
     channelTurnSources?: ChannelTurnSource[];
     modContext?: ModContext;
     modEvents?: ModEvents;
+    modPermissions?: Map<string, ModPermissionDefinition>;
+    modTools?: Map<string, ModToolDefinition>;
     runtimeContext?: Partial<RuntimeContextSnapshot>;
   },
 ): Promise<PreparedToolExecutionContext> {
@@ -1336,8 +1322,11 @@ export async function prepareToolExecutionContextForModel(
       externalExecutor: getExternalToolExecutor(),
       modContext: options?.modContext,
       modEvents: options?.modEvents,
-      modPermissions: getAvailableModPermissionsRegistry(options?.modContext),
-      modTools: getAvailableModToolsRegistry(options?.modContext),
+      modPermissions:
+        options?.modPermissions ??
+        getAvailableModPermissionsRegistry(options?.modContext),
+      modTools:
+        options?.modTools ?? getAvailableModToolsRegistry(options?.modContext),
     },
     options,
   );

@@ -81,7 +81,7 @@ export function SetupUI({
       settingsManager.updateSettings({ preferredBackendMode: "local" });
       await settingsManager.flush();
       setDoneMessage(
-        "Local mode enabled. Agents you create now will be stored on this device. To sign into Letta Cloud later, run `letta setup` or `letta backend api`.",
+        "Local mode enabled. Agents you create now will be stored on this device. To sign into Letta Cloud later, run `letta setup` or `letta backend cloud`.",
       );
       setMode("done");
       setTimeout(() => onComplete({ kind: "local" }), 500);

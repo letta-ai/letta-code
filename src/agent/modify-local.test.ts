@@ -48,6 +48,18 @@ describe("local model updates", () => {
     });
   });
 
+  test("builds direct Moonshot K3 settings without client reasoning controls", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("moonshot/kimi-k3", {
+        max_output_tokens: 131072,
+      }),
+    ).toMatchObject({
+      provider_type: "moonshot",
+      parallel_tool_calls: true,
+      max_output_tokens: 131072,
+    });
+  });
+
   test("stores GPT-5.6 max separately from xhigh for local providers", () => {
     expect(
       __modifyTestUtils.buildModelSettings("openai-codex/gpt-5.6-sol", {

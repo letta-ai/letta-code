@@ -687,7 +687,7 @@ export async function wireChannelIngress(
         ),
       };
     }
-  });
+  }, getCurrentModelStatusForRuntime);
 
   registry.setReloadHandler(async ({ runtime }) => {
     const scopedRuntime = getOrCreateScopedRuntime(
@@ -872,7 +872,6 @@ export function enqueueChannelTurn(
 
   return enqueuedItem;
 }
-
 export function createRuntime(): ListenerRuntime {
   const bootWorkingDirectory = getCurrentWorkingDirectory();
   return {
@@ -896,6 +895,7 @@ export function createRuntime(): ListenerRuntime {
     workingDirectoryByConversation: loadPersistedCwdMap(),
     worktreeWatcherByConversation: new Map(),
     permissionModeByConversation: loadPersistedPermissionModeMap(),
+    skillSourcesByConversation: new Map(),
     reminderStateByConversation: new Map(),
     contextTrackerByConversation: new Map(),
     systemPromptRecompileByConversation: new Map(),
@@ -938,11 +938,11 @@ export function stopRuntime(
   runtime.approvalRuntimeKeyByRequestId.clear();
   clearListenerWarmState(runtime);
   runtime.reminderStateByConversation.clear();
+  runtime.skillSourcesByConversation.clear();
   runtime.contextTrackerByConversation.clear();
   runtime.systemPromptRecompileByConversation.clear();
   runtime.queuedSystemPromptRecompileByConversation.clear();
   stopAllWorktreeWatchers(runtime);
-
   if (!runtime.socket) {
     if (
       runtime.streamSocket &&

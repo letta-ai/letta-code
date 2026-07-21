@@ -198,6 +198,18 @@ async function applyRuntimeStartState(
   scope: RuntimeScope,
   scopedRuntime: ConversationRuntime,
 ): Promise<void> {
+  if (parsed.skill_sources === undefined) {
+    scopedRuntime.skillSources = undefined;
+    context.runtime.skillSourcesByConversation.delete(scopedRuntime.key);
+  } else {
+    const skillSources = [...new Set(parsed.skill_sources)];
+    scopedRuntime.skillSources = skillSources;
+    context.runtime.skillSourcesByConversation.set(
+      scopedRuntime.key,
+      skillSources,
+    );
+  }
+
   if (parsed.mode) {
     const mode = migratePermissionMode(parsed.mode);
     if (!mode) {

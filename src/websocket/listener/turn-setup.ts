@@ -21,7 +21,10 @@ import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
-import { ensureListenerModAdapter } from "./mod-adapter";
+import {
+  createListenerModEvents,
+  ensureListenerModAdaptersForAgent,
+} from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
 import { emitListenerTurnStart } from "./turn-events";
 import {
@@ -247,6 +250,10 @@ export async function prepareListenerTurn(params: {
   if (currentInput !== messagesToSend) {
     inboundUserTranscriptLines = buildInboundUserTranscriptLines(currentInput);
   }
+  const modAdapters = await ensureListenerModAdaptersForAgent(
+    runtime.listener,
+    agentId,
+  );
   const preparedToolContext = await prepareToolExecutionContextForScope({
     agentId,
     conversationId,
@@ -254,9 +261,11 @@ export async function prepareListenerTurn(params: {
     externalToolScopeIds: msg.externalToolScopeIds,
     workingDirectory,
     permissionModeState,
+    skillSources: runtime.skillSources,
     cachedAgent,
     channelTurnSources: msg.channelTurnSources,
-    modEvents: ensureListenerModAdapter(runtime.listener).events,
+    modAdapters,
+    modEvents: createListenerModEvents(modAdapters),
   });
   if (isInterrupted()) {
     return { kind: "interrupted" };

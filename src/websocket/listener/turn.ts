@@ -249,6 +249,9 @@ export async function handleIncomingMessage(
       background: true,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
+      ...(runtime.skillSources !== undefined
+        ? { skillSources: runtime.skillSources }
+        : {}),
       preparedToolContext: preparedToolContext.preparedToolContext,
       ...(turnInput.imageFailureModesByMessageOtid
         ? {

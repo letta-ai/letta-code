@@ -181,11 +181,47 @@ channel command set is:
 - `/resume` — re-enable agent replies for the current routed chat.
 - `/cancel` — abort the in-progress agent turn for the current routed chat.
 - `/chat` — show the Letta web chat link for the current route.
+- `/whoami` — show the sender's access scope, tier, and runnable commands.
 - `/reflection` — start a memory reflection pass for the current route's agent
   conversation when MemFS is enabled.
 
 Slack-native slash command payloads currently exist only for `/cancel`; the rest
 are expected to be sent as normal channel messages in the relevant chat/thread.
+
+## Access control
+
+Sender access is decided centrally (`access-control.ts`) on every inbound
+message — DMs and groups, on every channel including auto-routed Slack/Discord
+traffic — before commands or routing run.
+
+Per-account fields (in `accounts.json`, snake_case):
+
+- `dm_policy` — `"open"`, `"allowlist"`, or `"pairing"` for direct messages.
+  Slack note: `"pairing"` is a legacy unenforced default on Slack and behaves
+  as `"open"`; use `"allowlist"` to restrict Slack DMs.
+- `allowed_users` — sender IDs allowed regardless of policy. `"*"` allows
+  everyone. WhatsApp/Signal entries match through identity normalization
+  (phone digits / UUID vs E.164).
+- `group_policy` — `"open"` (default, historical behavior) or `"allowlist"`,
+  which restricts group/channel senders to the allowlists below plus paired
+  users.
+- `admin_users` — enables slash-command tiers when non-empty: admins run
+  everything; other users get the read-only floor (`/help`, `/status`,
+  `/whoami`) plus `user_allowed_commands`. When unset, every allowed user has
+  full command access.
+- `user_allowed_commands` — extra commands non-admins may run.
+
+Env vars (comma-separated user IDs; merged with account config):
+
+- `LETTA_CHANNELS_ALLOWED_USERS` / `LETTA_<CHANNEL>_ALLOWED_USERS` — global /
+  per-channel allowlists. Once configured, they restrict all scopes (DMs and
+  groups) on the affected channels.
+- `LETTA_CHANNELS_ADMIN_USERS` / `LETTA_<CHANNEL>_ADMIN_USERS` — admin tiers.
+- `LETTA_CHANNELS_ALLOW_ALL_USERS=1` / `LETTA_<CHANNEL>_ALLOW_ALL_USERS=1` —
+  explicit opt-out of sender gating.
+
+Pairing approvals are a union with the allowlists: a paired sender stays
+allowed in any scope, and allowlisted senders skip the pairing handshake.
 
 ## Slack app manifest notes
 

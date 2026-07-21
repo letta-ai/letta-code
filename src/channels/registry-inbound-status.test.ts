@@ -19,18 +19,17 @@ test("WhatsApp inbound status includes runtime model", async () => {
     adapter,
     accountConfigured: true,
     accountEnabled: true,
-    channelId: "whatsapp",
     route,
     resolveModelStatus: async () => ({
       modelLabel: "GPT-5.6 Sol",
       modelHandle: "openai/gpt-5.6-sol",
-      scope: "conversation",
     }),
   });
 
-  expect(context.activeModel).toBe(
-    "GPT-5.6 Sol (openai/gpt-5.6-sol)",
-  );
+  expect(context.activeModel).toEqual({
+    modelLabel: "GPT-5.6 Sol",
+    modelHandle: "openai/gpt-5.6-sol",
+  });
 });
 
 test("activeModel is undefined when no route exists", async () => {
@@ -38,12 +37,10 @@ test("activeModel is undefined when no route exists", async () => {
     adapter,
     accountConfigured: true,
     accountEnabled: true,
-    channelId: "whatsapp",
     route: null,
     resolveModelStatus: async () => ({
       modelLabel: "GPT-5.6 Sol",
       modelHandle: "openai/gpt-5.6-sol",
-      scope: "conversation",
     }),
   });
 
@@ -55,7 +52,6 @@ test("activeModel is undefined when model lookup throws", async () => {
     adapter,
     accountConfigured: true,
     accountEnabled: true,
-    channelId: "whatsapp",
     route,
     resolveModelStatus: async () => {
       throw new Error("runtime unavailable");
@@ -63,4 +59,22 @@ test("activeModel is undefined when model lookup throws", async () => {
   });
 
   expect(context.activeModel).toBeUndefined();
+});
+
+test("activeModel preserves a handle used as the fallback label", async () => {
+  const context = await buildInboundChannelStatusContext({
+    adapter,
+    accountConfigured: true,
+    accountEnabled: true,
+    route,
+    resolveModelStatus: async () => ({
+      modelLabel: "custom/model",
+      modelHandle: "custom/model",
+    }),
+  });
+
+  expect(context.activeModel).toEqual({
+    modelLabel: "custom/model",
+    modelHandle: "custom/model",
+  });
 });

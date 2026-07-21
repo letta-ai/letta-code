@@ -1,28 +1,26 @@
 import { isLocalAgentId } from "@/agent/agent-id";
 import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
-import {
-  sanitizeChannelProgressCore,
-  truncateChannelProgressText,
-} from "@/channels/progress-formatting";
-import type {
-  ChannelControlRequestEvent,
-  ChannelTurnProgressEvent,
-} from "@/channels/types";
-import {
-  getDisplayToolName,
-  isShellTool,
-  isTaskTool,
-} from "@/cli/helpers/tool-name-mapping";
+import { truncateChannelProgressText } from "@/channels/progress-formatting";
+import type { ChannelControlRequestEvent } from "@/channels/types";
 import type { SlackApprovalActionPayload, SlackBlock } from "./internal-types";
-import { isNonEmptyString } from "./utils";
 
-export const SLACK_ASSISTANT_STARTUP_STATUS = "is thinking...";
-export const SLACK_ASSISTANT_WORKING_STATUS = "is working...";
+export {
+  formatSlackToolNameForDisplay,
+  resolveSlackConcreteActivity,
+  SLACK_ASSISTANT_STARTUP_STATUS,
+  SLACK_ASSISTANT_WORKING_STATUS,
+  sanitizeSlackStatusText,
+} from "./progress";
+
+import {
+  formatSlackToolNameForDisplay,
+  sanitizeSlackStatusText,
+} from "./progress";
+import { isNonEmptyString } from "./utils";
 export const SLACK_APPROVAL_ACTION_ID = "letta_channel_approval";
 
 const SLACK_MARKDOWN_BLOCK_TEXT_MAX = 12_000;
 const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
-const SLACK_STATUS_TEXT_MAX = 300;
 
 function buildSlackChatUrl(
   agentId: string,
@@ -79,56 +77,6 @@ export function buildSlackReplyBlocksWithFootnote(
     elements: [{ type: "mrkdwn", text: footnote }],
   });
   return blocks;
-}
-
-function sanitizeSlackStatusText(text: string, maxLength: number): string {
-  const normalized = sanitizeChannelProgressCore(text)
-    .replace(/[<>]/g, "")
-    .replace(/&/g, "and")
-    .replace(/\s+/g, " ")
-    .trim();
-  return truncateChannelProgressText(normalized, maxLength, "...");
-}
-
-function formatSlackToolNameForDisplay(toolName: string): string {
-  return isTaskTool(toolName) ? "Subagent" : getDisplayToolName(toolName);
-}
-
-export function resolveSlackConcreteActivity(
-  event: ChannelTurnProgressEvent,
-): string | null {
-  if (event.kind === "command" && isNonEmptyString(event.command)) {
-    return sanitizeSlackStatusText(
-      formatSlackToolNameForDisplay(event.command),
-      SLACK_STATUS_TEXT_MAX,
-    );
-  }
-  if (
-    event.kind !== "tool" ||
-    !isNonEmptyString(event.toolName) ||
-    event.toolName.toLowerCase() === "messagechannel"
-  ) {
-    return null;
-  }
-
-  for (const description of [
-    event.toolTitle,
-    event.toolDetails,
-    isShellTool(event.toolName) ? event.message : undefined,
-    formatSlackToolNameForDisplay(event.toolName),
-  ]) {
-    if (!isNonEmptyString(description)) {
-      continue;
-    }
-    const sanitized = sanitizeSlackStatusText(
-      description,
-      SLACK_STATUS_TEXT_MAX,
-    );
-    if (sanitized) {
-      return sanitized;
-    }
-  }
-  return null;
 }
 
 export function formatSlackControlRequestBlocks(

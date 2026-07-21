@@ -14,7 +14,7 @@ import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import { getModelContextWindow } from "./available-models";
-import type { ModelReasoningEffort } from "./model";
+import { getModelInfo, type ModelReasoningEffort } from "./model";
 
 type ModelSettings =
   | OpenAIModelSettings
@@ -59,6 +59,11 @@ function buildModelSettings(
     modelHandle.startsWith("lc-anthropic/") ||
     modelHandle.startsWith("claude-pro-max/") ||
     modelHandle.startsWith("minimax/");
+  const isMoonshot =
+    explicitProviderType === "moonshot" ||
+    explicitProviderType === "moonshotai" ||
+    modelHandle.startsWith("moonshot/") ||
+    modelHandle.startsWith("moonshotai/");
   const isZai =
     explicitProviderType === "zai" || modelHandle.startsWith("zai/");
   const isXai =
@@ -77,7 +82,16 @@ function buildModelSettings(
 
   let settings: ModelSettings;
 
-  if (isOpenAI || isOpenRouter) {
+  if (isMoonshot) {
+    const moonshotSettings: Record<string, unknown> = {
+      provider_type: "moonshot",
+      parallel_tool_calls: true,
+    };
+    if (typeof updateArgs?.reasoning_effort === "string") {
+      moonshotSettings.reasoning_effort = updateArgs.reasoning_effort;
+    }
+    settings = moonshotSettings;
+  } else if (isOpenAI || isOpenRouter) {
     const openaiSettings: OpenAIModelSettings = {
       provider_type: "openai",
       parallel_tool_calls: true,
@@ -304,24 +318,90 @@ function maxTokensForUpdatePayload(
  * @param agentId - The agent ID
  * @param modelHandle - The model handle (e.g., "anthropic/claude-sonnet-4-5-20250929")
  * @param updateArgs - Additional config args (context_window, reasoning_effort, enable_reasoner, etc.)
- * @param options - Optional update behavior overrides
  * @returns The updated agent state from the server (includes llm_config and model_settings)
  */
-export interface UpdateAgentLLMConfigOptions {
+export interface UpdateLLMConfigOptions {
   /**
-   * When true, do not derive and send a default context_window_limit unless the
-   * caller explicitly supplied updateArgs.context_window. This is for updates to
-   * existing agent/conversation model settings where omitting the field lets the
-   * backend keep its current value.
+   * Context window to send explicitly. Wins over updateArgs.context_window
+   * and catalog derivation on EVERY backend — including local backends, where
+   * updateArgs.context_window is otherwise ignored in favor of the pi model
+   * catalog. Preserve paths (reasoning cycles, resume refresh, conversation
+   * carryover, same-variant /model changes) use this to re-send the current
+   * window (LET-9786).
    */
-  avoidOverwritingExistingContextWindow?: boolean;
+  contextWindowOverride?: number;
+}
+
+/**
+ * Resolve the context window to send with a model-bearing update.
+ *
+ * Always produces a value when one is knowable. The server treats an omitted
+ * context_window_limit as "re-derive from the handle", which clamps to a
+ * legacy 128k global default (LET-9786) — so omission is never a preserve
+ * mechanism. Resolution order:
+ *  1. options.contextWindowOverride (preserve paths; all backends)
+ *  2. updateArgs.context_window (catalog presets; API backends only — local
+ *     backends own token limits via the pi catalog)
+ *  3. models API listing for the handle
+ *  4. registry preset for the handle (API backends)
+ *  5. the current server-side value, re-sent as-is (API backends; last resort
+ *     for uncatalogued/custom handles so the field is still not omitted)
+ */
+async function resolveContextWindowForUpdate(params: {
+  modelHandle: string;
+  updateArgs?: Record<string, unknown>;
+  options?: UpdateLLMConfigOptions;
+  useBackendModelCatalog: boolean;
+  fetchCurrent: () => Promise<number | undefined>;
+}): Promise<number | undefined> {
+  const { modelHandle, updateArgs, options, useBackendModelCatalog } = params;
+  if (typeof options?.contextWindowOverride === "number") {
+    return options.contextWindowOverride;
+  }
+  const presetContextWindow = useBackendModelCatalog
+    ? undefined
+    : (updateArgs?.context_window as number | undefined);
+  if (typeof presetContextWindow === "number") {
+    return presetContextWindow;
+  }
+  const catalogContextWindow = await getModelContextWindow(modelHandle);
+  if (typeof catalogContextWindow === "number") {
+    return catalogContextWindow;
+  }
+  if (useBackendModelCatalog) {
+    // Local backends derive token limits from the pi catalog server-side and
+    // treat an omitted value as "keep current"; no clamp exists there.
+    return undefined;
+  }
+  const registryContextWindow = (
+    getModelInfo(modelHandle)?.updateArgs as
+      | { context_window?: number }
+      | null
+      | undefined
+  )?.context_window;
+  if (typeof registryContextWindow === "number") {
+    return registryContextWindow;
+  }
+  return params.fetchCurrent();
+}
+
+function contextWindowFromEntityRecord(entity: unknown): number | undefined {
+  if (!isRecord(entity)) return undefined;
+  if (typeof entity.context_window_limit === "number") {
+    return entity.context_window_limit;
+  }
+  const llmConfig = entity.llm_config;
+  if (isRecord(llmConfig) && typeof llmConfig.context_window === "number") {
+    return llmConfig.context_window;
+  }
+  return undefined;
 }
 
 export async function updateAgentLLMConfig(
   agentId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
-  options?: UpdateAgentLLMConfigOptions,
+  options?: UpdateLLMConfigOptions,
 ): Promise<AgentState> {
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
@@ -330,17 +410,14 @@ export async function updateAgentLLMConfig(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
   );
-  const explicitContextWindow = useBackendModelCatalog
-    ? undefined
-    : (updateArgs?.context_window as number | undefined);
-  const shouldAvoidOverwritingExistingContextWindow =
-    options?.avoidOverwritingExistingContextWindow === true;
-  // Resume refresh updates should not implicitly reset context window.
-  const contextWindow =
-    explicitContextWindow ??
-    (!shouldAvoidOverwritingExistingContextWindow
-      ? await getModelContextWindow(modelHandle)
-      : undefined);
+  const contextWindow = await resolveContextWindowForUpdate({
+    modelHandle,
+    updateArgs,
+    options,
+    useBackendModelCatalog,
+    fetchCurrent: async () =>
+      contextWindowFromEntityRecord(await backend.retrieveAgent(agentId)),
+  });
   const hasModelSettings = Object.keys(modelSettings).length > 0;
   const maxTokens = maxTokensForUpdatePayload(updateArgs, {
     useBackendModelCatalog,
@@ -374,7 +451,7 @@ export async function updateConversationLLMConfig(
   conversationId: string,
   modelHandle: string,
   updateArgs?: Record<string, unknown>,
-  options?: UpdateAgentLLMConfigOptions,
+  options?: UpdateLLMConfigOptions,
 ): Promise<Conversation> {
   const backend = getBackend();
   const useBackendModelCatalog = backend.capabilities.localModelCatalog;
@@ -383,16 +460,32 @@ export async function updateConversationLLMConfig(
     modelHandle,
     updateArgsForModelSettings(updateArgs, { useBackendModelCatalog }),
   );
-  const explicitContextWindow = useBackendModelCatalog
-    ? undefined
-    : (updateArgs?.context_window as number | undefined);
-  const shouldAvoidOverwritingExistingContextWindow =
-    options?.avoidOverwritingExistingContextWindow === true;
-  const contextWindow =
-    explicitContextWindow ??
-    (!shouldAvoidOverwritingExistingContextWindow
-      ? await getModelContextWindow(modelHandle)
-      : undefined);
+  const contextWindow = await resolveContextWindowForUpdate({
+    modelHandle,
+    updateArgs,
+    options,
+    useBackendModelCatalog,
+    fetchCurrent: async () => {
+      // A conversation without its own override has context_window_limit
+      // null and inherits from its agent — walk up so uncatalogued handles
+      // still never omit the field (LET-9786).
+      const conversation = await backend.retrieveConversation(conversationId);
+      const conversationContextWindow =
+        contextWindowFromEntityRecord(conversation);
+      if (conversationContextWindow !== undefined) {
+        return conversationContextWindow;
+      }
+      const agentId = isRecord(conversation)
+        ? conversation.agent_id
+        : undefined;
+      if (typeof agentId !== "string" || agentId.length === 0) {
+        return undefined;
+      }
+      return contextWindowFromEntityRecord(
+        await backend.retrieveAgent(agentId),
+      );
+    },
+  });
   const hasModelSettings = Object.keys(modelSettings).length > 0;
   const maxTokens = maxTokensForUpdatePayload(updateArgs, {
     useBackendModelCatalog,

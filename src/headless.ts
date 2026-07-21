@@ -12,12 +12,14 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { extractTelemetryInputText } from "@/telemetry/input";
+import { installHeadlessStdoutGuard } from "@/utils/headless-stdout-guard";
 import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { detectShellContext } from "@/utils/shell-context";
 import { createSigintAbortSignal } from "@/utils/sigint-abort";
+import { reportSubagentStdoutLoss } from "@/utils/subagent-stdout-failure";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
@@ -30,6 +32,7 @@ import {
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
   parseRetryAfterHeaderMs,
+  rebuildInputForApprovalResync,
   refreshInputOtidsForNewRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldRetryRunMetadataError,
@@ -45,6 +48,7 @@ import {
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
   getResumeRefreshArgs,
+  preservableContextWindow,
   resolveModel,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
@@ -957,24 +961,9 @@ export async function handleHeadlessCommand(
   const inputFormat = values["input-format"];
   const isBidirectionalMode = inputFormat === "stream-json";
 
-  // If headless output is being piped and the downstream closes early (e.g.
-  // `| head`), Node will throw EPIPE on stdout writes. Treat this as a normal
-  // termination rather than crashing with a stack trace.
-  //
-  // Note: this must be registered before any `console.log` in headless mode.
-  process.stdout.on("error", (err: unknown) => {
-    const code =
-      typeof err === "object" && err !== null && "code" in err
-        ? (err as { code?: unknown }).code
-        : undefined;
-
-    if (code === "EPIPE") {
-      process.exit(0);
-    }
-
-    // Re-throw unknown stdout errors so they surface during tests/debugging.
-    throw err;
-  });
+  // Handle stdout errors (early-closing pipes, lost subagent streams) before
+  // any `console.log` in headless mode.
+  installHeadlessStdoutGuard();
 
   // Get prompt from either positional args or stdin (unless in bidirectional mode)
   let prompt = positionals.slice(2).join(" ");
@@ -1604,11 +1593,22 @@ export async function handleHeadlessCommand(
           getResumeRefreshArgs(presetRefresh.updateArgs, agent);
 
         if (needsUpdate) {
+          // Resume refresh must not reset the context window; preserve it by
+          // re-sending the agent's current value explicitly (omitting it
+          // makes the server re-derive + clamp to a legacy 128k default —
+          // LET-9786). A current value that looks like that clamp is not
+          // preserved, letting the agent heal.
+          const preservedContextWindow = preservableContextWindow(
+            agent.llm_config?.context_window,
+            presetRefresh.modelHandle,
+          );
           agent = await updateAgentLLMConfig(
             agent.id,
             presetRefresh.modelHandle,
             resumeRefreshUpdateArgs,
-            { avoidOverwritingExistingContextWindow: true },
+            preservedContextWindow !== undefined
+              ? { contextWindowOverride: preservedContextWindow }
+              : undefined,
           );
         }
       }
@@ -3179,12 +3179,9 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       }
 
-      // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
-      // Fetch the actual pending approvals and process them before retrying.
       const invalidIdsDetected =
         isInvalidToolCallIdsError(detailFromRun) ||
         isInvalidToolCallIdsError(latestErrorText);
-
       if (invalidIdsDetected) {
         if (outputFormat === "stream-json") {
           const recoveryMsg: RecoveryMessage = {
@@ -3204,16 +3201,18 @@ ${SYSTEM_REMINDER_CLOSE}
         }
 
         try {
-          // Fetch and process actual pending approvals from server
-          await resolveAllPendingApprovals();
-          // After processing, continue to next iteration (fresh state)
+          currentInput = await rebuildInputForApprovalResync(
+            agent.id,
+            conversationId,
+            currentInput,
+          );
           continue;
         } catch {
-          // If fetch fails, exit with error
+          // If reconciliation fails, exit instead of retrying stale input.
           if (outputFormat === "stream-json") {
             const errorMsg: ErrorMessage = {
               type: "error",
-              message: "Failed to fetch pending approvals for resync",
+              message: "Failed to reconcile pending approvals for resync",
               stop_reason: stopReason,
               run_id: lastRunId ?? undefined,
               session_id: sessionId,
@@ -3221,7 +3220,7 @@ ${SYSTEM_REMINDER_CLOSE}
             };
             await writeWireMessageAsync(errorMsg);
           } else {
-            console.error("Failed to fetch pending approvals for resync");
+            console.error("Failed to reconcile pending approvals for resync");
           }
           await exitHeadless(1, "headless_approval_resync_failed");
         }
@@ -3620,7 +3619,12 @@ ${SYSTEM_REMINDER_CLOSE}
       usage,
       uuid: resultUuid,
     };
-    await writeWireMessageAsync(resultEvent);
+    if (!(await writeWireMessageAsync(resultEvent))) {
+      // stdout died before the result envelope went out; consumers (e.g. a
+      // parent subagent manager) must see a failure, not a clean empty exit.
+      reportSubagentStdoutLoss();
+      await exitHeadless(1, "headless_result_write_lost");
+    }
   } else {
     // text format (default)
     if (!resultText || resultText === "No assistant response found") {
