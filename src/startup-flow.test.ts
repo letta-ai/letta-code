@@ -139,6 +139,21 @@ describe("Startup Flow - Flag Conflicts", () => {
 });
 
 describe("Startup Flow - Smoke", () => {
+  test("--help describes default startup and resume selector accurately", async () => {
+    const result = await runCli(["--help"], { expectExit: 0 });
+
+    expect(result.stdout).toContain(
+      "letta                 Open last project conversation when available",
+    );
+    expect(result.stdout).toContain(
+      "letta --resume        Pick a previous conversation for the last-used agent",
+    );
+    expect(result.stdout).toContain(
+      "-r, --resume            Open conversation selector for the last-used agent",
+    );
+    expect(result.stdout).not.toContain("Open agent selector UI");
+  });
+
   test("update aliases route to manual update instead of flag parsing errors", async () => {
     for (const alias of ["update", "upgrade", "--update", "--upgrade"]) {
       const result = await runCli([alias], { expectExit: 1 });

@@ -40,7 +40,7 @@ export const CLI_FLAG_CATALOG = {
   resume: {
     parser: { type: "boolean", short: "r" },
     mode: "interactive",
-    help: { description: "Open agent selector UI after loading" },
+    help: { description: "Open conversation selector for the last-used agent" },
   },
   conversation: { parser: { type: "string", short: "C" }, mode: "both" },
   "new-agent": {
