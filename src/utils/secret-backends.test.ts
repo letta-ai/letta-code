@@ -352,6 +352,51 @@ exit 2
   );
 
   posixTest(
+    "runs Bun macOS migration outside project config scope",
+    async () => {
+      const projectDir = makeTempDir("letta-bun-project-");
+      const bunDir = makeTempDir("letta-bun-bin-");
+      const bunPath = join(bunDir, "bun");
+      const cwdLog = join(projectDir, "cwd.log");
+      const envLog = join(projectDir, "env.log");
+      writeFileSync(
+        join(projectDir, "bunfig.toml"),
+        'preload = ["./bad.ts"]\n',
+      );
+      writeExecutable(
+        bunPath,
+        `#!/bin/sh
+pwd > "$BUN_CWD_LOG"
+printf '%s|%s|%s\\n' "$BUN_CONFIG" "$BUN_CONFIG_PATH" "$BUN_OPTIONS" > "$BUN_ENV_LOG"
+printf '{"ok":true,"valueBase64":null}\\n'
+`,
+      );
+      __setSecretRuntimeOverrideForTests({
+        platform: "darwin",
+        bunSecrets: null,
+        bunExecutablePath: bunPath,
+        macSecurityPath: null,
+        env: {
+          BUN_CWD_LOG: cwdLog,
+          BUN_ENV_LOG: envLog,
+          BUN_CONFIG: join(projectDir, "bunfig.toml"),
+          BUN_CONFIG_PATH: join(projectDir, "bunfig.toml"),
+          BUN_OPTIONS: "--preload ./bad.ts",
+        },
+      });
+      const backend = __getExplicitNodeSecretBackendForTests("darwin");
+      expect(backend).not.toBeNull();
+
+      await backend?.get({ service: "letta-code-test", name: "api-key" });
+
+      const helperCwd = readFileSync(cwdLog, "utf8").trim();
+      expect(helperCwd).toContain("letta-bun-keychain-");
+      expect(helperCwd).not.toBe(projectDir);
+      expect(readFileSync(envLog, "utf8").trim()).toBe("||");
+    },
+  );
+
+  posixTest(
     "uses secret-tool attrs and stdin without leaking values to argv",
     async () => {
       const dir = makeTempDir("letta-secret-tool-");

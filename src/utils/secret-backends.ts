@@ -1,6 +1,13 @@
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdtempSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
 export interface SecretLocator {
@@ -58,6 +65,12 @@ const WINDOWS_CREDENTIAL_MAX_BLOB_BYTES = 2_560;
 const BUN_LINUX_SECRET_SCHEMA = "com.oven-sh.bun.Secret";
 const MACOS_SECURITY_PATH = "/usr/bin/security";
 const MACOS_ITEM_NOT_FOUND_EXIT_CODE = 44;
+const BUN_PROJECT_ENV_KEYS = [
+  "BUN_CONFIG",
+  "BUN_CONFIG_PATH",
+  "BUN_OPTIONS",
+  "BUN_RUNTIME_TRANSPILER_CACHE_PATH",
+] as const;
 
 const BUN_MACOS_KEYCHAIN_MIGRATION_SCRIPT = `
 const locator = {
@@ -333,6 +346,7 @@ function runSecretCommand(
   args: string[],
   options: {
     env: NodeJS.ProcessEnv;
+    cwd?: string;
     input?: string;
     timeoutMs?: number;
     windowsHide?: boolean;
@@ -345,6 +359,7 @@ function runSecretCommand(
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     const child = spawn(command, args, {
+      cwd: options.cwd,
       env: options.env,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: options.windowsHide,
@@ -496,6 +511,23 @@ function getBunExecutablePath(runtime: SecretRuntime): string | null {
   return findExecutableOnPath("bun", runtime.env);
 }
 
+function getBunSecretCommandEnv(
+  env: NodeJS.ProcessEnv,
+  operation: "get" | "set" | "delete",
+  locator: SecretLocator,
+): NodeJS.ProcessEnv {
+  const commandEnv: NodeJS.ProcessEnv = {
+    ...env,
+    LETTA_SECRET_MIGRATION_OPERATION: operation,
+    LETTA_SECRET_MIGRATION_SERVICE: locator.service,
+    LETTA_SECRET_MIGRATION_NAME: locator.name,
+  };
+  for (const key of BUN_PROJECT_ENV_KEYS) {
+    delete commandEnv[key];
+  }
+  return commandEnv;
+}
+
 async function runBunMacKeychainOperation(
   operation: "get" | "set" | "delete",
   locator: SecretLocator,
@@ -505,24 +537,28 @@ async function runBunMacKeychainOperation(
   const bunPath = getBunExecutablePath(runtime);
   if (!bunPath) return null;
 
-  const result = await runSecretCommand(
-    bunPath,
-    ["-e", BUN_MACOS_KEYCHAIN_MIGRATION_SCRIPT],
-    {
-      env: {
-        ...runtime.env,
-        LETTA_SECRET_MIGRATION_OPERATION: operation,
-        LETTA_SECRET_MIGRATION_SERVICE: locator.service,
-        LETTA_SECRET_MIGRATION_NAME: locator.name,
+  const commandCwd = mkdtempSync(join(tmpdir(), "letta-bun-keychain-"));
+  let result: SecretCommandResult;
+  try {
+    result = await runSecretCommand(
+      bunPath,
+      ["-e", BUN_MACOS_KEYCHAIN_MIGRATION_SCRIPT],
+      {
+        cwd: commandCwd,
+        env: getBunSecretCommandEnv(runtime.env, operation, locator),
+        input:
+          operation === "set"
+            ? JSON.stringify({
+                valueBase64: Buffer.from(value ?? "", "utf8").toString(
+                  "base64",
+                ),
+              })
+            : undefined,
       },
-      input:
-        operation === "set"
-          ? JSON.stringify({
-              valueBase64: Buffer.from(value ?? "", "utf8").toString("base64"),
-            })
-          : undefined,
-    },
-  );
+    );
+  } finally {
+    rmSync(commandCwd, { recursive: true, force: true });
+  }
 
   let response: BunMacMigrationResponse;
   try {
