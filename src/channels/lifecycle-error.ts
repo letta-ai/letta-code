@@ -60,8 +60,8 @@ export const CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE =
 export const CHANNEL_LIFECYCLE_APPROVAL_PENDING_MESSAGE =
   "The agent is still waiting on a tool approval from an earlier turn. Please approve or deny that pending request, then send your message again.";
 
-export const CHANNEL_LIFECYCLE_DATABASE_LOCK_MESSAGE =
-  "A temporary database lock interrupted this turn. Please try again.";
+export const CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE =
+  "A temporary error interrupted this turn. Please try again.";
 
 export const CHANNEL_LIFECYCLE_CONVERSATION_BUSY_TITLE =
   CONVERSATION_BUSY_TITLE;
@@ -185,7 +185,7 @@ export function getChannelLifecycleErrorDisplay(
     return {
       kind: "database_lock_timeout",
       title: "Turn failed",
-      body: CHANNEL_LIFECYCLE_DATABASE_LOCK_MESSAGE,
+      body: CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE,
       runId,
     };
   }

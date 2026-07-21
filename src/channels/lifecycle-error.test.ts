@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   CHANNEL_LIFECYCLE_APPROVAL_PENDING_MESSAGE,
   CHANNEL_LIFECYCLE_CONVERSATION_BUSY_TITLE,
-  CHANNEL_LIFECYCLE_DATABASE_LOCK_MESSAGE,
   CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE,
+  CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE,
   extractChannelLifecycleRunId,
   formatChannelLifecycleErrorMessage,
   normalizeChannelLifecycleErrorMessage,
@@ -39,14 +39,19 @@ describe("normalizeChannelLifecycleErrorMessage", () => {
       "SQLSTATE 55P03 context",
       'psycopg.errors.LockNotAvailable: could not obtain lock on row in relation "steps" SQLSTATE: 55P03',
     ],
-  ])("replaces %s details with database lock guidance", (_label, rawError) => {
-    const message = normalizeChannelLifecycleErrorMessage(rawError);
+  ])(
+    "replaces %s details with transient retry guidance",
+    (_label, rawError) => {
+      const message = normalizeChannelLifecycleErrorMessage(rawError);
 
-    expect(message).toBe(CHANNEL_LIFECYCLE_DATABASE_LOCK_MESSAGE);
-    expect(message).not.toContain("55P03");
-    expect(message).not.toContain("canceling statement");
-    expect(message).not.toContain("steps");
-  });
+      expect(message).toBe(CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE);
+      expect(message).not.toContain("database");
+      expect(message).not.toContain("lock");
+      expect(message).not.toContain("55P03");
+      expect(message).not.toContain("canceling statement");
+      expect(message).not.toContain("steps");
+    },
+  );
 
   test("keeps ordinary non-Postgres lock timeout details", () => {
     expect(
@@ -127,7 +132,7 @@ describe("formatChannelLifecycleErrorMessage", () => {
     ).not.toContain("```");
   });
 
-  test("formats database lock guidance without database internals", () => {
+  test("formats transient guidance without database internals", () => {
     const message = formatChannelLifecycleErrorMessage(
       "sqlalchemy.exc.OperationalError: SQLSTATE: 55P03 while updating steps",
       { codeBlock: true, runId: "run-47960fe9" },
@@ -135,7 +140,7 @@ describe("formatChannelLifecycleErrorMessage", () => {
 
     expect(message).toBe(
       "Turn failed:\n" +
-        `${CHANNEL_LIFECYCLE_DATABASE_LOCK_MESSAGE}\n\n` +
+        `${CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE}\n\n` +
         "Run ID: run-47960fe9",
     );
     expect(message).not.toContain("```");
