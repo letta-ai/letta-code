@@ -52,6 +52,46 @@ describe("Slack channel sender", () => {
     ]);
   });
 
+  test("uses Slack reply blocks with web footnote for cloud agent responses", async () => {
+    const client = new FakeSlackSenderClient();
+    const sender = createSlackChannelSender({ client });
+    const message: OutboundChannelMessage = {
+      channel: "slack",
+      accountId: "integration-1",
+      chatId: "C123",
+      threadId: "1712790000.000000",
+      text: "hello from cloud",
+      agentId: "agent-123",
+      conversationId: "conversation-456",
+    };
+
+    await expect(sender.sendMessage(message)).resolves.toEqual({
+      messageId: "1712790000.000050",
+    });
+    expect(client.postMessages).toEqual([
+      {
+        channel: "C123",
+        text: "hello from cloud",
+        threadTs: "1712790000.000000",
+        blocks: [
+          {
+            type: "markdown",
+            text: "hello from cloud",
+          },
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: "<https://chat.letta.com/chat/agent-123?conversation=conversation-456|View on web>",
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
   test("adds Slack reactions", async () => {
     const client = new FakeSlackSenderClient();
     const sender = createSlackChannelSender({ client });

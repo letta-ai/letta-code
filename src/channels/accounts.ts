@@ -44,9 +44,12 @@ import {
  */
 const SNAKE_TO_CAMEL: Record<string, string> = {
   account_uuid: "accountUuid",
+  admin_users: "adminUsers",
   allowed_channels: "allowedChannels",
   allowed_groups: "allowedGroups",
   allow_bots: "allowBots",
+  group_policy: "groupPolicy",
+  user_allowed_commands: "userAllowedCommands",
   auto_thread_on_mention: "autoThreadOnMention",
   base_url: "baseUrl",
   acknowledge_message_reaction: "acknowledgeMessageReaction",
@@ -208,6 +211,13 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
     ...account,
     allowedUsers: [...account.allowedUsers],
   } as T;
+
+  if (account.adminUsers) {
+    cloned.adminUsers = [...account.adminUsers];
+  }
+  if (account.userAllowedCommands) {
+    cloned.userAllowedCommands = [...account.userAllowedCommands];
+  }
 
   if (isTelegramChannelAccount(account)) {
     (cloned as TelegramChannelAccount).binding = { ...account.binding };

@@ -295,6 +295,32 @@ describe("ChannelRegistry queued reload", () => {
     ).toBeNull();
   });
 
+  test("buffered ingress rechecks the refreshed sender access policy", async () => {
+    const { registry, deliveredMessageIds } = await createStartedRegistry();
+    const oldAdapter = registry.getAdapter("demo", account.accountId);
+    loadedAccounts = [
+      {
+        ...account,
+        dmPolicy: "allowlist",
+        allowedUsers: [],
+      },
+    ];
+    let releaseRefresh: () => void = () => {};
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const refresh = registry.reloadConfiguredChannels({
+      beforeRestart: () => refreshGate,
+    });
+
+    await oldAdapter?.onMessage?.(inbound("newly-denied"));
+    expect(deliveredMessageIds).toEqual([]);
+    releaseRefresh();
+    await refresh;
+
+    expect(deliveredMessageIds).toEqual([]);
+  });
+
   test("restore-mode reload discovers a newly enabled channel type", async () => {
     const registry = new ChannelRegistry();
     registry.setConfiguredChannelScope([], "all");

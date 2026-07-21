@@ -2646,6 +2646,17 @@
       "handle": "google_ai/gemini-3.5-flash",
       "label": "Gemini 3.5 Flash",
       "description": "Google's Gemini 3.5 Flash model",
+      "updateArgs": {
+        "context_window": 1048576,
+        "temperature": 1.0,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "gemini-3.6-flash",
+      "handle": "google_ai/gemini-3.6-flash",
+      "label": "Gemini 3.6 Flash",
+      "description": "Google's Gemini 3.6 Flash model",
       "isFeatured": true,
       "updateArgs": {
         "context_window": 1048576,
