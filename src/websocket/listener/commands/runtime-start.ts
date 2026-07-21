@@ -104,6 +104,18 @@ function sendRuntimeStartResponse(
   );
 }
 
+function rearmSessionContextForEnvironmentSwitch(
+  scopedRuntime: ConversationRuntime,
+): void {
+  if (!scopedRuntime.reminderState.hasSentSessionContext) {
+    return;
+  }
+
+  scopedRuntime.reminderState.hasSentSessionContext = false;
+  scopedRuntime.reminderState.pendingSessionContextReason =
+    "environment_changed";
+}
+
 function validateRuntimeStartShape(parsed: RuntimeStartCommand): void {
   const hasAgentId = hasString(parsed.agent_id);
   const hasCreateAgent = parsed.create_agent !== undefined;
@@ -262,6 +274,7 @@ export async function handleRuntimeStartCommand(
       runtimeScope.conversation_id,
     );
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    rearmSessionContextForEnvironmentSwitch(scopedRuntime);
     registerRuntimeExternalTools(
       context.runtime,
       runtimeScope,
