@@ -226,6 +226,17 @@ export class ChannelControlRequests {
       return false;
     }
 
+    // Same ownership rule as handleNativeResponse: only the sender the
+    // prompt was created for may answer it. Messages from other chat
+    // participants fall through to normal ingress handling instead of
+    // being consumed as an approval response.
+    if (
+      pending.event.source.senderId &&
+      pending.event.source.senderId !== msg.senderId
+    ) {
+      return false;
+    }
+
     if (
       msg.channel === "slack" &&
       pending.event.kind === "generic_tool_approval"
