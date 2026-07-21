@@ -11,6 +11,7 @@
     "LICENSE",
     "README.md",
     "letta.js",
+    "image-resize-worker.js",
     "scripts",
     "skills",
     "vendor",
