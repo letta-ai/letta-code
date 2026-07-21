@@ -722,6 +722,12 @@ export function updateTask(
     if (cronChanged || recurringWasEnabled) {
       assertValidCronForPersistence(task.cron);
     }
+    if (cronChanged && task.last_run_reason === "invalid_cron") {
+      task.last_run_at = null;
+      task.last_run_outcome = null;
+      task.last_run_reason = null;
+      task.last_run_error = null;
+    }
     writeCronFile(data);
     return { ...task };
   });

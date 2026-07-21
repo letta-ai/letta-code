@@ -51,6 +51,7 @@ describe("parseEvery", () => {
 
   test("days — multi-day", () => {
     expect(parseEvery("3d")?.cron).toBe("0 0 */3 * *");
+    expect(parseEvery("31d")?.cron).toBe("0 0 */31 * *");
   });
 
   test("days — rejects steps with no legal day-of-month", () => {

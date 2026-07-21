@@ -434,6 +434,13 @@ export function handleMissedOneShot(task: CronTask, now: Date): boolean {
   return false;
 }
 
+/** Apply scheduler lifecycle checks shared by the WS and TUI tick loops. */
+export function handleTaskPreflight(task: CronTask, now: Date): boolean {
+  return (
+    handleInvalidRecurringTask(task, now) || handleMissedOneShot(task, now)
+  );
+}
+
 export async function runCronTaskNow(taskId: string): Promise<{
   success: boolean;
   found: boolean;
@@ -523,13 +530,13 @@ function tick(
     // Older clients could persist expressions that the current cron dialect
     // rejects. Surface that state once rather than silently never firing.
     const invalidCronWasReported = hasReportedInvalidCron(task);
-    if (handleInvalidRecurringTask(task, matchedAt)) {
-      if (!invalidCronWasReported) emitCronsUpdated(socket, task);
+    const invalidCron = task.recurring && !isValidCron(task.cron);
+    if (handleTaskPreflight(task, matchedAt)) {
+      if (invalidCron && !invalidCronWasReported) {
+        emitCronsUpdated(socket, task);
+      }
       continue;
     }
-
-    // Handle missed one-shots (skip firing if marked missed)
-    if (handleMissedOneShot(task, matchedAt)) continue;
 
     // Per-minute dedup
     if (state.firedThisMinute.has(task.id)) continue;

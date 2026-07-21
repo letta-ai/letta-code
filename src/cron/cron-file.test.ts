@@ -237,6 +237,37 @@ describe("updateTask", () => {
       }),
     );
   });
+
+  test("clears a persisted invalid-cron failure when the cron is corrected", () => {
+    const { task } = addTask(makeInput({ cron: "*/5 * * * *" }));
+    const data = readCronFile();
+    const persistedTask = data.tasks.find(
+      (candidate) => candidate.id === task.id,
+    );
+    if (!persistedTask) throw new Error("expected persisted cron task");
+    persistedTask.cron = "0-60 * * * *";
+    persistedTask.last_run_at = "2026-07-21T00:00:00.000Z";
+    persistedTask.last_run_outcome = "failed";
+    persistedTask.last_run_reason = "invalid_cron";
+    persistedTask.last_run_error = "Invalid cron expression";
+    persistedTask.failed_count = 1;
+    writeFileSync(_CRON_PATH, JSON.stringify(data, null, 2));
+
+    const updated = updateTask(task.id, (candidate) => {
+      candidate.cron = "*/10 * * * *";
+    });
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        cron: "*/10 * * * *",
+        last_run_at: null,
+        last_run_outcome: null,
+        last_run_reason: null,
+        last_run_error: null,
+        failed_count: 1,
+      }),
+    );
+  });
 });
 
 describe("getActiveTasks", () => {

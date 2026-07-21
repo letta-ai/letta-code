@@ -53,8 +53,8 @@ export {
   formatCronPrompt,
   formatTimezoneQualifiedIso,
   getIntendedCronOccurrence,
-  handleInvalidRecurringTask,
   handleMissedOneShot,
+  handleTaskPreflight,
   shouldFireTask,
   wrapCronPrompt,
 } from "./scheduler";

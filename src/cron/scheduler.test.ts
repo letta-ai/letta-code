@@ -14,8 +14,8 @@ import { getCronRunLogPath, readCronRunLogEntries } from "@/cron/run-log";
 import {
   formatCronPrompt,
   getIntendedCronOccurrence,
-  handleInvalidRecurringTask,
   handleMissedOneShot,
+  handleTaskPreflight,
   wrapCronPrompt,
 } from "@/cron/scheduler";
 
@@ -304,7 +304,7 @@ describe("task lifecycle", () => {
     writePersistedTasks([task]);
     const checkedAt = new Date("2026-03-26T14:30:00Z");
 
-    expect(handleInvalidRecurringTask(task, checkedAt)).toBe(true);
+    expect(handleTaskPreflight(task, checkedAt)).toBe(true);
 
     const updated = getTask(task.id);
     expect(updated).toEqual(
@@ -332,7 +332,7 @@ describe("task lifecycle", () => {
     ]);
 
     if (!updated) throw new Error("expected persisted cron task");
-    expect(handleInvalidRecurringTask(updated, checkedAt)).toBe(true);
+    expect(handleTaskPreflight(updated, checkedAt)).toBe(true);
     expect(getTask(task.id)?.failed_count).toBe(1);
     expect(
       readCronRunLogEntries(getCronRunLogPath(task.id), {

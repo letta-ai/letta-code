@@ -3,22 +3,18 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 describe("TUI cron scheduler wiring", () => {
-  test("uses the shared invalid recurring cron handler before normal firing", () => {
+  test("uses the shared task preflight before normal firing", () => {
     const coordinatorPath = fileURLToPath(
       new URL("./AppCoordinator.tsx", import.meta.url),
     );
     const source = readFileSync(coordinatorPath, "utf-8");
 
-    const importIndex = source.indexOf("handleInvalidRecurringTask,");
+    const importIndex = source.indexOf("handleTaskPreflight,");
     const schedulerLoopIndex = source.indexOf(
       "for (const task of activeTasks)",
     );
-    const invalidHandlerIndex = source.indexOf(
-      "handleInvalidRecurringTask(task, now)",
-      schedulerLoopIndex,
-    );
-    const missedOneShotIndex = source.indexOf(
-      "handleMissedOneShot(task, now)",
+    const preflightIndex = source.indexOf(
+      "handleTaskPreflight(task, now)",
       schedulerLoopIndex,
     );
     const shouldFireIndex = source.indexOf(
@@ -28,8 +24,7 @@ describe("TUI cron scheduler wiring", () => {
 
     expect(importIndex).toBeGreaterThanOrEqual(0);
     expect(schedulerLoopIndex).toBeGreaterThanOrEqual(0);
-    expect(invalidHandlerIndex).toBeGreaterThan(schedulerLoopIndex);
-    expect(invalidHandlerIndex).toBeLessThan(missedOneShotIndex);
-    expect(invalidHandlerIndex).toBeLessThan(shouldFireIndex);
+    expect(preflightIndex).toBeGreaterThan(schedulerLoopIndex);
+    expect(preflightIndex).toBeLessThan(shouldFireIndex);
   });
 });
