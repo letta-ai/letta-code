@@ -17,7 +17,9 @@ describe("registry copy: first-party channels", () => {
       "letta channels pair --channel telegram --code ABC123 --agent <agent-id>",
     );
     expect(text).toContain("Find the target agent with: letta agents list");
-    expect(text).toContain("This code expires in 15 minutes.");
+    expect(text).toContain(
+      "This code expires 15 minutes after it was first issued.",
+    );
     expect(text).not.toContain("(community channel)");
   });
 
@@ -101,7 +103,9 @@ describe("registry copy: community channels", () => {
       "letta channels pair --channel custom-chat --code ABC123 --agent <agent-id>",
     );
     expect(text).toContain("Find the target agent with: letta agents list");
-    expect(text).toContain("This code expires in 15 minutes.");
+    expect(text).toContain(
+      "This code expires 15 minutes after it was first issued.",
+    );
     expect(text).not.toContain("open Channels >");
     expect(text).not.toContain("(community channel)");
     // Hard-stop against shipping the wrong subcommand again.

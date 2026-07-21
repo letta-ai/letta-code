@@ -149,6 +149,11 @@ export function createPairingCode(
   // Rate limit: reuse the sender's existing unexpired code instead of
   // minting a new one per inbound message. One live code per sender per
   // TTL window also keeps the operator-visible code stable.
+  //
+  // Keep the existing pending record as-is. Route creation consumes the
+  // original chatId; if a platform ever reports a different DM chatId for the
+  // same sender during the TTL, silently retargeting this live credential would
+  // bind it to a different surface than the one that first requested it.
   const nowMs = Date.now();
   const existing = store.pending.find(
     (p) =>

@@ -62,7 +62,7 @@ export function buildPairingInstructions(
       pairingCommand,
       ...agentLookupLines,
       "",
-      "This code expires in 15 minutes.",
+      "This code expires 15 minutes after it was first issued.",
     ].join("\n");
   }
   return [
@@ -76,7 +76,7 @@ export function buildPairingInstructions(
     pairingCommand,
     ...agentLookupLines,
     "",
-    "This code expires in 15 minutes.",
+    "This code expires 15 minutes after it was first issued.",
   ].join("\n");
 }
 
