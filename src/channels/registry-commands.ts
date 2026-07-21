@@ -16,9 +16,10 @@ import {
   buildChannelNoRouteMessage,
   buildChannelPausedMessage,
   buildChannelReflectionUnavailableMessage,
-  buildChannelReloadUnavailableMessage,
   buildChannelResumedMessage,
+  type ChannelSlashCommandHandlerResult,
 } from "./commands";
+import { getChannelDisplayName } from "./plugin-registry";
 import type { ChannelRegistryEvent } from "./registry-events";
 import type {
   ChannelCancelHandler,
@@ -42,6 +43,16 @@ import type {
   InboundChannelMessage,
 } from "./types";
 import { isSlackChannelAccount } from "./types";
+
+function buildChannelReloadUnavailableMessage(channelId: string): string {
+  let displayName = channelId;
+  try {
+    displayName = getChannelDisplayName(channelId);
+  } catch {
+    // Keep custom or stale channel ids usable while their plugin is unavailable.
+  }
+  return `${displayName} cannot reload listener settings for this chat because the listener is not ready yet. Try again in a moment.`;
+}
 
 export function createChannelCommandRouter(deps: {
   routes: ChannelRouteProvisioner;
@@ -329,7 +340,7 @@ export function createChannelCommandRouter(deps: {
 
   async function handleReloadSlashCommand(
     msg: InboundChannelMessage,
-  ): Promise<{ handled: boolean; text?: string }> {
+  ): Promise<ChannelSlashCommandHandlerResult> {
     const route = loadAndFindRawRouteForMessage(msg);
     if (!route?.enabled) {
       return {
@@ -347,6 +358,12 @@ export function createChannelCommandRouter(deps: {
     }
 
     return reloadHandler({
+      channelId: msg.channel,
+      accountId: route.accountId ?? msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+      chatId: msg.chatId,
+      messageId: msg.messageId,
+      threadId: msg.threadId ?? null,
+      route,
       runtime: {
         agent_id: route.agentId,
         conversation_id: route.conversationId,

@@ -10,7 +10,7 @@ import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
-import { refreshCustomCommands } from "@/cli/commands/custom";
+import { getChannelRegistry } from "@/channels/registry";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildDoctorMessage,
@@ -39,12 +39,16 @@ import type {
   StreamDelta,
 } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
-import { markSecretsReminderRefreshPending } from "./commands/secrets";
-import { getConversationWorkingDirectory } from "./cwd";
 import {
-  ensureListenerAgentModAdapter,
-  reloadListenerModAdapter,
-} from "./mod-adapter";
+  CHANNEL_RELOAD_DRAIN_TIMEOUT_MS,
+  clearReloadedChannelToolCache,
+  formatChannelReloadSummary,
+  reloadListenerRuntimeSurfaces,
+  waitForChannelTurnDrains,
+} from "./channel-reload";
+import { beginChannelReloadBarrier } from "./channel-reload-barrier";
+import { getConversationWorkingDirectory } from "./cwd";
+import { ensureListenerAgentModAdapter } from "./mod-adapter";
 import { getListenerModCommand, runListenerModCommand } from "./mod-commands";
 import {
   createLifecycleMessageBase,
@@ -53,10 +57,6 @@ import {
 } from "./protocol-outbound";
 import { flushRemoteSettingsWrites } from "./remote-settings";
 import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
-import {
-  ensureSecretsHydratedForAgent,
-  invalidateSecretsCacheForAgent,
-} from "./secrets-sync";
 import { handleIncomingMessage } from "./turn";
 import { buildMaybeLaunchReflectionSubagent } from "./turn-events";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
@@ -309,30 +309,30 @@ async function handleModCommand(
 export async function handleReloadCommand(
   conversationRuntime: ConversationRuntime,
 ): Promise<string> {
-  const { listener } = conversationRuntime;
-  settingsManager.clearCaches();
-  await settingsManager.loadProjectSettings();
-  await settingsManager.loadLocalProjectSettings();
+  let settingsOutput = "Reloaded settings, local mods, and agent secrets";
+  const registry = getChannelRegistry();
+  if (!registry) {
+    return reloadListenerRuntimeSurfaces(conversationRuntime);
+  }
 
+  const releaseReloadBarrier = beginChannelReloadBarrier(
+    conversationRuntime.listener,
+  );
   try {
-    refreshCustomCommands();
-  } catch (error) {
-    debugLog(
-      "commands",
-      "refreshCustomCommands failed during /reload:",
-      error instanceof Error ? error.message : String(error),
-    );
+    const summary = await registry.reloadConfiguredChannels({
+      forceReloadPlugins: true,
+      timeoutMs: CHANNEL_RELOAD_DRAIN_TIMEOUT_MS,
+      beforeRestart: async () => {
+        await waitForChannelTurnDrains(conversationRuntime.listener);
+        settingsOutput =
+          await reloadListenerRuntimeSurfaces(conversationRuntime);
+      },
+      afterRestart: clearReloadedChannelToolCache,
+    });
+    return formatChannelReloadSummary(settingsOutput, summary);
+  } finally {
+    releaseReloadBarrier();
   }
-
-  await reloadListenerModAdapter(listener, conversationRuntime.agentId);
-
-  if (conversationRuntime.agentId) {
-    invalidateSecretsCacheForAgent(listener, conversationRuntime.agentId);
-    markSecretsReminderRefreshPending(listener, conversationRuntime.agentId);
-    await ensureSecretsHydratedForAgent(listener, conversationRuntime.agentId);
-  }
-
-  return "Reloaded settings, local mods, and agent secrets";
 }
 
 async function handleUpgradeLettaCodeCommand(opts: {

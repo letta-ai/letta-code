@@ -10,6 +10,7 @@ import {
   type ChannelTurnRuntimeCarrier,
   clearActiveChannelTurn,
   finishActiveChannelTurn,
+  getActiveChannelTurnDrainPromise,
   getActiveChannelTurnProgressContext,
   recoverActiveChannelTurn,
   resolveTurnLifecycleTerminal,
@@ -45,6 +46,134 @@ test("channel turn session activates and clears all runtime state atomically", (
   clearActiveChannelTurn(runtime);
   expect(runtime.activeChannelTurn).toBeNull();
   expect(getActiveChannelTurnProgressContext(runtime)).toBeNull();
+});
+
+test("channel drain remains pending through final lifecycle delivery", async () => {
+  await getChannelRegistry()?.stopAll();
+  const registry = new ChannelRegistry();
+  let releaseFinalDelivery: () => void = () => {};
+  const finalDelivery = new Promise<void>((resolve) => {
+    releaseFinalDelivery = resolve;
+  });
+  registry.registerAdapter({
+    id: "slack:acct-1",
+    channelId: "slack",
+    accountId: "acct-1",
+    name: "Slack",
+    start: async () => {},
+    stop: async () => {},
+    isRunning: () => true,
+    sendMessage: async () => ({ messageId: "message-1" }),
+    sendDirectReply: async () => {},
+    handleTurnLifecycleEvent: async (event) => {
+      if (event.type === "finished") await finalDelivery;
+    },
+  });
+  const runtime: ChannelTurnRuntimeCarrier = { activeChannelTurn: null };
+  activateChannelTurn(runtime, {
+    sources: [
+      {
+        channel: "slack",
+        accountId: "acct-1",
+        chatId: "C123",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+    batchId: "batch-drain",
+    progress: null,
+    contextRecovered: false,
+  });
+  const drain = getActiveChannelTurnDrainPromise(runtime);
+  let drained = false;
+  void drain?.then(() => {
+    drained = true;
+  });
+
+  const finishing = finishActiveChannelTurn(runtime, {
+    lastStopReason: "end_turn",
+    didThrow: false,
+  });
+  await Promise.resolve();
+  expect(drained).toBe(false);
+
+  releaseFinalDelivery();
+  await finishing;
+  await drain;
+  expect(drained).toBe(true);
+  await registry.stopAll();
+});
+
+test("approval continuation keeps the channel drain active", async () => {
+  const runtime: ChannelTurnRuntimeCarrier = { activeChannelTurn: null };
+  activateChannelTurn(runtime, {
+    sources: [
+      {
+        channel: "slack",
+        chatId: "C123",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+    batchId: "batch-approval",
+    progress: null,
+    contextRecovered: false,
+  });
+  const drain = getActiveChannelTurnDrainPromise(runtime);
+
+  await finishActiveChannelTurn(runtime, {
+    lastStopReason: "requires_approval",
+    didThrow: false,
+    retainOnApproval: true,
+  });
+
+  expect(runtime.activeChannelTurn).toBeNull();
+  expect(getActiveChannelTurnDrainPromise(runtime)).toBe(drain);
+  recoverActiveChannelTurn(runtime, {
+    sources: [
+      {
+        channel: "slack",
+        chatId: "C123",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+    batchId: "batch-approval",
+    progress: null,
+  });
+  expect(getActiveChannelTurnDrainPromise(runtime)).toBe(drain);
+  await finishActiveChannelTurn(runtime, {
+    lastStopReason: "end_turn",
+    didThrow: false,
+  });
+  await drain;
+});
+
+test("clearing a pending approval releases its preserved channel drain", async () => {
+  const runtime: ChannelTurnRuntimeCarrier = { activeChannelTurn: null };
+  activateChannelTurn(runtime, {
+    sources: [
+      {
+        channel: "slack",
+        chatId: "C123",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+      },
+    ],
+    batchId: "batch-cancelled-approval",
+    progress: null,
+    contextRecovered: false,
+  });
+  const drain = getActiveChannelTurnDrainPromise(runtime);
+  await finishActiveChannelTurn(runtime, {
+    lastStopReason: "requires_approval",
+    didThrow: false,
+    retainOnApproval: true,
+  });
+
+  clearActiveChannelTurn(runtime);
+  await drain;
+  expect(getActiveChannelTurnDrainPromise(runtime)).toBeNull();
 });
 
 test("recovered channel turns are marked explicitly", () => {

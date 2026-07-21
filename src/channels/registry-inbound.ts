@@ -45,10 +45,13 @@ export function createChannelInboundRouter(deps: {
     event: ChannelTurnLifecycleEvent,
   ) => Promise<void>;
   deliver: (delivery: ChannelInboundDelivery) => void;
+  isReloading: () => boolean;
+  deferDuringReload: (message: InboundChannelMessage) => boolean;
   emitEvent: (event: ChannelRegistryEvent) => void;
 }) {
   async function handleInboundMessage(
     msg: InboundChannelMessage,
+    options?: { bypassReloadBuffer?: boolean; skipPreflight?: boolean },
   ): Promise<void> {
     const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
     const adapter = deps.getAdapter(msg.channel, accountId);
@@ -87,13 +90,16 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
-    if (await deps.controls.tryHandleInbound(adapter, msg)) {
+    if (
+      !options?.skipPreflight &&
+      (await deps.controls.tryHandleInbound(adapter, msg))
+    ) {
       return;
     }
 
-    if (
-      deps.commands.shouldDropUnroutedSlackThreadInput(msg, accountId, config)
-    ) {
+    const shouldDropUnroutedSlackInput =
+      deps.commands.shouldDropUnroutedSlackThreadInput(msg, accountId, config);
+    if (!deps.isReloading() && shouldDropUnroutedSlackInput) {
       return;
     }
 
@@ -117,7 +123,8 @@ export function createChannelInboundRouter(deps: {
     };
 
     if (
-      await tryHandleChannelSlashCommand(adapter, msg, {
+      !options?.skipPreflight &&
+      (await tryHandleChannelSlashCommand(adapter, msg, {
         statusContext: {
           adapterRunning: adapter.isRunning(),
           accountConfigured: !!config,
@@ -154,8 +161,16 @@ export function createChannelInboundRouter(deps: {
                 senderId: msg.senderId,
               })
           : undefined,
-      })
+      }))
     ) {
+      return;
+    }
+
+    if (!options?.bypassReloadBuffer && deps.deferDuringReload(msg)) {
+      return;
+    }
+
+    if (shouldDropUnroutedSlackInput) {
       return;
     }
 

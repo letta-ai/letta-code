@@ -11,10 +11,12 @@ import { isCoalescable } from "@/queue/queue-runtime";
 import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
+import { getChannelReloadBarrier } from "./channel-reload-barrier";
 import {
   activateChannelTurn,
   dispatchChannelTurnLifecycleEvent,
   finishActiveChannelTurn,
+  setActiveChannelTurnProgress,
 } from "./channel-turn-session";
 import { getInboundImageFailureMode } from "./image-policy";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
@@ -414,6 +416,21 @@ function computeListenerQueueBlockedReason(
   );
 }
 
+export function getChannelReloadBarrierBeforeDequeuing(
+  runtime: ConversationRuntime,
+): Promise<void> | null {
+  const hasQueuedChannelDelivery = runtime.queueRuntime
+    .peek()
+    .some(
+      (item) =>
+        (runtime.queuedMessagesByItemId.get(item.id)?.channelTurnSources
+          ?.length ?? 0) > 0,
+    );
+  return hasQueuedChannelDelivery
+    ? getChannelReloadBarrier(runtime.listener)
+    : null;
+}
+
 async function drainQueuedMessages(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
@@ -435,6 +452,12 @@ async function drainQueuedMessages(
         runtime.listener.intentionallyClosed
       ) {
         return;
+      }
+
+      let reloadBarrier = getChannelReloadBarrierBeforeDequeuing(runtime);
+      while (reloadBarrier) {
+        await reloadBarrier;
+        reloadBarrier = getChannelReloadBarrierBeforeDequeuing(runtime);
       }
 
       const blockedReason = computeListenerQueueBlockedReason(runtime);
@@ -464,26 +487,27 @@ async function drainQueuedMessages(
         runtime.listener.lastEmittedStatus = preTurnStatus;
         opts.onStatusChange?.(preTurnStatus, opts.connectionId);
       }
-      if (channelTurnSources.length > 0) {
-        await dispatchChannelTurnLifecycleEvent({
-          type: "processing",
-          batchId: dequeuedBatch.batchId,
-          sources: channelTurnSources,
-        });
-      }
-
-      let turnError: string | undefined;
-      let didThrow = false;
       activateChannelTurn(runtime, {
         sources: channelTurnSources,
         batchId: dequeuedBatch.batchId,
         contextRecovered: false,
-        progress:
-          channelTurnSources.length > 0
-            ? await buildChannelTurnProgressBuilder(queuedTurn.agentId)
-            : null,
+        progress: null,
       });
+      let turnError: string | undefined;
+      let didThrow = false;
       try {
+        if (channelTurnSources.length > 0) {
+          setActiveChannelTurnProgress(
+            runtime,
+            dequeuedBatch.batchId,
+            await buildChannelTurnProgressBuilder(queuedTurn.agentId),
+          );
+          await dispatchChannelTurnLifecycleEvent({
+            type: "processing",
+            batchId: dequeuedBatch.batchId,
+            sources: channelTurnSources,
+          });
+        }
         await processQueuedTurn(queuedTurn, dequeuedBatch);
       } catch (error) {
         didThrow = true;
@@ -495,6 +519,7 @@ async function drainQueuedMessages(
           didThrow,
           error: turnError ?? runtime.lastTerminalLoopErrorMessage ?? undefined,
           runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
+          retainOnApproval: true,
         });
       }
       emitListenerStatus(

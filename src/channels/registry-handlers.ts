@@ -34,5 +34,15 @@ export type ChannelModelHandler = (params: {
 }>;
 
 export type ChannelReloadHandler = (params: {
+  channelId: string;
+  accountId: string;
+  chatId: string;
+  messageId?: string;
+  threadId?: string | null;
+  route: ChannelRoute;
   runtime: { agent_id: string; conversation_id: string };
-}) => Promise<{ handled: boolean; text?: string }>;
+}) => Promise<{
+  handled: boolean;
+  text?: string;
+  afterReply?: () => void | Promise<void>;
+}>;

@@ -1,6 +1,15 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { isRecord } from "@/utils/type-guards";
 import { getChannelDir, getChannelsRoot } from "./config";
 import { CUSTOM_CHANNEL_CONFIG_SCHEMA } from "./custom/plugin";
@@ -12,9 +21,13 @@ import type {
 import { parseChannelConfigSchema } from "./schema-config";
 import { FIRST_PARTY_CHANNEL_IDS, type FirstPartyChannelId } from "./types";
 
+export type LoadChannelPluginOptions = {
+  forceReload?: boolean;
+};
+
 type ChannelPluginRegistration = {
   metadata: ChannelPluginMetadata;
-  load: () => Promise<ChannelPlugin>;
+  load: (options?: LoadChannelPluginOptions) => Promise<ChannelPlugin>;
 };
 
 type ChannelManifest = {
@@ -27,6 +40,88 @@ type ChannelManifest = {
 };
 
 const CHANNEL_ID_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+let pluginReloadGeneration = 0;
+const SOURCE_CHANNELS_DIR = dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT_DIR = resolve(SOURCE_CHANNELS_DIR, "../..");
+let sourceChannelsDirOverride: string | null = null;
+
+function rewriteCopiedChannelSelfImports(
+  channelDir: string,
+  channelId: FirstPartyChannelId,
+): void {
+  const visit = (directory: string) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = resolve(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(path);
+        continue;
+      }
+      if (!/\.(?:[cm]?[jt]sx?)$/.test(entry.name)) continue;
+
+      const source = readFileSync(path, "utf8");
+      const relativeRoot = relative(dirname(path), channelDir).replaceAll(
+        sep,
+        "/",
+      );
+      const localPrefix =
+        relativeRoot.length === 0
+          ? "./"
+          : relativeRoot.startsWith(".")
+            ? `${relativeRoot}/`
+            : `./${relativeRoot}/`;
+      const rewritten = source.replaceAll(
+        `@/channels/${channelId}/`,
+        localPrefix,
+      );
+      if (rewritten !== source) writeFileSync(path, rewritten);
+    }
+  };
+  visit(channelDir);
+}
+
+function copyFirstPartyChannelForReload(
+  channelId: FirstPartyChannelId,
+): string | null {
+  const sourceDir = resolve(
+    sourceChannelsDirOverride ?? SOURCE_CHANNELS_DIR,
+    channelId,
+  );
+  if (!existsSync(sourceDir)) return null;
+
+  pluginReloadGeneration += 1;
+  const targetDir = resolve(
+    PROJECT_ROOT_DIR,
+    ".letta",
+    "channel-reload",
+    `${process.pid}-${pluginReloadGeneration}`,
+    channelId,
+  );
+  mkdirSync(dirname(targetDir), { recursive: true });
+  cpSync(sourceDir, targetDir, { recursive: true, force: true });
+  rewriteCopiedChannelSelfImports(targetDir, channelId);
+  return targetDir;
+}
+
+async function loadFirstPartyPlugin(params: {
+  channelId: FirstPartyChannelId;
+  exportName: string;
+  forceReload?: boolean;
+  loadDefault: () => Promise<unknown>;
+}): Promise<ChannelPlugin> {
+  const reloadDir = params.forceReload
+    ? copyFirstPartyChannelForReload(params.channelId)
+    : null;
+  const loaded = reloadDir
+    ? await import(pathToFileURL(resolve(reloadDir, "plugin.ts")).href)
+    : await params.loadDefault();
+  const plugin = isRecord(loaded) ? loaded[params.exportName] : undefined;
+  if (!isRecord(plugin)) {
+    throw new Error(
+      `First-party channel ${params.channelId} did not export ${params.exportName}.`,
+    );
+  }
+  return plugin as unknown as ChannelPlugin;
+}
 
 const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
   FirstPartyChannelId,
@@ -41,12 +136,13 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       source: "first-party",
       firstParty: true,
     },
-    load: async () => {
-      const { telegramChannelPlugin } = await import(
-        "@/channels/telegram/plugin"
-      );
-      return telegramChannelPlugin;
-    },
+    load: (options) =>
+      loadFirstPartyPlugin({
+        channelId: "telegram",
+        exportName: "telegramChannelPlugin",
+        forceReload: options?.forceReload,
+        loadDefault: () => import("@/channels/telegram/plugin"),
+      }),
   },
   slack: {
     metadata: {
@@ -57,10 +153,13 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       source: "first-party",
       firstParty: true,
     },
-    load: async () => {
-      const { slackChannelPlugin } = await import("@/channels/slack/plugin");
-      return slackChannelPlugin;
-    },
+    load: (options) =>
+      loadFirstPartyPlugin({
+        channelId: "slack",
+        exportName: "slackChannelPlugin",
+        forceReload: options?.forceReload,
+        loadDefault: () => import("@/channels/slack/plugin"),
+      }),
   },
   discord: {
     metadata: {
@@ -71,12 +170,13 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       source: "first-party",
       firstParty: true,
     },
-    load: async () => {
-      const { discordChannelPlugin } = await import(
-        "@/channels/discord/plugin"
-      );
-      return discordChannelPlugin;
-    },
+    load: (options) =>
+      loadFirstPartyPlugin({
+        channelId: "discord",
+        exportName: "discordChannelPlugin",
+        forceReload: options?.forceReload,
+        loadDefault: () => import("@/channels/discord/plugin"),
+      }),
   },
   custom: {
     metadata: {
@@ -88,10 +188,13 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       firstParty: true,
       configSchema: CUSTOM_CHANNEL_CONFIG_SCHEMA,
     },
-    load: async () => {
-      const { customChannelPlugin } = await import("@/channels/custom/plugin");
-      return customChannelPlugin;
-    },
+    load: (options) =>
+      loadFirstPartyPlugin({
+        channelId: "custom",
+        exportName: "customChannelPlugin",
+        forceReload: options?.forceReload,
+        loadDefault: () => import("@/channels/custom/plugin"),
+      }),
   },
   whatsapp: {
     metadata: {
@@ -105,12 +208,13 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       source: "first-party",
       firstParty: true,
     },
-    load: async () => {
-      const { whatsappChannelPlugin } = await import(
-        "@/channels/whatsapp/plugin"
-      );
-      return whatsappChannelPlugin;
-    },
+    load: (options) =>
+      loadFirstPartyPlugin({
+        channelId: "whatsapp",
+        exportName: "whatsappChannelPlugin",
+        forceReload: options?.forceReload,
+        loadDefault: () => import("@/channels/whatsapp/plugin"),
+      }),
   },
   signal: {
     metadata: {
@@ -121,14 +225,17 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
       source: "first-party",
       firstParty: true,
     },
-    load: async () => {
-      const { signalChannelPlugin } = await import("@/channels/signal/plugin");
-      return signalChannelPlugin;
-    },
+    load: (options) =>
+      loadFirstPartyPlugin({
+        channelId: "signal",
+        exportName: "signalChannelPlugin",
+        forceReload: options?.forceReload,
+        loadDefault: () => import("@/channels/signal/plugin"),
+      }),
   },
 };
 
-const loadedUserPlugins = new Map<string, Promise<ChannelPlugin>>();
+const loadedPlugins = new Map<string, Promise<ChannelPlugin>>();
 
 function isValidChannelId(value: string): boolean {
   return CHANNEL_ID_PATTERN.test(value);
@@ -175,6 +282,18 @@ function readChannelManifest(channelDir: string): ChannelManifest | null {
   }
 }
 
+function buildFreshUserPluginImportHref(params: {
+  channelDir: string;
+  entry: string;
+  id: string;
+}): string {
+  const cacheDir = mkdtempSync(
+    join(tmpdir(), `letta-channel-plugin-${params.id}-`),
+  );
+  cpSync(params.channelDir, cacheDir, { recursive: true, force: true });
+  return pathToFileURL(resolve(cacheDir, params.entry)).href;
+}
+
 function createUserChannelRegistration(
   manifest: ChannelManifest,
 ): ChannelPluginRegistration {
@@ -196,50 +315,49 @@ function createUserChannelRegistration(
 
   return {
     metadata,
-    load: async () => {
-      const cached = loadedUserPlugins.get(manifest.id);
-      if (cached) {
-        return cached;
-      }
+    load: async (options) => {
       if (entryEscapesDir) {
         throw new Error(
           `Channel plugin "${manifest.id}" entry escapes its directory.`,
         );
       }
 
-      const loadPromise = import(pathToFileURL(entryPath).href).then(
-        (loaded): ChannelPlugin => {
-          const exported =
-            (isRecord(loaded) ? loaded.channelPlugin : undefined) ??
-            (isRecord(loaded) ? loaded.default : undefined);
-          if (!isRecord(exported)) {
-            throw new Error(
-              `Channel plugin "${manifest.id}" must export channelPlugin or default.`,
-            );
-          }
+      const importHref = options?.forceReload
+        ? buildFreshUserPluginImportHref({
+            channelDir: resolvedChannelDir,
+            entry: manifest.entry,
+            id: manifest.id,
+          })
+        : pathToFileURL(entryPath).href;
+      return import(importHref).then((loaded): ChannelPlugin => {
+        const exported =
+          (isRecord(loaded) ? loaded.channelPlugin : undefined) ??
+          (isRecord(loaded) ? loaded.default : undefined);
+        if (!isRecord(exported)) {
+          throw new Error(
+            `Channel plugin "${manifest.id}" must export channelPlugin or default.`,
+          );
+        }
 
-          const plugin = exported as unknown as ChannelPlugin;
-          if (typeof plugin.createAdapter !== "function") {
-            throw new Error(
-              `Channel plugin "${manifest.id}" is missing createAdapter().`,
-            );
-          }
+        const plugin = exported as unknown as ChannelPlugin;
+        if (typeof plugin.createAdapter !== "function") {
+          throw new Error(
+            `Channel plugin "${manifest.id}" is missing createAdapter().`,
+          );
+        }
 
-          return {
-            ...plugin,
-            metadata: {
-              ...metadata,
-              ...(plugin.metadata ?? {}),
-              id: manifest.id,
-              displayName: plugin.metadata?.displayName ?? metadata.displayName,
-              source: "user",
-              firstParty: false,
-            },
-          };
-        },
-      );
-      loadedUserPlugins.set(manifest.id, loadPromise);
-      return loadPromise;
+        return {
+          ...plugin,
+          metadata: {
+            ...metadata,
+            ...(plugin.metadata ?? {}),
+            id: manifest.id,
+            displayName: plugin.metadata?.displayName ?? metadata.displayName,
+            source: "user",
+            firstParty: false,
+          },
+        };
+      });
     },
   };
 }
@@ -324,14 +442,70 @@ export function isFirstPartyChannelPlugin(channelId: string): boolean {
 
 export async function loadChannelPlugin(
   channelId: string,
+  options?: LoadChannelPluginOptions,
 ): Promise<ChannelPlugin> {
+  const cached = loadedPlugins.get(channelId);
+  if (cached && !options?.forceReload) return cached;
+
   const registration = getChannelPluginRegistration(channelId);
   if (!registration) {
     throw new Error(`Unsupported channel: ${channelId}`);
   }
-  return registration.load();
+  const loadPromise = registration.load(options);
+  loadedPlugins.set(channelId, loadPromise);
+  loadPromise.catch(() => {
+    if (cached) {
+      loadedPlugins.set(channelId, cached);
+    } else {
+      loadedPlugins.delete(channelId);
+    }
+  });
+  return loadPromise;
+}
+
+export type ChannelPluginCacheSnapshot = Map<
+  string,
+  Promise<ChannelPlugin> | null
+>;
+
+export function snapshotChannelPluginCache(
+  channelIds: Iterable<string>,
+): ChannelPluginCacheSnapshot {
+  const snapshot: ChannelPluginCacheSnapshot = new Map();
+  for (const channelId of channelIds) {
+    snapshot.set(channelId, loadedPlugins.get(channelId) ?? null);
+  }
+  return snapshot;
+}
+
+export function restoreChannelPluginCache(
+  snapshot: ChannelPluginCacheSnapshot,
+): void {
+  for (const [channelId, cached] of snapshot) {
+    if (cached) {
+      loadedPlugins.set(channelId, cached);
+    } else {
+      loadedPlugins.delete(channelId);
+    }
+  }
+}
+
+export function invalidateChannelPluginCache(channelId?: string): void {
+  if (channelId) {
+    loadedPlugins.delete(channelId);
+    return;
+  }
+  loadedPlugins.clear();
 }
 
 export function __testClearUserChannelPluginCache(): void {
-  loadedUserPlugins.clear();
+  invalidateChannelPluginCache();
+  pluginReloadGeneration = 0;
+  sourceChannelsDirOverride = null;
+}
+
+export function __testOverrideFirstPartySourceChannelsDir(
+  directory: string | null,
+): void {
+  sourceChannelsDirOverride = directory;
 }

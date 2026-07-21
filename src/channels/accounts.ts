@@ -505,9 +505,11 @@ function getStore(channelId: string): ChannelAccountStore {
 export function loadChannelAccounts(channelId: string): void {
   if (loadAccountsOverride) {
     stores.set(channelId, {
-      accounts: (loadAccountsOverride(channelId) ?? []).map((account) =>
-        normalizeLoadedAccount(account),
-      ),
+      accounts: (loadAccountsOverride(channelId) ?? []).map((account) => {
+        const normalized = normalizeLoadedAccount(account);
+        applySecretPlaceholders(normalized);
+        return normalized;
+      }),
     });
     return;
   }
@@ -550,6 +552,52 @@ export function loadChannelAccounts(channelId: string): void {
   }
 
   stores.set(channelId, { accounts: [] });
+}
+
+export function reloadChannelAccounts(channelId: string): void {
+  if (loadAccountsOverride) {
+    loadChannelAccounts(channelId);
+    return;
+  }
+
+  const path = getChannelAccountsPath(channelId);
+  if (!existsSync(path)) {
+    loadChannelAccounts(channelId);
+    return;
+  }
+
+  try {
+    const text = readFileSync(path, "utf-8");
+    const parsed = JSON.parse(text) as Partial<ChannelAccountStore>;
+    if (!Array.isArray(parsed.accounts)) {
+      throw new Error("accounts must be an array");
+    }
+    const accounts = parsed.accounts.map((account) => {
+      const normalized = normalizeLoadedAccount(account);
+      applySecretPlaceholders(normalized);
+      return normalized;
+    });
+    const accountIds = new Set<string>();
+    for (const account of accounts) {
+      if (account.channel !== channelId) {
+        throw new Error(
+          `account ${account.accountId} belongs to ${account.channel}, not ${channelId}`,
+        );
+      }
+      if (!account.accountId.trim()) {
+        throw new Error("accountId must not be empty");
+      }
+      if (accountIds.has(account.accountId)) {
+        throw new Error(`duplicate accountId: ${account.accountId}`);
+      }
+      accountIds.add(account.accountId);
+    }
+    stores.set(channelId, { accounts });
+  } catch (error) {
+    throw new Error(
+      `Failed to reload channel accounts for ${channelId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 function saveChannelAccounts(channelId: string): void {
@@ -639,6 +687,15 @@ export async function hydrateChannelAccountSecrets(
 
 export function listChannelAccounts(channelId: string): ChannelAccount[] {
   return getStore(channelId).accounts.map((account) => cloneAccount(account));
+}
+
+export function replaceChannelAccountsInMemory(
+  channelId: string,
+  accounts: ChannelAccount[],
+): void {
+  stores.set(channelId, {
+    accounts: accounts.map((account) => cloneAccount(account)),
+  });
 }
 
 export async function listChannelAccountsWithSecrets(

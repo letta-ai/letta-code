@@ -189,6 +189,56 @@ describe("channel slash commands", () => {
     ]);
   });
 
+  test("starts authorized reload only after replying and ignores bare reload", async () => {
+    const events: string[] = [];
+    let reloadCalls = 0;
+    const adapter: ChannelAdapter = {
+      id: "slack",
+      name: "Slack",
+      async start() {},
+      async stop() {},
+      isRunning: () => true,
+      async sendMessage() {
+        return { messageId: "sent-reload" };
+      },
+      async sendDirectReply(_chatId, text) {
+        events.push(`reply:${text}`);
+      },
+    };
+    const reload = async () => {
+      reloadCalls += 1;
+      return {
+        handled: true,
+        text: "Reload queued.",
+        afterReply: () => {
+          events.push("reload-started");
+        },
+      };
+    };
+    const message: InboundChannelMessage = {
+      channel: "slack",
+      chatId: "C123",
+      senderId: "U123",
+      text: "/reload",
+      timestamp: Date.now(),
+      messageId: "1783379000.000200",
+      isMention: true,
+    };
+
+    await tryHandleChannelSlashCommand(adapter, message, {
+      handlers: { reload },
+    });
+    await Promise.resolve();
+    expect(events).toEqual(["reply:Reload queued.", "reload-started"]);
+
+    await tryHandleChannelSlashCommand(
+      adapter,
+      { ...message, isMention: false },
+      { handlers: { reload } },
+    );
+    expect(reloadCalls).toBe(1);
+  });
+
   test("lists supported commands for channel help", () => {
     for (const name of [
       "help",
