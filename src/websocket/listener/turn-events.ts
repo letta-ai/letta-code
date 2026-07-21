@@ -24,7 +24,7 @@ import { emitCanonicalMessageDelta } from "./protocol-outbound";
 import type { ListenerTransport } from "./transport";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
-function escapeTaskNotificationSummary(summary: string): string {
+export function escapeTaskNotificationSummary(summary: string): string {
   return summary
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

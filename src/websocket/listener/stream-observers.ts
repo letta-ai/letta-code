@@ -24,3 +24,27 @@ export function notifyStreamObservers(
     }
   }
 }
+
+/**
+ * Deliver a synthetic terminal event when a runtime is stopped (e.g. a WS
+ * control client replacing a bridge-owned runtime). Without this, in-flight
+ * observers would wait on turns that will never emit again. The observer set
+ * is cleared afterwards: the runtime is dead.
+ */
+export function notifyStreamObserversRuntimeStopped(
+  listener: ListenerRuntime,
+): void {
+  if (!listener.streamObservers?.size) return;
+  const observed = {
+    type: "runtime_stopped",
+    runtime: {},
+  } as ObservedProtocolV2Message;
+  for (const observer of [...listener.streamObservers]) {
+    try {
+      observer(observed);
+    } catch (error) {
+      console.error("[Listen V2] Stream observer failed on stop", error);
+    }
+  }
+  listener.streamObservers.clear();
+}
