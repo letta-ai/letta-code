@@ -79,7 +79,8 @@ export function parseEvery(input: string): ParsedInterval | null {
       return { cron: "0 0 * * *" };
     }
     // Multi-day: use day-of-month step
-    return { cron: `0 0 */${value} * *` };
+    const cron = `0 0 */${value} * *`;
+    return isValidCron(cron) ? { cron } : null;
   }
 
   return null;
@@ -206,6 +207,84 @@ function hasBareValueStep(fields: string[]): boolean {
   );
 }
 
+function expandOneBasedWildcardStep(
+  part: string,
+  min: number,
+  max: number,
+): string | null {
+  const match = part.match(/^\*\/(\d+)$/);
+  if (!match) return part;
+
+  const step = Number.parseInt(match[1] ?? "", 10);
+  if (!Number.isSafeInteger(step) || step <= 0) return null;
+
+  const values: number[] = [];
+  for (let value = min; value <= max; value++) {
+    if (value % step === 0) values.push(value);
+  }
+
+  return values.length > 0 ? values.join(",") : null;
+}
+
+function normalizeOneBasedWildcardSteps(
+  field: string,
+  min: number,
+  max: number,
+): string | null {
+  const normalizedParts: string[] = [];
+  for (const part of field.split(",")) {
+    if (part === "") return null;
+    const normalized = expandOneBasedWildcardStep(part, min, max);
+    if (normalized === null) return null;
+    normalizedParts.push(normalized);
+  }
+  return normalizedParts.join(",");
+}
+
+/**
+ * Convert the product cron dialect into the expression handed to cron-parser.
+ *
+ * cron-parser treats wildcard steps in 1-based fields as starting at the first
+ * legal value (star-slash-3 day-of-month => 1,4,7...). The old matcher treated
+ * them as modulo checks against the actual value (star-slash-3 => 3,6,9...).
+ * Normalize only those 1-based wildcard steps so persisted schedules keep
+ * their phase while minute/hour/DOW wildcard steps and explicit ranged steps
+ * keep standard cron-parser behavior.
+ */
+function normalizeCronExpressionForParser(expr: string): string | null {
+  const trimmed = expr.trim();
+  const fields = trimmed.split(/\s+/);
+  if (fields.length !== 5) return null;
+  if (!SUPPORTED_CRON_RE.test(trimmed)) return null;
+  if (hasBareValueStep(fields)) return null;
+
+  const normalizedFields: string[] = [];
+  for (let index = 0; index < fields.length; index++) {
+    const field = fields[index] ?? "";
+    if (index === 2) {
+      const normalized = normalizeOneBasedWildcardSteps(field, 1, 31);
+      if (normalized === null) return null;
+      normalizedFields.push(normalized);
+      continue;
+    }
+    if (index === 3) {
+      const normalized = normalizeOneBasedWildcardSteps(field, 1, 12);
+      if (normalized === null) return null;
+      normalizedFields.push(normalized);
+      continue;
+    }
+    normalizedFields.push(field);
+  }
+
+  const normalized = normalizedFields.join(" ");
+  try {
+    CronExpressionParser.parse(normalized, { strict: false });
+    return normalized;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Validate a 5-field cron expression using cron-parser as the source of truth
  * for cron semantics, so that validation and execution (cronMatchesTime) can
@@ -215,17 +294,7 @@ function hasBareValueStep(fields: string[]): boolean {
  * either never fired or fired with surprising semantics.
  */
 export function isValidCron(expr: string): boolean {
-  const trimmed = expr.trim();
-  const fields = trimmed.split(/\s+/);
-  if (fields.length !== 5) return false;
-  if (!SUPPORTED_CRON_RE.test(trimmed)) return false;
-  if (hasBareValueStep(fields)) return false;
-  try {
-    CronExpressionParser.parse(trimmed, { strict: false });
-    return true;
-  } catch {
-    return false;
-  }
+  return normalizeCronExpressionForParser(expr) !== null;
 }
 
 // ── Cron evaluation ─────────────────────────────────────────────────
@@ -252,7 +321,8 @@ export function cronMatchesTime(
   date: Date,
   timezone?: string | null,
 ): boolean {
-  if (!isValidCron(expr)) return false;
+  const parserExpression = normalizeCronExpressionForParser(expr);
+  if (!parserExpression) return false;
 
   // Align to the start of the target minute (drop seconds/ms) so the window
   // check is stable regardless of when within the minute `date` falls.
@@ -266,7 +336,7 @@ export function cronMatchesTime(
   // lands inside [minuteStart, windowEnd).
   const previousMinute = new Date(minuteStart.getTime() - 1);
   try {
-    const iterator = CronExpressionParser.parse(expr, {
+    const iterator = CronExpressionParser.parse(parserExpression, {
       currentDate: previousMinute,
       tz: resolveTimezone(timezone),
     });

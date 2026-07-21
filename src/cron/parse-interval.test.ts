@@ -53,6 +53,10 @@ describe("parseEvery", () => {
     expect(parseEvery("3d")?.cron).toBe("0 0 */3 * *");
   });
 
+  test("days — rejects steps with no legal day-of-month", () => {
+    expect(parseEvery("32d")).toBeNull();
+  });
+
   test("seconds — below 60 rounds up to 1m", () => {
     const result = parseEvery("30s");
     expect(result).not.toBeNull();
@@ -198,9 +202,11 @@ describe("isValidCron", () => {
     // impossible day-of-month
     expect(isValidCron("0 0 32 * *")).toBe(false);
     expect(isValidCron("0 0 0 * *")).toBe(false); // DOM is 1-based
+    expect(isValidCron("0 0 */32 * *")).toBe(false); // no legacy DOM value matches
     // impossible month
     expect(isValidCron("0 0 1 13 *")).toBe(false);
     expect(isValidCron("0 0 1 0 *")).toBe(false); // month is 1-based
+    expect(isValidCron("0 0 * */13 *")).toBe(false); // no legacy month matches
     // day-of-week > 7
     expect(isValidCron("0 0 * * 8")).toBe(false);
     // out-of-range inside ranges / steps
@@ -241,6 +247,46 @@ describe("cronMatchesTime", () => {
     const date = new Date("2026-03-26T14:30:00");
     expect(cronMatchesTime("*/5 * * * *", date)).toBe(true); // 30 % 5 === 0
     expect(cronMatchesTime("*/7 * * * *", date)).toBe(false); // 30 % 7 !== 0
+  });
+
+  test("1-based wildcard steps keep the legacy modulo phase", () => {
+    expect(
+      cronMatchesTime("0 0 */3 * *", new Date("2026-03-03T00:00:00Z"), "UTC"),
+    ).toBe(true);
+    expect(
+      cronMatchesTime("0 0 */3 * *", new Date("2026-03-01T00:00:00Z"), "UTC"),
+    ).toBe(false);
+
+    expect(
+      cronMatchesTime("0 0 * */3 *", new Date("2026-03-01T00:00:00Z"), "UTC"),
+    ).toBe(true);
+    expect(
+      cronMatchesTime("0 0 * */3 *", new Date("2026-01-01T00:00:00Z"), "UTC"),
+    ).toBe(false);
+
+    expect(
+      cronMatchesTime(
+        "0 0 1-31/3 * *",
+        new Date("2026-03-01T00:00:00Z"),
+        "UTC",
+      ),
+    ).toBe(true);
+    expect(
+      cronMatchesTime(
+        "0 0 1-31/3 * *",
+        new Date("2026-03-03T00:00:00Z"),
+        "UTC",
+      ),
+    ).toBe(false);
+  });
+
+  test("1-based wildcard steps with no legacy legal values never match", () => {
+    expect(
+      cronMatchesTime("0 0 */32 * *", new Date("2026-03-01T00:00:00Z"), "UTC"),
+    ).toBe(false);
+    expect(
+      cronMatchesTime("0 0 * */13 *", new Date("2026-01-01T00:00:00Z"), "UTC"),
+    ).toBe(false);
   });
 
   test("range match", () => {

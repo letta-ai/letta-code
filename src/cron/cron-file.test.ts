@@ -106,6 +106,13 @@ describe("addTask", () => {
     const r2 = addTask(makeInput({ prompt: "echo world" }));
     expect(r1.task.id).not.toBe(r2.task.id);
   });
+
+  test("rejects semantically invalid cron expressions before persistence", () => {
+    expect(() => addTask(makeInput({ cron: "0 0 */32 * *" }))).toThrow(
+      /Invalid cron expression "0 0 \*\/32 \* \*"/,
+    );
+    expect(readCronFile().tasks).toHaveLength(0);
+  });
 });
 
 describe("listTasks", () => {
@@ -189,6 +196,46 @@ describe("updateTask", () => {
     const updated = getTask(task.id);
     expect(updated?.fire_count).toBe(5);
     expect(updated?.last_fired_at).toBe("2026-01-01T00:00:00Z");
+  });
+
+  test("rejects invalid cron-changing updates without rewriting the task", () => {
+    const { task } = addTask(makeInput({ cron: "*/5 * * * *" }));
+
+    expect(() =>
+      updateTask(task.id, (t) => {
+        t.cron = "0 0 */32 * *";
+      }),
+    ).toThrow(/Invalid cron expression "0 0 \*\/32 \* \*"/);
+
+    const persisted = getTask(task.id);
+    expect(persisted?.cron).toBe("*/5 * * * *");
+  });
+
+  test("rejects enabling recurrence on a persisted invalid cron", () => {
+    const scheduledFor = new Date(Date.now() + 60000);
+    const { task } = addTask(
+      makeInput({ recurring: false, scheduled_for: scheduledFor }),
+    );
+    const data = readCronFile();
+    const persistedTask = data.tasks.find(
+      (candidate) => candidate.id === task.id,
+    );
+    if (!persistedTask) throw new Error("expected persisted cron task");
+    persistedTask.cron = "0 0 */32 * *";
+    writeFileSync(_CRON_PATH, JSON.stringify(data, null, 2));
+
+    expect(() =>
+      updateTask(task.id, (candidate) => {
+        candidate.recurring = true;
+      }),
+    ).toThrow(/Invalid cron expression "0 0 \*\/32 \* \*"/);
+
+    expect(getTask(task.id)).toEqual(
+      expect.objectContaining({
+        cron: "0 0 */32 * *",
+        recurring: false,
+      }),
+    );
   });
 });
 

@@ -143,6 +143,7 @@ import {
 import {
   getIntendedCronOccurrence,
   getTask,
+  handleInvalidRecurringTask,
   handleMissedOneShot,
   isProcessAlive,
   readCronFile,
@@ -1536,8 +1537,7 @@ export function App({
 
       for (const task of activeTasks) {
         if (firedThisMinute.has(task.id)) continue;
-
-        // Handle missed one-shots
+        if (handleInvalidRecurringTask(task, now)) continue;
         if (handleMissedOneShot(task, now)) continue;
 
         if (shouldFireTask(task, now)) {

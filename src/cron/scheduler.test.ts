@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   type AddTaskInput,
   addTask,
+  type CronTask,
   deleteTask,
   getTask,
   updateTask,
@@ -52,6 +53,46 @@ function makeInput(overrides: Partial<AddTaskInput> = {}): AddTaskInput {
     recurring: true,
     ...overrides,
   };
+}
+
+function makePersistedTask(overrides: Partial<CronTask> = {}): CronTask {
+  const now = "2026-03-01T00:00:00.000Z";
+  return {
+    id: "cron_legacy_invalid",
+    agent_id: "agent-test-001",
+    conversation_id: "default",
+    name: "Legacy task",
+    description: "Persisted before semantic validation existed",
+    cron: "*/5 * * * *",
+    timezone: "UTC",
+    recurring: true,
+    prompt: "echo hello",
+    status: "active",
+    created_at: now,
+    expires_at: null,
+    last_fired_at: null,
+    fire_count: 0,
+    cancel_reason: null,
+    jitter_offset_ms: 0,
+    last_run_at: null,
+    last_run_outcome: null,
+    last_run_reason: null,
+    last_run_error: null,
+    last_missed_at: null,
+    missed_count: 0,
+    failed_count: 0,
+    scheduled_for: null,
+    fired_at: null,
+    missed_at: null,
+    ...overrides,
+  };
+}
+
+function writePersistedTasks(tasks: CronTask[]): void {
+  writeFileSync(
+    path.join(TEST_DIR, "crons.json"),
+    JSON.stringify({ version: 1, scheduler_owner: null, tasks }, null, 2),
+  );
 }
 
 function pad(value: number, width: number): string {
@@ -259,7 +300,8 @@ describe("task lifecycle", () => {
   });
 
   test("persisted invalid recurring tasks expose one durable failure", () => {
-    const { task } = addTask(makeInput({ cron: "0-60 * * * *" }));
+    const task = makePersistedTask({ cron: "0-60 * * * *" });
+    writePersistedTasks([task]);
     const checkedAt = new Date("2026-03-26T14:30:00Z");
 
     expect(handleInvalidRecurringTask(task, checkedAt)).toBe(true);

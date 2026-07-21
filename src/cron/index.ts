@@ -53,6 +53,7 @@ export {
   formatCronPrompt,
   formatTimezoneQualifiedIso,
   getIntendedCronOccurrence,
+  handleInvalidRecurringTask,
   handleMissedOneShot,
   shouldFireTask,
   wrapCronPrompt,

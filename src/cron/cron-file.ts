@@ -19,7 +19,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { estimatePeriodMs } from "./parse-interval";
+import { estimatePeriodMs, isValidCron } from "./parse-interval";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -413,6 +413,14 @@ function generateTaskId(): string {
   return randomBytes(TASK_ID_BYTES).toString("hex");
 }
 
+function assertValidCronForPersistence(cron: string): void {
+  if (!isValidCron(cron)) {
+    throw new Error(
+      `Invalid cron expression "${cron}". Schedule was not saved.`,
+    );
+  }
+}
+
 // ── Jitter ──────────────────────────────────────────────────────────
 
 function simpleHash(s: string): number {
@@ -503,6 +511,8 @@ export function addTask(input: AddTaskInput): AddTaskResult {
         `Agent ${agentId} has ${activeCount} active tasks (max ${MAX_ACTIVE_TASKS_PER_AGENT}). Delete some before adding more.`,
       );
     }
+
+    assertValidCronForPersistence(input.cron);
 
     const now = new Date();
     const taskId = generateTaskId();
@@ -704,7 +714,14 @@ export function updateTask(
     const data = readCronFile();
     const task = data.tasks.find((t) => t.id === taskId);
     if (!task) return null;
+    const originalCron = task.cron;
+    const originalRecurring = task.recurring;
     updater(task);
+    const cronChanged = task.cron !== originalCron;
+    const recurringWasEnabled = !originalRecurring && task.recurring;
+    if (cronChanged || recurringWasEnabled) {
+      assertValidCronForPersistence(task.cron);
+    }
     writeCronFile(data);
     return { ...task };
   });
