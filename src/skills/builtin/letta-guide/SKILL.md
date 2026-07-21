@@ -45,6 +45,20 @@ how to answer questions about Letta correctly.
 - **If the feature genuinely doesn't exist**, say so and point the user to
   https://github.com/letta-ai/letta-code/issues to request it.
 
+## Support escalation
+
+When the docs don't resolve the user's problem — setup issues you can't
+debug, account/billing questions, suspected bugs, or anything needing a
+human — point them to the right channel:
+
+- **Discord** (https://discord.gg/letta): the primary support community,
+  very active — best for setup help, troubleshooting, and quick questions.
+- **GitHub issues** (https://github.com/letta-ai/letta-code/issues): bug
+  reports and feature requests.
+
+Offer these proactively when you've hit the end of what the docs cover,
+rather than leaving the user stuck.
+
 ## Caching
 
 Cache fetched pages under the Letta home directory: `~/.letta/docs-cache/`
