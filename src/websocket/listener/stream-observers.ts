@@ -1,0 +1,26 @@
+import type { ListenerRuntime, ObservedProtocolV2Message } from "./types";
+
+/**
+ * Notify in-process observers (e.g. the OpenAI-compat HTTP bridge) of an
+ * outbound v2 protocol message. Observers consume protocol messages without
+ * owning a transport, so callers must notify before any socket-open gate: a
+ * closed or absent socket must not starve them.
+ */
+export function notifyStreamObservers(
+  listener: ListenerRuntime | null,
+  message: Record<string, unknown>,
+  runtimeScope: ObservedProtocolV2Message["runtime"],
+): void {
+  if (!listener?.streamObservers?.size) return;
+  const observed = {
+    ...message,
+    runtime: runtimeScope,
+  } as ObservedProtocolV2Message;
+  for (const observer of listener.streamObservers) {
+    try {
+      observer(observed);
+    } catch (error) {
+      console.error("[Listen V2] Stream observer failed", error);
+    }
+  }
+}
