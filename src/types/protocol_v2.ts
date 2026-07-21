@@ -64,8 +64,8 @@ export type CronRunReason =
   | "queue_full"
   | "runtime_unavailable"
   | "task_cancelled"
+  | "invalid_cron"
   | "scheduler_error";
-
 export interface CronTask {
   id: string;
   agent_id: string;
