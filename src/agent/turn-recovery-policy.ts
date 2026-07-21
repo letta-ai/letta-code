@@ -462,7 +462,7 @@ export interface PendingApprovalInfo {
 }
 
 export const STALE_APPROVAL_RECOVERY_DENIAL_REASON =
-  "Auto-denied: stale approval from interrupted session";
+  "This pending tool call was automatically closed by the client to recover from a disconnect: the tool never executed, and no user or policy denied it. Re-issue the tool call if you still need it.";
 
 export function buildFreshDenialApprovals(
   serverApprovals: PendingApprovalInfo[],
