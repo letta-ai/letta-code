@@ -14,6 +14,35 @@ function makeFetchFailure(message: string, code?: string): Error {
   return new TypeError("fetch failed", { cause });
 }
 
+function makeHtmlGatewayError(headers?: Record<string, string>): Response {
+  return new Response(
+    "<!DOCTYPE html><html><title>Bad Gateway body marker</title></html>",
+    {
+      status: 502,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        ...headers,
+      },
+    },
+  );
+}
+
+function makeJsonTransientError(headers?: Record<string, string>): Response {
+  return new Response(
+    JSON.stringify({
+      error: "temporarily_unavailable",
+      error_description: "JSON transient body marker",
+    }),
+    {
+      status: 503,
+      headers: {
+        "Content-Type": "application/json",
+        ...headers,
+      },
+    },
+  );
+}
+
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
@@ -38,6 +67,160 @@ describe("OAuth network errors", () => {
         "Check your network, DNS, proxy, VPN, or TLS settings.",
       );
     }
+  });
+
+  test("requestDeviceCode retries non-JSON server responses before actionable error", async () => {
+    const fetchMock = mock(() =>
+      Promise.resolve(makeHtmlGatewayError({ "cf-ray": "abc123-SJC" })),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    let failure: unknown;
+    try {
+      await requestDeviceCode();
+    } catch (error) {
+      failure = error;
+    }
+
+    const message =
+      failure instanceof Error ? failure.message : String(failure);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(message).toContain(
+      "Failed to request device code from app.letta.com",
+    );
+    expect(message).toContain("HTTP 502");
+    expect(message).toContain("media type text/html");
+    expect(message).toContain("request id cf-ray=abc123-SJC");
+    expect(message).toContain("Try again later");
+    expect(message).not.toContain("<!DOCTYPE");
+    expect(message).not.toContain("Bad Gateway body marker");
+    expect(message).not.toContain("Unexpected token");
+  });
+
+  test("requestDeviceCode retries JSON 5xx before safe actionable error", async () => {
+    const fetchMock = mock(() =>
+      Promise.resolve(makeJsonTransientError({ "x-request-id": "req-503" })),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    let failure: unknown;
+    try {
+      await requestDeviceCode();
+    } catch (error) {
+      failure = error;
+    }
+
+    const message =
+      failure instanceof Error ? failure.message : String(failure);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(message).toContain(
+      "Failed to request device code from app.letta.com",
+    );
+    expect(message).toContain("received transient OAuth response");
+    expect(message).toContain("HTTP 503");
+    expect(message).toContain("media type application/json");
+    expect(message).toContain("request id x-request-id=req-503");
+    expect(message).not.toContain("temporarily_unavailable");
+    expect(message).not.toContain("JSON transient body marker");
+  });
+
+  test("pollForToken recovers from bounded transient response failures", async () => {
+    let calls = 0;
+    const fetchMock = mock(() => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(makeHtmlGatewayError());
+      }
+
+      if (calls === 2) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: "authorization_pending" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }
+
+      if (calls === 3 || calls === 4) {
+        return Promise.resolve(makeJsonTransientError());
+      }
+
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+            token_type: "Bearer",
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      pollForToken("device-code", 0, 60, "device-id"),
+    ).resolves.toMatchObject({ access_token: "access-token" });
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  test("pollForToken bounds persistent non-JSON response failures", async () => {
+    const fetchMock = mock(() =>
+      Promise.resolve(
+        makeHtmlGatewayError({ "x-vercel-id": "sfo1::iad1::oauth123" }),
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    let failure: unknown;
+    try {
+      await pollForToken("device-code", 0, 60, "device-id");
+    } catch (error) {
+      failure = error;
+    }
+
+    const message =
+      failure instanceof Error ? failure.message : String(failure);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(message).toContain(
+      "Failed to poll for OAuth token from app.letta.com",
+    );
+    expect(message).toContain("HTTP 502");
+    expect(message).toContain("media type text/html");
+    expect(message).toContain("request id x-vercel-id=sfo1::iad1::oauth123");
+    expect(message).not.toContain("<!DOCTYPE");
+    expect(message).not.toContain("Bad Gateway body marker");
+    expect(message).not.toContain("Unexpected token");
+  });
+
+  test("pollForToken bounds persistent JSON transient response failures", async () => {
+    const fetchMock = mock(() =>
+      Promise.resolve(
+        makeJsonTransientError({ "x-request-id": "poll-json-503" }),
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    let failure: unknown;
+    try {
+      await pollForToken("device-code", 0, 60, "device-id");
+    } catch (error) {
+      failure = error;
+    }
+
+    const message =
+      failure instanceof Error ? failure.message : String(failure);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(message).toContain(
+      "Failed to poll for OAuth token from app.letta.com",
+    );
+    expect(message).toContain("received transient OAuth response");
+    expect(message).toContain("HTTP 503");
+    expect(message).toContain("media type application/json");
+    expect(message).toContain("request id x-request-id=poll-json-503");
+    expect(message).not.toContain("temporarily_unavailable");
+    expect(message).not.toContain("JSON transient body marker");
   });
 
   test("pollForToken explains that browser auth may have succeeded", async () => {
