@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { Buffer } from "node:buffer";
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -10,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   __getDefaultServiceNameForTests,
   __getExplicitNodeSecretBackendForTests,
@@ -30,12 +32,14 @@ type BunSecretFixture = {
     service: string;
     name: string;
     value: string;
+    allowUnrestrictedAccess?: boolean;
   }) => Promise<void>;
   delete: (options: { service: string; name: string }) => Promise<boolean>;
 };
 
 const DEFAULT_SERVICE_NAME = __getDefaultServiceNameForTests();
 const posixTest = process.platform === "win32" ? test.skip : test;
+const macosTest = process.platform === "darwin" ? test : test.skip;
 const tempDirs: string[] = [];
 const bunSecretsForInterop = (
   globalThis as typeof globalThis & { Bun?: { secrets?: BunSecretFixture } }
@@ -102,6 +106,42 @@ describe("Secret backend selection", () => {
     });
 
     expect(__getSelectedSecretBackendKindForTests()).toBe("bun");
+  });
+
+  test("makes Bun-written macOS entries available to headless runtimes", async () => {
+    const set = mock(async () => {});
+    __setSecretRuntimeOverrideForTests({
+      platform: "darwin",
+      bunSecrets: fakeBunSecrets({ set }),
+    });
+
+    setServiceName(`letta-code-bun-access-${randomUUID()}`);
+    await setSecretValue("api-key", "credential-value");
+
+    expect(set).toHaveBeenCalledWith({
+      service: expect.any(String),
+      name: "api-key",
+      value: "credential-value",
+      allowUnrestrictedAccess: true,
+    });
+  });
+
+  test("normalizes empty values to deletion across runtimes", async () => {
+    const set = mock(async () => {});
+    const remove = mock(async () => true);
+    __setSecretRuntimeOverrideForTests({
+      platform: "linux",
+      bunSecrets: fakeBunSecrets({ set, delete: remove }),
+    });
+
+    setServiceName(`letta-code-empty-${randomUUID()}`);
+    await setSecretValue("api-key", "");
+
+    expect(set).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledWith({
+      service: expect.any(String),
+      name: "api-key",
+    });
   });
 
   test("selects explicit Node backends by platform when Bun is absent", () => {
@@ -201,6 +241,116 @@ describe("Secret backend selection", () => {
 });
 
 describe("Secret backend command protocols", () => {
+  posixTest(
+    "uses macOS security status and stdin without leaking values to argv",
+    async () => {
+      const dir = makeTempDir("letta-macos-security-");
+      const securityPath = join(dir, "security");
+      const argvLog = join(dir, "argv.log");
+      const stdinLog = join(dir, "stdin.log");
+      writeExecutable(
+        securityPath,
+        `#!/bin/sh
+printf '%s\\n' "$@" > "$MACOS_ARGV_LOG"
+case "$1" in
+  add-generic-password)
+    cat > "$MACOS_STDIN_LOG"
+    exit 0
+    ;;
+  find-generic-password)
+    case "$MACOS_TEST_MODE" in
+      missing) echo 'item not found' >&2; exit 44 ;;
+      denied) echo 'interaction not allowed' >&2; exit 51 ;;
+      *) printf 'stored-value\\n'; exit 0 ;;
+    esac
+    ;;
+  delete-generic-password)
+    case "$MACOS_TEST_MODE" in
+      missing) exit 44 ;;
+      denied) echo 'interaction not allowed' >&2; exit 51 ;;
+      *) exit 0 ;;
+    esac
+    ;;
+esac
+exit 2
+`,
+      );
+      __setSecretRuntimeOverrideForTests({
+        platform: "darwin",
+        bunSecrets: null,
+        bunExecutablePath: null,
+        macSecurityPath: securityPath,
+        env: {
+          MACOS_ARGV_LOG: argvLog,
+          MACOS_STDIN_LOG: stdinLog,
+        },
+      });
+      const backend = __getExplicitNodeSecretBackendForTests();
+      expect(backend).not.toBeNull();
+
+      await backend?.set({
+        service: "letta-code-test",
+        name: "api-key",
+        value: "credential-value",
+      });
+      const argvLogValue = readFileSync(argvLog, "utf8");
+      expect(argvLogValue).toContain("add-generic-password");
+      expect(argvLogValue).toContain("-A");
+      expect(argvLogValue.trim().endsWith("-w")).toBe(true);
+      expect(argvLogValue).not.toContain("credential-value");
+      expect(readFileSync(stdinLog, "utf8")).toBe(
+        "credential-value\ncredential-value\n",
+      );
+
+      expect(
+        await backend?.get({ service: "letta-code-test", name: "api-key" }),
+      ).toBe("stored-value");
+
+      __setSecretRuntimeOverrideForTests({
+        platform: "darwin",
+        bunSecrets: null,
+        bunExecutablePath: null,
+        macSecurityPath: securityPath,
+        env: {
+          MACOS_ARGV_LOG: argvLog,
+          MACOS_STDIN_LOG: stdinLog,
+          MACOS_TEST_MODE: "missing",
+        },
+      });
+      expect(
+        await backend?.get({ service: "letta-code-test", name: "missing" }),
+      ).toBeNull();
+      expect(
+        await backend?.delete({ service: "letta-code-test", name: "missing" }),
+      ).toBe(false);
+
+      __setSecretRuntimeOverrideForTests({
+        platform: "darwin",
+        bunSecrets: null,
+        bunExecutablePath: null,
+        macSecurityPath: securityPath,
+        env: {
+          MACOS_ARGV_LOG: argvLog,
+          MACOS_STDIN_LOG: stdinLog,
+          MACOS_TEST_MODE: "denied",
+        },
+      });
+      await expect(
+        backend?.get({ service: "letta-code-test", name: "api-key" }),
+      ).rejects.toThrow("interaction not allowed");
+      await expect(
+        backend?.delete({ service: "letta-code-test", name: "api-key" }),
+      ).rejects.toThrow("interaction not allowed");
+      await expect(
+        backend?.set({
+          service: "letta-code-test",
+          name: "api-key",
+          value: "line-one\nline-two",
+        }),
+      ).rejects.toThrow("does not accept line breaks");
+    },
+  );
+
   posixTest(
     "uses secret-tool attrs and stdin without leaking values to argv",
     async () => {
@@ -425,5 +575,83 @@ describe("Bun.secrets and explicit Node backend interoperability", () => {
       }
     },
     30_000,
+  );
+
+  macosTest(
+    "preserves legacy Bun entries across a real Node process boundary",
+    async () => {
+      if (!bunSecretsForInterop) return;
+      const outputDir = makeTempDir("letta-node-secret-backend-");
+      const build = await Bun.build({
+        entrypoints: [join(process.cwd(), "src/utils/secret-backends.ts")],
+        outdir: outputDir,
+        target: "node",
+        format: "esm",
+      });
+      expect(build.success).toBe(true);
+
+      const moduleUrl = pathToFileURL(
+        join(outputDir, "secret-backends.js"),
+      ).href;
+      const service = `letta-code-process-interop-${randomUUID()}`;
+      const bunName = `from-bun-${randomUUID()}`;
+      const nodeName = `from-node-${randomUUID()}`;
+      const bunValue = `bun-value-${randomUUID()}`;
+      const nodeValue = `node-value-${randomUUID()}`;
+
+      try {
+        // No allowUnrestrictedAccess flag: this models entries written before
+        // the runtime-independent backend shipped.
+        await bunSecretsForInterop.set({
+          service,
+          name: bunName,
+          value: bunValue,
+        });
+
+        const node = spawnSync("node", ["--input-type=module"], {
+          input: `
+const { createExplicitNodeSecretBackend } = await import(process.env.MODULE_URL);
+const backend = createExplicitNodeSecretBackend("darwin");
+if (!backend) throw new Error("missing macOS backend");
+const value = await backend.get({ service: process.env.SERVICE, name: process.env.BUN_NAME });
+if (value !== process.env.BUN_VALUE) throw new Error("Bun-to-Node value mismatch");
+if (!(await backend.delete({ service: process.env.SERVICE, name: process.env.BUN_NAME }))) {
+  throw new Error("Node failed to delete the legacy Bun entry");
+}
+await backend.set({ service: process.env.SERVICE, name: process.env.NODE_NAME, value: process.env.NODE_VALUE });
+`,
+          env: {
+            ...process.env,
+            MODULE_URL: moduleUrl,
+            SERVICE: service,
+            BUN_NAME: bunName,
+            NODE_NAME: nodeName,
+            BUN_VALUE: bunValue,
+            NODE_VALUE: nodeValue,
+          },
+          encoding: "utf8",
+          timeout: 30_000,
+        });
+        expect(node.status, `${node.stdout}\n${node.stderr}`).toBe(0);
+
+        expect(
+          await bunSecretsForInterop.get({ service, name: bunName }),
+        ).toBeNull();
+        expect(
+          await bunSecretsForInterop.get({ service, name: nodeName }),
+        ).toBe(nodeValue);
+        expect(
+          await bunSecretsForInterop.delete({ service, name: nodeName }),
+        ).toBe(true);
+      } finally {
+        await Promise.allSettled([
+          bunSecretsForInterop.delete({ service, name: bunName }),
+          bunSecretsForInterop.delete({ service, name: nodeName }),
+          explicitNodeBackendForInterop?.delete({ service, name: bunName }),
+          explicitNodeBackendForInterop?.delete({ service, name: nodeName }),
+        ]);
+      }
+    },
+    60_000,
   );
 });

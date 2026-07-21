@@ -28,24 +28,18 @@ export interface SecretBackend {
 
 export interface BunSecretsLike {
   get(options: SecretLocator): Promise<string | null> | string | null;
-  set(options: SecretSetOptions): Promise<void> | void;
+  set(
+    options: SecretSetOptions & { allowUnrestrictedAccess?: boolean },
+  ): Promise<void> | void;
   delete(options: SecretLocator): Promise<boolean> | boolean;
 }
-
-type KeyringEntry = {
-  getPassword(): string | null;
-  setPassword(password: string): void;
-  deletePassword(): boolean;
-};
-
-type KeyringModule = {
-  Entry: new (service: string, name: string) => KeyringEntry;
-};
 
 type SecretRuntimeOverride = {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   bunSecrets?: BunSecretsLike | null;
+  bunExecutablePath?: string | null;
+  macSecurityPath?: string | null;
   powerShellPath?: string | null;
 };
 
@@ -53,6 +47,8 @@ type SecretRuntime = {
   platform: NodeJS.Platform;
   env: NodeJS.ProcessEnv;
   bunSecrets: BunSecretsLike | null;
+  bunExecutablePath?: string | null;
+  macSecurityPath?: string | null;
   powerShellPath?: string | null;
 };
 
@@ -60,6 +56,41 @@ const SECRET_COMMAND_TIMEOUT_MS = 10_000;
 const SECRET_COMMAND_MAX_OUTPUT_BYTES = 64 * 1024;
 const WINDOWS_CREDENTIAL_MAX_BLOB_BYTES = 2_560;
 const BUN_LINUX_SECRET_SCHEMA = "com.oven-sh.bun.Secret";
+const MACOS_SECURITY_PATH = "/usr/bin/security";
+const MACOS_ITEM_NOT_FOUND_EXIT_CODE = 44;
+
+const BUN_MACOS_KEYCHAIN_MIGRATION_SCRIPT = `
+const locator = {
+  service: process.env.LETTA_SECRET_MIGRATION_SERVICE,
+  name: process.env.LETTA_SECRET_MIGRATION_NAME,
+};
+
+try {
+  if (process.env.LETTA_SECRET_MIGRATION_OPERATION === "delete") {
+    const deleted = await Bun.secrets.delete(locator);
+    process.stdout.write(JSON.stringify({ ok: true, deleted }));
+  } else {
+    const value = await Bun.secrets.get(locator);
+    if (value !== null) {
+      await Bun.secrets.set({
+        ...locator,
+        value,
+        allowUnrestrictedAccess: true,
+      });
+    }
+    process.stdout.write(JSON.stringify({
+      ok: true,
+      valueBase64: value === null ? null : Buffer.from(value, "utf8").toString("base64"),
+    }));
+  }
+} catch (error) {
+  process.stdout.write(JSON.stringify({
+    ok: false,
+    error: error instanceof Error ? error.message : String(error),
+  }));
+  process.exitCode = 1;
+}
+`;
 
 const WINDOWS_CREDENTIAL_SCRIPT = `
 $ErrorActionPreference = 'Stop'
@@ -230,12 +261,21 @@ interface WindowsCredentialResponse {
   error?: string;
 }
 
+interface BunMacMigrationResponse {
+  ok?: boolean;
+  valueBase64?: string | null;
+  deleted?: boolean;
+  error?: string;
+}
+
 let runtimeOverrideForTests: SecretRuntimeOverride | null = null;
+const migratedMacKeychainLocators = new Set<string>();
 
 export function __setSecretRuntimeOverrideForTests(
   override: SecretRuntimeOverride | null,
 ): void {
   runtimeOverrideForTests = override;
+  migratedMacKeychainLocators.clear();
 }
 
 export function __getWindowsCredentialScriptForTests(): string {
@@ -261,6 +301,8 @@ function getRuntime(): SecretRuntime {
     platform: override?.platform ?? process.platform,
     env,
     bunSecrets,
+    bunExecutablePath: override?.bunExecutablePath,
+    macSecurityPath: override?.macSecurityPath,
     powerShellPath: override?.powerShellPath,
   };
 }
@@ -405,12 +447,21 @@ function commandError(
   return new Error(`${commandName} ${operation} failed: ${detail}`);
 }
 
-function createBunSecretBackend(bunSecrets: BunSecretsLike): SecretBackend {
+function createBunSecretBackend(
+  bunSecrets: BunSecretsLike,
+  platform: NodeJS.Platform,
+): SecretBackend {
   return {
     kind: "bun",
     get: async (options) => bunSecrets.get(options),
     set: async (options) => {
-      await bunSecrets.set(options);
+      await bunSecrets.set({
+        ...options,
+        // Letta listeners and global installs can legitimately switch between
+        // Bun and Node. macOS otherwise restricts the item to the writer
+        // executable, making the same Keychain entry unreadable headlessly.
+        ...(platform === "darwin" ? { allowUnrestrictedAccess: true } : {}),
+      });
     },
     delete: async (options) => bunSecrets.delete(options),
     isAvailable: async (probe) => {
@@ -420,60 +471,173 @@ function createBunSecretBackend(bunSecrets: BunSecretsLike): SecretBackend {
   };
 }
 
-function isMacKeyringMissingError(error: unknown): boolean {
-  const message = (error instanceof Error ? error.message : String(error))
-    .toLowerCase()
-    .trim();
-  return (
-    message.includes("not found") ||
-    message.includes("no entry") ||
-    message.includes("no matching") ||
-    message.includes("not exist") ||
-    message.includes("could not find") ||
-    message.includes("specified item could not be found") ||
-    message.includes("code: -25300") ||
-    message.includes("osstatus -25300")
+function getMacSecurityPath(runtime: SecretRuntime): string | null {
+  if (runtime.macSecurityPath !== undefined) {
+    return runtime.macSecurityPath;
+  }
+  try {
+    accessSync(MACOS_SECURITY_PATH, constants.X_OK);
+    return MACOS_SECURITY_PATH;
+  } catch {
+    return null;
+  }
+}
+
+function getBunExecutablePath(runtime: SecretRuntime): string | null {
+  if (runtime.bunExecutablePath !== undefined) {
+    return runtime.bunExecutablePath;
+  }
+  return findExecutableOnPath("bun", runtime.env);
+}
+
+function macKeychainLocatorKey({ service, name }: SecretLocator): string {
+  return `${service.length}:${service}${name}`;
+}
+
+async function runBunMacKeychainMigration(
+  operation: "get" | "delete",
+  locator: SecretLocator,
+): Promise<BunMacMigrationResponse | null> {
+  const runtime = getRuntime();
+  const bunPath = getBunExecutablePath(runtime);
+  if (!bunPath) return null;
+
+  const result = await runSecretCommand(
+    bunPath,
+    ["-e", BUN_MACOS_KEYCHAIN_MIGRATION_SCRIPT],
+    {
+      env: {
+        ...runtime.env,
+        LETTA_SECRET_MIGRATION_OPERATION: operation,
+        LETTA_SECRET_MIGRATION_SERVICE: locator.service,
+        LETTA_SECRET_MIGRATION_NAME: locator.name,
+      },
+    },
   );
+
+  let response: BunMacMigrationResponse;
+  try {
+    const output = result.stdout.toString("utf8").trim();
+    if (!output) throw new Error("empty output");
+    response = JSON.parse(output) as BunMacMigrationResponse;
+  } catch {
+    throw commandError("Bun Keychain migration", operation, result);
+  }
+
+  if (result.code !== 0 || response.ok === false) {
+    throw new Error(
+      response.error ||
+        result.stderr.toString("utf8").trim() ||
+        `Bun Keychain migration ${operation} failed`,
+    );
+  }
+  return response;
 }
 
-async function loadMacKeyringModule(): Promise<KeyringModule> {
-  return (await import("@napi-rs/keyring")) as KeyringModule;
+async function runMacSecurityCommand(
+  args: string[],
+  input?: string,
+): Promise<SecretCommandResult> {
+  const runtime = getRuntime();
+  if (runtime.platform !== "darwin") {
+    throw new Error("macOS Keychain is only available on macOS");
+  }
+
+  const securityPath = getMacSecurityPath(runtime);
+  if (!securityPath) {
+    throw new Error("macOS security CLI is unavailable");
+  }
+
+  return runSecretCommand(securityPath, args, {
+    env: runtime.env,
+    input,
+  });
 }
 
-async function createMacKeyringEntry(
-  service: string,
-  name: string,
-): Promise<KeyringEntry> {
-  const { Entry } = await loadMacKeyringModule();
-  return new Entry(service, name);
+function macSecurityResultIsMissing(result: SecretCommandResult): boolean {
+  return result.code === MACOS_ITEM_NOT_FOUND_EXIT_CODE;
+}
+
+function decodeMacSecurityPassword(stdout: Buffer): string {
+  const value = stdout.toString("utf8");
+  // `security ... -w` appends one LF after the raw password. Remove only
+  // that byte so a password that itself ends in CR/LF remains intact.
+  return value.endsWith("\n") ? value.slice(0, -1) : value;
 }
 
 function createMacKeyringBackend(): SecretBackend {
   const backend: SecretBackend = {
     kind: "macos-keyring",
     get: async ({ service, name }) => {
-      try {
-        return (
-          (await createMacKeyringEntry(service, name)).getPassword() ?? null
-        );
-      } catch (error) {
-        if (isMacKeyringMissingError(error)) return null;
-        throw error;
+      const locator = { service, name };
+      const locatorKey = macKeychainLocatorKey(locator);
+      if (!migratedMacKeychainLocators.has(locatorKey)) {
+        const migration = await runBunMacKeychainMigration("get", locator);
+        if (migration) {
+          if (migration.valueBase64 == null) return null;
+          migratedMacKeychainLocators.add(locatorKey);
+          return Buffer.from(migration.valueBase64, "base64").toString("utf8");
+        }
       }
+
+      const result = await runMacSecurityCommand([
+        "find-generic-password",
+        "-s",
+        service,
+        "-a",
+        name,
+        "-w",
+      ]);
+      if (result.code === 0) return decodeMacSecurityPassword(result.stdout);
+      if (macSecurityResultIsMissing(result)) return null;
+      throw commandError("macOS Keychain", "get", result);
     },
     set: async ({ service, name, value }) => {
-      (await createMacKeyringEntry(service, name)).setPassword(value);
+      if (value.includes("\n")) {
+        throw new Error(
+          "macOS cross-runtime Keychain storage does not accept line breaks",
+        );
+      }
+      const result = await runMacSecurityCommand(
+        [
+          "add-generic-password",
+          "-a",
+          name,
+          "-s",
+          service,
+          "-A",
+          "-U",
+          // Keep -w last so `security` reads and confirms the password from
+          // stdin instead of exposing it in the process argument list.
+          "-w",
+        ],
+        `${value}\n${value}\n`,
+      );
+      if (result.code !== 0) {
+        throw commandError("macOS Keychain", "set", result);
+      }
+      migratedMacKeychainLocators.add(macKeychainLocatorKey({ service, name }));
     },
     delete: async ({ service, name }) => {
-      try {
-        const deleted = (
-          await createMacKeyringEntry(service, name)
-        ).deletePassword();
-        return deleted !== false;
-      } catch (error) {
-        if (isMacKeyringMissingError(error)) return false;
-        throw error;
+      const locator = { service, name };
+      const locatorKey = macKeychainLocatorKey(locator);
+      if (!migratedMacKeychainLocators.has(locatorKey)) {
+        const migration = await runBunMacKeychainMigration("delete", locator);
+        if (migration) {
+          return migration.deleted === true;
+        }
       }
+
+      const result = await runMacSecurityCommand([
+        "delete-generic-password",
+        "-s",
+        service,
+        "-a",
+        name,
+      ]);
+      if (result.code === 0) return true;
+      if (macSecurityResultIsMissing(result)) return false;
+      throw commandError("macOS Keychain", "delete", result);
     },
     isAvailable: async (probe) => {
       try {
@@ -753,7 +917,7 @@ export function createExplicitNodeSecretBackend(
 export function getSecretBackend(): SecretBackend | null {
   const runtime = getRuntime();
   if (runtime.bunSecrets) {
-    return createBunSecretBackend(runtime.bunSecrets);
+    return createBunSecretBackend(runtime.bunSecrets, runtime.platform);
   }
   return createExplicitNodeSecretBackend(runtime.platform);
 }

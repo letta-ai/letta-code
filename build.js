@@ -100,7 +100,7 @@ await Bun.build({
   // bundled AbortSignal class during bot.init().
   // But don't make `sharp` external, causes issues with global Bun-based installs
   // ref: #745, #1200
-  external: ["ws", "@vscode/ripgrep", "node-pty", "grammy", "@napi-rs/keyring"],
+  external: ["ws", "@vscode/ripgrep", "node-pty", "grammy"],
   features: features,
 });
 

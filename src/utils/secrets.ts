@@ -81,6 +81,17 @@ export async function setSecretValue(
 ): Promise<void> {
   const backend = getBackendOrThrow();
 
+  // Bun.secrets treats an empty value as deletion on every platform. Keep the
+  // explicit Node backends behaviorally identical instead of storing an empty
+  // credential that only one runtime can observe.
+  if (value === "") {
+    await backend.delete({
+      service: SERVICE_NAME,
+      name,
+    });
+    return;
+  }
+
   try {
     await backend.set({
       service: SERVICE_NAME,
