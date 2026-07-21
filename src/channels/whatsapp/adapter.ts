@@ -250,6 +250,12 @@ export function createWhatsAppAdapter(
     releaseLease?.();
   }
 
+  function clearReconnectTimer(): void {
+    if (!reconnectTimer) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
   async function ensureRuntimeHelpers(): Promise<void> {
     if (downloadContentFromMessage) return;
     const mod = await loadWhatsAppModule();
@@ -270,6 +276,7 @@ export function createWhatsAppAdapter(
     );
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
+      if (stopping || !running) return;
       void connect().catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         setWhatsAppConnectionState(account.accountId, {
@@ -312,6 +319,7 @@ export function createWhatsAppAdapter(
           if (isWhatsAppConflictDisconnect(update)) {
             running = false;
             stopping = true;
+            clearReconnectTimer();
             const message =
               typeof error.message === "string"
                 ? error.message
@@ -335,14 +343,13 @@ export function createWhatsAppAdapter(
           if (recentDisconnects.length > RAPID_DISCONNECT_LIMIT) {
             running = false;
             stopping = true;
+            clearReconnectTimer();
             const loopMessage = `WhatsApp disconnected ${recentDisconnects.length} times in ${RAPID_DISCONNECT_WINDOW_MS / 1000}s; stopping to avoid reconnect loop. Another client may be competing for this session. Restart the server to retry.`;
             setWhatsAppConnectionState(account.accountId, {
               status: "error",
               lastError: loopMessage,
             });
-            console.warn(
-              `[WhatsApp:${account.accountId}] ${loopMessage}`,
-            );
+            console.warn(`[WhatsApp:${account.accountId}] ${loopMessage}`);
             return;
           }
           scheduleReconnect(
@@ -547,10 +554,7 @@ export function createWhatsAppAdapter(
       if (!running) return;
       stopping = true;
       running = false;
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
+      clearReconnectTimer();
       connectionGeneration += 1;
       clearActiveSocket(true);
       setWhatsAppConnectionState(account.accountId, { status: "disconnected" });
