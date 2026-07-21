@@ -38,18 +38,24 @@ function sha256Hex(value: string): string {
 }
 
 function stubTurn(
-  onCall?: (conversationId: string, agentId: string) => void,
+  onCall?: (
+    conversationId: string,
+    agentId: string,
+    messages: unknown[],
+  ) => void,
 ): void {
-  __testSetRunTurnImpl(async ({ agentId, conversationId, onAssistantText }) => {
-    onCall?.(conversationId, agentId);
-    onAssistantText?.("Hello ");
-    onAssistantText?.("world");
-    return {
-      text: "Hello world",
-      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
-      error: null,
-    };
-  });
+  __testSetRunTurnImpl(
+    async ({ agentId, conversationId, messages, onAssistantText }) => {
+      onCall?.(conversationId, agentId, messages);
+      onAssistantText?.("Hello ");
+      onAssistantText?.("world");
+      return {
+        text: "Hello world",
+        usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+        error: null,
+      };
+    },
+  );
 }
 
 function httpUrl(handle: AppServerHandle, path: string): string {
@@ -164,12 +170,14 @@ describe("app-server OpenAI-compatible API", () => {
     expect(captured.agent).toBe("agent-local-111");
   });
 
-  test("client chats map to distinct, sticky Letta conversations", async () => {
+  test("header-less requests run statelessly with transcript replay", async () => {
     const created: string[] = [];
     __testSetBackend(fakeBackend(created));
     const conversationsUsed: string[] = [];
-    stubTurn((conversationId) => {
+    const messageCounts: number[] = [];
+    stubTurn((conversationId, _agentId, messages) => {
       conversationsUsed.push(conversationId);
+      messageCounts.push(messages.length);
     });
     handle = await startAppServer({
       listen: "ws://127.0.0.1:0",
@@ -183,25 +191,18 @@ describe("app-server OpenAI-compatible API", () => {
         body: JSON.stringify({ model: "memo", messages }),
       });
 
-    // Chat A, first message: creates a fresh conversation.
+    // Without a stable chat identity there is no server-side reuse: every
+    // request gets a fresh conversation and the transcript is replayed.
     await send([{ role: "user", content: "first chat" }]);
-    // Chat A, second message: client resends the transcript, which now
-    // includes the reply ("Hello world") — must map back to the same
-    // conversation without creating a new one.
     await send([
       { role: "user", content: "first chat" },
       { role: "assistant", content: "Hello world" },
       { role: "user", content: "follow-up" },
     ]);
-    // Chat B, first message: a different thread gets its own conversation.
-    await send([{ role: "user", content: "second chat" }]);
 
-    expect(conversationsUsed).toEqual([
-      "conv-test-1",
-      "conv-test-1",
-      "conv-test-2",
-    ]);
+    expect(conversationsUsed).toEqual(["conv-test-1", "conv-test-2"]);
     expect(created).toEqual(["conv-test-1", "conv-test-2"]);
+    expect(messageCounts).toEqual([1, 3]);
   });
 
   test("POST /v1/chat/completions streams SSE chunks", async () => {
@@ -407,11 +408,40 @@ describe("app-server OpenAI-compatible API", () => {
     expect(created.length).toBe(2);
   });
 
+  test("stateful header mode sends only the newest message", async () => {
+    __testSetBackend(fakeBackend());
+    const messageCounts: number[] = [];
+    stubTurn((_conversationId, _agentId, messages) => {
+      messageCounts.push(messages.length);
+    });
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    await fetch(httpUrl(handle, "/v1/chat/completions"), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-letta-chat-key": "pinned-chat",
+      },
+      body: JSON.stringify({
+        model: "memo",
+        messages: [
+          { role: "user", content: "Hello" },
+          { role: "assistant", content: "Hello world" },
+          { role: "user", content: "follow-up" },
+        ],
+      }),
+    });
+    expect(messageCounts).toEqual([1]);
+  });
+
   test("image_url parts pass through as Letta image content", async () => {
     __testSetBackend(fakeBackend());
     let capturedContent: unknown = null;
-    __testSetRunTurnImpl(async ({ userContent, onAssistantText }) => {
-      capturedContent = userContent;
+    __testSetRunTurnImpl(async ({ messages, onAssistantText }) => {
+      capturedContent = (messages[0] as { content: unknown }).content;
       onAssistantText?.("I see it");
       return {
         text: "I see it",

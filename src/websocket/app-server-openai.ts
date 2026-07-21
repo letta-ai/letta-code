@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type {
   IncomingMessage as HttpIncomingMessage,
   ServerResponse,
@@ -19,6 +19,7 @@ import {
   LocalListenerTransport,
 } from "@/websocket/listener/transport";
 import { handleIncomingMessage } from "@/websocket/listener/turn";
+import { registerTurnObserver } from "@/websocket/listener/turn-observers";
 import type {
   IncomingMessage as ListenerIncomingMessage,
   ListenerRuntime,
@@ -28,11 +29,12 @@ import type {
 } from "@/websocket/listener/types";
 
 // OpenAI-compatible surface for the App Server. Each Letta agent is
-// advertised as a "model"; a chat completion request routes the last user
-// message into a Letta conversation on that agent. The resent client-side
-// history is not replayed into the agent — server-side state is
-// authoritative — but it IS used as a fingerprint to keep each client-side
-// chat pinned to its own Letta conversation across stateless requests.
+// advertised as a "model". Conversation identity is explicit or absent:
+// clients that send a stable chat id header get a pinned Letta conversation
+// that receives only the newest message (stateful mode); header-less clients
+// are served statelessly — every request runs in a fresh conversation with
+// the client's transcript replayed — because identical transcripts are
+// indistinguishable and transcript fingerprinting cross-wires them.
 const MODELS_PATH = "/v1/models";
 const CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
 const MAX_REQUEST_BODY_BYTES = 20 * 1024 * 1024;
@@ -48,10 +50,21 @@ interface TurnOutcome {
   error: string | null;
 }
 
+interface BridgeTurnMessage {
+  role: "user" | "assistant";
+  content: UserContentPart[];
+  otid: string;
+}
+
 interface RunTurnParams {
   agentId: string;
   conversationId: string;
-  userContent: UserContentPart[];
+  /** Full input for the turn: the newest message in stateful mode, or the
+   * replayed client transcript in stateless mode. */
+  messages: BridgeTurnMessage[];
+  /** OTID of a message in this turn, used to correlate the listener turn
+   * lifecycle with this request. */
+  correlationOtid: string;
   onAssistantText?: (text: string) => void;
   onLog?: (message: string) => void;
 }
@@ -243,17 +256,36 @@ async function listAgentEntries(): Promise<AgentModelEntry[]> {
   return getPageItems<AgentModelEntry>(page);
 }
 
-async function handleListModels(response: ServerResponse): Promise<void> {
-  const agents = await listAgentEntries();
-  // Advertise the agent name when it is unambiguous; fall back to the agent
-  // id for duplicate names so every listed model id resolves to one agent.
+/**
+ * One collision-free advertised-id map, used by both listing and
+ * resolution. An agent name is advertised only when it is unique among
+ * names AND does not equal any agent id — otherwise the agent id is
+ * advertised — so every advertised id resolves to exactly one agent and
+ * raw agent-id lookups can never be shadowed by another agent's name.
+ */
+function buildAdvertisedModelMap(
+  agents: AgentModelEntry[],
+): Map<string, AgentModelEntry> {
+  const ids = new Set(agents.map((agent) => agent.id));
   const nameCounts = new Map<string, number>();
   for (const agent of agents) {
     if (!agent.name) continue;
     nameCounts.set(agent.name, (nameCounts.get(agent.name) ?? 0) + 1);
   }
-  const data = agents.map((agent) => ({
-    id: agent.name && nameCounts.get(agent.name) === 1 ? agent.name : agent.id,
+  const advertised = new Map<string, AgentModelEntry>();
+  for (const agent of agents) {
+    const useName =
+      agent.name && nameCounts.get(agent.name) === 1 && !ids.has(agent.name);
+    const id = useName && agent.name ? agent.name : agent.id;
+    if (!advertised.has(id)) advertised.set(id, agent);
+  }
+  return advertised;
+}
+
+async function handleListModels(response: ServerResponse): Promise<void> {
+  const advertised = buildAdvertisedModelMap(await listAgentEntries());
+  const data = [...advertised.entries()].map(([id, agent]) => ({
+    id,
     object: "model" as const,
     created: toModelCreatedTimestamp(agent.created_at),
     owned_by: "letta",
@@ -266,27 +298,17 @@ async function resolveAgentForModel(
 ): Promise<AgentModelEntry | null> {
   const agents = await listAgentEntries();
   return (
+    buildAdvertisedModelMap(agents).get(model) ??
     agents.find((agent) => agent.id === model) ??
-    agents.find((agent) => agent.name === model) ??
     null
   );
 }
 
-// Conversation continuity across stateless chat-completions requests.
-// The protocol carries no thread id, so a client chat is identified by a
-// fingerprint of its transcript prefix (the user/assistant turns before
-// the message being sent). A first message has an empty prefix and starts
-// a fresh Letta conversation; after each completed turn we also store the
-// fingerprint of the transcript including the new reply, which is exactly
-// the prefix the client will resend on its next message in that chat.
-// Bounded FIFO map: long-idle chats fall out and start a new conversation.
+// Conversation continuity for header-keyed chats. Clients that supply a
+// stable chat identity get a pinned Letta conversation; the bounded FIFO
+// map evicts long-idle chats, which then start a fresh conversation.
 const MAX_TRACKED_TRANSCRIPTS = 4096;
 const conversationIdByTranscript = new Map<string, string>();
-
-interface TranscriptTurn {
-  role: string;
-  text: string;
-}
 
 function rememberConversation(key: string, conversationId: string): void {
   conversationIdByTranscript.delete(key);
@@ -296,35 +318,6 @@ function rememberConversation(key: string, conversationId: string): void {
     if (oldest === undefined) break;
     conversationIdByTranscript.delete(oldest);
   }
-}
-
-function transcriptFingerprint(
-  agentId: string,
-  turns: TranscriptTurn[],
-): string {
-  const hash = createHash("sha256");
-  hash.update(agentId);
-  for (const turn of turns) {
-    hash.update("\0");
-    hash.update(turn.role);
-    hash.update("\0");
-    hash.update(turn.text);
-  }
-  return hash.digest("hex");
-}
-
-/** User/assistant turns with text content, in order; system turns are
- * excluded because clients vary them independently of the thread. */
-function normalizeTranscript(messages: OpenAiChatMessage[]): TranscriptTurn[] {
-  const turns: TranscriptTurn[] = [];
-  for (const message of messages) {
-    if (message.role !== "user" && message.role !== "assistant") continue;
-    turns.push({
-      role: message.role,
-      text: extractTextContent(message.content),
-    });
-  }
-  return turns;
 }
 
 // Conversation creation is serialized per agent: concurrent creations race
@@ -355,19 +348,19 @@ async function createConversationWithRetry(agentId: string): Promise<string> {
   throw lastError;
 }
 
-async function resolveConversationId(
+/** Serialized per-agent conversation creation (see note above). The
+ * optional reuseKey is re-checked after the queue drains so a concurrent
+ * request with the same key reuses the conversation it created. */
+async function createConversationSerialized(
   agentId: string,
-  prefixKey: string,
+  reuseKey?: string,
 ): Promise<string> {
-  const existing = conversationIdByTranscript.get(prefixKey);
-  if (existing) return existing;
   const tail = conversationCreateTailByAgent.get(agentId) ?? Promise.resolve();
   const creation = tail.then(async () => {
-    // Re-check after the queue drains: a concurrent request with the same
-    // key (e.g. a double-send from a header-keyed chat) may have created
-    // and remembered the conversation while this one waited.
-    const raced = conversationIdByTranscript.get(prefixKey);
-    if (raced) return raced;
+    if (reuseKey) {
+      const raced = conversationIdByTranscript.get(reuseKey);
+      if (raced) return raced;
+    }
     return await createConversationWithRetry(agentId);
   });
   const settled = creation.then(
@@ -381,6 +374,15 @@ async function resolveConversationId(
     }
   });
   return await creation;
+}
+
+async function resolveConversationId(
+  agentId: string,
+  chatKey: string,
+): Promise<string> {
+  const existing = conversationIdByTranscript.get(chatKey);
+  if (existing) return existing;
+  return await createConversationSerialized(agentId, chatKey);
 }
 
 // Clients that know their chat identity can pin it explicitly instead of
@@ -525,7 +527,16 @@ async function runTurnViaListenerRuntime(
       completion_tokens: 0,
       total_tokens: 0,
     };
+    // The request settles from ITS OWN turn's lifecycle (turn-observers,
+    // keyed by OTID), never from raw stream events: stop_reason ends a
+    // stream segment before the listener decides on retries/approvals, and
+    // usage can arrive after it. Stream deltas are accumulated only while
+    // this request's turn is active, so queued requests and WS-initiated
+    // turns in the same conversation never bleed into this response.
+    let turnActive = false;
+    let recordedError: string | null = null;
     let settled = false;
+    let unregisterTurnObserver: () => void = () => {};
     if (!listener.streamObservers) {
       listener.streamObservers = new Set();
     }
@@ -536,12 +547,21 @@ async function runTurnViaListenerRuntime(
       settled = true;
       clearTimeout(timer);
       observers.delete(observer);
+      unregisterTurnObserver();
       resolve({ text, usage, error });
     };
 
     const observer: ListenerStreamObserver = (message) => {
+      if (message.type === "runtime_stopped") {
+        finish(
+          recordedError ??
+            "server runtime was replaced while the request was in flight",
+        );
+        return;
+      }
       if (message.runtime.agent_id !== params.agentId) return;
       if (message.runtime.conversation_id !== params.conversationId) return;
+      if (!turnActive) return;
       if (message.type === "update_loop_status") {
         // The turn paused for interactive input this surface cannot provide.
         const status = (message as { loop_status?: { status?: string } })
@@ -582,38 +602,37 @@ async function runTurnViaListenerRuntime(
           };
           return;
         }
-        case "stop_reason": {
-          const stopReason = (delta as { stop_reason?: string }).stop_reason;
-          // requires_approval ends a stream segment, not the turn: the turn
-          // processor evaluates the approval (auto-approving under the
-          // conversation's permission mode) and continues. Keep observing;
-          // a WAITING_ON_APPROVAL loop status marks a truly stuck turn.
-          if (stopReason === "requires_approval") return;
-          finish(null);
-          return;
-        }
         case "loop_error": {
+          // Recorded, not settled: the listener may still retry. The turn
+          // lifecycle end decides the final outcome.
           const loopError = delta as {
             is_terminal?: boolean;
             message?: string;
           };
           if (loopError.is_terminal !== false) {
-            finish(loopError.message ?? "agent turn failed");
+            recordedError = loopError.message ?? "agent turn failed";
           }
           return;
         }
         case "error_message":
-          finish(
-            (delta as { message?: string }).message ?? "agent turn failed",
-          );
+          recordedError =
+            (delta as { message?: string }).message ?? "agent turn failed";
           return;
         default:
           return;
       }
     };
     observers.add(observer);
+    unregisterTurnObserver = registerTurnObserver(params.correlationOtid, {
+      onStarted: () => {
+        turnActive = true;
+      },
+      onFinished: () => {
+        finish(recordedError);
+      },
+    });
     const timer = setTimeout(
-      () => finish("agent turn timed out"),
+      () => finish(recordedError ?? "agent turn timed out"),
       OPENAI_TURN_TIMEOUT_MS,
     );
 
@@ -621,13 +640,7 @@ async function runTurnViaListenerRuntime(
       type: "message",
       agentId: params.agentId,
       conversationId: params.conversationId,
-      messages: [
-        {
-          role: "user",
-          content: params.userContent,
-          otid: randomUUID(),
-        },
-      ],
+      messages: params.messages,
     };
     try {
       dispatchInboundMessageWhenReady({
@@ -706,12 +719,6 @@ async function handleChatCompletions(
     return;
   }
 
-  const transcript = normalizeTranscript(body.messages);
-  const lastUserIndex = transcript.findLastIndex(
-    (turn) => turn.role === "user",
-  );
-  const userText =
-    (lastUserIndex >= 0 && transcript[lastUserIndex]?.text) || "";
   const lastUserMessage = [...body.messages]
     .reverse()
     .find((message) => message.role === "user");
@@ -738,18 +745,20 @@ async function handleChatCompletions(
     return;
   }
 
-  const prefixTurns = transcript.slice(0, lastUserIndex);
+  // Stateful mode requires a stable chat identity from the client; without
+  // one, identical transcripts are indistinguishable and any reuse
+  // heuristic can cross-wire chats. Header-less requests run statelessly:
+  // a fresh conversation per request, with the client transcript replayed.
   const headerChatKey = chatKeyFromHeaders(request);
-  const prefixKey = headerChatKey
-    ? `chat-key:${agent.id}:${headerChatKey}`
-    : transcriptFingerprint(agent.id, prefixTurns);
   let conversationId: string;
   try {
-    conversationId = await resolveConversationId(agent.id, prefixKey);
     if (headerChatKey) {
-      // Header keys are stable chat identities: pin them immediately so a
-      // concurrent request for the same chat reuses this conversation.
-      rememberConversation(prefixKey, conversationId);
+      const chatKey = `chat-key:${agent.id}:${headerChatKey}`;
+      conversationId = await resolveConversationId(agent.id, chatKey);
+      // Pin immediately so concurrent requests for this chat reuse it.
+      rememberConversation(chatKey, conversationId);
+    } else {
+      conversationId = await createConversationSerialized(agent.id);
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -759,6 +768,40 @@ async function handleChatCompletions(
       500,
       "failed to create a conversation for this chat",
       "server_error",
+    );
+    return;
+  }
+
+  const turnMessages: BridgeTurnMessage[] = [];
+  if (headerChatKey) {
+    turnMessages.push({
+      role: "user",
+      content: userContent,
+      otid: randomUUID(),
+    });
+  } else {
+    for (const message of body.messages) {
+      if (message.role !== "user" && message.role !== "assistant") continue;
+      let content: UserContentPart[];
+      if (message === lastUserMessage) {
+        content = userContent;
+      } else if (message.role === "user") {
+        content = extractUserContentParts(message.content);
+      } else {
+        const replyText = extractTextContent(message.content);
+        content = replyText ? [{ type: "text", text: replyText }] : [];
+      }
+      if (content.length === 0) continue;
+      turnMessages.push({ role: message.role, content, otid: randomUUID() });
+    }
+  }
+  const correlationOtid = turnMessages.at(-1)?.otid;
+  if (!correlationOtid) {
+    sendOpenAiError(
+      response,
+      400,
+      "the messages array must include usable content",
+      "invalid_request_error",
     );
     return;
   }
@@ -793,7 +836,8 @@ async function handleChatCompletions(
     outcome = await runTurnImpl({
       agentId: agent.id,
       conversationId,
-      userContent,
+      messages: turnMessages,
+      correlationOtid,
       onLog: options.onLog,
       onAssistantText: streaming
         ? (piece) => {
@@ -824,31 +868,6 @@ async function handleChatCompletions(
   const streamError = outcome.error;
 
   if (clientClosed) return;
-
-  if (!streamError) {
-    // Map the prefix itself (so a regenerate of the same message reuses
-    // this conversation) and the transcript including the new reply (the
-    // prefix the client resends on its next message in this chat). The
-    // EMPTY prefix is shared by every brand-new chat and must never be
-    // remembered — doing so would funnel all new chats into one
-    // conversation. Header-keyed chats are already pinned by their stable
-    // key and skip transcript bookkeeping entirely.
-    if (headerChatKey) {
-      rememberConversation(prefixKey, conversationId);
-    } else {
-      if (prefixTurns.length > 0) {
-        rememberConversation(prefixKey, conversationId);
-      }
-      rememberConversation(
-        transcriptFingerprint(agent.id, [
-          ...prefixTurns,
-          { role: "user", text: userText },
-          { role: "assistant", text: fullText },
-        ]),
-        conversationId,
-      );
-    }
-  }
 
   if (streaming) {
     if (streamError) {

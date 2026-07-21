@@ -103,6 +103,7 @@ import {
   safeEmitWsEvent,
   setActiveRuntime,
 } from "./runtime";
+import { notifyStreamObserversRuntimeStopped } from "./stream-observers";
 import {
   getListenerTransportKind,
   isListenerTransportOpen,
@@ -110,6 +111,7 @@ import {
   LocalListenerTransport,
 } from "./transport";
 import { handleIncomingMessage } from "./turn";
+import { escapeTaskNotificationSummary } from "./turn-events";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -122,13 +124,6 @@ import {
   scheduleListenerWarmupsAfterSync,
 } from "./warmup";
 import { stopAllWorktreeWatchers } from "./worktree-watcher";
-
-function escapeTaskNotificationSummary(summary: string): string {
-  return summary
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
 
 function trackListenerError(
   errorType: string,
@@ -918,6 +913,7 @@ export function stopRuntime(
   runtime: ListenerRuntime,
   suppressCallbacks: boolean,
 ): void {
+  notifyStreamObserversRuntimeStopped(runtime);
   disposeListenerModAdapter(runtime);
   rejectPendingExternalToolCalls(runtime, "Listener runtime stopped");
   setMessageQueueAdder(null); // Clear bridge for ALL stop paths
