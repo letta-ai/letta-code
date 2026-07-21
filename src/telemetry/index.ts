@@ -16,7 +16,7 @@ export type TelemetrySurface =
   | "letta_code_desktop";
 
 export type TelemetryBackend =
-  | "constellation"
+  | "cloud"
   | "local"
   | "docker_deprecated"
   | "self_hosted_api"
@@ -201,11 +201,11 @@ export function resolveTelemetryBackend(options?: {
   }
 
   if (isTelemetryCloudServerUrl(serverUrl)) {
-    return "constellation";
+    return "cloud";
   }
 
   if (isLettaCodeDesktopRuntime(env)) {
-    return "constellation";
+    return "cloud";
   }
 
   if (isLikelyDeprecatedDockerBackendUrl(serverUrl)) {

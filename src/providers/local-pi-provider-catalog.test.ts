@@ -30,7 +30,7 @@ describe("local pi provider catalog", () => {
     clearRegisteredPiProviders();
   });
 
-  test("Constellation /connect configs exclude local-only providers", () => {
+  test("Cloud /connect configs exclude local-only providers", () => {
     const apiProviderIds = new Set(
       getProviderConfigs("api").map((provider) => provider.id),
     );
