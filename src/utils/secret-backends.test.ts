@@ -285,7 +285,7 @@ exit 2
           MACOS_STDIN_LOG: stdinLog,
         },
       });
-      const backend = __getExplicitNodeSecretBackendForTests();
+      const backend = __getExplicitNodeSecretBackendForTests("darwin");
       expect(backend).not.toBeNull();
 
       await backend?.set({
@@ -615,9 +615,6 @@ const backend = createExplicitNodeSecretBackend("darwin");
 if (!backend) throw new Error("missing macOS backend");
 const value = await backend.get({ service: process.env.SERVICE, name: process.env.BUN_NAME });
 if (value !== process.env.BUN_VALUE) throw new Error("Bun-to-Node value mismatch");
-if (!(await backend.delete({ service: process.env.SERVICE, name: process.env.BUN_NAME }))) {
-  throw new Error("Node failed to delete the legacy Bun entry");
-}
 await backend.set({ service: process.env.SERVICE, name: process.env.NODE_NAME, value: process.env.NODE_VALUE });
 `,
           env: {
@@ -634,15 +631,45 @@ await backend.set({ service: process.env.SERVICE, name: process.env.NODE_NAME, v
         });
         expect(node.status, `${node.stdout}\n${node.stderr}`).toBe(0);
 
+        const restartedNode = spawnSync("node", ["--input-type=module"], {
+          input: `
+const { createExplicitNodeSecretBackend } = await import(process.env.MODULE_URL);
+const backend = createExplicitNodeSecretBackend("darwin");
+if (!backend) throw new Error("missing macOS backend");
+const bunValue = await backend.get({ service: process.env.SERVICE, name: process.env.BUN_NAME });
+const nodeValue = await backend.get({ service: process.env.SERVICE, name: process.env.NODE_NAME });
+if (bunValue !== process.env.BUN_VALUE) throw new Error("legacy value missing after restart");
+if (nodeValue !== process.env.NODE_VALUE) throw new Error("Node value missing after restart");
+if (!(await backend.delete({ service: process.env.SERVICE, name: process.env.BUN_NAME }))) {
+  throw new Error("Node failed to delete the legacy Bun entry after restart");
+}
+if (!(await backend.delete({ service: process.env.SERVICE, name: process.env.NODE_NAME }))) {
+  throw new Error("Node failed to delete its entry after restart");
+}
+`,
+          env: {
+            ...process.env,
+            MODULE_URL: moduleUrl,
+            SERVICE: service,
+            BUN_NAME: bunName,
+            NODE_NAME: nodeName,
+            BUN_VALUE: bunValue,
+            NODE_VALUE: nodeValue,
+          },
+          encoding: "utf8",
+          timeout: 30_000,
+        });
+        expect(
+          restartedNode.status,
+          `${restartedNode.stdout}\n${restartedNode.stderr}`,
+        ).toBe(0);
+
         expect(
           await bunSecretsForInterop.get({ service, name: bunName }),
         ).toBeNull();
         expect(
           await bunSecretsForInterop.get({ service, name: nodeName }),
-        ).toBe(nodeValue);
-        expect(
-          await bunSecretsForInterop.delete({ service, name: nodeName }),
-        ).toBe(true);
+        ).toBeNull();
       } finally {
         await Promise.allSettled([
           bunSecretsForInterop.delete({ service, name: bunName }),

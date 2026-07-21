@@ -66,7 +66,15 @@ const locator = {
 };
 
 try {
-  if (process.env.LETTA_SECRET_MIGRATION_OPERATION === "delete") {
+  if (process.env.LETTA_SECRET_MIGRATION_OPERATION === "set") {
+    const request = JSON.parse(await Bun.stdin.text());
+    await Bun.secrets.set({
+      ...locator,
+      value: Buffer.from(request.valueBase64, "base64").toString("utf8"),
+      allowUnrestrictedAccess: true,
+    });
+    process.stdout.write(JSON.stringify({ ok: true }));
+  } else if (process.env.LETTA_SECRET_MIGRATION_OPERATION === "delete") {
     const deleted = await Bun.secrets.delete(locator);
     process.stdout.write(JSON.stringify({ ok: true, deleted }));
   } else {
@@ -269,13 +277,11 @@ interface BunMacMigrationResponse {
 }
 
 let runtimeOverrideForTests: SecretRuntimeOverride | null = null;
-const migratedMacKeychainLocators = new Set<string>();
 
 export function __setSecretRuntimeOverrideForTests(
   override: SecretRuntimeOverride | null,
 ): void {
   runtimeOverrideForTests = override;
-  migratedMacKeychainLocators.clear();
 }
 
 export function __getWindowsCredentialScriptForTests(): string {
@@ -490,13 +496,10 @@ function getBunExecutablePath(runtime: SecretRuntime): string | null {
   return findExecutableOnPath("bun", runtime.env);
 }
 
-function macKeychainLocatorKey({ service, name }: SecretLocator): string {
-  return `${service.length}:${service}${name}`;
-}
-
-async function runBunMacKeychainMigration(
-  operation: "get" | "delete",
+async function runBunMacKeychainOperation(
+  operation: "get" | "set" | "delete",
   locator: SecretLocator,
+  value?: string,
 ): Promise<BunMacMigrationResponse | null> {
   const runtime = getRuntime();
   const bunPath = getBunExecutablePath(runtime);
@@ -512,6 +515,12 @@ async function runBunMacKeychainMigration(
         LETTA_SECRET_MIGRATION_SERVICE: locator.service,
         LETTA_SECRET_MIGRATION_NAME: locator.name,
       },
+      input:
+        operation === "set"
+          ? JSON.stringify({
+              valueBase64: Buffer.from(value ?? "", "utf8").toString("base64"),
+            })
+          : undefined,
     },
   );
 
@@ -570,14 +579,11 @@ function createMacKeyringBackend(): SecretBackend {
     kind: "macos-keyring",
     get: async ({ service, name }) => {
       const locator = { service, name };
-      const locatorKey = macKeychainLocatorKey(locator);
-      if (!migratedMacKeychainLocators.has(locatorKey)) {
-        const migration = await runBunMacKeychainMigration("get", locator);
-        if (migration) {
-          if (migration.valueBase64 == null) return null;
-          migratedMacKeychainLocators.add(locatorKey);
-          return Buffer.from(migration.valueBase64, "base64").toString("utf8");
-        }
+      const bunResult = await runBunMacKeychainOperation("get", locator);
+      if (bunResult) {
+        return bunResult.valueBase64 == null
+          ? null
+          : Buffer.from(bunResult.valueBase64, "base64").toString("utf8");
       }
 
       const result = await runMacSecurityCommand([
@@ -593,6 +599,10 @@ function createMacKeyringBackend(): SecretBackend {
       throw commandError("macOS Keychain", "get", result);
     },
     set: async ({ service, name, value }) => {
+      const locator = { service, name };
+      const bunResult = await runBunMacKeychainOperation("set", locator, value);
+      if (bunResult) return;
+
       if (value.includes("\n")) {
         throw new Error(
           "macOS cross-runtime Keychain storage does not accept line breaks",
@@ -616,16 +626,12 @@ function createMacKeyringBackend(): SecretBackend {
       if (result.code !== 0) {
         throw commandError("macOS Keychain", "set", result);
       }
-      migratedMacKeychainLocators.add(macKeychainLocatorKey({ service, name }));
     },
     delete: async ({ service, name }) => {
       const locator = { service, name };
-      const locatorKey = macKeychainLocatorKey(locator);
-      if (!migratedMacKeychainLocators.has(locatorKey)) {
-        const migration = await runBunMacKeychainMigration("delete", locator);
-        if (migration) {
-          return migration.deleted === true;
-        }
+      const bunResult = await runBunMacKeychainOperation("delete", locator);
+      if (bunResult) {
+        return bunResult.deleted === true;
       }
 
       const result = await runMacSecurityCommand([
