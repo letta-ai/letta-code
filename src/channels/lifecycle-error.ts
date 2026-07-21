@@ -16,6 +16,14 @@ const APPROVAL_PENDING_ERROR_PATTERNS = [
   /approve or deny the pending request/i,
 ];
 
+const LETTA_CLOUD_DATABASE_LOCK_TIMEOUT_PATTERN =
+  /\bcancel(?:l)?ing statement due to lock timeout\b/i;
+const POSTGRES_LOCK_NOT_AVAILABLE_CODE_PATTERN = /\b55P03\b/i;
+const POSTGRES_LOCK_NOT_AVAILABLE_SQLSTATE_PATTERN =
+  /\b(?:sqlstate|pgcode)\s*[:=]?\s*["']?55P03\b/i;
+const POSTGRES_LOCK_NOT_AVAILABLE_CONTEXT_PATTERN =
+  /\b(?:postgres(?:ql)?|psycopg|sqlalchemy|lock[_ -]?not[_ -]?available|lock timeout)\b/i;
+
 const RUN_ID_PATTERNS = [
   /"run_id"\s*:\s*"([^"\\]+)"/i,
   /\brun[_\s-]?id\b["']?\s*[:=]\s*["']?([A-Za-z0-9_-]+)/i,
@@ -25,6 +33,7 @@ const RUN_ID_PATTERNS = [
 export type ChannelLifecycleErrorKind =
   | "approval_pending"
   | "conversation_busy"
+  | "letta_cloud_busy"
   | "generic";
 
 export interface ChannelLifecycleErrorDisplayOptions {
@@ -50,6 +59,9 @@ export const CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE =
 
 export const CHANNEL_LIFECYCLE_APPROVAL_PENDING_MESSAGE =
   "The agent is still waiting on a tool approval from an earlier turn. Please approve or deny that pending request, then send your message again.";
+
+export const CHANNEL_LIFECYCLE_LETTA_CLOUD_BUSY_MESSAGE =
+  "Letta Cloud was temporarily busy, so the turn could not finish. Please try again.";
 
 export const CHANNEL_LIFECYCLE_CONVERSATION_BUSY_TITLE =
   CONVERSATION_BUSY_TITLE;
@@ -143,6 +155,15 @@ function truncateLifecycleMessage(text: string, maxLength: number): string {
   return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
+function isLettaCloudDatabaseLockErrorText(errorText: string): boolean {
+  return (
+    LETTA_CLOUD_DATABASE_LOCK_TIMEOUT_PATTERN.test(errorText) ||
+    POSTGRES_LOCK_NOT_AVAILABLE_SQLSTATE_PATTERN.test(errorText) ||
+    (POSTGRES_LOCK_NOT_AVAILABLE_CODE_PATTERN.test(errorText) &&
+      POSTGRES_LOCK_NOT_AVAILABLE_CONTEXT_PATTERN.test(errorText))
+  );
+}
+
 export function getChannelLifecycleErrorDisplay(
   errorText: string | null | undefined,
   options: ChannelLifecycleErrorDisplayOptions = {},
@@ -156,6 +177,15 @@ export function getChannelLifecycleErrorDisplay(
       kind: "generic",
       title: "Turn failed",
       body: CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE,
+      runId,
+    };
+  }
+
+  if (isLettaCloudDatabaseLockErrorText(normalized)) {
+    return {
+      kind: "letta_cloud_busy",
+      title: "Turn failed",
+      body: CHANNEL_LIFECYCLE_LETTA_CLOUD_BUSY_MESSAGE,
       runId,
     };
   }
@@ -205,6 +235,14 @@ export function formatChannelLifecycleErrorMessage(
 
   if (display.kind === "conversation_busy") {
     const lines = [display.title, body];
+    if (display.runId) {
+      lines.push("", `Run ID: ${display.runId}`);
+    }
+    return lines.join("\n");
+  }
+
+  if (display.kind === "letta_cloud_busy") {
+    const lines = [`${display.title}:`, body];
     if (display.runId) {
       lines.push("", `Run ID: ${display.runId}`);
     }
