@@ -185,8 +185,9 @@ channel command set is:
 - `/reflection` — start a memory reflection pass for the current route's agent
   conversation when MemFS is enabled.
 
-Slack-native slash command payloads currently exist only for `/cancel`; the rest
-are expected to be sent as normal channel messages in the relevant chat/thread.
+Slack-native slash command payloads are registered for the shared command set
+by `src/channels/slack/manifest.ts`, so the app manifest and Bolt registration
+stay in lockstep.
 
 ## Access control
 
@@ -225,52 +226,35 @@ allowed in any scope, and allowlisted senders skip the pairing handshake.
 
 ## Slack app manifest notes
 
-The bundled Slack channel runs in Socket Mode. The Slack app must still declare
-the events, scopes, and slash commands that Slack should deliver to Letta Code.
-For `/cancel`, add the `commands` bot scope and a native slash command entry:
+The bundled Slack channel runs in Socket Mode. The source-of-truth app manifest
+lives in `src/channels/slack/manifest.ts`; use `buildSlackAppManifest()` instead
+of hand-copying YAML. It declares bot scopes including `commands`, event
+subscriptions, Socket Mode settings, App Home messages, and native
+`features.slash_commands` entries derived from `listChannelSlashCommands()`.
 
-```yaml
-features:
-  slash_commands:
-    - command: /cancel
-      url: https://example.com/slack/commands
-      description: Cancel the in-progress Letta agent turn
-      usage_hint: ""
-      should_escape: false
-oauth_config:
-  scopes:
-    bot:
-      - app_mentions:read
-      - channels:history
-      - chat:write
-      - commands
-      - files:read
-      - files:write
-      - groups:history
-      - im:history
-      - reactions:read
-      - reactions:write
-      - users:read
-settings:
-  event_subscriptions:
-    bot_events:
-      - app_mention
-      - message.channels
-      - message.groups
-      - message.im
-      - reaction_added
-      - reaction_removed
-  socket_mode_enabled: true
-```
+Bot scopes cover every Slack Web API call the adapter makes:
 
-Slack-native slash command payloads do not identify a thread. If `/cancel` is
+- `assistant:write` — `assistant.threads.setStatus` for live progress status.
+- `channels:read` — `conversations.list` public channels for proactive target resolution.
+- `groups:read` — `conversations.list` private channels for proactive target resolution.
+- `im:write` — `conversations.open` for proactive DM target resolution.
+- `channels:history`, `groups:history`, `im:history` — message event subscriptions.
+- `chat:write` — `chat.postMessage` for outbound replies.
+- `commands` — native slash command interactivity.
+- `files:read`, `files:write` — inbound attachment download and outbound upload.
+- `reactions:read`, `reactions:write` — lifecycle reaction tracking.
+- `app_mentions:read` — `app_mention` event delivery.
+- `users:read` — sender display name resolution.
+
+Slack manifests still require a `features.slash_commands[].url` for each slash
+command. In Socket Mode this can stay as the generated placeholder because Bolt
+receives the payload over the app-level WebSocket.
+
+Slack-native slash command payloads do not identify a thread. If a command is
 sent through Slack's native command UI in a channel, Letta Code can target the
 sole routed thread in that channel; if multiple Letta threads are routed there,
-send `/cancel` as a normal thread message instead so the thread route is
+send the slash command as a normal thread message instead so the thread route is
 unambiguous.
-
-The slash command `url` is present because Slack manifests require one; the
-Socket Mode listener receives the command over the app-level WebSocket.
 
 
 ## First-party vs user plugins
