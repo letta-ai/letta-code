@@ -58,10 +58,14 @@ function normalizeOpenAICompatibleLocalModelHandle(
 ): string | undefined {
   if (!model?.startsWith("openai/")) return model;
   const nestedHandle = model.slice("openai/".length);
+  if (resolveRegisteredPiProviderFromModelHandle(nestedHandle)) {
+    return nestedHandle;
+  }
   const nestedProvider = resolveProviderFromModelHandle(nestedHandle);
   if (!nestedProvider) return model;
-  return getPiProviderSpec(nestedProvider).localModelDiscovery ===
-    "openai-compatible"
+  const nestedSpec = getPiProviderSpec(nestedProvider);
+  return nestedSpec.piProvider !== undefined ||
+    nestedSpec.localModelDiscovery === "openai-compatible"
     ? nestedHandle
     : model;
 }
