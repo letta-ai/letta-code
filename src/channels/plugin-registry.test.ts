@@ -9,6 +9,7 @@ import {
 } from "@/channels/message-tool";
 import {
   __testClearUserChannelPluginCache,
+  __testOverrideFirstPartySourceChannelsDir,
   getChannelDisplayName,
   getChannelPluginMetadata,
   getSupportedChannelIds,
@@ -70,6 +71,64 @@ function writeDemoChannel(): void {
   );
 }
 
+function writeVersionedDemoPlugin(version: string, failLoad = false): void {
+  const channelDir = join(channelsRoot, "demo");
+  writeFileSync(
+    join(channelDir, "plugin.mjs"),
+    failLoad
+      ? `throw new Error("broken ${version}");\n`
+      : `export const channelPlugin = {
+          version: ${JSON.stringify(version)},
+          metadata: { id: "demo", displayName: "Demo Chat" },
+          createAdapter(account) {
+            return {
+              id: "demo:" + account.accountId,
+              channelId: "demo",
+              accountId: account.accountId,
+              name: "Demo Chat " + ${JSON.stringify(version)},
+              start: async () => {},
+              stop: async () => {},
+              isRunning: () => true,
+              sendMessage: async () => ({ messageId: "demo-1" }),
+              sendDirectReply: async () => {}
+            };
+          }
+        };\n`,
+  );
+}
+
+function writeFirstPartyCustomFixture(version: string): string {
+  const sourceRoot = join(channelsRoot, "first-party-source");
+  const customDir = join(sourceRoot, "custom");
+  mkdirSync(customDir, { recursive: true });
+  writeFileSync(
+    join(customDir, "behavior.ts"),
+    `export const behavior = ${JSON.stringify(version)};\n`,
+  );
+  writeFileSync(
+    join(customDir, "plugin.ts"),
+    `import { behavior } from "@/channels/custom/behavior";
+     export const customChannelPlugin = {
+       behavior,
+       metadata: { id: "custom", displayName: "Custom" },
+       createAdapter(account) {
+         return {
+           id: "custom:" + account.accountId,
+           channelId: "custom",
+           accountId: account.accountId,
+           name: "Custom " + behavior,
+           start: async () => {},
+           stop: async () => {},
+           isRunning: () => true,
+           sendMessage: async () => ({ messageId: "custom-1" }),
+           sendDirectReply: async () => {}
+         };
+       }
+     };\n`,
+  );
+  return sourceRoot;
+}
+
 beforeEach(() => {
   channelsRoot = mkdtempSync(join(tmpdir(), "letta-channel-plugins-"));
   __testOverrideChannelsRoot(channelsRoot);
@@ -103,6 +162,33 @@ test("discovers user channel plugins from channel.json manifests", async () => {
     source: "user",
     firstParty: false,
   });
+});
+
+test("force reload picks up edited user plugin source and refreshes the cache", async () => {
+  writeDemoChannel();
+  writeVersionedDemoPlugin("one");
+  const first = await loadChannelPlugin("demo");
+
+  writeVersionedDemoPlugin("two");
+  expect(await loadChannelPlugin("demo")).toBe(first);
+
+  const reloaded = await loadChannelPlugin("demo", { forceReload: true });
+  expect((reloaded as typeof reloaded & { version: string }).version).toBe(
+    "two",
+  );
+  expect(await loadChannelPlugin("demo")).toBe(reloaded);
+});
+
+test("failed force reload restores the previous working plugin cache", async () => {
+  writeDemoChannel();
+  writeVersionedDemoPlugin("working");
+  const working = await loadChannelPlugin("demo");
+
+  writeVersionedDemoPlugin("candidate", true);
+  await expect(
+    loadChannelPlugin("demo", { forceReload: true }),
+  ).rejects.toThrow("broken candidate");
+  expect(await loadChannelPlugin("demo")).toBe(working);
 });
 
 test("user plugins can extend the MessageChannel action schema", async () => {
@@ -246,4 +332,22 @@ test("first-party custom channel has configSchema", () => {
   expect(urlField).not.toBeUndefined();
   expect(urlField?.type).toBe("text");
   expect(urlField?.required).toBe(true);
+});
+
+test("force reload refreshes first-party modules imported through self aliases", async () => {
+  const sourceRoot = writeFirstPartyCustomFixture("one");
+  __testOverrideFirstPartySourceChannelsDir(sourceRoot);
+  const original = await loadChannelPlugin("custom", { forceReload: true });
+  expect((original as typeof original & { behavior: string }).behavior).toBe(
+    "one",
+  );
+
+  writeFirstPartyCustomFixture("two");
+  const reloaded = await loadChannelPlugin("custom", { forceReload: true });
+
+  expect(reloaded).not.toBe(original);
+  expect((reloaded as typeof reloaded & { behavior: string }).behavior).toBe(
+    "two",
+  );
+  expect(await loadChannelPlugin("custom")).toBe(reloaded);
 });

@@ -27,11 +27,13 @@ export type ChannelSlashCommandHandlerResult = {
   handled: boolean;
   text?: string;
   modelPicker?: ChannelModelPickerData;
+  afterReply?: () => void | Promise<void>;
 };
 
 type ChannelDirectReplyPayload = {
   text: string;
   modelPicker?: ChannelModelPickerData;
+  afterReply?: () => void | Promise<void>;
 };
 
 export type ChannelSlashCommandHandlers = {
@@ -809,6 +811,7 @@ async function handleScopedCommand(params: {
   return {
     text,
     ...(result.modelPicker ? { modelPicker: result.modelPicker } : {}),
+    ...(result.afterReply ? { afterReply: result.afterReply } : {}),
   };
 }
 
@@ -953,5 +956,14 @@ export async function tryHandleChannelSlashCommand(
         }
       : undefined,
   );
+  if (reply.afterReply) {
+    void Promise.resolve()
+      .then(() => reply.afterReply?.())
+      .catch((error) => {
+        console.error(
+          `[Channels] post-reply slash command action failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+  }
   return true;
 }

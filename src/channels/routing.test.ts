@@ -7,6 +7,7 @@ import {
   getAllRoutes,
   getRoute,
   getRoutesForChannel,
+  reloadRoutes,
   removeRoute,
   removeRoutesForScope,
 } from "@/channels/routing";
@@ -124,5 +125,48 @@ describe("routing", () => {
     });
 
     expect(getAllRoutes()).toHaveLength(1);
+  });
+
+  test("reload replaces routes removed or edited in the backing store", () => {
+    addRoute("telegram", {
+      chatId: "chat-old",
+      agentId: "agent-old",
+      conversationId: "conv-old",
+      enabled: true,
+      createdAt: "2026-07-21T00:00:00.000Z",
+    });
+    __testOverrideLoadRoutes(() => [
+      {
+        chatId: "chat-new",
+        agentId: "agent-new",
+        conversationId: "conv-new",
+        enabled: true,
+        createdAt: "2026-07-21T00:00:00.000Z",
+      },
+    ]);
+
+    reloadRoutes("telegram");
+
+    expect(getRoute("telegram", "chat-old")).toBeNull();
+    expect(getRoute("telegram", "chat-new")).toMatchObject({
+      agentId: "agent-new",
+      conversationId: "conv-new",
+    });
+  });
+
+  test("failed route reload preserves the previous in-memory routes", () => {
+    addRoute("telegram", {
+      chatId: "chat-existing",
+      agentId: "agent-existing",
+      conversationId: "conv-existing",
+      enabled: true,
+      createdAt: "2026-07-21T00:00:00.000Z",
+    });
+    __testOverrideLoadRoutes(() => {
+      throw new Error("invalid route store");
+    });
+
+    expect(() => reloadRoutes("telegram")).toThrow("invalid route store");
+    expect(getRoute("telegram", "chat-existing")).not.toBeNull();
   });
 });

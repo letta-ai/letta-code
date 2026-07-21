@@ -16,6 +16,14 @@ import {
   listChannelAccounts,
   listChannelAccountsWithSecrets,
 } from "./accounts";
+import {
+  ChannelIngressBuffer,
+  ChannelReloadCoordinator,
+  type ChannelReloadOptions,
+  type ChannelReloadSummary,
+  withChannelReloadTimeout,
+} from "./channel-reload";
+import { ChannelReloadIngress } from "./channel-reload-ingress";
 import { getChannelAccountsPath, getChannelsRoot } from "./config";
 import {
   consumePairingCode,
@@ -49,6 +57,7 @@ import {
   type ChannelRouteProvisioner,
   createChannelRouteProvisioner,
 } from "./registry-routes";
+import { resolveChannelTurnSourcesForScope } from "./registry-turn-sources";
 import type { ChannelRestoreAgentScope } from "./restore-scope";
 import { shouldRestoreChannelAccountForAgentScope } from "./restore-scope";
 import {
@@ -100,7 +109,14 @@ export function getActiveChannelIds(): string[] {
 
 type ChannelStartupOptions = {
   logger?: ChannelStartupLogger;
+  forceReloadPlugin?: boolean;
+  startTimeoutMs?: number;
 };
+
+export type {
+  ChannelReloadOptions,
+  ChannelReloadSummary,
+} from "./channel-reload";
 
 export interface ChannelStartupFailure {
   channelId: string;
@@ -167,7 +183,9 @@ export class ChannelRegistry {
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
   private reloadHandler: ChannelReloadHandler | null = null;
-  private readonly buffer: ChannelInboundDelivery[] = [];
+  private readonly ingressBuffer: ChannelIngressBuffer<ChannelInboundDelivery>;
+  private readonly reloadIngress: ChannelReloadIngress;
+  private readonly reloadCoordinator: ChannelReloadCoordinator;
   private readonly controls: ChannelControlRequests;
   private readonly routes: ChannelRouteProvisioner;
   private readonly commands: ChannelCommandRouter;
@@ -199,6 +217,12 @@ export class ChannelRegistry {
       getReloadHandler: () => this.reloadHandler,
       getModelHandler: () => this.modelHandler,
     });
+    this.reloadIngress = new ChannelReloadIngress((message) =>
+      this.inbound.handleInboundMessage(message, {
+        bypassReloadBuffer: true,
+        skipPreflight: true,
+      }),
+    );
     this.inbound = createChannelInboundRouter({
       controls: this.controls,
       commands: this.commands,
@@ -208,7 +232,24 @@ export class ChannelRegistry {
       dispatchTurnLifecycleEvent: (event) =>
         this.dispatchTurnLifecycleEvent(event),
       deliver: (delivery) => this.deliverOrBuffer(delivery),
+      isReloading: () => this.reloadIngress.isActive(),
+      deferDuringReload: (message) => this.reloadIngress.defer(message),
       emitEvent: (event) => this.eventHandler?.(event),
+    });
+    this.ingressBuffer = new ChannelIngressBuffer({
+      isReady: () => this.isReady(),
+      deliver: (delivery) => this.messageHandler?.(delivery),
+    });
+    this.reloadCoordinator = new ChannelReloadCoordinator({
+      adapters: this.adapters,
+      getAdapterKey: (channelId, accountId) =>
+        this.getAdapterKey(channelId, accountId),
+      beginBuffering: () => this.reloadIngress.begin(),
+      startChannelAccount: (channelId, accountId, options) =>
+        this.startChannelAccount(channelId, accountId, options),
+      registerAdapter: (adapter) => this.registerAdapter(adapter),
+      log: logChannelStartup,
+      createError: (failures) => new ChannelInitializationError(failures),
     });
     this.unsubscribeWhatsAppState = subscribeWhatsAppConnectionState(
       (accountId) => {
@@ -221,8 +262,6 @@ export class ChannelRegistry {
     );
   }
 
-  // ── Adapter management ────────────────────────────────────────
-
   private getAdapterKey(
     channelId: string,
     accountId = LEGACY_CHANNEL_ACCOUNT_ID,
@@ -230,13 +269,7 @@ export class ChannelRegistry {
     return `${channelId}:${accountId}`;
   }
 
-  registerAdapter(adapter: ChannelAdapter): void {
-    this.adapters.set(
-      this.getAdapterKey(adapter.channelId ?? adapter.id, adapter.accountId),
-      adapter,
-    );
-
-    // Wire the adapter's onMessage to our ingress pipeline
+  private wireAdapter(adapter: ChannelAdapter): void {
     adapter.onMessage = async (msg: InboundChannelMessage) => {
       await this.inbound.handleInboundMessage(msg);
     };
@@ -244,11 +277,26 @@ export class ChannelRegistry {
       await this.controls.handleNativeResponse(input);
   }
 
+  registerAdapter(adapter: ChannelAdapter): void {
+    this.wireAdapter(adapter);
+    this.adapters.set(
+      this.getAdapterKey(adapter.channelId ?? adapter.id, adapter.accountId),
+      adapter,
+    );
+  }
+
   getAdapter(
     channelId: string,
     accountId = LEGACY_CHANNEL_ACCOUNT_ID,
   ): ChannelAdapter | null {
     return this.adapters.get(this.getAdapterKey(channelId, accountId)) ?? null;
+  }
+
+  setConfiguredChannelScope(
+    channelNames: string[],
+    restoreAgentScope?: ChannelRestoreAgentScope | null,
+  ): void {
+    this.reloadCoordinator.setConfiguredScope(channelNames, restoreAgentScope);
   }
 
   getActiveChannelIds(): string[] {
@@ -261,36 +309,11 @@ export class ChannelRegistry {
     agentId: string,
     conversationId: string,
   ): ChannelTurnSource[] {
-    const sources: ChannelTurnSource[] = [];
-    const seen = new Set<string>();
-    for (const adapter of this.adapters.values()) {
-      const channel = adapter.channelId ?? adapter.id;
-      const accountId = adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
-      for (const route of getRoutesForChannel(channel, accountId)) {
-        if (
-          route.enabled === false ||
-          route.agentId !== agentId ||
-          route.conversationId !== conversationId
-        ) {
-          continue;
-        }
-        const key = `${channel}:${accountId}:${route.chatId}:${route.threadId ?? ""}`;
-        if (seen.has(key)) {
-          continue;
-        }
-        seen.add(key);
-        sources.push({
-          channel,
-          accountId,
-          chatId: route.chatId,
-          chatType: route.chatType,
-          threadId: route.threadId ?? null,
-          agentId,
-          conversationId,
-        });
-      }
-    }
-    return sources;
+    return resolveChannelTurnSourcesForScope(
+      this.adapters.values(),
+      agentId,
+      conversationId,
+    );
   }
 
   async dispatchTurnLifecycleEvent(
@@ -411,12 +434,6 @@ export class ChannelRegistry {
     }
   }
 
-  // ── Readiness / ingress handler ───────────────────────────────
-
-  /**
-   * Set the message handler and mark the registry as ready.
-   * Called from inside startListenerClient() with closure-scoped state.
-   */
   setMessageHandler(handler: ChannelMessageHandler): void {
     this.messageHandler = handler;
   }
@@ -471,22 +488,14 @@ export class ChannelRegistry {
     this.controls.clear(requestId);
   }
 
-  /**
-   * Mark the registry as ready, flushing any buffered messages.
-   */
   setReady(): void {
     this.ready = true;
-    this.flushBuffer();
+    this.ingressBuffer.flush();
   }
 
-  /**
-   * Check if the registry is ready to deliver messages.
-   */
   isReady(): boolean {
     return this.ready && this.messageHandler !== null;
   }
-
-  // ── Routing ───────────────────────────────────────────────────
 
   getRoute(
     channel: string,
@@ -569,6 +578,7 @@ export class ChannelRegistry {
       );
       return false;
     }
+    this.reloadCoordinator.addConfiguredChannel(channelId);
 
     if (isSignalChannelAccount(account)) {
       const conflict = findSignalBaseUrlConflictForStart(
@@ -592,32 +602,85 @@ export class ChannelRegistry {
     loadPairingStore(channelId);
     loadTargetStore(channelId);
 
+    const adapterKey = this.getAdapterKey(channelId, accountId);
     const existing = this.getAdapter(channelId, accountId);
-    if (existing?.isRunning()) {
-      logChannelStartup(
-        options?.logger,
-        `stopping existing adapter for ${channelId}/${accountId}`,
-      );
-      await existing.stop();
-    }
-    this.adapters.delete(this.getAdapterKey(channelId, accountId));
+    const existingWasRunning = existing?.isRunning() ?? false;
 
     logChannelStartup(
       options?.logger,
       `loading plugin for ${account.channel}/${accountId}`,
     );
-    const plugin = await loadChannelPlugin(account.channel);
+    const plugin = await loadChannelPlugin(account.channel, {
+      forceReload: options?.forceReloadPlugin,
+    });
     logChannelStartup(
       options?.logger,
       `creating adapter for ${account.channel}/${accountId}`,
     );
     const adapter = await plugin.createAdapter(account);
-    this.registerAdapter(adapter);
-    logChannelStartup(
-      options?.logger,
-      `starting adapter for ${account.channel}/${accountId}`,
-    );
-    await adapter.start({ logger: options?.logger });
+    this.wireAdapter(adapter);
+
+    let mappedReplacement = false;
+    let startPromise: Promise<void> | null = null;
+    try {
+      if (existing?.isRunning()) {
+        logChannelStartup(
+          options?.logger,
+          `stopping existing adapter for ${channelId}/${accountId}`,
+        );
+        await existing.stop();
+      }
+
+      this.adapters.set(adapterKey, adapter);
+      mappedReplacement = true;
+      logChannelStartup(
+        options?.logger,
+        `starting adapter for ${account.channel}/${accountId}`,
+      );
+      startPromise = Promise.resolve(
+        adapter.start({ logger: options?.logger }),
+      );
+      await withChannelReloadTimeout(
+        startPromise,
+        options?.startTimeoutMs,
+        `Timed out starting adapter for ${account.channel}/${accountId}`,
+      );
+    } catch (error) {
+      if (startPromise) {
+        void startPromise
+          .then(async () => {
+            if (
+              this.adapters.get(adapterKey) !== adapter &&
+              adapter.isRunning()
+            ) {
+              await adapter.stop();
+            }
+          })
+          .catch(() => {});
+      }
+      if (mappedReplacement) {
+        this.adapters.delete(adapterKey);
+      }
+      if (adapter.isRunning()) {
+        await adapter.stop();
+      }
+      if (existing) {
+        this.registerAdapter(existing);
+        if (existingWasRunning && !existing.isRunning()) {
+          logChannelStartup(
+            options?.logger,
+            `restarting previous adapter for ${channelId}/${accountId}`,
+          );
+          await withChannelReloadTimeout(
+            Promise.resolve(existing.start({ logger: options?.logger })),
+            options?.startTimeoutMs,
+            `Timed out restarting previous adapter for ${channelId}/${accountId}`,
+          );
+        }
+      }
+      throw error;
+    }
+
     logChannelStartup(
       options?.logger,
       `started adapter for ${account.channel}/${accountId}`,
@@ -626,6 +689,7 @@ export class ChannelRegistry {
   }
 
   async stopChannel(channelId: string): Promise<boolean> {
+    this.reloadCoordinator.removeConfiguredChannel(channelId);
     const adapters = Array.from(this.adapters.values()).filter(
       (adapter) => adapter.channelId === channelId,
     );
@@ -661,6 +725,12 @@ export class ChannelRegistry {
     }
     this.adapters.delete(this.getAdapterKey(channelId, accountId));
     return true;
+  }
+
+  reloadConfiguredChannels(
+    options: ChannelReloadOptions = {},
+  ): Promise<ChannelReloadSummary> {
+    return this.reloadCoordinator.reload(options);
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────
@@ -708,6 +778,9 @@ export class ChannelRegistry {
     this.modelHandler = null;
     this.reloadHandler = null;
     this.controls.clearAll();
+    this.ingressBuffer.reset();
+    this.reloadIngress.reset();
+    this.reloadCoordinator.reset();
     this.unsubscribeWhatsAppState();
     instance = null;
   }
@@ -715,23 +788,7 @@ export class ChannelRegistry {
   // ── Inbound message pipeline ──────────────────────────────────
 
   private deliverOrBuffer(delivery: ChannelInboundDelivery): void {
-    if (this.isReady()) {
-      this.messageHandler?.(delivery);
-      return;
-    }
-
-    this.buffer.push(delivery);
-  }
-
-  private flushBuffer(): void {
-    if (!this.messageHandler) return;
-
-    while (this.buffer.length > 0) {
-      const item = this.buffer.shift();
-      if (item) {
-        this.messageHandler(item);
-      }
-    }
+    this.ingressBuffer.deliverOrBuffer(delivery);
   }
 }
 
@@ -757,6 +814,10 @@ export async function initializeChannels(
   },
 ): Promise<ChannelRegistry> {
   const registry = ensureChannelRegistry();
+  registry.setConfiguredChannelScope(
+    channelNames,
+    options?.restoreAgentScope ?? null,
+  );
   const failures: ChannelStartupFailure[] = [];
 
   logChannelStartup(

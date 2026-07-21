@@ -14,6 +14,45 @@ export type ChannelTurnRuntimeCarrier = {
   activeChannelTurn: ActiveChannelTurn | null;
 };
 
+type ActiveChannelTurnDrain = {
+  promise: Promise<void>;
+  resolve: () => void;
+};
+
+const channelTurnDrains = new WeakMap<
+  ChannelTurnRuntimeCarrier,
+  ActiveChannelTurnDrain
+>();
+
+function beginActiveChannelTurnDrain(runtime: ChannelTurnRuntimeCarrier): void {
+  completeActiveChannelTurnDrain(runtime);
+  let resolveDrain: () => void = () => {};
+  const promise = new Promise<void>((resolve) => {
+    resolveDrain = resolve;
+  });
+  channelTurnDrains.set(runtime, {
+    promise,
+    resolve: resolveDrain,
+  });
+}
+
+function completeActiveChannelTurnDrain(
+  runtime: ChannelTurnRuntimeCarrier,
+): void {
+  const drain = channelTurnDrains.get(runtime);
+  if (!drain) {
+    return;
+  }
+  channelTurnDrains.delete(runtime);
+  drain.resolve();
+}
+
+export function getActiveChannelTurnDrainPromise(
+  runtime: ChannelTurnRuntimeCarrier,
+): Promise<void> | null {
+  return channelTurnDrains.get(runtime)?.promise ?? null;
+}
+
 function getChannelTurnSourceKey(source: ChannelTurnSource): string {
   return [
     source.channel,
@@ -33,32 +72,64 @@ export function uniqueChannelTurnSources(
   return [...sourcesByKey.values()];
 }
 
-export function activateChannelTurn(
+function assignActiveChannelTurn(
   runtime: ChannelTurnRuntimeCarrier,
   turn: ActiveChannelTurn,
+  preserveExistingDrain: boolean,
 ): ActiveChannelTurn {
   const activeTurn = {
     ...turn,
     sources: [...turn.sources],
   };
   runtime.activeChannelTurn = activeTurn;
+  if (activeTurn.sources.length > 0) {
+    if (!preserveExistingDrain || !channelTurnDrains.has(runtime)) {
+      beginActiveChannelTurnDrain(runtime);
+    }
+  } else {
+    completeActiveChannelTurnDrain(runtime);
+  }
   return activeTurn;
+}
+
+export function activateChannelTurn(
+  runtime: ChannelTurnRuntimeCarrier,
+  turn: ActiveChannelTurn,
+): ActiveChannelTurn {
+  return assignActiveChannelTurn(runtime, turn, false);
 }
 
 export function recoverActiveChannelTurn(
   runtime: ChannelTurnRuntimeCarrier,
   turn: Omit<ActiveChannelTurn, "contextRecovered">,
 ): ActiveChannelTurn {
-  return activateChannelTurn(runtime, {
-    ...turn,
-    contextRecovered: true,
-  });
+  return assignActiveChannelTurn(
+    runtime,
+    { ...turn, contextRecovered: true },
+    true,
+  );
 }
 
 export function clearActiveChannelTurn(
   runtime: ChannelTurnRuntimeCarrier,
+  options: { completeDrain?: boolean } = {},
 ): void {
   runtime.activeChannelTurn = null;
+  if (options.completeDrain !== false) {
+    completeActiveChannelTurnDrain(runtime);
+  }
+}
+
+export function setActiveChannelTurnProgress(
+  runtime: ChannelTurnRuntimeCarrier,
+  batchId: string,
+  progress: ChannelTurnProgressBuilder | null,
+): void {
+  const activeTurn = runtime.activeChannelTurn;
+  if (!activeTurn || activeTurn.batchId !== batchId) {
+    return;
+  }
+  activeTurn.progress = progress;
 }
 
 export function getActiveChannelTurnProgressContext(
@@ -158,27 +229,35 @@ export async function finishActiveChannelTurn(
   const activeTurn = runtime.activeChannelTurn;
 
   if (terminal.stopReason === "requires_approval") {
-    if (!options.retainOnApproval) clearActiveChannelTurn(runtime);
+    clearActiveChannelTurn(runtime, {
+      completeDrain: !options.retainOnApproval,
+    });
     return { terminal, dispatched: false };
   }
 
   // Clear before the async dispatch so re-entrant cleanup cannot emit a
-  // second terminal event for the same turn.
-  clearActiveChannelTurn(runtime);
+  // second terminal event for the same turn, but keep the drain promise open
+  // until adapter terminal lifecycle handlers finish.
+  clearActiveChannelTurn(runtime, { completeDrain: false });
   if (!activeTurn || activeTurn.sources.length === 0) {
+    completeActiveChannelTurnDrain(runtime);
     return { terminal, dispatched: false };
   }
 
-  await dispatchChannelTurnLifecycleEvent({
-    type: "finished",
-    batchId: activeTurn.batchId,
-    sources: activeTurn.sources,
-    outcome: terminal.outcome,
-    stopReason: terminal.stopReason,
-    ...(terminal.outcome === "error" && options.error
-      ? { error: options.error }
-      : {}),
-    ...(options.runId ? { runId: options.runId } : {}),
-  });
-  return { terminal, dispatched: true };
+  try {
+    await dispatchChannelTurnLifecycleEvent({
+      type: "finished",
+      batchId: activeTurn.batchId,
+      sources: activeTurn.sources,
+      outcome: terminal.outcome,
+      stopReason: terminal.stopReason,
+      ...(terminal.outcome === "error" && options.error
+        ? { error: options.error }
+        : {}),
+      ...(options.runId ? { runId: options.runId } : {}),
+    });
+    return { terminal, dispatched: true };
+  } finally {
+    completeActiveChannelTurnDrain(runtime);
+  }
 }

@@ -18,6 +18,59 @@ const routesByKey = new Map<string, ChannelRoute>();
 let loadRoutesOverride: ((channelId: string) => ChannelRoute[] | null) | null =
   null;
 
+function applyLoadedRoutes(
+  channelId: string,
+  routes: ChannelRoute[],
+  replaceExisting: boolean,
+): void {
+  if (replaceExisting) {
+    const prefix = `${channelId}:`;
+    for (const key of Array.from(routesByKey.keys())) {
+      if (key.startsWith(prefix)) routesByKey.delete(key);
+    }
+  }
+
+  for (const route of routes) {
+    if (!route.chatId || !route.agentId || !route.conversationId) continue;
+    routesByKey.set(
+      routeKey(channelId, route.chatId, route.accountId, route.threadId),
+      {
+        accountId: normalizeAccountId(route.accountId),
+        chatId: route.chatId,
+        chatType: route.chatType,
+        threadId: route.threadId ?? null,
+        agentId: route.agentId,
+        conversationId: route.conversationId,
+        enabled: route.enabled !== false,
+        outboundEnabled: route.outboundEnabled !== false,
+        detached: route.detached === true,
+        createdAt: route.createdAt ?? new Date().toISOString(),
+        updatedAt:
+          route.updatedAt ?? route.createdAt ?? new Date().toISOString(),
+      },
+    );
+  }
+}
+
+function assertReloadableRoutes(
+  channelId: string,
+  routes: unknown[],
+): asserts routes is ChannelRoute[] {
+  const invalidIndex = routes.findIndex(
+    (route) =>
+      !route ||
+      typeof route !== "object" ||
+      typeof (route as Partial<ChannelRoute>).chatId !== "string" ||
+      typeof (route as Partial<ChannelRoute>).agentId !== "string" ||
+      typeof (route as Partial<ChannelRoute>).conversationId !== "string",
+  );
+  if (invalidIndex >= 0) {
+    throw new Error(
+      `route ${invalidIndex + 1} for ${channelId} must include chatId, agentId, and conversationId`,
+    );
+  }
+}
+
 function normalizeAccountId(accountId?: string): string {
   return accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
 }
@@ -47,35 +100,7 @@ export function loadRoutes(channelId: string): void {
     if (overriddenRoutes === null) {
       return;
     }
-
-    const prefix = `${channelId}:`;
-    for (const key of Array.from(routesByKey.keys())) {
-      if (key.startsWith(prefix)) {
-        routesByKey.delete(key);
-      }
-    }
-
-    for (const route of overriddenRoutes) {
-      if (route.chatId && route.agentId && route.conversationId) {
-        routesByKey.set(
-          routeKey(channelId, route.chatId, route.accountId, route.threadId),
-          {
-            accountId: normalizeAccountId(route.accountId),
-            chatId: route.chatId,
-            chatType: route.chatType,
-            threadId: route.threadId ?? null,
-            agentId: route.agentId,
-            conversationId: route.conversationId,
-            enabled: route.enabled !== false,
-            outboundEnabled: route.outboundEnabled !== false,
-            detached: route.detached === true,
-            createdAt: route.createdAt ?? new Date().toISOString(),
-            updatedAt:
-              route.updatedAt ?? route.createdAt ?? new Date().toISOString(),
-          },
-        );
-      }
-    }
+    applyLoadedRoutes(channelId, overriddenRoutes, true);
     return;
   }
 
@@ -86,31 +111,48 @@ export function loadRoutes(channelId: string): void {
     const text = readFileSync(path, "utf-8");
     const parsed = JSON.parse(text) as { routes?: ChannelRoute[] };
     const routes = parsed.routes ?? [];
-
-    for (const route of routes) {
-      if (route.chatId && route.agentId && route.conversationId) {
-        routesByKey.set(
-          routeKey(channelId, route.chatId, route.accountId, route.threadId),
-          {
-            accountId: normalizeAccountId(route.accountId),
-            chatId: route.chatId,
-            chatType: route.chatType,
-            threadId: route.threadId ?? null,
-            agentId: route.agentId,
-            conversationId: route.conversationId,
-            enabled: route.enabled !== false,
-            outboundEnabled: route.outboundEnabled !== false,
-            detached: route.detached === true,
-            createdAt: route.createdAt ?? new Date().toISOString(),
-            updatedAt:
-              route.updatedAt ?? route.createdAt ?? new Date().toISOString(),
-          },
-        );
-      }
-    }
+    applyLoadedRoutes(channelId, routes, false);
   } catch {
     // Corrupted file — start fresh.
   }
+}
+
+export function reloadRoutes(channelId: string): void {
+  if (loadRoutesOverride) {
+    const overriddenRoutes = loadRoutesOverride(channelId);
+    if (overriddenRoutes !== null) {
+      assertReloadableRoutes(channelId, overriddenRoutes);
+      applyLoadedRoutes(channelId, overriddenRoutes, true);
+    }
+    return;
+  }
+
+  const path = getChannelRoutingPath(channelId);
+  if (!existsSync(path)) {
+    applyLoadedRoutes(channelId, [], true);
+    return;
+  }
+
+  try {
+    const text = readFileSync(path, "utf-8");
+    const parsed = JSON.parse(text) as { routes?: ChannelRoute[] };
+    if (!Array.isArray(parsed.routes)) {
+      throw new Error("routes must be an array");
+    }
+    assertReloadableRoutes(channelId, parsed.routes);
+    applyLoadedRoutes(channelId, parsed.routes, true);
+  } catch (error) {
+    throw new Error(
+      `Failed to reload channel routes for ${channelId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+export function replaceRoutesInMemory(
+  channelId: string,
+  routes: ChannelRoute[],
+): void {
+  applyLoadedRoutes(channelId, routes, true);
 }
 
 // Test hook: when set, saveRoutes calls this instead of writing to disk.

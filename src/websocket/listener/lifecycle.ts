@@ -39,10 +39,13 @@ import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
 import { resolveListenerReconnectAuth } from "./auth";
 import {
+  createChannelReloadHandler,
+  reloadListenerRuntimeSurfaces,
+} from "./channel-reload";
+import {
   recoverActiveChannelTurn,
   uniqueChannelTurnSources,
 } from "./channel-turn-session";
-import { handleReloadCommand } from "./commands";
 import { handleChannelRegistryEvent } from "./commands/channels";
 import {
   applyModelUpdateForRuntime,
@@ -689,26 +692,18 @@ export async function wireChannelIngress(
     }
   });
 
-  registry.setReloadHandler(async ({ runtime }) => {
-    const scopedRuntime = getOrCreateScopedRuntime(
+  registry.setReloadHandler(
+    createChannelReloadHandler({
+      registry,
       listener,
-      runtime.agent_id,
-      runtime.conversation_id,
-    );
-    try {
-      const output = await handleReloadCommand(scopedRuntime);
-      emitDeviceStatusUpdate(socket, scopedRuntime, runtime);
-      return {
-        handled: true,
-        text: output,
-      };
-    } catch (error) {
-      return {
-        handled: true,
-        text: `Failed to reload listener settings: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-  });
+      getOrCreateRuntime: (agentId, conversationId) =>
+        getOrCreateScopedRuntime(listener, agentId, conversationId),
+      reloadRuntimeSurfaces: reloadListenerRuntimeSurfaces,
+      afterRuntimeReload: (runtime, scope) =>
+        emitDeviceStatusUpdate(socket, runtime, scope),
+      logger: opts.onLog,
+    }),
+  );
 
   registry.setReflectionHandler(async ({ runtime }) => {
     const agentId = runtime.agent_id;

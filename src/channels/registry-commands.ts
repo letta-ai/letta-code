@@ -18,6 +18,7 @@ import {
   buildChannelReflectionUnavailableMessage,
   buildChannelReloadUnavailableMessage,
   buildChannelResumedMessage,
+  type ChannelSlashCommandHandlerResult,
 } from "./commands";
 import type { ChannelRegistryEvent } from "./registry-events";
 import type {
@@ -329,7 +330,7 @@ export function createChannelCommandRouter(deps: {
 
   async function handleReloadSlashCommand(
     msg: InboundChannelMessage,
-  ): Promise<{ handled: boolean; text?: string }> {
+  ): Promise<ChannelSlashCommandHandlerResult> {
     const route = loadAndFindRawRouteForMessage(msg);
     if (!route?.enabled) {
       return {
@@ -347,6 +348,12 @@ export function createChannelCommandRouter(deps: {
     }
 
     return reloadHandler({
+      channelId: msg.channel,
+      accountId: route.accountId ?? msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+      chatId: msg.chatId,
+      messageId: msg.messageId,
+      threadId: msg.threadId ?? null,
+      route,
       runtime: {
         agent_id: route.agentId,
         conversation_id: route.conversationId,
