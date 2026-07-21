@@ -332,15 +332,31 @@ async function resolveConversationId(
 // verbatim reply). Open WebUI sends X-OpenWebUI-Chat-Id when
 // ENABLE_FORWARD_USER_INFO_HEADERS is on; X-Letta-Chat-Key is the generic
 // escape hatch for other clients.
-const CHAT_KEY_HEADERS = ["x-letta-chat-key", "x-openwebui-chat-id"] as const;
-
-function chatKeyFromHeaders(request: HttpIncomingMessage): string | null {
-  for (const name of CHAT_KEY_HEADERS) {
-    const value = request.headers[name];
-    if (typeof value === "string" && value) return value;
-    if (Array.isArray(value) && value[0]) return value[0];
-  }
+function headerValue(
+  request: HttpIncomingMessage,
+  name: string,
+): string | null {
+  const value = request.headers[name];
+  if (typeof value === "string" && value) return value;
+  if (Array.isArray(value) && value[0]) return value[0];
   return null;
+}
+
+/**
+ * X-Letta-Chat-Key always pins chat identity. X-OpenWebUI-Chat-Id is
+ * honored only for streaming requests: Open WebUI's real chat messages
+ * always stream, while its background task requests (title/tags/follow-up
+ * generation) are non-streaming yet carry the same chat id — honoring
+ * those would route task prompts into the user's pinned conversation.
+ */
+function chatKeyFromHeaders(
+  request: HttpIncomingMessage,
+  streaming: boolean,
+): string | null {
+  const explicit = headerValue(request, "x-letta-chat-key");
+  if (explicit) return explicit;
+  if (!streaming) return null;
+  return headerValue(request, "x-openwebui-chat-id");
 }
 
 // Retry idempotency: a client retry carrying the same Idempotency-Key
@@ -355,9 +371,8 @@ function idempotencyKeyFromHeaders(
   request: HttpIncomingMessage,
 ): string | null {
   for (const name of IDEMPOTENCY_HEADERS) {
-    const value = request.headers[name];
-    if (typeof value === "string" && value) return value;
-    if (Array.isArray(value) && value[0]) return value[0];
+    const value = headerValue(request, name);
+    if (value) return value;
   }
   return null;
 }
@@ -467,7 +482,7 @@ async function handleChatCompletions(
   // one, identical transcripts are indistinguishable and any reuse
   // heuristic can cross-wire chats. Header-less requests run statelessly:
   // a fresh conversation per request, with the client transcript replayed.
-  const headerChatKey = chatKeyFromHeaders(request);
+  const headerChatKey = chatKeyFromHeaders(request, body.stream === true);
   let conversationId: string;
   try {
     if (headerChatKey) {
