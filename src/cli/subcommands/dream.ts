@@ -3,7 +3,7 @@ import {
   type ParsedSource,
   parseFromSource,
   stageFromSource,
-} from "@/cli/subcommands/dream-sources";
+} from "@/cli/subcommands/dream-adapters";
 import {
   buildTargetInstruction,
   type DreamTarget,
@@ -28,7 +28,8 @@ Options:
                               $LETTA_AGENT_ID, then the last-used agent)
   --from <conv-id|type:path>  What to reflect on: a conversation id (default:
                               the agent's primary "default" history), or an
-                              external source, e.g. openhands:<conversation-dir>
+                              external source, e.g. claude:<session|dir>,
+                              codex:<session|dir>, openhands:<conversation-dir>,
                               or transcript:./rows.jsonl
   -m, --model <handle>        Model for the reflection subagent (default:
                               letta/auto-memory)
