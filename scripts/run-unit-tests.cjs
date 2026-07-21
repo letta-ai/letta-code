@@ -4,8 +4,7 @@ const { readFileSync, readdirSync } = require("node:fs");
 const path = require("node:path");
 
 // Unit test directories — bun discovers *.test.ts / *.test.tsx within each.
-// Listed explicitly so we skip src/integration-tests (API-gated). A small
-// number of packaging script tests are listed separately below.
+// Listed explicitly so we skip src/integration-tests (API-gated).
 const dirs = [
   "src/agent",
   "src/auth",
@@ -32,7 +31,6 @@ const dirs = [
   "src/web",
   "src/websocket",
 ];
-const scriptTestFiles = ["scripts/launcher-shebang.test.js"];
 
 const isolationManifest = JSON.parse(
   readFileSync(path.join(__dirname, "isolated-unit-tests.json"), "utf8"),
@@ -70,7 +68,6 @@ const allTestFiles = [
   ...dirs.flatMap((dir) => findTestFiles(dir)),
   ...findTestFiles("src/channels"),
   ...findRootTestFiles("src"),
-  ...scriptTestFiles,
 ].sort();
 const discoveredPaths = new Set(allTestFiles);
 

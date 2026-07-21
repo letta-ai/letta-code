@@ -16,7 +16,6 @@ import {
 } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { normalizeLauncherContent } from "./scripts/launcher-shebang.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -101,21 +100,22 @@ await Bun.build({
   // bundled AbortSignal class during bot.init().
   // But don't make `sharp` external, causes issues with global Bun-based installs
   // ref: #745, #1200
-  external: ["ws", "@vscode/ripgrep", "node-pty", "grammy"],
+  external: ["ws", "@vscode/ripgrep", "node-pty", "grammy", "@napi-rs/keyring"],
   features: features,
 });
 
-// Add Node-shebang launcher bootstrap to output file
+// Add shebang to output file
 const outputPath = join(__dirname, "letta.js");
 let content = readFileSync(outputPath, "utf-8");
 
-// Patch secrets requirement back in for node build
-content = content.replace(
-  `(()=>{throw new Error("Cannot require module "+"bun");})().secrets`,
-  `globalThis.Bun.secrets`,
-);
+// Remove any existing shebang first
+if (content.startsWith("#!")) {
+  content = content.slice(content.indexOf("\n") + 1);
+}
 
-await Bun.write(outputPath, normalizeLauncherContent(content));
+const withShebang = `#!/usr/bin/env node
+${content}`;
+await Bun.write(outputPath, withShebang);
 
 // Make executable
 if (process.platform !== "win32") {

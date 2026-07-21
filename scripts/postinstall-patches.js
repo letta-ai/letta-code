@@ -106,22 +106,3 @@ await copyToResolved(
 );
 
 console.log("[patch] Ink runtime patched");
-
-// Normalize the packaged CLI launcher. The first line must stay as a Node
-// shebang so npm can generate Windows shims before postinstall runs. Bun
-// preference lives in the JavaScript bootstrap inside letta.js instead.
-try {
-  const lettaPath = join(pkgRoot, "letta.js");
-  if (existsSync(lettaPath)) {
-    const { normalizeLauncherFile } = await import("./launcher-shebang.js");
-    const { changed } = normalizeLauncherFile(lettaPath);
-    if (changed) {
-      console.log("[patch] Configured letta launcher bootstrap");
-    }
-  }
-} catch (error) {
-  console.warn(
-    "[patch] failed to normalize letta launcher:",
-    error?.message || error,
-  );
-}
