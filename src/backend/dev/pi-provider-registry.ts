@@ -70,6 +70,19 @@ function hasEnvValue(value: string | undefined): boolean {
   return typeof value === "string" && value.length > 0;
 }
 
+function isTruthyEnvFlag(value: string | undefined): boolean {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(normalized);
+}
+
+function shouldDisableOpenRouterAttribution(): boolean {
+  return (
+    isTruthyEnvFlag(process.env.LETTA_DISABLE_OPENROUTER_ATTRIBUTION) ||
+    isTruthyEnvFlag(process.env.DO_NOT_TRACK)
+  );
+}
+
 function unique(values: readonly string[]): string[] {
   return [...new Set(values.filter((value) => value.length > 0))];
 }
@@ -149,11 +162,14 @@ const PI_PROVIDER_OVERRIDES: Partial<
   openrouter: {
     localProviderNames: ["openrouter", LOCAL_OPENROUTER_PROVIDER_NAME],
     baseUrlEnv: () => process.env.OPENROUTER_BASE_URL,
-    headers: () => ({
-      "HTTP-Referer": "https://letta.com",
-      "X-OpenRouter-Title": "Letta Code",
-      "X-OpenRouter-Categories": "cli-agent,personal-agent",
-    }),
+    headers: () =>
+      shouldDisableOpenRouterAttribution()
+        ? undefined
+        : {
+            "HTTP-Referer": "https://letta.com",
+            "X-OpenRouter-Title": "Letta Code",
+            "X-OpenRouter-Categories": "cli-agent,personal-agent",
+          },
   },
   zai: {
     providerTypes: ["zai", "zai_coding"],
