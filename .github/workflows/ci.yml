@@ -181,6 +181,10 @@ jobs:
         if: runner.os == 'Linux'
         uses: t1m0thyj/unlock-keyring@v1
 
+      - name: Install Secret Service CLI
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -qq libsecret-tools
+
       - name: Run tests (extended timeout)
         timeout-minutes: 15
         # Unit tests must pass for fork PRs (no secrets). Keep API-dependent tests
