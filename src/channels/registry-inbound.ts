@@ -45,11 +45,16 @@ export async function buildInboundChannelStatusContext(params: {
   accountConfigured: boolean;
   accountEnabled?: boolean;
   route: ChannelRoute | null;
+  includeActiveModel?: boolean;
   resolveModelStatus?: ChannelModelStatusHandler;
 }): Promise<ChannelStatusContext> {
   let activeModel: ChannelStatusContext["activeModel"];
 
-  if (params.route && params.resolveModelStatus) {
+  if (
+    params.includeActiveModel !== false &&
+    params.route &&
+    params.resolveModelStatus
+  ) {
     try {
       const status = await params.resolveModelStatus({
         agentId: params.route.agentId,
@@ -166,12 +171,16 @@ export function createChannelInboundRouter(deps: {
       await tryHandleChannelSlashCommand(adapter, msg, {
         statusContext,
         resolveStatusContext: () => {
-          const modelStatusHandler = deps.getModelStatusHandler();
+          const includeActiveModel = senderAccess !== "pair";
+          const modelStatusHandler = includeActiveModel
+            ? deps.getModelStatusHandler()
+            : null;
           return buildInboundChannelStatusContext({
             adapter,
             accountConfigured: statusContext.accountConfigured,
             accountEnabled: statusContext.accountEnabled,
             route: statusRoute,
+            includeActiveModel,
             resolveModelStatus: modelStatusHandler ?? undefined,
           });
         },

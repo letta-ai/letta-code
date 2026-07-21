@@ -61,6 +61,22 @@ test("activeModel is undefined when model lookup throws", async () => {
   expect(context.activeModel).toBeUndefined();
 });
 
+test("activeModel is undefined when enrichment is disabled", async () => {
+  const context = await buildInboundChannelStatusContext({
+    adapter,
+    accountConfigured: true,
+    accountEnabled: true,
+    route,
+    includeActiveModel: false,
+    resolveModelStatus: async () => ({
+      modelLabel: "GPT-5.6 Sol",
+      modelHandle: "openai/gpt-5.6-sol",
+    }),
+  });
+
+  expect(context.activeModel).toBeUndefined();
+});
+
 test("activeModel preserves a handle used as the fallback label", async () => {
   const context = await buildInboundChannelStatusContext({
     adapter,
