@@ -5,6 +5,7 @@ import {
   deleteTask as deleteCronTask,
   getCronRunLogPath,
   getTask as getCronTask,
+  isValidCron,
   listTasks as listCronTasks,
   readCronRunLogEntriesPage,
   updateTask as updateCronTask,
@@ -47,6 +48,12 @@ type CronCommandContext = {
   safeSocketSend: SafeSocketSend;
   runDetachedListenerTask: RunDetachedListenerTask;
 };
+
+function assertValidCronExpression(cron: string): void {
+  if (!isValidCron(cron)) {
+    throw new Error(`Invalid cron expression "${cron}"`);
+  }
+}
 
 function emitCronsUpdated(
   socket: WebSocket,
@@ -109,6 +116,7 @@ export async function handleCronCommand(
 
   if (parsed.type === "cron_add") {
     try {
+      assertValidCronExpression(parsed.cron);
       const scheduledFor = parsed.scheduled_for
         ? new Date(parsed.scheduled_for)
         : undefined;
@@ -267,6 +275,9 @@ export async function handleCronCommand(
 
   if (parsed.type === "cron_update") {
     try {
+      if (parsed.cron !== undefined) {
+        assertValidCronExpression(parsed.cron);
+      }
       let scheduledForIso: string | null | undefined;
       if (parsed.scheduled_for === null) {
         scheduledForIso = null;
@@ -278,6 +289,9 @@ export async function handleCronCommand(
         scheduledForIso = scheduledFor.toISOString();
       }
       const task = updateCronTask(parsed.task_id, (current) => {
+        if (parsed.recurring === true && parsed.cron === undefined) {
+          assertValidCronExpression(current.cron);
+        }
         if (parsed.name !== undefined) current.name = parsed.name;
         if (parsed.description !== undefined) {
           current.description = parsed.description;
@@ -285,7 +299,15 @@ export async function handleCronCommand(
         if (parsed.conversation_id !== undefined) {
           current.conversation_id = parsed.conversation_id;
         }
-        if (parsed.cron !== undefined) current.cron = parsed.cron;
+        if (parsed.cron !== undefined) {
+          current.cron = parsed.cron;
+          if (current.last_run_reason === "invalid_cron") {
+            current.last_run_at = null;
+            current.last_run_outcome = null;
+            current.last_run_reason = null;
+            current.last_run_error = null;
+          }
+        }
         if (parsed.timezone !== undefined) current.timezone = parsed.timezone;
         if (parsed.recurring !== undefined)
           current.recurring = parsed.recurring;

@@ -79,7 +79,8 @@ export function parseEvery(input: string): ParsedInterval | null {
       return { cron: "0 0 * * *" };
     }
     // Multi-day: use day-of-month step
-    return { cron: `0 0 */${value} * *` };
+    const cron = `0 0 */${value} * *`;
+    return isValidCron(cron) ? { cron } : null;
   }
 
   return null;
@@ -193,6 +194,43 @@ function dateToCron(d: Date): string {
  */
 const SUPPORTED_CRON_RE = /^[\d\s*,*/-]+$/;
 
+const DAY_OF_MONTH_FIELD_INDEX = 2;
+const MONTH_FIELD_INDEX = 3;
+
+/**
+ * The legacy matcher anchored wildcard steps at zero in every field. Standard
+ * cron anchors them at each field's minimum, which is one for day-of-month and
+ * month. Preserve the existing Letta dialect by translating those two fields
+ * to equivalent explicit ranges before handing them to cron-parser:
+ *
+ *   day-of-month wildcard/3 -> `3-31/3` (3, 6, 9, ...)
+ *   month wildcard/2       -> `2-12/2` (2, 4, 6, ...)
+ *
+ * This also makes oversized day-of-month wildcard steps invalid instead
+ * of silently changing them from "never" to the first day of every month.
+ */
+function preserveLegacyWildcardStepSemantics(fields: string[]): string[] {
+  return fields.map((field, index) => {
+    const maximum =
+      index === DAY_OF_MONTH_FIELD_INDEX
+        ? 31
+        : index === MONTH_FIELD_INDEX
+          ? 12
+          : null;
+    if (maximum === null) return field;
+
+    return field
+      .split(",")
+      .map((part) => {
+        const match = part.match(/^\*\/(\d+)$/);
+        if (!match) return part;
+        const step = Number.parseInt(match[1] ?? "", 10);
+        return `${step}-${maximum}/${step}`;
+      })
+      .join(",");
+  });
+}
+
 /**
  * The legacy matcher accepted bare value steps (`N/S`) but treated them as
  * the single value `N`. cron-parser gives them standard step semantics, which
@@ -206,6 +244,16 @@ function hasBareValueStep(fields: string[]): boolean {
   );
 }
 
+/** Return the normalized expression accepted by the Letta cron dialect. */
+function normalizeSupportedCronExpression(expr: string): string | null {
+  const trimmed = expr.trim();
+  const fields = trimmed.split(/\s+/);
+  if (fields.length !== 5) return null;
+  if (!SUPPORTED_CRON_RE.test(trimmed)) return null;
+  if (hasBareValueStep(fields)) return null;
+  return preserveLegacyWildcardStepSemantics(fields).join(" ");
+}
+
 /**
  * Validate a 5-field cron expression using cron-parser as the source of truth
  * for cron semantics, so that validation and execution (cronMatchesTime) can
@@ -215,13 +263,10 @@ function hasBareValueStep(fields: string[]): boolean {
  * either never fired or fired with surprising semantics.
  */
 export function isValidCron(expr: string): boolean {
-  const trimmed = expr.trim();
-  const fields = trimmed.split(/\s+/);
-  if (fields.length !== 5) return false;
-  if (!SUPPORTED_CRON_RE.test(trimmed)) return false;
-  if (hasBareValueStep(fields)) return false;
+  const normalized = normalizeSupportedCronExpression(expr);
+  if (!normalized) return false;
   try {
-    CronExpressionParser.parse(trimmed, { strict: false });
+    CronExpressionParser.parse(normalized, { strict: false });
     return true;
   } catch {
     return false;
@@ -252,7 +297,8 @@ export function cronMatchesTime(
   date: Date,
   timezone?: string | null,
 ): boolean {
-  if (!isValidCron(expr)) return false;
+  const normalized = normalizeSupportedCronExpression(expr);
+  if (!normalized) return false;
 
   // Align to the start of the target minute (drop seconds/ms) so the window
   // check is stable regardless of when within the minute `date` falls.
@@ -266,7 +312,7 @@ export function cronMatchesTime(
   // lands inside [minuteStart, windowEnd).
   const previousMinute = new Date(minuteStart.getTime() - 1);
   try {
-    const iterator = CronExpressionParser.parse(expr, {
+    const iterator = CronExpressionParser.parse(normalized, {
       currentDate: previousMinute,
       tz: resolveTimezone(timezone),
     });

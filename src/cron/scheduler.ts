@@ -434,6 +434,13 @@ export function handleMissedOneShot(task: CronTask, now: Date): boolean {
   return false;
 }
 
+/** Apply scheduler lifecycle checks shared by the WS and TUI tick loops. */
+export function handleTaskPreflight(task: CronTask, now: Date): boolean {
+  return (
+    handleInvalidRecurringTask(task, now) || handleMissedOneShot(task, now)
+  );
+}
+
 export async function runCronTaskNow(taskId: string): Promise<{
   success: boolean;
   found: boolean;

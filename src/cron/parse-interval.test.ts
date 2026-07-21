@@ -51,6 +51,8 @@ describe("parseEvery", () => {
 
   test("days — multi-day", () => {
     expect(parseEvery("3d")?.cron).toBe("0 0 */3 * *");
+    expect(parseEvery("31d")?.cron).toBe("0 0 */31 * *");
+    expect(parseEvery("32d")).toBeNull();
   });
 
   test("seconds — below 60 rounds up to 1m", () => {
@@ -206,6 +208,8 @@ describe("isValidCron", () => {
     // out-of-range inside ranges / steps
     expect(isValidCron("0-60 * * * *")).toBe(false); // minute range endpoint > 59
     expect(isValidCron("0 0 1-32 * *")).toBe(false); // DOM range endpoint > 31
+    expect(isValidCron("0 0 */32 * *")).toBe(false); // DOM step never matched
+    expect(isValidCron("0 0 * */13 *")).toBe(false); // month step never matched
     expect(isValidCron("0-59/0 * * * *")).toBe(false); // step must be > 0
     // out-of-range inside a comma list rejects the whole field
     expect(isValidCron("0,60 * * * *")).toBe(false);
@@ -241,6 +245,21 @@ describe("cronMatchesTime", () => {
     const date = new Date("2026-03-26T14:30:00");
     expect(cronMatchesTime("*/5 * * * *", date)).toBe(true); // 30 % 5 === 0
     expect(cronMatchesTime("*/7 * * * *", date)).toBe(false); // 30 % 7 !== 0
+  });
+
+  test("preserves legacy wildcard-step anchors for one-based fields", () => {
+    const januaryFirst = new Date("2026-01-01T00:00:00Z");
+    const januarySecond = new Date("2026-01-02T00:00:00Z");
+    const januaryThird = new Date("2026-01-03T00:00:00Z");
+    const februaryFirst = new Date("2026-02-01T00:00:00Z");
+
+    // The pre-parser matcher used value % step === 0 in every field. Keep
+    // existing persisted schedules and --every Nd output on that phase.
+    expect(cronMatchesTime("0 0 */2 * *", januaryFirst, "UTC")).toBe(false);
+    expect(cronMatchesTime("0 0 */2 * *", januarySecond, "UTC")).toBe(true);
+    expect(cronMatchesTime("0 0 */3 * *", januaryThird, "UTC")).toBe(true);
+    expect(cronMatchesTime("0 0 * */2 *", januaryFirst, "UTC")).toBe(false);
+    expect(cronMatchesTime("0 0 * */2 *", februaryFirst, "UTC")).toBe(true);
   });
 
   test("range match", () => {
