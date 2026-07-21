@@ -184,9 +184,12 @@ describe("isValidCron", () => {
     expect(isValidCron("1, * * * *")).toBe(false); // trailing comma
     expect(isValidCron(",5 * * * *")).toBe(false); // leading comma
     expect(isValidCron(", * * * *")).toBe(false); // lone comma
+    // The legacy matcher treated N/S as exact N, while cron-parser repeats
+    // from N. Reject it instead of silently changing persisted schedules.
+    expect(isValidCron("5/10 * * * *")).toBe(false);
   });
 
-  test("rejects out-of-range values that would never fire", () => {
+  test("rejects out-of-range values and malformed ranges", () => {
     // minute > 59
     expect(isValidCron("60 * * * *")).toBe(false);
     expect(isValidCron("99 99 99 99 *")).toBe(false);
@@ -313,6 +316,27 @@ describe("cronMatchesTime", () => {
     // In Asia/Tokyo (JST, UTC+9), 22:30 UTC = 07:30 next day (March 27)
     expect(cronMatchesTime("30 7 27 3 *", utcDate, "Asia/Tokyo")).toBe(true);
     expect(cronMatchesTime("30 22 26 3 *", utcDate, "Asia/Tokyo")).toBe(false);
+  });
+
+  test("preserves the absolute minute across the host DST fallback fold", () => {
+    const script = `
+      import { cronMatchesTime } from "./src/cron/parse-interval";
+      const secondOneThirty = new Date("2026-11-01T09:30:45Z");
+      console.log(JSON.stringify({
+        due: cronMatchesTime("30 9 * * *", secondOneThirty, "UTC"),
+        previousHour: cronMatchesTime("30 8 * * *", secondOneThirty, "UTC"),
+      }));
+    `;
+    const result = Bun.spawnSync([process.execPath, "-e", script], {
+      cwd: `${import.meta.dir}/../..`,
+      env: { ...process.env, TZ: "America/Los_Angeles" },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout.toString())).toEqual({
+      due: true,
+      previousHour: false,
+    });
   });
 
   test("invalid timezone falls back to local time", () => {

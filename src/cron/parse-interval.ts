@@ -194,6 +194,19 @@ function dateToCron(d: Date): string {
 const SUPPORTED_CRON_RE = /^[\d\s*,*/-]+$/;
 
 /**
+ * The legacy matcher accepted bare value steps (`N/S`) but treated them as
+ * the single value `N`. cron-parser gives them standard step semantics, which
+ * would silently make persisted schedules run more often after an upgrade.
+ * Keep them outside the product dialect; wildcard steps and ranged steps
+ * remain supported.
+ */
+function hasBareValueStep(fields: string[]): boolean {
+  return fields.some((field) =>
+    field.split(",").some((part) => /^\d+\/\d+$/.test(part)),
+  );
+}
+
+/**
  * Validate a 5-field cron expression using cron-parser as the source of truth
  * for cron semantics, so that validation and execution (cronMatchesTime) can
  * never disagree. Rejects out-of-range values (`99 99 * * *`, `0 0 32 * *`),
@@ -206,6 +219,7 @@ export function isValidCron(expr: string): boolean {
   const fields = trimmed.split(/\s+/);
   if (fields.length !== 5) return false;
   if (!SUPPORTED_CRON_RE.test(trimmed)) return false;
+  if (hasBareValueStep(fields)) return false;
   try {
     CronExpressionParser.parse(trimmed, { strict: false });
     return true;
@@ -243,13 +257,7 @@ export function cronMatchesTime(
   // Align to the start of the target minute (drop seconds/ms) so the window
   // check is stable regardless of when within the minute `date` falls.
   const minuteStart = new Date(
-    date.getFullYear(),
-    date.getMonth(),
-    date.getDate(),
-    date.getHours(),
-    date.getMinutes(),
-    0,
-    0,
+    Math.floor(date.getTime() / MS_PER_MINUTE) * MS_PER_MINUTE,
   );
   const windowEnd = new Date(minuteStart.getTime() + MS_PER_MINUTE);
 

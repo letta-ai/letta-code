@@ -42,7 +42,7 @@ import {
   updateTask,
   verifySchedulerLease,
 } from "./cron-file";
-import { cronMatchesTime } from "./parse-interval";
+import { cronMatchesTime, isValidCron } from "./parse-interval";
 import { safeAppendCronRunLogForTask } from "./run-log";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -210,6 +210,45 @@ export function shouldFireTask(task: CronTask, now: Date): boolean {
   // Recurring: check if the cron expression matches this minute.
   // Jitter is applied as a setTimeout delay at the call site, not here.
   return cronMatchesTime(task.cron, now, task.timezone);
+}
+
+function getInvalidCronError(cron: string): string {
+  return `Invalid cron expression "${cron}". Delete and recreate this schedule.`;
+}
+
+function hasReportedInvalidCron(task: CronTask): boolean {
+  return (
+    task.last_run_outcome === "failed" &&
+    task.last_run_reason === "invalid_cron" &&
+    task.last_run_error === getInvalidCronError(task.cron)
+  );
+}
+
+/**
+ * Persist a visible failure for legacy recurring tasks that predate current
+ * cron validation. Keep the task active so the user can inspect and replace
+ * it instead of silently dropping it or garbage-collecting its definition.
+ */
+export function handleInvalidRecurringTask(task: CronTask, now: Date): boolean {
+  if (!task.recurring || isValidCron(task.cron)) return false;
+
+  const error = getInvalidCronError(task.cron);
+  if (hasReportedInvalidCron(task)) return true;
+
+  setLastRunOutcome(task.id, {
+    outcome: "failed",
+    reason: "invalid_cron",
+    runAt: now,
+    error,
+  });
+  safeAppendCronRunLogForTask(task, {
+    status: "error",
+    outcome: "failed",
+    reason: "invalid_cron",
+    error,
+    runAtMs: now.getTime(),
+  });
+  return true;
 }
 
 async function fireCronTask(
@@ -473,6 +512,14 @@ function tick(
 
   for (const task of state.cachedTasks) {
     if (task.status !== "active") continue;
+
+    // Older clients could persist expressions that the current cron dialect
+    // rejects. Surface that state once rather than silently never firing.
+    const invalidCronWasReported = hasReportedInvalidCron(task);
+    if (handleInvalidRecurringTask(task, now)) {
+      if (!invalidCronWasReported) emitCronsUpdated(socket, task);
+      continue;
+    }
 
     // Handle missed one-shots (skip firing if marked missed)
     if (handleMissedOneShot(task, now)) continue;
