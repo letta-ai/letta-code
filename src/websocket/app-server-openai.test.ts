@@ -340,6 +340,73 @@ describe("app-server OpenAI-compatible API", () => {
     expect(body.error.type).toBe("server_error");
   });
 
+  test("two chats starting with identical messages get distinct conversations", async () => {
+    const created: string[] = [];
+    __testSetBackend(fakeBackend(created));
+    const conversationsUsed: string[] = [];
+    stubTurn((conversationId) => {
+      conversationsUsed.push(conversationId);
+    });
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const send = () =>
+      fetch(httpUrl(handle as AppServerHandle, "/v1/chat/completions"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "memo",
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+      });
+    await send();
+    await send();
+    expect(conversationsUsed).toEqual(["conv-test-1", "conv-test-2"]);
+  });
+
+  test("chat-key header pins chat identity across identical transcripts", async () => {
+    const created: string[] = [];
+    __testSetBackend(fakeBackend(created));
+    const conversationsUsed: string[] = [];
+    stubTurn((conversationId) => {
+      conversationsUsed.push(conversationId);
+    });
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const send = (chatKey: string, messages: unknown[]) =>
+      fetch(httpUrl(handle as AppServerHandle, "/v1/chat/completions"), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-openwebui-chat-id": chatKey,
+        },
+        body: JSON.stringify({ model: "memo", messages }),
+      });
+
+    // Two chats with byte-identical transcripts but different chat ids.
+    await send("chat-a", [{ role: "user", content: "Hello" }]);
+    await send("chat-b", [{ role: "user", content: "Hello" }]);
+    // Follow-up in chat-a with an identical transcript to what chat-b
+    // would resend — the header, not the transcript, decides.
+    await send("chat-a", [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "Hello world" },
+      { role: "user", content: "follow-up" },
+    ]);
+
+    expect(conversationsUsed).toEqual([
+      "conv-test-1",
+      "conv-test-2",
+      "conv-test-1",
+    ]);
+    expect(created.length).toBe(2);
+  });
+
   test("image_url parts pass through as Letta image content", async () => {
     __testSetBackend(fakeBackend());
     let capturedContent: unknown = null;
