@@ -384,7 +384,7 @@ describe("app-server OpenAI-compatible API", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-openwebui-chat-id": chatKey,
+          "x-letta-chat-key": chatKey,
         },
         body: JSON.stringify({ model: "memo", messages }),
       });
@@ -406,6 +406,45 @@ describe("app-server OpenAI-compatible API", () => {
       "conv-test-1",
     ]);
     expect(created.length).toBe(2);
+  });
+
+  test("openwebui chat id is honored only for streaming requests", async () => {
+    const created: string[] = [];
+    __testSetBackend(fakeBackend(created));
+    const conversationsUsed: string[] = [];
+    stubTurn((conversationId) => {
+      conversationsUsed.push(conversationId);
+    });
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const send = (stream: boolean) =>
+      fetch(httpUrl(handle as AppServerHandle, "/v1/chat/completions"), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-openwebui-chat-id": "webui-chat",
+        },
+        body: JSON.stringify({
+          model: "memo",
+          messages: [{ role: "user", content: "hi" }],
+          stream,
+        }),
+      });
+
+    // Streaming chat messages pin the conversation; non-streaming task
+    // requests (title/tags generation) run statelessly despite the header.
+    await send(true);
+    await send(true);
+    await send(false);
+
+    expect(conversationsUsed).toEqual([
+      "conv-test-1",
+      "conv-test-1",
+      "conv-test-2",
+    ]);
   });
 
   test("stateful header mode sends only the newest message", async () => {
