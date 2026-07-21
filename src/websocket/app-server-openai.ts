@@ -362,7 +362,14 @@ async function resolveConversationId(
   const existing = conversationIdByTranscript.get(prefixKey);
   if (existing) return existing;
   const tail = conversationCreateTailByAgent.get(agentId) ?? Promise.resolve();
-  const creation = tail.then(() => createConversationWithRetry(agentId));
+  const creation = tail.then(async () => {
+    // Re-check after the queue drains: a concurrent request with the same
+    // key (e.g. a double-send from a header-keyed chat) may have created
+    // and remembered the conversation while this one waited.
+    const raced = conversationIdByTranscript.get(prefixKey);
+    if (raced) return raced;
+    return await createConversationWithRetry(agentId);
+  });
   const settled = creation.then(
     () => undefined,
     () => undefined,
@@ -374,6 +381,23 @@ async function resolveConversationId(
     }
   });
   return await creation;
+}
+
+// Clients that know their chat identity can pin it explicitly instead of
+// relying on transcript fingerprints, which collide when two chats have
+// byte-identical transcripts (e.g. both start "Hello" and get the same
+// verbatim reply). Open WebUI sends X-OpenWebUI-Chat-Id when
+// ENABLE_FORWARD_USER_INFO_HEADERS is on; X-Letta-Chat-Key is the generic
+// escape hatch for other clients.
+const CHAT_KEY_HEADERS = ["x-letta-chat-key", "x-openwebui-chat-id"] as const;
+
+function chatKeyFromHeaders(request: HttpIncomingMessage): string | null {
+  for (const name of CHAT_KEY_HEADERS) {
+    const value = request.headers[name];
+    if (typeof value === "string" && value) return value;
+    if (Array.isArray(value) && value[0]) return value[0];
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -715,10 +739,18 @@ async function handleChatCompletions(
   }
 
   const prefixTurns = transcript.slice(0, lastUserIndex);
-  const prefixKey = transcriptFingerprint(agent.id, prefixTurns);
+  const headerChatKey = chatKeyFromHeaders(request);
+  const prefixKey = headerChatKey
+    ? `chat-key:${agent.id}:${headerChatKey}`
+    : transcriptFingerprint(agent.id, prefixTurns);
   let conversationId: string;
   try {
     conversationId = await resolveConversationId(agent.id, prefixKey);
+    if (headerChatKey) {
+      // Header keys are stable chat identities: pin them immediately so a
+      // concurrent request for the same chat reuses this conversation.
+      rememberConversation(prefixKey, conversationId);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     options.onLog?.(`OpenAI-compat failed to create conversation: ${message}`);
@@ -799,18 +831,23 @@ async function handleChatCompletions(
     // prefix the client resends on its next message in this chat). The
     // EMPTY prefix is shared by every brand-new chat and must never be
     // remembered — doing so would funnel all new chats into one
-    // conversation.
-    if (prefixTurns.length > 0) {
+    // conversation. Header-keyed chats are already pinned by their stable
+    // key and skip transcript bookkeeping entirely.
+    if (headerChatKey) {
       rememberConversation(prefixKey, conversationId);
+    } else {
+      if (prefixTurns.length > 0) {
+        rememberConversation(prefixKey, conversationId);
+      }
+      rememberConversation(
+        transcriptFingerprint(agent.id, [
+          ...prefixTurns,
+          { role: "user", text: userText },
+          { role: "assistant", text: fullText },
+        ]),
+        conversationId,
+      );
     }
-    rememberConversation(
-      transcriptFingerprint(agent.id, [
-        ...prefixTurns,
-        { role: "user", text: userText },
-        { role: "assistant", text: fullText },
-      ]),
-      conversationId,
-    );
   }
 
   if (streaming) {
