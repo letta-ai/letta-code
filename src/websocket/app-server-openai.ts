@@ -51,7 +51,7 @@ interface TurnOutcome {
 interface RunTurnParams {
   agentId: string;
   conversationId: string;
-  userText: string;
+  userContent: UserContentPart[];
   onAssistantText?: (text: string) => void;
   onLog?: (message: string) => void;
 }
@@ -73,12 +73,22 @@ export function __testResetConversationMap(): void {
 interface OpenAiChatMessagePart {
   type?: string;
   text?: string;
+  image_url?: { url?: string } | string;
 }
 
 interface OpenAiChatMessage {
   role?: string;
   content?: string | OpenAiChatMessagePart[] | null;
 }
+
+type UserContentPart =
+  | { type: "text"; text: string }
+  | {
+      type: "image";
+      source:
+        | { type: "base64"; media_type: string; data: string }
+        | { type: "url"; url: string };
+    };
 
 interface OpenAiChatCompletionRequest {
   model?: string;
@@ -150,6 +160,51 @@ function extractTextContent(
     )
     .filter(Boolean)
     .join("\n");
+}
+
+const IMAGE_DATA_URL_RE = /^data:([^;,]+);base64,(.+)$/;
+
+function toImagePart(rawUrl: string): UserContentPart | null {
+  const match = IMAGE_DATA_URL_RE.exec(rawUrl);
+  if (match?.[1] && match[2]) {
+    return {
+      type: "image",
+      source: { type: "base64", media_type: match[1], data: match[2] },
+    };
+  }
+  if (/^https?:\/\//.test(rawUrl)) {
+    return { type: "image", source: { type: "url", url: rawUrl } };
+  }
+  return null;
+}
+
+/** OpenAI user content → Letta content parts (text and image_url). */
+function extractUserContentParts(
+  content: string | OpenAiChatMessagePart[] | null | undefined,
+): UserContentPart[] {
+  if (typeof content === "string") {
+    return content ? [{ type: "text", text: content }] : [];
+  }
+  if (!Array.isArray(content)) return [];
+  const parts: UserContentPart[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    if (part.type === "text" && typeof part.text === "string" && part.text) {
+      parts.push({ type: "text", text: part.text });
+      continue;
+    }
+    if (part.type === "image_url") {
+      const raw =
+        typeof part.image_url === "string"
+          ? part.image_url
+          : part.image_url?.url;
+      if (typeof raw === "string") {
+        const image = toImagePart(raw);
+        if (image) parts.push(image);
+      }
+    }
+  }
+  return parts;
 }
 
 function toModelCreatedTimestamp(createdAt: unknown): number {
@@ -518,7 +573,7 @@ async function runTurnViaListenerRuntime(
       messages: [
         {
           role: "user",
-          content: [{ type: "text", text: params.userText }],
+          content: params.userContent,
           otid: randomUUID(),
         },
       ],
@@ -604,12 +659,17 @@ async function handleChatCompletions(
   const lastUserIndex = transcript.findLastIndex(
     (turn) => turn.role === "user",
   );
-  const userText = lastUserIndex >= 0 ? transcript[lastUserIndex]?.text : "";
-  if (!userText) {
+  const userText =
+    (lastUserIndex >= 0 && transcript[lastUserIndex]?.text) || "";
+  const lastUserMessage = [...body.messages]
+    .reverse()
+    .find((message) => message.role === "user");
+  const userContent = extractUserContentParts(lastUserMessage?.content);
+  if (userContent.length === 0) {
     sendOpenAiError(
       response,
       400,
-      "the messages array must include a user message with text content",
+      "the messages array must include a user message with text or image content",
       "invalid_request_error",
     );
     return;
@@ -665,7 +725,7 @@ async function handleChatCompletions(
     outcome = await runTurnImpl({
       agentId: agent.id,
       conversationId,
-      userText: userText ?? "",
+      userContent,
       onLog: options.onLog,
       onAssistantText: streaming
         ? (piece) => {

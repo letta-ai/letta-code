@@ -272,6 +272,56 @@ describe("app-server OpenAI-compatible API", () => {
     expect(body.error.code).toBe("model_not_found");
   });
 
+  test("image_url parts pass through as Letta image content", async () => {
+    __testSetBackend(fakeBackend());
+    let capturedContent: unknown = null;
+    __testSetRunTurnImpl(async ({ userContent, onAssistantText }) => {
+      capturedContent = userContent;
+      onAssistantText?.("I see it");
+      return {
+        text: "I see it",
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        error: null,
+      };
+    });
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const response = await fetch(httpUrl(handle, "/v1/chat/completions"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "memo",
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "what is in this image?" },
+              {
+                type: "image_url",
+                image_url: { url: "data:image/png;base64,iVBORw0KGgo=" },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(capturedContent).toEqual([
+      { type: "text", text: "what is in this image?" },
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: "image/png",
+          data: "iVBORw0KGgo=",
+        },
+      },
+    ]);
+  });
+
   test("missing user text returns 400", async () => {
     __testSetBackend(fakeBackend());
     handle = await startAppServer({
