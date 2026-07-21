@@ -8,6 +8,7 @@ on:
 jobs:
   startup-update-chain:
     name: Startup Update Chain
+    if: github.event_name != 'schedule' || github.repository == 'letta-ai/letta-code'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
