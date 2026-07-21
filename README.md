@@ -28,8 +28,8 @@ Letta Code can be used interactively, or to power always-on agents that work pro
 | [Hooks](https://docs.letta.com/letta-code/hooks) | Run custom scripts at key points of agent execution to automate workflows |
 | [Permissions](https://docs.letta.com/letta-code/permissions) | Set permission modes and customize what actions are auto-approved or auto-denied |
 | [Crons & Schedules](https://docs.letta.com/letta-code/scheduling) | Configure heartbeats and crons, and let agents work across time with self-managed schedules |
-| [Remote & Multi-Env](https://docs.letta.com/letta-code/client-server-architecture) (requires Constellation login) | Agents work across multiple environments. Make any machine available as a remote environment by running `letta server --env-name "..."` |
-| [Secrets](https://docs.letta.com/letta-code/secrets) (requires Constellation login) | Make secrets available as environment variables (across machines) while obfuscating their values from context |
+| [Remote & Multi-Env](https://docs.letta.com/letta-code/client-server-architecture) (requires signing in with Letta) | Agents work across multiple environments. Make any machine available as a remote environment by running `letta server --env-name "..."` |
+| [Secrets](https://docs.letta.com/letta-code/secrets) (requires signing in with Letta) | Make secrets available as environment variables (across machines) while obfuscating their values from context |
 
 See the full list of slash commands in our [documentation](https://docs.letta.com/letta-code/slash-commands).
 
@@ -50,22 +50,23 @@ Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, 
 
 You can also download the [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for macOS, Windows, and Linux. Agents created in the CLI are available via the desktop app, and vice versa.
 
-## 🌌 Constellation
+## Letta Cloud
 
-Agents hosted on Constellation can be accessed from any machine: your laptop, [GitHub Actions](https://github.com/letta-ai/letta-code-action), a sandbox, remote VM, or a Mac Mini. You can also chat with agents through [chat.letta.com](https://chat.letta.com/) or through the desktop app.
+Agents stored in Letta Cloud keep their memory, identity, and conversations there while the Letta Code harness can run on any connected computer: your laptop, [GitHub Actions](https://github.com/letta-ai/letta-code-action), a managed cloud sandbox, a remote VM, or a Mac Mini. You can chat with the same agents through [chat.letta.com](https://chat.letta.com/) or the desktop app.
 
 ```mermaid
 graph TD
-    Constellation["🌌 Constellation"]
-    Constellation --> A["💻 Your Laptop"]
-    Constellation --> B["☁️ Cloud VM"]
-    Constellation --> C["🖥️ Mac Mini"]
-    Constellation --> D["📦 Sandbox"]
+    LettaCloud["Letta Cloud<br/>Agent state"]
+    LettaCloud --> A["💻 Your Laptop"]
+    LettaCloud --> B["☁️ Cloud VM"]
+    LettaCloud --> C["🖥️ Mac Mini"]
+    LettaCloud --> D["📦 Managed Sandbox"]
 ```
-To create agents on Constellation, run `/login` from the CLI or login through the desktop app. 
+
+Run `/login` from the CLI or sign in through the desktop app to access agents in your Letta account.
 
 ### Remote environments
-Agents on Constellation can run across multiple machines. Any machine can be made into an available environment by running:
+Agents stored in Letta Cloud can run across multiple machines. Any machine can be made into an available environment by running:
 ```bash
 letta server
 letta server --env-name "work-laptop"

@@ -328,6 +328,8 @@ export function setLocalOAuthProvider(input: {
   providerType: string;
   auth: LocalProviderOAuthAuth;
   storageDir?: string;
+  baseURL?: string;
+  timeout?: LocalProviderTimeout;
 }): void {
   if (!isLocalProviderTypeSupported(input.providerType)) {
     throw new Error(
@@ -344,6 +346,14 @@ export function setLocalOAuthProvider(input: {
     provider_type: input.providerType,
     provider_category: "byok",
     auth: input.auth,
+    ...((input.baseURL ?? existing?.base_url)
+      ? { base_url: input.baseURL ?? existing?.base_url }
+      : {}),
+    ...(input.timeout !== undefined
+      ? { timeout: input.timeout }
+      : existing?.timeout !== undefined
+        ? { timeout: existing.timeout }
+        : {}),
     created_at: existing?.created_at ?? now,
     updated_at: now,
   };

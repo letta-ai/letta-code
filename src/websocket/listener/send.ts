@@ -32,7 +32,10 @@ import {
 } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
-import { ensureListenerModAdapter } from "./mod-adapter";
+import {
+  createListenerModEvents,
+  ensureListenerModAdaptersForAgent,
+} from "./mod-adapter";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import { emitDequeuedUserMessage, emitRetryDelta } from "./protocol-outbound";
 import {
@@ -349,6 +352,10 @@ export async function resolveStaleApprovals(
     agent_id: runtime.agentId,
     conversation_id: recoveryConversationId,
   } as const;
+  const modAdapters = await ensureListenerModAdaptersForAgent(
+    runtime.listener,
+    runtime.agentId,
+  );
   const preparedToolContext = await prepareToolExecutionContext({
     agentId: runtime.agentId,
     conversationId: recoveryConversationId,
@@ -358,7 +365,8 @@ export async function resolveStaleApprovals(
       runtime.agentId,
       runtime.conversationId,
     ),
-    modEvents: ensureListenerModAdapter(runtime.listener).events,
+    modAdapters,
+    modEvents: createListenerModEvents(modAdapters),
   });
   assertCurrentTurnLease();
   runtime.currentToolset = preparedToolContext.toolset;

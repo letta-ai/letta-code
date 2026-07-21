@@ -12,7 +12,7 @@ Use events when trusted local code should react to app/session changes or transf
 - Conversation status example
 - Rules
 
-This is the first slice of the hooks-v2 direction. The long-term goal is for typed mod events to replace settings-based hooks. Existing hooks still own blocking decisions and model feedback injection until each event has a typed return contract.
+Mod events are typed local extension points. Use the event's documented return contract for transformations, cancellation, or result replacement; otherwise treat the event as notification-only.
 
 ## Capabilities
 
@@ -61,7 +61,7 @@ Lifecycle, turn, tool, compaction, and llm events are wired today.
 
 Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform or cancel outbound user-message turns. `tool_start` handlers can transform the tool arguments before execution. Compaction and llm handlers are notification-only.
 
-`compact_start`/`compact_end` and `llm_start`/`llm_end` only fire on the **local backend**, where compaction and provider requests run client-side. On the constellation backend that work happens server-side and these events do not fire, so guard with `letta.capabilities.events.compact` / `letta.capabilities.events.llm` for portable mods.
+`compact_start`/`compact_end` and `llm_start`/`llm_end` only fire on the **local backend**, where compaction and provider requests run client-side. On the Letta Cloud backend that work happens server-side and these events do not fire, so guard with `letta.capabilities.events.compact` / `letta.capabilities.events.llm` for portable mods.
 
 ## Supported events
 
@@ -124,7 +124,7 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
 }
 ```
 
-`tool_start` fires immediately before a client-side tool executes. This includes built-in tools, mod tools, and external tools executed through the local tool manager. It runs after permission/approval classification and before `PreToolUse` hooks, so trusted local mods can change the actual executed arguments after the approval UI has already classified the original request. Mod permission overlays are rechecked after `tool_start` on the final args.
+`tool_start` fires immediately before a client-side tool executes. This includes built-in tools, mod tools, and external tools executed through the local tool manager. It runs after permission/approval classification, so trusted local mods can change the actual executed arguments after the approval UI has already classified the original request. Mod permission overlays are rechecked after `tool_start` on the final args.
 
 Handlers can inspect `event.args`, mutate it directly, or return replacement args:
 
@@ -171,7 +171,7 @@ letta.events.on("tool_end", (event) => {
 });
 ```
 
-The first handler that returns a `result` wins; later handlers are shadowed. Only string results are surfaced — multimodal/image results pass through unchanged. `tool_end` is the trusted-local-mod equivalent of the `PostToolUse` / `PostToolUseFailure` hooks for observing and rewriting tool results.
+The first handler that returns a `result` wins; later handlers are shadowed. Only string results are surfaced — multimodal/image results pass through unchanged. Use `tool_end` when trusted local code should observe or rewrite tool results before the agent sees them.
 
 A handler can also react to a specific tool completing by adjusting conversation state. For example, switch model and reasoning effort when entering and exiting plan mode (`tool_end` fires only after the tool succeeds, so a denied approval won't switch):
 
@@ -359,6 +359,6 @@ export default function activate(letta) {
 ## Rules
 
 - Do not block user flow unless the event's typed contract explicitly supports blocking.
-- Do not use lifecycle events for safety decisions yet. Existing hooks still own blocking behavior.
+- Do not use lifecycle events for safety decisions. Use permission registration or an event contract that explicitly supports blocking.
 - Catch expected local errors if the user-facing outcome matters. Uncaught errors are isolated and recorded as mod diagnostics.
 - Return disposers from activation for event registrations, timers, subscriptions, and status values.

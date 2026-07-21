@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { getPinnedAgentBackendMode } from "@/cli/components/AgentSelector";
+import { getPinnedAgentBackendMode } from "@/cli/helpers/pinned-agent-listing";
 
 describe("agent selector shortcuts", () => {
   test("uses Shift+D for delete so lowercase d can be typed in search", () => {

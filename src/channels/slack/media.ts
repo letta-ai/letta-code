@@ -327,6 +327,7 @@ function resolveAttachmentKind(
 async function fetchWithSlackAuth(
   url: string,
   token: string,
+  signal?: AbortSignal,
 ): Promise<Response> {
   const parsed = assertSlackFileUrl(url);
   const authHeaders = { Authorization: `Bearer ${token}` };
@@ -334,6 +335,7 @@ async function fetchWithSlackAuth(
   const initial = await fetch(parsed.href, {
     headers: authHeaders,
     redirect: "manual",
+    ...(signal ? { signal } : {}),
   });
 
   if (initial.status < 300 || initial.status >= 400) {
@@ -350,10 +352,14 @@ async function fetchWithSlackAuth(
     return fetch(resolved.href, {
       headers: authHeaders,
       redirect: "follow",
+      ...(signal ? { signal } : {}),
     });
   }
 
-  return fetch(resolved.href, { redirect: "follow" });
+  return fetch(resolved.href, {
+    redirect: "follow",
+    ...(signal ? { signal } : {}),
+  });
 }
 
 function resolveSlackAttachmentFileName(params: {
@@ -418,6 +424,7 @@ export async function materializeSlackAttachment(params: {
   sourceThreadId?: string | null;
   maxBytes?: number;
   transcribeVoice?: boolean;
+  signal?: AbortSignal;
 }): Promise<ChannelMessageAttachment> {
   if (
     params.maxBytes !== undefined &&
@@ -438,16 +445,16 @@ export async function materializeSlackAttachment(params: {
     );
   }
 
-  const response = await fetchWithSlackAuth(url, params.token).catch(
-    (error) => {
-      throw new SlackAttachmentDownloadError(
-        "download_failed",
-        error instanceof Error
-          ? error.message
-          : "Slack attachment fetch failed.",
-      );
-    },
-  );
+  const response = await fetchWithSlackAuth(
+    url,
+    params.token,
+    params.signal,
+  ).catch((error) => {
+    throw new SlackAttachmentDownloadError(
+      "download_failed",
+      error instanceof Error ? error.message : "Slack attachment fetch failed.",
+    );
+  });
   if (!response.ok) {
     throw new SlackAttachmentDownloadError(
       "download_failed",
@@ -499,6 +506,7 @@ export async function materializeSlackAttachment(params: {
     fileName,
     body: response.body,
     maxBytes: params.maxBytes,
+    signal: params.signal,
   });
 
   const kind = resolveAttachmentKind(mimeType);

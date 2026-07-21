@@ -8,6 +8,7 @@ import {
   type PiProviderOAuthLoginCallbacks,
   registerPiProvider,
 } from "@/backend/dev/pi-provider-mod-registry";
+import { getLocalProviderRecordByName } from "@/backend/local/local-provider-auth-store";
 import { runLocalOAuthConnectFlow } from "@/cli/commands/connect-local-oauth";
 import type { ByokProvider } from "@/providers/byok-providers";
 
@@ -108,5 +109,22 @@ describe("runLocalOAuthConnectFlow select prompts", () => {
 
     expect(selectedMethod).toBe("device_code");
     expect(result.providerName).toBe(FAKE_PROVIDER_ID);
+  });
+
+  test("persists proxy connection options with OAuth credentials", async () => {
+    await runLocalOAuthConnectFlow(FAKE_BYOK_PROVIDER, {
+      onStatus: () => {},
+      openBrowser: async () => {},
+      baseURL: "http://proxy.example.test",
+      timeout: 30_000,
+    });
+
+    expect(
+      getLocalProviderRecordByName(FAKE_PROVIDER_ID, storageDir),
+    ).toMatchObject({
+      base_url: "http://proxy.example.test",
+      timeout: 30_000,
+      auth: { type: "oauth" },
+    });
   });
 });

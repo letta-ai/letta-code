@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { isSkillSourceArray } from "@/agent/skill-sources";
 import { isValidChannelPluginConfigPayload } from "@/channels/account-config";
 import { isSupportedChannelId } from "@/channels/plugin-registry";
 import type { ExperimentId } from "@/experiments/types";
@@ -120,7 +121,6 @@ function isStringArray(value: unknown): value is string[] {
     Array.isArray(value) && value.every((item) => typeof item === "string")
   );
 }
-
 function isStringRecord(value: unknown): value is Record<string, string> {
   return (
     !!value &&
@@ -419,7 +419,6 @@ function isRuntimeStartCreateConversationOptions(value: unknown): boolean {
   if (!isObjectRecord(value)) return false;
   return value.body === undefined || isObjectRecord(value.body);
 }
-
 function isRuntimeStartClientInfo(value: unknown): boolean {
   if (!isObjectRecord(value)) return false;
   return (
@@ -447,7 +446,6 @@ function isRuntimeStartExternalToolsGroup(value: unknown): boolean {
     value.tools.every(isExternalToolDefinitionPayload)
   );
 }
-
 export function isRuntimeStartCommand(
   value: unknown,
 ): value is RuntimeStartCommand {
@@ -461,6 +459,7 @@ export function isRuntimeStartCommand(
     create_conversation?: unknown;
     cwd?: unknown;
     mode?: unknown;
+    skill_sources?: unknown;
     client_info?: unknown;
     recover_approvals?: unknown;
     force_device_status?: unknown;
@@ -478,6 +477,7 @@ export function isRuntimeStartCommand(
       isRuntimeStartCreateConversationOptions(c.create_conversation)) &&
     (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
     (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
+    (c.skill_sources === undefined || isSkillSourceArray(c.skill_sources)) &&
     (c.client_info === undefined || isRuntimeStartClientInfo(c.client_info)) &&
     (c.recover_approvals === undefined ||
       typeof c.recover_approvals === "boolean") &&

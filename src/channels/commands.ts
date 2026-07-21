@@ -1,4 +1,12 @@
 import type { ListModelsResponseModelEntry } from "@/types/protocol_v2";
+import {
+  buildChannelCommandDeniedMessage,
+  buildChannelWhoamiMessage,
+  type ChannelCommandGate,
+  canonicalizeChannelCommandName,
+  canRunChannelCommand,
+} from "./access-control";
+import { handleChannelFeedbackCommand } from "./feedback";
 import { getChannelDisplayName } from "./plugin-registry";
 import type {
   ChannelAdapter,
@@ -83,6 +91,8 @@ export type ChannelSlashCommandOptions = {
   statusContext?: ChannelStatusContext;
   handlers?: ChannelSlashCommandHandlers;
   enableBangCommands?: boolean;
+  /** Admin/user tier gate for this sender; undefined disables gating. */
+  commandGate?: ChannelCommandGate;
 };
 
 const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
@@ -95,6 +105,11 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     name: "status",
     kind: "direct",
     summary: "Show this chat's channel connection status.",
+  },
+  {
+    name: "whoami",
+    kind: "direct",
+    summary: "Show your access tier and runnable commands here.",
   },
   {
     name: "pause",
@@ -115,6 +130,11 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     name: "chat",
     kind: "direct",
     summary: "Show the Letta web chat link for this channel route.",
+  },
+  {
+    name: "feedback",
+    kind: "direct",
+    summary: "Send feedback about Letta Code from this routed chat.",
   },
   {
     name: "model",
@@ -251,11 +271,13 @@ function supportedCommandsText(prefix: "/" | "!" = "/"): string {
 const SLACK_MENTION_SLASH_COMMAND_EXAMPLES = [
   "@agent /help",
   "@agent /status",
+  "@agent /whoami",
   "@agent /model",
   "@agent /model list",
   "@agent /model <handle-or-id>",
   "@agent /cancel",
   "@agent /chat",
+  "@agent /feedback <message>",
   "@agent /reflection",
   "@agent /detach",
   "@agent /new",
@@ -310,6 +332,7 @@ export function buildChannelHelpMessage(channelId: string): string {
       "@agent /status - show route and listener status",
       "@agent /cancel - cancel the current turn",
       "@agent /chat - show the web chat link",
+      "@agent /feedback <message> - send feedback to the Letta team from this routed thread",
       "@agent /reflection - start a memory reflection pass",
       "@agent /detach - stop replying in this thread until mentioned again",
       "@agent /new - start a fresh conversation for this thread",
@@ -839,11 +862,30 @@ export async function tryHandleChannelSlashCommand(
     return true;
   }
 
+  const canonicalName = canonicalizeChannelCommandName(command.name);
+  if (
+    options.commandGate &&
+    !canRunChannelCommand(options.commandGate, canonicalName)
+  ) {
+    await adapter.sendDirectReply(
+      msg.chatId,
+      buildChannelCommandDeniedMessage(
+        msg.channel,
+        canonicalName,
+        options.commandGate,
+      ),
+      msg.threadId ? { replyToMessageId: msg.threadId } : undefined,
+    );
+    return true;
+  }
+
   const reply = normalizeDirectReplyPayload(
     await (async () => {
       switch (command.name) {
         case "help":
           return buildChannelHelpMessage(msg.channel);
+        case "whoami":
+          return buildChannelWhoamiMessage(msg, options.commandGate);
         case "status":
           return buildChannelStatusMessage(
             msg,
@@ -877,6 +919,12 @@ export async function tryHandleChannelSlashCommand(
             msg,
             command,
             handler: options.handlers?.chat,
+          });
+        case "feedback":
+          return handleChannelFeedbackCommand({
+            msg,
+            command,
+            route: options.statusContext?.route,
           });
         case "detach":
           if (!isSlackMentionControl) {

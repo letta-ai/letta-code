@@ -126,6 +126,9 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(resolved.description).toContain(
       'Use action="download-file" with channel, chat_id, attachmentId, and messageId',
     );
+    expect(resolved.description).toContain(
+      "TaskOutput (block: true, timeout: 600000)",
+    );
     expect(properties.channel?.enum).toEqual(["slack", "telegram"]);
     expect(properties.action?.enum).toEqual([
       "send",

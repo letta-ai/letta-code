@@ -293,6 +293,7 @@ export interface ChannelAdapter {
     chatId: string;
     threadId?: string | null;
     messageId: string;
+    signal?: AbortSignal;
   }): Promise<ChannelMessageAttachment>;
 
   /**
@@ -501,6 +502,13 @@ export interface ChannelRoute {
 // ── Config ────────────────────────────────────────────────────────
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
+/**
+ * Group/channel-scope sender policy. "open" preserves the historical
+ * behavior (any participant of an allowed group/channel can talk to the
+ * agent). "allowlist" restricts group senders to allowedUsers/adminUsers,
+ * paired users, and env-var allowlists.
+ */
+export type ChannelGroupSenderPolicy = "open" | "allowlist";
 export type SlackChannelMode = "socket";
 export type SlackAllowBotsMode = false | "mentions";
 export type TelegramGroupMode = "open" | "mention-only";
@@ -518,6 +526,24 @@ interface ChannelAccountBase {
   enabled: boolean;
   dmPolicy: DmPolicy;
   allowedUsers: string[];
+  /**
+   * Sender policy for group/channel-scope messages. Default "open"
+   * (historical behavior). "allowlist" restricts group senders to
+   * allowedUsers/adminUsers, paired users, and env allowlists.
+   * Slack note: dmPolicy "pairing" is a legacy unenforced default and
+   * behaves as "open" for Slack DMs; use "allowlist" to restrict.
+   */
+  groupPolicy?: ChannelGroupSenderPolicy;
+  /**
+   * Admin user IDs for slash-command tiers. When set (non-empty),
+   * command gating activates: non-admins may only run the read-only
+   * floor (/help, /status, /whoami) plus userAllowedCommands. When
+   * unset, every allowed user has full command access (historical
+   * behavior).
+   */
+  adminUsers?: string[];
+  /** Extra slash commands (no leading slash) non-admins may run. */
+  userAllowedCommands?: string[];
   createdAt: string;
   updatedAt: string;
 }

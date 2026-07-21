@@ -294,6 +294,44 @@ function buildModelHandleFromConfig(
   return config.model ?? null;
 }
 
+/**
+ * The server's legacy global context-window clamp
+ * (`model_settings.global_max_context_window_limit`, default 128000). Any
+ * model-bearing update that omitted `context_window_limit` historically got
+ * its window clamped to this value regardless of the model's real window
+ * (LET-9786).
+ */
+export const LEGACY_SERVER_CONTEXT_WINDOW_CLAMP = 128000;
+
+/**
+ * Return the current context window if it is safe to preserve across a
+ * model-settings update, or undefined when it looks like the server's legacy
+ * 128k clamp rather than a deliberate value.
+ *
+ * A value of exactly 128000 that matches no registry preset for the handle is
+ * indistinguishable from server-clamp poisoning (LET-9786) — and poisoned
+ * values are self-perpetuating if preserved. Callers should fall back to the
+ * selected preset / catalog value when this returns undefined. Models whose
+ * presets legitimately include 128000 (e.g. Codex Spark tiers) are preserved
+ * normally.
+ */
+export function preservableContextWindow(
+  current: number | null | undefined,
+  modelHandle: string,
+): number | undefined {
+  if (typeof current !== "number" || current <= 0) return undefined;
+  if (current !== LEGACY_SERVER_CONTEXT_WINDOW_CLAMP) return current;
+  const registryHandle =
+    normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
+  const matchesPreset = models.some(
+    (m) =>
+      m.handle === registryHandle &&
+      (m.updateArgs as { context_window?: number } | null)?.context_window ===
+        LEGACY_SERVER_CONTEXT_WINDOW_CLAMP,
+  );
+  return matchesPreset ? current : undefined;
+}
+
 export function shouldPreserveContextWindowForModelSelection(input: {
   currentModelHandle?: string | null;
   currentModelId?: string | null;

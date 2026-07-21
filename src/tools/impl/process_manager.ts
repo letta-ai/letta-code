@@ -60,6 +60,11 @@ export function getNextTaskId() {
   return `task_${taskIdCounter++}`;
 }
 
+let downloadIdCounter = 1;
+export function getNextDownloadId() {
+  return `download_${downloadIdCounter++}`;
+}
+
 interface BackgroundRetentionConfig {
   completedEntryTtlMs: number;
   maxProcessLinesPerStream: number;

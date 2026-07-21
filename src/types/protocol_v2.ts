@@ -64,8 +64,8 @@ export type CronRunReason =
   | "queue_full"
   | "runtime_unavailable"
   | "task_cancelled"
+  | "invalid_cron"
   | "scheduler_error";
-
 export interface CronTask {
   id: string;
   agent_id: string;
@@ -667,6 +667,9 @@ export interface SubagentSnapshot {
   prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agent_url: string | null;
+  /** The subagent's own conversation id (for dual-view routing; local agents
+   * have a bare-id agent_url with no ?conversation= param to parse). */
+  conversation_id?: string | null;
   model?: string;
   is_background?: boolean;
   silent?: boolean;
@@ -822,7 +825,6 @@ export interface RuntimeStartExternalToolsGroup {
   scope_id?: string;
   tools: readonly ExternalToolDefinitionPayload[];
 }
-
 export interface RuntimeStartCommand {
   type: "runtime_start";
   /** Echoed back in the response for request correlation. */
@@ -839,6 +841,7 @@ export interface RuntimeStartCommand {
   cwd?: string | null;
   /** Initial permission mode for this runtime scope. */
   mode?: DevicePermissionMode;
+  skill_sources?: readonly ("bundled" | "global" | "agent" | "project")[];
   /** Optional client metadata for diagnostics/future protocol negotiation. */
   client_info?: RuntimeStartClientInfo;
   /** Whether to probe backend state for stale pending approvals before replaying state. Defaults to true. */

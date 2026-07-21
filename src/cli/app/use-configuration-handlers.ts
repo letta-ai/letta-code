@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   type ModelReasoningEffort,
+  preservableContextWindow,
   shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
 import { applyPersonalityToMemory } from "@/agent/personality";
@@ -428,6 +429,16 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           return;
         }
 
+        // Switching to a different model (or a different context-window
+        // variant of the same model, e.g. base <-> 1M dual listings) resets
+        // the context window to the selected catalog entry's preset. Only a
+        // tier change within the same variant preserves the current window —
+        // and it preserves by RE-SENDING the current value explicitly, never
+        // by omitting the field: the server treats an omitted
+        // context_window_limit as "re-derive from the handle" and clamps it
+        // to a legacy global default (128k). A current value that looks like
+        // that clamp is not preservable, so poisoned agents heal to the
+        // preset even on same-variant tier changes. See LET-9786.
         const currentLlmConfig = llmConfigRef.current;
         const shouldPreserveContextWindow =
           shouldPreserveContextWindowForModelSelection({
@@ -437,12 +448,19 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             selectedModelHandle: modelHandle,
             selectedContextWindow,
           });
+        const preservedContextWindow = shouldPreserveContextWindow
+          ? preservableContextWindow(
+              currentLlmConfig?.context_window,
+              modelHandle,
+            )
+          : undefined;
         const modelUpdateArgsForRequest = model.updateArgs
           ? { ...(model.updateArgs as Record<string, unknown>) }
           : undefined;
-        if (shouldPreserveContextWindow && modelUpdateArgsForRequest) {
-          delete modelUpdateArgsForRequest.context_window;
-        }
+        const updateOptions =
+          preservedContextWindow !== undefined
+            ? { contextWindowOverride: preservedContextWindow }
+            : undefined;
 
         await withCommandLock(async () => {
           const cmd =
@@ -472,10 +490,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               agentIdRef.current,
               modelHandle,
               modelUpdateArgsForRequest,
-              {
-                avoidOverwritingExistingContextWindow:
-                  shouldPreserveContextWindow,
-              },
+              updateOptions,
             );
             conversationModelSettings = updatedAgent?.model_settings;
           } else {
@@ -486,10 +501,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               conversationIdRef.current,
               modelHandle,
               modelUpdateArgsForRequest,
-              {
-                avoidOverwritingExistingContextWindow:
-                  shouldPreserveContextWindow,
-              },
+              updateOptions,
             );
             conversationModelSettings = (
               updatedConversation as {
@@ -529,16 +541,13 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           }
 
           const presetContextWindow = modelUpdateArgsForRequest?.context_window;
-          const preservedContextWindow = llmConfigRef.current?.context_window;
           const resolvedContextWindow =
             typeof conversationContextWindowLimit === "number"
               ? conversationContextWindowLimit
-              : shouldPreserveContextWindow &&
-                  typeof preservedContextWindow === "number"
-                ? preservedContextWindow
-                : typeof presetContextWindow === "number"
+              : (preservedContextWindow ??
+                (typeof presetContextWindow === "number"
                   ? presetContextWindow
-                  : undefined;
+                  : undefined));
           const resolvedProviderType =
             providerTypeFromModelSettings(conversationModelSettings) ??
             providerTypeFromUpdateArgs(modelUpdateArgsForRequest) ??

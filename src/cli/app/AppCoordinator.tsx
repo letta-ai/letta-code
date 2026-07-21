@@ -143,7 +143,7 @@ import {
 import {
   getIntendedCronOccurrence,
   getTask,
-  handleMissedOneShot,
+  handleTaskPreflight,
   isProcessAlive,
   readCronFile,
   safeAppendCronRunLogForTask,
@@ -305,7 +305,7 @@ function buildStartupCommandHints(options: {
   }
 
   if (!hasCloudCredentials) {
-    onboardingHints.push("→ **/login**     sign in to Constellation");
+    onboardingHints.push("→ **/login**     sign in with Letta");
   }
 
   const dedupedHints: string[] = [];
@@ -1537,8 +1537,7 @@ export function App({
       for (const task of activeTasks) {
         if (firedThisMinute.has(task.id)) continue;
 
-        // Handle missed one-shots
-        if (handleMissedOneShot(task, now)) continue;
+        if (handleTaskPreflight(task, now)) continue;
 
         if (shouldFireTask(task, now)) {
           firedThisMinute.add(task.id);
@@ -3469,11 +3468,16 @@ export function App({
 
       try {
         const { updateConversationLLMConfig } = await import("@/agent/modify");
+        // The preserved window rides as contextWindowOverride so it survives
+        // on local backends too (local catalog resolution ignores
+        // updateArgs.context_window); presets stay in updateArgs. LET-9786.
         await updateConversationLLMConfig(
           targetConversationId,
           carryover.modelHandle,
           carryover.updateArgs,
-          { avoidOverwritingExistingContextWindow: true },
+          carryover.contextWindowOverride !== undefined
+            ? { contextWindowOverride: carryover.contextWindowOverride }
+            : undefined,
         );
       } catch (error) {
         debugWarn(

@@ -32,6 +32,7 @@ import type {
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalCompactionStats } from "./compaction";
+import { listLocalConversations } from "./local-conversation-list";
 import {
   emptyLocalUsage,
   type LocalAssistantMessage,
@@ -1489,28 +1490,8 @@ export class LocalStore {
   listConversations(body?: ConversationListBody): Conversation[] {
     this.loadConversationRecordsFromStorage();
     this.refreshLoadedConversationRecordsFromStorage();
-    const bodyRecord = (body ?? {}) as Record<string, unknown>;
-    const agentId = optionalString(bodyRecord.agent_id);
-    const after = optionalString(bodyRecord.after);
-    const limit = typeof bodyRecord.limit === "number" ? bodyRecord.limit : 20;
-    let conversations = [...this.conversations.values()].filter(
-      (conversation) =>
-        conversation.id !== "default" &&
-        (bodyRecord.include_hidden === true || !conversation.hidden) &&
-        (!agentId || conversation.agent_id === agentId),
-    );
-    conversations.sort((a, b) => {
-      const aDate = a.last_message_at ?? a.updated_at ?? a.created_at ?? "";
-      const bDate = b.last_message_at ?? b.updated_at ?? b.created_at ?? "";
-      return bDate.localeCompare(aDate);
-    });
-    if (after) {
-      const afterIndex = conversations.findIndex(
-        (conversation) => conversation.id === after,
-      );
-      if (afterIndex >= 0) conversations = conversations.slice(afterIndex + 1);
-    }
-    return conversations.slice(0, limit);
+
+    return listLocalConversations(this.conversations.values(), body);
   }
 
   createConversation(body: ConversationCreateBody): Conversation {

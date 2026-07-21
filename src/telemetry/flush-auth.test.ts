@@ -28,7 +28,7 @@ const telemetrySurfaces = [
 ] satisfies TelemetrySurface[];
 
 const telemetryBackends = [
-  "constellation",
+  "cloud",
   "local",
   "docker_deprecated",
   "self_hosted_api",
@@ -54,13 +54,13 @@ describe("telemetry segmentation", () => {
     ).toBe("local");
     expect(
       resolveTelemetryBackend({ env: {}, serverUrl: "https://api.letta.com" }),
-    ).toBe("constellation");
+    ).toBe("cloud");
     expect(
       resolveTelemetryBackend({
         env: { LETTA_DESKTOP_MODE: "1" },
         serverUrl: "http://127.0.0.1:54085",
       }),
-    ).toBe("constellation");
+    ).toBe("cloud");
     expect(
       resolveTelemetryBackend({ env: {}, serverUrl: "http://localhost:8283" }),
     ).toBe("docker_deprecated");

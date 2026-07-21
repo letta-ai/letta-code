@@ -12,6 +12,7 @@ import {
   getInteractiveApprovalKind,
   isInteractiveApprovalTool,
 } from "@/tools/interactive-policy";
+import type { PermissionModeState } from "@/tools/permission-mode-state";
 import type {
   ApprovalResponseBody,
   ApprovalResponseDecision,
@@ -150,7 +151,7 @@ export async function handleApprovalStop(params: {
   agentId: string;
   conversationId: string;
   turnWorkingDirectory: string;
-  turnPermissionModeState: import("@/tools/manager").PermissionModeState;
+  turnPermissionModeState: PermissionModeState;
   dequeuedBatchId: string;
   runId?: string;
   msgRunIds: string[];
