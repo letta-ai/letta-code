@@ -232,10 +232,17 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
 
     // Conversation-scoped update for non-default
     expect(source).toContain("updateConversationLLMConfig(");
-    expect(source).toContain(
-      "avoidOverwritingExistingContextWindow: shouldPreserveContextWindow",
-    );
     expect(source).toContain('appliedTo = "conversation"');
+
+    // Context-window preservation must RE-SEND the current value explicitly
+    // (contextWindowOverride), never omit the field (an omitted
+    // context_window_limit makes the server re-derive and clamp it to a
+    // legacy 128k default — LET-9786), and must not preserve a value that
+    // looks like that server clamp (preservableContextWindow).
+    expect(source).not.toContain("avoidOverwritingExistingContextWindow");
+    expect(source).not.toContain("delete updateArgsForRequest.context_window");
+    expect(source).toContain("preservableContextWindow(");
+    expect(source).toContain("contextWindowOverride: preservedContextWindow");
   });
 
   test("preserves registry provider type for BYOK model id updates", () => {
@@ -248,6 +255,55 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     expect(resolved?.handle).toBe("lc-anthropic/claude-opus-4-8");
     expect(resolved?.updateArgs?.provider_type).toBe("anthropic");
     expect(resolved?.updateArgs?.reasoning_effort).toBe("medium");
+  });
+
+  test("reports the current scoped model for channel /model without args", async () => {
+    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-current-model-"));
+    const previousHome = process.env.HOME;
+    try {
+      process.env.HOME = storageDir;
+      await settingsManager.reset();
+      await settingsManager.initialize();
+
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Current Model Agent",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      await expect(
+        __listenClientTestUtils.getCurrentModelStatusForRuntime({
+          agentId: agent.id,
+          conversationId: "default",
+        }),
+      ).resolves.toMatchObject({
+        modelHandle: "anthropic/claude-sonnet-4-6",
+        scope: "agent",
+      });
+      await expect(
+        __listenClientTestUtils.getCurrentModelStatusForRuntime({
+          agentId: agent.id,
+          conversationId: conversation.id,
+        }),
+      ).resolves.toMatchObject({
+        modelHandle: "anthropic/claude-sonnet-4-6",
+        scope: "conversation",
+      });
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("preserves ChatGPT OAuth provider type for alias-backed model id updates", () => {
@@ -481,6 +537,11 @@ describe("listen-client channel model command wiring", () => {
     const source = readListenerLifecycleSource();
 
     expect(source).toContain("registry.setModelHandler");
+    expect(source).toContain("getCurrentModelStatusForRuntime({");
+    expect(source).toContain(
+      "buildChannelCurrentModelMessage(channelId, status)",
+    );
+    expect(source).toContain('modelIdentifier.toLowerCase() === "list"');
     expect(source).toContain("buildListModelsResponse(");
     expect(source).toContain("resolveModelForUpdate({");
     expect(source).toContain("applyModelUpdateForRuntime({");
@@ -497,7 +558,7 @@ describe("listen-client list_models response wiring", () => {
 
     // The response builder should use Promise.allSettled for parallel fetches
     expect(source).toContain("Promise.allSettled");
-    expect(source).toContain("getAvailableModelHandles()");
+    expect(source).toContain("getAvailableModelHandles(");
     expect(source).toContain("listProviders()");
     expect(source).toContain("buildByokProviderAliases(providers)");
   });
@@ -506,7 +567,19 @@ describe("listen-client list_models response wiring", () => {
     const source = readModelToolsetCommandSource();
 
     // Handler should be wrapped in void (async () => { ... })() pattern
-    expect(source).toContain("buildListModelsResponse(parsed.request_id)");
+    expect(source).toContain("buildListModelsResponse(parsed.request_id, {");
+  });
+
+  test("user-initiated force refresh bypasses the availability cache", () => {
+    const source = readModelToolsetCommandSource();
+
+    // The WS command's force flag must reach getAvailableModelHandles as
+    // forceRefresh — otherwise "Refresh model list" can be answered from a
+    // stale-but-within-TTL cache snapshot (LET-9479).
+    expect(source).toContain("forceRefresh: parsed.force === true");
+    expect(source).toContain(
+      "getAvailableModelHandles(\n      options.forceRefresh === true ? { forceRefresh: true } : undefined,\n    )",
+    );
   });
 
   test("response type includes available_handles and byok_provider_aliases fields", () => {

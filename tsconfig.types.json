@@ -12,6 +12,8 @@
     "src/types/app-server-protocol.ts",
     "src/app-server-client.ts",
     "src/agent-presets.ts",
+    "src/channels-public.ts",
+    "src/channels-slack.ts",
     "src/types/md.d.ts",
     "src/types/mdx.d.ts",
     "src/types/txt.d.ts"

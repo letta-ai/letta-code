@@ -4,15 +4,12 @@
  */
 
 import { hostname } from "node:os";
-import { getServerUrl } from "@/backend/api/client";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { settingsManager } from "@/settings-manager";
 import { getErrorMessage } from "@/utils/error";
-import {
-  deriveListenerInstanceId,
-  registerWithCloudRetry,
-} from "@/websocket/listen-register";
+import { registerWithCloudRetry } from "@/websocket/listen-register";
+import { resolveListenerRegistrationOptions } from "@/websocket/listener/auth";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -217,43 +214,29 @@ export async function handleListen(
       "running",
     );
 
-    // Register with cloud to get connectionId
-    const serverUrl = getServerUrl();
-    const settings = await settingsManager.getSettingsWithSecureTokens();
-    const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-
-    if (!apiKey) {
-      throw new Error("Missing LETTA_API_KEY");
-    }
+    const resolveRegisterOptions = () =>
+      resolveListenerRegistrationOptions(deviceId, connectionName, {
+        allowInteractiveOAuth: false,
+        surface: "listen",
+      });
 
     // Register with cloud, retrying transient failures with a bounded backoff.
+    const registerOptions = await resolveRegisterOptions();
     const { connectionId, wsUrl, supportsSplitStatusChannels } =
-      await registerWithCloudRetry(
-        {
-          serverUrl,
-          apiKey,
-          deviceId,
-          connectionName,
-          listenerInstanceId: deriveListenerInstanceId(
-            "listen",
-            connectionName,
-          ),
+      await registerWithCloudRetry(registerOptions, {
+        onRetry: (attempt, delayMs, error) => {
+          updateCommandResult(
+            ctx.buffersRef,
+            ctx.refreshDerived,
+            cmdId,
+            msg,
+            `Registering listener "${connectionName}"...\n` +
+              `Retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
+            true,
+            "running",
+          );
         },
-        {
-          onRetry: (attempt, delayMs, error) => {
-            updateCommandResult(
-              ctx.buffersRef,
-              ctx.refreshDerived,
-              cmdId,
-              msg,
-              `Registering listener "${connectionName}"...\n` +
-                `Retry ${attempt} in ${Math.round(delayMs / 1000)}s: ${error.message}`,
-              true,
-              "running",
-            );
-          },
-        },
-      );
+      });
 
     updateCommandResult(
       ctx.buffersRef,
@@ -348,17 +331,9 @@ export async function handleListen(
           );
 
           try {
+            const nextRegisterOptions = await resolveRegisterOptions();
             const reregisterResult = await registerWithCloudRetry(
-              {
-                serverUrl,
-                apiKey,
-                deviceId,
-                connectionName,
-                listenerInstanceId: deriveListenerInstanceId(
-                  "listen",
-                  connectionName,
-                ),
-              },
+              nextRegisterOptions,
               {
                 maxDurationMs: Infinity,
                 onRetry: (attempt, delayMs, error) => {

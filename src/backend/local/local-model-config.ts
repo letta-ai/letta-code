@@ -1,4 +1,5 @@
-import { type Api, getModels, type Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import {
   DEFAULT_PI_PROVIDER,
   isUnselectedLocalModelHandle,
@@ -45,10 +46,14 @@ export interface LocalModelConfig {
 export { UNSELECTED_LOCAL_MODEL_HANDLE };
 
 interface LocalModelListEntry {
+  display_name: string;
   handle: string;
   max_context_window?: number;
+  max_tokens?: number;
   model: string;
   model_endpoint_type: string;
+  name: string;
+  provider_type: string;
 }
 
 interface ListLocalModelsOptions {
@@ -421,7 +426,9 @@ export async function listLocalModels(
     options: {
       handle?: string;
       maxContextWindow?: number;
+      maxOutputTokens?: number;
       modelEndpointType?: string;
+      name?: string;
     } = {},
   ) => {
     const handle =
@@ -437,12 +444,35 @@ export async function listLocalModels(
       (typeof modelSettings?.context_window_limit === "number"
         ? modelSettings.context_window_limit
         : undefined);
+    const maxOutputTokens =
+      options.maxOutputTokens ??
+      (typeof modelSettings?.max_tokens === "number"
+        ? modelSettings.max_tokens
+        : undefined);
+    const modelId =
+      typeof provider === "string" && isPiProvider(provider)
+        ? (stripProviderHandlePrefix(handle, provider) ?? model)
+        : model;
+    const providerSpec = isPiProvider(provider)
+      ? getPiProviderSpec(provider)
+      : undefined;
+    const catalogModel = providerSpec?.piProvider
+      ? (getModels(providerSpec.piProvider) as Model<Api>[]).find(
+          (entry) => entry.id === modelId,
+        )
+      : undefined;
+    const providerType =
+      options.modelEndpointType ?? localProviderTypeForModelConfig(provider);
+    const name = options.name ?? catalogModel?.name ?? modelId;
     models.push({
+      display_name: name,
       handle,
       ...(maxContextWindow ? { max_context_window: maxContextWindow } : {}),
+      ...(maxOutputTokens ? { max_tokens: maxOutputTokens } : {}),
       model: handle,
-      model_endpoint_type:
-        options.modelEndpointType ?? localProviderTypeForModelConfig(provider),
+      model_endpoint_type: providerType,
+      name,
+      provider_type: providerType,
     });
   };
 
@@ -459,7 +489,9 @@ export async function listLocalModels(
         addModel(provider.providerName, model.id, {
           handle: `${provider.providerName}/${model.id}`,
           maxContextWindow: model.contextWindow,
+          maxOutputTokens: model.maxTokens,
           modelEndpointType: provider.providerName,
+          name: model.name,
         });
       }
     } catch {
@@ -467,7 +499,9 @@ export async function listLocalModels(
         addModel(provider.providerName, model.id, {
           handle: `${provider.providerName}/${model.id}`,
           maxContextWindow: model.contextWindow,
+          maxOutputTokens: model.maxTokens,
           modelEndpointType: provider.providerName,
+          name: model.name,
         });
       }
     }

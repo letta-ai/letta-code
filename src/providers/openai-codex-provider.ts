@@ -13,11 +13,12 @@ import {
   type ProviderResponse,
   updateProvider,
 } from "./byok-providers";
+import { OPENAI_CODEX_PROVIDER_NAME } from "./openai-codex-constants";
 
 export { listProviders };
 
 // Provider name constant for letta-code's ChatGPT OAuth provider
-export const OPENAI_CODEX_PROVIDER_NAME = "chatgpt-plus-pro";
+export { OPENAI_CODEX_PROVIDER_NAME };
 
 const CHATGPT_OAUTH_PROVIDER_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
 

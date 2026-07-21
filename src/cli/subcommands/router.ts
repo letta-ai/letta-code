@@ -1,15 +1,16 @@
 import { runAgentsSubcommand } from "./agents";
-import { runAppServerSubcommand } from "./app-server";
 import { runBackendSubcommand } from "./backend";
 import { runChannelsSubcommand } from "./channels";
 import { runConnectSubcommand } from "./connect";
 import { runCronSubcommand } from "./cron";
+import { runDreamSubcommand } from "./dream";
 import { runEnvironmentsSubcommand } from "./environments";
 import { runListenSubcommand } from "./listen.tsx";
 import { runLocalBackendSubcommand } from "./local-backend";
 import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 import { runModsSubcommand } from "./mods";
+import { asLegacyAppServerCommand, runServerSubcommand } from "./server";
 import { runSetupSubcommand } from "./setup";
 import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
 
@@ -33,6 +34,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "app-server":
     case "agents":
     case "connect":
+    case "dream":
     case "environments":
     case "envs":
     case "install":
@@ -68,7 +70,10 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "agents":
       return runAgentsSubcommand(rest);
     case "app-server":
-      return runAppServerSubcommand(rest);
+      console.error(
+        "Warning: `letta app-server` is deprecated. Use `letta server --listen` instead.",
+      );
+      return runServerSubcommand(asLegacyAppServerCommand(rest));
     case "messages":
       return runMessagesSubcommand(rest);
     case "environments":
@@ -77,6 +82,7 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "mods":
       return runModsSubcommand(rest);
     case "server":
+      return runServerSubcommand(rest);
     case "remote": // alias
       return runListenSubcommand(rest);
     case "connect":
@@ -91,6 +97,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runSkillsSubcommand(rest);
     case "cron":
       return runCronSubcommand(rest);
+    case "dream":
+      return runDreamSubcommand(rest);
     case "channels":
       return runChannelsSubcommand(rest);
     case "local-backend":

@@ -203,7 +203,30 @@ describe("memory subagent recompile handling", () => {
     );
 
     expect(message).toBe(
-      "\x1b]8;;https://app.letta.com/chat/agent-reflection\x1b\\Dreamed\x1b]8;;\x1b\\ and made some memories.",
+      "\x1b]8;;https://chat.letta.com/chat/agent-reflection\x1b\\Dreamed\x1b]8;;\x1b\\ and made some memories.",
     );
+  });
+
+  test("uses reflection status override even when transcript is not consumed", async () => {
+    const message = await handleMemorySubagentCompletion(
+      {
+        agentId: "agent-parent",
+        conversationId: "conv-parent",
+        subagentType: "reflection",
+        success: false,
+        successMessageOverride:
+          "Tried to reflect, but memory changes were not committed cleanly; will retry later.",
+      },
+      {
+        recompileByConversation: new Map(),
+        recompileQueuedByConversation: new Set(),
+        recompileAgentSystemPromptImpl: recompileAgentSystemPromptMock,
+      },
+    );
+
+    expect(message).toBe(
+      "Tried to reflect, but memory changes were not committed cleanly; will retry later.",
+    );
+    expect(recompileAgentSystemPromptMock).not.toHaveBeenCalled();
   });
 });

@@ -382,12 +382,46 @@ export function getShellEnv(): NodeJS.ProcessEnv {
         const inheritedParentMemoryDir = parentAgentId
           ? getScopedMemoryFilesystemRoot(parentAgentId)
           : null;
+        const inheritedParentAgentDir = inheritedParentMemoryDir
+          ? path.dirname(inheritedParentMemoryDir)
+          : null;
+        const inheritedMemoryPath = inheritedMemoryDir
+          ? path.resolve(inheritedMemoryDir)
+          : null;
+        const inheritedMemoryIsParentScoped =
+          inheritedMemoryPath && inheritedParentMemoryDir
+            ? inheritedMemoryPath === path.resolve(inheritedParentMemoryDir) ||
+              Boolean(
+                inheritedParentAgentDir &&
+                  inheritedMemoryPath.startsWith(
+                    `${path.resolve(inheritedParentAgentDir)}${path.sep}memory-worktrees${path.sep}`,
+                  ),
+              )
+            : false;
+        // An EXPLICIT memory scope (LETTA_MEMORY_DIR_EXPLICIT=1, set by a
+        // launcher that deliberately points this session's memory at an
+        // isolated copy — e.g. an SDK dream batch's memfs clone) is honored
+        // when it lies outside the agents' memory store: such a path cannot
+        // be another agent's memory, which is what this guard protects.
+        // Without the marker, a non-parent-scoped inherited value is treated
+        // as stale leakage and stripped, as before.
+        const inheritedMemoryExplicit =
+          process.env.LETTA_MEMORY_DIR_EXPLICIT === "1";
+        const memoryStoreDir = path.dirname(
+          path.dirname(getScopedMemoryFilesystemRoot(agentId)),
+        );
+        const inheritedMemoryOutsideStore = Boolean(
+          inheritedMemoryPath &&
+            !inheritedMemoryPath.startsWith(
+              `${path.resolve(memoryStoreDir)}${path.sep}`,
+            ) &&
+            inheritedMemoryPath !== path.resolve(memoryStoreDir),
+        );
 
         if (
           inheritedMemoryDir &&
-          inheritedParentMemoryDir &&
-          path.resolve(inheritedMemoryDir) ===
-            path.resolve(inheritedParentMemoryDir)
+          (inheritedMemoryIsParentScoped ||
+            (inheritedMemoryExplicit && inheritedMemoryOutsideStore))
         ) {
           env.MEMORY_DIR = inheritedMemoryDir;
           env.LETTA_MEMORY_DIR = inheritedLettaMemoryDir || inheritedMemoryDir;

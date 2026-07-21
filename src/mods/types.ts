@@ -97,6 +97,10 @@ export type ModConversationMessage = MessageCreate | ApprovalCreate;
 export interface ModConversationSendMessageOptions {
   background?: boolean;
   overrideModel?: string;
+  /**
+   * @deprecated Image normalization is always enforced at the send boundary.
+   * This option is retained as an ignored compatibility shim for existing mods.
+   */
   skipImageNormalization?: boolean;
   streamTokens?: boolean;
   workingDirectory?: string;

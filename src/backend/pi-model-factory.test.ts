@@ -2,10 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModels } from "@earendil-works/pi-ai";
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
 import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import {
   applyPiEnvOverrides,
+  reasoningForSettings,
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
 import {
@@ -151,6 +153,43 @@ describe("pi model factory", () => {
       );
 
       expect(resolved.apiKey).toBe("chatgpt-access-token");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves local ChatGPT OAuth GPT-5.6 with max reasoning", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-chatgpt-56-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "chatgpt_oauth",
+        providerName: "chatgpt-plus-pro",
+        apiKey: JSON.stringify({
+          access_token: "chatgpt-access-token",
+          id_token: "chatgpt-id-token",
+          refresh_token: "chatgpt-refresh-token",
+          account_id: "account-123",
+          expires_at: Date.now() + 60_000,
+        }),
+      });
+
+      const resolved = await resolvePiModelForAgent(
+        "chatgpt-plus-pro/gpt-5.6-sol",
+        { provider_type: "chatgpt_oauth" },
+        { localProviderAuthStorageDir: storageDir },
+      );
+
+      expect(resolved.provider).toBe("openai-codex");
+      expect(resolved.model.id).toBe("gpt-5.6-sol");
+      expect(resolved.model.contextWindow).toBe(372000);
+      expect(getSupportedThinkingLevels(resolved.model)).toContain("max");
+      expect(
+        reasoningForSettings(
+          { reasoning_effort: "max" },
+          "openai-codex/gpt-5.6-sol",
+        ),
+      ).toBe("max");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -540,7 +579,7 @@ describe("pi model factory", () => {
     }
   });
 
-  test("normalizes local OpenAI-compatible provider base URLs for runtime", async () => {
+  test("normalizes wrapped llama.cpp handles and custom base URLs", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-llama-cpp-base-url-"));
     try {
       await createOrUpdateLocalProvider({
@@ -551,13 +590,35 @@ describe("pi model factory", () => {
         baseURL: "http://localhost:8088/",
       });
 
-      const resolved = await resolvePiModelForAgent(
+      const native = await resolvePiModelForAgent(
         "llama.cpp/local-model",
-        { provider_type: "llama_cpp" },
+        {
+          provider_type: "llama_cpp",
+          context_window_limit: 128000,
+          max_tokens: 32000,
+        },
+        { localProviderAuthStorageDir: storageDir },
+      );
+      const wrapped = await resolvePiModelForAgent(
+        "openai/llama.cpp/local-model",
+        {
+          provider_type: "llama_cpp",
+          context_window_limit: 128000,
+          max_tokens: 32000,
+        },
         { localProviderAuthStorageDir: storageDir },
       );
 
-      expect(resolved.model.baseUrl).toBe("http://localhost:8088/v1");
+      expect(native.provider).toBe("llama-cpp");
+      expect(wrapped).toEqual(native);
+      expect(native.model).toMatchObject({
+        id: "local-model",
+        api: "openai-completions",
+        provider: "llama-cpp",
+        baseUrl: "http://localhost:8088/v1",
+        contextWindow: 128000,
+        maxTokens: 32000,
+      });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

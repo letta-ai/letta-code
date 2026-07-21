@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import type { DeviceCodeResponse, TokenResponse } from "@/auth/oauth";
+import {
+  type DeviceCodeResponse,
+  OAuthRefreshError,
+  type TokenResponse,
+} from "@/auth/oauth";
 import { settingsManager } from "@/settings-manager";
+import { __listenerAuthTestUtils } from "@/websocket/listener/auth";
 
 const refreshAccessTokenMock = mock(async (): Promise<TokenResponse> => {
   throw new Error("refreshAccessToken not mocked");
@@ -32,7 +37,7 @@ describe("listen subcommand auth resolution", () => {
     refreshAccessTokenMock.mockReset();
     requestDeviceCodeMock.mockReset();
     pollForTokenMock.mockReset();
-    __listenSubcommandTestUtils.setOAuthDepsForTests({
+    __listenerAuthTestUtils.setOAuthDepsForTests({
       LETTA_CLOUD_API_URL: "https://api.letta.com",
       refreshAccessToken: refreshAccessTokenMock,
       requestDeviceCode: requestDeviceCodeMock,
@@ -88,7 +93,7 @@ describe("listen subcommand auth resolution", () => {
     } else {
       process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = originalLocalBackend;
     }
-    __listenSubcommandTestUtils.setOAuthDepsForTests(null);
+    __listenerAuthTestUtils.setOAuthDepsForTests(null);
   });
 
   test("prefers explicit LETTA_API_KEY over saved OAuth credentials", async () => {
@@ -183,7 +188,13 @@ describe("listen subcommand auth resolution", () => {
       updateSettingsMock as typeof settingsManager.updateSettings;
     settingsManager.flush = flushMock as typeof settingsManager.flush;
 
-    refreshAccessTokenMock.mockRejectedValue(new Error("refresh broke"));
+    refreshAccessTokenMock.mockRejectedValue(
+      new OAuthRefreshError("refresh token revoked", {
+        retryable: false,
+        status: 400,
+        oauthCode: "invalid_grant",
+      }),
+    );
     requestDeviceCodeMock.mockImplementation(async () => ({
       device_code: "device-code",
       user_code: "ABC123",

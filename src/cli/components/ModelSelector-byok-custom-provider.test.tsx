@@ -3,7 +3,9 @@ import { getReasoningTierOptionsForHandle } from "@/agent/model";
 import {
   buildByokProviderAliases,
   isByokHandleForSelector,
+  labelForBackendModel,
   labelForChatGPTByokAlias,
+  registryHandleForBackendModel,
   registryHandleForByokAlias,
   toByokSelectorModel,
 } from "@/cli/components/ModelSelector";
@@ -52,6 +54,27 @@ describe("ModelSelector custom BYOK provider detection", () => {
     );
   });
 
+  test("uses ChatGPT GPT-5.6 metadata for available variants", () => {
+    expect(
+      registryHandleForBackendModel(
+        "openai-codex/gpt-5.6-sol",
+        "chatgpt_oauth",
+      ),
+    ).toBe("chatgpt-plus-pro/gpt-5.6-sol");
+    expect(
+      registryHandleForBackendModel(
+        "openai-codex/gpt-5.6-luna",
+        "chatgpt_oauth",
+      ),
+    ).toBe("chatgpt-plus-pro/gpt-5.6-luna");
+    expect(labelForBackendModel("GPT-5.6 Sol", "chatgpt_oauth")).toBe(
+      "GPT-5.6 Sol (ChatGPT)",
+    );
+    expect(labelForBackendModel("GPT-5.6 Sol (ChatGPT)", "chatgpt_oauth")).toBe(
+      "GPT-5.6 Sol (ChatGPT)",
+    );
+  });
+
   test("resolves alias-backed BYOK handles to registry handles for reasoning tiers", () => {
     const aliases = buildByokProviderAliases([
       {
@@ -69,6 +92,9 @@ describe("ModelSelector custom BYOK provider detection", () => {
     ).toBe("chatgpt-plus-pro/gpt-5.5");
     expect(registryHandleForByokAlias("openai-sarah/gpt-5.5", aliases)).toBe(
       "openai/gpt-5.5",
+    );
+    expect(registryHandleForByokAlias("lc-moonshot/kimi-k3", aliases)).toBe(
+      "moonshot/kimi-k3",
     );
 
     const reasoningOptions = getReasoningTierOptionsForHandle(

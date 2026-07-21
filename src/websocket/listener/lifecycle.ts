@@ -6,11 +6,15 @@ import {
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "@/agent/subagent-state";
 import {
+  buildChannelCurrentModelMessage,
+  buildChannelCurrentModelUnavailableMessage,
   buildChannelModelListMessage,
   buildChannelModelListUnavailableMessage,
+  buildChannelModelNotFoundText,
   buildChannelModelUpdatedMessage,
   buildChannelModelUpdateFailedMessage,
 } from "@/channels/commands";
+import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
@@ -33,10 +37,17 @@ import { isDebugEnabled } from "@/utils/debug";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolvers } from "./approval";
+import { resolveListenerReconnectAuth } from "./auth";
+import {
+  recoverActiveChannelTurn,
+  uniqueChannelTurnSources,
+} from "./channel-turn-session";
+import { handleReloadCommand } from "./commands";
 import { handleChannelRegistryEvent } from "./commands/channels";
 import {
   applyModelUpdateForRuntime,
   buildListModelsResponse,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import {
@@ -326,6 +337,28 @@ export async function recoverPendingChannelControlRequests(
       getRecoveredApprovalStateForScope(listener, scope)?.pendingRequestIds ??
       new Set<string>();
 
+    const stillPendingEntries = entries.filter((entry) => {
+      const requestId = entry.event.requestId;
+      return (
+        livePendingRequestIds.has(requestId) ||
+        recoveredPendingRequestIds.has(requestId)
+      );
+    });
+    if (
+      stillPendingEntries.length > 0 &&
+      (!runtime.activeChannelTurn ||
+        runtime.activeChannelTurn.sources.length === 0)
+    ) {
+      const recoveredSources = uniqueChannelTurnSources(
+        stillPendingEntries.map((entry) => entry.event.source),
+      );
+      recoverActiveChannelTurn(runtime, {
+        sources: recoveredSources,
+        batchId: `recovered-${stillPendingEntries[0]?.event.requestId ?? crypto.randomUUID()}`,
+        progress: createChannelTurnProgressBuilder(),
+      });
+    }
+
     for (const entry of entries) {
       const requestId = entry.event.requestId;
       const stillPending =
@@ -519,6 +552,52 @@ export async function wireChannelIngress(
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
     if (!modelIdentifier) {
       try {
+        const status = await getCurrentModelStatusForRuntime({
+          agentId: runtime.agent_id,
+          conversationId: runtime.conversation_id,
+        });
+        const text = buildChannelCurrentModelMessage(channelId, status);
+        try {
+          const response = await buildListModelsResponse(
+            `channel-model-picker-${crypto.randomUUID()}`,
+          );
+          if (!response.success) {
+            return {
+              handled: true,
+              text,
+            };
+          }
+          return {
+            handled: true,
+            text,
+            modelPicker: {
+              current: status,
+              entries: response.entries,
+              availableHandles: response.available_handles,
+              recentHandles: settingsManager.getRecentModels(),
+            },
+          };
+        } catch {
+          return {
+            handled: true,
+            text,
+          };
+        }
+      } catch (error) {
+        return {
+          handled: true,
+          text: buildChannelCurrentModelUnavailableMessage(
+            channelId,
+            error instanceof Error
+              ? error.message
+              : "Failed to load current model",
+          ),
+        };
+      }
+    }
+
+    if (modelIdentifier.toLowerCase() === "list") {
+      try {
         const response = await buildListModelsResponse(
           `channel-model-list-${crypto.randomUUID()}`,
         );
@@ -560,7 +639,7 @@ export async function wireChannelIngress(
         text: buildChannelModelUpdateFailedMessage(
           channelId,
           modelIdentifier,
-          "Model not found. Use /model to see available models.",
+          buildChannelModelNotFoundText(channelId),
         ),
       };
     }
@@ -606,6 +685,27 @@ export async function wireChannelIngress(
           modelIdentifier,
           error instanceof Error ? error.message : "Failed to update model",
         ),
+      };
+    }
+  });
+
+  registry.setReloadHandler(async ({ runtime }) => {
+    const scopedRuntime = getOrCreateScopedRuntime(
+      listener,
+      runtime.agent_id,
+      runtime.conversation_id,
+    );
+    try {
+      const output = await handleReloadCommand(scopedRuntime);
+      emitDeviceStatusUpdate(socket, scopedRuntime, runtime);
+      return {
+        handled: true,
+        text: output,
+      };
+    } catch (error) {
+      return {
+        handled: true,
+        text: `Failed to reload listener settings: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
   });
@@ -772,7 +872,6 @@ export function enqueueChannelTurn(
 
   return enqueuedItem;
 }
-
 export function createRuntime(): ListenerRuntime {
   const bootWorkingDirectory = getCurrentWorkingDirectory();
   return {
@@ -788,7 +887,6 @@ export function createRuntime(): ListenerRuntime {
     everConnected: false,
     sessionId: `listen-${crypto.randomUUID()}`,
     eventSeqCounter: 0,
-    lastStopReason: null,
     queueEmitScheduled: false,
     pendingQueueEmitScope: undefined,
     onWsEvent: undefined,
@@ -797,6 +895,7 @@ export function createRuntime(): ListenerRuntime {
     workingDirectoryByConversation: loadPersistedCwdMap(),
     worktreeWatcherByConversation: new Map(),
     permissionModeByConversation: loadPersistedPermissionModeMap(),
+    skillSourcesByConversation: new Map(),
     reminderStateByConversation: new Map(),
     contextTrackerByConversation: new Map(),
     systemPromptRecompileByConversation: new Map(),
@@ -839,11 +938,11 @@ export function stopRuntime(
   runtime.approvalRuntimeKeyByRequestId.clear();
   clearListenerWarmState(runtime);
   runtime.reminderStateByConversation.clear();
+  runtime.skillSourcesByConversation.clear();
   runtime.contextTrackerByConversation.clear();
   runtime.systemPromptRecompileByConversation.clear();
   runtime.queuedSystemPromptRecompileByConversation.clear();
   stopAllWorktreeWatchers(runtime);
-
   if (!runtime.socket) {
     if (
       runtime.streamSocket &&
@@ -1344,9 +1443,7 @@ export async function startLocalChannelListener(
   }
 }
 
-/**
- * Connect to WebSocket with exponential backoff retry.
- */
+/** Connect to WebSocket with exponential backoff retry. */
 async function connectWithRetry(
   runtime: ListenerRuntime,
   opts: StartListenerOptions,
@@ -1398,12 +1495,13 @@ async function connectWithRetry(
     await loadTools();
   }
 
-  const settings = await settingsManager.getSettingsWithSecureTokens();
-  const apiKey = process.env.LETTA_API_KEY || settings.env?.LETTA_API_KEY;
-
-  if (!apiKey) {
-    throw new Error("Missing LETTA_API_KEY");
+  const auth = await resolveListenerReconnectAuth(opts);
+  if (auth.kind === "retry")
+    return connectWithRetry(runtime, opts, attempt + 1, startTime);
+  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+    return;
   }
+  const apiKey = auth.apiKey;
 
   const url = new URL(opts.wsUrl);
   url.searchParams.set("deviceId", opts.deviceId);

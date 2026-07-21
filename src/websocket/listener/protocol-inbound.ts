@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { isSkillSourceArray } from "@/agent/skill-sources";
 import { isValidChannelPluginConfigPayload } from "@/channels/account-config";
 import { isSupportedChannelId } from "@/channels/plugin-registry";
 import type { ExperimentId } from "@/experiments/types";
@@ -101,7 +102,6 @@ import type {
 const EXPERIMENT_IDS = new Set<ExperimentId>([
   "conversation_titles",
   "desktop_conversation_bootstrap",
-  "node",
   "tui_cron",
 ]);
 
@@ -121,7 +121,6 @@ function isStringArray(value: unknown): value is string[] {
     Array.isArray(value) && value.every((item) => typeof item === "string")
   );
 }
-
 function isStringRecord(value: unknown): value is Record<string, string> {
   return (
     !!value &&
@@ -411,7 +410,8 @@ function isRuntimeStartCreateAgentOptions(value: unknown): boolean {
   if (!isObjectRecord(value)) return false;
   return (
     isObjectRecord(value.body) &&
-    (value.pin_global === undefined || typeof value.pin_global === "boolean")
+    (value.pin_global === undefined || typeof value.pin_global === "boolean") &&
+    (value.memfs === undefined || typeof value.memfs === "boolean")
   );
 }
 
@@ -419,7 +419,6 @@ function isRuntimeStartCreateConversationOptions(value: unknown): boolean {
   if (!isObjectRecord(value)) return false;
   return value.body === undefined || isObjectRecord(value.body);
 }
-
 function isRuntimeStartClientInfo(value: unknown): boolean {
   if (!isObjectRecord(value)) return false;
   return (
@@ -447,7 +446,6 @@ function isRuntimeStartExternalToolsGroup(value: unknown): boolean {
     value.tools.every(isExternalToolDefinitionPayload)
   );
 }
-
 export function isRuntimeStartCommand(
   value: unknown,
 ): value is RuntimeStartCommand {
@@ -461,6 +459,7 @@ export function isRuntimeStartCommand(
     create_conversation?: unknown;
     cwd?: unknown;
     mode?: unknown;
+    skill_sources?: unknown;
     client_info?: unknown;
     recover_approvals?: unknown;
     force_device_status?: unknown;
@@ -478,6 +477,7 @@ export function isRuntimeStartCommand(
       isRuntimeStartCreateConversationOptions(c.create_conversation)) &&
     (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
     (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
+    (c.skill_sources === undefined || isSkillSourceArray(c.skill_sources)) &&
     (c.client_info === undefined || isRuntimeStartClientInfo(c.client_info)) &&
     (c.recover_approvals === undefined ||
       typeof c.recover_approvals === "boolean") &&
@@ -877,8 +877,13 @@ export function isListModelsCommand(
   const c = value as {
     type?: unknown;
     request_id?: unknown;
+    force?: unknown;
   };
-  return c.type === "list_models" && typeof c.request_id === "string";
+  return (
+    c.type === "list_models" &&
+    typeof c.request_id === "string" &&
+    (c.force === undefined || typeof c.force === "boolean")
+  );
 }
 
 export function isListConnectProvidersCommand(
@@ -1216,13 +1221,12 @@ export function isCreateAgentCommand(
   value: unknown,
 ): value is CreateAgentCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    personality?: unknown;
-    model?: unknown;
-    pin_global?: unknown;
-  };
+  /**
+   * Treat inbound values as untrusted protocol data.
+   * Each supported field is validated before narrowing the command type.
+   * Optional tags must contain only strings.
+   */
+  const c = value as Record<string, unknown>;
   return (
     c.type === "create_agent" &&
     typeof c.request_id === "string" &&
@@ -1232,6 +1236,7 @@ export function isCreateAgentCommand(
       c.personality === "linus" ||
       c.personality === "kawaii") &&
     (c.model === undefined || typeof c.model === "string") &&
+    (c.tags === undefined || isStringArray(c.tags)) &&
     (c.pin_global === undefined || typeof c.pin_global === "boolean")
   );
 }

@@ -43,7 +43,19 @@ import {
   verifySchedulerLease,
 } from "./cron-file";
 import { cronMatchesTime, isValidCron } from "./parse-interval";
+import {
+  type CronPromptTiming,
+  formatCronPrompt,
+  getIntendedCronOccurrence,
+} from "./prompt";
 import { safeAppendCronRunLogForTask } from "./run-log";
+
+export {
+  type CronPromptTiming,
+  formatCronPrompt,
+  formatTimezoneQualifiedIso,
+  getIntendedCronOccurrence,
+} from "./prompt";
 
 // ── Types ───────────────────────────────────────────────────────────
 
@@ -99,19 +111,11 @@ export function minuteKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-export function wrapCronPrompt(task: CronTask): string {
-  const lines = [
-    `Scheduled task "${task.name}" is firing.`,
-    `Description: ${task.description}`,
-    task.recurring
-      ? `This is fire #${task.fire_count + 1} (cron: ${task.cron}).`
-      : `This is a one-off scheduled task.`,
-    "",
-    "You are running autonomously: no user is watching this turn and questions will not be answered. Deliver results through your available channels or record them in memory, and work until the task is done or genuinely blocked.",
-    "",
-    `Prompt: ${task.prompt}`,
-  ];
-  return lines.join("\n");
+export function wrapCronPrompt(
+  task: CronTask,
+  timing: CronPromptTiming,
+): string {
+  return formatCronPrompt(task, timing);
 }
 
 function getCronConversationSummary(task: CronTask): string {
@@ -253,7 +257,7 @@ export function handleInvalidRecurringTask(task: CronTask, now: Date): boolean {
 
 async function fireCronTask(
   task: CronTask,
-  now: Date,
+  timing: CronPromptTiming,
   socket: ListenerTransport,
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
@@ -263,7 +267,7 @@ async function fireCronTask(
     setLastRunOutcome(task.id, {
       outcome: "failed",
       reason: "runtime_unavailable",
-      runAt: now,
+      runAt: timing.schedulerNow,
       error: "No active runtime",
     });
     safeAppendCronRunLogForTask(task, {
@@ -271,7 +275,7 @@ async function fireCronTask(
       outcome: "failed",
       reason: "runtime_unavailable",
       error: "No active runtime",
-      runAtMs: now.getTime(),
+      runAtMs: timing.schedulerNow.getTime(),
       scheduledFor: task.scheduled_for,
     });
     return false;
@@ -285,7 +289,7 @@ async function fireCronTask(
       status: "error",
       error:
         err instanceof Error ? err.message : "failed to resolve conversation",
-      runAtMs: now.getTime(),
+      runAtMs: timing.schedulerNow.getTime(),
       scheduledFor: task.scheduled_for,
     });
     return false;
@@ -301,7 +305,7 @@ async function fireCronTask(
     setLastRunOutcome(task.id, {
       outcome: "failed",
       reason: "runtime_unavailable",
-      runAt: now,
+      runAt: timing.schedulerNow,
       error: "Conversation runtime unavailable",
     });
     safeAppendCronRunLogForTask(task, {
@@ -309,7 +313,7 @@ async function fireCronTask(
       outcome: "failed",
       reason: "runtime_unavailable",
       error: "Conversation runtime unavailable",
-      runAtMs: now.getTime(),
+      runAtMs: timing.schedulerNow.getTime(),
       scheduledFor: task.scheduled_for,
     });
     return false;
@@ -322,7 +326,7 @@ async function fireCronTask(
     rawRuntime,
   );
 
-  const text = wrapCronPrompt(task);
+  const text = wrapCronPrompt(task, timing);
 
   const queuedItem = conversationRuntime.queueRuntime.enqueue({
     kind: "cron_prompt",
@@ -337,7 +341,7 @@ async function fireCronTask(
     setLastRunOutcome(task.id, {
       outcome: "failed",
       reason: "queue_full",
-      runAt: now,
+      runAt: timing.schedulerNow,
       error: "queue buffer limit",
     });
     safeAppendCronRunLogForTask(task, {
@@ -345,7 +349,7 @@ async function fireCronTask(
       outcome: "failed",
       reason: "queue_full",
       error: "queue buffer limit",
-      runAtMs: now.getTime(),
+      runAtMs: timing.schedulerNow.getTime(),
       scheduledFor: task.scheduled_for,
     });
     return false;
@@ -354,7 +358,7 @@ async function fireCronTask(
   scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
 
   // Update task state
-  const nowIso = now.toISOString();
+  const nowIso = timing.schedulerNow.toISOString();
   if (task.recurring) {
     updateTask(task.id, (t) => {
       t.last_fired_at = nowIso;
@@ -382,7 +386,7 @@ async function fireCronTask(
     status: "ok",
     outcome: "queued",
     reason: task.recurring ? "scheduled_time_matched" : "one_off_due",
-    runAtMs: now.getTime(),
+    runAtMs: timing.schedulerNow.getTime(),
     queueItemId: queuedItem.id,
     scheduledFor: task.scheduled_for,
     firedAt: nowIso,
@@ -462,10 +466,13 @@ export async function runCronTaskNow(taskId: string): Promise<{
     };
   }
 
-  const now = new Date();
+  const schedulerNow = new Date();
   const fired = await fireCronTask(
     task,
-    now,
+    {
+      intendedOccurrence: getIntendedCronOccurrence(task, schedulerNow),
+      schedulerNow,
+    },
     ctx.socket,
     ctx.opts,
     ctx.processQueuedTurn,
@@ -499,8 +506,8 @@ function tick(
     return;
   }
 
-  const now = new Date();
-  const currentMinuteKey = minuteKey(now);
+  const matchedAt = new Date();
+  const currentMinuteKey = minuteKey(matchedAt);
 
   // Reset per-minute dedup when minute changes
   if (currentMinuteKey !== state.lastMinuteKey) {
@@ -516,19 +523,20 @@ function tick(
     // Older clients could persist expressions that the current cron dialect
     // rejects. Surface that state once rather than silently never firing.
     const invalidCronWasReported = hasReportedInvalidCron(task);
-    if (handleInvalidRecurringTask(task, now)) {
+    if (handleInvalidRecurringTask(task, matchedAt)) {
       if (!invalidCronWasReported) emitCronsUpdated(socket, task);
       continue;
     }
 
     // Handle missed one-shots (skip firing if marked missed)
-    if (handleMissedOneShot(task, now)) continue;
+    if (handleMissedOneShot(task, matchedAt)) continue;
 
     // Per-minute dedup
     if (state.firedThisMinute.has(task.id)) continue;
 
-    if (shouldFireTask(task, now)) {
+    if (shouldFireTask(task, matchedAt)) {
       state.firedThisMinute.add(task.id);
+      const intendedOccurrence = getIntendedCronOccurrence(task, matchedAt);
 
       // Apply jitter as a real delay for recurring tasks so that tasks with
       // different jitter values actually fire at different times.
@@ -542,9 +550,10 @@ function tick(
         const freshTask = getTask(taskId);
         if (!freshTask || freshTask.status !== "active") return;
 
+        const schedulerNow = new Date();
         void fireCronTask(
           freshTask,
-          now,
+          { intendedOccurrence, schedulerNow },
           socket,
           opts,
           processQueuedTurn,
@@ -553,7 +562,7 @@ function tick(
           setLastRunOutcome(freshTask.id, {
             outcome: "failed",
             reason: "scheduler_error",
-            runAt: now,
+            runAt: schedulerNow,
             error: err instanceof Error ? err.message : String(err),
           });
           safeAppendCronRunLogForTask(freshTask, {
@@ -561,7 +570,7 @@ function tick(
             outcome: "failed",
             reason: "scheduler_error",
             error: err instanceof Error ? err.message : String(err),
-            runAtMs: now.getTime(),
+            runAtMs: schedulerNow.getTime(),
             scheduledFor: freshTask.scheduled_for,
           });
         });

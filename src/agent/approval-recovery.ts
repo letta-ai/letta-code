@@ -2,11 +2,18 @@
  * Approval recovery helpers.
  *
  * Pure policy logic lives in `./turn-recovery-policy.ts` and is re-exported
- * here for backward compatibility. This module keeps only the async/side-effect
- * helper (`fetchRunErrorDetail`) that requires network access.
+ * here for backward compatibility. Async helpers that require backend access
+ * stay in this module.
  */
 
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
+import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { getBackend } from "@/backend";
+import {
+  rebuildInputWithFreshDenials,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+} from "./turn-recovery-policy";
 
 export interface RunErrorInfo {
   error_type?: string;
@@ -100,4 +107,26 @@ export async function fetchRunErrorDetail(
 ): Promise<string | null> {
   const errorInfo = await fetchRunErrorInfo(runId);
   return errorInfo?.detail ?? errorInfo?.message ?? null;
+}
+
+export async function rebuildInputForApprovalResync(
+  agentId: string,
+  conversationId: string,
+  currentInput: Array<MessageCreate | ApprovalCreate>,
+): Promise<Array<MessageCreate | ApprovalCreate>> {
+  const backend = getBackend();
+  const agent = await backend.retrieveAgent(agentId);
+  const { pendingApprovals } = await getResumeDataFromBackend(
+    agent,
+    conversationId,
+  );
+  const rebuilt = rebuildInputWithFreshDenials(
+    currentInput,
+    pendingApprovals ?? [],
+    STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+  );
+  if (rebuilt.length === 0) {
+    throw new Error("Approval resync produced no retryable input");
+  }
+  return rebuilt;
 }

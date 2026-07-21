@@ -526,7 +526,7 @@ describe("formatErrorDetails", () => {
     const message = formatErrorDetails(error, "agent-1", "conv-1");
 
     expect(message).toContain(
-      "\x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\",
+      "\x1b]8;;https://chat.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\",
     );
   });
 
@@ -566,7 +566,7 @@ describe("formatErrorDetails", () => {
     });
 
     expect(message).toContain(
-      "\x1b]8;;https://app.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\",
+      "\x1b]8;;https://chat.letta.com/chat/agent-1?conversation=conv-1\x1b\\agent-1\x1b]8;;\x1b\\",
     );
   });
 

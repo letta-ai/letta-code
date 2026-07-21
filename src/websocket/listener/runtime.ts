@@ -7,6 +7,8 @@ import {
   resolveScopedAgentId,
   resolveScopedConversationId,
 } from "./scope";
+import { releaseListenerTurnContext } from "./turn-context";
+import { TurnLifecycle } from "./turn-lifecycle";
 import type {
   ConversationRuntime,
   ListenerRuntime,
@@ -59,8 +61,7 @@ export function evictConversationRuntimeIfIdle(
   runtime: ConversationRuntime,
 ): boolean {
   if (
-    runtime.isProcessing ||
-    runtime.isRecoveringApprovals ||
+    runtime.turnLifecycle.kind !== "idle" ||
     runtime.queuePumpActive ||
     runtime.queuePumpScheduled ||
     runtime.pendingTurns > 0 ||
@@ -69,12 +70,7 @@ export function evictConversationRuntimeIfIdle(
     runtime.recoveredApprovalState !== null ||
     runtime.pendingInterruptedResults !== null ||
     runtime.pendingInterruptedContext !== null ||
-    runtime.activeExecutingToolCallIds.length > 0 ||
     (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
-    runtime.activeRunId !== null ||
-    runtime.activeRunStartedAt !== null ||
-    runtime.activeAbortController !== null ||
-    runtime.cancelRequested ||
     runtime.queuedMessagesByItemId.size > 0 ||
     runtime.queueRuntime?.length > 0
   ) {
@@ -108,7 +104,7 @@ export function getListenerStatus(
 ): "idle" | "receiving" | "processing" {
   let hasPendingTurns = false;
   for (const runtime of listener.conversationRuntimes.values()) {
-    if (runtime.isProcessing || runtime.isRecoveringApprovals) {
+    if (runtime.isProcessing) {
       return "processing";
     }
     if (runtime.pendingTurns > 0) {
@@ -154,33 +150,45 @@ export function createConversationRuntime(
     normalizedAgentId,
     normalizedConversationId,
   );
+  const turnLifecycle = new TurnLifecycle();
   const conversationRuntime: ConversationRuntime = {
     listener,
     key: runtimeKey,
     agentId: normalizedAgentId,
     conversationId: normalizedConversationId,
-    activeChannelTurnSources: null,
+    skillSources: listener.skillSourcesByConversation.get(runtimeKey)?.slice(),
+    activeChannelTurn: null,
+    turnLifecycle,
     messageQueue: Promise.resolve(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
-    lastStopReason: null,
+    get lastStopReason() {
+      return turnLifecycle.lastStopReason;
+    },
     lastTerminalLoopErrorMessage: null,
     lastTerminalLoopErrorRunId: null,
-    isProcessing: false,
-    activeWorkingDirectory: null,
+    get isProcessing() {
+      return turnLifecycle.isProcessing;
+    },
+    get activeWorkingDirectory() {
+      return turnLifecycle.activeWorkingDirectory;
+    },
     expectedWorktreePath: null,
     expectedWorktreeExpiresAt: null,
-    activeRunId: null,
-    activeRunStartedAt: null,
-    activeAbortController: null,
-    cancelRequested: false,
+    get activeRunId() {
+      return turnLifecycle.activeRunId;
+    },
+    get cancelRequested() {
+      return turnLifecycle.cancelRequested;
+    },
     queueRuntime: null as unknown as ConversationRuntime["queueRuntime"],
     queuedMessagesByItemId: new Map(),
     queuePumpActive: false,
     queuePumpScheduled: false,
     pendingTurns: 0,
-    isRecoveringApprovals: false,
-    loopStatus: "WAITING_ON_INPUT",
+    get loopStatus() {
+      return turnLifecycle.loopStatus;
+    },
     currentToolset: null,
     currentToolsetPreference: "auto",
     currentLoadedTools: [],
@@ -188,7 +196,6 @@ export function createConversationRuntime(
     pendingInterruptedResults: null,
     pendingInterruptedContext: null,
     continuationEpoch: 0,
-    activeExecutingToolCallIds: [],
     pendingInterruptedToolCallIds: null,
     reminderState:
       listener.reminderStateByConversation.get(runtimeKey) ??
@@ -235,13 +242,6 @@ export function getOrCreateConversationRuntime(
   );
 }
 
-export function clearActiveRunState(runtime: ConversationRuntime): void {
-  runtime.activeWorkingDirectory = null;
-  runtime.activeRunId = null;
-  runtime.activeRunStartedAt = null;
-  runtime.activeAbortController = null;
-}
-
 export function clearRecoveredApprovalState(
   runtime: ConversationRuntime,
 ): void {
@@ -252,24 +252,20 @@ export function clearRecoveredApprovalState(
 export function clearConversationRuntimeState(
   runtime: ConversationRuntime,
 ): void {
-  runtime.cancelRequested = true;
-  if (
-    runtime.activeAbortController &&
-    !runtime.activeAbortController.signal.aborted
-  ) {
-    runtime.activeAbortController.abort();
-  }
+  runtime.turnLifecycle.reset("cancelled");
+  releaseListenerTurnContext({
+    runtime,
+    agentId: runtime.agentId,
+    conversationId: runtime.conversationId,
+  });
   runtime.pendingApprovalBatchByToolCallId.clear();
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
-  runtime.activeExecutingToolCallIds = [];
-  runtime.loopStatus = "WAITING_ON_INPUT";
   runtime.continuationEpoch += 1;
   runtime.pendingTurns = 0;
   runtime.queuePumpActive = false;
   runtime.queuePumpScheduled = false;
-  clearActiveRunState(runtime);
 }
 
 export function getRecoveredApprovalStateForScope(

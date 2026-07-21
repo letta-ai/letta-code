@@ -27,6 +27,13 @@ function isSkillSource(value: string): value is SkillSource {
   return ALL_SKILL_SOURCES.includes(value as SkillSource);
 }
 
+export function isSkillSourceArray(value: unknown): value is SkillSource[] {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === "string" && isSkillSource(item))
+  );
+}
+
 function normalizeSkillSources(sources: SkillSource[]): SkillSource[] {
   const sourceSet = new Set(sources);
   return ALL_SKILL_SOURCES.filter((source) => sourceSet.has(source));

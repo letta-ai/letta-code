@@ -1,8 +1,12 @@
 import type WebSocket from "ws";
-import { getAvailableModelHandles } from "@/agent/available-models";
+import {
+  getAvailableModelHandles,
+  getCachedAvailableModels,
+} from "@/agent/available-models";
 import {
   getModelInfo,
   models,
+  preservableContextWindow,
   shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
 import {
@@ -24,11 +28,13 @@ import {
 import { formatToolsetName } from "@/tools/toolset-labels";
 import type {
   ListModelsResponseMessage,
-  ListModelsResponseModelEntry,
   UpdateModelResponseMessage,
   UpdateToolsetResponseMessage,
 } from "@/types/protocol_v2";
-import { ensureListenerModAdapter } from "@/websocket/listener/mod-adapter";
+import {
+  createListenerModEvents,
+  ensureListenerModAdaptersForAgent,
+} from "@/websocket/listener/mod-adapter";
 import {
   isListModelsCommand,
   isUpdateModelCommand,
@@ -43,6 +49,10 @@ import type {
   ConversationRuntime,
   ListenerRuntime,
 } from "@/websocket/listener/types";
+import {
+  buildListModelsEntries,
+  findAvailableModelForPreset,
+} from "./model-catalog";
 import type {
   GetOrCreateScopedRuntime,
   RunDetachedListenerTask,
@@ -71,6 +81,12 @@ type ModelScopeSnapshot = {
     model_endpoint_type?: string | null;
     context_window?: number | null;
   } | null;
+};
+
+export type CurrentModelStatus = {
+  modelHandle: string | null;
+  modelLabel: string;
+  scope: "agent" | "conversation";
 };
 
 function inferProviderTypeFromRegistryHandle(
@@ -177,10 +193,26 @@ async function getCurrentModelScopeSnapshot(params: {
   };
 }
 
+export async function getCurrentModelStatusForRuntime(params: {
+  agentId: string;
+  conversationId: string;
+}): Promise<CurrentModelStatus> {
+  const snapshot = await getCurrentModelScopeSnapshot(params);
+  const modelInfo = snapshot.modelHandle
+    ? getModelInfo(snapshot.modelHandle)
+    : null;
+  return {
+    modelHandle: snapshot.modelHandle,
+    modelLabel: modelInfo?.label ?? snapshot.modelHandle ?? "unknown",
+    scope: params.conversationId === "default" ? "agent" : "conversation",
+  };
+}
+
 export function resolveModelForUpdate(payload: {
   model_id?: string;
   model_handle?: string;
 }): ResolvedModelForUpdate | null {
+  const availableModels = getCachedAvailableModels() ?? [];
   if (typeof payload.model_id === "string" && payload.model_id.length > 0) {
     const byId = getModelInfo(payload.model_id);
     if (byId) {
@@ -198,20 +230,41 @@ export function resolveModelForUpdate(payload: {
           ? ({ ...byId.updateArgs } as Record<string, unknown>)
           : undefined;
       const providerType = inferProviderTypeFromRegistryHandle(byId.handle);
+      const availableModel = findAvailableModelForPreset(
+        byId.handle,
+        availableModels,
+      );
       if (
-        explicitHandle &&
+        (explicitHandle || availableModel) &&
         updateArgs &&
-        providerType &&
+        (availableModel?.providerType || providerType) &&
         typeof updateArgs.provider_type !== "string"
       ) {
-        updateArgs.provider_type = providerType;
+        updateArgs.provider_type = availableModel?.providerType ?? providerType;
       }
 
       return {
         id: byId.id,
-        handle: explicitHandle ?? byId.handle,
+        handle: explicitHandle ?? availableModel?.handle ?? byId.handle,
         label: byId.label,
         updateArgs,
+      };
+    }
+
+    const nativeModel = availableModels.find(
+      (model) => model.handle === payload.model_id,
+    );
+    if (nativeModel || payload.model_id.includes("/")) {
+      const explicitHandle =
+        typeof payload.model_handle === "string" &&
+        payload.model_handle.length > 0
+          ? payload.model_handle
+          : null;
+      return {
+        id: payload.model_id,
+        handle: explicitHandle ?? payload.model_id,
+        label: nativeModel?.label ?? payload.model_id,
+        updateArgs: undefined,
       };
     }
   }
@@ -234,10 +287,13 @@ export function resolveModelForUpdate(payload: {
       };
     }
 
+    const nativeModel = availableModels.find(
+      (model) => model.handle === payload.model_handle,
+    );
     return {
       id: payload.model_handle,
       handle: payload.model_handle,
-      label: payload.model_handle,
+      label: nativeModel?.label ?? payload.model_handle,
       updateArgs: undefined,
     };
   }
@@ -354,6 +410,15 @@ export async function applyModelUpdateForRuntime(params: {
     agentId,
     conversationId,
   });
+  // Switching to a different model (or a different context-window variant of
+  // the same model, e.g. base <-> 1M dual listings) resets the context window
+  // to the selected catalog entry's preset. Only a tier change within the
+  // same variant preserves the current window — and it preserves by
+  // RE-SENDING the current value explicitly, never by omitting the field:
+  // the server treats an omitted context_window_limit as "re-derive from the
+  // handle" and clamps it to a legacy global default (128k). A current value
+  // that looks like that clamp is not preservable, so poisoned agents heal
+  // to the preset even on same-variant tier changes. See LET-9786.
   const shouldPreserveContextWindow =
     shouldPreserveContextWindowForModelSelection({
       currentModelHandle: currentModelScope.modelHandle,
@@ -361,10 +426,17 @@ export async function applyModelUpdateForRuntime(params: {
       selectedModelHandle: model.handle,
       selectedContextWindow,
     });
+  const preservedContextWindow = shouldPreserveContextWindow
+    ? preservableContextWindow(
+        currentModelScope.llmConfig?.context_window,
+        model.handle,
+      )
+    : undefined;
+  const updateOptions =
+    preservedContextWindow !== undefined
+      ? { contextWindowOverride: preservedContextWindow }
+      : undefined;
   const updateArgsForRequest = { ...updateArgs };
-  if (shouldPreserveContextWindow) {
-    delete updateArgsForRequest.context_window;
-  }
 
   let modelSettings: Record<string, unknown> | null = null;
   let appliedTo: "agent" | "conversation";
@@ -374,7 +446,7 @@ export async function applyModelUpdateForRuntime(params: {
       agentId,
       model.handle,
       updateArgsForRequest,
-      { avoidOverwritingExistingContextWindow: shouldPreserveContextWindow },
+      updateOptions,
     );
     modelSettings =
       (updatedAgent.model_settings as
@@ -387,7 +459,7 @@ export async function applyModelUpdateForRuntime(params: {
       conversationId,
       model.handle,
       updateArgsForRequest,
-      { avoidOverwritingExistingContextWindow: shouldPreserveContextWindow },
+      updateOptions,
     );
     modelSettings =
       ((
@@ -406,6 +478,10 @@ export async function applyModelUpdateForRuntime(params: {
 
   try {
     await ensureCorrectMemoryTool(agentId, model.handle);
+    const modAdapters = await ensureListenerModAdaptersForAgent(
+      listener,
+      agentId,
+    );
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
@@ -414,7 +490,8 @@ export async function applyModelUpdateForRuntime(params: {
         providerTypeFromModelSettings(modelSettings) ??
         inferProviderTypeFromRegistryHandle(model.handle) ??
         null,
-      modEvents: ensureListenerModAdapter(listener).events,
+      modAdapters,
+      modEvents: createListenerModEvents(modAdapters),
     });
     nextToolset = preparedToolContext.toolset;
     nextLoadedTools = preparedToolContext.preparedToolContext.loadedToolNames;
@@ -501,10 +578,15 @@ export async function applyToolsetUpdateForRuntime(params: {
 
   try {
     settingsManager.setToolsetPreference(agentId, toolsetPreference);
+    const modAdapters = await ensureListenerModAdaptersForAgent(
+      listener,
+      agentId,
+    );
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
-      modEvents: ensureListenerModAdapter(listener).events,
+      modAdapters,
+      modEvents: createListenerModEvents(modAdapters),
     });
     nextToolset = preparedToolContext.toolset;
     scopedRuntime.currentToolset = preparedToolContext.toolset;
@@ -551,36 +633,21 @@ export async function applyToolsetUpdateForRuntime(params: {
   };
 }
 
-export function buildListModelsEntries(): ListModelsResponseModelEntry[] {
-  return models.map((model) => ({
-    id: model.id,
-    handle: model.handle,
-    label: model.label,
-    description: model.description,
-    ...(typeof model.isDefault === "boolean"
-      ? { isDefault: model.isDefault }
-      : {}),
-    ...(typeof model.isFeatured === "boolean"
-      ? { isFeatured: model.isFeatured }
-      : {}),
-    ...(typeof model.free === "boolean" ? { free: model.free } : {}),
-    ...(model.updateArgs && typeof model.updateArgs === "object"
-      ? { updateArgs: model.updateArgs as Record<string, unknown> }
-      : {}),
-  }));
-}
-
 /**
  * Build the full list_models_response payload, including availability data.
  * Fetches available handles and BYOK provider aliases in parallel (best-effort).
  */
 export async function buildListModelsResponse(
   requestId: string,
+  options: { forceRefresh?: boolean } = {},
 ): Promise<ListModelsResponseMessage> {
-  const entries = buildListModelsEntries();
-
   const [handlesResult, providersResult] = await Promise.allSettled([
-    getAvailableModelHandles(),
+    // User-initiated refreshes bypass the availability cache: within the
+    // cache TTL a stale snapshot would otherwise make every "Refresh model
+    // list" click return the same wrong answer.
+    getAvailableModelHandles(
+      options.forceRefresh === true ? { forceRefresh: true } : undefined,
+    ),
     listProviders(),
   ]);
 
@@ -588,6 +655,9 @@ export async function buildListModelsResponse(
     handlesResult.status === "fulfilled"
       ? [...handlesResult.value.handles]
       : null;
+  const entries = buildListModelsEntries(
+    handlesResult.status === "fulfilled" ? handlesResult.value.models : [],
+  );
 
   // listProviders already degrades to [] on failure, but handle rejection too
   const providers =
@@ -619,7 +689,9 @@ export function handleModelToolsetCommand(
   if (isListModelsCommand(parsed)) {
     runDetachedListenerTask("list_models", async () => {
       try {
-        const response = await buildListModelsResponse(parsed.request_id);
+        const response = await buildListModelsResponse(parsed.request_id, {
+          forceRefresh: parsed.force === true,
+        });
         safeSocketSend(
           socket,
           response,

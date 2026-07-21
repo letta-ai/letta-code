@@ -5,6 +5,7 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
+import { getChannelRegistry } from "@/channels/registry";
 import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
@@ -22,7 +23,6 @@ import type {
   DeviceStatus,
   DeviceStatusUpdateMessage,
   LoopState,
-  LoopStatus,
   LoopStatusUpdateMessage,
   ModCommandInfo,
   QueueMessage,
@@ -38,8 +38,16 @@ import type {
   WsProtocolMessage,
 } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
+import {
+  type ChannelTurnRuntimeCarrier,
+  getActiveChannelTurnProgressContext,
+} from "./channel-turn-session";
 import { SYSTEM_REMINDER_RE } from "./constants";
-import { getConversationWorkingDirectory } from "./cwd";
+import { getConversationWorkingDirectory, getExportedCwdMap } from "./cwd";
+import {
+  recordDeviceStatus,
+  shouldEmitDeviceStatus,
+} from "./device-status-cache";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { listListenerModCommands } from "./mod-commands";
 import { getConversationPermissionModeState } from "./permission-mode";
@@ -64,18 +72,16 @@ import type {
 } from "./types";
 
 type RuntimeCarrier = ListenerRuntime | ConversationRuntime | null;
+type PartialRuntimeScope = {
+  agent_id?: string | null;
+  conversation_id?: string | null;
+};
 
 const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
 const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
 /**
- * Frozen copy of the supported commands list. Avoids creating a new array on
- * every `buildDeviceStatus()` call (every 5–30 s per connected web client).
- * (LET-8948)
- */
-/**
- * Pre-computed copy of the supported commands list. Avoids creating a new
- * array on every `buildDeviceStatus()` call (every 5–30 s per connected
- * web client). (LET-8948)
+ * Frozen copy of the supported commands list. Avoids allocating it for every
+ * device-status update. (LET-8948)
  */
 const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
 
@@ -83,10 +89,13 @@ const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
  * Mod-contributed commands for the device status, omitted entirely when no mods
  * register commands so the common case adds no field.
  */
-function buildModCommandsField(listener: ListenerRuntime): {
+function buildModCommandsField(
+  listener: ListenerRuntime,
+  agentId?: string | null,
+): {
   mod_commands?: ModCommandInfo[];
 } {
-  const modCommands = listListenerModCommands(listener);
+  const modCommands = listListenerModCommands(listener, agentId);
   return modCommands.length > 0 ? { mod_commands: modCommands } : {};
 }
 const PROTOCOL_PERF_FLUSH_INTERVAL_MS = 1_000;
@@ -324,14 +333,8 @@ function getListenerRuntime(runtime: RuntimeCarrier): ListenerRuntime | null {
 
 function getScopeForRuntime(
   runtime: RuntimeCarrier,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
-): {
-  agent_id?: string | null;
-  conversation_id?: string | null;
-} {
+  scope?: PartialRuntimeScope,
+): PartialRuntimeScope {
   if (runtime && "listener" in runtime) {
     return {
       agent_id: scope?.agent_id ?? runtime.agentId,
@@ -440,7 +443,6 @@ export function buildDeviceStatus(
       return "auto" as const;
     }
   })();
-  // Read mode from the persistent ListenerRuntime map (outlives ConversationRuntime).
   const conversationPermissionModeState = getConversationPermissionModeState(
     listener,
     scopedAgentId,
@@ -492,13 +494,14 @@ export function buildDeviceStatus(
       : null,
     ...(params === undefined
       ? {
-          cwd_map: Object.fromEntries(listener.workingDirectoryByConversation),
+          cwd_map: getExportedCwdMap(listener),
           boot_working_directory: listener.bootWorkingDirectory,
         }
       : {}),
+    cwd_revision: listener.workingDirectoryRevision ?? 0,
     should_doctor: systemPromptDoctorState?.should_doctor ?? false,
     supported_commands: FROZEN_SUPPORTED_COMMANDS,
-    ...buildModCommandsField(listener),
+    ...buildModCommandsField(listener, scopedAgentId),
     reflection_settings: scopedAgentId
       ? {
           agent_id: scopedAgentId,
@@ -521,6 +524,7 @@ export function buildLoopStatus(
     return {
       status: "WAITING_ON_INPUT",
       active_run_ids: [],
+      executing_tool_call_ids: [],
     };
   }
   const scope = getScopeForRuntime(runtime, params);
@@ -552,6 +556,13 @@ export function buildLoopStatus(
         : conversationRuntime?.activeRunId
           ? [conversationRuntime.activeRunId]
           : [],
+    // Gate on the *reported* status so downgrades (interrupted cache) also
+    // clear the executing set, and stale runtime state never leaks into
+    // frames emitted while the loop is not executing tools.
+    executing_tool_call_ids:
+      status === "EXECUTING_CLIENT_SIDE_TOOL" && conversationRuntime
+        ? [...conversationRuntime.turnLifecycle.executingToolCallIds]
+        : [],
   };
 }
 
@@ -580,21 +591,6 @@ export function buildQueueSnapshot(
     content: item.kind === "message" ? item.content : item.text,
     enqueued_at: new Date(item.enqueuedAt).toISOString(),
   }));
-}
-
-export function setLoopStatus(
-  runtime: ConversationRuntime,
-  status: LoopStatus,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
-): void {
-  if (runtime.loopStatus === status) {
-    return;
-  }
-  runtime.loopStatus = status;
-  emitLoopStatusIfOpen(runtime, scope);
 }
 
 /** Message types that belong on the stream channel.
@@ -698,17 +694,16 @@ export function emitProtocolV2Message(
 export function emitDeviceStatusUpdate(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
+  scope?: PartialRuntimeScope,
 ): void {
+  const deviceStatus = buildDeviceStatus(runtime, scope);
+  recordDeviceStatus(socket, getScopeForRuntime(runtime, scope), deviceStatus);
   const message: Omit<
     DeviceStatusUpdateMessage,
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
   > = {
     type: "update_device_status",
-    device_status: buildDeviceStatus(runtime, scope),
+    device_status: deviceStatus,
   };
   emitProtocolV2Message(socket, runtime, message, scope);
 }
@@ -946,17 +941,29 @@ export function emitQueueUpdateIfOpen(
   }
 }
 
-/**
- * Per-transport, per-scope cache of the last emitted device-status JSON.
- * Periodic syncs can opt into this cache to avoid redundant device-status
- * frames when idle, while recovery/visibility syncs can force a full replay.
- * Keyed by transport (WeakMap) so cache is naturally cleaned up when the
- * socket closes and gets GC'd. (LET-8948)
- */
-const lastSyncDeviceStatusByTransport = new WeakMap<
-  ListenerTransport,
-  Map<string, string>
->();
+export function emitDeviceStatusUpdateIfChanged(
+  socket: ListenerTransport,
+  runtime: RuntimeCarrier,
+  scope?: PartialRuntimeScope,
+  options?: { force?: boolean },
+): boolean {
+  const resolvedScope = getScopeForRuntime(runtime, scope);
+  const deviceStatus = buildDeviceStatus(runtime, resolvedScope);
+  if (
+    !shouldEmitDeviceStatus(socket, resolvedScope, deviceStatus, options?.force)
+  ) {
+    return false;
+  }
+  const message: Omit<
+    DeviceStatusUpdateMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  > = {
+    type: "update_device_status",
+    device_status: deviceStatus,
+  };
+  emitProtocolV2Message(socket, runtime, message, resolvedScope);
+  return true;
+}
 
 export function emitStateSync(
   socket: ListenerTransport,
@@ -964,28 +971,12 @@ export function emitStateSync(
   scope: RuntimeScope,
   options?: { forceDeviceStatus?: boolean },
 ): void {
-  const deviceStatus = buildDeviceStatus(runtime, scope);
-  const deviceStatusJson = JSON.stringify(deviceStatus);
-  const cacheKey = `${scope.agent_id ?? ""}:${scope.conversation_id ?? ""}`;
-
-  let scopeCache = lastSyncDeviceStatusByTransport.get(socket);
-  if (!scopeCache) {
-    scopeCache = new Map();
-    lastSyncDeviceStatusByTransport.set(socket, scopeCache);
-  }
-  const prev = scopeCache.get(cacheKey);
-
-  if (options?.forceDeviceStatus || deviceStatusJson !== prev) {
-    scopeCache.set(cacheKey, deviceStatusJson);
-    const message: Omit<
-      DeviceStatusUpdateMessage,
-      "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
-    > = {
-      type: "update_device_status",
-      device_status: deviceStatus,
-    };
-    emitProtocolV2Message(socket, runtime, message, scope);
-  }
+  emitDeviceStatusUpdateIfChanged(
+    socket,
+    runtime,
+    scope,
+    options?.forceDeviceStatus ? { force: true } : undefined,
+  );
 
   emitLoopStatusUpdate(socket, runtime, scope);
   emitQueueUpdate(socket, runtime, scope);
@@ -1045,6 +1036,7 @@ export function buildSubagentSnapshot(
       prompt: a.prompt,
       status: a.status,
       agent_url: a.agentURL,
+      conversation_id: a.conversationId ?? null,
       model: a.model,
       is_background: a.isBackground,
       silent: a.silent,
@@ -1128,6 +1120,35 @@ export function createLifecycleMessageBase<TMessageType extends string>(
   };
 }
 
+function dispatchChannelTurnProgressFromDelta(
+  runtime: RuntimeCarrier,
+  delta: StreamDelta,
+): void {
+  if (!runtime || !("activeChannelTurn" in runtime)) return;
+  const context = getActiveChannelTurnProgressContext(
+    runtime as ChannelTurnRuntimeCarrier,
+  );
+  if (!context) {
+    return;
+  }
+  const updates = context.progressBuilder.buildUpdates(delta);
+  if (updates.length === 0) {
+    return;
+  }
+  const registry = getChannelRegistry();
+  if (!registry) {
+    return;
+  }
+  for (const update of updates) {
+    void registry.dispatchTurnProgressEvent({
+      type: "progress",
+      sources: context.sources,
+      ...update,
+      ...(context.batchId ? { batchId: context.batchId } : {}),
+    });
+  }
+}
+
 export function emitCanonicalMessageDelta(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -1138,6 +1159,7 @@ export function emitCanonicalMessageDelta(
   },
 ): void {
   emitStreamDelta(socket, runtime, delta, scope);
+  dispatchChannelTurnProgressFromDelta(runtime, delta);
 }
 
 export function emitLoopErrorDelta(

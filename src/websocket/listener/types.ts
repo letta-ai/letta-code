@@ -5,6 +5,7 @@ import type {
   ApprovalDecision,
   ApprovalResult,
 } from "@/agent/approval-execution";
+import type { SkillSource } from "@/agent/skill-sources";
 import type { ChannelTurnSource } from "@/channels/types";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
@@ -24,9 +25,12 @@ import type {
   ExternalToolCallResult,
   LoopStatus,
   RuntimeScope,
+  StopReasonType,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
+import type { ActiveChannelTurn } from "./channel-turn-session";
 import type { ListenerTransport } from "./transport";
+import type { TurnLifecycle } from "./turn-lifecycle";
 
 export interface StartListenerOptions {
   connectionId: string;
@@ -139,28 +143,28 @@ export type ConversationRuntime = {
   key: string;
   agentId: string | null;
   conversationId: string;
-  activeChannelTurnSources: ChannelTurnSource[] | null;
+  /** Runtime-scoped SDK override. Undefined uses the process defaults. */
+  skillSources: SkillSource[] | undefined;
+  activeChannelTurn: ActiveChannelTurn | null;
+  turnLifecycle: TurnLifecycle;
   messageQueue: Promise<void>;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
-  lastStopReason: string | null;
+  readonly lastStopReason: StopReasonType | null;
   lastTerminalLoopErrorMessage: string | null;
   lastTerminalLoopErrorRunId: string | null;
-  isProcessing: boolean;
-  activeWorkingDirectory: string | null;
+  readonly isProcessing: boolean;
+  readonly activeWorkingDirectory: string | null;
   expectedWorktreePath: string | null;
   expectedWorktreeExpiresAt: number | null;
-  activeRunId: string | null;
-  activeRunStartedAt: string | null;
-  activeAbortController: AbortController | null;
-  cancelRequested: boolean;
+  readonly activeRunId: string | null;
+  readonly cancelRequested: boolean;
   queueRuntime: QueueRuntime;
   queuedMessagesByItemId: Map<string, IncomingMessage>;
   queuePumpActive: boolean;
   queuePumpScheduled: boolean;
   pendingTurns: number;
-  isRecoveringApprovals: boolean;
-  loopStatus: LoopStatus;
+  readonly loopStatus: LoopStatus;
   currentToolset: ToolsetName | null;
   currentToolsetPreference: ToolsetPreference;
   currentLoadedTools: string[];
@@ -172,7 +176,6 @@ export type ConversationRuntime = {
     continuationEpoch: number;
   } | null;
   continuationEpoch: number;
-  activeExecutingToolCallIds: string[];
   pendingInterruptedToolCallIds: string[] | null;
   /** Per-conversation reminder state (session-context, agent-info, etc.). */
   reminderState: SharedReminderState;
@@ -197,11 +200,14 @@ export type ListenerRuntime = {
   hasSuccessfulConnection: boolean;
   /** True once the WS has connected at least once. Never reset to false. */
   everConnected: boolean;
-  /** Provider-only local mod adapter for desktop/listener surfaces. */
+  /** Global local mod adapter for desktop/listener surfaces. */
   modAdapter?: ModAdapter | undefined;
+  /** Isolated agent-scoped adapters loaded from each agent's MemFS. */
+  agentModAdapters?: Map<string, ModAdapter>;
+  /** Coalesces concurrent first-loads for one agent's scoped adapter. */
+  agentModAdapterLoads?: Map<string, Promise<ModAdapter | null>>;
   sessionId: string;
   eventSeqCounter: number;
-  lastStopReason: string | null;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
     agent_id?: string | null;
@@ -211,11 +217,15 @@ export type ListenerRuntime = {
   reminderState: SharedReminderState;
   bootWorkingDirectory: string;
   workingDirectoryByConversation: Map<string, string>;
+  /** Monotonic signal for cwd changes and rejected stale cwd requests. */
+  workingDirectoryRevision?: number;
   /** Per-conversation permission mode state. Mirrors workingDirectoryByConversation. */
   permissionModeByConversation: Map<
     string,
     import("@/websocket/listener/permission-mode").ConversationPermissionModeState
   >;
+  /** Per-conversation skill overrides survive idle ConversationRuntime eviction. */
+  skillSourcesByConversation: Map<string, SkillSource[]>;
   /** Per-conversation reminder state survives ConversationRuntime eviction. */
   reminderStateByConversation: Map<string, SharedReminderState>;
   /** Per-conversation context tracker survives ConversationRuntime eviction. */
@@ -233,7 +243,7 @@ export type ListenerRuntime = {
     import("@/websocket/listener/worktree-watcher").WorktreeWatcherState
   >;
   /** Agent IDs whose memfs repo has been cloned/pulled this session. Concurrent callers coalesce on the same promise. */
-  memfsSyncedAgents: Map<string, Promise<void>>;
+  memfsSyncedAgents: Map<string, Promise<boolean>>;
   /** Agent IDs with an in-flight secrets refresh. Concurrent callers coalesce on the same promise. */
   secretsHydrationByAgent: Map<string, Promise<void>>;
   /** Per-agent timestamp of the last successful secrets hydration. Used for freshness-based caching. */

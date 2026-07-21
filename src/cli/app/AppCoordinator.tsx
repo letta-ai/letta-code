@@ -83,6 +83,7 @@ import {
 } from "@/cli/helpers/conversation-title";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import { setErrorContext } from "@/cli/helpers/error-context";
+import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { parsePatchOperations } from "@/cli/helpers/format-args-display";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -93,8 +94,19 @@ import {
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
 import {
+  buildReflectionArenaChoiceQuestions,
+  finalizeReflectionArenaChoice,
+  formatReflectionArenaDeferredMessage,
+  launchReflectionArena,
+  parseReflectionArenaChoiceAnswers,
+  REFLECTION_ARENA_MODEL_A_DEFAULT,
+  type ReflectionArenaChoiceQuestion,
+  sampleReflectionArenaComparisonModel,
+} from "@/cli/helpers/reflection-arena";
+import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
+  queuePendingReflectionWorktreeReminders,
 } from "@/cli/helpers/reflection-launcher";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
@@ -129,6 +141,7 @@ import {
   useLocalModAdapter,
 } from "@/cli/mods/use-local-mod-adapter";
 import {
+  getIntendedCronOccurrence,
   getTask,
   handleMissedOneShot,
   isProcessAlive,
@@ -136,6 +149,7 @@ import {
   safeAppendCronRunLogForTask,
   shouldFireTask,
   updateTask,
+  wrapCronPrompt,
 } from "@/cron";
 import { experimentManager } from "@/experiments/manager";
 import { runSessionEndHooks, runSessionStartHooks } from "@/hooks";
@@ -520,6 +534,11 @@ export function App({
   const [worktreeDiffSelectorPending, setWorktreeDiffSelectorPending] =
     useState<{
       worktrees: import("@/web/worktree-diff-list").WorktreeDiffOption[];
+    } | null>(null);
+  const [reflectionArenaChoicePending, setReflectionArenaChoicePending] =
+    useState<{
+      questions: ReflectionArenaChoiceQuestion[];
+      runId: string;
     } | null>(null);
 
   // If we have approval requests, we should show the approval dialog instead of the input area
@@ -1523,6 +1542,7 @@ export function App({
 
         if (shouldFireTask(task, now)) {
           firedThisMinute.add(task.id);
+          const intendedOccurrence = getIntendedCronOccurrence(task, now);
 
           // Apply jitter delay for recurring tasks (same as WS scheduler)
           const jitterMs = task.recurring ? task.jitter_offset_ms : 0;
@@ -1532,17 +1552,12 @@ export function App({
             const freshTask = getTask(taskId);
             if (!freshTask || freshTask.status !== "active") return;
 
-            // Format as plain text for the TUI — no <system-reminder> wrapper
-            // (the WS scheduler uses wrapCronPrompt with XML, but the TUI
-            // renders user messages as-is, so XML shows up raw)
-            const text = [
-              `Scheduled task "${freshTask.name}" is firing.`,
-              freshTask.recurring
-                ? `This is fire #${freshTask.fire_count + 1} (cron: ${freshTask.cron}).`
-                : `This is a one-off scheduled task.`,
-              "",
-              freshTask.prompt,
-            ].join("\n");
+            const schedulerNow = new Date();
+            // Use the same user-visible prompt formatter as the WS scheduler.
+            const text = wrapCronPrompt(freshTask, {
+              intendedOccurrence,
+              schedulerNow,
+            });
             addToMessageQueue({
               kind: "user",
               text,
@@ -1551,7 +1566,7 @@ export function App({
             });
 
             // Update task state
-            const nowIso = new Date().toISOString();
+            const nowIso = schedulerNow.toISOString();
             if (freshTask.recurring) {
               updateTask(freshTask.id, (t) => {
                 t.last_fired_at = nowIso;
@@ -1568,7 +1583,7 @@ export function App({
 
             safeAppendCronRunLogForTask(freshTask, {
               status: "ok",
-              runAtMs: now.getTime(),
+              runAtMs: schedulerNow.getTime(),
               scheduledFor: freshTask.scheduled_for,
               firedAt: nowIso,
             });
@@ -3434,12 +3449,12 @@ export function App({
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
   const maybeCarryOverActiveConversationModel = useCallback(
     async (targetConversationId: string) => {
-      if (!hasConversationModelOverrideRef.current) {
-        return;
-      }
+      if (!hasConversationModelOverrideRef.current) return;
 
       const currentLlmConfig = llmConfigRef.current;
-      const rawModelHandle = buildModelHandleFromLlmConfig(currentLlmConfig);
+      const rawModelHandle =
+        currentModelHandleRef.current ??
+        buildModelHandleFromLlmConfig(currentLlmConfig);
       if (!rawModelHandle) {
         return;
       }
@@ -3454,11 +3469,16 @@ export function App({
 
       try {
         const { updateConversationLLMConfig } = await import("@/agent/modify");
+        // The preserved window rides as contextWindowOverride so it survives
+        // on local backends too (local catalog resolution ignores
+        // updateArgs.context_window); presets stay in updateArgs. LET-9786.
         await updateConversationLLMConfig(
           targetConversationId,
           carryover.modelHandle,
           carryover.updateArgs,
-          { avoidOverwritingExistingContextWindow: true },
+          carryover.contextWindowOverride !== undefined
+            ? { contextWindowOverride: carryover.contextWindowOverride }
+            : undefined,
         );
       } catch (error) {
         debugWarn(
@@ -3675,12 +3695,47 @@ export function App({
         reflectionSettings,
         reminderState: sharedReminderStateRef.current,
         contextTracker: contextTrackerRef.current,
+        onCompaction: () =>
+          queuePendingReflectionWorktreeReminders({
+            agentId: reflectionAgentId,
+            conversationId: conversationIdRef.current ?? "default",
+          }),
         launch: async (triggerSource) => {
+          if (experimentManager.isEnabled("reflection_arena")) {
+            const arenaResult = await launchReflectionArena({
+              agentId: reflectionAgentId,
+              conversationId: conversationIdRef.current ?? "default",
+              triggerSource,
+              models: [
+                REFLECTION_ARENA_MODEL_A_DEFAULT,
+                sampleReflectionArenaComparisonModel(),
+              ],
+              feedbackContext: {
+                parentAgentName: agentName,
+                parentAgentDescription: agentDescription,
+                surface: "letta_code_tui",
+                model: currentModelId,
+              },
+              onReady: (message, readyRun) => {
+                appendTaskNotificationEvents([message]);
+                setReflectionArenaChoicePending({
+                  runId: readyRun.runId,
+                  questions: buildReflectionArenaChoiceQuestions(
+                    readyRun.runId,
+                  ),
+                });
+              },
+            });
+            return arenaResult.launched;
+          }
+
           const result = await launchReflectionSubagent({
             agentId: reflectionAgentId,
             conversationId: conversationIdRef.current ?? "default",
             memfsEnabled: isActiveMemfsEnabled(reflectionAgentId),
             triggerSource,
+            skipPendingWorktreeReminderScan:
+              triggerSource === "compaction-event",
             reflectionSettings,
             description: AUTO_REFLECTION_DESCRIPTION,
             completionConversationId: () => conversationIdRef.current,
@@ -4120,6 +4175,53 @@ export function App({
     setNeedsEagerApprovalCheck,
   });
 
+  const handleReflectionArenaChoiceSubmit = useCallback(
+    async (answers: Record<string, string>) => {
+      const pending = reflectionArenaChoicePending;
+      if (!pending) return;
+      setReflectionArenaChoicePending(null);
+      setCommandRunning(true);
+      try {
+        const answer = parseReflectionArenaChoiceAnswers(answers);
+        const { message } = await finalizeReflectionArenaChoice({
+          runId: pending.runId,
+          choice: answer.choice,
+          notes: answer.notes,
+          onHfUploadComplete: (message) => {
+            appendTaskNotificationEvents([message]);
+          },
+          recompileByConversation:
+            _systemPromptRecompileByConversationRef.current,
+          recompileQueuedByConversation:
+            _queuedSystemPromptRecompileByConversationRef.current,
+        });
+        appendTaskNotificationEvents([message]);
+      } catch (error) {
+        appendTaskNotificationEvents([
+          `Failed to record reflection arena choice: ${formatErrorDetails(error, agentId)}`,
+        ]);
+      } finally {
+        setCommandRunning(false);
+      }
+    },
+    [
+      reflectionArenaChoicePending,
+      setCommandRunning,
+      appendTaskNotificationEvents,
+      agentId,
+    ],
+  );
+
+  const handleReflectionArenaChoiceCancel = useCallback(() => {
+    const pending = reflectionArenaChoicePending;
+    setReflectionArenaChoicePending(null);
+    if (pending) {
+      appendTaskNotificationEvents([
+        formatReflectionArenaDeferredMessage(pending.runId),
+      ]);
+    }
+  }, [reflectionArenaChoicePending, appendTaskNotificationEvents]);
+
   const onSubmit = useSubmitHandler({
     abortControllerRef,
     agentDescription,
@@ -4202,6 +4304,7 @@ export function App({
     setModelSelectorOptions,
     setNeedsEagerApprovalCheck,
     setProfileConfirmPending,
+    setReflectionArenaChoicePending,
     setWorktreeDiffSelectorPending,
     setReasoningTabCycleEnabled: _setReasoningTabCycleEnabled,
     setSearchQuery,
@@ -4250,6 +4353,7 @@ export function App({
       pendingApprovals.length === 0 &&
       !commandRunning &&
       !isExecutingTool &&
+      !reflectionArenaChoicePending &&
       !anySelectorOpen && // Don't dequeue while a selector/overlay is open
       !waitingForQueueCancelRef.current && // Don't dequeue while waiting for cancel
       !userCancelledRef.current && // Don't dequeue if user just cancelled
@@ -4329,6 +4433,7 @@ export function App({
     pendingApprovals,
     commandRunning,
     isExecutingTool,
+    reflectionArenaChoicePending,
     anySelectorOpen,
     dequeueEpoch,
     queuedOverlayAction,
@@ -4889,8 +4994,20 @@ export function App({
     trajectoryTokenDisplayRef.current,
   );
   const inputVisible = !showExitStats;
+  const reflectionArenaChoiceVisible = Boolean(
+    reflectionArenaChoicePending &&
+      !showExitStats &&
+      !streaming &&
+      !commandRunning &&
+      !isExecutingTool &&
+      pendingApprovals.length === 0 &&
+      !anySelectorOpen,
+  );
   const inputEnabled =
-    !showExitStats && pendingApprovals.length === 0 && !anySelectorOpen;
+    !showExitStats &&
+    pendingApprovals.length === 0 &&
+    !reflectionArenaChoiceVisible &&
+    !anySelectorOpen;
   const onEscapeCommandCancel = useCallback(() => {
     if (isActiveConnectOperationCancellable()) {
       cancelActiveConnectOperation();
@@ -4923,7 +5040,9 @@ export function App({
         titleData={terminalTitleData}
         shouldAnimate={shouldAnimate}
         hasActiveProgress={terminalTitleTaskRunning}
-        requiresAction={pendingApprovals.length > 0}
+        requiresAction={
+          pendingApprovals.length > 0 || reflectionArenaChoiceVisible
+        }
         previewTitle={terminalTitlePreviewOverride}
       />
       <AppView
@@ -4992,6 +5111,8 @@ export function App({
         handlePersonalitySelect={handlePersonalitySelect}
         handleProfileEscapeCancel={handleProfileEscapeCancel}
         handleQuestionSubmit={handleQuestionSubmit}
+        handleReflectionArenaChoiceCancel={handleReflectionArenaChoiceCancel}
+        handleReflectionArenaChoiceSubmit={handleReflectionArenaChoiceSubmit}
         handleSleeptimeModeSelect={handleSleeptimeModeSelect}
         handleSystemPromptSelect={handleSystemPromptSelect}
         handleToolsetSelect={handleToolsetSelect}
@@ -5017,6 +5138,9 @@ export function App({
         onSubmit={onSubmit}
         pendingApprovals={pendingApprovals}
         pendingConversationSwitchRef={pendingConversationSwitchRef}
+        reflectionArenaChoicePending={
+          reflectionArenaChoiceVisible ? reflectionArenaChoicePending : null
+        }
         pendingIds={pendingIds}
         precomputedDiffsRef={precomputedDiffsRef}
         profileConfirmPending={profileConfirmPending}

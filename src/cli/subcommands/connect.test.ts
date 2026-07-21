@@ -318,13 +318,21 @@ describe("connect subcommand", () => {
 
   function createLocalOAuthFlowMock() {
     const selections: (string | undefined)[] = [];
+    const connectionOptions: Array<{
+      baseURL?: string;
+      timeout?: number | false;
+    }> = [];
     const runLocalOAuthConnectFlow = mock(
       async (_provider: unknown, callbacks: LocalOAuthConnectCallbacks) => {
         selections.push(await callbacks.onSelect?.(CODEX_LOGIN_SELECT_PROMPT));
+        connectionOptions.push({
+          baseURL: callbacks.baseURL,
+          timeout: callbacks.timeout,
+        });
         return { providerName: "chatgpt-plus-pro" };
       },
     );
-    return { selections, runLocalOAuthConnectFlow };
+    return { selections, connectionOptions, runLocalOAuthConnectFlow };
   }
 
   test("local codex connect defaults to the first login method option", async () => {
@@ -355,6 +363,29 @@ describe("connect subcommand", () => {
 
     expect(exitCode).toBe(0);
     expect(selections).toEqual(["device_code"]);
+  });
+
+  test("passes proxy connection options to local OAuth providers", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("local");
+    const { connectionOptions, runLocalOAuthConnectFlow } =
+      createLocalOAuthFlowMock();
+
+    const exitCode = await runConnectSubcommand(
+      [
+        "anthropic-oauth",
+        "--base-url",
+        "http://proxy.example.test",
+        "--timeout",
+        "30s",
+      ],
+      { ...deps, runLocalOAuthConnectFlow },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(connectionOptions).toEqual([
+      { baseURL: "http://proxy.example.test", timeout: 30_000 },
+    ]);
   });
 
   test("local codex connect rejects unknown --method values", async () => {

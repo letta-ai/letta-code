@@ -183,3 +183,22 @@ jobs:
           generate_release_notes: true
           files: letta.js
           fail_on_unmatched_files: true
+
+      # Propagate the release downstream: dispatch the packaging bump
+      # workflow with the exact version so bundled copies of the CLI never
+      # silently lag behind published releases. Non-blocking: a failed
+      # dispatch must not fail the release (a scheduled fallback run on the
+      # receiving side picks up missed versions).
+      - name: Dispatch downstream CLI bump
+        if: steps.detect.outputs.should_publish == 'true' && steps.version.outputs.is_prerelease == 'false'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.AMELIA_GITHUB_TOKEN }}
+          TARGET_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Brief wait so the npm registry has propagated the new version
+          # before the bump workflow tries to resolve it into lockfiles.
+          sleep 60
+          gh workflow run bump-code-desktop-letta-code.yml \
+            --repo letta-ai/letta-cloud \
+            -f letta_code_version="$TARGET_VERSION"

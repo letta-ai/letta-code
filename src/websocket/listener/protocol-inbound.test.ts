@@ -29,6 +29,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
       create_conversation: { body: { summary: "New conversation" } },
       cwd: "/tmp/project",
       mode: "acceptEdits",
+      skill_sources: [],
       client_info: { name: "test", title: "Test", version: "1.0.0" },
       external_tools: [
         {
@@ -47,6 +48,12 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "external_tool_call_response",
       request_id: "ext-1",
       result: { content: [{ type: "text", text: "ok" }] },
+    },
+    {
+      type: "create_agent",
+      request_id: "create-1",
+      personality: "tutorial",
+      tags: ["origin:onboarding"] as string[],
     },
     { type: "agent_list", request_id: "r1", query: { limit: 10 } },
     { type: "agent_retrieve", request_id: "r2", agent_id: "agent-1" },
@@ -126,6 +133,12 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "runtime_start",
       request_id: "r0",
       agent_id: "agent-1",
+      skill_sources: ["bundled", "invalid"],
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
       client_info: { title: "missing name" },
     },
     {
@@ -138,6 +151,12 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "external_tool_call_response",
       request_id: "ext-1",
       result: { content: "not-array" },
+    },
+    {
+      type: "create_agent",
+      request_id: "create-bad-tags",
+      personality: "tutorial",
+      tags: ["origin:onboarding", 1],
     },
     { type: "agent_list", request_id: "r1", query: "bad" },
     { type: "agent_retrieve", request_id: "r2" },

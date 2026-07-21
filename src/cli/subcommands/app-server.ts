@@ -4,12 +4,12 @@ import { parseAppServerWebsocketAuthSettings } from "@/websocket/app-server-auth
 
 function printAppServerHelp(): void {
   console.log(
-    `Usage: letta app-server [--listen <url>]
+    `Usage: letta server --listen [url]
 
-Run a local Letta Code app-server using native v2 websocket frames.
+Run the local App Server using native v2 WebSocket frames.
 
 Options:
-  --listen <url>  WebSocket listen URL. Defaults to ws://127.0.0.1:0
+  --listen [url]  WebSocket listen URL. Defaults to an available loopback port
   --ws-auth <mode>  WebSocket auth mode for non-loopback listeners. Supported: capability-token, signed-bearer-token
   --ws-token-file <path>  Absolute path to the capability-token file
   --ws-token-sha256 <hex>  Hex-encoded SHA-256 digest of the capability token
@@ -20,10 +20,10 @@ Options:
   -h, --help      Show this help message
 
 Examples:
-  letta app-server
-  letta app-server --listen ws://127.0.0.1:4500
-  letta app-server --listen ws://0.0.0.0:4500 --ws-auth capability-token --ws-token-file /path/to/token
-  letta app-server --listen ws://0.0.0.0:4500 --ws-auth signed-bearer-token --ws-shared-secret-file /path/to/secret`,
+  letta server --listen
+  letta server --listen ws://127.0.0.1:4500
+  letta server --listen ws://0.0.0.0:4500 --ws-auth capability-token --ws-token-file /path/to/token
+  letta server --listen ws://0.0.0.0:4500 --ws-auth signed-bearer-token --ws-shared-secret-file /path/to/secret`,
   );
 }
 
@@ -35,7 +35,7 @@ async function waitForShutdown(close: () => Promise<void>): Promise<number> {
       shuttingDown = true;
       void close()
         .then(() => {
-          console.log(`\nStopped app-server (${signal}).`);
+          console.log(`\nStopped App Server (${signal}).`);
           resolve(0);
         })
         .catch((error) => {

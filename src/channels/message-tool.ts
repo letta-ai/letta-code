@@ -137,12 +137,19 @@ function buildDynamicMessageChannelDescriptionFromDiscovery(
     .join(", ");
   const actionList = discovery.actions.join(", ");
 
+  const scopedChannels = scope?.channels ?? [];
   const scopedReplyContract =
-    scope && scope.channels.length > 0
+    scopedChannels.length > 0
       ? '\n\nThis tool is currently scoped to a routed external channel turn. Plain assistant text is not delivered to that external user. If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call with action="send", channel from the notification, chat_id from the notification, and message containing the reply. If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement. For lightweight acknowledgement, prefer action="react" when supported. If the useful response belongs later, schedule the follow-up instead of sending a placeholder.'
       : "";
+  const slackWorkAcknowledgement = discovery.activeChannels.includes("slack")
+    ? '\n\nFor Slack requests that require nontrivial work or several tool calls, send one short MessageChannel call with action="send" before starting other tools. This gives the Slack user verbal acknowledgement and a View in web link. Do not do this for no-ops, reaction-only responses, or simple no-tool answers.'
+    : "";
+  const slackAttachmentDownload = discovery.activeChannels.includes("slack")
+    ? '\n\nSlack attachments that exceed the automatic download limit include an exact recovery instruction. Use action="download-file" with channel, chat_id, attachmentId, and messageId from that instruction. The action saves the file in the normal Slack inbound attachment directory and returns its local_path. Downloads that outlast the synchronous window return a task_id instead; wait for the local_path with TaskOutput (block: true, timeout: 600000) or cancel with TaskStop.'
+    : "";
 
-  return `${description}${scopedReplyContract}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
+  return `${description}${scopedReplyContract}${slackWorkAcknowledgement}${slackAttachmentDownload}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
 }
 
 function pruneInactiveChannelGuidance(

@@ -117,10 +117,20 @@ describe("ProviderTurnExecutor", () => {
     ).toBe("requires_approval");
   });
 
-  test("uses pi contentIndex to keep interleaved live blocks separate", async () => {
+  test("groups adjacent live blocks and preserves interleaved boundaries", async () => {
     const adapter: ProviderStreamAdapter = {
       async *stream() {
-        const message = assistantMessage();
+        const message = {
+          ...assistantMessage(),
+          content: [
+            { type: "text" as const, text: "first-a" },
+            { type: "text" as const, text: "first-b" },
+            { type: "thinking" as const, thinking: "think-a" },
+            { type: "thinking" as const, thinking: "think-b" },
+            { type: "text" as const, text: "second" },
+            { type: "thinking" as const, thinking: "think-c" },
+          ],
+        };
         yield providerStreamPart(
           part({
             type: "text_delta",
@@ -132,23 +142,23 @@ describe("ProviderTurnExecutor", () => {
         yield providerStreamPart(
           part({
             type: "text_delta",
-            contentIndex: 2,
-            delta: "second",
-            partial: message,
-          }),
-        );
-        yield providerStreamPart(
-          part({
-            type: "text_delta",
-            contentIndex: 0,
+            contentIndex: 1,
             delta: "first-b",
             partial: message,
           }),
         );
         yield providerStreamPart(
           part({
+            type: "text_delta",
+            contentIndex: 4,
+            delta: "second",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
             type: "thinking_delta",
-            contentIndex: 1,
+            contentIndex: 2,
             delta: "think-a",
             partial: message,
           }),
@@ -158,6 +168,14 @@ describe("ProviderTurnExecutor", () => {
             type: "thinking_delta",
             contentIndex: 3,
             delta: "think-b",
+            partial: message,
+          }),
+        );
+        yield providerStreamPart(
+          part({
+            type: "thinking_delta",
+            contentIndex: 5,
+            delta: "think-c",
             partial: message,
           }),
         );
@@ -173,13 +191,14 @@ describe("ProviderTurnExecutor", () => {
     const assistantOtids = chunks
       .filter((chunk) => chunk.message_type === "assistant_message")
       .map((chunk) => (chunk as { otid?: string }).otid);
-    expect(assistantOtids[0]).toBe(assistantOtids[2]);
-    expect(assistantOtids[0]).not.toBe(assistantOtids[1]);
+    expect(assistantOtids[0]).toBe(assistantOtids[1]);
+    expect(assistantOtids[0]).not.toBe(assistantOtids[2]);
 
     const reasoningOtids = chunks
       .filter((chunk) => chunk.message_type === "reasoning_message")
       .map((chunk) => (chunk as { otid?: string }).otid);
-    expect(reasoningOtids[0]).not.toBe(reasoningOtids[1]);
+    expect(reasoningOtids[0]).toBe(reasoningOtids[1]);
+    expect(reasoningOtids[0]).not.toBe(reasoningOtids[2]);
   });
 
   test("emits final local assistant messages as state-only chunks before stop_reason", async () => {
@@ -204,6 +223,28 @@ describe("ProviderTurnExecutor", () => {
     expect(
       (chunks.at(-1) as { stop_reason?: string } | undefined)?.stop_reason,
     ).toBe("end_turn");
+  });
+
+  test("maps pi length completions to max_tokens_exceeded", async () => {
+    const finalMessage = {
+      ...assistantMessage(),
+      content: [],
+      stopReason: "length" as const,
+    };
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield providerStreamPart(
+          part({ type: "done", reason: "length", message: finalMessage }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    expect(
+      (chunks.at(-1) as { stop_reason?: string } | undefined)?.stop_reason,
+    ).toBe("max_tokens_exceeded");
   });
 
   test("emits estimated context_tokens when provider usage is empty", async () => {

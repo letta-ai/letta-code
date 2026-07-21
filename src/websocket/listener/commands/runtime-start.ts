@@ -8,6 +8,7 @@ import { getBackend } from "@/backend";
 import { migratePermissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
+import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
 import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-change";
 import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
 import {
@@ -134,16 +135,23 @@ async function resolveRuntimeStartAgent(
 ): Promise<AgentState> {
   const backend = getBackend();
   if (parsed.create_agent) {
+    const withMemfs = parsed.create_agent.memfs !== false;
     const { prepareRawCreateAgentBodyForMemfs, enableMemfsIfCloud } =
       await import("@/agent/memory-filesystem");
-    const body = await prepareRawCreateAgentBodyForMemfs(
-      parsed.create_agent.body,
-    );
+    const body = withMemfs
+      ? await prepareRawCreateAgentBodyForMemfs(parsed.create_agent.body)
+      : parsed.create_agent.body;
     const agent = await backend.createAgent(body);
-    // Finish memfs setup (settings, repo clone, legacy tool detach) without
-    // blocking runtime start. The tag is already stamped at creation, so
-    // lazy sync paths can complete this even if the process dies here.
-    void enableMemfsIfCloud(agent.id);
+    if (withMemfs) {
+      // Finish memfs setup (settings, repo clone, legacy tool detach) without
+      // blocking runtime start. The tag is already stamped at creation, so
+      // lazy sync paths can complete this even if the process dies here.
+      void enableMemfsIfCloud(agent.id);
+    } else {
+      // Worker-style agent: no memfs of its own; a memory scope may be
+      // provided per session (MEMORY_DIR + LETTA_MEMORY_DIR_EXPLICIT).
+      settingsManager.setMemfsEnabled(agent.id, false);
+    }
     created.agent = true;
     if (parsed.create_agent.pin_global !== false) {
       settingsManager.pinAgent(agent.id);
@@ -190,6 +198,18 @@ async function applyRuntimeStartState(
   scope: RuntimeScope,
   scopedRuntime: ConversationRuntime,
 ): Promise<void> {
+  if (parsed.skill_sources === undefined) {
+    scopedRuntime.skillSources = undefined;
+    context.runtime.skillSourcesByConversation.delete(scopedRuntime.key);
+  } else {
+    const skillSources = [...new Set(parsed.skill_sources)];
+    scopedRuntime.skillSources = skillSources;
+    context.runtime.skillSourcesByConversation.set(
+      scopedRuntime.key,
+      skillSources,
+    );
+  }
+
   if (parsed.mode) {
     const mode = migratePermissionMode(parsed.mode);
     if (!mode) {
@@ -209,7 +229,7 @@ async function applyRuntimeStartState(
       runtime: context.runtime,
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
-      workingDirectory: parsed.cwd ?? context.runtime.bootWorkingDirectory,
+      workingDirectory: parsed.cwd ?? getBootWorkingDirectory(context.runtime),
       emitStatus: false,
       statusRuntime: scopedRuntime,
       statusSocket: context.socket,

@@ -27,6 +27,7 @@ import { ExperimentSelector } from "@/cli/components/ExperimentSelector";
 import { FeedbackDialog } from "@/cli/components/FeedbackDialog";
 import { HelpDialog } from "@/cli/components/HelpDialog";
 import { HooksManager } from "@/cli/components/HooksManager";
+import { InlineQuestionApproval } from "@/cli/components/InlineQuestionApproval";
 import { Input } from "@/cli/components/InputRich";
 import { InstallGithubAppFlow } from "@/cli/components/InstallGithubAppFlow";
 import { McpConnectFlow } from "@/cli/components/McpConnectFlow";
@@ -71,6 +72,7 @@ import {
   type ReflectionSettings,
 } from "@/cli/helpers/memory-reminder";
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
+import type { ReflectionArenaChoiceQuestion } from "@/cli/helpers/reflection-arena";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   isFileEditTool,
@@ -174,7 +176,7 @@ type AppViewProps = {
       profileName?: string;
       conversationId?: string;
       commandId?: string;
-      backendMode?: import("@/cli/components/AgentSelector").AgentBackendMode;
+      backendMode?: import("@/agent/agent-id").AgentBackendMode;
     },
   ) => Promise<void>;
   handleApproveAlways: (
@@ -196,7 +198,7 @@ type AppViewProps = {
     name: string,
     opts?: {
       commandId?: string;
-      backendMode?: import("@/cli/components/AgentSelector").AgentBackendMode;
+      backendMode?: import("@/agent/agent-id").AgentBackendMode;
     },
   ) => Promise<void>;
   handleCycleReasoningEffort: () => void;
@@ -225,6 +227,10 @@ type AppViewProps = {
   ) => Promise<void>;
   handleProfileEscapeCancel: () => void;
   handleQuestionSubmit: (answers: Record<string, string>) => Promise<void>;
+  handleReflectionArenaChoiceCancel: () => void;
+  handleReflectionArenaChoiceSubmit: (
+    answers: Record<string, string>,
+  ) => Promise<void>;
   handleSleeptimeModeSelect: (
     reflectionSettings: ReflectionSettings,
     commandId?: string | null,
@@ -259,6 +265,10 @@ type AppViewProps = {
   pendingApprovals: ApprovalRequest[];
   pendingConversationSwitchRef: RefObject<ConversationSwitchContext | null>;
   pendingIds: Set<string>;
+  reflectionArenaChoicePending: {
+    questions: ReflectionArenaChoiceQuestion[];
+    runId: string;
+  } | null;
   precomputedDiffsRef: RefObject<Map<string, AdvancedDiffSuccess>>;
   profileConfirmPending: {
     name: string;
@@ -399,6 +409,8 @@ export function AppView(props: AppViewProps) {
     handlePersonalitySelect,
     handleProfileEscapeCancel,
     handleQuestionSubmit,
+    handleReflectionArenaChoiceCancel,
+    handleReflectionArenaChoiceSubmit,
     handleSleeptimeModeSelect,
     handleSystemPromptSelect,
     handleToolsetSelect,
@@ -428,6 +440,7 @@ export function AppView(props: AppViewProps) {
     queueDisplay,
     queuedDecisions,
     queuedIds,
+    reflectionArenaChoicePending,
     reasoningTabCycleEnabled,
     recoverRestoredPendingApprovals,
     refreshDerived,
@@ -685,6 +698,19 @@ export function AppView(props: AppViewProps) {
                   />
                 );
               })()}
+
+            {/* Reflection arena choice prompt - merges the selected memory worktree */}
+            {reflectionArenaChoicePending && !currentApproval && (
+              <Box marginTop={1} flexDirection="column">
+                <InlineQuestionApproval
+                  key={reflectionArenaChoicePending.runId}
+                  questions={reflectionArenaChoicePending.questions}
+                  onSubmit={handleReflectionArenaChoiceSubmit}
+                  onCancel={handleReflectionArenaChoiceCancel}
+                  isFocused={true}
+                />
+              </Box>
+            )}
 
             {/* /btw ephemeral pane - shows forked conversation response */}
             {btwState.status !== "idle" && (

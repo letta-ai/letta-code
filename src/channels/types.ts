@@ -8,6 +8,60 @@
  */
 
 import type { PermissionMode } from "@/permissions/mode";
+import type {
+  ApprovalResponseBody,
+  ListModelsResponseModelEntry,
+  StopReasonType,
+} from "@/types/protocol_v2";
+
+/**
+ * Vendor-neutral model-picker payload produced by the generic channel
+ * `/model` handler. Adapters decide how (or whether) to render it.
+ */
+export type ChannelModelPickerData = {
+  current: {
+    modelLabel: string;
+    modelHandle: string | null;
+    scope?: "agent" | "conversation";
+  };
+  entries: ListModelsResponseModelEntry[];
+  availableHandles?: string[] | null;
+  recentHandles?: string[];
+};
+
+/**
+ * Default channel id used for wire compatibility when WS clients omit
+ * `channel_id` on channel commands. Early protocol versions predate
+ * multi-channel support, when Telegram was the only bundled channel.
+ */
+export const LEGACY_DEFAULT_CHANNEL_ID = "telegram";
+
+/**
+ * Per-turn rich draft streaming policy derived from a channel account's
+ * generic opt-in fields. Returns null when the account has not opted in.
+ * Any channel account config may declare `richDraftStreaming` /
+ * `richPrivateChatDefault`; adapters that also implement
+ * `sendRichMessageDraft` get live draft streaming from the listener.
+ */
+export type ChannelRichDraftStreamingPolicy = {
+  richPrivateChatDefault: boolean;
+};
+
+export function getRichDraftStreamingPolicy(
+  account: unknown,
+): ChannelRichDraftStreamingPolicy | null {
+  if (!account || typeof account !== "object") {
+    return null;
+  }
+  const record = account as {
+    richDraftStreaming?: unknown;
+    richPrivateChatDefault?: unknown;
+  };
+  if (record.richDraftStreaming !== true) {
+    return null;
+  }
+  return { richPrivateChatDefault: record.richPrivateChatDefault !== false };
+}
 
 export const FIRST_PARTY_CHANNEL_IDS = [
   "telegram",
@@ -44,7 +98,19 @@ export interface ChannelMessageAttachment {
   mimeType?: string;
   sizeBytes?: number;
   kind: "image" | "file" | "audio" | "video";
-  localPath: string;
+  /** Local file materialized for tool access. Absent when automatic download was skipped. */
+  localPath?: string;
+  /** Platform message that contains this attachment, used for scoped on-demand downloads. */
+  sourceMessageId?: string;
+  /** Platform thread that contains this attachment, when it is thread-scoped. */
+  sourceThreadId?: string | null;
+  /** Why an attachment discovered on the platform was not downloaded automatically. */
+  downloadReason?:
+    | "exceeds_auto_download_limit"
+    | "missing_download_url"
+    | "download_failed";
+  /** Automatic download threshold that rejected this attachment, when applicable. */
+  autoDownloadLimitBytes?: number;
   imageDataBase64?: string;
   /** Best-effort speech-to-text transcription (voice memos only). */
   transcription?: string;
@@ -85,6 +151,10 @@ export interface ChannelTurnSource {
   accountId?: string;
   chatId: string;
   chatType?: ChannelChatType;
+  /** Platform user who triggered the turn, when known. Slack streaming needs this in channel threads. */
+  senderId?: string;
+  /** Platform team/workspace for the triggering user, when known. */
+  senderTeamId?: string;
   messageId?: string;
   threadId?: string | null;
   agentId: string;
@@ -92,6 +162,50 @@ export interface ChannelTurnSource {
 }
 
 export type ChannelTurnOutcome = "completed" | "error" | "cancelled";
+
+export type ChannelTurnProgressKind =
+  | "thinking"
+  | "responding"
+  | "tool"
+  | "approval"
+  | "command"
+  | "status"
+  | "retry"
+  | "error";
+
+export type ChannelTurnProgressState =
+  | "started"
+  | "updated"
+  | "completed"
+  | "error"
+  | "waiting";
+
+export interface ChannelTurnProgressUpdate {
+  kind: ChannelTurnProgressKind;
+  state: ChannelTurnProgressState;
+  /** Sanitized, user-facing status text. Never include tool args or output. */
+  message: string;
+  toolCallId?: string;
+  toolName?: string;
+  /** Optional sanitized argument summary for expanded tool progress details. */
+  toolDetails?: string;
+  /**
+   * Optional sanitized error-output preview for failed tool calls. Kept
+   * separate from toolDetails so surfaces can render it as secondary detail
+   * text; it must never be used as a row title/header (LET-9509).
+   */
+  errorDetails?: string;
+  /** Optional sanitized row title for native/rich progress surfaces. */
+  toolTitle?: string;
+  command?: string;
+  runId?: string;
+}
+
+export interface ChannelTurnProgressEvent extends ChannelTurnProgressUpdate {
+  type: "progress";
+  batchId?: string;
+  sources: ChannelTurnSource[];
+}
 
 export type ChannelControlRequestKind =
   | "ask_user_question"
@@ -103,6 +217,22 @@ export interface ChannelControlRequestEvent {
   source: ChannelTurnSource;
   toolName: string;
   input: Record<string, unknown>;
+}
+
+export type ChannelControlResponseResult =
+  | "handled"
+  | "expired"
+  | "unavailable"
+  | "forbidden";
+
+export interface ChannelControlResponseInput {
+  requestId: string;
+  response: ApprovalResponseBody;
+  senderId: string;
+  channel: string;
+  accountId?: string;
+  chatId: string;
+  threadId?: string | null;
 }
 
 export type ChannelTurnLifecycleEvent =
@@ -120,6 +250,7 @@ export type ChannelTurnLifecycleEvent =
       batchId: string;
       sources: ChannelTurnSource[];
       outcome: ChannelTurnOutcome;
+      stopReason: StopReasonType;
       error?: string;
       runId?: string;
     };
@@ -153,6 +284,19 @@ export interface ChannelAdapter {
   sendMessage(msg: OutboundChannelMessage): Promise<{ messageId: string }>;
 
   /**
+   * Optionally materialize a platform attachment into the channel's local
+   * inbound directory. MessageChannel plugins expose this only when the
+   * adapter can verify the attachment against its canonical source message.
+   */
+  downloadAttachment?(params: {
+    attachmentId: string;
+    chatId: string;
+    threadId?: string | null;
+    messageId: string;
+    signal?: AbortSignal;
+  }): Promise<ChannelMessageAttachment>;
+
+  /**
    * Optionally stream an ephemeral rich-message draft while a final rich
    * message is being generated. Drafts are best-effort previews; callers must
    * still send a final persistent message with sendMessage().
@@ -166,7 +310,15 @@ export interface ChannelAdapter {
   sendDirectReply(
     chatId: string,
     text: string,
-    options?: { replyToMessageId?: string },
+    options?: {
+      replyToMessageId?: string;
+      threadId?: string | null;
+      /**
+       * Structured model-picker data. Adapters with native rich UI (for
+       * example Slack Block Kit) may render it; others fall back to text.
+       */
+      modelPicker?: ChannelModelPickerData;
+    },
   ): Promise<void>;
 
   /**
@@ -187,11 +339,23 @@ export interface ChannelAdapter {
   handleTurnLifecycleEvent?(event: ChannelTurnLifecycleEvent): Promise<void>;
 
   /**
+   * Optional progress hook for channel-originated turns. Payloads are generic
+   * and sanitized before they reach adapters; adapters decide how to render and
+   * throttle their platform-specific UX.
+   */
+  handleTurnProgressEvent?(event: ChannelTurnProgressEvent): Promise<void>;
+
+  /**
    * Optional hook for control requests that originate from a channel turn.
    * Adapters can render these natively (or near-natively) for Slack/Telegram
    * instead of relying on a desktop/websocket UI intercept layer.
    */
   handleControlRequestEvent?(event: ChannelControlRequestEvent): Promise<void>;
+
+  /** Wired by ChannelRegistry for native approval controls such as Slack buttons. */
+  onControlResponse?: (
+    input: ChannelControlResponseInput,
+  ) => Promise<ChannelControlResponseResult>;
 
   /**
    * Called by the registry when the adapter receives an inbound message.
@@ -211,6 +375,8 @@ export interface InboundChannelMessage {
   chatId: string;
   /** Platform-specific sender user ID. */
   senderId: string;
+  /** Platform-specific sender team/workspace ID, when available. */
+  senderTeamId?: string;
   /** Sender display name, if available. */
   senderName?: string;
   /** Chat/channel label, if available (for discovery UIs). */
@@ -285,6 +451,10 @@ export interface OutboundChannelMessage {
   removeReaction?: boolean;
   /** Optional: target message id for reactions. */
   targetMessageId?: string;
+  /** Optional: sending agent identity, used by adapters that render web deep links. */
+  agentId?: string;
+  /** Optional: conversation identity, used by adapters that render web deep links. */
+  conversationId?: string;
 }
 
 export interface OutboundChannelRichMessageDraft {
@@ -321,6 +491,8 @@ export interface ChannelRoute {
   enabled: boolean;
   /** Whether this route permits outbound MessageChannel sends. Defaults true. */
   outboundEnabled?: boolean;
+  /** Slack-only: a detached thread stays silent until the app is mentioned again. */
+  detached?: boolean;
   /** ISO 8601 creation timestamp. */
   createdAt: string;
   /** ISO 8601 update timestamp. */
@@ -330,7 +502,15 @@ export interface ChannelRoute {
 // ── Config ────────────────────────────────────────────────────────
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
+/**
+ * Group/channel-scope sender policy. "open" preserves the historical
+ * behavior (any participant of an allowed group/channel can talk to the
+ * agent). "allowlist" restricts group senders to allowedUsers/adminUsers,
+ * paired users, and env-var allowlists.
+ */
+export type ChannelGroupSenderPolicy = "open" | "allowlist";
 export type SlackChannelMode = "socket";
+export type SlackAllowBotsMode = false | "mentions";
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
 export type SignalGroupMode = "disabled" | "mention" | "open";
@@ -346,6 +526,24 @@ interface ChannelAccountBase {
   enabled: boolean;
   dmPolicy: DmPolicy;
   allowedUsers: string[];
+  /**
+   * Sender policy for group/channel-scope messages. Default "open"
+   * (historical behavior). "allowlist" restricts group senders to
+   * allowedUsers/adminUsers, paired users, and env allowlists.
+   * Slack note: dmPolicy "pairing" is a legacy unenforced default and
+   * behaves as "open" for Slack DMs; use "allowlist" to restrict.
+   */
+  groupPolicy?: ChannelGroupSenderPolicy;
+  /**
+   * Admin user IDs for slash-command tiers. When set (non-empty),
+   * command gating activates: non-admins may only run the read-only
+   * floor (/help, /status, /whoami) plus userAllowedCommands. When
+   * unset, every allowed user has full command access (historical
+   * behavior).
+   */
+  adminUsers?: string[];
+  /** Extra slash commands (no leading slash) non-admins may run. */
+  userAllowedCommands?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -385,10 +583,14 @@ export interface SlackChannelConfig {
   allowedUsers: string[];
   /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When false, successful turns remove 👀 without adding ✅. Default true. */
-  showCompletedReaction?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
+  /**
+   * Bot-authored inbound policy. Default false drops bot messages. "mentions"
+   * accepts only explicit foreign bot mentions. There is intentionally no
+   * accept-all mode until Letta has a shared pair-loop guard.
+   */
+  allowBots?: SlackAllowBotsMode;
 }
 
 export interface DiscordChannelConfig {
@@ -553,10 +755,14 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   defaultPermissionMode: SlackDefaultPermissionMode;
   /** When true and OPENAI_API_KEY is set, inbound audio attachments are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When false, successful turns remove 👀 without adding ✅. Default true. */
-  showCompletedReaction?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
+  /**
+   * Bot-authored inbound policy. Default false drops bot messages. "mentions"
+   * accepts only explicit foreign bot mentions. There is intentionally no
+   * accept-all mode until Letta has a shared pair-loop guard.
+   */
+  allowBots?: SlackAllowBotsMode;
   /**
    * Optional debounce window (ms) for inbound messages. When greater than
    * `0`, short back-to-back messages from the same sender in the same

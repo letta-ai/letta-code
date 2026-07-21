@@ -161,6 +161,35 @@ describe("app-server client", () => {
     ]);
   });
 
+  test("notifies once when either websocket disconnects unexpectedly", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const disconnects: string[] = [];
+    client.onDisconnect(({ channel }) => disconnects.push(channel));
+
+    control.close();
+    stream.close();
+
+    expect(disconnects).toEqual(["control"]);
+  });
+
+  test("does not report explicit client shutdown as a disconnect", async () => {
+    const { client, control, stream } = createFakeClient();
+    control.open();
+    stream.open();
+    await client.connect();
+
+    const disconnects: string[] = [];
+    client.onDisconnect(({ channel }) => disconnects.push(channel));
+
+    client.close();
+
+    expect(disconnects).toEqual([]);
+  });
+
   test("wraps sync, abort, and input commands", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();

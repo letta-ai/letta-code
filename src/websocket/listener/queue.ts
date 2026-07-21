@@ -1,6 +1,7 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getChannelRegistry } from "@/channels/registry";
-import type { ChannelTurnOutcome, ChannelTurnSource } from "@/channels/types";
+import { buildClientSkillsPayload } from "@/agent/client-skills";
+import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
+import type { ChannelTurnSource } from "@/channels/types";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -9,12 +10,13 @@ import type {
 import { isCoalescable } from "@/queue/queue-runtime";
 import { mergeQueuedTurnInput } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
-import { resizeImageIfNeeded } from "@/utils/image-resize";
-import {
-  type ImageNormalizationFailureMode,
-  normalizeMessageContentImages as normalizeSharedMessageContentImages,
-} from "@/utils/message-image-normalization";
 import { getListenerBlockedReason } from "@/websocket/helpers/listener-queue-adapter";
+import {
+  activateChannelTurn,
+  dispatchChannelTurnLifecycleEvent,
+  finishActiveChannelTurn,
+} from "./channel-turn-session";
+import { getInboundImageFailureMode } from "./image-policy";
 import { emitDequeuedUserMessage } from "./protocol-outbound";
 import {
   emitListenerStatus,
@@ -27,7 +29,6 @@ import { resolveRuntimeScope } from "./scope";
 import type { ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
-  InboundMessagePayload,
   IncomingMessage,
   StartListenerOptions,
 } from "./types";
@@ -153,106 +154,26 @@ function collectBatchChannelTurnSources(
   return sources.length > 0 ? sources : undefined;
 }
 
-async function dispatchChannelTurnLifecycleEvent(
-  event:
-    | {
-        type: "processing";
-        batchId: string;
-        sources: ChannelTurnSource[];
+async function buildChannelTurnProgressBuilder(agentId?: string | null) {
+  try {
+    const { clientSkills } = await buildClientSkillsPayload({
+      agentId: agentId ?? undefined,
+    });
+    const skillDescriptionsByName = new Map<string, string>();
+    for (const skill of clientSkills) {
+      if (skill.name && skill.description) {
+        skillDescriptionsByName.set(skill.name, skill.description);
       }
-    | {
-        type: "finished";
-        batchId: string;
-        sources: ChannelTurnSource[];
-        outcome: ChannelTurnOutcome;
-        error?: string;
-        runId?: string;
-      },
-): Promise<void> {
-  if (event.sources.length === 0) {
-    return;
+    }
+    return createChannelTurnProgressBuilder({ skillDescriptionsByName });
+  } catch (error) {
+    trackBoundaryError({
+      context: "websocket-listener channel progress skill descriptions",
+      errorType: "channel_progress_skill_description_discovery_failed",
+      error,
+    });
+    return createChannelTurnProgressBuilder();
   }
-
-  const registry = getChannelRegistry();
-  if (!registry) {
-    return;
-  }
-
-  if (event.type === "processing") {
-    await registry.dispatchTurnLifecycleEvent(event);
-    return;
-  }
-
-  await registry.dispatchTurnLifecycleEvent({
-    type: "finished",
-    batchId: event.batchId,
-    sources: event.sources,
-    outcome: event.outcome,
-    ...(event.error ? { error: event.error } : {}),
-    ...(event.runId ? { runId: event.runId } : {}),
-  });
-}
-
-function mapTurnLifecycleOutcome(
-  lastStopReason: string | null,
-  didThrow: boolean,
-): ChannelTurnOutcome {
-  if (didThrow) {
-    return "error";
-  }
-  if (lastStopReason === "cancelled") {
-    return "cancelled";
-  }
-  if (lastStopReason && lastStopReason !== "end_turn") {
-    return "error";
-  }
-  return "completed";
-}
-
-export async function normalizeMessageContentImages(
-  content: MessageCreate["content"],
-  resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
-  failureMode: ImageNormalizationFailureMode = "strict",
-): Promise<MessageCreate["content"]> {
-  return await normalizeSharedMessageContentImages(
-    content,
-    resize,
-    failureMode,
-  );
-}
-
-export async function normalizeInboundMessages(
-  messages: InboundMessagePayload[],
-  resize: typeof resizeImageIfNeeded = resizeImageIfNeeded,
-  options: {
-    imageFailureMode?: ImageNormalizationFailureMode;
-  } = {},
-): Promise<InboundMessagePayload[]> {
-  let didChange = false;
-
-  const normalizedMessages = await Promise.all(
-    messages.map(async (message) => {
-      if (!("content" in message)) {
-        return message;
-      }
-
-      const normalizedContent = await normalizeMessageContentImages(
-        message.content,
-        resize,
-        options.imageFailureMode ?? "strict",
-      );
-      if (normalizedContent !== message.content) {
-        didChange = true;
-        return {
-          ...message,
-          content: normalizedContent,
-        };
-      }
-      return message;
-    }),
-  );
-
-  return didChange ? normalizedMessages : messages;
 }
 
 function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
@@ -375,19 +296,13 @@ export function shouldProcessInboundMessageDirectly(
     runtime.queuePumpScheduled ||
     runtime.pendingTurns > 0 ||
     runtime.queuedMessagesByItemId.size > 0 ||
-    runtime.isProcessing ||
-    runtime.isRecoveringApprovals ||
-    runtime.cancelRequested ||
+    runtime.turnLifecycle.kind !== "idle" ||
     runtime.pendingApprovalResolvers.size > 0 ||
     runtime.pendingApprovalBatchByToolCallId.size > 0 ||
     runtime.recoveredApprovalState !== null ||
     runtime.pendingInterruptedResults !== null ||
     runtime.pendingInterruptedContext !== null ||
-    runtime.activeExecutingToolCallIds.length > 0 ||
-    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0 ||
-    runtime.activeRunId !== null ||
-    runtime.activeRunStartedAt !== null ||
-    runtime.activeAbortController !== null
+    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0
   ) {
     return false;
   }
@@ -397,15 +312,12 @@ export function shouldProcessInboundMessageDirectly(
     conversation_id: runtime.conversationId,
   });
   return (
-    getListenerBlockedReason({
-      loopStatus: runtime.loopStatus,
-      isProcessing: runtime.isProcessing,
-      pendingApprovalsLen: activeScope
+    getListenerBlockedReason(
+      runtime.turnLifecycle.snapshot(),
+      activeScope
         ? getPendingControlRequestCount(runtime.listener, activeScope)
         : 0,
-      cancelRequested: runtime.cancelRequested,
-      isRecoveringApprovals: runtime.isRecoveringApprovals,
-    }) === null
+    ) === null
   );
 }
 
@@ -424,12 +336,26 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasTaskNotification = false;
   let hasCronPrompt = false;
   let hasModContinue = false;
+  let batchImageFailureMode: "strict" | "drop" | null = null;
   for (const item of queuedItems) {
     if (
       !isCoalescable(item.kind) ||
       !hasSameQueueScope(firstQueuedItem, item)
     ) {
       break;
+    }
+
+    if (item.kind === "message") {
+      const itemImageFailureMode = getInboundImageFailureMode(
+        runtime.queuedMessagesByItemId.get(item.id),
+      );
+      if (
+        batchImageFailureMode !== null &&
+        itemImageFailureMode !== batchImageFailureMode
+      ) {
+        break;
+      }
+      batchImageFailureMode = itemImageFailureMode;
     }
 
     queueLen += 1;
@@ -480,15 +406,12 @@ function computeListenerQueueBlockedReason(
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
   });
-  return getListenerBlockedReason({
-    loopStatus: runtime.loopStatus,
-    isProcessing: runtime.isProcessing,
-    pendingApprovalsLen: activeScope
+  return getListenerBlockedReason(
+    runtime.turnLifecycle.snapshot(),
+    activeScope
       ? getPendingControlRequestCount(runtime.listener, activeScope)
       : 0,
-    cancelRequested: runtime.cancelRequested,
-    isRecoveringApprovals: runtime.isRecoveringApprovals,
-  });
+  );
 }
 
 async function drainQueuedMessages(
@@ -551,7 +474,15 @@ async function drainQueuedMessages(
 
       let turnError: string | undefined;
       let didThrow = false;
-      runtime.activeChannelTurnSources = channelTurnSources;
+      activateChannelTurn(runtime, {
+        sources: channelTurnSources,
+        batchId: dequeuedBatch.batchId,
+        contextRecovered: false,
+        progress:
+          channelTurnSources.length > 0
+            ? await buildChannelTurnProgressBuilder(queuedTurn.agentId)
+            : null,
+      });
       try {
         await processQueuedTurn(queuedTurn, dequeuedBatch);
       } catch (error) {
@@ -559,28 +490,12 @@ async function drainQueuedMessages(
         turnError = error instanceof Error ? error.message : String(error);
         throw error;
       } finally {
-        runtime.activeChannelTurnSources = null;
-        if (channelTurnSources.length > 0) {
-          const outcome = mapTurnLifecycleOutcome(
-            runtime.lastStopReason,
-            didThrow,
-          );
-          const lifecycleError =
-            turnError ??
-            (outcome === "error"
-              ? (runtime.lastTerminalLoopErrorMessage ?? undefined)
-              : undefined);
-          await dispatchChannelTurnLifecycleEvent({
-            type: "finished",
-            batchId: dequeuedBatch.batchId,
-            sources: channelTurnSources,
-            outcome,
-            ...(lifecycleError ? { error: lifecycleError } : {}),
-            ...(runtime.lastTerminalLoopErrorRunId
-              ? { runId: runtime.lastTerminalLoopErrorRunId }
-              : {}),
-          });
-        }
+        await finishActiveChannelTurn(runtime, {
+          lastStopReason: runtime.lastStopReason,
+          didThrow,
+          error: turnError ?? runtime.lastTerminalLoopErrorMessage ?? undefined,
+          runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
+        });
       }
       emitListenerStatus(
         runtime.listener,

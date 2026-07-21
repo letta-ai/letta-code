@@ -8,6 +8,7 @@ import type {
   DmPolicy,
   OutboundChannelMessage,
   SignalGroupMode,
+  SlackAllowBotsMode,
   SlackChannelMode,
   TelegramGroupMode,
   WhatsAppGroupMode,
@@ -167,8 +168,8 @@ export interface ChannelPluginAccountPatch {
   autoThreadOnMention?: boolean;
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
-  showCompletedReaction?: boolean;
   listenMode?: boolean;
+  allowBots?: SlackAllowBotsMode;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;
@@ -240,6 +241,7 @@ export interface ChannelMessageActionRequest {
   replyToMessageId?: string;
   threadId?: string | null;
   messageId?: string;
+  attachmentId?: string;
   emoji?: string;
   remove?: boolean;
   mediaPath?: string;
@@ -291,5 +293,8 @@ export interface ChannelPlugin {
     account: ChannelAccount,
   ): Promise<ChannelAdapter> | ChannelAdapter;
   runSetup?(): Promise<boolean>;
+  resolveAccountDisplayName?(
+    account: ChannelAccount,
+  ): Promise<string | undefined> | string | undefined;
   messageActions?: ChannelMessageActionAdapter;
 }

@@ -676,6 +676,36 @@ describe("channel service", () => {
     expect(snapshot?.channelId).toBe("slack");
     if (snapshot?.channelId === "slack") {
       expect(snapshot.defaultPermissionMode).toBe("unrestricted");
+      expect(snapshot.allowBots).toBe(false);
+      expect(snapshot.config.allow_bots).toBe(false);
+    }
+  });
+
+  test("loaded Slack accounts normalize persisted allow_bots settings", () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "slack",
+        accountId: "legacy-slack",
+        enabled: false,
+        mode: "socket",
+        botToken: "xoxb-test-token",
+        appToken: "xapp-test-token",
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        agentId: null,
+        defaultPermissionMode: "standard",
+        allow_bots: "mentions",
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      } as unknown as SlackChannelAccount,
+    ]);
+
+    const snapshot = getChannelAccountSnapshot("slack", "legacy-slack");
+    expect(snapshot?.channelId).toBe("slack");
+    if (snapshot?.channelId === "slack") {
+      expect(snapshot.allowBots).toBe("mentions");
+      expect(snapshot.config.allow_bots).toBe("mentions");
     }
   });
 
@@ -832,7 +862,7 @@ describe("channel service", () => {
     );
   });
 
-  test("slack live account helpers preserve the transcribeVoice opt-in in snapshots", () => {
+  test("slack live account helpers preserve ingress settings in snapshots", () => {
     const created = createChannelAccountLive(
       "slack",
       {
@@ -845,8 +875,8 @@ describe("channel service", () => {
           mode: "socket",
           agent_id: null,
           transcribe_voice: true,
-          show_completed_reaction: false,
           listen_mode: true,
+          allow_bots: "mentions",
         },
       },
       { accountId: "slack-voice" },
@@ -856,10 +886,12 @@ describe("channel service", () => {
       expect.objectContaining({
         accountId: "slack-voice",
         transcribeVoice: true,
+        listenMode: true,
+        allowBots: "mentions",
         config: expect.objectContaining({
           transcribe_voice: true,
-          show_completed_reaction: false,
           listen_mode: true,
+          allow_bots: "mentions",
         }),
       }),
     );
@@ -867,8 +899,8 @@ describe("channel service", () => {
     const updated = updateChannelAccountLive("slack", "slack-voice", {
       config: {
         transcribe_voice: false,
-        show_completed_reaction: true,
         listen_mode: false,
+        allow_bots: false,
       },
     });
 
@@ -876,10 +908,12 @@ describe("channel service", () => {
       expect.objectContaining({
         accountId: "slack-voice",
         transcribeVoice: false,
+        listenMode: false,
+        allowBots: false,
         config: expect.objectContaining({
           transcribe_voice: false,
-          show_completed_reaction: true,
           listen_mode: false,
+          allow_bots: false,
         }),
       }),
     );
@@ -888,10 +922,12 @@ describe("channel service", () => {
       expect.objectContaining({
         accountId: "slack-voice",
         transcribeVoice: false,
+        listenMode: false,
+        allowBots: false,
         config: expect.objectContaining({
           transcribe_voice: false,
-          show_completed_reaction: true,
           listen_mode: false,
+          allow_bots: false,
         }),
       }),
     );

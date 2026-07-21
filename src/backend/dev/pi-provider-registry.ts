@@ -1,5 +1,9 @@
 import type { Api, KnownProvider, Model } from "@earendil-works/pi-ai";
-import { getEnvApiKey, getModels, getProviders } from "@earendil-works/pi-ai";
+import {
+  getEnvApiKey,
+  getModels,
+  getProviders,
+} from "@earendil-works/pi-ai/compat";
 
 export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
 export const LOCAL_OPENAI_PROVIDER_NAME = "lc-openai";
@@ -190,6 +194,11 @@ const PI_PROVIDER_OVERRIDES: Partial<
       hasEnvValue(process.env.GOOGLE_GENERATIVE_AI_API_KEY) ||
       getEnvApiKey("google") !== undefined,
   },
+  "google-vertex": {
+    providerTypes: ["google-vertex", "google_vertex"],
+    handlePrefixes: ["google-vertex/", "google_vertex/"],
+    localProviderNames: ["google-vertex", "google_vertex"],
+  },
   "amazon-bedrock": {
     providerTypes: ["amazon-bedrock", "bedrock"],
     handlePrefixes: ["amazon-bedrock/", "bedrock/"],
@@ -374,6 +383,24 @@ export function resolveProviderFromModelHandle(
   return PI_PROVIDER_SPECS.find((provider) =>
     provider.handlePrefixes.some((prefix) => model.startsWith(prefix)),
   )?.id;
+}
+
+export function resolvePiModelIdentity(
+  model: string | undefined,
+): string | undefined {
+  const provider = resolveProviderFromModelHandle(model);
+  if (!model || !provider) return undefined;
+  const modelId = stripProviderHandlePrefix(model, provider);
+  return modelId ? `${provider}/${modelId}` : undefined;
+}
+
+export function isResolvablePiModelHandle(model: string | undefined): boolean {
+  const provider = resolveProviderFromModelHandle(model);
+  if (!model || !provider) return false;
+  const spec = getPiProviderSpec(provider);
+  if (!spec.piProvider) return spec.createCustomModel === true;
+  const modelId = stripProviderHandlePrefix(model, provider);
+  return getModels(spec.piProvider).some((entry) => entry.id === modelId);
 }
 
 export function resolveProviderFromProviderType(

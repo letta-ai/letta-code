@@ -1057,13 +1057,16 @@ html.dark .warning-badge { background: hsl(42, 30%, 18%); color: hsl(42, 80%, 70
   var agentIdEl = document.getElementById('agent-id');
   agentIdEl.textContent = agentId;
   if (agentId) {
-    var adeBase;
-    if (serverUrl) {
-      adeBase = serverUrl.replace(/\/v1\/?$/, '').replace('api.letta.com', 'app.letta.com');
+    var chatBase;
+    var normalizedServerUrl = serverUrl.replace(/\/+$/, '');
+    if (normalizedServerUrl === 'https://api.letta.com' || normalizedServerUrl === 'https://api.letta.com/v1') {
+      chatBase = 'https://chat.letta.com';
+    } else if (normalizedServerUrl) {
+      chatBase = normalizedServerUrl.replace(/\/v1$/, '');
     } else {
-      adeBase = 'https://app.letta.com';
+      chatBase = 'https://chat.letta.com';
     }
-    agentIdEl.href = adeBase + '/chat/' + encodeURIComponent(agentId);
+    agentIdEl.href = chatBase + '/chat/' + encodeURIComponent(agentId);
     agentIdEl.target = '_blank';
   }
   document.getElementById('generated-at').textContent = 'Generated ' + new Date(DATA.generatedAt).toLocaleString();

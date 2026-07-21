@@ -7,6 +7,7 @@ import {
   localOAuthAuthFromCredentials,
   setLocalOAuthProvider,
 } from "@/backend/local/local-provider-auth-store";
+import type { LocalProviderTimeout } from "@/backend/local/local-provider-timeout";
 import type { ByokProvider } from "@/providers/byok-providers";
 import { openOAuthBrowser } from "./connect-oauth-core";
 
@@ -17,6 +18,8 @@ export interface LocalOAuthConnectCallbacks {
   onSelect?: (prompt: OAuthSelectPrompt) => Promise<string | undefined>;
   openBrowser?: (authorizationUrl: string) => Promise<void>;
   signal?: AbortSignal;
+  baseURL?: string;
+  timeout?: LocalProviderTimeout;
 }
 
 interface OAuthDeviceCodeInfo {
@@ -101,6 +104,8 @@ export async function runLocalOAuthConnectFlow(
     providerName: provider.providerName,
     providerType: provider.providerType,
     auth: localOAuthAuthFromCredentials(credentials),
+    baseURL: callbacks.baseURL,
+    timeout: callbacks.timeout,
   });
 
   return { providerName: provider.providerName };
