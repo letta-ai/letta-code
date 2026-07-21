@@ -16,7 +16,7 @@ const APPROVAL_PENDING_ERROR_PATTERNS = [
   /approve or deny the pending request/i,
 ];
 
-const LETTA_CLOUD_DATABASE_LOCK_TIMEOUT_PATTERN =
+const DATABASE_LOCK_TIMEOUT_PATTERN =
   /\bcancel(?:l)?ing statement due to lock timeout\b/i;
 const POSTGRES_LOCK_NOT_AVAILABLE_CODE_PATTERN = /\b55P03\b/i;
 const POSTGRES_LOCK_NOT_AVAILABLE_SQLSTATE_PATTERN =
@@ -33,7 +33,7 @@ const RUN_ID_PATTERNS = [
 export type ChannelLifecycleErrorKind =
   | "approval_pending"
   | "conversation_busy"
-  | "letta_cloud_busy"
+  | "database_lock_timeout"
   | "generic";
 
 export interface ChannelLifecycleErrorDisplayOptions {
@@ -60,8 +60,8 @@ export const CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE =
 export const CHANNEL_LIFECYCLE_APPROVAL_PENDING_MESSAGE =
   "The agent is still waiting on a tool approval from an earlier turn. Please approve or deny that pending request, then send your message again.";
 
-export const CHANNEL_LIFECYCLE_LETTA_CLOUD_BUSY_MESSAGE =
-  "Letta Cloud was temporarily busy, so the turn could not finish. Please try again.";
+export const CHANNEL_LIFECYCLE_DATABASE_LOCK_MESSAGE =
+  "A temporary database lock interrupted this turn. Please try again.";
 
 export const CHANNEL_LIFECYCLE_CONVERSATION_BUSY_TITLE =
   CONVERSATION_BUSY_TITLE;
@@ -155,9 +155,9 @@ function truncateLifecycleMessage(text: string, maxLength: number): string {
   return `${text.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
-function isLettaCloudDatabaseLockErrorText(errorText: string): boolean {
+function isDatabaseLockErrorText(errorText: string): boolean {
   return (
-    LETTA_CLOUD_DATABASE_LOCK_TIMEOUT_PATTERN.test(errorText) ||
+    DATABASE_LOCK_TIMEOUT_PATTERN.test(errorText) ||
     POSTGRES_LOCK_NOT_AVAILABLE_SQLSTATE_PATTERN.test(errorText) ||
     (POSTGRES_LOCK_NOT_AVAILABLE_CODE_PATTERN.test(errorText) &&
       POSTGRES_LOCK_NOT_AVAILABLE_CONTEXT_PATTERN.test(errorText))
@@ -181,11 +181,11 @@ export function getChannelLifecycleErrorDisplay(
     };
   }
 
-  if (isLettaCloudDatabaseLockErrorText(normalized)) {
+  if (isDatabaseLockErrorText(normalized)) {
     return {
-      kind: "letta_cloud_busy",
+      kind: "database_lock_timeout",
       title: "Turn failed",
-      body: CHANNEL_LIFECYCLE_LETTA_CLOUD_BUSY_MESSAGE,
+      body: CHANNEL_LIFECYCLE_DATABASE_LOCK_MESSAGE,
       runId,
     };
   }
@@ -241,7 +241,7 @@ export function formatChannelLifecycleErrorMessage(
     return lines.join("\n");
   }
 
-  if (display.kind === "letta_cloud_busy") {
+  if (display.kind === "database_lock_timeout") {
     const lines = [`${display.title}:`, body];
     if (display.runId) {
       lines.push("", `Run ID: ${display.runId}`);

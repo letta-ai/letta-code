@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import {
   CHANNEL_LIFECYCLE_APPROVAL_PENDING_MESSAGE,
   CHANNEL_LIFECYCLE_CONVERSATION_BUSY_TITLE,
+  CHANNEL_LIFECYCLE_DATABASE_LOCK_MESSAGE,
   CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE,
-  CHANNEL_LIFECYCLE_LETTA_CLOUD_BUSY_MESSAGE,
   extractChannelLifecycleRunId,
   formatChannelLifecycleErrorMessage,
   normalizeChannelLifecycleErrorMessage,
@@ -39,17 +39,14 @@ describe("normalizeChannelLifecycleErrorMessage", () => {
       "SQLSTATE 55P03 context",
       'psycopg.errors.LockNotAvailable: could not obtain lock on row in relation "steps" SQLSTATE: 55P03',
     ],
-  ])(
-    "replaces %s details with Letta Cloud busy guidance",
-    (_label, rawError) => {
-      const message = normalizeChannelLifecycleErrorMessage(rawError);
+  ])("replaces %s details with database lock guidance", (_label, rawError) => {
+    const message = normalizeChannelLifecycleErrorMessage(rawError);
 
-      expect(message).toBe(CHANNEL_LIFECYCLE_LETTA_CLOUD_BUSY_MESSAGE);
-      expect(message).not.toContain("55P03");
-      expect(message).not.toContain("canceling statement");
-      expect(message).not.toContain("steps");
-    },
-  );
+    expect(message).toBe(CHANNEL_LIFECYCLE_DATABASE_LOCK_MESSAGE);
+    expect(message).not.toContain("55P03");
+    expect(message).not.toContain("canceling statement");
+    expect(message).not.toContain("steps");
+  });
 
   test("keeps ordinary non-Postgres lock timeout details", () => {
     expect(
@@ -130,7 +127,7 @@ describe("formatChannelLifecycleErrorMessage", () => {
     ).not.toContain("```");
   });
 
-  test("formats Letta Cloud busy guidance without database internals", () => {
+  test("formats database lock guidance without database internals", () => {
     const message = formatChannelLifecycleErrorMessage(
       "sqlalchemy.exc.OperationalError: SQLSTATE: 55P03 while updating steps",
       { codeBlock: true, runId: "run-47960fe9" },
@@ -138,7 +135,7 @@ describe("formatChannelLifecycleErrorMessage", () => {
 
     expect(message).toBe(
       "Turn failed:\n" +
-        `${CHANNEL_LIFECYCLE_LETTA_CLOUD_BUSY_MESSAGE}\n\n` +
+        `${CHANNEL_LIFECYCLE_DATABASE_LOCK_MESSAGE}\n\n` +
         "Run ID: run-47960fe9",
     );
     expect(message).not.toContain("```");
