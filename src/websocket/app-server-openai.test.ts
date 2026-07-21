@@ -272,6 +272,74 @@ describe("app-server OpenAI-compatible API", () => {
     expect(body.error.code).toBe("model_not_found");
   });
 
+  test("concurrent new chats serialize conversation creation per agent", async () => {
+    const created: string[] = [];
+    let inFlight = 0;
+    __testSetBackend({
+      listAgents: async () => TEST_AGENTS,
+      createConversation: async (body: { agent_id: string }) => {
+        inFlight += 1;
+        if (inFlight > 1) {
+          inFlight -= 1;
+          throw new Error("concurrent createConversation detected");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        inFlight -= 1;
+        const id = `conv-test-${created.length + 1}`;
+        created.push(id);
+        return { id, agent_id: body.agent_id };
+      },
+    } as unknown as Backend);
+    stubTurn();
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const send = (text: string) =>
+      fetch(httpUrl(handle as AppServerHandle, "/v1/chat/completions"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "memo",
+          messages: [{ role: "user", content: text }],
+        }),
+      });
+    const responses = await Promise.all([
+      send("chat one"),
+      send("chat two"),
+      send("chat three"),
+    ]);
+    expect(responses.map((r) => r.status)).toEqual([200, 200, 200]);
+    expect(created.length).toBe(3);
+  });
+
+  test("conversation creation failure returns 500, not default fallback", async () => {
+    __testSetBackend({
+      listAgents: async () => TEST_AGENTS,
+      createConversation: async () => {
+        throw new Error("could not lock config file .git/config");
+      },
+    } as unknown as Backend);
+    stubTurn();
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const response = await fetch(httpUrl(handle, "/v1/chat/completions"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "memo",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+    expect(response.status).toBe(500);
+    const body = (await response.json()) as { error: { type: string } };
+    expect(body.error.type).toBe("server_error");
+  });
+
   test("image_url parts pass through as Letta image content", async () => {
     __testSetBackend(fakeBackend());
     let capturedContent: unknown = null;

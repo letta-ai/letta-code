@@ -327,26 +327,53 @@ function normalizeTranscript(messages: OpenAiChatMessage[]): TranscriptTurn[] {
   return turns;
 }
 
+// Conversation creation is serialized per agent: concurrent creations race
+// on initializing the agent's local memory repository (transient git config
+// lock failures). Failures propagate to the caller as a 500 — routing into
+// the shared "default" conversation instead would cross-wire client chats.
+const conversationCreateTailByAgent = new Map<string, Promise<void>>();
+const CONVERSATION_CREATE_RETRIES = 2;
+const CONVERSATION_CREATE_RETRY_DELAY_MS = 200;
+
+async function createConversationWithRetry(agentId: string): Promise<string> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= CONVERSATION_CREATE_RETRIES; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, CONVERSATION_CREATE_RETRY_DELAY_MS * attempt),
+      );
+    }
+    try {
+      const conversation = await getBackend().createConversation({
+        agent_id: agentId,
+      });
+      return conversation.id;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
 async function resolveConversationId(
   agentId: string,
   prefixKey: string,
-  onLog?: (message: string) => void,
 ): Promise<string> {
   const existing = conversationIdByTranscript.get(prefixKey);
   if (existing) return existing;
-  try {
-    const conversation = await getBackend().createConversation({
-      agent_id: agentId,
-    });
-    return conversation.id;
-  } catch (error) {
-    onLog?.(
-      `OpenAI-compat failed to create conversation, using default: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return "default";
-  }
+  const tail = conversationCreateTailByAgent.get(agentId) ?? Promise.resolve();
+  const creation = tail.then(() => createConversationWithRetry(agentId));
+  const settled = creation.then(
+    () => undefined,
+    () => undefined,
+  );
+  conversationCreateTailByAgent.set(agentId, settled);
+  void settled.then(() => {
+    if (conversationCreateTailByAgent.get(agentId) === settled) {
+      conversationCreateTailByAgent.delete(agentId);
+    }
+  });
+  return await creation;
 }
 
 // ---------------------------------------------------------------------------
@@ -689,11 +716,20 @@ async function handleChatCompletions(
 
   const prefixTurns = transcript.slice(0, lastUserIndex);
   const prefixKey = transcriptFingerprint(agent.id, prefixTurns);
-  const conversationId = await resolveConversationId(
-    agent.id,
-    prefixKey,
-    options.onLog,
-  );
+  let conversationId: string;
+  try {
+    conversationId = await resolveConversationId(agent.id, prefixKey);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    options.onLog?.(`OpenAI-compat failed to create conversation: ${message}`);
+    sendOpenAiError(
+      response,
+      500,
+      "failed to create a conversation for this chat",
+      "server_error",
+    );
+    return;
+  }
 
   const completionId = `chatcmpl-${randomUUID()}`;
   const created = Math.floor(Date.now() / 1000);
