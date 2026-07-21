@@ -116,6 +116,7 @@ export async function resolveSubagentModel(options: {
   availableHandles?: Set<string>;
   subagentType?: string;
   backendMode?: BackendMode;
+  reflectionModelOverride?: string;
 }): Promise<string | null> {
   const { userModel, recommendedModel, parentModelHandle, billingTier } =
     options;
@@ -127,26 +128,35 @@ export async function resolveSubagentModel(options: {
 
   if (userModel && !userRequestedInheritance) return userModel;
 
-  // Local backend has no server-side auto router. If the parent agent is
-  // already running successfully on a local model, spawned subagents should use
-  // that exact model instead of resolving auto/auto-memory to a provider
-  // default that may not match the active session.
-  if (options.backendMode === "local" && parentModelHandle) {
-    return parentModelHandle;
-  }
-
   if (options.subagentType === "reflection") {
+    // Reflection can be overridden globally for automatic sleep-time launches,
+    // or through .letta/agents/reflection.md. Honor either explicit choice even
+    // on local backends; "inherit" still uses the active parent model below.
+    const configuredReflectionModel =
+      options.reflectionModelOverride ?? effectiveRecommendedModel;
     if (
-      effectiveRecommendedModel &&
-      !isInheritModel(effectiveRecommendedModel)
+      configuredReflectionModel &&
+      !isInheritModel(configuredReflectionModel)
     ) {
-      const recommendedHandle = resolveModel(effectiveRecommendedModel);
+      const recommendedHandle = resolveModel(configuredReflectionModel);
       if (recommendedHandle) {
         return recommendedHandle;
       }
     }
 
+    if (options.backendMode === "local" && parentModelHandle) {
+      return parentModelHandle;
+    }
+
     return "letta/auto-memory";
+  }
+
+  // Local backend has no server-side auto router. If the parent agent is
+  // already running successfully on a local model, spawned subagents should use
+  // that exact model instead of resolving auto to a provider default that may
+  // not match the active session.
+  if (options.backendMode === "local" && parentModelHandle) {
+    return parentModelHandle;
   }
 
   let recommendedHandle: string | null = null;
