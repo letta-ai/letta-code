@@ -180,6 +180,12 @@ describe("isValidCron", () => {
     expect(isValidCron("0,10-20,30-59/5 * * * *")).toBe(true);
   });
 
+  test("accepts overlapping legacy wildcard steps and comma values", () => {
+    expect(isValidCron("0 0 */3,15 * *")).toBe(true);
+    expect(isValidCron("0 0 */3,2-3 * *")).toBe(true);
+    expect(isValidCron("0 0 * */3,6 *")).toBe(true);
+  });
+
   test("invalid expressions", () => {
     expect(isValidCron("")).toBe(false);
     expect(isValidCron("* * *")).toBe(false); // too few fields
@@ -280,6 +286,37 @@ describe("cronMatchesTime", () => {
     ).toBe(false);
   });
 
+  test("1-based wildcard steps preserve comma unions without duplicates", () => {
+    expect(
+      cronMatchesTime(
+        "0 0 */3,15 * *",
+        new Date("2026-03-15T00:00:00Z"),
+        "UTC",
+      ),
+    ).toBe(true);
+    expect(
+      cronMatchesTime(
+        "0 0 */3,15 * *",
+        new Date("2026-03-01T00:00:00Z"),
+        "UTC",
+      ),
+    ).toBe(false);
+    expect(
+      cronMatchesTime(
+        "0 0 */3,2-3 * *",
+        new Date("2026-03-02T00:00:00Z"),
+        "UTC",
+      ),
+    ).toBe(true);
+
+    expect(
+      cronMatchesTime("0 0 * */3,6 *", new Date("2026-06-01T00:00:00Z"), "UTC"),
+    ).toBe(true);
+    expect(
+      cronMatchesTime("0 0 * */3,6 *", new Date("2026-01-01T00:00:00Z"), "UTC"),
+    ).toBe(false);
+  });
+
   test("1-based wildcard steps with no legacy legal values never match", () => {
     expect(
       cronMatchesTime("0 0 */32 * *", new Date("2026-03-01T00:00:00Z"), "UTC"),
@@ -341,6 +378,17 @@ describe("cronMatchesTime", () => {
     // Only day-of-week constrained (dom is *): AND logic
     expect(cronMatchesTime("0 9 * * 4", date)).toBe(true);
     expect(cronMatchesTime("0 9 * * 1", date)).toBe(false);
+
+    // A normalized legacy wildcard step remains constrained and retains OR.
+    expect(
+      cronMatchesTime("0 0 */3 * 1", new Date("2026-03-02T00:00:00Z"), "UTC"),
+    ).toBe(true); // Monday
+    expect(
+      cronMatchesTime("0 0 */3 * 1", new Date("2026-03-03T00:00:00Z"), "UTC"),
+    ).toBe(true); // divisible day-of-month
+    expect(
+      cronMatchesTime("0 0 */3 * 1", new Date("2026-03-04T00:00:00Z"), "UTC"),
+    ).toBe(false);
   });
 
   test("timezone-aware matching", () => {

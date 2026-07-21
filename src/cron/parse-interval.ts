@@ -211,34 +211,59 @@ function expandOneBasedWildcardStep(
   part: string,
   min: number,
   max: number,
-): string | null {
+): number[] | null {
   const match = part.match(/^\*\/(\d+)$/);
-  if (!match) return part;
+  if (!match) return null;
 
   const step = Number.parseInt(match[1] ?? "", 10);
-  if (!Number.isSafeInteger(step) || step <= 0) return null;
+  if (!Number.isSafeInteger(step) || step <= 0) return [];
 
   const values: number[] = [];
   for (let value = min; value <= max; value++) {
     if (value % step === 0) values.push(value);
   }
 
-  return values.length > 0 ? values.join(",") : null;
+  return values;
+}
+
+type OneBasedCronField = "dayOfMonth" | "month";
+
+function parseOneBasedFieldPart(
+  part: string,
+  field: OneBasedCronField,
+): number[] | null {
+  const expression =
+    field === "dayOfMonth" ? `0 0 ${part} * *` : `0 0 * ${part} *`;
+  try {
+    const parsed = CronExpressionParser.parse(expression, { strict: false });
+    const values: number[] = [];
+    for (const value of parsed.fields[field].values) {
+      if (typeof value === "number") values.push(Number(value));
+    }
+    return values;
+  } catch {
+    return null;
+  }
 }
 
 function normalizeOneBasedWildcardSteps(
   field: string,
   min: number,
   max: number,
+  fieldName: OneBasedCronField,
 ): string | null {
-  const normalizedParts: string[] = [];
+  const parts = field.split(",");
+  if (!parts.some((part) => /^\*\/\d+$/.test(part))) return field;
+
+  const normalizedValues = new Set<number>();
   for (const part of field.split(",")) {
     if (part === "") return null;
-    const normalized = expandOneBasedWildcardStep(part, min, max);
-    if (normalized === null) return null;
-    normalizedParts.push(normalized);
+    const wildcardValues = expandOneBasedWildcardStep(part, min, max);
+    const values = wildcardValues ?? parseOneBasedFieldPart(part, fieldName);
+    if (!values || values.length === 0) return null;
+    for (const value of values) normalizedValues.add(value);
   }
-  return normalizedParts.join(",");
+  return [...normalizedValues].sort((a, b) => a - b).join(",");
 }
 
 /**
@@ -257,18 +282,33 @@ function normalizeCronExpressionForParser(expr: string): string | null {
   if (fields.length !== 5) return null;
   if (!SUPPORTED_CRON_RE.test(trimmed)) return null;
   if (hasBareValueStep(fields)) return null;
+  const hasOneBasedWildcardStep = fields
+    .slice(2, 4)
+    .some((field) => field.split(",").some((part) => /^\*\/\d+$/.test(part)));
+  if (hasOneBasedWildcardStep) {
+    try {
+      CronExpressionParser.parse(trimmed, { strict: false });
+    } catch {
+      return null;
+    }
+  }
 
   const normalizedFields: string[] = [];
   for (let index = 0; index < fields.length; index++) {
     const field = fields[index] ?? "";
     if (index === 2) {
-      const normalized = normalizeOneBasedWildcardSteps(field, 1, 31);
+      const normalized = normalizeOneBasedWildcardSteps(
+        field,
+        1,
+        31,
+        "dayOfMonth",
+      );
       if (normalized === null) return null;
       normalizedFields.push(normalized);
       continue;
     }
     if (index === 3) {
-      const normalized = normalizeOneBasedWildcardSteps(field, 1, 12);
+      const normalized = normalizeOneBasedWildcardSteps(field, 1, 12, "month");
       if (normalized === null) return null;
       normalizedFields.push(normalized);
       continue;
