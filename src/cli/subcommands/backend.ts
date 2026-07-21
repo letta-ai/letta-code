@@ -98,9 +98,7 @@ export async function runBackendSubcommand(argv: string[]): Promise<number> {
 
   if (backendMode === "api") {
     console.log("Default backend set to Letta Cloud.");
-    console.log(
-      "Run `letta` to sign in with Login to Constellation if needed.",
-    );
+    console.log("Run `letta` to sign in with Letta if needed.");
   } else {
     console.log("Default backend set to local mode.");
     console.log("Agents you create by default will be stored on this device.");

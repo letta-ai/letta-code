@@ -149,17 +149,22 @@ export function buildSlackModelPickerBlocks(
         type: "mrkdwn",
         text: "Choose a model for this routed conversation:",
       },
-      accessory: {
-        type: "static_select",
-        action_id: SLACK_MODEL_SELECT_ACTION_ID,
-        placeholder: {
-          type: "plain_text",
-          text: "Select a model",
-          emoji: true,
+    },
+    {
+      type: "actions",
+      elements: [
+        {
+          type: "static_select",
+          action_id: SLACK_MODEL_SELECT_ACTION_ID,
+          placeholder: {
+            type: "plain_text",
+            text: "Select a model",
+            emoji: true,
+          },
+          options,
+          ...(initialOption ? { initial_option: initialOption } : {}),
         },
-        options,
-        ...(initialOption ? { initial_option: initialOption } : {}),
-      },
+      ],
     },
     {
       type: "context",

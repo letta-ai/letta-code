@@ -19,7 +19,6 @@ import { BashCommandMessage } from "@/cli/components/BashCommandMessage";
 import { BtwPane, type BtwState } from "@/cli/components/BtwPane";
 import { CommandMessage } from "@/cli/components/CommandMessage";
 import { CompactionSelector } from "@/cli/components/CompactionSelector";
-import { ConstellationLoginOverlay } from "@/cli/components/ConstellationLoginOverlay";
 import { ConversationSelector } from "@/cli/components/ConversationSelector";
 import { ErrorMessage } from "@/cli/components/ErrorMessageRich";
 import { EventMessage } from "@/cli/components/EventMessage";
@@ -30,6 +29,7 @@ import { HooksManager } from "@/cli/components/HooksManager";
 import { InlineQuestionApproval } from "@/cli/components/InlineQuestionApproval";
 import { Input } from "@/cli/components/InputRich";
 import { InstallGithubAppFlow } from "@/cli/components/InstallGithubAppFlow";
+import { LettaLoginOverlay } from "@/cli/components/LettaLoginOverlay";
 import { McpConnectFlow } from "@/cli/components/McpConnectFlow";
 import { McpSelector } from "@/cli/components/McpSelector";
 import { MemfsTreeViewer } from "@/cli/components/MemfsTreeViewer";
@@ -1124,17 +1124,17 @@ export function AppView(props: AppViewProps) {
             )}
 
             {activeOverlay === "login" && (
-              <ConstellationLoginOverlay
+              <LettaLoginOverlay
                 onComplete={() => {
                   const overlayCommand = completeOverlay("login");
                   const cmd =
                     overlayCommand ??
                     commandRunner.start(
                       "/login",
-                      "Signed in to Constellation. Switch to a Constellation agent with /agents.",
+                      "Signed in with Letta. Switch agents with /agents.",
                     );
                   cmd.finish(
-                    "Signed in to Constellation. Switch to a Constellation agent with /agents.",
+                    "Signed in with Letta. Switch agents with /agents.",
                     true,
                   );
                 }}
@@ -1144,10 +1144,10 @@ export function AppView(props: AppViewProps) {
                     overlayCommand ??
                     commandRunner.start(
                       "/login",
-                      "Already signed in to Constellation. Run /logout to sign out.",
+                      "Already signed in with Letta. Run /logout to sign out.",
                     );
                   cmd.finish(
-                    "Already signed in to Constellation. Run /logout to sign out.",
+                    "Already signed in with Letta. Run /logout to sign out.",
                     true,
                   );
                 }}

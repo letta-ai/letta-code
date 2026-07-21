@@ -570,7 +570,7 @@ async function resolveCurrentModelHandle(
  *   a context window when one is not supplied, matching updateAgentLLMConfig.
  *
  * Routes through the supplied backend's updateAgent/updateConversation, so it
- * works for both local and constellation agents.
+ * works for both local and cloud agents.
  */
 export async function updateModelConfig(
   backend: Backend,

@@ -5,6 +5,7 @@ import {
   __testOverrideReadProcessIdentity,
   type AddTaskInput,
   addTask,
+  type CronTask,
   claimSchedulerLease,
   computeJitter,
   deleteAllTasks,
@@ -71,6 +72,14 @@ function makeInput(overrides: Partial<AddTaskInput> = {}): AddTaskInput {
   };
 }
 
+function overwriteTask(taskId: string, patch: Partial<CronTask>): void {
+  const data = readCronFile();
+  const task = data.tasks.find((candidate) => candidate.id === taskId);
+  if (!task) throw new Error("expected persisted cron task");
+  Object.assign(task, patch);
+  writeFileSync(_CRON_PATH, JSON.stringify(data, null, 2));
+}
+
 // ── Tests ───────────────────────────────────────────────────────────
 
 describe("addTask", () => {
@@ -105,6 +114,13 @@ describe("addTask", () => {
     const r1 = addTask(makeInput());
     const r2 = addTask(makeInput({ prompt: "echo world" }));
     expect(r1.task.id).not.toBe(r2.task.id);
+  });
+
+  test("rejects semantically invalid cron expressions before persistence", () => {
+    expect(() => addTask(makeInput({ cron: "0 0 */32 * *" }))).toThrow(
+      /Invalid cron expression "0 0 \*\/32 \* \*"/,
+    );
+    expect(readCronFile().tasks).toHaveLength(0);
   });
 });
 
@@ -189,6 +205,46 @@ describe("updateTask", () => {
     const updated = getTask(task.id);
     expect(updated?.fire_count).toBe(5);
     expect(updated?.last_fired_at).toBe("2026-01-01T00:00:00Z");
+  });
+
+  test("rejects invalid cron-changing updates without rewriting the task", () => {
+    const { task } = addTask(makeInput({ cron: "*/5 * * * *" }));
+
+    expect(() =>
+      updateTask(task.id, (t) => {
+        t.cron = "0 0 */32 * *";
+      }),
+    ).toThrow(/Invalid cron expression "0 0 \*\/32 \* \*"/);
+
+    const persisted = getTask(task.id);
+    expect(persisted?.cron).toBe("*/5 * * * *");
+  });
+
+  test("clears a persisted invalid-cron failure when the cron is corrected", () => {
+    const { task } = addTask(makeInput({ cron: "*/5 * * * *" }));
+    overwriteTask(task.id, {
+      cron: "0-60 * * * *",
+      last_run_at: "2026-07-21T00:00:00.000Z",
+      last_run_outcome: "failed",
+      last_run_reason: "invalid_cron",
+      last_run_error: "Invalid cron expression",
+      failed_count: 1,
+    });
+
+    const updated = updateTask(task.id, (candidate) => {
+      candidate.cron = "*/10 * * * *";
+    });
+
+    expect(updated).toEqual(
+      expect.objectContaining({
+        cron: "*/10 * * * *",
+        last_run_at: null,
+        last_run_outcome: null,
+        last_run_reason: null,
+        last_run_error: null,
+        failed_count: 1,
+      }),
+    );
   });
 });
 

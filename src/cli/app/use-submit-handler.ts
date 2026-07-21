@@ -1662,7 +1662,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /login command - sign in to Letta Constellation
+        // Special handling for /login command - sign in with Letta
         if (trimmed === "/login") {
           openOverlay("login", "/login", "Opening login...", "Login dismissed");
           return { submitted: true };
@@ -1695,7 +1695,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             if (!hasEnvApiKey && !hasStoredCloudAuth) {
               cmd.finish(
-                "Already logged out. Run /login to sign into Constellation.",
+                "Already logged out. Run /login to sign in with Letta.",
                 true,
               );
               return { submitted: true };
