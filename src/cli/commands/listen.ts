@@ -8,7 +8,11 @@ import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { settingsManager } from "@/settings-manager";
 import { getErrorMessage } from "@/utils/error";
-import { registerWithCloudRetry } from "@/websocket/listen-register";
+import {
+  createListenerSessionNonce,
+  isSupersededRegistrationError,
+  registerWithCloudRetry,
+} from "@/websocket/listen-register";
 import { resolveListenerRegistrationOptions } from "@/websocket/listener/auth";
 
 // tiny helper for unique ids
@@ -214,10 +218,16 @@ export async function handleListen(
       "running",
     );
 
+    // One nonce per /listen session: a superseded session's nonce is
+    // tombstoned server-side, and a LATER /listen from this same long-lived
+    // TUI process must not inherit that tombstone.
+    const sessionNonce = createListenerSessionNonce();
+
     const resolveRegisterOptions = () =>
       resolveListenerRegistrationOptions(deviceId, connectionName, {
         allowInteractiveOAuth: false,
         surface: "listen",
+        sessionNonce,
       });
 
     // Register with cloud, retrying transient failures with a bounded backoff.
@@ -358,6 +368,19 @@ export async function handleListen(
               reregisterResult.supportsSplitStatusChannels,
             );
           } catch (error) {
+            if (isSupersededRegistrationError(error)) {
+              updateCommandResult(
+                ctx.buffersRef,
+                ctx.refreshDerived,
+                cmdId,
+                msg,
+                `Listener stopped: a newer listener took over environment "${connectionName}".`,
+                false,
+                "finished",
+              );
+              ctx.setCommandRunning(false);
+              return;
+            }
             updateCommandResult(
               ctx.buffersRef,
               ctx.refreshDerived,

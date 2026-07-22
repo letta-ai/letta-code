@@ -23,6 +23,7 @@ import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
+  createListenerSessionNonce,
   isSupersededRegistrationError,
   type RegisterOptions,
   registerWithCloudRetry,
@@ -499,12 +500,18 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       return createListenerProcessAnchorPromise();
     }
 
+    // One nonce for this listener session, reused across re-registrations.
+    // A superseded session's nonce is tombstoned server-side; a fresh
+    // session (new process run) mints a fresh nonce.
+    const sessionNonce = createListenerSessionNonce();
+
     let registerOptions: RegisterOptions;
 
     try {
       registerOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
+        { sessionNonce },
       );
     } catch (authErr) {
       if (authErr instanceof MissingListenerApiKeyError) {
@@ -573,6 +580,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
+        { sessionNonce },
       );
       const result = await registerWithCloudRetry(nextRegisterOptions, {
         maxDurationMs: Infinity,

@@ -34,6 +34,12 @@ type ListenerAuthOptions = {
 
 type ListenerRegistrationOptions = ListenerAuthOptions & {
   surface?: ListenerSurface;
+  /**
+   * Session-scoped registration nonce (createListenerSessionNonce()).
+   * Callers pass the SAME nonce for a session's initial registration and
+   * all of its re-registrations, and a fresh nonce for each new session.
+   */
+  sessionNonce?: string;
 };
 
 const defaultListenerOAuthDeps: ListenerOAuthDeps = {
@@ -269,6 +275,7 @@ export async function resolveListenerRegistrationOptions(
       resolveListenerSurfaceFromEnv(options.surface ?? "server"),
       connectionName,
     ),
+    ...(options.sessionNonce ? { sessionNonce: options.sessionNonce } : {}),
   };
 }
 

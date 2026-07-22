@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import {
+  createListenerSessionNonce,
   deriveListenerInstanceId,
-  getListenerProcessInstanceId,
   isSupersededRegistrationError,
   registerWithCloud,
   registerWithCloudRetry,
@@ -325,7 +325,30 @@ describe("deriveListenerInstanceId", () => {
 });
 
 describe("supersession (LET-10024)", () => {
-  it("sends the per-process nonce with registration", async () => {
+  it("sends the session nonce with registration when provided", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ connectionId: "conn-1", wsUrl: "wss://example.com" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const sessionNonce = createListenerSessionNonce();
+    await registerWithCloud(
+      { ...defaultOpts, sessionNonce },
+      mockFetch as unknown as typeof fetch,
+    );
+
+    const [, init] = mockFetch.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    const body = JSON.parse(init.body as string);
+    expect(body.processInstanceId).toBe(sessionNonce);
+    expect(body.processInstanceId).toMatch(/^proc-/);
+  });
+
+  it("omits the nonce when the caller does not provide one", async () => {
     mockFetch.mockResolvedValueOnce(
       new Response(
         JSON.stringify({ connectionId: "conn-1", wsUrl: "wss://example.com" }),
@@ -340,8 +363,11 @@ describe("supersession (LET-10024)", () => {
       RequestInit,
     ];
     const body = JSON.parse(init.body as string);
-    expect(body.processInstanceId).toBe(getListenerProcessInstanceId());
-    expect(body.processInstanceId).toMatch(/^proc-/);
+    expect(body.processInstanceId).toBeUndefined();
+  });
+
+  it("mints a distinct nonce per session", () => {
+    expect(createListenerSessionNonce()).not.toBe(createListenerSessionNonce());
   });
 
   it("classifies 409 LISTENER_SUPERSEDED as a superseded registration error", async () => {

@@ -146,7 +146,13 @@ describe("listener auth lifecycle", () => {
     }
   });
 
-  function startClient(overrides: { onError?: (error: Error) => void } = {}) {
+  function startClient(
+    overrides: {
+      onError?: (error: Error) => void;
+      onSuperseded?: () => void;
+      onNeedsReregister?: () => void;
+    } = {},
+  ) {
     return startListenerClient({
       connectionId: "connection-id",
       wsUrl,
@@ -154,7 +160,10 @@ describe("listener auth lifecycle", () => {
       connectionName: "listener-name",
       onConnected: mock(() => {}),
       onDisconnected: mock(() => {}),
-      onNeedsReregister: mock(() => {}),
+      onNeedsReregister: overrides.onNeedsReregister ?? mock(() => {}),
+      ...(overrides.onSuperseded
+        ? { onSuperseded: overrides.onSuperseded }
+        : {}),
       onError: overrides.onError ?? mock(() => {}),
     });
   }
@@ -259,6 +268,30 @@ describe("listener auth lifecycle", () => {
 
     expect(authorizations[1]).toBe("Bearer recovered-access-token");
     expect(refreshAccessTokenMock).toHaveBeenCalledTimes(2);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  test("treats close code 4009 as terminal supersession: onSuperseded fires once, no reconnect", async () => {
+    const onSuperseded = mock(() => {});
+    const onNeedsReregister = mock(() => {});
+    const onError = mock(() => {});
+    await startClient({ onSuperseded, onNeedsReregister, onError });
+    await waitFor(
+      () => connections.length === 1,
+      "initial socket did not open",
+    );
+
+    connections[0]?.close(4009, "Superseded by a newer listener registration");
+    await waitFor(
+      () => onSuperseded.mock.calls.length === 1,
+      "onSuperseded did not fire",
+    );
+
+    // Give any (incorrect) reconnect attempt time to land, then verify none did.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(connections.length).toBe(1);
+    expect(onSuperseded).toHaveBeenCalledTimes(1);
+    expect(onNeedsReregister).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
   });
 });

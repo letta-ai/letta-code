@@ -9,17 +9,22 @@ import { getVersion } from "@/version.ts";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener/listener-constants";
 
 /**
- * Per-process registration nonce (unique for this process lifetime, NOT
- * stable across restarts). The relay records which process owns each
- * connection lease; when a newer registration supersedes this process, the
- * relay tombstones this nonce and rejects our re-registration attempts with
- * 409 LISTENER_SUPERSEDED instead of letting us steal the lease back
- * (LET-10024). Servers that predate the field ignore it.
+ * Create a registration nonce for one listener SESSION (a single `letta
+ * server` run, or one in-app /listen invocation). The relay records which
+ * session owns each connection lease; when a newer registration supersedes
+ * it, the relay tombstones this nonce and rejects the displaced session's
+ * re-registration attempts with 409 LISTENER_SUPERSEDED instead of letting
+ * it steal the lease back (LET-10024).
+ *
+ * Session-scoped, not process-global: the interactive TUI is a long-lived
+ * process that can start multiple /listen sessions over time (including for
+ * different environments). A process-global nonce would leave every later
+ * session 409-blocked by an earlier session's tombstone. Callers must reuse
+ * ONE nonce across a session's re-registration attempts and mint a fresh
+ * one per new session.
  */
-const PROCESS_INSTANCE_ID = `proc-${randomUUID()}`;
-
-export function getListenerProcessInstanceId(): string {
-  return PROCESS_INSTANCE_ID;
+export function createListenerSessionNonce(): string {
+  return `proc-${randomUUID()}`;
 }
 
 export interface RegisterResult {
@@ -41,6 +46,12 @@ export interface RegisterOptions {
    * Optional: servers that predate the field ignore it.
    */
   listenerInstanceId?: string;
+  /**
+   * Session-scoped registration nonce from createListenerSessionNonce().
+   * Reused across THIS session's re-registration attempts only. Optional:
+   * servers that predate the field ignore it (legacy newest-wins).
+   */
+  sessionNonce?: string;
 }
 
 /**
@@ -189,7 +200,7 @@ export async function registerWithCloud(
       ...(opts.listenerInstanceId
         ? { listenerInstanceId: opts.listenerInstanceId }
         : {}),
-      processInstanceId: PROCESS_INSTANCE_ID,
+      ...(opts.sessionNonce ? { processInstanceId: opts.sessionNonce } : {}),
       connectionName: opts.connectionName,
       metadata: {
         lettaCodeVersion: getVersion(),
