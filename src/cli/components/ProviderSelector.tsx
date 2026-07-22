@@ -172,9 +172,14 @@ export function fieldValuesFromProviderPlaceholders(
 ): Record<string, string> {
   if (!fields) return {};
 
+  // Optional fields stay empty so an untouched value is not persisted:
+  // e.g. leaving the Ollama base URL blank keeps env/default resolution.
   return Object.fromEntries(
     fields
-      .filter((field) => !field.secret && field.placeholder)
+      .filter(
+        (field) =>
+          !field.secret && field.placeholder && field.required !== false,
+      )
       .map((field) => [field.key, field.placeholder as string]),
   );
 }
@@ -682,10 +687,13 @@ export function ProviderSelector({
     if (!fields) return;
 
     // Check all required fields are filled
-    const allFilled = fields.every((field) => fieldValues[field.key]?.trim());
+    const allFilled = fields.every(
+      (field) => field.required === false || fieldValues[field.key]?.trim(),
+    );
     if (!allFilled) return;
 
-    const apiKey = fieldValues.apiKey?.trim() || "";
+    const apiKey =
+      fieldValues.apiKey?.trim() || defaultProviderApiKey(provider) || "";
     const accessKey = fieldValues.accessKey?.trim();
     const region = fieldValues.region?.trim();
     const profile = fieldValues.profile?.trim();
@@ -1419,9 +1427,10 @@ export function ProviderSelector({
       ("fields" in provider ? (provider.fields as ProviderField[]) : undefined);
     if (!fields) return null;
 
-    // Check if all fields are filled
-    const allFilled = fields.every((field: ProviderField) =>
-      fieldValues[field.key]?.trim(),
+    // Check if all required fields are filled
+    const allFilled = fields.every(
+      (field: ProviderField) =>
+        field.required === false || fieldValues[field.key]?.trim(),
     );
 
     const statusText =
@@ -1482,7 +1491,8 @@ export function ProviderSelector({
                   {isFocused ? "> " : "  "}
                 </Text>
                 <Text dimColor={!isFocused} bold={isFocused}>
-                  {field.label}:
+                  {field.label}
+                  {field.required === false ? " (optional)" : ""}:
                 </Text>
                 <Text> </Text>
                 <Text

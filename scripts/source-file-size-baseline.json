@@ -14,7 +14,7 @@
   "src/cli/components/AgentSelector.tsx": 1111,
   "src/cli/components/InputRich.tsx": 2219,
   "src/cli/components/ModelSelector.tsx": 1204,
-  "src/cli/components/ProviderSelector.tsx": 1672,
+  "src/cli/components/ProviderSelector.tsx": 1682,
   "src/cli/components/ToolCallMessageRich.tsx": 1109,
   "src/cli/helpers/accumulator.ts": 1596,
   "src/cli/helpers/reflection-transcript.ts": 2080,

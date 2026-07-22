@@ -124,6 +124,7 @@ function formatUsage(): string {
     "  letta connect codex --method device-code",
     "  letta connect anthropic <api_key>",
     "  letta connect openai --api-key <api_key>",
+    "  letta connect ollama --base-url http://192.168.1.50:11434/v1",
     "  letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
     "  letta connect llama-cpp --base-url http://localhost:8080/v1",
     "  letta connect bedrock --method iam --access-key <id> --secret-key <key> --region <region>",

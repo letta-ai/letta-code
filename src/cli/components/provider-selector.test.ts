@@ -215,6 +215,20 @@ describe("ProviderSelector multi-field defaults", () => {
       ]),
     ).toEqual({});
   });
+
+  test("does not prefill optional field placeholders", () => {
+    expect(
+      fieldValuesFromProviderPlaceholders([
+        {
+          key: "baseUrl",
+          label: "Base URL",
+          placeholder: "http://localhost:11434/v1",
+          required: false,
+        },
+        { key: "apiKey", label: "API Key", secret: true, required: false },
+      ]),
+    ).toEqual({});
+  });
 });
 
 describe("ProviderSelector connected provider actions", () => {
