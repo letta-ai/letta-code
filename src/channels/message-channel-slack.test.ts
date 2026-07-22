@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
@@ -7,6 +7,7 @@ import {
 } from "@/channels/accounts";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import { clearAllRoutes, setRouteInMemory } from "@/channels/routing";
+import { slackMessageActions } from "@/channels/slack/message-actions";
 import {
   __testOverrideLoadTargetStore,
   __testOverrideSaveTargetStore,
@@ -18,6 +19,7 @@ import { message_channel } from "@/tools/impl/message-channel";
 
 describe("MessageChannel Slack", () => {
   afterEach(async () => {
+    mock.restore();
     const registry = getChannelRegistry();
     if (registry) {
       await registry.stopAll();
@@ -317,6 +319,7 @@ describe("MessageChannel Slack", () => {
       updatedAt: "2026-04-11T00:00:00.000Z",
     });
 
+    const handleAction = spyOn(slackMessageActions, "handleAction");
     const result = await message_channel({
       action: "send",
       channel: "slack",
@@ -333,7 +336,7 @@ describe("MessageChannel Slack", () => {
           chatId: "C123",
           chatType: "channel",
           messageId: "1712790000.000050",
-          threadId: "1712790000.000050",
+          threadId: null,
           agentId: "agent-1",
           conversationId: "conv-channel",
         },
@@ -341,6 +344,13 @@ describe("MessageChannel Slack", () => {
     });
 
     expect(result).toContain("Message sent to slack");
+    expect(handleAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: expect.objectContaining({
+          messageId: "1712790000.000050",
+        }),
+      }),
+    );
     expect(sendMessage).toHaveBeenCalledWith({
       channel: "slack",
       accountId: "account-1",
@@ -632,7 +642,7 @@ describe("MessageChannel Slack", () => {
     expect(downloadAttachment).not.toHaveBeenCalled();
   });
 
-  test("supports proactive Slack sends to explicit cached targets without consulting routes", async () => {
+  test("supports proactive and source-aware Slack sends to explicit cached targets", async () => {
     installChannelStateTestOverrides();
     const registry = new ChannelRegistry();
 
@@ -694,6 +704,7 @@ describe("MessageChannel Slack", () => {
       lastSeenAt: "2026-04-11T00:00:00.000Z",
     });
 
+    const handleAction = spyOn(slackMessageActions, "handleAction");
     const result = await message_channel({
       action: "send",
       channel: "slack",
@@ -706,6 +717,7 @@ describe("MessageChannel Slack", () => {
     });
 
     expect(result).toContain("Message sent to slack");
+    expect(handleAction.mock.calls[0]?.[0]).not.toHaveProperty("source");
     expect(sendMessage).toHaveBeenCalledWith({
       channel: "slack",
       accountId: "account-1",
@@ -717,6 +729,35 @@ describe("MessageChannel Slack", () => {
       agentId: "agent-1",
       conversationId: "default",
     });
+
+    await message_channel({
+      action: "send",
+      channel: "slack",
+      target: "#eng",
+      message: "hello from the active turn",
+      parentScope: {
+        agentId: "agent-1",
+        conversationId: "default",
+      },
+      channelTurnSources: [
+        {
+          channel: "slack",
+          accountId: "account-1",
+          chatId: "C999",
+          chatType: "channel",
+          messageId: "source-message",
+          threadId: null,
+          agentId: "agent-1",
+          conversationId: "default",
+        },
+      ],
+    });
+
+    expect(handleAction.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        source: expect.objectContaining({ messageId: "source-message" }),
+      }),
+    );
   });
 
   test("requires accountId when multiple proactive Slack accounts are eligible", async () => {

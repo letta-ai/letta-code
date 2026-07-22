@@ -1,6 +1,7 @@
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getChannelAccount } from "@/channels/accounts";
 import { getChannelRegistry } from "@/channels/registry";
+import { channelTurnSourceIdentity } from "@/channels/turn-source";
 import type { ChannelAdapter, ChannelTurnSource } from "@/channels/types";
 import { getRichDraftStreamingPolicy } from "@/channels/types";
 import { debugLog, debugWarn } from "@/utils/debug";
@@ -122,22 +123,22 @@ function resolveSingleChannelDraftSource(
     return null;
   }
 
-  const byRoute = new Map<string, ChannelDraftSource>();
+  const distinctSources = new Map<string, ChannelDraftSource>();
   for (const source of candidateSources) {
-    byRoute.set(
-      [
-        source.channel,
-        source.accountId.trim(),
-        source.chatId,
-        source.threadId ?? "",
-        source.agentId,
-        source.conversationId,
-      ].join(":"),
-      { ...source, accountId: source.accountId.trim() },
+    const normalizedSource = {
+      ...source,
+      accountId: source.accountId.trim(),
+    };
+    distinctSources.set(
+      channelTurnSourceIdentity(normalizedSource),
+      normalizedSource,
     );
+    if (distinctSources.size > 1) {
+      return null;
+    }
   }
 
-  return byRoute.size === 1 ? ([...byRoute.values()][0] ?? null) : null;
+  return distinctSources.values().next().value ?? null;
 }
 
 class ChannelRichDraftStreamerImpl implements ChannelRichDraftStreamer {
@@ -355,6 +356,7 @@ class ChannelRichDraftStreamerImpl implements ChannelRichDraftStreamer {
       chatId: this.source.chatId,
       threadId: this.source.threadId ?? null,
       draftId: state.draftId,
+      source: this.source,
       richMessage: { markdown: message },
     };
 

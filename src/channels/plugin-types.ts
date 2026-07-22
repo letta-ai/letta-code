@@ -4,6 +4,7 @@ import type {
   ChannelChatType,
   ChannelDefaultPermissionMode,
   ChannelRoute,
+  ChannelTurnSource,
   DiscordChannelMode,
   DmPolicy,
   OutboundChannelMessage,
@@ -260,6 +261,8 @@ export interface ChannelMessageActionContext {
   request: ChannelMessageActionRequest;
   route: ChannelRoute;
   adapter: ChannelAdapter;
+  /** Unique initiating channel message when this action belongs to a channel turn. */
+  source?: ChannelTurnSource;
   /**
    * Format user-authored markdown/plain text for the target channel before the
    * plugin sends it. The shared MessageChannel tool owns cross-channel text
