@@ -47,6 +47,15 @@ export function getChannelAccountsPath(channelId: string): string {
 }
 
 export function getChannelRoutingPath(channelId: string): string {
+  return join(getChannelDir(channelId), "routing.json");
+}
+
+/**
+ * Legacy routing path from the original channels MVP, when the file was named
+ * `routing.yaml` despite holding JSON content. Used only for one-time migration
+ * to the correctly-named `routing.json`. See issue #3076.
+ */
+export function getLegacyChannelRoutingPath(channelId: string): string {
   return join(getChannelDir(channelId), "routing.yaml");
 }
 
