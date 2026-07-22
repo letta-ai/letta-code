@@ -2,6 +2,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   writeFile,
@@ -60,10 +61,10 @@ const CHUNKS_DIR = "chunks";
 const FIRST_PROMPT_MAX_CHARS = 200;
 const LIST_PAGE_LIMIT = 1000;
 
-/** Make a discovered session id safe to use as a single filename segment. */
-export function sanitizeSessionId(id: string): string {
-  const cleaned = id.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[.-]+/, "");
-  return cleaned || "session";
+/** Filesystem-safe filename stamp from an ISO startedAt (colons stripped). */
+export function fileTimestamp(startedAt: string | undefined): string {
+  if (!startedAt) return "unknown-date";
+  return startedAt.slice(0, 19).replace(/:/g, "-");
 }
 
 /**
@@ -222,7 +223,11 @@ export async function runTrajectoryExport(
     sessions: [],
   };
 
-  const usedFiles = new Set<string>();
+  // Session files get uniform chronological names (<startedAt>_<index>.json)
+  // whose index is only known once every session has been collected, so write
+  // under a temporary name first and rename after the final sort. Native
+  // session identity stays on the manifest entry's `id`.
+  let pendingSeq = 0;
   const writeSession = async (
     source: string,
     id: string,
@@ -235,12 +240,8 @@ export async function runTrajectoryExport(
     if (options.project && !(stats.project ?? "").startsWith(options.project)) {
       return;
     }
-    const base = sanitizeSessionId(id);
-    let file = join(source, `${base}.json`);
-    for (let suffix = 2; usedFiles.has(file); suffix += 1) {
-      file = join(source, `${base}-${suffix}.json`);
-    }
-    usedFiles.add(file);
+    pendingSeq += 1;
+    const file = join(source, `.pending-${pendingSeq}.json`);
     const body = JSON.stringify(records);
     await mkdir(join(options.outDir, source), { recursive: true });
     await writeFile(join(options.outDir, file), body, "utf-8");
@@ -366,6 +367,23 @@ export async function runTrajectoryExport(
   manifest.sessions.sort((a, b) =>
     (a.startedAt ?? "").localeCompare(b.startedAt ?? ""),
   );
+
+  // Assign the final uniform filenames: <startedAt>_<index>.json, where the
+  // 1-based index is the session's position in the chronologically sorted
+  // manifest. Identical across sources, unique by construction, and `ls`
+  // within a source folder lists sessions in time order.
+  const width = Math.max(4, String(manifest.sessions.length).length);
+  for (const [index, session] of manifest.sessions.entries()) {
+    const file = join(
+      session.source,
+      `${fileTimestamp(session.startedAt)}_${String(index + 1).padStart(width, "0")}.json`,
+    );
+    await rename(
+      join(options.outDir, session.file),
+      join(options.outDir, file),
+    );
+    session.file = file;
+  }
 
   if (options.chunks && options.chunks > 0 && manifest.sessions.length > 0) {
     const partitions = partitionSessions(manifest.sessions, options.chunks);

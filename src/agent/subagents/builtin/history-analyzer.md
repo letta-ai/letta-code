@@ -181,7 +181,7 @@ Each durable finding should include at least one of:
 - date range or source reference for future lookup
 - why the rule matters in practice
 
-You can also cite sessions if you want to note where something came from (e.g. `(from: codex/rollout-2026-03-30-s1.json, 2026-03-30)`); the manifest entry's `source` and `sourcePath` identify the original harness and native file.
+You can also cite sessions if you want to note where something came from (e.g. `(from: codex/2026-03-30T05-38-34_0012.json)`); the manifest entry's `id` and `sourcePath` identify the native session and original store.
 
 ### 5. Commit
 

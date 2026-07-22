@@ -11,10 +11,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  fileTimestamp,
   listAllTrajectories,
   partitionSessions,
   runTrajectoryExport,
-  sanitizeSessionId,
 } from "@/cli/subcommands/trajectories/export";
 import { listSupportedSources } from "@/cli/subcommands/trajectories/sources";
 import type { SessionManifestEntry } from "@/cli/subcommands/trajectories/types";
@@ -251,6 +251,17 @@ describe("trajectories export", () => {
     expect(hermes?.id).toBe("hermes-1");
     expect(hermes?.project).toBe("/workspace/hermes");
 
+    // Uniform chronological filenames: <startedAt>_<index>.json, with the
+    // index matching the session's position in the sorted manifest.
+    for (const [index, session] of manifest.sessions.entries()) {
+      expect(session.file).toBe(
+        join(
+          session.source,
+          `${fileTimestamp(session.startedAt)}_${String(index + 1).padStart(4, "0")}.json`,
+        ),
+      );
+    }
+
     const written = JSON.parse(
       await readFile(join(outDir, "manifest.json"), "utf-8"),
     );
@@ -404,11 +415,11 @@ describe("partitionSessions", () => {
   });
 });
 
-describe("sanitizeSessionId", () => {
-  test("produces filesystem-safe names", () => {
-    expect(sanitizeSessionId("conversation:local/conv 1")).toBe(
-      "conversation-local-conv-1",
+describe("fileTimestamp", () => {
+  test("produces filesystem-safe stamps", () => {
+    expect(fileTimestamp("2026-03-06T14:15:22.394Z")).toBe(
+      "2026-03-06T14-15-22",
     );
-    expect(sanitizeSessionId("...")).toBe("session");
+    expect(fileTimestamp(undefined)).toBe("unknown-date");
   });
 });
