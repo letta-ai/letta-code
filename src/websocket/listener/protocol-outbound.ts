@@ -64,6 +64,7 @@ import {
   resolveScopedAgentId,
   resolveScopedConversationId,
 } from "./scope";
+import { notifyStreamObservers } from "./stream-observers";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
@@ -631,20 +632,15 @@ export function emitProtocolV2Message(
     }
   }
 
-  if (!isListenerTransportOpen(targetSocket)) {
-    return;
-  }
   const runtimeScope = resolveRuntimeScope(
     listener,
     getScopeForRuntime(runtime, scope),
   );
-  if (!runtimeScope) {
-    return;
-  }
+  if (!runtimeScope) return;
+  notifyStreamObservers(listener, message, runtimeScope);
+  if (!isListenerTransportOpen(targetSocket)) return;
   const eventSeq = nextEventSeq(listener);
-  if (eventSeq === null) {
-    return;
-  }
+  if (eventSeq === null) return;
   const outbound: WsProtocolMessage = {
     ...message,
     runtime: runtimeScope,

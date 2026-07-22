@@ -41,6 +41,12 @@ export type MessageQueueItem = QueueItemBase & {
   kind: "message";
   /** Full multimodal content — string or content-part array. */
   content: MessageCreate["content"];
+  /**
+   * Never merge this item with other queued messages. Set by request-scoped
+   * producers (e.g. the OpenAI-compat HTTP bridge) where each message must
+   * run as its own turn so its correlated client request can settle.
+   */
+  noCoalesce?: boolean;
 };
 
 export type TaskNotificationQueueItem = QueueItemBase & {

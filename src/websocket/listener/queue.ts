@@ -337,11 +337,18 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasCronPrompt = false;
   let hasModContinue = false;
   let batchImageFailureMode: "strict" | "drop" | null = null;
+  const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
+    candidate.kind === "message" && candidate.noCoalesce === true;
   for (const item of queuedItems) {
     if (
       !isCoalescable(item.kind) ||
       !hasSameQueueScope(firstQueuedItem, item)
     ) {
+      break;
+    }
+    // noCoalesce items run as single-item batches: one never joins an
+    // existing batch, and nothing joins a batch it started.
+    if (queueLen > 0 && (isNoCoalesce(item) || isNoCoalesce(firstQueuedItem))) {
       break;
     }
 

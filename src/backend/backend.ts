@@ -179,6 +179,11 @@ export interface Backend {
     options?: ConversationCreateOptions,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["create"]>>>;
 
+  /** Optional: not all backends support deleting conversations. */
+  deleteConversation?(
+    conversationId: string,
+  ): Promise<Awaited<ReturnType<APIClient["conversations"]["delete"]>>>;
+
   updateConversation(
     conversationId: string,
     body: ConversationUpdateBody,
@@ -347,6 +352,11 @@ export class APIBackend implements Backend {
   ) {
     const client = await this.getClient();
     return client.conversations.create(body, options);
+  }
+
+  async deleteConversation(conversationId: string) {
+    const client = await this.getClient();
+    return client.conversations.delete(conversationId);
   }
 
   async updateConversation(
