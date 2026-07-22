@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Discord
+    url: https://discord.gg/9GEQrxmVyE
+    about: Chat with the Letta community and get help.
+  - name: Documentation
+    url: https://docs.letta.com
+    about: Check the docs before filing an issue.
