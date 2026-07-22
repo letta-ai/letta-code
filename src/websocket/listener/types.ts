@@ -64,6 +64,8 @@ export interface IncomingMessage {
   type: "message";
   agentId?: string;
   conversationId?: string;
+  /** Queue this message as its own turn; never merge with other messages. */
+  noCoalesce?: boolean;
   channelTurnSources?: ChannelTurnSource[];
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];

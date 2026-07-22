@@ -17,6 +17,7 @@ import {
   handleOpenAiCompatRequest,
   isOpenAiCompatPath,
 } from "@/websocket/app-server-openai";
+import { closeOpenAiBridgeRuntime } from "@/websocket/app-server-openai-turn";
 import {
   attachOpenListenerSocket,
   createRuntime,
@@ -474,6 +475,9 @@ export async function startAppServer(
     ...resolvedInfo,
     close: async () => {
       clearInterval(heartbeatInterval);
+      if (options.openaiApi) {
+        closeOpenAiBridgeRuntime();
+      }
       const streamSocket = clearPendingStream();
       terminateSocket(streamSocket);
       if (activeSession) {

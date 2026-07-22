@@ -192,8 +192,24 @@ function getPageItems<T>(page: unknown): T[] {
   return [];
 }
 
+const MAX_LISTED_AGENTS = 1000;
+
 async function listAgentEntries(): Promise<AgentModelEntry[]> {
-  const page = await getBackend().listAgents({});
+  const page = await getBackend().listAgents({ limit: MAX_LISTED_AGENTS });
+  if (Array.isArray(page)) return page as AgentModelEntry[];
+  // SDK pages are async-iterable across ALL pages; a first-page-only read
+  // silently drops agents once the list exceeds one page.
+  const iterable = page as unknown as {
+    [Symbol.asyncIterator]?: () => AsyncIterator<AgentModelEntry>;
+  };
+  if (typeof iterable[Symbol.asyncIterator] === "function") {
+    const items: AgentModelEntry[] = [];
+    for await (const item of iterable as AsyncIterable<AgentModelEntry>) {
+      items.push(item);
+      if (items.length >= MAX_LISTED_AGENTS) break;
+    }
+    return items;
+  }
   return getPageItems<AgentModelEntry>(page);
 }
 
@@ -483,60 +499,75 @@ async function handleChatCompletions(
   // heuristic can cross-wire chats. Header-less requests run statelessly:
   // a fresh conversation per request, with the client transcript replayed.
   const headerChatKey = chatKeyFromHeaders(request, body.stream === true);
-  let conversationId: string;
-  try {
-    if (headerChatKey) {
-      const chatKey = `chat-key:${agent.id}:${headerChatKey}`;
-      conversationId = await resolveConversationId(agent.id, chatKey);
-      // Pin immediately so concurrent requests for this chat reuse it.
-      rememberConversation(chatKey, conversationId);
-    } else {
-      conversationId = await createConversationSerialized(agent.id);
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    options.onLog?.(`OpenAI-compat failed to create conversation: ${message}`);
-    sendOpenAiError(
-      response,
-      500,
-      "failed to create a conversation for this chat",
-      "server_error",
-    );
-    return;
-  }
+  const idempotencyHeader = idempotencyKeyFromHeaders(request);
+  const idempotencyKey = idempotencyHeader
+    ? `${agent.id}:${headerChatKey ?? ""}:${idempotencyHeader}`
+    : null;
+  // Consult the idempotency cache BEFORE any allocation: a replay must not
+  // create (and orphan) a conversation for a turn that will never run.
+  const replayPromise = idempotencyKey
+    ? outcomeByIdempotencyKey.get(idempotencyKey)
+    : undefined;
 
+  let conversationId: string | null = null;
   const turnMessages: BridgeTurnMessage[] = [];
-  if (headerChatKey) {
-    turnMessages.push({
-      role: "user",
-      content: userContent,
-      otid: randomUUID(),
-    });
-  } else {
-    for (const message of body.messages) {
-      if (message.role !== "user" && message.role !== "assistant") continue;
-      let content: UserContentPart[];
-      if (message === lastUserMessage) {
-        content = userContent;
-      } else if (message.role === "user") {
-        content = extractUserContentParts(message.content);
+  let correlationOtid: string | null = null;
+  if (!replayPromise) {
+    try {
+      if (headerChatKey) {
+        const chatKey = `chat-key:${agent.id}:${headerChatKey}`;
+        conversationId = await resolveConversationId(agent.id, chatKey);
+        // Pin immediately so concurrent requests for this chat reuse it.
+        rememberConversation(chatKey, conversationId);
       } else {
-        const replyText = extractTextContent(message.content);
-        content = replyText ? [{ type: "text", text: replyText }] : [];
+        conversationId = await createConversationSerialized(agent.id);
       }
-      if (content.length === 0) continue;
-      turnMessages.push({ role: message.role, content, otid: randomUUID() });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      options.onLog?.(
+        `OpenAI-compat failed to create conversation: ${message}`,
+      );
+      sendOpenAiError(
+        response,
+        500,
+        "failed to create a conversation for this chat",
+        "server_error",
+      );
+      return;
     }
-  }
-  const correlationOtid = turnMessages.at(-1)?.otid;
-  if (!correlationOtid) {
-    sendOpenAiError(
-      response,
-      400,
-      "the messages array must include usable content",
-      "invalid_request_error",
-    );
-    return;
+
+    if (headerChatKey) {
+      turnMessages.push({
+        role: "user",
+        content: userContent,
+        otid: randomUUID(),
+      });
+    } else {
+      for (const message of body.messages) {
+        if (message.role !== "user" && message.role !== "assistant") continue;
+        let content: UserContentPart[];
+        if (message === lastUserMessage) {
+          content = userContent;
+        } else if (message.role === "user") {
+          content = extractUserContentParts(message.content);
+        } else {
+          const replyText = extractTextContent(message.content);
+          content = replyText ? [{ type: "text", text: replyText }] : [];
+        }
+        if (content.length === 0) continue;
+        turnMessages.push({ role: message.role, content, otid: randomUUID() });
+      }
+    }
+    correlationOtid = turnMessages.at(-1)?.otid ?? null;
+    if (!correlationOtid) {
+      sendOpenAiError(
+        response,
+        400,
+        "the messages array must include usable content",
+        "invalid_request_error",
+      );
+      return;
+    }
   }
 
   const completionId = `chatcmpl-${randomUUID()}`;
@@ -564,23 +595,16 @@ async function handleChatCompletions(
     );
   }
 
-  const idempotencyHeader = idempotencyKeyFromHeaders(request);
-  const idempotencyKey = idempotencyHeader
-    ? `${agent.id}:${headerChatKey ?? ""}:${idempotencyHeader}`
-    : null;
-
   let outcome: TurnOutcome;
   try {
-    let turnPromise = idempotencyKey
-      ? outcomeByIdempotencyKey.get(idempotencyKey)
-      : undefined;
+    let turnPromise = replayPromise;
     const ownsTurn = !turnPromise;
     if (!turnPromise) {
       turnPromise = runBridgeTurn({
         agentId: agent.id,
-        conversationId,
+        conversationId: conversationId as string,
         messages: turnMessages,
-        correlationOtid,
+        correlationOtid: correlationOtid as string,
         onLog: options.onLog,
         onAssistantText: streaming
           ? (piece) => {
@@ -627,6 +651,20 @@ async function handleChatCompletions(
   const fullText = outcome.text;
   const usage = outcome.usage;
   const streamError = outcome.error;
+
+  // Headerless requests are stateless: their conversation exists only to
+  // host this turn, so remove it best-effort once the turn has settled.
+  // Header-keyed conversations persist — they ARE the chat's state.
+  if (!headerChatKey && conversationId) {
+    const ephemeralConversationId = conversationId;
+    void getBackend()
+      .deleteConversation?.(ephemeralConversationId)
+      .catch(() => {
+        options.onLog?.(
+          `OpenAI-compat failed to delete ephemeral conversation ${ephemeralConversationId}`,
+        );
+      });
+  }
 
   if (clientClosed) return;
 

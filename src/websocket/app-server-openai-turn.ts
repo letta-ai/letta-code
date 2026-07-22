@@ -2,9 +2,15 @@ import { randomUUID } from "node:crypto";
 import { settingsManager } from "@/settings-manager";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "@/websocket/listener/inbound-dispatch";
-import { startLocalChannelListener } from "@/websocket/listener/lifecycle";
+import {
+  startLocalChannelListener,
+  stopRuntime,
+} from "@/websocket/listener/lifecycle";
 import { getOrCreateConversationPermissionModeStateRef } from "@/websocket/listener/permission-mode";
-import { getActiveRuntime } from "@/websocket/listener/runtime";
+import {
+  getActiveRuntime,
+  setActiveRuntime,
+} from "@/websocket/listener/runtime";
 import {
   type ListenerTransport,
   LocalListenerTransport,
@@ -88,6 +94,23 @@ const OPENAI_TURN_TIMEOUT_MS = 15 * 60 * 1000;
 
 const bridgeTransport = new LocalListenerTransport();
 let bridgeRuntimeStart: Promise<void> | null = null;
+let bridgeOwnedRuntime: ListenerRuntime | null = null;
+
+/**
+ * Stop the listener runtime the bridge started, if it still owns it. Called
+ * from AppServerHandle.close(): a WS-session runtime is closed by its own
+ * socket lifecycle, but a bridge-started (socket-free) runtime has no other
+ * owner and would otherwise outlive the server, keeping cron and channel
+ * lifecycles running.
+ */
+export function closeOpenAiBridgeRuntime(): void {
+  const runtime = bridgeOwnedRuntime;
+  bridgeOwnedRuntime = null;
+  if (!runtime || runtime.intentionallyClosed) return;
+  if (getActiveRuntime() !== runtime) return;
+  stopRuntime(runtime, true);
+  setActiveRuntime(null);
+}
 
 /**
  * Reuse the active listener runtime when one exists (a connected WS control
@@ -119,6 +142,7 @@ async function ensureListenerRuntime(
   if (!runtime || runtime.intentionallyClosed) {
     throw new Error("failed to start listener runtime for OpenAI-compat API");
   }
+  bridgeOwnedRuntime = runtime;
   return runtime;
 }
 
@@ -314,6 +338,10 @@ async function runTurnViaListenerRuntime(
       type: "message",
       agentId: params.agentId,
       conversationId: params.conversationId,
+      // Each HTTP request settles from its own turn: batching two requests
+      // would strand the second observer (only the first OTID survives a
+      // merged batch) and answer the first with both prompts.
+      noCoalesce: true,
       messages: params.messages,
     };
     try {

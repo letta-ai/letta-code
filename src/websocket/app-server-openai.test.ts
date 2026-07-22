@@ -22,7 +22,7 @@ const TEST_AGENTS = [
   },
 ];
 
-function fakeBackend(created: string[] = []): Backend {
+function fakeBackend(created: string[] = [], deleted: string[] = []): Backend {
   return {
     listAgents: async () => TEST_AGENTS,
     createConversation: async (body: { agent_id: string }) => {
@@ -30,7 +30,20 @@ function fakeBackend(created: string[] = []): Backend {
       created.push(id);
       return { id, agent_id: body.agent_id };
     },
+    deleteConversation: async (conversationId: string) => {
+      deleted.push(conversationId);
+      return {};
+    },
   } as unknown as Backend;
+}
+
+async function waitFor(predicate: () => boolean, ms = 2000): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return predicate();
 }
 
 function sha256Hex(value: string): string {
@@ -551,6 +564,71 @@ describe("app-server OpenAI-compatible API", () => {
     expect((await send()).status).toBe(500);
     expect((await send()).status).toBe(200);
     expect(runs).toBe(2);
+  });
+
+  test("idempotent replays allocate no conversation", async () => {
+    const created: string[] = [];
+    __testSetBackend(fakeBackend(created));
+    stubTurn();
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const send = () =>
+      fetch(httpUrl(handle as AppServerHandle, "/v1/chat/completions"), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": "alloc-check",
+        },
+        body: JSON.stringify({
+          model: "memo",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      });
+
+    await send();
+    expect(created.length).toBe(1);
+    await send();
+    // The replay consulted the cache before allocating anything.
+    expect(created.length).toBe(1);
+  });
+
+  test("headerless conversations are deleted after the turn settles", async () => {
+    const created: string[] = [];
+    const deleted: string[] = [];
+    __testSetBackend(fakeBackend(created, deleted));
+    stubTurn();
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    await fetch(httpUrl(handle, "/v1/chat/completions"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "memo",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+    expect(await waitFor(() => deleted.includes("conv-test-1"))).toBe(true);
+
+    // Header-keyed conversations persist: they ARE the chat's state.
+    await fetch(httpUrl(handle, "/v1/chat/completions"), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-letta-chat-key": "sticky-chat",
+      },
+      body: JSON.stringify({
+        model: "memo",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(deleted).toEqual(["conv-test-1"]);
   });
 
   test("image_url parts pass through as Letta image content", async () => {
