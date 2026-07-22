@@ -3,10 +3,24 @@
  * Owns the HTTP request contract and error handling; callers own UX strings and logging.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { getSelfUpdateStatus } from "@/updater/auto-update";
 import { getVersion } from "@/version.ts";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener/listener-constants";
+
+/**
+ * Per-process registration nonce (unique for this process lifetime, NOT
+ * stable across restarts). The relay records which process owns each
+ * connection lease; when a newer registration supersedes this process, the
+ * relay tombstones this nonce and rejects our re-registration attempts with
+ * 409 LISTENER_SUPERSEDED instead of letting us steal the lease back
+ * (LET-10024). Servers that predate the field ignore it.
+ */
+const PROCESS_INSTANCE_ID = `proc-${randomUUID()}`;
+
+export function getListenerProcessInstanceId(): string {
+  return PROCESS_INSTANCE_ID;
+}
 
 export interface RegisterResult {
   connectionId: string;
@@ -30,17 +44,48 @@ export interface RegisterOptions {
 }
 
 /**
+ * Listener surfaces. Each (surface, connectionName) combination maps to its
+ * own environment slot on the relay, so listeners spawned by different
+ * owners coexist instead of contesting one lease — e.g. a Desktop-spawned
+ * cloud listener and a manual `letta server` that both default to
+ * hostname() as the connection name (LET-10024).
+ *
+ * - "server": manual `letta server` / `letta remote` CLI process
+ * - "listen": in-app /listen command
+ * - "desktop-remote": Desktop-spawned direct-Cloud listener (Desktop passes
+ *   LETTA_LISTENER_SURFACE=desktop-remote to the child; inferring from
+ *   command shape would regress silently)
+ */
+export type ListenerSurface = "server" | "listen" | "desktop-remote";
+
+const LISTENER_SURFACES: readonly ListenerSurface[] = [
+  "server",
+  "listen",
+  "desktop-remote",
+];
+
+/**
+ * Resolve the surface for a spawned listener process. The spawner (e.g.
+ * Desktop) declares it explicitly via LETTA_LISTENER_SURFACE; unset or
+ * unknown values fall back to the caller's default.
+ */
+export function resolveListenerSurfaceFromEnv(
+  fallback: ListenerSurface,
+): ListenerSurface {
+  const raw = process.env.LETTA_LISTENER_SURFACE;
+  return LISTENER_SURFACES.includes(raw as ListenerSurface)
+    ? (raw as ListenerSurface)
+    : fallback;
+}
+
+/**
  * Derive a stable listener instance id from the listener surface and its
  * connection name. Deterministic (no stored state): the same surface + name
  * maps to the same instance across restarts, while a rename creates a new
  * instance (the old row ages out server-side via lastSeenAt).
- *
- * Surfaces:
- * - "server": `letta server` CLI process
- * - "listen": in-app /listen command
  */
 export function deriveListenerInstanceId(
-  surface: "server" | "listen",
+  surface: ListenerSurface,
   connectionName: string,
 ): string {
   const nameHash = createHash("sha256")
@@ -59,12 +104,33 @@ type FetchImpl = typeof fetch;
 export class RegistrationError extends Error {
   readonly statusCode: number;
   readonly retryAfterMs?: number;
-  constructor(message: string, statusCode: number, retryAfterMs?: number) {
+  readonly errorCode?: string;
+  constructor(
+    message: string,
+    statusCode: number,
+    retryAfterMs?: number,
+    errorCode?: string,
+  ) {
     super(message);
     this.name = "RegistrationError";
     this.statusCode = statusCode;
     this.retryAfterMs = retryAfterMs;
+    this.errorCode = errorCode;
   }
+}
+
+/**
+ * True when registration was rejected because this process's lease was
+ * superseded by a newer listener (relay returned 409 LISTENER_SUPERSEDED).
+ * Terminal: the process must stop, not retry or re-register.
+ */
+export function isSupersededRegistrationError(error: unknown): boolean {
+  return (
+    error instanceof RegistrationError &&
+    error.statusCode === 409 &&
+    (error.errorCode === "LISTENER_SUPERSEDED" ||
+      error.message.includes("LISTENER_SUPERSEDED"))
+  );
 }
 
 /** Returns true for errors that are likely transient and worth retrying. */
@@ -123,6 +189,7 @@ export async function registerWithCloud(
       ...(opts.listenerInstanceId
         ? { listenerInstanceId: opts.listenerInstanceId }
         : {}),
+      processInstanceId: PROCESS_INSTANCE_ID,
       connectionName: opts.connectionName,
       metadata: {
         lettaCodeVersion: getVersion(),
@@ -142,6 +209,7 @@ export async function registerWithCloud(
 
   if (!response.ok) {
     let detail = `HTTP ${response.status}`;
+    let errorCode: string | undefined;
     const retryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After"));
     const text = await response.text().catch(() => "");
     if (text) {
@@ -151,8 +219,12 @@ export async function registerWithCloud(
           errorCode?: string;
           message?: string;
         };
+        errorCode = parsed.errorCode;
         if (parsed.message) {
           detail = parsed.message;
+          if (parsed.errorCode) {
+            detail += ` (${parsed.errorCode})`;
+          }
         } else if (parsed.error) {
           detail = `HTTP ${response.status}: ${parsed.error}`;
           if (parsed.errorCode) {
@@ -165,7 +237,12 @@ export async function registerWithCloud(
         detail += `: ${text.slice(0, 200)}`;
       }
     }
-    throw new RegistrationError(detail, response.status, retryAfterMs);
+    throw new RegistrationError(
+      detail,
+      response.status,
+      retryAfterMs,
+      errorCode,
+    );
   }
 
   let body: unknown;

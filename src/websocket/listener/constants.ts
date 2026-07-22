@@ -2,6 +2,15 @@ export const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 export const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 export const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
 
+/**
+ * Application close code from the relay: this connection lease was
+ * superseded by a newer listener registration for the same environment
+ * slot. TERMINAL — do not reconnect and do not re-register; a newer
+ * listener owns the slot now. Re-registering would steal the lease back and
+ * restart the lease ping-pong that aborts in-flight turns (LET-10024).
+ */
+export const WS_CLOSE_SUPERSEDED = 4009;
+
 // Listener heartbeat: app-level ping/pong over the cloud relay. Each `ping`
 // refreshes the environment's lastHeartbeat (the relay marks an env offline
 // after ~120s of silence) and the relay replies with a `pong`.

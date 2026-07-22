@@ -9,7 +9,9 @@ import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
 import { settingsManager } from "@/settings-manager";
 import {
   deriveListenerInstanceId,
+  type ListenerSurface,
   type RegisterOptions,
+  resolveListenerSurfaceFromEnv,
 } from "@/websocket/listen-register";
 import type { StartListenerOptions } from "@/websocket/listener/types";
 
@@ -31,7 +33,7 @@ type ListenerAuthOptions = {
 };
 
 type ListenerRegistrationOptions = ListenerAuthOptions & {
-  surface?: "server" | "listen";
+  surface?: ListenerSurface;
 };
 
 const defaultListenerOAuthDeps: ListenerOAuthDeps = {
@@ -259,8 +261,12 @@ export async function resolveListenerRegistrationOptions(
     ...auth,
     deviceId,
     connectionName,
+    // The spawner may override the surface via LETTA_LISTENER_SURFACE (e.g.
+    // Desktop registers its cloud listener as "desktop-remote") so it gets
+    // a distinct environment slot from a manual `letta server` with the
+    // same connection name (LET-10024).
     listenerInstanceId: deriveListenerInstanceId(
-      options.surface ?? "server",
+      resolveListenerSurfaceFromEnv(options.surface ?? "server"),
       connectionName,
     ),
   };

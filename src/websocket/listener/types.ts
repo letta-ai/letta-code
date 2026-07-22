@@ -41,6 +41,14 @@ export interface StartListenerOptions {
   onConnected: (connectionId: string) => void;
   onDisconnected: () => void;
   onNeedsReregister?: () => void;
+  /**
+   * Terminal supersession (close code 4009): a newer listener registered for
+   * this environment slot and the relay fenced this process out. The process
+   * must stop — never re-register (that would steal the lease back and
+   * restart the lease ping-pong, LET-10024). Falls back to onError when
+   * unset.
+   */
+  onSuperseded?: () => void;
   onError: (error: Error) => void;
   onStatusChange?: (
     status: "idle" | "receiving" | "processing",

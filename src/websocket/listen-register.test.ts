@@ -1,8 +1,11 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 import {
   deriveListenerInstanceId,
+  getListenerProcessInstanceId,
+  isSupersededRegistrationError,
   registerWithCloud,
   registerWithCloudRetry,
+  resolveListenerSurfaceFromEnv,
 } from "@/websocket/listen-register";
 
 const defaultOpts = {
@@ -318,5 +321,131 @@ describe("deriveListenerInstanceId", () => {
     expect(deriveListenerInstanceId("server", "mac-mini")).toMatch(
       /^server-[0-9a-f]{16}$/,
     );
+  });
+});
+
+describe("supersession (LET-10024)", () => {
+  it("sends the per-process nonce with registration", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ connectionId: "conn-1", wsUrl: "wss://example.com" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await registerWithCloud(defaultOpts, mockFetch as unknown as typeof fetch);
+
+    const [, init] = mockFetch.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    const body = JSON.parse(init.body as string);
+    expect(body.processInstanceId).toBe(getListenerProcessInstanceId());
+    expect(body.processInstanceId).toMatch(/^proc-/);
+  });
+
+  it("classifies 409 LISTENER_SUPERSEDED as a superseded registration error", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          errorCode: "LISTENER_SUPERSEDED",
+          message: "This listener process was superseded by a newer listener.",
+        }),
+        { status: 409, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    let caught: unknown;
+    try {
+      await registerWithCloud(
+        defaultOpts,
+        mockFetch as unknown as typeof fetch,
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(isSupersededRegistrationError(caught)).toBe(true);
+  });
+
+  it("does NOT retry a 409 LISTENER_SUPERSEDED (terminal, not transient)", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          errorCode: "LISTENER_SUPERSEDED",
+          message: "Superseded.",
+        }),
+        { status: 409, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    let caught: unknown;
+    try {
+      await registerWithCloudRetry(defaultOpts, {
+        fetchImpl: mockFetch as unknown as typeof fetch,
+        sleep: async () => {},
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(isSupersededRegistrationError(caught)).toBe(true);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("other 409s are not classified as superseded", async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ errorCode: "CONFLICT", message: "Busy" }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    let caught: unknown;
+    try {
+      await registerWithCloud(
+        defaultOpts,
+        mockFetch as unknown as typeof fetch,
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(isSupersededRegistrationError(caught)).toBe(false);
+  });
+});
+
+describe("resolveListenerSurfaceFromEnv", () => {
+  it("honors LETTA_LISTENER_SURFACE when it names a known surface", () => {
+    const prev = process.env.LETTA_LISTENER_SURFACE;
+    try {
+      process.env.LETTA_LISTENER_SURFACE = "desktop-remote";
+      expect(resolveListenerSurfaceFromEnv("server")).toBe("desktop-remote");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.LETTA_LISTENER_SURFACE;
+      } else {
+        process.env.LETTA_LISTENER_SURFACE = prev;
+      }
+    }
+  });
+
+  it("falls back for unset or unknown values", () => {
+    const prev = process.env.LETTA_LISTENER_SURFACE;
+    try {
+      delete process.env.LETTA_LISTENER_SURFACE;
+      expect(resolveListenerSurfaceFromEnv("server")).toBe("server");
+      process.env.LETTA_LISTENER_SURFACE = "bogus-surface";
+      expect(resolveListenerSurfaceFromEnv("listen")).toBe("listen");
+    } finally {
+      if (prev === undefined) {
+        delete process.env.LETTA_LISTENER_SURFACE;
+      } else {
+        process.env.LETTA_LISTENER_SURFACE = prev;
+      }
+    }
+  });
+
+  it("desktop-remote and server slots differ for the same connection name", () => {
+    expect(
+      deriveListenerInstanceId("desktop-remote", "MacBook-Pro-8.local"),
+    ).not.toBe(deriveListenerInstanceId("server", "MacBook-Pro-8.local"));
   });
 });

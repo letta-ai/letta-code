@@ -370,6 +370,18 @@ export async function handleListen(
             ctx.setCommandRunning(false);
           }
         },
+        onSuperseded: () => {
+          updateCommandResult(
+            ctx.buffersRef,
+            ctx.refreshDerived,
+            cmdId,
+            msg,
+            `Listener stopped: a newer listener took over environment "${connectionName}".`,
+            false,
+            "finished",
+          );
+          ctx.setCommandRunning(false);
+        },
         onDisconnected: () => {
           updateCommandResult(
             ctx.buffersRef,

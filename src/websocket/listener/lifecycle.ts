@@ -57,6 +57,7 @@ import {
   LISTENER_PONG_TIMEOUT_MS,
   MAX_RETRY_DELAY_MS,
   MAX_RETRY_DURATION_MS,
+  WS_CLOSE_SUPERSEDED,
 } from "./constants";
 import {
   handleAbortMessageInput,
@@ -1674,6 +1675,27 @@ async function connectWithRetry(
 
     if (runtime.intentionallyClosed) {
       opts.onDisconnected();
+      return;
+    }
+
+    // 4009: Superseded — a newer listener registered for this environment
+    // slot and the relay fenced this process out. TERMINAL: never reconnect
+    // or re-register (that would steal the lease back and restart the lease
+    // ping-pong that aborts in-flight turns, LET-10024).
+    if (code === WS_CLOSE_SUPERSEDED) {
+      runtime.intentionallyClosed = true;
+      console.error(
+        "[Listen] This listener was superseded by a newer listener for the same environment. Shutting down.",
+      );
+      if (opts.onSuperseded) {
+        opts.onSuperseded();
+      } else {
+        opts.onError(
+          new Error(
+            "Listener superseded by a newer listener registration for this environment",
+          ),
+        );
+      }
       return;
     }
 

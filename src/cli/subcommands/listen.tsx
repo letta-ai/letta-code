@@ -23,6 +23,7 @@ import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { RemoteSessionLog } from "@/websocket/listen-log";
 import {
+  isSupersededRegistrationError,
   type RegisterOptions,
   registerWithCloudRetry,
 } from "@/websocket/listen-register";
@@ -660,6 +661,14 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
                 result.supportsSplitStatusChannels,
               );
             } catch (error) {
+              if (isSupersededRegistrationError(error)) {
+                sessionLog.log("Superseded by a newer listener. Exiting.");
+                console.log(
+                  `[${formatTimestamp()}] A newer listener took over this environment ("${connectionName}"). Exiting.`,
+                );
+                await exitWithTelemetry(0, "listener_superseded");
+                return;
+              }
               const msg =
                 error instanceof Error ? error.message : String(error);
               sessionLog.log(`Re-registration failed: ${msg}`);
@@ -668,6 +677,13 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               );
               await exitWithTelemetry(1, "listener_reregister_failed");
             }
+          },
+          onSuperseded: () => {
+            sessionLog.log("Superseded by a newer listener. Exiting.");
+            console.log(
+              `[${formatTimestamp()}] A newer listener took over this environment ("${connectionName}"). Exiting.`,
+            );
+            void exitWithTelemetry(0, "listener_superseded");
           },
           onDisconnected: () => {
             sessionLog.log("Disconnected.");
@@ -748,6 +764,16 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
                 result.supportsSplitStatusChannels,
               );
             } catch (error) {
+              if (isSupersededRegistrationError(error)) {
+                sessionLog.log("Superseded by a newer listener. Exiting.");
+                unmount();
+                console.log(
+                  `\nA newer listener took over environment "${connectionName}".`,
+                );
+                console.log("This listener is shutting down.\n");
+                await exitWithTelemetry(0, "listener_superseded");
+                return;
+              }
               const msg =
                 error instanceof Error ? error.message : String(error);
               sessionLog.log(`Re-registration failed: ${msg}`);
@@ -755,6 +781,15 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               console.error(`\n\u2717 Re-registration failed: ${msg}\n`);
               await exitWithTelemetry(1, "listener_reregister_failed");
             }
+          },
+          onSuperseded: () => {
+            sessionLog.log("Superseded by a newer listener. Exiting.");
+            unmount();
+            console.log(
+              `\nA newer listener took over environment "${connectionName}".`,
+            );
+            console.log("This listener is shutting down.\n");
+            void exitWithTelemetry(0, "listener_superseded");
           },
           onDisconnected: () => {
             sessionLog.log("Disconnected.");
