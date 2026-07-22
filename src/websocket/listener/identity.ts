@@ -14,11 +14,10 @@
  * verbatim, giving Desktop children relay slots that can never collide
  * with manual listeners or other installations.
  *
- * Manual listener identity behavior is deliberately UNCHANGED (legacy
- * name-derived ids). Duplicate manual `letta server`/`/listen` processes
- * are a separate, pre-existing problem — if evidence shows they need a
- * local single-run guard, that is a follow-up with a session-owned lock
- * API, not part of this fix suite.
+ * Manual listener identity behavior remains unchanged (legacy name-derived
+ * ids). Standalone `letta server`/`letta remote` processes use that exact id
+ * for their local single-instance guard; in-app `/listen` remains a separate
+ * surface and is not part of that guard.
  */
 
 /**
