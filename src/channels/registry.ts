@@ -23,6 +23,7 @@ import {
   rollbackPairingApproval,
 } from "./pairing";
 import { getSupportedChannelIds, loadChannelPlugin } from "./plugin-registry";
+import { ChannelBuffer } from "./registry-buffer";
 import {
   type ChannelCommandRouter,
   createChannelCommandRouter,
@@ -167,7 +168,7 @@ export class ChannelRegistry {
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
   private reloadHandler: ChannelReloadHandler | null = null;
-  private readonly buffer: ChannelInboundDelivery[] = [];
+  private readonly buffer: ChannelBuffer = new ChannelBuffer();
   private readonly controls: ChannelControlRequests;
   private readonly routes: ChannelRouteProvisioner;
   private readonly commands: ChannelCommandRouter;
@@ -715,23 +716,19 @@ export class ChannelRegistry {
   // ── Inbound message pipeline ──────────────────────────────────
 
   private deliverOrBuffer(delivery: ChannelInboundDelivery): void {
-    if (this.isReady()) {
-      this.messageHandler?.(delivery);
-      return;
-    }
-
-    this.buffer.push(delivery);
+    this.buffer.deliverOrBuffer(
+      delivery,
+      this.isReady(),
+      this.messageHandler,
+      (channelId, accountId) => this.getAdapter(channelId, accountId),
+    );
   }
 
   private flushBuffer(): void {
     if (!this.messageHandler) return;
-
-    while (this.buffer.length > 0) {
-      const item = this.buffer.shift();
-      if (item) {
-        this.messageHandler(item);
-      }
-    }
+    this.buffer.flush(this.messageHandler, (channelId, accountId) =>
+      this.getAdapter(channelId, accountId),
+    );
   }
 }
 

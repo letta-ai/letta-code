@@ -795,6 +795,16 @@ export function buildChannelReflectionUnavailableMessage(
   return `${displayName} cannot start reflection for this chat because the listener is not ready yet. Try again in a moment.`;
 }
 
+export function buildChannelReconnectingMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} is reconnecting to Letta Code right now, so I may not see your message immediately. It's been queued and will be delivered once the connection is back.`;
+}
+
+export function buildChannelBufferExpiredMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} couldn't deliver your message because the reconnection took too long. Please try sending it again.`;
+}
+
 export function buildChannelReloadUnavailableMessage(
   channelId: string,
 ): string {

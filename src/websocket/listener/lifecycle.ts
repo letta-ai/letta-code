@@ -92,6 +92,7 @@ import {
   emitSubagentStateIfOpen,
 } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
+import { recoverPendingQueuedMessages } from "./reconnect-replay";
 import { recoverApprovalStateForSync } from "./recovery";
 import {
   clearConversationRuntimeState,
@@ -524,6 +525,8 @@ export async function wireChannelIngress(
   });
 
   await recoverPendingChannelControlRequests(listener);
+
+  recoverPendingQueuedMessages(listener, socket, opts, processQueuedTurn);
 
   registry.setApprovalResponseHandler(async ({ runtime, response }) =>
     handleApprovalResponseInput(listener, {
@@ -1625,16 +1628,14 @@ async function connectWithRetry(
       channelRegistry.pause();
     }
 
-    // Clear the bridge before queue clearing to prevent a race where a task
-    // completion enqueues into a shutting-down runtime.
+    // Clear the bridge before queue clearing to prevent race conditions.
     setMessageQueueAdder(null);
 
-    // Single authoritative queue clear for all close paths
-    // (intentional and unintentional). Must fire before early returns.
-    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      conversationRuntime.queuedMessagesByItemId.clear();
-      if (conversationRuntime.queueRuntime) {
-        conversationRuntime.queueRuntime.clear("shutdown");
+    // Preserve queued items for replay on reconnect; clear only for intentional shutdowns.
+    if (runtime.intentionallyClosed) {
+      for (const cr of runtime.conversationRuntimes.values()) {
+        cr.queuedMessagesByItemId.clear();
+        cr.queueRuntime?.clear("shutdown");
       }
     }
 
