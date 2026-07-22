@@ -75,7 +75,7 @@ export function providerApiKeyFromInput(
   return input.trim() || defaultProviderApiKey(provider);
 }
 
-export function hasConstellationProviderStoreCredentials(
+export function hasCloudProviderStoreCredentials(
   settings: Pick<Settings, "env" | "refreshToken">,
   env: { LETTA_API_KEY?: string } = {
     LETTA_API_KEY: process.env.LETTA_API_KEY,
@@ -87,9 +87,9 @@ export function hasConstellationProviderStoreCredentials(
 }
 
 export function shouldShowProviderStoreTabs(
-  hasConstellationCredentials: boolean | null,
+  hasCloudCredentials: boolean | null,
 ): boolean {
-  return hasConstellationCredentials === true;
+  return hasCloudCredentials === true;
 }
 
 export function filterProviderConfigs(
@@ -216,8 +216,9 @@ export function ProviderSelector({
   const [selectedTarget, setSelectedTarget] = useState<ProviderStorageTarget>(
     defaultProviderStorageTarget(),
   );
-  const [hasConstellationCredentials, setHasConstellationCredentials] =
-    useState<boolean | null>(null);
+  const [hasCloudCredentials, setHasCloudCredentials] = useState<
+    boolean | null
+  >(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [connectedProvidersByTarget, setConnectedProvidersByTarget] =
     useState<ConnectedProvidersByTarget>({});
@@ -255,9 +256,8 @@ export function ProviderSelector({
     () => filterProviderConfigs(providers, searchQuery),
     [providers, searchQuery],
   );
-  const showProviderStoreTabs = shouldShowProviderStoreTabs(
-    hasConstellationCredentials,
-  );
+  const showProviderStoreTabs =
+    shouldShowProviderStoreTabs(hasCloudCredentials);
   const connectedProviders = useMemo(
     () => connectedProvidersByTarget[selectedTarget] ?? new Map(),
     [connectedProvidersByTarget, selectedTarget],
@@ -302,13 +302,11 @@ export function ProviderSelector({
       .getSettingsWithSecureTokens()
       .then((settings) => {
         if (cancelled || !mountedRef.current) return;
-        setHasConstellationCredentials(
-          hasConstellationProviderStoreCredentials(settings),
-        );
+        setHasCloudCredentials(hasCloudProviderStoreCredentials(settings));
       })
       .catch(() => {
         if (cancelled || !mountedRef.current) return;
-        setHasConstellationCredentials(Boolean(process.env.LETTA_API_KEY));
+        setHasCloudCredentials(Boolean(process.env.LETTA_API_KEY));
       });
 
     return () => {
@@ -1102,9 +1100,7 @@ export function ProviderSelector({
                   : colors.command.running
               }
             >
-              {selectedTarget === "api"
-                ? "[ Constellation ]"
-                : "  Constellation  "}
+              {selectedTarget === "api" ? "[ Cloud ]" : "  Cloud  "}
             </Text>
           </Box>
         )}

@@ -110,8 +110,8 @@ const BEDROCK_AUTH_METHODS: AuthMethod[] = [
   },
 ];
 
-// Provider configuration for the Constellation / Letta API provider store.
-export const CONSTELLATION_BYOK_PROVIDERS: readonly ByokProvider[] = [
+// Provider configuration for the Letta Cloud / API provider store.
+export const CLOUD_BYOK_PROVIDERS: readonly ByokProvider[] = [
   {
     id: "codex",
     displayName: "ChatGPT / Codex plan",
@@ -209,7 +209,7 @@ export const CONSTELLATION_BYOK_PROVIDERS: readonly ByokProvider[] = [
 ];
 
 // Backwards-compatible export for code/tests that mean the API provider list.
-export const BYOK_PROVIDERS = CONSTELLATION_BYOK_PROVIDERS;
+export const BYOK_PROVIDERS = CLOUD_BYOK_PROVIDERS;
 
 const LOCAL_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   anthropic: "Anthropic",
@@ -430,7 +430,7 @@ function byokProviderFromRegisteredProvider(
 export function getProviderConfigs(
   target: ProviderStorageTarget = defaultProviderStorageTarget(),
 ): readonly ByokProvider[] {
-  if (target === "api") return CONSTELLATION_BYOK_PROVIDERS;
+  if (target === "api") return CLOUD_BYOK_PROVIDERS;
 
   const byId = new Map<string, ByokProvider>();
   for (const provider of localOAuthProviderConfigs()) {
@@ -513,7 +513,7 @@ export { PROVIDER_TYPE_TO_BASE_PROVIDER };
 /**
  * Build a mapping of BYOK provider names → base provider strings.
  *
- * Default aliases are derived from both Constellation and local provider
+ * Default aliases are derived from both Letta Cloud and local provider
  * metadata so all built-in providers are covered. Connected providers are
  * layered on top to support custom provider names.
  */

@@ -349,7 +349,7 @@ letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s
 letta connect bedrock --method profile --profile "$AWS_PROFILE" --region "$AWS_REGION"
 ```
 
-Before connecting, verify whether the target agent/backend is API/Constellation or local. A provider saved to the wrong backend does not configure the current agent.
+Before connecting, verify whether the target agent/backend is Letta Cloud or local. A provider saved to the wrong backend does not configure the current agent.
 
 Never print provider keys. Shell expansion such as `--api-key "$OPENAI_API_KEY"` still puts the resolved secret in process argv, where process listings may expose it. Prefer the command's interactive secret prompt in a trusted TTY. If no safer input path exists, stop for explicit user approval rather than passing a provider secret autonomously. Browser login, device-code confirmation, or account consent also requires human consent; do not claim success before it completes.
 
