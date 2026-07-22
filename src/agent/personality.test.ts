@@ -190,6 +190,11 @@ describe("personality helpers", () => {
     expect(body).toContain("Every turn ends with a clear next step");
     expect(body).toContain("Progress through the onboarding naturally");
     expect(body).toContain("what should I call you");
+    expect(body).toContain("do not run whatever build happens");
+    expect(body).toContain("do not append remembered product commands");
+    expect(body).toContain("load the self-configuration skill");
+    expect(body).toContain("Ending a complete answer with");
+    expect(body).toContain("the final sentence is the recommended action");
   });
 
   test("onboarding block sets proactive, ordered checklist rules", async () => {
