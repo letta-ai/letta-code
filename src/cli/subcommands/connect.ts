@@ -232,6 +232,14 @@ export async function runConnectSubcommand(
 
   const provider = resolveConnectProvider(providerToken);
   if (!provider) {
+    const localProvider = resolveConnectProvider(providerToken, "local");
+    if (localProvider) {
+      io.stderr(
+        `Provider "${providerToken}" is only available with the local backend.\n` +
+          `Retry with: letta --backend local connect ${argv.join(" ")}`,
+      );
+      return 1;
+    }
     io.stderr(
       `Unknown provider: ${providerToken}. Supported providers: ${listConnectProviderTokens().join(", ")}`,
     );
