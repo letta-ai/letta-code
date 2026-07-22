@@ -1,3 +1,7 @@
+import {
+  createInboundDebouncer,
+  type InboundDebouncer,
+} from "@/channels/inbound-debounce";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
 import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type {
@@ -36,9 +40,17 @@ const DEDUPE_MAX_SIZE = 5000;
 const RECONNECT_MAX_MS = 30_000;
 const MAX_MENTION_PATTERN_LENGTH = 256;
 const MENTION_MATCH_TEXT_MAX_LENGTH = 2000;
+const WHATSAPP_TYPING_REFRESH_MS = 12_000;
+const WHATSAPP_TYPING_MAX_MS = 5 * 60 * 1000;
 
 type EventEmitterLike = {
   on?: (event: string, handler: (payload: unknown) => void) => void;
+};
+
+type WhatsAppTypingEntry = {
+  sourceKeys: Set<string>;
+  timer: ReturnType<typeof setInterval>;
+  timeout: ReturnType<typeof setTimeout>;
 };
 
 type WhatsAppSocket = {
@@ -208,6 +220,142 @@ export function createWhatsAppAdapter(
   const seenMessageIds = new Set<string>();
   const lidToJid = new Map<string, string>();
   const messageStore = new Map<string, unknown>();
+  const typingByChatId = new Map<string, WhatsAppTypingEntry>();
+
+  // ── Typing indicator helpers ────────────────────────────────────
+  // Per-chat entry with source-key refcount, refresh interval, and
+  // max-lifetime timeout. Only active when waitingBehavior ===
+  // "typing_indicator".
+
+  function getTypingSourceKey(source: ChannelTurnSource): string | null {
+    if (source.channel !== CHANNEL_ID) return null;
+    const chatId = source.chatId;
+    if (!chatId) return null;
+    return [
+      source.accountId ?? "",
+      chatId,
+      source.messageId ?? "",
+      source.agentId,
+      source.conversationId,
+    ].join(":");
+  }
+
+  function clearTypingForChat(chatId: string): void {
+    const entry = typingByChatId.get(chatId);
+    if (!entry) return;
+    clearInterval(entry.timer);
+    clearTimeout(entry.timeout);
+    typingByChatId.delete(chatId);
+  }
+
+  function clearAllTyping(): void {
+    for (const entry of typingByChatId.values()) {
+      clearInterval(entry.timer);
+      clearTimeout(entry.timeout);
+    }
+    typingByChatId.clear();
+  }
+
+  function startTypingForSource(source: ChannelTurnSource): void {
+    const chatId = source.chatId;
+    const sourceKey = getTypingSourceKey(source);
+    if (!chatId || !sourceKey) return;
+
+    const existing = typingByChatId.get(chatId);
+    if (existing) {
+      existing.sourceKeys.add(sourceKey);
+      return;
+    }
+
+    // Use chatId as-is for the typing jid — do NOT use LID resolution.
+    // PR 1 handles LID presence resolution separately.
+    try {
+      void sock?.sendPresenceUpdate?.("composing", chatId);
+    } catch {
+      // Best-effort; presence failures are non-fatal.
+    }
+    const timer = setInterval(() => {
+      if (!running) return;
+      try {
+        void sock?.sendPresenceUpdate?.("composing", chatId);
+      } catch {
+        // Best-effort.
+      }
+    }, WHATSAPP_TYPING_REFRESH_MS);
+    const timeout = setTimeout(() => {
+      clearTypingForChat(chatId);
+    }, WHATSAPP_TYPING_MAX_MS);
+    if (typeof (timer as { unref?: () => void }).unref === "function") {
+      (timer as { unref?: () => void }).unref?.();
+    }
+    if (typeof (timeout as { unref?: () => void }).unref === "function") {
+      (timeout as { unref?: () => void }).unref?.();
+    }
+    typingByChatId.set(chatId, {
+      sourceKeys: new Set([sourceKey]),
+      timer,
+      timeout,
+    });
+  }
+
+  function stopTypingForSource(source: ChannelTurnSource): void {
+    const chatId = source.chatId;
+    const sourceKey = getTypingSourceKey(source);
+    if (!chatId || !sourceKey) return;
+
+    const entry = typingByChatId.get(chatId);
+    if (!entry) return;
+    entry.sourceKeys.delete(sourceKey);
+    if (entry.sourceKeys.size === 0) {
+      clearTypingForChat(chatId);
+    }
+  }
+
+  function stopTypingPresence(chatId: string): void {
+    try {
+      void sock?.sendPresenceUpdate?.("paused", chatId);
+    } catch {
+      // Best-effort.
+    }
+  }
+
+  // ── Inbound debouncer ──────────────────────────────────────────
+  // Batches back-to-back messages into a single dispatch.
+  // Voice notes, attachments, and reactions bypass the debounce (always
+  // dispatched immediately). Disabled when inboundDebounceMs is 0/undefined.
+
+  const debouncer: InboundDebouncer<{ inbound: InboundChannelMessage }> =
+    createInboundDebouncer<{ inbound: InboundChannelMessage }>({
+      debounceMs: Math.max(0, Math.min(account.inboundDebounceMs ?? 0, 10000)),
+      buildKey: ({ inbound }) =>
+        `${account.accountId}:${inbound.chatId ?? ""}`,
+      shouldDebounce: ({ inbound }) => {
+        if (inbound.attachments && inbound.attachments.length > 0)
+          return false;
+        if (inbound.text && inbound.text.length > 0) return true;
+        return false;
+      },
+      onFlush: async (entries) => {
+        const last = entries[entries.length - 1];
+        if (!last || !adapter.onMessage) return;
+        const combinedText = entries
+          .map((e) => (e.inbound.text ?? "").trim())
+          .filter(Boolean)
+          .join("\n");
+        const merged: InboundChannelMessage = {
+          ...last.inbound,
+          text: combinedText,
+        };
+        try {
+          await adapter.onMessage(merged);
+        } catch (err) {
+          console.error(
+            `[WhatsApp:${account.accountId}] debounced dispatch failed:`,
+            err instanceof Error ? err.message : err,
+          );
+        }
+      },
+    });
 
   function rememberSeen(id: string): boolean {
     if (seenMessageIds.has(id)) return true;
@@ -485,7 +633,7 @@ export function createWhatsAppAdapter(
       console.log(
         `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${preview(body)}"`,
       );
-      await adapter.onMessage?.(inbound);
+      await debouncer.enqueue({ inbound });
     }
   }
 
@@ -520,6 +668,7 @@ export function createWhatsAppAdapter(
     },
 
     async stop() {
+      clearAllTyping();
       if (!running) return;
       stopping = true;
       running = false;
@@ -561,10 +710,21 @@ export function createWhatsAppAdapter(
         rememberSent(id, result);
         return { messageId: id };
       }
-      try {
-        await sock?.sendPresenceUpdate?.("composing", targetJid);
-      } catch {
-        // Presence is best-effort.
+      // Stop typing immediately before sending the reply. The refresh
+      // interval can otherwise fire a final "composing" presence between
+      // the reply landing and the "finished" lifecycle event arriving,
+      // causing a brief typing blip after the answer.
+      if (msg.chatId && typingByChatId.has(msg.chatId)) {
+        clearTypingForChat(msg.chatId);
+        stopTypingPresence(msg.chatId);
+      }
+      if (
+        account.messagePrefix &&
+        msg.text?.trim() &&
+        !msg.reaction &&
+        !msg.removeReaction
+      ) {
+        msg = { ...msg, text: account.messagePrefix + msg.text };
       }
       const payload = buildWhatsAppOutboundPayload(msg);
       const result = await sendToWhatsApp(
@@ -586,9 +746,12 @@ export function createWhatsAppAdapter(
         lidToJid,
         sock,
       });
+      const prefixed = account.messagePrefix
+        ? account.messagePrefix + text
+        : text;
       const result = await sendToWhatsApp(
         targetJid,
-        { text },
+        { text: prefixed },
         buildQuotedOptions(targetJid, options?.replyToMessageId),
       );
       rememberSent(result.key?.id ?? "", result);
@@ -608,13 +771,40 @@ export function createWhatsAppAdapter(
     async handleTurnLifecycleEvent(
       event: ChannelTurnLifecycleEvent,
     ): Promise<void> {
-      if (!running || event.type !== "finished") return;
+      if (!running) return;
+
+      // "processing" = the agent turn has actually started. Start typing.
+      if (event.type === "processing") {
+        if (account.waitingBehavior !== "typing_indicator") return;
+        for (const source of event.sources) {
+          startTypingForSource(source);
+        }
+        return;
+      }
+
+      // "queued" = waiting for prior turns to finish; no typing yet.
+      if (event.type === "queued") return;
+
+      // "finished" = stop typing for all sources, then handle error replies.
+      const finishedSources = event.sources;
+      const chatsToStopPresence = new Set<string>();
+      for (const source of finishedSources) {
+        const wasActive = typingByChatId.has(source.chatId);
+        stopTypingForSource(source);
+        if (wasActive && !typingByChatId.has(source.chatId)) {
+          chatsToStopPresence.add(source.chatId);
+        }
+      }
+      // Best-effort: send "paused" presence to clear the typing indicator.
+      for (const chatId of chatsToStopPresence) {
+        stopTypingPresence(chatId);
+      }
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
       if (!errorText) return;
 
       const uniqueSources = new Map<string, ChannelTurnSource>();
-      for (const source of event.sources) {
+      for (const source of finishedSources) {
         const key = getLifecycleErrorReplyKey(source);
         if (!key || uniqueSources.has(key)) continue;
         uniqueSources.set(key, source);
