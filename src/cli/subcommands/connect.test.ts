@@ -79,6 +79,34 @@ describe("connect subcommand", () => {
     setProviderTarget("api");
   });
 
+  test("suggests --backend local for local-only providers on the API backend", async () => {
+    const { stderr, deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(
+      ["ollama", "--base-url", "http://192.168.1.50:11434/v1"],
+      deps,
+    );
+
+    expect(exitCode).toBe(1);
+    const output = stderr.join("\n");
+    expect(output).toContain(
+      'Provider "ollama" is only available with the local backend.',
+    );
+    expect(output).toContain(
+      "letta --backend local connect ollama --base-url http://192.168.1.50:11434/v1",
+    );
+    expect(deps.checkProviderApiKey).not.toHaveBeenCalled();
+  });
+
+  test("still reports unknown providers that exist on no backend", async () => {
+    const { stderr, deps } = createIoDeps();
+
+    const exitCode = await runConnectSubcommand(["not-a-provider"], deps);
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join("\n")).toContain("Unknown provider: not-a-provider.");
+  });
+
   test("runs OAuth flow for codex alias", async () => {
     const { stdout, deps } = createIoDeps();
 

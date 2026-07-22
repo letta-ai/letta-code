@@ -16,6 +16,14 @@ function printUsage(): void {
 Usage:
   letta agents list [options]
   letta agents create [options]
+  letta agents config [--agent <id> | --conversation <id>]
+
+Config Options:
+  --agent <id>          Show an agent's default model configuration
+  --conversation <id>   Show a conversation override and its parent agent
+  --conv <id>           Alias for --conversation
+
+  With no options, uses AGENT_ID and CONVERSATION_ID from the current session.
 
 List Options:
   --name <name>         Exact name match
@@ -65,6 +73,10 @@ const AGENTS_OPTIONS = {
   "match-all-tags": { type: "boolean" },
   "include-blocks": { type: "boolean" },
   limit: { type: "string" },
+  // Config options
+  agent: { type: "string" },
+  conversation: { type: "string" },
+  conv: { type: "string" },
   // Create options
   model: { type: "string" },
   personality: { type: "string" },
@@ -104,6 +116,10 @@ export async function runAgentsSubcommand(argv: string[]): Promise<number> {
 
   if (action === "list") {
     return runListAction(parsed.values);
+  }
+
+  if (action === "config") {
+    return runConfigAction(parsed.values);
   }
 
   console.error(`Unknown action: ${action}`);
@@ -180,6 +196,168 @@ async function runCreateAction(
     const updatedAgent = await getBackend().retrieveAgent(agentId);
 
     console.log(JSON.stringify(updatedAgent, null, 2));
+    return 0;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    return 1;
+  }
+}
+
+const SECRET_CONFIG_FIELD =
+  /api[_-]?key|access[_-]?key|secret|credential|password|authorization|(^|[_-])(auth|refresh|access|bearer)?token($|[_-])/i;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function redactConfigSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactConfigSecrets);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, nested]) => [
+      key,
+      SECRET_CONFIG_FIELD.test(key)
+        ? "[redacted]"
+        : redactConfigSecrets(nested),
+    ]),
+  );
+}
+
+function safeConfigEntity(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  const output: Record<string, unknown> = {};
+  for (const key of [
+    "id",
+    "agent_id",
+    "name",
+    "model",
+    "context_window_limit",
+  ]) {
+    if (value[key] !== undefined) output[key] = value[key];
+  }
+  if (isRecord(value.model_settings)) {
+    output.model_settings = redactConfigSecrets(value.model_settings);
+  }
+  if (
+    isRecord(value.llm_config) &&
+    value.llm_config.context_window !== undefined
+  ) {
+    output.llm_config = {
+      context_window: value.llm_config.context_window,
+    };
+  }
+  return output;
+}
+
+export function buildAgentConfigReport(
+  agent: unknown,
+  conversation: unknown,
+): Record<string, unknown> {
+  if (!isRecord(agent)) throw new Error("Agent configuration is unavailable");
+  const conversationRecord = isRecord(conversation) ? conversation : null;
+  const conversationSettings = conversationRecord?.model_settings;
+  const hasConversationOverride = Boolean(
+    (typeof conversationRecord?.model === "string" &&
+      conversationRecord.model.length > 0) ||
+      (isRecord(conversationSettings) &&
+        Object.keys(conversationSettings).length > 0),
+  );
+  const effectiveSource = hasConversationOverride ? conversationRecord : agent;
+  const effectiveSettings = isRecord(effectiveSource?.model_settings)
+    ? effectiveSource.model_settings
+    : isRecord(agent.model_settings)
+      ? agent.model_settings
+      : {};
+
+  return {
+    agent: safeConfigEntity(agent),
+    conversation: safeConfigEntity(conversationRecord),
+    effective: {
+      scope: hasConversationOverride ? "conversation" : "agent",
+      model:
+        (typeof effectiveSource?.model === "string" && effectiveSource.model) ||
+        agent.model ||
+        null,
+      model_settings: redactConfigSecrets(effectiveSettings),
+    },
+    note: "model is the configured handle; router handles do not identify the underlying model selected for one inference",
+  };
+}
+
+async function runConfigAction(
+  values: ReturnType<typeof parseAgentsArgs>["values"],
+): Promise<number> {
+  const explicitAgentId = values.agent as string | undefined;
+  const conversationId = (values.conversation ?? values.conv) as
+    | string
+    | undefined;
+  if (values.conversation && values.conv) {
+    console.error("Use either --conversation or --conv, not both");
+    return 1;
+  }
+  if (explicitAgentId && conversationId) {
+    console.error("Use either --agent or --conversation, not both");
+    return 1;
+  }
+
+  await settingsManager.initialize();
+  const backend = getBackend();
+
+  try {
+    let agentId = explicitAgentId;
+    let conversation: unknown = null;
+
+    if (conversationId && conversationId !== "default") {
+      conversation = await backend.retrieveConversation(conversationId);
+      if (
+        !isRecord(conversation) ||
+        typeof conversation.agent_id !== "string"
+      ) {
+        throw new Error(
+          `Conversation ${conversationId} did not identify its parent agent`,
+        );
+      }
+      agentId = conversation.agent_id;
+    } else if (!agentId) {
+      const environmentAgentId = process.env.AGENT_ID;
+      const currentConversationId =
+        conversationId ?? process.env.CONVERSATION_ID;
+      if (currentConversationId && currentConversationId !== "default") {
+        conversation = await backend.retrieveConversation(
+          currentConversationId,
+        );
+        if (
+          !isRecord(conversation) ||
+          typeof conversation.agent_id !== "string"
+        ) {
+          throw new Error(
+            `Conversation ${currentConversationId} did not identify its parent agent`,
+          );
+        }
+        if (
+          environmentAgentId &&
+          conversation.agent_id !== environmentAgentId
+        ) {
+          throw new Error(
+            `Conversation ${currentConversationId} belongs to ${conversation.agent_id}, not current AGENT_ID ${environmentAgentId}`,
+          );
+        }
+        agentId = conversation.agent_id;
+      } else {
+        agentId = environmentAgentId;
+      }
+    }
+
+    if (!agentId) {
+      throw new Error(
+        "Set AGENT_ID or pass --agent/--conversation to inspect configuration",
+      );
+    }
+
+    const agent = await backend.retrieveAgent(agentId);
+    console.log(
+      JSON.stringify(buildAgentConfigReport(agent, conversation), null, 2),
+    );
     return 0;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));

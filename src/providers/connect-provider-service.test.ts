@@ -276,6 +276,70 @@ describe("connect provider service", () => {
     ]);
   });
 
+  test("serializes optional fields as not required", () => {
+    const providers: ByokProvider[] = [
+      {
+        id: "ollama",
+        displayName: "Ollama (local)",
+        description: "Connect Ollama",
+        providerType: "ollama",
+        providerName: "ollama",
+        requiresApiKey: false,
+        defaultApiKey: "not-needed",
+        fields: [
+          {
+            key: "baseUrl",
+            label: "Base URL",
+            placeholder: "http://localhost:11434/v1",
+            required: false,
+          },
+          { key: "apiKey", label: "API Key", secret: true, required: false },
+        ],
+      },
+    ];
+
+    const entries = buildConnectProviderEntries(providers, new Map(), "local");
+
+    expect(entries[0]?.fields).toEqual([
+      {
+        key: "baseUrl",
+        label: "Base URL",
+        placeholder: "http://localhost:11434/v1",
+        required: false,
+      },
+      { key: "apiKey", label: "API Key", secret: true, required: false },
+    ]);
+  });
+
+  test("resolves optional-field providers without any input", () => {
+    const provider: ByokProvider = {
+      id: "ollama",
+      displayName: "Ollama (local)",
+      description: "Connect Ollama",
+      providerType: "ollama",
+      providerName: "ollama",
+      requiresApiKey: false,
+      defaultApiKey: "not-needed",
+      fields: [
+        { key: "baseUrl", label: "Base URL", required: false },
+        { key: "apiKey", label: "API Key", secret: true, required: false },
+      ],
+    };
+
+    expect(resolveProviderConnectionFields(provider, { fields: {} })).toEqual({
+      apiKey: "not-needed",
+      options: {},
+    });
+    expect(
+      resolveProviderConnectionFields(provider, {
+        fields: { baseUrl: " http://192.168.1.20:11434/v1 " },
+      }),
+    ).toEqual({
+      apiKey: "not-needed",
+      options: { baseURL: "http://192.168.1.20:11434/v1" },
+    });
+  });
+
   test("resolves simple API key fields for saving", () => {
     const provider: ByokProvider = {
       id: "anthropic",

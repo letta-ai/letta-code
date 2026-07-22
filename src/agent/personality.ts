@@ -26,9 +26,12 @@ import {
   FRONTMATTER_REGEX,
   getPersonalityBlockDefinitions,
   getPersonalityContent,
+  getPersonalityCreationTags,
+  getPersonalityDefaultMemoryFiles,
   getPersonalityOption,
   normalizeComparableContent,
   PERSONALITY_OPTIONS,
+  type PersonalityEnvironment,
   type PersonalityId,
   type PersonalityOption,
   serializeFrontmatter,
@@ -104,20 +107,25 @@ export async function buildCreateAgentOptionsForPersonality(params: {
   description?: string;
   model?: string;
   tags?: string[];
+  environment?: PersonalityEnvironment;
 }): Promise<CreateAgentOptions> {
   const { personalityId, name, description, model, tags } = params;
   const personality = getPersonalityOption(personalityId);
   const defaultMemoryBlocks = await getDefaultMemoryBlocks();
+  const environment =
+    params.environment ??
+    (getBackend().capabilities.localMemfs ? "local" : "cloud");
 
   return {
     name: name ?? personality.label,
     description: description ?? personality.description,
     model: model ?? personality.defaultModel,
-    tags,
+    tags: [...getPersonalityCreationTags(personalityId), ...(tags ?? [])],
     memoryPromptMode: "memfs",
     memoryBlocks: buildPersonalityMemoryBlocks(
       personalityId,
       defaultMemoryBlocks,
+      environment,
     ),
   };
 }
@@ -175,14 +183,20 @@ export async function createAgentForPersonality(params: {
   Awaited<ReturnType<typeof import("@/agent/create")["createAgent"]>>
 > {
   const { createAgent } = await import("@/agent/create");
-  const result = await createAgent(
-    await buildCreateAgentOptionsForPersonality(params),
-  );
+  const createOptions = await buildCreateAgentOptionsForPersonality(params);
+  const result = await createAgent(createOptions);
 
   await enableMemfsForCreatedAgent({
     agentId: result.agent.id,
     agentTags: result.agent.tags,
   });
+
+  if (getPersonalityDefaultMemoryFiles(params.personalityId).length > 0) {
+    const { enableMemfsIfCloud } = await import("@/agent/memory-filesystem");
+    await enableMemfsIfCloud(result.agent.id, {
+      agentTags: result.agent.tags,
+    });
+  }
 
   return result;
 }
@@ -300,9 +314,12 @@ export async function applyPersonalityToMemory(
   params: ApplyPersonalityToMemoryParams,
 ): Promise<ApplyPersonalityToMemoryResult> {
   const personality = getPersonalityOption(params.personalityId);
-  const blockDefinitions = getPersonalityBlockDefinitions(params.personalityId);
-
   const isLocalMemfs = getBackend().capabilities.localMemfs;
+  const blockDefinitions = getPersonalityBlockDefinitions(
+    params.personalityId,
+    isLocalMemfs ? "local" : "cloud",
+  );
+
   const repoDir = isLocalMemfs
     ? getScopedMemoryFilesystemRoot(params.agentId)
     : getMemoryRepoDir(params.agentId);

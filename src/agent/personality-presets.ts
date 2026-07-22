@@ -11,12 +11,22 @@
 import { parseMdxFrontmatter } from "./memory";
 import { MEMORY_PROMPTS, SYSTEM_PROMPTS } from "./prompt-assets";
 
+export type PersonalityAssetId = "tutor-profile";
+
+export interface PersonalityDefaultMemoryFile {
+  path: string;
+  assetId: PersonalityAssetId;
+  commitMessage: string;
+}
+
 export interface PersonalityOption {
   id: "blank" | "kawaii" | "codex" | "claude" | "linus" | "memo" | "tutorial";
   label: string;
   description: string;
   /** Model ID from models.json to use when no explicit model is provided. */
   defaultModel?: string;
+  /** Binary files seeded into MemFS after the initial checkout. */
+  defaultMemoryFiles?: readonly PersonalityDefaultMemoryFile[];
 }
 
 export const PERSONALITY_OPTIONS: PersonalityOption[] = [
@@ -28,7 +38,15 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
   {
     id: "tutorial",
     label: "Tutor",
-    description: "A tutor-guide that teaches Letta through real work",
+    description:
+      "I help with getting started with Letta. I can answer any questions about Letta, and also help you create and configure agents.",
+    defaultMemoryFiles: [
+      {
+        path: "profile.png",
+        assetId: "tutor-profile",
+        commitMessage: "chore: set default Tutor profile picture",
+      },
+    ],
   },
   {
     id: "blank",
@@ -59,6 +77,38 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
 ];
 
 export type PersonalityId = PersonalityOption["id"];
+export type PersonalityEnvironment = "cloud" | "local";
+
+export const PERSONALITY_TAG_PREFIX = "personality:";
+
+export function buildPersonalityTag(personalityId: PersonalityId): string {
+  return `${PERSONALITY_TAG_PREFIX}${personalityId}`;
+}
+
+export function getPersonalityCreationTags(
+  personalityId: PersonalityId,
+): string[] {
+  return getPersonalityDefaultMemoryFiles(personalityId).length > 0
+    ? [buildPersonalityTag(personalityId)]
+    : [];
+}
+
+export function resolvePersonalityIdFromTags(
+  tags: readonly string[] | null | undefined,
+): PersonalityId | null {
+  for (const tag of tags ?? []) {
+    if (!tag.startsWith(PERSONALITY_TAG_PREFIX)) {
+      continue;
+    }
+    const personalityId = resolvePersonalityId(
+      tag.slice(PERSONALITY_TAG_PREFIX.length),
+    );
+    if (personalityId) {
+      return personalityId;
+    }
+  }
+  return null;
+}
 
 export const DEFAULT_CREATE_AGENT_PERSONALITIES = [
   "memo",
@@ -208,6 +258,12 @@ export function getPersonalityOption(
   return option;
 }
 
+export function getPersonalityDefaultMemoryFiles(
+  personalityId: PersonalityId,
+): readonly PersonalityDefaultMemoryFile[] {
+  return getPersonalityOption(personalityId).defaultMemoryFiles ?? [];
+}
+
 export function resolvePersonalityId(input: string): PersonalityId | null {
   const normalized = input.trim().toLowerCase();
   if (!normalized) {
@@ -259,8 +315,12 @@ export function getDefaultHumanContent(): string {
 export function getPersonalityHumanContent(
   personalityId: PersonalityId,
 ): string {
-  if (personalityId === "memo" || personalityId === "tutorial") {
+  if (personalityId === "memo") {
     return getPromptBody("human_memo.mdx");
+  }
+
+  if (personalityId === "tutorial") {
+    return getPromptBody("human_tutorial.mdx");
   }
 
   if (personalityId === "linus") {
@@ -289,7 +349,10 @@ export function getPersonalityBlockValues(personalityId: PersonalityId): {
   };
 }
 
-export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
+export function getPersonalityBlockDefinitions(
+  personalityId: PersonalityId,
+  environment: PersonalityEnvironment = "cloud",
+): {
   persona: PersonalityBlockDefinition;
   human: PersonalityBlockDefinition;
   onboarding?: PersonalityBlockDefinition;
@@ -307,13 +370,17 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
               ? "persona_linus.mdx"
               : "persona.mdx";
   const humanTemplatePromptAssetName =
-    personalityId === "memo" || personalityId === "tutorial"
+    personalityId === "memo"
       ? "human_memo.mdx"
-      : personalityId === "kawaii"
-        ? "human_kawaii.mdx"
-        : personalityId === "linus"
-          ? "human_linus.mdx"
-          : "human.mdx";
+      : personalityId === "tutorial"
+        ? "human_tutorial.mdx"
+        : personalityId === "kawaii"
+          ? "human_kawaii.mdx"
+          : personalityId === "linus"
+            ? "human_linus.mdx"
+            : "human.mdx";
+  const onboardingTemplatePromptAssetName =
+    environment === "local" ? "onboarding_local.mdx" : "onboarding.mdx";
 
   return {
     persona: {
@@ -331,10 +398,11 @@ export function getPersonalityBlockDefinitions(personalityId: PersonalityId): {
     ...(supportsOnboardingBlock(personalityId)
       ? {
           onboarding: {
-            value: getPromptBody("onboarding.mdx"),
-            description:
-              getEditablePromptFrontmatter("onboarding.mdx").description,
-            templatePromptAssetName: "onboarding.mdx",
+            value: getPromptBody(onboardingTemplatePromptAssetName),
+            description: getEditablePromptFrontmatter(
+              onboardingTemplatePromptAssetName,
+            ).description,
+            templatePromptAssetName: onboardingTemplatePromptAssetName,
           },
         }
       : {}),
@@ -362,8 +430,12 @@ export function buildPersonalityMemoryBlocks(
     value: string;
     description?: string | null;
   }>,
+  environment: PersonalityEnvironment = "cloud",
 ): PersonalityMemoryBlock[] {
-  const blockDefinitions = getPersonalityBlockDefinitions(personalityId);
+  const blockDefinitions = getPersonalityBlockDefinitions(
+    personalityId,
+    environment,
+  );
 
   const memoryBlocks = defaultMemoryBlocks.map((block) => {
     if (block.label === "persona") {

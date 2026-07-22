@@ -57,6 +57,7 @@ export interface ProviderField {
   label: string;
   placeholder?: string;
   secret?: boolean; // If true, mask input like a password
+  required?: boolean; // Defaults to true when omitted
 }
 
 // Auth method definition for providers with multiple auth options
@@ -258,12 +259,21 @@ const LOCAL_EXTRA_PROVIDER_CONFIGS: readonly ByokProvider[] = [
   {
     id: "ollama",
     displayName: "Ollama (local)",
-    description: "Connect local Ollama at http://localhost:11434/v1",
+    description: "Connect Ollama at http://localhost:11434/v1 or a remote URL",
     providerType: "ollama",
     providerName: "ollama",
     providerNames: ["ollama", "lc-ollama"],
     requiresApiKey: false,
     defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
+    fields: [
+      {
+        key: "baseUrl",
+        label: "Base URL",
+        placeholder: "http://localhost:11434/v1",
+        required: false,
+      },
+      { key: "apiKey", label: "API Key", secret: true, required: false },
+    ],
   },
   {
     id: "ollama-cloud",
@@ -276,22 +286,42 @@ const LOCAL_EXTRA_PROVIDER_CONFIGS: readonly ByokProvider[] = [
   {
     id: "lmstudio",
     displayName: "LM Studio (local)",
-    description: "Connect local LM Studio at http://127.0.0.1:1234/v1",
+    description:
+      "Connect LM Studio at http://127.0.0.1:1234/v1 or a remote URL",
     providerType: LMSTUDIO_OPENAI_PROVIDER_TYPE,
     providerName: "lmstudio",
     providerNames: ["lmstudio", "lc-lmstudio"],
     requiresApiKey: false,
     defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
+    fields: [
+      {
+        key: "baseUrl",
+        label: "Base URL",
+        placeholder: "http://127.0.0.1:1234/v1",
+        required: false,
+      },
+      { key: "apiKey", label: "API Key", secret: true, required: false },
+    ],
   },
   {
     id: "llama-cpp",
     displayName: "llama.cpp (local)",
-    description: "Connect local llama.cpp at http://localhost:8080/v1",
+    description:
+      "Connect llama.cpp at http://localhost:8080/v1 or a remote URL",
     providerType: "llama_cpp",
     providerName: "llama-cpp",
     providerNames: ["llama-cpp", "lc-llama-cpp"],
     requiresApiKey: false,
     defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
+    fields: [
+      {
+        key: "baseUrl",
+        label: "Base URL",
+        placeholder: "http://localhost:8080/v1",
+        required: false,
+      },
+      { key: "apiKey", label: "API Key", secret: true, required: false },
+    ],
   },
 ];
 
