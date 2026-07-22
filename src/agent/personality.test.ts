@@ -137,7 +137,7 @@ describe("personality helpers", () => {
     }
   });
 
-  test("tutorial includes Constellation onboarding memory by default", async () => {
+  test("tutorial includes cloud onboarding memory by default", async () => {
     expect(ONBOARDING_PERSONALITIES).toEqual(["tutorial"]);
 
     const options = await buildCreateAgentOptionsForPersonality({

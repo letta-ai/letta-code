@@ -122,6 +122,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   socket: WebSocket | null;
   workingDirectoryByConversation: Map<string, string>;
   permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
+  skillSourcesByConversation: ListenerRuntime["skillSourcesByConversation"];
   reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
   contextTrackerByConversation: ListenerRuntime["contextTrackerByConversation"];
   systemPromptRecompileByConversation: ListenerRuntime["systemPromptRecompileByConversation"];
@@ -162,6 +163,7 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     socket: WebSocket | null;
     workingDirectoryByConversation: Map<string, string>;
     permissionModeByConversation: ListenerRuntime["permissionModeByConversation"];
+    skillSourcesByConversation: ListenerRuntime["skillSourcesByConversation"];
     reminderStateByConversation: ListenerRuntime["reminderStateByConversation"];
     contextTrackerByConversation: ListenerRuntime["contextTrackerByConversation"];
     systemPromptRecompileByConversation: ListenerRuntime["systemPromptRecompileByConversation"];
@@ -211,6 +213,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.permissionModeByConversation,
       set: (value: ListenerRuntime["permissionModeByConversation"]) => {
         listener.permissionModeByConversation = value;
+      },
+    },
+    skillSourcesByConversation: {
+      get: () => listener.skillSourcesByConversation,
+      set: (value: ListenerRuntime["skillSourcesByConversation"]) => {
+        listener.skillSourcesByConversation = value;
       },
     },
     reminderStateByConversation: {

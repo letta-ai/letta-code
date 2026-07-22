@@ -156,6 +156,7 @@ export function createConversationRuntime(
     key: runtimeKey,
     agentId: normalizedAgentId,
     conversationId: normalizedConversationId,
+    skillSources: listener.skillSourcesByConversation.get(runtimeKey)?.slice(),
     activeChannelTurn: null,
     turnLifecycle,
     messageQueue: Promise.resolve(),

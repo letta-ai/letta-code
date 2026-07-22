@@ -462,7 +462,7 @@ export interface PendingApprovalInfo {
 }
 
 export const STALE_APPROVAL_RECOVERY_DENIAL_REASON =
-  "Auto-denied: stale approval from interrupted session";
+  "The agent harness automatically closed this stale pending tool call to recover from a client/server state desync: the server was still waiting on a result for it, but the harness had no matching tool execution in flight and no result was ever recorded. It was not denied by the user or a permissions policy. Re-issue the tool call if you still need it.";
 
 export function buildFreshDenialApprovals(
   serverApprovals: PendingApprovalInfo[],

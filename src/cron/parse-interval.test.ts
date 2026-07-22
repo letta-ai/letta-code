@@ -51,6 +51,11 @@ describe("parseEvery", () => {
 
   test("days — multi-day", () => {
     expect(parseEvery("3d")?.cron).toBe("0 0 */3 * *");
+    expect(parseEvery("31d")?.cron).toBe("0 0 */31 * *");
+  });
+
+  test("days — rejects steps with no legal day-of-month", () => {
+    expect(parseEvery("32d")).toBeNull();
   });
 
   test("seconds — below 60 rounds up to 1m", () => {
@@ -153,6 +158,13 @@ describe("isValidCron", () => {
     expect(isValidCron("0 0 * * *")).toBe(true);
     expect(isValidCron("0 0 */3 * *")).toBe(true);
     expect(isValidCron("0-59 * * * *")).toBe(true);
+    expect(isValidCron("0 0 */3,15 * *")).toBe(true);
+    expect(isValidCron("0 0 */3,2-3 * *")).toBe(true);
+    expect(isValidCron("0 0 * */3,6 *")).toBe(true);
+    expect(isValidCron("0 0 */32,15 * *")).toBe(true);
+    expect(isValidCron("0 0 * */13,6 *")).toBe(true);
+    expect(isValidCron("59 23 31 12 7")).toBe(true);
+    expect(isValidCron("0-59 0-23 1-31 1-12 0-7")).toBe(true);
   });
 
   test("valid comma-separated values", () => {
@@ -176,14 +188,31 @@ describe("isValidCron", () => {
     expect(isValidCron("0,10-20,30-59/5 * * * *")).toBe(true);
   });
 
-  test("invalid expressions", () => {
-    expect(isValidCron("")).toBe(false);
-    expect(isValidCron("* * *")).toBe(false); // too few fields
-    expect(isValidCron("* * * * * *")).toBe(false); // too many fields
-    expect(isValidCron("abc * * * *")).toBe(false);
-    expect(isValidCron("1, * * * *")).toBe(false); // trailing comma
-    expect(isValidCron(",5 * * * *")).toBe(false); // leading comma
-    expect(isValidCron(", * * * *")).toBe(false); // lone comma
+  test.each([
+    "",
+    "* * *",
+    "* * * * * *",
+    "abc * * * *",
+    "1, * * * *",
+    ",5 * * * *",
+    "5/10 * * * *",
+    "60 * * * *",
+    "0 24 * * *",
+    "0 0 0 * *",
+    "0 0 32 * *",
+    "0 0 */32 * *",
+    "0 0 1 0 *",
+    "0 0 1 13 *",
+    "0 0 * */13 *",
+    "0 0 * * 8",
+    "0-60 * * * *",
+    "0 0 1-32 * *",
+    "0-59/0 * * * *",
+    "0,60 * * * *",
+    "59-0 * * * *",
+    "0 0 31-1 * *",
+  ])("rejects invalid expression %s", (expression) => {
+    expect(isValidCron(expression)).toBe(false);
   });
 });
 
@@ -207,6 +236,28 @@ describe("cronMatchesTime", () => {
     expect(cronMatchesTime("*/7 * * * *", date)).toBe(false); // 30 % 7 !== 0
   });
 
+  test.each([
+    ["0 0 */3 * *", "2026-03-03T00:00:00Z", true],
+    ["0 0 */3 * *", "2026-03-01T00:00:00Z", false],
+    ["0 0 * */3 *", "2026-03-01T00:00:00Z", true],
+    ["0 0 * */3 *", "2026-01-01T00:00:00Z", false],
+    ["0 0 */3,15 * *", "2026-03-15T00:00:00Z", true],
+    ["0 0 */3,15 * *", "2026-03-01T00:00:00Z", false],
+    ["0 0 */3,2-3 * *", "2026-03-02T00:00:00Z", true],
+    ["0 0 */32,15 * *", "2026-03-15T00:00:00Z", true],
+    ["0 0 */32,15 * *", "2026-03-16T00:00:00Z", false],
+    ["0 0 * */3,6 *", "2026-06-01T00:00:00Z", true],
+    ["0 0 * */3,6 *", "2026-01-01T00:00:00Z", false],
+    ["0 0 * */13,6 *", "2026-06-01T00:00:00Z", true],
+    ["0 0 */32 * *", "2026-03-01T00:00:00Z", false],
+    ["0 0 * */13 *", "2026-01-01T00:00:00Z", false],
+    ["0 0 */3 * 1", "2026-03-02T00:00:00Z", true],
+    ["0 0 */3 * 1", "2026-03-03T00:00:00Z", true],
+    ["0 0 */3 * 1", "2026-03-04T00:00:00Z", false],
+  ])("preserves legacy one-based steps for %s at %s", (expr, iso, expected) => {
+    expect(cronMatchesTime(expr, new Date(iso), "UTC")).toBe(expected);
+  });
+
   test("range match", () => {
     const date = new Date("2026-03-26T14:30:00");
     expect(cronMatchesTime("25-35 * * * *", date)).toBe(true);
@@ -218,6 +269,15 @@ describe("cronMatchesTime", () => {
     const date = new Date("2026-03-26T14:30:00");
     expect(cronMatchesTime("30 14 * * 4", date)).toBe(true);
     expect(cronMatchesTime("30 14 * * 5", date)).toBe(false);
+  });
+
+  test("day of week 7 matches Sunday just like 0", () => {
+    const sunday = new Date("2026-03-29T00:00:00");
+    expect(cronMatchesTime("0 0 * * 7", sunday)).toBe(true);
+    expect(cronMatchesTime("0 0 * * 0", sunday)).toBe(true);
+    expect(cronMatchesTime("0 0 * * 7", new Date("2026-03-26T00:00:00"))).toBe(
+      false,
+    );
   });
 
   test("full exact match", () => {
@@ -267,6 +327,39 @@ describe("cronMatchesTime", () => {
     // In Asia/Tokyo (JST, UTC+9), 22:30 UTC = 07:30 next day (March 27)
     expect(cronMatchesTime("30 7 27 3 *", utcDate, "Asia/Tokyo")).toBe(true);
     expect(cronMatchesTime("30 22 26 3 *", utcDate, "Asia/Tokyo")).toBe(false);
+  });
+
+  test("preserves the absolute minute across the host DST fallback fold", () => {
+    const script = `
+      import { cronMatchesTime } from "./src/cron/parse-interval";
+      const secondOneThirty = new Date("2026-11-01T09:30:45Z");
+      console.log(JSON.stringify({
+        due: cronMatchesTime("30 9 * * *", secondOneThirty, "UTC"),
+        previousHour: cronMatchesTime("30 8 * * *", secondOneThirty, "UTC"),
+      }));
+    `;
+    const result = Bun.spawnSync([process.execPath, "-e", script], {
+      cwd: `${import.meta.dir}/../..`,
+      env: { ...process.env, TZ: "America/Los_Angeles" },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout.toString())).toEqual({
+      due: true,
+      previousHour: false,
+    });
+  });
+
+  test("preserves wall-clock semantics across target-timezone DST", () => {
+    const timezone = "America/Los_Angeles";
+    const springForward = new Date("2026-03-08T10:00:00Z"); // 03:00 PDT
+    expect(cronMatchesTime("0 2 * * *", springForward, timezone)).toBe(false);
+    expect(cronMatchesTime("0 3 * * *", springForward, timezone)).toBe(true);
+
+    const firstOne = new Date("2026-11-01T08:00:00Z");
+    const secondOne = new Date("2026-11-01T09:00:00Z");
+    expect(cronMatchesTime("0 1 * * *", firstOne, timezone)).toBe(true);
+    expect(cronMatchesTime("0 1 * * *", secondOne, timezone)).toBe(true);
   });
 
   test("invalid timezone falls back to local time", () => {

@@ -60,7 +60,7 @@ export function getListenerModCommand(
  * Run a mod command in the listener and return its result. Builds a
  * ModCommandContext that mirrors the TUI command path (createModConversationHandle
  * with the shared sendMessageStreamWithBackend so fork/send/updateLlmConfig work
- * across local and Constellation backends).
+ * across local and Letta Cloud backends).
  */
 export async function runListenerModCommand(
   conversationRuntime: ConversationRuntime,

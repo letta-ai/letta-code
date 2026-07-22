@@ -112,7 +112,7 @@ export async function buildCreateAgentOptionsForPersonality(params: {
   const defaultMemoryBlocks = await getDefaultMemoryBlocks();
   const environment =
     params.environment ??
-    (getBackend().capabilities.localMemfs ? "local" : "constellation");
+    (getBackend().capabilities.localMemfs ? "local" : "cloud");
 
   return {
     name: name ?? personality.label,
@@ -309,7 +309,7 @@ export async function applyPersonalityToMemory(
   const isLocalMemfs = getBackend().capabilities.localMemfs;
   const blockDefinitions = getPersonalityBlockDefinitions(
     params.personalityId,
-    isLocalMemfs ? "local" : "constellation",
+    isLocalMemfs ? "local" : "cloud",
   );
 
   const repoDir = isLocalMemfs

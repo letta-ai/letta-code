@@ -60,7 +60,7 @@ export const PERSONALITY_OPTIONS: PersonalityOption[] = [
 ];
 
 export type PersonalityId = PersonalityOption["id"];
-export type PersonalityEnvironment = "constellation" | "local";
+export type PersonalityEnvironment = "cloud" | "local";
 
 export const DEFAULT_CREATE_AGENT_PERSONALITIES = [
   "memo",
@@ -297,7 +297,7 @@ export function getPersonalityBlockValues(personalityId: PersonalityId): {
 
 export function getPersonalityBlockDefinitions(
   personalityId: PersonalityId,
-  environment: PersonalityEnvironment = "constellation",
+  environment: PersonalityEnvironment = "cloud",
 ): {
   persona: PersonalityBlockDefinition;
   human: PersonalityBlockDefinition;
@@ -376,7 +376,7 @@ export function buildPersonalityMemoryBlocks(
     value: string;
     description?: string | null;
   }>,
-  environment: PersonalityEnvironment = "constellation",
+  environment: PersonalityEnvironment = "cloud",
 ): PersonalityMemoryBlock[] {
   const blockDefinitions = getPersonalityBlockDefinitions(
     personalityId,

@@ -12,6 +12,7 @@ import {
   type ModelReasoningEffort,
 } from "@/agent/model";
 import { getBackendForMode } from "@/backend";
+import { listPinnedAgentsForCurrentUser } from "@/cli/helpers/pinned-agent-listing";
 import { getRecentAgentOptions } from "@/cli/helpers/recent-agent-options";
 import { settingsManager } from "@/settings-manager";
 import { colors } from "./components/colors";
@@ -72,37 +73,6 @@ function getLabel(option: ProfileOption, _freshRepoMode?: boolean): string {
   return parts.length > 0 ? ` (${parts.join(", ")})` : "";
 }
 
-function buildInitialProfileOptions(
-  lruAgentId: string | null,
-): ProfileOption[] {
-  const pinned = settingsManager.getPinnedAgents();
-  const options: ProfileOption[] = [];
-  const seenAgentIds = new Set<string>();
-
-  if (lruAgentId) {
-    options.push({
-      name: null,
-      agentId: lruAgentId,
-      isLru: true,
-      agent: null,
-    });
-    seenAgentIds.add(lruAgentId);
-  }
-
-  for (const agentId of pinned) {
-    if (seenAgentIds.has(agentId)) continue;
-    options.push({
-      name: null,
-      agentId,
-      isLru: false,
-      agent: null,
-    });
-    seenAgentIds.add(agentId);
-  }
-
-  return options;
-}
-
 function ProfileSelectionUI({
   lruAgentId,
   externalLoading,
@@ -122,10 +92,9 @@ function ProfileSelectionUI({
   serverBaseUrl?: string;
   onComplete: (result: ProfileSelectionResult) => void;
 }) {
-  const [options, setOptions] = useState<ProfileOption[]>(() =>
-    externalLoading ? [] : buildInitialProfileOptions(lruAgentId),
-  );
-  const loading = externalLoading;
+  const [options, setOptions] = useState<ProfileOption[]>([]);
+  const [optionsLoading, setOptionsLoading] = useState(true);
+  const loading = externalLoading || optionsLoading;
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [showAll, setShowAll] = useState(false);
   // Model selection mode for custom API backends
@@ -143,62 +112,59 @@ function ProfileSelectionUI({
   } | null>(null);
 
   const loadOptions = useCallback(async () => {
+    setOptionsLoading(true);
     try {
-      const pinned = settingsManager.getPinnedAgents();
-      const optionsToFetch: ProfileOption[] = [];
+      const pinned = await listPinnedAgentsForCurrentUser();
+      let fetchedOptions: ProfileOption[] = [];
       const seenAgentIds = new Set<string>();
 
       // First: LRU agent
       if (lruAgentId) {
-        optionsToFetch.push({
-          name: null, // Will be fetched from server
-          agentId: lruAgentId,
-          isLru: true,
-          agent: null,
-        });
+        const pinnedLru = pinned.find(
+          ({ agentId, agent }) => agentId === lruAgentId && agent,
+        );
+        let agent = pinnedLru?.agent ?? null;
+        if (!agent) {
+          try {
+            const backend = getBackendForMode(
+              isLocalAgentId(lruAgentId) ? "local" : "api",
+            );
+            agent = await backend.retrieveAgent(lruAgentId, {
+              include: ["agent.blocks"],
+            });
+          } catch {
+            agent = null;
+          }
+        }
+        if (agent) {
+          fetchedOptions.push({
+            name: agent.name,
+            agentId: lruAgentId,
+            isLru: true,
+            agent,
+          });
+        }
         seenAgentIds.add(lruAgentId);
       }
 
       // Then: Other pinned agents
-      for (const agentId of pinned) {
-        if (!seenAgentIds.has(agentId)) {
-          optionsToFetch.push({
-            name: null, // Will be fetched from server
+      for (const { agentId, agent } of pinned) {
+        if (agent && !seenAgentIds.has(agentId)) {
+          fetchedOptions.push({
+            name: agent.name,
             agentId,
             isLru: false,
-            agent: null,
+            agent,
           });
           seenAgentIds.add(agentId);
         }
       }
 
-      // Fetch agent data
-      let fetchedOptions = await Promise.all(
-        optionsToFetch.map(async (opt) => {
-          if (opt.agent) {
-            return opt;
-          }
-          try {
-            const backend = getBackendForMode(
-              isLocalAgentId(opt.agentId) ? "local" : "api",
-            );
-            const agent = await backend.retrieveAgent(opt.agentId, {
-              include: ["agent.blocks"],
-            });
-            return { ...opt, agent };
-          } catch {
-            return { ...opt, agent: null };
-          }
-        }),
-      );
-
-      fetchedOptions = fetchedOptions.filter((opt) => opt.agent !== null);
-
       // Fresh repo / invalid pins fallback: show recent agents from the active backend(s)
       if (fetchedOptions.length === 0) {
         const recentAgents = await getRecentAgentOptions({
           includeLocal: false,
-          includeConstellation: true,
+          includeCloud: true,
           limit: RECENT_FALLBACK_DISPLAY,
         });
 
@@ -213,16 +179,15 @@ function ProfileSelectionUI({
       setOptions(fetchedOptions);
     } catch {
       setOptions([]);
+    } finally {
+      setOptionsLoading(false);
     }
   }, [lruAgentId]);
 
   useEffect(() => {
     if (externalLoading) return;
-    setOptions((current) =>
-      current.length > 0 ? current : buildInitialProfileOptions(lruAgentId),
-    );
     loadOptions();
-  }, [externalLoading, loadOptions, lruAgentId]);
+  }, [externalLoading, loadOptions]);
 
   const displayOptions = showAll ? options : options.slice(0, MAX_DISPLAY);
   const hasMore = options.length > MAX_DISPLAY;

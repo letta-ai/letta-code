@@ -56,7 +56,7 @@ describe("buildCreateAgentRequestForPersonality", () => {
     }
   });
 
-  test("onboarding personalities include the Constellation onboarding block", async () => {
+  test("onboarding personalities include the cloud onboarding block", async () => {
     const request = await buildCreateAgentRequestForPersonality({
       personalityId: "tutorial",
     });

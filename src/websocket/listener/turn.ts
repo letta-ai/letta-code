@@ -11,6 +11,7 @@ import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
   normalizeStreamErrorTypeToStopReason,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import {
@@ -249,6 +250,9 @@ export async function handleIncomingMessage(
       background: true,
       workingDirectory: turnWorkingDirectory,
       permissionModeState: turnPermissionModeState,
+      ...(runtime.skillSources !== undefined
+        ? { skillSources: runtime.skillSources }
+        : {}),
       preparedToolContext: preparedToolContext.preparedToolContext,
       ...(turnInput.imageFailureModesByMessageOtid
         ? {
@@ -502,7 +506,7 @@ export async function handleIncomingMessage(
             turnInput = rebuildTurnInputWithFreshDenials(
               turnInput,
               existingApprovals ?? [],
-              "Auto-denied: stale approval from interrupted session",
+              STALE_APPROVAL_RECOVERY_DENIAL_REASON,
             );
           } catch {
             turnInput = rebuildTurnInputWithFreshDenials(turnInput, [], "");

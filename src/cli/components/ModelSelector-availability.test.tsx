@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { models } from "@/agent/model";
 import { filterModelsByAvailabilityForSelector } from "@/cli/components/ModelSelector";
 
 type StubModel = { handle: string; label: string };
@@ -55,5 +56,22 @@ describe("ModelSelector availability gating", () => {
     ]);
     expect(shownResult.map((m) => m.handle)).toContain("letta/auto");
     expect(shownResult.map((m) => m.handle)).toContain("letta/glm");
+  });
+
+  test("includes Kimi K3 presets only when the API catalog exposes those handles", () => {
+    const result = filterModelsByAvailabilityForSelector(
+      models,
+      new Set(["moonshot/kimi-k3", "openrouter/moonshotai/kimi-k3"]),
+      [],
+    );
+
+    expect(result.map((m) => m.handle)).toEqual([
+      "moonshot/kimi-k3",
+      "openrouter/moonshotai/kimi-k3",
+    ]);
+    expect(result.map((m) => m.updateArgs?.reasoning_effort)).toEqual([
+      undefined,
+      undefined,
+    ]);
   });
 });
