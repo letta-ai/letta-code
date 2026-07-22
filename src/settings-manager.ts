@@ -167,11 +167,6 @@ export interface LocalProjectSettings {
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   listenerEnvName?: string; // Saved environment name for listener connections (project-specific)
-  // Stable listener identity per environment name (LET-10085). The display
-  // name is NOT the identity: this map gives each configured manual
-  // listener a persisted UUID identity so same-named listeners on other
-  // devices/processes never collide on a relay slot.
-  listenerInstanceIdsByEnvName?: Record<string, string>;
 }
 
 // Hard-deprecated keys: ignored on load and stripped from disk on persist.
@@ -1612,59 +1607,6 @@ class SettingsManager {
         })
         .catch((error) => {
           console.error("Failed to save listener environment name:", error);
-        });
-    }
-  }
-
-  /**
-   * Get the persisted stable listener identity for an environment name in
-   * this project, if one exists (LET-10085).
-   */
-  getListenerInstanceId(
-    envName: string,
-    workingDirectory: string = process.cwd(),
-  ): string | undefined {
-    try {
-      const localSettings = this.getLocalProjectSettings(workingDirectory);
-      return localSettings.listenerInstanceIdsByEnvName?.[envName];
-    } catch {
-      // Settings not loaded yet
-      return undefined;
-    }
-  }
-
-  /**
-   * Persist the stable listener identity for an environment name in this
-   * project (LET-10085).
-   */
-  setListenerInstanceId(
-    envName: string,
-    instanceId: string,
-    workingDirectory: string = process.cwd(),
-  ): void {
-    const buildUpdate = (): Partial<LocalProjectSettings> => {
-      let existing: Record<string, string> = {};
-      try {
-        existing =
-          this.getLocalProjectSettings(workingDirectory)
-            .listenerInstanceIdsByEnvName ?? {};
-      } catch {
-        // Settings not loaded yet — start fresh; merge happens on write.
-      }
-      return {
-        listenerInstanceIdsByEnvName: { ...existing, [envName]: instanceId },
-      };
-    };
-    try {
-      this.updateLocalProjectSettings(buildUpdate(), workingDirectory);
-    } catch {
-      // Settings not loaded yet - load and retry
-      this.loadLocalProjectSettings(workingDirectory)
-        .then(() => {
-          this.updateLocalProjectSettings(buildUpdate(), workingDirectory);
-        })
-        .catch((error) => {
-          console.error("Failed to save listener instance id:", error);
         });
     }
   }

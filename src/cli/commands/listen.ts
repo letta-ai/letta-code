@@ -216,8 +216,8 @@ export async function handleListen(
     );
 
     // Stable explicit identity for this configured /listen listener
-    // (LET-10085); the display name is not the identity.
-    const identity = resolveListenerIdentity(connectionName, {
+    // (LET-10085); the identity value is never name-derived.
+    const identity = await resolveListenerIdentity(connectionName, {
       namespace: "listen",
     });
 

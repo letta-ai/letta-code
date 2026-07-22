@@ -12,31 +12,50 @@
  *
  * Three identities, kept separate:
  * - Listener instance (this module): WHICH configured listener this is.
- *   Stable across restarts. Persisted per (project, environment name) for
- *   manual listeners; supplied explicitly by the spawner for owned children
+ *   Stable across restarts. Persisted per configuration key for manual
+ *   listeners; supplied explicitly by the spawner for owned children
  *   (e.g. Desktop passes `LETTA_LISTENER_INSTANCE_ID=desktop-primary:<installation-id>`).
  * - Process instance: this exact OS process. Owned by the spawner's child
  *   registry (LET-10023), not by this module.
  * - Connection generation: one registration attempt; the relay's ephemeral
  *   `conn-*` id.
  *
- * The display name (`connectionName`) is exactly that — a display name.
- * Renaming a listener does not change its identity; two listeners may share
- * a name and coexist.
+ * The CONFIGURATION KEY for a manual listener is (project directory,
+ * namespace, environment name): that triple names one configured listener,
+ * and its minted identity is stable across restarts. The environment name
+ * therefore participates in selecting WHICH configuration this is (renaming
+ * configures a new listener whose old relay row ages out via lastSeenAt) —
+ * but the identity VALUE is a random UUID, never derived from the name, so
+ * same-named listeners in other projects/machines/processes can never
+ * collide on a relay slot.
+ *
+ * Identity get-or-create is ATOMIC (O_EXCL + hard-link publication, one
+ * file per configuration key under ~/.letta/listener-identities). Two
+ * first-time processes racing the same configuration converge on one
+ * identity — the loser of the publish race reads the winner's value — so
+ * the single-run lock keyed by this identity actually guards them.
  */
 
-import { randomUUID } from "node:crypto";
-import { settingsManager } from "@/settings-manager";
+import { createHash, randomUUID } from "node:crypto";
+import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
 
 /**
  * Environment variable a spawner sets to assign the child an explicit
- * listener identity. Takes precedence over the persisted per-project
+ * listener identity. Takes precedence over the persisted per-configuration
  * identity. Desktop uses `desktop-<slot>:<installation-id>`.
  */
 export const LISTENER_INSTANCE_ID_ENV = "LETTA_LISTENER_INSTANCE_ID";
 
 /** Prefix for identities minted by this module for manual listeners. */
 const MANUAL_INSTANCE_ID_PREFIX = "li";
+
+const DEFAULT_IDENTITY_DIR = path.join(
+  homedir(),
+  ".letta",
+  "listener-identities",
+);
 
 /**
  * Instance ids must be compact and relay-safe. Spawner-provided ids are
@@ -49,67 +68,154 @@ export function isValidListenerInstanceId(value: string): boolean {
   return INSTANCE_ID_PATTERN.test(value);
 }
 
-function mintManualListenerInstanceId(): string {
-  return `${MANUAL_INSTANCE_ID_PREFIX}-${randomUUID()}`;
-}
+/**
+ * Which run mode configured this listener. `letta server` and the in-app
+ * /listen command are distinct configured listeners even when they share a
+ * project and display name; the namespace keeps their persisted identities
+ * apart.
+ */
+export type ListenerIdentityNamespace = "server" | "listen";
 
 export type ResolvedListenerIdentity = {
   listenerInstanceId: string;
   /**
    * Where the identity came from. "spawner" ids belong to an owning parent
    * process (Desktop); "persisted" and "minted" ids belong to a manual
-   * listener configured in this project.
+   * listener configured on this machine.
    */
   source: "spawner" | "persisted" | "minted";
 };
 
 /**
- * Which run mode configured this listener. `letta server` and the in-app
- * /listen command are distinct configured listeners even when they share a
- * project and display name (they were previously separated by surface
- * prefix); the namespace keeps their persisted identities apart.
+ * True when this process is a Desktop-spawned listener child that was NOT
+ * given an explicit identity (a Desktop build predating LET-10023).
+ *
+ * Such children must keep their legacy name-derived identities AND must
+ * not participate in identity minting or the single-run lock: Desktop
+ * legitimately runs multiple children that share a project and display
+ * name, so minting per-configuration identities here would collide its
+ * siblings on the lock — turning the old relay ping-pong into a local
+ * startup failure. Their lifecycle belongs to Desktop; new Desktop builds
+ * pass explicit per-slot identities and never hit this path.
  */
-export type ListenerIdentityNamespace = "server" | "listen";
+export function isLegacyDesktopSpawn(): boolean {
+  if (process.env.LETTA_DESKTOP_MODE !== "1") {
+    return false;
+  }
+  const explicit = process.env[LISTENER_INSTANCE_ID_ENV];
+  return !(explicit && isValidListenerInstanceId(explicit));
+}
+
+function identityFilePath(
+  identityDir: string,
+  namespace: ListenerIdentityNamespace,
+  connectionName: string,
+  workingDirectory: string,
+): string {
+  const digest = createHash("sha256")
+    .update(`${workingDirectory}\n${namespace}\n${connectionName}`)
+    .digest("hex")
+    .slice(0, 24);
+  return path.join(identityDir, `${digest}.json`);
+}
+
+function parseIdentityFile(raw: string): string | null {
+  try {
+    const parsed = JSON.parse(raw) as { listenerInstanceId?: unknown };
+    return typeof parsed.listenerInstanceId === "string" &&
+      isValidListenerInstanceId(parsed.listenerInstanceId)
+      ? parsed.listenerInstanceId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Atomic get-or-create of the persisted identity for one configuration
+ * key. Publication is O_EXCL candidate + hard link: exactly one racer's
+ * mint lands; everyone else reads the winner.
+ */
+async function getOrCreatePersistedIdentity(
+  identityPath: string,
+  connectionName: string,
+  namespace: ListenerIdentityNamespace,
+  workingDirectory: string,
+): Promise<ResolvedListenerIdentity> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const existing = parseIdentityFile(await readFile(identityPath, "utf-8"));
+      if (existing) {
+        return { listenerInstanceId: existing, source: "persisted" };
+      }
+      // Corrupt file: remove and re-mint. Worst case a concurrent reader
+      // re-mints too and the publish race picks one winner.
+      await rm(identityPath, { force: true }).catch(() => {});
+    } catch {
+      // Missing — mint below.
+    }
+
+    const minted = `${MANUAL_INSTANCE_ID_PREFIX}-${randomUUID()}`;
+    const candidatePath = `${identityPath}.candidate-${randomUUID()}`;
+    try {
+      await mkdir(path.dirname(identityPath), { recursive: true });
+      await writeFile(
+        candidatePath,
+        JSON.stringify({
+          listenerInstanceId: minted,
+          namespace,
+          connectionName,
+          workingDirectory,
+          mintedAt: Date.now(),
+        }),
+        { flag: "wx" },
+      );
+      await link(candidatePath, identityPath);
+      return { listenerInstanceId: minted, source: "minted" };
+    } catch {
+      // Lost the publish race (EEXIST) or fs trouble — loop and re-read.
+    } finally {
+      await rm(candidatePath, { force: true }).catch(() => {});
+    }
+  }
+
+  // Persistent store unusable: fall back to a session-scoped identity so
+  // the listener still runs. It gets a fresh relay row per run (old rows
+  // age out via lastSeenAt) — degraded but never colliding.
+  return {
+    listenerInstanceId: `${MANUAL_INSTANCE_ID_PREFIX}-${randomUUID()}`,
+    source: "minted",
+  };
+}
 
 /**
  * Resolve the stable identity for a listener session.
  *
  * Precedence:
  * 1. Spawner-provided env (owned children — Desktop slots).
- * 2. Identity previously persisted for this (project, namespace, env name).
- * 3. Freshly minted UUID identity, persisted for future runs.
- *
- * The persisted map is keyed by (namespace, environment name) so a project
- * that runs multiple named manual listeners keeps a distinct stable
- * identity per name, while renames mint a new identity (the old row ages
- * out server-side via lastSeenAt — same lifecycle as before, without the
- * name collision).
+ * 2. Identity persisted for this configuration key, created atomically on
+ *    first use.
  */
-export function resolveListenerIdentity(
+export async function resolveListenerIdentity(
   connectionName: string,
   options: {
     namespace?: ListenerIdentityNamespace;
     workingDirectory?: string;
+    identityDir?: string;
   } = {},
-): ResolvedListenerIdentity {
-  const namespace = options.namespace ?? "server";
-  const workingDirectory = options.workingDirectory ?? process.cwd();
-
+): Promise<ResolvedListenerIdentity> {
   const fromSpawner = process.env[LISTENER_INSTANCE_ID_ENV];
   if (fromSpawner && isValidListenerInstanceId(fromSpawner)) {
     return { listenerInstanceId: fromSpawner, source: "spawner" };
   }
 
-  const settingsKey = `${namespace}:${connectionName}`;
-  const persisted = settingsManager.getListenerInstanceId(
-    settingsKey,
+  const namespace = options.namespace ?? "server";
+  const workingDirectory = options.workingDirectory ?? process.cwd();
+  const identityDir = options.identityDir ?? DEFAULT_IDENTITY_DIR;
+  return getOrCreatePersistedIdentity(
+    identityFilePath(identityDir, namespace, connectionName, workingDirectory),
+    connectionName,
+    namespace,
     workingDirectory,
   );
-  if (persisted && isValidListenerInstanceId(persisted)) {
-    return { listenerInstanceId: persisted, source: "persisted" };
-  }
-
-  const minted = mintManualListenerInstanceId();
-  settingsManager.setListenerInstanceId(settingsKey, minted, workingDirectory);
-  return { listenerInstanceId: minted, source: "minted" };
 }

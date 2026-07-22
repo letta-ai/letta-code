@@ -32,7 +32,10 @@ import {
   MissingListenerApiKeyError,
   resolveListenerRegistrationOptions,
 } from "@/websocket/listener/auth";
-import { resolveListenerIdentity } from "@/websocket/listener/identity";
+import {
+  isLegacyDesktopSpawn,
+  resolveListenerIdentity,
+} from "@/websocket/listener/identity";
 import {
   claimListenerLock,
   releaseListenerLock,
@@ -438,33 +441,49 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
 
-    // Resolve this listener's stable identity (LET-10085): spawner-provided
-    // env, else the identity persisted for this (project, env name), else a
-    // freshly minted persisted UUID. The display name is NOT the identity —
-    // same-named listeners elsewhere coexist on distinct relay slots.
-    const identity = resolveListenerIdentity(connectionName, {
-      namespace: "server",
-    });
-    sessionLog.log(
-      `listenerInstanceId: ${identity.listenerInstanceId} (${identity.source})`,
-    );
+    // Desktop children from builds predating explicit identities keep the
+    // legacy name-derived identity and skip minting + the single-run lock:
+    // Desktop legitimately runs multiple same-named children whose
+    // lifecycle IT owns (LET-10023). Minting/locking here would collide
+    // those siblings locally — the exact failure this work removes.
+    const legacyDesktopSpawn = isLegacyDesktopSpawn();
 
-    // Single-run guard: the SAME configured listener must not run twice on
-    // this host. Fails visibly — never kills the incumbent.
-    const lock = await claimListenerLock(identity.listenerInstanceId);
-    if (lock.kind === "held") {
-      console.error(
-        `Listener "${connectionName}" is already running on this machine (pid ${lock.holder.pid}).`,
+    let explicitListenerInstanceId: string | undefined;
+    if (legacyDesktopSpawn) {
+      sessionLog.log(
+        "listenerInstanceId: legacy desktop spawn (name-derived; lock skipped)",
       );
-      console.error(
-        "Stop it first, or run a second listener under a different --env-name.",
+    } else {
+      // Resolve this listener's stable identity (LET-10085):
+      // spawner-provided env, else the identity persisted atomically for
+      // this configuration (project + env name). The identity VALUE is
+      // never name-derived — same-named listeners elsewhere coexist on
+      // distinct relay slots.
+      const identity = await resolveListenerIdentity(connectionName, {
+        namespace: "server",
+      });
+      explicitListenerInstanceId = identity.listenerInstanceId;
+      sessionLog.log(
+        `listenerInstanceId: ${identity.listenerInstanceId} (${identity.source})`,
       );
-      await flushListenerTelemetryEnd("listener_already_running");
-      return 1;
-    }
-    if (lock.kind === "unavailable") {
-      // Advisory guard — log and continue rather than bricking startup.
-      sessionLog.log(`[InstanceLock] unavailable: ${lock.reason}`);
+
+      // Single-run guard: the SAME configured listener must not run twice
+      // on this host. Fails visibly — never kills the incumbent.
+      const lock = await claimListenerLock(identity.listenerInstanceId);
+      if (lock.kind === "held") {
+        console.error(
+          `Listener "${connectionName}" is already running on this machine (pid ${lock.holder.pid}).`,
+        );
+        console.error(
+          "Stop it first, or run a second listener under a different --env-name.",
+        );
+        await flushListenerTelemetryEnd("listener_already_running");
+        return 1;
+      }
+      if (lock.kind === "unavailable") {
+        // Advisory guard — log and continue rather than bricking startup.
+        sessionLog.log(`[InstanceLock] unavailable: ${lock.reason}`);
+      }
     }
 
     const startupMode = await resolveListenerStartupMode(channelNames);
@@ -541,7 +560,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       registerOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
-        { listenerInstanceId: identity.listenerInstanceId },
+        { listenerInstanceId: explicitListenerInstanceId },
       );
     } catch (authErr) {
       if (authErr instanceof MissingListenerApiKeyError) {
@@ -610,7 +629,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
-        { listenerInstanceId: identity.listenerInstanceId },
+        { listenerInstanceId: explicitListenerInstanceId },
       );
       const result = await registerWithCloudRetry(nextRegisterOptions, {
         maxDurationMs: Infinity,

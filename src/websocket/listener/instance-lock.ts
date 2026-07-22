@@ -14,9 +14,16 @@
  * Acquisition is atomic via O_EXCL create + hard-link publication (the
  * same CAS shape as remote-settings-lock.ts): the lock file appears fully
  * initialized or not at all, so two simultaneous starters cannot both
- * conclude "unlocked". Stale locks from dead pids are reclaimed; liveness
- * verification failures are treated as "held" (fail safe — never assume a
- * process is gone because we could not check).
+ * conclude "unlocked".
+ *
+ * Stale-lock recovery uses a RECLAIM CLAIM (the reference protocol's
+ * guard): before removing a dead holder's lock file, a claimant must
+ * atomically publish a claim keyed to that exact stale record, then
+ * re-verify the lock file still contains it. Without the claim, two
+ * racers that both observed the stale record could interleave as
+ * A-removes/A-publishes-fresh/B-removes-A's-FRESH-lock — the TOCTOU this
+ * closes. A crashed reclaimer degrades to "unavailable" (advisory), never
+ * to a false acquisition.
  */
 
 import { createHash, randomUUID } from "node:crypto";
@@ -30,12 +37,18 @@ export interface ListenerLockRecord {
   pid: number;
   listenerInstanceId: string;
   acquiredAt: number;
+  /** Random per-acquisition nonce: distinguishes lock generations even for one pid. */
+  lockNonce: string;
 }
 
 export type ClaimListenerLockResult =
   | { kind: "acquired"; lockPath: string }
   | { kind: "held"; holder: ListenerLockRecord }
   | { kind: "unavailable"; reason: string };
+
+export interface ListenerLockDeps {
+  isPidAlive: (pid: number) => boolean;
+}
 
 let activeLockPath: string | null = null;
 
@@ -48,7 +61,7 @@ function hasErrorCode(error: unknown, code: string): boolean {
   );
 }
 
-function isPidAlive(pid: number): boolean {
+function defaultIsPidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -58,6 +71,8 @@ function isPidAlive(pid: number): boolean {
     return !hasErrorCode(error, "ESRCH");
   }
 }
+
+const DEFAULT_DEPS: ListenerLockDeps = { isPidAlive: defaultIsPidAlive };
 
 export function getListenerLockPath(
   listenerInstanceId: string,
@@ -85,6 +100,7 @@ function parseLockRecord(raw: string): ListenerLockRecord | null {
       pid: parsed.pid,
       listenerInstanceId: parsed.listenerInstanceId,
       acquiredAt: typeof parsed.acquiredAt === "number" ? parsed.acquiredAt : 0,
+      lockNonce: typeof parsed.lockNonce === "string" ? parsed.lockNonce : "",
     };
   } catch {
     return null;
@@ -92,20 +108,21 @@ function parseLockRecord(raw: string): ListenerLockRecord | null {
 }
 
 /**
- * Atomically publish an initialized lock file: write a unique candidate,
- * hard-link it to the lock path (fails EEXIST if held), remove candidate.
+ * Atomically publish a fully-initialized file: write a unique candidate,
+ * hard-link it to the target (fails EEXIST when the target exists), remove
+ * the candidate.
  */
-async function publishLock(
-  lockPath: string,
-  record: ListenerLockRecord,
+async function publishFile(
+  targetPath: string,
+  contents: string,
 ): Promise<"ok" | "exists" | "error"> {
   const candidatePath = path.join(
-    path.dirname(lockPath),
+    path.dirname(targetPath),
     `.candidate-${randomUUID()}`,
   );
   try {
-    await writeFile(candidatePath, JSON.stringify(record), { flag: "wx" });
-    await link(candidatePath, lockPath);
+    await writeFile(candidatePath, contents, { flag: "wx" });
+    await link(candidatePath, targetPath);
     return "ok";
   } catch (error) {
     return hasErrorCode(error, "EEXIST") ? "exists" : "error";
@@ -115,24 +132,95 @@ async function publishLock(
 }
 
 /**
+ * Remove a stale lock under a reclaim claim keyed to the exact stale
+ * content. Returns:
+ * - "reclaimed": the stale lock was removed by us; caller may re-attempt
+ *   the publish.
+ * - "changed": the lock no longer contains the stale record (someone else
+ *   already reclaimed and/or republished); caller must re-evaluate.
+ * - "contended"/"unavailable": another claimant owns the reclaim, or the
+ *   claim state cannot be established safely.
+ */
+async function reclaimStaleLock(
+  lockPath: string,
+  staleRaw: string,
+  deps: ListenerLockDeps,
+): Promise<"reclaimed" | "changed" | "contended" | "unavailable"> {
+  const claimPath = `${lockPath}.reclaim-${createHash("sha256")
+    .update(staleRaw)
+    .digest("hex")
+    .slice(0, 16)}`;
+  const published = await publishFile(
+    claimPath,
+    JSON.stringify({ pid: process.pid }),
+  );
+  if (published === "exists") {
+    let claimOwnerPid: number | null = null;
+    try {
+      const parsed = JSON.parse(await readFile(claimPath, "utf-8")) as {
+        pid?: unknown;
+      };
+      claimOwnerPid = typeof parsed.pid === "number" ? parsed.pid : null;
+    } catch {
+      return "unavailable";
+    }
+    if (claimOwnerPid !== null && deps.isPidAlive(claimOwnerPid)) {
+      // A live claimant is mid-reclaim; it will publish a fresh lock.
+      return "contended";
+    }
+    // Crashed reclaimer. Taking over its claim safely needs the reference
+    // protocol's depth chain; for an advisory single-run guard, degrade
+    // instead of risking a double-remove.
+    return "unavailable";
+  }
+  if (published === "error") {
+    return "unavailable";
+  }
+
+  try {
+    // We own the claim for THIS stale generation. Only remove the lock if
+    // it still contains exactly that generation — a fresh lock published
+    // meanwhile stays untouched.
+    let currentRaw: string;
+    try {
+      currentRaw = await readFile(lockPath, "utf-8");
+    } catch {
+      return "changed";
+    }
+    if (currentRaw !== staleRaw) {
+      return "changed";
+    }
+    await rm(lockPath, { force: true });
+    return "reclaimed";
+  } catch {
+    return "unavailable";
+  } finally {
+    await rm(claimPath, { force: true }).catch(() => {});
+  }
+}
+
+/**
  * Try to claim the single-run lock for a listener instance.
  *
  * - "acquired": this session owns the instance; release on shutdown.
  * - "held": the exact same listener is already running — the caller must
  *   fail visibly (print holder pid) and exit. Nothing is killed.
- * - "unavailable": the lock state could not be established (fs errors).
- *   Callers proceed WITHOUT the lock (advisory guard; a broken lock dir
- *   must not brick listener startup) but should log the reason.
+ * - "unavailable": the lock state could not be established (fs errors,
+ *   crashed reclaimer). Callers proceed WITHOUT the lock (advisory guard;
+ *   a broken lock dir must not brick listener startup) but should log.
  */
 export async function claimListenerLock(
   listenerInstanceId: string,
   lockDir: string = LOCK_DIR,
+  deps: Partial<ListenerLockDeps> = {},
 ): Promise<ClaimListenerLockResult> {
+  const resolvedDeps: ListenerLockDeps = { ...DEFAULT_DEPS, ...deps };
   const lockPath = getListenerLockPath(listenerInstanceId, lockDir);
   const record: ListenerLockRecord = {
     pid: process.pid,
     listenerInstanceId,
     acquiredAt: Date.now(),
+    lockNonce: randomUUID(),
   };
 
   try {
@@ -146,8 +234,8 @@ export async function claimListenerLock(
     };
   }
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const published = await publishLock(lockPath, record);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const published = await publishFile(lockPath, JSON.stringify(record));
     if (published === "ok") {
       activeLockPath = lockPath;
       return { kind: "acquired", lockPath };
@@ -156,30 +244,38 @@ export async function claimListenerLock(
       return { kind: "unavailable", reason: "lock file write failed" };
     }
 
-    // Held: read the holder and decide stale vs live.
+    // Held: read the holder and decide live vs stale.
     let raw: string;
     try {
       raw = await readFile(lockPath, "utf-8");
     } catch {
-      // Vanished between EEXIST and read — retry the claim once.
+      // Vanished between EEXIST and read — retry the publish.
       continue;
     }
     const holder = parseLockRecord(raw);
-    if (holder && isPidAlive(holder.pid)) {
+    if (holder && resolvedDeps.isPidAlive(holder.pid)) {
       // Any live holder means "held" — including our own pid: a restarted
-      // process always has a new pid, so a same-pid holder is either this
-      // process double-starting the same listener (must fail visibly) or a
-      // concurrent claim that already won.
+      // process always has a new pid, so a same-pid holder is this process
+      // double-starting the same listener (must fail visibly).
       return { kind: "held", holder };
     }
-    // Dead pid or corrupt record: reclaim by removing and retrying the
-    // atomic publish. The remove-then-publish window is closed by the
-    // second publish attempt failing EEXIST if someone else won it.
-    try {
-      await rm(lockPath, { force: true });
-    } catch {
-      // Another reclaimer got there first — loop and re-attempt.
+
+    // Dead pid or corrupt record: reclaim under a content-keyed claim so a
+    // concurrent claimant can never remove OUR freshly published lock.
+    const reclaim = await reclaimStaleLock(lockPath, raw, resolvedDeps);
+    if (reclaim === "contended") {
+      // A live claimant is republishing; on re-attempt we will observe its
+      // fresh lock and report "held".
+      continue;
     }
+    if (reclaim === "unavailable") {
+      return {
+        kind: "unavailable",
+        reason: "stale lock reclaim could not be completed safely",
+      };
+    }
+    // "reclaimed" or "changed": loop to re-attempt the atomic publish /
+    // re-evaluate the current holder.
   }
 
   return { kind: "unavailable", reason: "lock contention did not settle" };
