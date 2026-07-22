@@ -29,6 +29,7 @@ import {
   getPersonalityOption,
   normalizeComparableContent,
   PERSONALITY_OPTIONS,
+  type PersonalityEnvironment,
   type PersonalityId,
   type PersonalityOption,
   serializeFrontmatter,
@@ -104,10 +105,14 @@ export async function buildCreateAgentOptionsForPersonality(params: {
   description?: string;
   model?: string;
   tags?: string[];
+  environment?: PersonalityEnvironment;
 }): Promise<CreateAgentOptions> {
   const { personalityId, name, description, model, tags } = params;
   const personality = getPersonalityOption(personalityId);
   const defaultMemoryBlocks = await getDefaultMemoryBlocks();
+  const environment =
+    params.environment ??
+    (getBackend().capabilities.localMemfs ? "local" : "cloud");
 
   return {
     name: name ?? personality.label,
@@ -118,6 +123,7 @@ export async function buildCreateAgentOptionsForPersonality(params: {
     memoryBlocks: buildPersonalityMemoryBlocks(
       personalityId,
       defaultMemoryBlocks,
+      environment,
     ),
   };
 }
@@ -300,9 +306,12 @@ export async function applyPersonalityToMemory(
   params: ApplyPersonalityToMemoryParams,
 ): Promise<ApplyPersonalityToMemoryResult> {
   const personality = getPersonalityOption(params.personalityId);
-  const blockDefinitions = getPersonalityBlockDefinitions(params.personalityId);
-
   const isLocalMemfs = getBackend().capabilities.localMemfs;
+  const blockDefinitions = getPersonalityBlockDefinitions(
+    params.personalityId,
+    isLocalMemfs ? "local" : "cloud",
+  );
+
   const repoDir = isLocalMemfs
     ? getScopedMemoryFilesystemRoot(params.agentId)
     : getMemoryRepoDir(params.agentId);
