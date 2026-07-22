@@ -13,6 +13,7 @@ import {
   getChannelSecret,
   setChannelSecret,
 } from "./credential-store";
+import { normalizeDiscordAllowBotsMode } from "./discord/bot-policy";
 import { normalizeSlackAllowBotsMode } from "./slack/bot-policy";
 import type {
   ChannelAccount,
@@ -338,6 +339,9 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     );
     (next as DiscordChannelAccount).defaultPermissionMode =
       (migrated as ChannelDefaultPermissionMode | null) ?? "standard";
+    (next as DiscordChannelAccount).allowBots = normalizeDiscordAllowBotsMode(
+      (next as DiscordChannelAccount).allowBots,
+    );
 
     // Compatibility migration: existing accounts created before this field was
     // persisted auto-threaded on mentions by default. Keep that behavior for
@@ -414,6 +418,7 @@ function makeDefaultLegacyAccount(
         : undefined,
       autoThreadOnMention: config.autoThreadOnMention ?? true,
       threadPolicyByChannel: config.threadPolicyByChannel,
+      allowBots: config.allowBots ?? false,
       agentId: null,
       defaultPermissionMode: config.defaultPermissionMode ?? "standard",
       createdAt: now,
