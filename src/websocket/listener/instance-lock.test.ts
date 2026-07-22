@@ -100,33 +100,54 @@ describe("claimListenerLock", () => {
     expect(result.kind).toBe("acquired");
   });
 
-  test("TOCTOU regression: a claimant that observed a stale record cannot remove a FRESH lock republished meanwhile", async () => {
-    // Sequence under test: A and B both read stale lock S. A reclaims S
-    // and publishes fresh lock A'. B then attempts its reclaim of S — the
-    // content-keyed claim re-check must see the lock no longer contains S
-    // and leave A' untouched, reporting "held".
-    writeLock("li-toctou", { pid: 999999, lockNonce: "stale-gen" });
-
-    // Claimant A (this process) reclaims and acquires.
-    const a = await claimListenerLock("li-toctou", lockDir, {
-      isPidAlive: (pid) => pid === process.pid,
+  test("TOCTOU regression: a claimant that captured stale contents cannot remove a FRESH lock republished mid-flight", async () => {
+    // Recreates the actual interleaving: B reads stale lock S and decides
+    // it is dead; BEFORE B's reclaim proceeds, A reclaims S and publishes
+    // fresh lock A'. B's content-keyed claim re-check must then observe
+    // the lock no longer contains S, leave A' untouched, and settle as
+    // "held" on the fresh holder. The pre-fix implementation removed the
+    // lock path unconditionally here and would delete A'.
+    const lockPath = writeLock("li-toctou", {
+      pid: 999999,
+      lockNonce: "stale-gen",
     });
-    expect(a.kind).toBe("acquired");
-    const freshRaw = readFileSync(
-      getListenerLockPath("li-toctou", lockDir),
-      "utf-8",
-    );
+    const staleRaw = readFileSync(lockPath, "utf-8");
 
-    // Claimant B raced: it also observed the stale record before A's
-    // reclaim. Simulate by resetting module state and running a claim in
-    // which the CURRENT holder (this live process) is alive — B must
-    // report "held" and must NOT delete A's fresh lock.
-    __resetListenerLockForTests();
-    const b = await claimListenerLock("li-toctou", lockDir);
+    // A': the fresh lock A publishes after winning its reclaim. A live
+    // foreign-ish pid (our own, injected as alive) with a new nonce.
+    const freshRecord = JSON.stringify({
+      pid: process.pid,
+      listenerInstanceId: "li-toctou",
+      acquiredAt: Date.now(),
+      lockNonce: "fresh-gen-A",
+    });
+
+    // Drive claimant B. The liveness probe doubles as the interleaving
+    // hook: the FIRST probe is B evaluating stale holder 999999 (dead) —
+    // at that exact point, before B's reclaim runs, A swaps in its fresh
+    // lock. Subsequent probes (fresh holder = our pid) report alive.
+    let staleProbes = 0;
+    const b = await claimListenerLock("li-toctou", lockDir, {
+      isPidAlive: (pid) => {
+        if (pid === 999999) {
+          staleProbes += 1;
+          if (staleProbes === 1) {
+            // A wins the race here: reclaim S, publish A'.
+            writeFileSync(lockPath, freshRecord);
+          }
+          return false;
+        }
+        return true;
+      },
+    });
+
+    // B captured S, attempted the reclaim, and the claim guard detected
+    // the generation change: A's fresh lock survives untouched.
     expect(b.kind).toBe("held");
-    expect(
-      readFileSync(getListenerLockPath("li-toctou", lockDir), "utf-8"),
-    ).toBe(freshRaw);
+    if (b.kind !== "held") throw new Error("unreachable");
+    expect(b.holder.lockNonce).toBe("fresh-gen-A");
+    expect(readFileSync(lockPath, "utf-8")).toBe(freshRecord);
+    expect(staleRaw).not.toBe(freshRecord);
   });
 
   test("stale reclaim is content-keyed: two generations of dead locks reclaim independently", async () => {

@@ -132,9 +132,67 @@ function parseIdentityFile(raw: string): string | null {
 }
 
 /**
+ * Remove a corrupt identity file under a content-keyed repair claim.
+ * The same generation guard as the stale-lock reclaim: publish a claim
+ * keyed to the exact corrupt content, then re-verify the file still holds
+ * that content before removing. Without it, two racers that both read the
+ * corrupt file could interleave as A-removes/A-publishes-valid/
+ * B-removes-A's-VALID-identity — splitting one configuration across two
+ * identities (and therefore two different locks).
+ *
+ * Returns true when the corrupt generation is gone (removed by us or
+ * already replaced) and the caller may retry; false when repair could not
+ * proceed safely (contended claim) — the caller loops and re-reads.
+ */
+async function repairCorruptIdentity(
+  identityPath: string,
+  corruptRaw: string,
+): Promise<boolean> {
+  const claimPath = `${identityPath}.repair-${createHash("sha256")
+    .update(corruptRaw)
+    .digest("hex")
+    .slice(0, 16)}`;
+  const candidatePath = `${claimPath}.candidate-${randomUUID()}`;
+  let claimed = false;
+  try {
+    await writeFile(candidatePath, JSON.stringify({ pid: process.pid }), {
+      flag: "wx",
+    });
+    await link(candidatePath, claimPath);
+    claimed = true;
+  } catch {
+    // Another repairer owns this corrupt generation — let it finish.
+    return false;
+  } finally {
+    await rm(candidatePath, { force: true }).catch(() => {});
+  }
+
+  try {
+    let currentRaw: string;
+    try {
+      currentRaw = await readFile(identityPath, "utf-8");
+    } catch {
+      return true; // already gone
+    }
+    if (currentRaw !== corruptRaw) {
+      return true; // replaced (possibly by a valid identity) — re-read
+    }
+    await rm(identityPath, { force: true });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    if (claimed) {
+      await rm(claimPath, { force: true }).catch(() => {});
+    }
+  }
+}
+
+/**
  * Atomic get-or-create of the persisted identity for one configuration
  * key. Publication is O_EXCL candidate + hard link: exactly one racer's
- * mint lands; everyone else reads the winner.
+ * mint lands; everyone else reads the winner. Corrupt files are removed
+ * only under a content-keyed repair claim (see repairCorruptIdentity).
  */
 async function getOrCreatePersistedIdentity(
   identityPath: string,
@@ -143,16 +201,21 @@ async function getOrCreatePersistedIdentity(
   workingDirectory: string,
 ): Promise<ResolvedListenerIdentity> {
   for (let attempt = 0; attempt < 4; attempt++) {
+    let raw: string | null = null;
     try {
-      const existing = parseIdentityFile(await readFile(identityPath, "utf-8"));
+      raw = await readFile(identityPath, "utf-8");
+    } catch {
+      // Missing — mint below.
+    }
+    if (raw !== null) {
+      const existing = parseIdentityFile(raw);
       if (existing) {
         return { listenerInstanceId: existing, source: "persisted" };
       }
-      // Corrupt file: remove and re-mint. Worst case a concurrent reader
-      // re-mints too and the publish race picks one winner.
-      await rm(identityPath, { force: true }).catch(() => {});
-    } catch {
-      // Missing — mint below.
+      // Corrupt: repair under a claim, then loop to re-read (the repairer
+      // that beat us may have republished a valid identity).
+      await repairCorruptIdentity(identityPath, raw);
+      continue;
     }
 
     const minted = `${MANUAL_INSTANCE_ID_PREFIX}-${randomUUID()}`;

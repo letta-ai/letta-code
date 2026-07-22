@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -113,6 +120,53 @@ describe("resolveListenerIdentity", () => {
     process.env[LISTENER_INSTANCE_ID_ENV] = "bad value with spaces!";
     const identity = await resolve("host");
     expect(identity.source).toBe("minted");
+  });
+
+  test("recovers from a corrupt identity file", async () => {
+    const before = await resolve("corrupt-env");
+    // Locate and corrupt the identity file.
+    const files = readdirSync(identityDir).filter((f) => f.endsWith(".json"));
+    expect(files.length).toBe(1);
+    writeFileSync(join(identityDir, files[0] as string), "not json");
+
+    const after = await resolve("corrupt-env");
+    expect(after.source).toBe("minted");
+    expect(after.listenerInstanceId).not.toBe(before.listenerInstanceId);
+    // Stable again afterwards.
+    const again = await resolve("corrupt-env");
+    expect(again.listenerInstanceId).toBe(after.listenerInstanceId);
+  });
+
+  test("TOCTOU regression: a repairer that captured corrupt contents cannot remove a VALID identity republished mid-flight", async () => {
+    // Recreates the interleaving: A and B both read corrupt content C. A
+    // repairs C and publishes valid identity A'. B's repair claim for C
+    // must then observe the file no longer contains C and leave A'
+    // untouched — B converges on A' instead of splitting the
+    // configuration across two identities. Simulate B-loses-the-claim by
+    // pre-publishing the repair claim for C (as A would hold it), swapping
+    // in A's valid identity, and verifying B adopts it.
+    await resolve("toctou-env");
+    const files = readdirSync(identityDir).filter((f) => f.endsWith(".json"));
+    const identityPath = join(identityDir, files[0] as string);
+    const corruptRaw = "corrupt-generation";
+    writeFileSync(identityPath, corruptRaw);
+
+    // A holds the repair claim for corrupt generation C...
+    const claimPath = `${identityPath}.repair-${createHash("sha256")
+      .update(corruptRaw)
+      .digest("hex")
+      .slice(0, 16)}`;
+    writeFileSync(claimPath, JSON.stringify({ pid: process.pid }));
+    // ...and has already republished a valid identity A'.
+    const validA = JSON.stringify({ listenerInstanceId: "li-valid-from-A" });
+    writeFileSync(identityPath, validA);
+
+    // B resolves: its repair attempt for C fails (claim held), it loops,
+    // re-reads, and adopts A's valid identity — never deleting it.
+    const b = await resolve("toctou-env");
+    expect(b.source).toBe("persisted");
+    expect(b.listenerInstanceId).toBe("li-valid-from-A");
+    expect(readFileSync(identityPath, "utf-8")).toBe(validA);
   });
 });
 
