@@ -2517,8 +2517,21 @@
       "id": "glm-5.2",
       "handle": "zai/glm-5.2",
       "label": "GLM-5.2",
-      "description": "zAI's latest reasoning and coding model with 1M context",
+      "description": "zAI's latest reasoning and coding model with 200K context",
       "isFeatured": true,
+      "free": true,
+      "updateArgs": {
+        "context_window": 200000,
+        "max_output_tokens": 131072,
+        "parallel_tool_calls": true
+      }
+    },
+    {
+      "id": "glm-5.2-1m",
+      "handle": "zai/glm-5.2",
+      "label": "GLM-5.2 1M",
+      "description": "zAI's latest reasoning and coding model with 1M context",
+      "isFeatured": false,
       "free": true,
       "updateArgs": {
         "context_window": 1000000,
