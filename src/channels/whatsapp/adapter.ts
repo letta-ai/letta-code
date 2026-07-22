@@ -38,6 +38,9 @@ const MAX_MENTION_PATTERN_LENGTH = 256;
 const MENTION_MATCH_TEXT_MAX_LENGTH = 2000;
 const RAPID_DISCONNECT_LIMIT = 5;
 const RAPID_DISCONNECT_WINDOW_MS = 60_000;
+// A brief open inside a reconnect loop is not stable enough to forgive
+// prior disconnects. Clear the loop window only after this much uptime.
+const STABLE_OPEN_RESET_MS = RAPID_DISCONNECT_WINDOW_MS;
 
 type EventEmitterLike = {
   on?: (event: string, handler: (payload: unknown) => void) => void;
@@ -198,6 +201,7 @@ export function createWhatsAppAdapter(
   let stopping = false;
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let stableOpenTimer: ReturnType<typeof setTimeout> | null = null;
   let selfPhoneJid: string | null = null;
   let selfLid: string | null = null;
   let connectedAtMs = 0;
@@ -235,7 +239,14 @@ export function createWhatsAppAdapter(
     );
   }
 
+  function clearStableOpenTimer(): void {
+    if (!stableOpenTimer) return;
+    clearTimeout(stableOpenTimer);
+    stableOpenTimer = null;
+  }
+
   function clearActiveSocket(closeWebSocket: boolean): void {
+    clearStableOpenTimer();
     const currentSock = sock;
     const releaseLease = releaseSocketLease;
     sock = null;
@@ -254,6 +265,18 @@ export function createWhatsAppAdapter(
     if (!reconnectTimer) return;
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
+  }
+
+  function scheduleStableOpenReset(generation: number): void {
+    clearStableOpenTimer();
+    const timer = setTimeout(() => {
+      if (stableOpenTimer !== timer) return;
+      stableOpenTimer = null;
+      if (generation !== connectionGeneration || stopping || !running) return;
+      reconnectAttempts = 0;
+      recentDisconnects = [];
+    }, STABLE_OPEN_RESET_MS);
+    stableOpenTimer = timer;
   }
 
   async function ensureRuntimeHelpers(): Promise<void> {
@@ -301,8 +324,7 @@ export function createWhatsAppAdapter(
       onConnectionUpdate(update) {
         if (generation !== connectionGeneration) return;
         if (update.connection === "open") {
-          reconnectAttempts = 0;
-          recentDisconnects = [];
+          scheduleStableOpenReset(generation);
           selfPhoneJid = stripDeviceSuffix(sock?.user?.id ?? null) || null;
           selfLid = stripDeviceSuffix(sock?.user?.lid ?? null) || null;
           const mode = account.selfChatMode
@@ -337,7 +359,7 @@ export function createWhatsAppAdapter(
           // that doesn't trigger the explicit conflict-disconnect path).
           const now = Date.now();
           recentDisconnects = recentDisconnects.filter(
-            (ts) => now - ts < RAPID_DISCONNECT_WINDOW_MS,
+            (ts) => now - ts <= RAPID_DISCONNECT_WINDOW_MS,
           );
           recentDisconnects.push(now);
           if (recentDisconnects.length > RAPID_DISCONNECT_LIMIT) {

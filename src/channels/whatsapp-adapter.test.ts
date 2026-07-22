@@ -79,17 +79,40 @@ describe("WhatsApp adapter helpers", () => {
 });
 
 describe("WhatsApp reconnect guardrail", () => {
+  const STABLE_OPEN_RESET_MS = 60_000;
+
   type CapturedTimer = {
     callback: () => void;
     cleared: boolean;
     delay?: number;
+    dueAt: number;
+    fired: boolean;
     unref: () => void;
   };
 
   function captureTimers() {
     const originalSetTimeout = globalThis.setTimeout;
     const originalClearTimeout = globalThis.clearTimeout;
+    const originalDateNow = Date.now;
     const timers: CapturedTimer[] = [];
+    let now = 0;
+
+    function nextPendingTimer(target: number): CapturedTimer | undefined {
+      let next: CapturedTimer | undefined;
+      for (const timer of timers) {
+        if (timer.cleared || timer.fired || timer.dueAt > target) continue;
+        if (!next || timer.dueAt < next.dueAt) next = timer;
+      }
+      return next;
+    }
+
+    function runTimer(timer: CapturedTimer): void {
+      timer.fired = true;
+      now = timer.dueAt;
+      timer.callback();
+    }
+
+    Date.now = () => now;
 
     globalThis.setTimeout = ((
       handler: unknown,
@@ -104,6 +127,8 @@ describe("WhatsApp reconnect guardrail", () => {
         },
         cleared: false,
         delay,
+        dueAt: now + Math.max(0, Number(delay ?? 0)),
+        fired: false,
         unref: () => {},
       };
       timers.push(timer);
@@ -119,40 +144,73 @@ describe("WhatsApp reconnect guardrail", () => {
 
     return {
       timers,
+      pendingTimers(delay?: number) {
+        return timers.filter(
+          (timer) =>
+            !timer.cleared &&
+            !timer.fired &&
+            (delay === undefined || timer.delay === delay),
+        );
+      },
+      advanceBy(ms: number) {
+        const target = now + ms;
+        for (;;) {
+          const timer = nextPendingTimer(target);
+          if (!timer) break;
+          runTimer(timer);
+        }
+        now = target;
+      },
+      advanceToNextTimer() {
+        const timer = nextPendingTimer(Number.POSITIVE_INFINITY);
+        if (!timer) throw new Error("expected pending timer");
+        runTimer(timer);
+      },
       runUnclearedTimers() {
-        for (const timer of timers) {
-          if (!timer.cleared) {
-            timer.callback();
-          }
+        for (;;) {
+          const timer = nextPendingTimer(Number.POSITIVE_INFINITY);
+          if (!timer) break;
+          runTimer(timer);
         }
       },
       restore() {
         globalThis.setTimeout = originalSetTimeout;
         globalThis.clearTimeout = originalClearTimeout;
+        Date.now = originalDateNow;
       },
     };
   }
 
-  function requireCapturedTimer(timers: CapturedTimer[]): CapturedTimer {
-    const timer = timers[0];
+  function requirePendingTimer(
+    timers: ReturnType<typeof captureTimers>,
+    delay?: number,
+  ): CapturedTimer {
+    const timer = timers.pendingTimers(delay)[0];
     if (!timer) {
-      throw new Error("expected reconnect timer");
+      throw new Error(
+        `expected pending timer${delay === undefined ? "" : ` with delay ${delay}`}`,
+      );
     }
     return timer;
   }
 
   function mockWhatsAppSession() {
-    let capturedUpdate: ((update: Record<string, unknown>) => void) | null =
-      null;
+    type ConnectionUpdate = (update: Record<string, unknown>) => void;
+
+    const capturedUpdates: Array<ConnectionUpdate | null> = [];
     let createSocketCalls = 0;
     let releaseCalls = 0;
+
+    function latestUpdate(): ConnectionUpdate | null {
+      return capturedUpdates[capturedUpdates.length - 1] ?? null;
+    }
 
     mock.module("@/channels/whatsapp/session", () => ({
       createWhatsAppSocket: (params: {
         onConnectionUpdate?: (update: Record<string, unknown>) => void;
       }) => {
         createSocketCalls += 1;
-        capturedUpdate = params.onConnectionUpdate ?? null;
+        capturedUpdates.push(params.onConnectionUpdate ?? null);
         return Promise.resolve({
           sock: {
             ev: { on: () => {} },
@@ -182,8 +240,14 @@ describe("WhatsApp reconnect guardrail", () => {
     }));
 
     return {
-      fireClose(message = "timed out") {
-        capturedUpdate?.({
+      fireOpen(generationIndex = capturedUpdates.length - 1) {
+        capturedUpdates[generationIndex]?.({ connection: "open" });
+      },
+      fireClose(
+        message = "timed out",
+        generationIndex = capturedUpdates.length - 1,
+      ) {
+        capturedUpdates[generationIndex]?.({
           connection: "close",
           lastDisconnect: { error: { message } },
         });
@@ -195,7 +259,7 @@ describe("WhatsApp reconnect guardrail", () => {
         return releaseCalls;
       },
       get capturedUpdate() {
-        return capturedUpdate;
+        return latestUpdate();
       },
     };
   }
@@ -221,6 +285,13 @@ describe("WhatsApp reconnect guardrail", () => {
     await Promise.resolve();
   }
 
+  async function advanceToReconnectedSocket(
+    timers: ReturnType<typeof captureTimers>,
+  ) {
+    timers.advanceToNextTimer();
+    await flushReconnectMicrotasks();
+  }
+
   test("clears pending reconnect timer when rapid disconnect guardrail trips", async () => {
     const accountId = "guardrail-test";
     clearWhatsAppConnectionState(accountId);
@@ -241,7 +312,7 @@ describe("WhatsApp reconnect guardrail", () => {
       }
       expect(adapter.isRunning()).toBe(true);
       expect(timers.timers).toHaveLength(1);
-      const reconnectTimer = requireCapturedTimer(timers.timers);
+      const reconnectTimer = requirePendingTimer(timers);
       expect(reconnectTimer.cleared).toBe(false);
 
       // 6th rapid disconnect exceeds the limit → guardrail trips and owns
@@ -266,7 +337,88 @@ describe("WhatsApp reconnect guardrail", () => {
     }
   });
 
-  test("stop cancels its pending reconnect timer and prevents stale reconnects", async () => {
+  test("counts rapid disconnects across distinct socket generations", async () => {
+    const accountId = "guardrail-generations-test";
+    clearWhatsAppConnectionState(accountId);
+    const timers = captureTimers();
+
+    try {
+      const session = mockWhatsAppSession();
+      const adapter = createGuardrailAdapter(accountId);
+
+      await adapter.start();
+      expect(session.createSocketCalls).toBe(1);
+
+      for (let i = 0; i < 5; i++) {
+        session.fireOpen();
+        const stableTimer = requirePendingTimer(timers, STABLE_OPEN_RESET_MS);
+        session.fireClose(`loop ${i}`);
+        expect(stableTimer.cleared).toBe(true);
+        expect(adapter.isRunning()).toBe(true);
+
+        await advanceToReconnectedSocket(timers);
+        expect(session.createSocketCalls).toBe(i + 2);
+      }
+
+      session.fireOpen();
+      const terminalStableTimer = requirePendingTimer(
+        timers,
+        STABLE_OPEN_RESET_MS,
+      );
+      session.fireClose("loop terminal");
+
+      expect(adapter.isRunning()).toBe(false);
+      expect(terminalStableTimer.cleared).toBe(true);
+      expect(timers.pendingTimers()).toHaveLength(0);
+
+      timers.runUnclearedTimers();
+      await flushReconnectMicrotasks();
+      expect(session.createSocketCalls).toBe(6);
+      expect(terminalStableTimer.fired).toBe(false);
+
+      const state = getWhatsAppConnectionState(accountId);
+      expect(state.status).toBe("error");
+      expect(state.lastError).toContain("disconnected 6 times in 60s");
+    } finally {
+      timers.restore();
+      clearWhatsAppConnectionState(accountId);
+    }
+  });
+
+  test("stable open resets disconnect window and reconnect attempts", async () => {
+    const accountId = "guardrail-stable-reset-test";
+    clearWhatsAppConnectionState(accountId);
+    const timers = captureTimers();
+
+    try {
+      const session = mockWhatsAppSession();
+      const adapter = createGuardrailAdapter(accountId);
+
+      await adapter.start();
+
+      for (let i = 0; i < 5; i++) {
+        session.fireOpen();
+        session.fireClose(`loop ${i}`);
+        await advanceToReconnectedSocket(timers);
+      }
+      expect(session.createSocketCalls).toBe(6);
+
+      session.fireOpen();
+      const stableTimer = requirePendingTimer(timers, STABLE_OPEN_RESET_MS);
+      timers.advanceBy(STABLE_OPEN_RESET_MS);
+      expect(stableTimer.fired).toBe(true);
+
+      session.fireClose("post-stable close");
+
+      expect(adapter.isRunning()).toBe(true);
+      expect(requirePendingTimer(timers).delay).toBe(2000);
+    } finally {
+      timers.restore();
+      clearWhatsAppConnectionState(accountId);
+    }
+  });
+
+  test("stop cancels pending reconnect and stability timers", async () => {
     const accountId = "guardrail-stop-test";
     clearWhatsAppConnectionState(accountId);
     const timers = captureTimers();
@@ -278,9 +430,11 @@ describe("WhatsApp reconnect guardrail", () => {
       await adapter.start();
       expect(session.createSocketCalls).toBe(1);
 
+      session.fireOpen();
+      const stableTimer = requirePendingTimer(timers, STABLE_OPEN_RESET_MS);
       session.fireClose();
-      expect(timers.timers).toHaveLength(1);
-      const reconnectTimer = requireCapturedTimer(timers.timers);
+      expect(stableTimer.cleared).toBe(true);
+      const reconnectTimer = requirePendingTimer(timers);
       expect(reconnectTimer.cleared).toBe(false);
 
       await adapter.stop();
@@ -291,6 +445,8 @@ describe("WhatsApp reconnect guardrail", () => {
       timers.runUnclearedTimers();
       await flushReconnectMicrotasks();
       expect(session.createSocketCalls).toBe(1);
+      expect(stableTimer.fired).toBe(false);
+      expect(reconnectTimer.fired).toBe(false);
       expect(session.releaseCalls).toBe(1);
     } finally {
       timers.restore();
