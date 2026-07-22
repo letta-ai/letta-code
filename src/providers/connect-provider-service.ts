@@ -116,7 +116,7 @@ function serializeFields(
     label: field.label,
     ...(field.placeholder ? { placeholder: field.placeholder } : {}),
     ...(field.secret !== undefined ? { secret: field.secret } : {}),
-    required: true,
+    required: field.required !== false,
   }));
 }
 
@@ -201,7 +201,7 @@ export function resolveProviderConnectionFields(
     input.authMethodId,
   );
   const missingField = requiredFields.find(
-    (field) => !fieldValue(input.fields, field.key),
+    (field) => field.required !== false && !fieldValue(input.fields, field.key),
   );
   if (missingField) {
     throw new Error(`Missing ${missingField.label}.`);
@@ -209,7 +209,9 @@ export function resolveProviderConnectionFields(
 
   const apiKey =
     fieldValue(input.fields, "apiKey") ?? defaultProviderApiKey(provider);
-  const apiKeyRequired = requiredFields.some((field) => field.key === "apiKey");
+  const apiKeyRequired = requiredFields.some(
+    (field) => field.key === "apiKey" && field.required !== false,
+  );
   if (!apiKey && apiKeyRequired) {
     throw new Error(`Missing ${provider.displayName} API key.`);
   }
