@@ -11,6 +11,7 @@ import {
   deriveListenerInstanceId,
   type RegisterOptions,
 } from "@/websocket/listen-register";
+import { getSpawnerListenerInstanceId } from "@/websocket/listener/identity";
 import type { StartListenerOptions } from "@/websocket/listener/types";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
@@ -31,17 +32,7 @@ type ListenerAuthOptions = {
 };
 
 type ListenerRegistrationOptions = ListenerAuthOptions & {
-  /**
-   * Legacy identity surface, retained ONLY as the fallback discriminator
-   * for sessions that predate explicit identities (LET-10085). New sessions
-   * resolve identity via resolveListenerIdentity() and never hit this.
-   */
   surface?: "server" | "listen";
-  /**
-   * Explicit stable listener identity. When set, it is used verbatim as
-   * the relay `listenerInstanceId`; the display name plays no part.
-   */
-  listenerInstanceId?: string;
 };
 
 const defaultListenerOAuthDeps: ListenerOAuthDeps = {
@@ -269,11 +260,10 @@ export async function resolveListenerRegistrationOptions(
     ...auth,
     deviceId,
     connectionName,
-    // Explicit identity wins (LET-10085). The name-derived fallback exists
-    // only for callers that have not adopted explicit identities yet; it
-    // preserves their previous slot so upgrades don't strand server rows.
+    // A spawner-assigned identity (Desktop slots, LET-10085) wins; manual
+    // listeners keep their legacy name-derived identity unchanged.
     listenerInstanceId:
-      options.listenerInstanceId ??
+      getSpawnerListenerInstanceId() ??
       deriveListenerInstanceId(options.surface ?? "server", connectionName),
   };
 }

@@ -7,7 +7,6 @@
 export {
   __listenClientTestUtils,
   emitInterruptedStatusDelta,
-  hasListenerRuntime,
   isListenerActive,
   parseServerMessage,
   rejectPendingApprovalResolvers,

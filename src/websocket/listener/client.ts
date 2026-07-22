@@ -428,7 +428,6 @@ export {
 } from "./approval";
 export type { StartLocalChannelListenerOptions } from "./lifecycle";
 export {
-  hasListenerRuntime,
   isListenerActive,
   startListenerClient,
   startLocalChannelListener,

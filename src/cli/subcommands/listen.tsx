@@ -32,15 +32,6 @@ import {
   MissingListenerApiKeyError,
   resolveListenerRegistrationOptions,
 } from "@/websocket/listener/auth";
-import {
-  isLegacyDesktopSpawn,
-  resolveListenerIdentity,
-} from "@/websocket/listener/identity";
-import {
-  claimListenerLock,
-  type ListenerLockHandle,
-  releaseListenerLock,
-} from "@/websocket/listener/instance-lock";
 import { flushRemoteSettingsWrites } from "@/websocket/listener/remote-settings";
 
 type ListenerProcessAnchor = {
@@ -285,11 +276,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   // (subagents, bash commands, PTY sessions) before exiting. Without these,
   // SIGTERM from the desktop app only kills the listener process itself,
   // orphaning its descendants which accumulate over time.
-  // This process's single-run lock generation (letta server holds at most
-  // one). Nonce-compared on release, so shutdown after a takeover can
-  // never delete the successor's lock.
-  let processLockHandle: ListenerLockHandle | null = null;
-
   let isShuttingDown = false;
   const handleShutdownSignal = async (
     signal: "SIGINT" | "SIGHUP" | "SIGTERM",
@@ -312,7 +298,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best-effort cleanup — don't block exit
     }
-    await releaseListenerLock(processLockHandle);
     await flushRemoteSettingsWrites();
     await flushListenerTelemetryEnd(`listener_${signal.toLowerCase()}`);
     process.exit(0);
@@ -336,7 +321,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best effort — don't block exit on channel cleanup failure
     }
-    await releaseListenerLock(processLockHandle);
     await flushRemoteSettingsWrites();
     await flushListenerTelemetryEnd(exitReason);
     process.exit(code);
@@ -446,67 +430,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   try {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
-
-    // Desktop children from builds predating explicit identities keep the
-    // legacy name-derived identity and skip minting + the single-run lock:
-    // Desktop legitimately runs multiple same-named children whose
-    // lifecycle IT owns (LET-10023). Minting/locking here would collide
-    // those siblings locally — the exact failure this work removes.
-    const legacyDesktopSpawn = isLegacyDesktopSpawn();
-
-    let explicitListenerInstanceId: string | undefined;
-    if (legacyDesktopSpawn) {
-      sessionLog.log(
-        "listenerInstanceId: legacy desktop spawn (name-derived; lock skipped)",
-      );
-    } else {
-      // Resolve this listener's stable identity (LET-10085):
-      // spawner-provided env, else the identity persisted atomically for
-      // this configuration (project + env name). The identity VALUE is
-      // never name-derived — same-named listeners elsewhere coexist on
-      // distinct relay slots. Fails visibly when a corrupt identity cannot
-      // be repaired safely (never silently splits the configuration).
-      let identity: Awaited<ReturnType<typeof resolveListenerIdentity>>;
-      try {
-        identity = await resolveListenerIdentity(connectionName, {
-          namespace: "server",
-        });
-      } catch (identityError) {
-        const message =
-          identityError instanceof Error
-            ? identityError.message
-            : String(identityError);
-        console.error(`Cannot start listener: ${message}`);
-        await flushListenerTelemetryEnd("listener_identity_unavailable");
-        return 1;
-      }
-      explicitListenerInstanceId = identity.listenerInstanceId;
-      sessionLog.log(
-        `listenerInstanceId: ${identity.listenerInstanceId} (${identity.source})`,
-      );
-
-      // Single-run guard: the SAME configured listener must not run twice
-      // on this host. Fails visibly — never kills the incumbent.
-      const lock = await claimListenerLock(identity.listenerInstanceId);
-      if (lock.kind === "held") {
-        console.error(
-          `Listener "${connectionName}" is already running on this machine (pid ${lock.holder.pid}).`,
-        );
-        console.error(
-          "Stop it first, or run a second listener under a different --env-name.",
-        );
-        await flushListenerTelemetryEnd("listener_already_running");
-        return 1;
-      }
-      if (lock.kind === "unavailable") {
-        // Advisory guard — log and continue rather than bricking startup.
-        sessionLog.log(`[InstanceLock] unavailable: ${lock.reason}`);
-      }
-      if (lock.kind === "acquired") {
-        processLockHandle = lock.handle;
-      }
-    }
-
     const startupMode = await resolveListenerStartupMode(channelNames);
 
     if (
@@ -581,7 +504,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       registerOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
-        { listenerInstanceId: explicitListenerInstanceId },
       );
     } catch (authErr) {
       if (authErr instanceof MissingListenerApiKeyError) {
@@ -650,7 +572,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
-        { listenerInstanceId: explicitListenerInstanceId },
       );
       const result = await registerWithCloudRetry(nextRegisterOptions, {
         maxDurationMs: Infinity,
