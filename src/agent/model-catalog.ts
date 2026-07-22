@@ -9,7 +9,33 @@
 
 import modelsData from "@/models.json";
 
-export const models = modelsData.models;
+/**
+ * A curated model catalog entry in the bundled models.json shape.
+ *
+ * The same shape is produced by the cloud catalog endpoint
+ * (GET /v1/models/catalog, mapped in `@/agent/remote-model-catalog`), so the
+ * bundled snapshot and live remote data are interchangeable.
+ */
+export interface CatalogModel {
+  id: string;
+  handle: string;
+  label: string;
+  description: string;
+  shortLabel?: string;
+  isDefault?: boolean;
+  isFeatured?: boolean;
+  free?: boolean;
+  updateArgs?: Record<string, unknown>;
+}
+
+/**
+ * The live model catalog. Seeded from the bundled models.json snapshot at
+ * module load; on cloud (API) backends the array contents are refreshed in
+ * place from GET /v1/models/catalog (see `@/agent/remote-model-catalog`), so
+ * consumers that read at call time pick up live data without going async.
+ * Do not capture long-lived copies of the array contents.
+ */
+export const models: CatalogModel[] = modelsData.models;
 
 /**
  * Browser-safe presentation metadata for a curated Letta Code model preset.
