@@ -6,15 +6,19 @@ import {
   replaceBodyPreservingFrontmatter,
 } from "@/agent/personality";
 import {
+  buildPersonalityTag,
   DEFAULT_CREATE_AGENT_PERSONALITIES,
   getDefaultHumanContent,
   getPersonalityBlockDefinitions,
   getPersonalityBlockValues,
   getPersonalityContent,
+  getPersonalityCreationTags,
+  getPersonalityDefaultMemoryFiles,
   getPersonalityHumanContent,
   ONBOARDING_PERSONALITIES,
   PERSONALITY_OPTIONS,
   resolvePersonalityId,
+  resolvePersonalityIdFromTags,
 } from "@/agent/personality-presets";
 import { configureBackendMode } from "@/backend";
 import { __testOverrideGetClient } from "@/backend/api/client";
@@ -97,6 +101,30 @@ describe("personality helpers", () => {
     expect(tutorialOption?.description).toBe(
       "I help with getting started with Letta. I can answer any questions about Letta, and also help you create and configure agents.",
     );
+  });
+
+  test("tutorial owns its default profile picture metadata", () => {
+    expect(getPersonalityDefaultMemoryFiles("tutorial")).toEqual([
+      {
+        path: "profile.png",
+        assetId: "tutor-profile",
+        commitMessage: "chore: set default Tutor profile picture",
+      },
+    ]);
+    expect(getPersonalityCreationTags("tutorial")).toEqual([
+      buildPersonalityTag("tutorial"),
+    ]);
+    expect(getPersonalityDefaultMemoryFiles("memo")).toEqual([]);
+    expect(getPersonalityCreationTags("memo")).toEqual([]);
+  });
+
+  test("personality tags round-trip without inferring unrelated tags", () => {
+    for (const option of PERSONALITY_OPTIONS) {
+      expect(
+        resolvePersonalityIdFromTags([buildPersonalityTag(option.id)]),
+      ).toBe(option.id);
+    }
+    expect(resolvePersonalityIdFromTags(["origin:onboarding"])).toBeNull();
   });
 
   test("default create-agent personalities include memo, tutorial, blank, linus, and kawaii", () => {

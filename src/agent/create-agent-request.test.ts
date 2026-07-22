@@ -13,6 +13,7 @@ import { resolveModel } from "@/agent/model-catalog";
 import { buildCreateAgentOptionsForPersonality } from "@/agent/personality";
 import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
+  getPersonalityCreationTags,
   getPersonalityOption,
 } from "@/agent/personality-presets";
 import { buildSystemPrompt } from "@/agent/prompt-assets";
@@ -46,7 +47,11 @@ describe("buildCreateAgentRequestForPersonality", () => {
       expect(request.tags).toEqual([
         LETTA_CODE_ORIGIN_TAG,
         GIT_MEMORY_ENABLED_TAG,
+        ...getPersonalityCreationTags(personalityId),
       ]);
+      expect(cliOptions.tags).toEqual(
+        getPersonalityCreationTags(personalityId),
+      );
       expect(request.tools).toEqual(DEFAULT_CREATED_AGENT_BASE_TOOLS);
       expect(request.include_base_tools).toBe(false);
       expect(request.include_base_tool_rules).toBe(false);
