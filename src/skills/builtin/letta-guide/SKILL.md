@@ -14,9 +14,11 @@ how to answer questions about Letta correctly.
 
 1. **Self-inspection first for questions about THIS agent.** "What model are
    you using?", "what tools do you have?", "what's in your memory?" are
-   questions about the running session, not the docs. Answer them from the
-   live environment: your system prompt and agent info, `/status`-style
-   command surfaces, settings files, and MemFS. Do not fetch docs for these.
+   questions about the running session, not the docs. Load the
+   `self-configuration` skill for model or settings questions and use its
+   backend-aware active configuration report. Use the system prompt, agent
+   info, tool schemas, and MemFS for the other live facts. Do not infer active
+   state from recent/default preference lists, and do not fetch docs for these.
 2. **Fetch the docs index.** For product questions, fetch
    `https://docs.letta.com/llms.txt` — a curated index of every current
    documentation page with descriptions. Pick the most relevant page URLs.

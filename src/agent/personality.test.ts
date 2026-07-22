@@ -192,7 +192,7 @@ describe("personality helpers", () => {
     expect(body).toContain("what should I call you");
     expect(body).toContain("do not run whatever build happens");
     expect(body).toContain("do not append remembered product commands");
-    expect(body).toContain("never infer my active model");
+    expect(body).toContain("load the self-configuration skill");
     expect(body).toContain("Ending a complete answer with");
     expect(body).toContain("the final sentence is the recommended action");
   });
