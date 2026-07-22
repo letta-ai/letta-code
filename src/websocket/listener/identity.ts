@@ -131,6 +131,49 @@ function parseIdentityFile(raw: string): string | null {
   }
 }
 
+/** Thrown when a corrupt identity cannot be repaired safely. Callers must
+ * fail VISIBLY: falling back to a random identity while a corrupt
+ * generation (or its repair claim) remains would hand concurrent starters
+ * different identities — and therefore different single-run locks —
+ * silently splitting one configured listener. */
+export class ListenerIdentityUnavailableError extends Error {
+  constructor(identityPath: string) {
+    super(
+      `Listener identity at ${identityPath} is corrupt and could not be repaired safely. ` +
+        "Another process may be repairing it; retry shortly, or delete the file if the problem persists.",
+    );
+    this.name = "ListenerIdentityUnavailableError";
+  }
+}
+
+type IdentityDeps = {
+  isPidAlive: (pid: number) => boolean;
+  sleep: (ms: number) => Promise<void>;
+};
+
+function defaultIsPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // ESRCH is the only proof the process is gone; fail safe otherwise.
+    return !(
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: string }).code === "ESRCH"
+    );
+  }
+}
+
+const DEFAULT_IDENTITY_DEPS: IdentityDeps = {
+  isPidAlive: defaultIsPidAlive,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
+
+const REPAIR_RETRY_DELAY_MS = 50;
+const RESOLVE_MAX_ATTEMPTS = 10;
+
 /**
  * Remove a corrupt identity file under a content-keyed repair claim.
  * The same generation guard as the stale-lock reclaim: publish a claim
@@ -140,18 +183,24 @@ function parseIdentityFile(raw: string): string | null {
  * B-removes-A's-VALID-identity — splitting one configuration across two
  * identities (and therefore two different locks).
  *
+ * A contended claim held by a DEAD pid is recovered (removed) so a crashed
+ * repairer cannot wedge the configuration forever; a live claimant is
+ * waited out by the caller.
+ *
  * Returns true when the corrupt generation is gone (removed by us or
- * already replaced) and the caller may retry; false when repair could not
- * proceed safely (contended claim) — the caller loops and re-reads.
+ * already replaced) and the caller may re-read immediately; false when a
+ * live repairer owns the claim — the caller waits and re-reads.
  */
 async function repairCorruptIdentity(
   identityPath: string,
   corruptRaw: string,
+  deps: IdentityDeps,
 ): Promise<boolean> {
   const claimPath = `${identityPath}.repair-${createHash("sha256")
     .update(corruptRaw)
     .digest("hex")
     .slice(0, 16)}`;
+
   const candidatePath = `${claimPath}.candidate-${randomUUID()}`;
   let claimed = false;
   try {
@@ -161,8 +210,27 @@ async function repairCorruptIdentity(
     await link(candidatePath, claimPath);
     claimed = true;
   } catch {
-    // Another repairer owns this corrupt generation — let it finish.
-    return false;
+    // Claim exists. Recover it if its owner is dead (crashed repairer);
+    // otherwise let the live owner finish.
+    let ownerPid: number | null = null;
+    try {
+      const parsed = JSON.parse(await readFile(claimPath, "utf-8")) as {
+        pid?: unknown;
+      };
+      ownerPid = typeof parsed.pid === "number" ? parsed.pid : null;
+    } catch {
+      // Claim vanished (owner finished) or unreadable — re-read the
+      // identity; treat as progress.
+      return true;
+    }
+    if (ownerPid !== null && deps.isPidAlive(ownerPid)) {
+      return false; // live repairer — wait for it
+    }
+    // Dead/corrupt claim owner: remove the stale claim. The identity file
+    // still holds the corrupt generation (the dead repairer never got to
+    // its guarded remove), so the next attempt re-claims and repairs.
+    await rm(claimPath, { force: true }).catch(() => {});
+    return true;
   } finally {
     await rm(candidatePath, { force: true }).catch(() => {});
   }
@@ -192,15 +260,21 @@ async function repairCorruptIdentity(
  * Atomic get-or-create of the persisted identity for one configuration
  * key. Publication is O_EXCL candidate + hard link: exactly one racer's
  * mint lands; everyone else reads the winner. Corrupt files are removed
- * only under a content-keyed repair claim (see repairCorruptIdentity).
+ * only under a content-keyed repair claim (see repairCorruptIdentity),
+ * and contended repairs are WAITED OUT, never bypassed: while a corrupt
+ * generation or live repair claim remains, returning a random fallback
+ * identity would hand concurrent starters different lock keys.
  */
 async function getOrCreatePersistedIdentity(
   identityPath: string,
   connectionName: string,
   namespace: ListenerIdentityNamespace,
   workingDirectory: string,
+  deps: IdentityDeps,
 ): Promise<ResolvedListenerIdentity> {
-  for (let attempt = 0; attempt < 4; attempt++) {
+  let sawCorruption = false;
+
+  for (let attempt = 0; attempt < RESOLVE_MAX_ATTEMPTS; attempt++) {
     let raw: string | null = null;
     try {
       raw = await readFile(identityPath, "utf-8");
@@ -212,9 +286,14 @@ async function getOrCreatePersistedIdentity(
       if (existing) {
         return { listenerInstanceId: existing, source: "persisted" };
       }
-      // Corrupt: repair under a claim, then loop to re-read (the repairer
-      // that beat us may have republished a valid identity).
-      await repairCorruptIdentity(identityPath, raw);
+      // Corrupt: repair under a claim. A live contending repairer is
+      // waited out; loop to re-read either way (the winner may have
+      // republished a valid identity).
+      sawCorruption = true;
+      const progressed = await repairCorruptIdentity(identityPath, raw, deps);
+      if (!progressed) {
+        await deps.sleep(REPAIR_RETRY_DELAY_MS);
+      }
       continue;
     }
 
@@ -242,9 +321,17 @@ async function getOrCreatePersistedIdentity(
     }
   }
 
-  // Persistent store unusable: fall back to a session-scoped identity so
-  // the listener still runs. It gets a fresh relay row per run (old rows
-  // age out via lastSeenAt) — degraded but never colliding.
+  if (sawCorruption) {
+    // Never fall back to a random identity while a corrupt generation or
+    // repair claim remains: concurrent starters would resolve different
+    // identities and acquire different locks. Fail visibly instead.
+    throw new ListenerIdentityUnavailableError(identityPath);
+  }
+
+  // Persistent store unusable for plain fs reasons (no corruption seen):
+  // fall back to a session-scoped identity so the listener still runs. It
+  // gets a fresh relay row per run (old rows age out via lastSeenAt) —
+  // degraded but never colliding.
   return {
     listenerInstanceId: `${MANUAL_INSTANCE_ID_PREFIX}-${randomUUID()}`,
     source: "minted",
@@ -265,6 +352,7 @@ export async function resolveListenerIdentity(
     namespace?: ListenerIdentityNamespace;
     workingDirectory?: string;
     identityDir?: string;
+    dependencies?: Partial<IdentityDeps>;
   } = {},
 ): Promise<ResolvedListenerIdentity> {
   const fromSpawner = process.env[LISTENER_INSTANCE_ID_ENV];
@@ -275,10 +363,15 @@ export async function resolveListenerIdentity(
   const namespace = options.namespace ?? "server";
   const workingDirectory = options.workingDirectory ?? process.cwd();
   const identityDir = options.identityDir ?? DEFAULT_IDENTITY_DIR;
+  const deps: IdentityDeps = {
+    ...DEFAULT_IDENTITY_DEPS,
+    ...options.dependencies,
+  };
   return getOrCreatePersistedIdentity(
     identityFilePath(identityDir, namespace, connectionName, workingDirectory),
     connectionName,
     namespace,
     workingDirectory,
+    deps,
   );
 }

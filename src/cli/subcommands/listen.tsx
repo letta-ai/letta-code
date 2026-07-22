@@ -458,10 +458,22 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       // spawner-provided env, else the identity persisted atomically for
       // this configuration (project + env name). The identity VALUE is
       // never name-derived — same-named listeners elsewhere coexist on
-      // distinct relay slots.
-      const identity = await resolveListenerIdentity(connectionName, {
-        namespace: "server",
-      });
+      // distinct relay slots. Fails visibly when a corrupt identity cannot
+      // be repaired safely (never silently splits the configuration).
+      let identity: Awaited<ReturnType<typeof resolveListenerIdentity>>;
+      try {
+        identity = await resolveListenerIdentity(connectionName, {
+          namespace: "server",
+        });
+      } catch (identityError) {
+        const message =
+          identityError instanceof Error
+            ? identityError.message
+            : String(identityError);
+        console.error(`Cannot start listener: ${message}`);
+        await flushListenerTelemetryEnd("listener_identity_unavailable");
+        return 1;
+      }
       explicitListenerInstanceId = identity.listenerInstanceId;
       sessionLog.log(
         `listenerInstanceId: ${identity.listenerInstanceId} (${identity.source})`,

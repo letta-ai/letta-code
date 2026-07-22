@@ -13,6 +13,7 @@ import {
   isLegacyDesktopSpawn,
   isValidListenerInstanceId,
   LISTENER_INSTANCE_ID_ENV,
+  ListenerIdentityUnavailableError,
   resolveListenerIdentity,
 } from "./identity";
 
@@ -46,11 +47,16 @@ function resolve(
   overrides: {
     namespace?: "server" | "listen";
     workingDirectory?: string;
+    dependencies?: {
+      isPidAlive?: (pid: number) => boolean;
+      sleep?: (ms: number) => Promise<void>;
+    };
   } = {},
 ) {
   return resolveListenerIdentity(name, {
     namespace: overrides.namespace ?? "server",
     workingDirectory: overrides.workingDirectory ?? "/proj",
+    ...(overrides.dependencies ? { dependencies: overrides.dependencies } : {}),
     identityDir,
   });
 }
@@ -138,35 +144,115 @@ describe("resolveListenerIdentity", () => {
   });
 
   test("TOCTOU regression: a repairer that captured corrupt contents cannot remove a VALID identity republished mid-flight", async () => {
-    // Recreates the interleaving: A and B both read corrupt content C. A
-    // repairs C and publishes valid identity A'. B's repair claim for C
-    // must then observe the file no longer contains C and leave A'
-    // untouched — B converges on A' instead of splitting the
-    // configuration across two identities. Simulate B-loses-the-claim by
-    // pre-publishing the repair claim for C (as A would hold it), swapping
-    // in A's valid identity, and verifying B adopts it.
+    // Recreates the interleaving from the repair path itself: B reads
+    // corrupt C and enters repairCorruptIdentity; A (simulated inside B's
+    // claim-owner liveness probe — i.e. after B has captured C but before
+    // B's guarded remove) repairs C and publishes valid identity A'. B's
+    // content re-verification must observe the change and leave A'
+    // untouched; B converges on A'.
     await resolve("toctou-env");
     const files = readdirSync(identityDir).filter((f) => f.endsWith(".json"));
     const identityPath = join(identityDir, files[0] as string);
     const corruptRaw = "corrupt-generation";
     writeFileSync(identityPath, corruptRaw);
 
-    // A holds the repair claim for corrupt generation C...
+    // A holds the repair claim for corrupt generation C (live owner)...
     const claimPath = `${identityPath}.repair-${createHash("sha256")
       .update(corruptRaw)
       .digest("hex")
       .slice(0, 16)}`;
     writeFileSync(claimPath, JSON.stringify({ pid: process.pid }));
-    // ...and has already republished a valid identity A'.
-    const validA = JSON.stringify({ listenerInstanceId: "li-valid-from-A" });
-    writeFileSync(identityPath, validA);
 
-    // B resolves: its repair attempt for C fails (claim held), it loops,
-    // re-reads, and adopts A's valid identity — never deleting it.
-    const b = await resolve("toctou-env");
+    // B resolves. Its first repair attempt finds A's live claim and waits;
+    // A "finishes" during B's sleep: removes the corrupt file, publishes
+    // valid identity A', releases the claim.
+    const validA = JSON.stringify({ listenerInstanceId: "li-valid-from-A" });
+    let slept = 0;
+    const b = await resolve("toctou-env", {
+      dependencies: {
+        isPidAlive: () => true, // A's claim owner is alive
+        sleep: async () => {
+          slept += 1;
+          writeFileSync(identityPath, validA);
+          rmSync(claimPath, { force: true });
+        },
+      },
+    });
+    expect(slept).toBeGreaterThanOrEqual(1);
     expect(b.source).toBe("persisted");
     expect(b.listenerInstanceId).toBe("li-valid-from-A");
     expect(readFileSync(identityPath, "utf-8")).toBe(validA);
+  });
+
+  test("SPLIT regression: concurrent resolvers over a corrupt identity converge on ONE identity", async () => {
+    // The reviewer's reproduction: contended repair must never fall back
+    // to random session identities — that hands racers different lock
+    // keys. All concurrent resolvers must settle on a single identity.
+    await resolve("split-env");
+    const files = readdirSync(identityDir).filter((f) => f.endsWith(".json"));
+    const identityPath = join(identityDir, files[0] as string);
+    writeFileSync(identityPath, "corrupt-generation");
+
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () => resolve("split-env")),
+    );
+    const ids = new Set(results.map((r) => r.listenerInstanceId));
+    expect(ids.size).toBe(1);
+    // And the winning identity is the persisted one.
+    const persisted = JSON.parse(readFileSync(identityPath, "utf-8")) as {
+      listenerInstanceId: string;
+    };
+    expect(ids.has(persisted.listenerInstanceId)).toBe(true);
+  });
+
+  test("recovers a repair claim left by a CRASHED repairer", async () => {
+    await resolve("crashed-env");
+    const files = readdirSync(identityDir).filter((f) => f.endsWith(".json"));
+    const identityPath = join(identityDir, files[0] as string);
+    const corruptRaw = "corrupt-generation";
+    writeFileSync(identityPath, corruptRaw);
+
+    // A crashed repairer's claim (dead pid) sits on this generation.
+    const claimPath = `${identityPath}.repair-${createHash("sha256")
+      .update(corruptRaw)
+      .digest("hex")
+      .slice(0, 16)}`;
+    writeFileSync(claimPath, JSON.stringify({ pid: 999999 }));
+
+    const identity = await resolve("crashed-env", {
+      dependencies: { isPidAlive: (pid: number) => pid === process.pid },
+    });
+    expect(identity.source).toBe("minted");
+    // Repaired and re-minted; stable afterwards.
+    const again = await resolve("crashed-env");
+    expect(again.listenerInstanceId).toBe(identity.listenerInstanceId);
+  });
+
+  test("fails VISIBLY (never a random identity) when a live repairer never finishes", async () => {
+    await resolve("wedged-env");
+    const files = readdirSync(identityDir).filter((f) => f.endsWith(".json"));
+    const identityPath = join(identityDir, files[0] as string);
+    const corruptRaw = "corrupt-generation";
+    writeFileSync(identityPath, corruptRaw);
+    const claimPath = `${identityPath}.repair-${createHash("sha256")
+      .update(corruptRaw)
+      .digest("hex")
+      .slice(0, 16)}`;
+    writeFileSync(claimPath, JSON.stringify({ pid: process.pid }));
+
+    // The claim owner stays alive and the corrupt file never changes:
+    // resolution must throw, not silently mint a session identity.
+    await expect(
+      resolve("wedged-env", {
+        dependencies: {
+          isPidAlive: () => true,
+          sleep: async () => {},
+        },
+      }),
+    ).rejects.toBeInstanceOf(ListenerIdentityUnavailableError);
+    // The corrupt generation and A's claim are both untouched.
+    expect(readFileSync(identityPath, "utf-8")).toBe(corruptRaw);
+    expect(readFileSync(claimPath, "utf-8")).toContain(String(process.pid));
   });
 });
 
