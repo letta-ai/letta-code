@@ -3,9 +3,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  __resetListenerLockForTests,
   claimListenerLock,
   getListenerLockPath,
+  type ListenerLockHandle,
   releaseListenerLock,
 } from "./instance-lock";
 
@@ -13,13 +13,20 @@ let lockDir: string;
 
 beforeEach(() => {
   lockDir = mkdtempSync(join(tmpdir(), "listener-lock-"));
-  __resetListenerLockForTests();
 });
 
 afterEach(() => {
-  __resetListenerLockForTests();
   rmSync(lockDir, { recursive: true, force: true });
 });
+
+function handleOf(
+  result: Awaited<ReturnType<typeof claimListenerLock>>,
+): ListenerLockHandle {
+  if (result.kind !== "acquired") {
+    throw new Error(`expected acquired, got ${result.kind}`);
+  }
+  return result.handle;
+}
 
 function writeLock(
   instanceId: string,
@@ -42,15 +49,13 @@ describe("claimListenerLock", () => {
   test("acquires a fresh lock and records this process", async () => {
     const result = await claimListenerLock("li-abc", lockDir);
     expect(result.kind).toBe("acquired");
-    if (result.kind !== "acquired") throw new Error("unreachable");
-    const record = JSON.parse(readFileSync(result.lockPath, "utf-8"));
+    const record = JSON.parse(readFileSync(handleOf(result).lockPath, "utf-8"));
     expect(record.pid).toBe(process.pid);
     expect(record.listenerInstanceId).toBe("li-abc");
   });
 
   test("different instance ids never contend (coexistence is the default)", async () => {
     const a = await claimListenerLock("li-a", lockDir);
-    __resetListenerLockForTests();
     const b = await claimListenerLock("li-b", lockDir);
     expect(a.kind).toBe("acquired");
     expect(b.kind).toBe("acquired");
@@ -157,7 +162,7 @@ describe("claimListenerLock", () => {
       isPidAlive: (pid) => pid === process.pid,
     });
     expect(first.kind).toBe("acquired");
-    await releaseListenerLock();
+    await releaseListenerLock(handleOf(first));
 
     // Second stale generation (different content → different claim key).
     writeLock("li-gen", { pid: 222222, lockNonce: "gen-2" });
@@ -217,18 +222,42 @@ describe("claimListenerLock", () => {
 });
 
 describe("releaseListenerLock", () => {
-  test("removes the lock this session acquired", async () => {
+  test("removes the generation this handle owns", async () => {
     const result = await claimListenerLock("li-rel", lockDir);
-    expect(result.kind).toBe("acquired");
-    await releaseListenerLock();
+    await releaseListenerLock(handleOf(result));
     expect(() =>
       readFileSync(getListenerLockPath("li-rel", lockDir), "utf-8"),
     ).toThrow();
   });
 
-  test("leaves a newer claimant's lock intact", async () => {
+  test("SAME-PID generation regression: a stale release cannot delete a replacement lock from the same process", async () => {
+    // The long-lived TUI case: generation A acquires, ends, generation B
+    // (SAME pid, new nonce) acquires the same path. A's stale terminal
+    // callback fires late and releases with A's handle — B's lock must
+    // survive. A pid-compared release deletes it (the pre-fix bug).
+    const a = await claimListenerLock("li-tui", lockDir);
+    const aHandle = handleOf(a);
+    // Generation B replaces the lock (same pid, new nonce) — as a fresh
+    // /listen session would after A ended without releasing.
+    const lockPath = getListenerLockPath("li-tui", lockDir);
+    const bRecord = JSON.stringify({
+      pid: process.pid,
+      listenerInstanceId: "li-tui",
+      acquiredAt: Date.now(),
+      lockNonce: "nonce-generation-B",
+    });
+    writeFileSync(lockPath, bRecord);
+
+    // A's stale callback fires.
+    await releaseListenerLock(aHandle);
+
+    // B's lock survives byte-identical.
+    expect(readFileSync(lockPath, "utf-8")).toBe(bRecord);
+  });
+
+  test("leaves a different-pid claimant's lock intact", async () => {
     const result = await claimListenerLock("li-newer", lockDir);
-    expect(result.kind).toBe("acquired");
+    const handle = handleOf(result);
     const lockPath = getListenerLockPath("li-newer", lockDir);
     writeFileSync(
       lockPath,
@@ -239,13 +268,21 @@ describe("releaseListenerLock", () => {
         lockNonce: "nonce-newer",
       }),
     );
-    await releaseListenerLock();
+    await releaseListenerLock(handle);
     expect(JSON.parse(readFileSync(lockPath, "utf-8")).pid).toBe(
       process.pid + 1,
     );
   });
 
-  test("is a no-op without a prior claim", async () => {
-    await releaseListenerLock();
+  test("is a no-op with a null handle", async () => {
+    await releaseListenerLock(null);
+    await releaseListenerLock(undefined);
+  });
+
+  test("is idempotent for the owning handle", async () => {
+    const result = await claimListenerLock("li-idem", lockDir);
+    const handle = handleOf(result);
+    await releaseListenerLock(handle);
+    await releaseListenerLock(handle);
   });
 });

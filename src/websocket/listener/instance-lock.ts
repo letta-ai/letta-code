@@ -41,16 +41,26 @@ export interface ListenerLockRecord {
   lockNonce: string;
 }
 
+/**
+ * Ownership handle for one acquired lock generation. release() compares
+ * the exact nonce before deleting: a pid check alone cannot distinguish
+ * generations inside one long-lived TUI process (every /listen session
+ * shares the pid), so a stale generation's release would delete its
+ * replacement's lock.
+ */
+export type ListenerLockHandle = Readonly<{
+  lockPath: string;
+  lockNonce: string;
+}>;
+
 export type ClaimListenerLockResult =
-  | { kind: "acquired"; lockPath: string }
+  | { kind: "acquired"; handle: ListenerLockHandle }
   | { kind: "held"; holder: ListenerLockRecord }
   | { kind: "unavailable"; reason: string };
 
 export interface ListenerLockDeps {
   isPidAlive: (pid: number) => boolean;
 }
-
-let activeLockPath: string | null = null;
 
 function hasErrorCode(error: unknown, code: string): boolean {
   return (
@@ -237,8 +247,10 @@ export async function claimListenerLock(
   for (let attempt = 0; attempt < 3; attempt++) {
     const published = await publishFile(lockPath, JSON.stringify(record));
     if (published === "ok") {
-      activeLockPath = lockPath;
-      return { kind: "acquired", lockPath };
+      return {
+        kind: "acquired",
+        handle: Object.freeze({ lockPath, lockNonce: record.lockNonce }),
+      };
     }
     if (published === "error") {
       return { kind: "unavailable", reason: "lock file write failed" };
@@ -282,27 +294,23 @@ export async function claimListenerLock(
 }
 
 /**
- * Release the lock if this session acquired it. Only removes the file when
- * it still names this process — a slower shutdown must not delete a newer
- * claimant's lock.
+ * Release one acquired lock GENERATION. Removes the file only while it
+ * still contains this handle's exact nonce — a stale callback from a
+ * replaced generation (same pid, same path) can never delete its
+ * replacement's lock. Idempotent and safe with a null handle.
  */
-export async function releaseListenerLock(): Promise<void> {
-  const lockPath = activeLockPath;
-  activeLockPath = null;
-  if (!lockPath) {
+export async function releaseListenerLock(
+  handle: ListenerLockHandle | null | undefined,
+): Promise<void> {
+  if (!handle) {
     return;
   }
   try {
-    const holder = parseLockRecord(await readFile(lockPath, "utf-8"));
-    if (holder?.pid === process.pid) {
-      await rm(lockPath, { force: true });
+    const holder = parseLockRecord(await readFile(handle.lockPath, "utf-8"));
+    if (holder?.lockNonce === handle.lockNonce) {
+      await rm(handle.lockPath, { force: true });
     }
   } catch {
     // Already gone or unreadable — nothing to release.
   }
-}
-
-/** Test-only: reset module state. */
-export function __resetListenerLockForTests(): void {
-  activeLockPath = null;
 }

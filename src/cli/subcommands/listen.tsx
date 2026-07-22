@@ -38,6 +38,7 @@ import {
 } from "@/websocket/listener/identity";
 import {
   claimListenerLock,
+  type ListenerLockHandle,
   releaseListenerLock,
 } from "@/websocket/listener/instance-lock";
 import { flushRemoteSettingsWrites } from "@/websocket/listener/remote-settings";
@@ -284,6 +285,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   // (subagents, bash commands, PTY sessions) before exiting. Without these,
   // SIGTERM from the desktop app only kills the listener process itself,
   // orphaning its descendants which accumulate over time.
+  // This process's single-run lock generation (letta server holds at most
+  // one). Nonce-compared on release, so shutdown after a takeover can
+  // never delete the successor's lock.
+  let processLockHandle: ListenerLockHandle | null = null;
+
   let isShuttingDown = false;
   const handleShutdownSignal = async (
     signal: "SIGINT" | "SIGHUP" | "SIGTERM",
@@ -306,7 +312,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best-effort cleanup — don't block exit
     }
-    await releaseListenerLock();
+    await releaseListenerLock(processLockHandle);
     await flushRemoteSettingsWrites();
     await flushListenerTelemetryEnd(`listener_${signal.toLowerCase()}`);
     process.exit(0);
@@ -330,7 +336,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best effort — don't block exit on channel cleanup failure
     }
-    await releaseListenerLock();
+    await releaseListenerLock(processLockHandle);
     await flushRemoteSettingsWrites();
     await flushListenerTelemetryEnd(exitReason);
     process.exit(code);
@@ -495,6 +501,9 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       if (lock.kind === "unavailable") {
         // Advisory guard — log and continue rather than bricking startup.
         sessionLog.log(`[InstanceLock] unavailable: ${lock.reason}`);
+      }
+      if (lock.kind === "acquired") {
+        processLockHandle = lock.handle;
       }
     }
 

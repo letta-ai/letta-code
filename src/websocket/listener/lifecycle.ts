@@ -1753,6 +1753,17 @@ export function isListenerActive(): boolean {
 }
 
 /**
+ * True while a listener runtime exists AT ALL — including the reconnecting
+ * state, where the transport is null but the runtime (and its retry loop)
+ * is alive. `/remote off` must use this, not isListenerActive(): refusing
+ * to stop "because the transport is down" leaves a reconnecting session
+ * running and its single-run lock held.
+ */
+export function hasListenerRuntime(): boolean {
+  return getActiveRuntime() !== null;
+}
+
+/**
  * Stop the active listener connection.
  */
 export function stopListenerClient(): void {
