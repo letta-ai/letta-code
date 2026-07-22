@@ -58,13 +58,21 @@ describe("WhatsApp media helpers", () => {
     });
   });
 
-  test("rejects non-Ogg/Opus audio for outbound voice memos", () => {
-    expect(() =>
+  test("builds non-Ogg/Opus audio payloads as documents (not voice memos)", () => {
+    // .mp3 (and .m4a/.wav) reach WhatsApp as regular audio file attachments —
+    // not as push-to-talk voice notes. Agents that want a true voice memo must
+    // transcode to Ogg/Opus upstream; that path remains the ptt:true branch
+    // (covered in the prior test).
+    expect(
       buildWhatsAppOutboundPayload({
         text: "",
         mediaPath: "/tmp/voice.mp3",
       }),
-    ).toThrow(/Ogg\/Opus/);
+    ).toEqual({
+      document: { url: "/tmp/voice.mp3" },
+      fileName: "voice.mp3",
+      mimetype: "application/octet-stream",
+    });
   });
 
   test("returns attachment metadata without downloading when media is disabled", async () => {
