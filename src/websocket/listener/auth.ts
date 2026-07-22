@@ -11,6 +11,7 @@ import {
   deriveListenerInstanceId,
   type RegisterOptions,
 } from "@/websocket/listen-register";
+import { getSpawnerListenerInstanceId } from "@/websocket/listener/identity";
 import type { StartListenerOptions } from "@/websocket/listener/types";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
@@ -259,10 +260,11 @@ export async function resolveListenerRegistrationOptions(
     ...auth,
     deviceId,
     connectionName,
-    listenerInstanceId: deriveListenerInstanceId(
-      options.surface ?? "server",
-      connectionName,
-    ),
+    // A spawner-assigned identity (Desktop slots, LET-10085) wins; manual
+    // listeners keep their legacy name-derived identity unchanged.
+    listenerInstanceId:
+      getSpawnerListenerInstanceId() ??
+      deriveListenerInstanceId(options.surface ?? "server", connectionName),
   };
 }
 

@@ -207,4 +207,31 @@ describe("listener auth", () => {
     expect(second.apiKey).toBe("refreshed-access-token");
     expect(second.listenerInstanceId).toStartWith("listen-");
   });
+
+  test("passes a spawner-assigned identity through to registration verbatim", async () => {
+    // LET-10085: an owning spawner (Desktop) assigns its child an explicit
+    // identity so it never collides with a manual listener sharing the
+    // same display name. Manual listeners (no env) keep the legacy
+    // name-derived identity — asserted by the test above.
+    settings = {
+      ...settings,
+      env: { LETTA_API_KEY: "spawner-access-token" },
+    };
+    const previous = process.env.LETTA_LISTENER_INSTANCE_ID;
+    process.env.LETTA_LISTENER_INSTANCE_ID = "desktop-primary:install-42";
+    try {
+      const options = await resolveListenerRegistrationOptions(
+        "device-id",
+        "listener-name",
+        { allowInteractiveOAuth: false, surface: "server" },
+      );
+      expect(options.listenerInstanceId).toBe("desktop-primary:install-42");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.LETTA_LISTENER_INSTANCE_ID;
+      } else {
+        process.env.LETTA_LISTENER_INSTANCE_ID = previous;
+      }
+    }
+  });
 });
