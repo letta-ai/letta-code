@@ -32,6 +32,10 @@ import {
   MissingListenerApiKeyError,
   resolveListenerRegistrationOptions,
 } from "@/websocket/listener/auth";
+import {
+  claimListenerInstanceLock,
+  releaseListenerInstanceLockSync,
+} from "@/websocket/listener/instance-lock";
 import { flushRemoteSettingsWrites } from "@/websocket/listener/remote-settings";
 
 type ListenerProcessAnchor = {
@@ -298,6 +302,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best-effort cleanup — don't block exit
     }
+    releaseListenerInstanceLockSync();
     await flushRemoteSettingsWrites();
     await flushListenerTelemetryEnd(`listener_${signal.toLowerCase()}`);
     process.exit(0);
@@ -321,6 +326,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best effort — don't block exit on channel cleanup failure
     }
+    releaseListenerInstanceLockSync();
     await flushRemoteSettingsWrites();
     await flushListenerTelemetryEnd(exitReason);
     process.exit(code);
@@ -430,6 +436,29 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   try {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
+
+    // Single-instance lock: multiple listeners for the same (device, env)
+    // contest one relay connection lease, dropping each other's sockets
+    // mid-turn and orphaning healthy runs (LET-10023). Newest wins: reap any
+    // live previous holder before registering.
+    try {
+      const lockResult = await claimListenerInstanceLock({
+        deviceId,
+        connectionName,
+      });
+      for (const note of lockResult.notes) {
+        sessionLog.log(`[InstanceLock] ${note}`);
+        console.log(`[${formatTimestamp()}] ${note}`);
+      }
+    } catch (lockError) {
+      // The lock is an advisory local guard — never block startup on it.
+      sessionLog.log(
+        `[InstanceLock] Claim failed (continuing): ${
+          lockError instanceof Error ? lockError.message : String(lockError)
+        }`,
+      );
+    }
+
     const startupMode = await resolveListenerStartupMode(channelNames);
 
     if (
