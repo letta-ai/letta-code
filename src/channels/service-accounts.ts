@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   getChannelAccount,
   getChannelAccountWithSecrets,
-  removeChannelAccount,
+  removeChannelAccountWithSecrets,
   upsertChannelAccount,
   upsertChannelAccountWithSecrets,
 } from "./accounts";
@@ -63,7 +63,7 @@ export async function createChannelAccountLiveWithSecrets(
 ): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
   const accountId = options?.accountId?.trim() || randomUUID();
-  const existing = await getChannelAccountWithSecrets(channelId, accountId);
+  const existing = getChannelAccount(channelId, accountId);
   if (existing) {
     throw new Error(
       `Channel account "${accountId}" already exists for ${channelId}.`,
@@ -140,14 +140,14 @@ export async function updateChannelAccountLiveWithSecrets(
   patch: ChannelAccountPatch,
 ): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
-  const existing = await getChannelAccountWithSecrets(channelId, accountId);
+  let existing = getChannelAccount(channelId, accountId);
   if (!existing) {
     throw new Error(
       `Channel account "${accountId}" was not found for ${channelId}.`,
     );
   }
 
-  const nextAccount = mergeAccountPatch(existing, patch);
+  let nextAccount = mergeAccountPatch(existing, patch);
   const shouldResetRoutes =
     (isSlackChannelAccount(existing) ||
       isDiscordChannelAccount(existing) ||
@@ -157,6 +157,23 @@ export async function updateChannelAccountLiveWithSecrets(
       isSignalChannelAccount(nextAccount)) &&
     typeof nextAccount.agentId === "string" &&
     nextAccount.agentId !== existing.agentId;
+
+  if (shouldResetRoutes) {
+    // Route-save rollback must restore the prior credential value if this
+    // update also rotates it. Ordinary account edits can preserve secret
+    // placeholders without reading the keyring.
+    const hydratedExisting = await getChannelAccountWithSecrets(
+      channelId,
+      accountId,
+    );
+    if (!hydratedExisting) {
+      throw new Error(
+        `Channel account "${accountId}" was not found for ${channelId}.`,
+      );
+    }
+    existing = hydratedExisting;
+    nextAccount = mergeAccountPatch(existing, patch);
+  }
 
   const updated = await upsertChannelAccountWithSecrets(channelId, nextAccount);
 
@@ -425,7 +442,7 @@ export async function removeChannelAccountLive(
   removeRoutesForAccount(channelId, accountId);
   removeChannelTargetsForAccount(channelId, accountId);
   removePairingStateForAccount(channelId, accountId);
-  const removed = removeChannelAccount(channelId, accountId);
+  const removed = await removeChannelAccountWithSecrets(channelId, accountId);
   await refreshLoadedMessageChannelTool();
   return removed;
 }

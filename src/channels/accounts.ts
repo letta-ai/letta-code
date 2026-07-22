@@ -740,7 +740,7 @@ export async function removeChannelAccountWithSecrets(
   channelId: string,
   accountId: string,
 ): Promise<boolean> {
-  await hydrateChannelAccountSecrets(channelId);
+  await getActiveChannelCredentialsStoreMode();
   const account = getChannelAccount(channelId, accountId);
   if (account && getCachedChannelCredentialsStoreMode() === "keyring") {
     await Promise.all(
