@@ -181,11 +181,16 @@ function prepareAccountForStorage(
     return cloned;
   }
 
+  const existingSecretRefs = cloned[CHANNEL_SECRET_REFS_KEY];
   delete cloned[CHANNEL_SECRET_REFS_KEY];
   for (const fieldPath of getSecretFieldPaths(cloned)) {
     const value = getSecretValueFromAccount(cloned, fieldPath);
     if (typeof value === "string" && value.trim().length > 0) {
-      if (isSecretPlaceholder(value) || options.redactPersistedSecrets) {
+      if (
+        isSecretPlaceholder(value) ||
+        existingSecretRefs?.[fieldPath] === true ||
+        options.redactPersistedSecrets
+      ) {
         markSecretRef(cloned, fieldPath);
         deleteSecretValueFromAccount(cloned, fieldPath);
       }

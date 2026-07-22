@@ -142,6 +142,30 @@ describe("channel credential storage", () => {
     expect(hydrated?.appToken).toBe("xapp-secret");
   });
 
+  test("sync saves keep hydrated keyring credentials redacted", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    await upsertChannelAccountWithSecrets("slack", makeSlackAccount());
+    clearChannelAccountStores();
+    const hydrated = (await getChannelAccountWithSecrets(
+      "slack",
+      "slack-account",
+    )) as SlackChannelAccount | null;
+    if (!hydrated) {
+      throw new Error("Expected hydrated Slack account");
+    }
+
+    upsertChannelAccount("slack", { ...hydrated, enabled: false });
+
+    const persistedText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+    expect(persistedText).not.toContain("xoxb-secret");
+    expect(persistedText).not.toContain("xapp-secret");
+    expect(persistedText).toContain("__letta_secret_refs");
+  });
+
   test("keyring write failure does not persist dangling secret refs", async () => {
     __setActiveChannelCredentialsStoreModeForTests("keyring");
     __setChannelSecretStoreOverrideForTests({

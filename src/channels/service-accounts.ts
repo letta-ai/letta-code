@@ -436,13 +436,13 @@ export async function removeChannelAccountLive(
   }
 
   await getChannelRegistry()?.stopChannelAccount(channelId, accountId);
+  const removed = await removeChannelAccountWithSecrets(channelId, accountId);
   loadRoutes(channelId);
   loadTargetStore(channelId);
   loadPairingStore(channelId);
   removeRoutesForAccount(channelId, accountId);
   removeChannelTargetsForAccount(channelId, accountId);
   removePairingStateForAccount(channelId, accountId);
-  const removed = await removeChannelAccountWithSecrets(channelId, accountId);
   await refreshLoadedMessageChannelTool();
   return removed;
 }
