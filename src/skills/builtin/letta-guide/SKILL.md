@@ -19,16 +19,33 @@ how to answer questions about Letta correctly.
    backend-aware active configuration report. Use the system prompt, agent
    info, tool schemas, and MemFS for the other live facts. Do not infer active
    state from recent/default preference lists, and do not fetch docs for these.
-2. **Fetch the docs index.** For product questions, fetch
-   `https://docs.letta.com/llms.txt` — a curated index of every current
-   documentation page with descriptions. Pick the most relevant page URLs.
-3. **Fetch the specific pages.** Append `/index.md` to any docs URL for the
-   canonical LLM-friendly markdown version (e.g.
-   `https://docs.letta.com/configuration/models/index.md`). Read the page,
-   then answer. Cite the doc URL(s) you used so the user can go deeper.
-4. **If the docs are unreachable**, say so explicitly, give your best answer,
-   and clearly mark it as possibly out of date with a link to
-   https://docs.letta.com. Never silently fall back to memory.
+2. **Fetch the docs index directly.** For product questions, run:
+
+   ```bash
+   node <SKILL_DIR>/scripts/fetch-letta-docs.mjs
+   ```
+
+   The helper retrieves `https://docs.letta.com/llms.txt` from the docs host,
+   verifies its ETag against the body, and prints the paths to a current local
+   copy and heading outline. Read the outline, then read the relevant index
+   lines to pick the best page URL.
+3. **Fetch the specific page directly.** Pass the exact canonical URL from the
+   index back to the same helper, for example:
+
+   ```bash
+   node <SKILL_DIR>/scripts/fetch-letta-docs.mjs \
+     --docs-url "https://docs.letta.com/configuration/models/index.md"
+   ```
+
+   Read the returned docs path before running the helper for another URL. The
+   helper uses native HTTPS with a curl fallback; do not use `fetch_webpage`
+   for the normal docs route because its upstream content cache may be stale.
+   Cite the public doc URL so the user can go deeper.
+4. **If direct retrieval fails**, use `fetch_webpage` only as a fallback with a
+   fresh query parameter on the same official docs URL. Disclose that the
+   fallback may be stale. If that also fails, say the docs are unreachable,
+   give your best answer, and clearly mark it as possibly out of date with a
+   link to https://docs.letta.com. Never silently fall back to memory.
 
 ## Hard rules
 
@@ -68,9 +85,9 @@ rather than leaving the user stuck.
 
 ## Caching
 
-Cache fetched pages under the Letta home directory: `~/.letta/docs-cache/`
-(Windows: `%USERPROFILE%\.letta\docs-cache\`). Resolve `~` to an absolute
-path before passing paths to file tools — they do not expand it. Reuse cached
-pages within a session; refetch `llms.txt` when the cached copy is older than
-about a day.
+The helper owns the cache. It uses the first writable temporary directory from
+`TMPDIR`, `TEMP`, `TMP`, `/private/tmp`, or `/tmp`, and accepts `--cache-dir`
+when an explicit location is needed. Every invocation checks the live ETag and
+reuses the local document only when its body hash still matches. Do not create
+or manage a second cache yourself.
 
