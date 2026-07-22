@@ -78,6 +78,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "^0.80.6",
     "@letta-ai/letta-client": "^1.10.2",
+    "@letta-ai/trajectory": "^0.1.1",
     "@pierre/diffs": "1.2.2",
     "@scarf/scarf": "^1.4.0",
     "cron-parser": "^5.6.1",

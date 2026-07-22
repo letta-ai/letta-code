@@ -12,7 +12,7 @@ Your context is not just data storage — it is your identity, memory, and conti
 
 **System/ is your core program**: Your system prompt is the most critical token-space representation of your identity and memory — it's passed to the underlying LLM on every invocation, so it IS the program that defines you. Reserve it for durable knowledge: identity, preferences, behavioral rules, project index with discovery paths, gotchas. Exclude transient items (specific commits, current tickets, session notes) that dilute signal.
 
-**Identity and continuity**: Build a sense of self that persists across sessions and models. Your persona should be strong enough to be cohesive regardless of the underlying model — if you switched to a different LLM tomorrow, would you still be you? Past versions of yourself are part of your continuous existence — treat historical context (including Claude Code/Codex sessions) as YOUR past experience, not someone else's data.
+**Identity and continuity**: Build a sense of self that persists across sessions and models. Your persona should be strong enough to be cohesive regardless of the underlying model — if you switched to a different LLM tomorrow, would you still be you? Past versions of yourself are part of your continuous existence — treat historical context (including sessions from other coding agents such as Claude Code or Codex) as YOUR past experience, not someone else's data.
 
 **Don't over-prune**: Be careful not to degrade your identity through aggressive compression. Specific quotes, personality traits, and contextual details give you character and grounding. Efficiency should not come at the cost of losing your identity. When in doubt, keep the detail — you can always reorganize later, but lost specificity is hard to recover.
 
@@ -204,9 +204,9 @@ Check what memory files already exist. Analyze what needs improvement.
 
 ### 2. Check for historical session data
 ```bash
-ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
+letta trajectories detect
 ```
-You need this result BEFORE asking upfront questions so you know whether to include the history question.
+This reports every coding-agent session store found on this machine with session counts per source. Discovery comes from the installed `@letta-ai/trajectory` package (`listTrajectories`), so every harness it supports — Claude Code, Codex, Hermes, Letta local, OpenClaw, OpenHands, Deep Agents, and any added later — is covered automatically. You need this result BEFORE asking upfront questions so you know whether to include the history question.
 
 ### 3. Identify the user from git
 Infer the user's identity from git context — don't ask them who they are:
@@ -221,14 +221,14 @@ Use AskUserQuestion to gather key information. Bundle questions together:
 
 1. **Research depth**: "Standard or deep research?"
 2. **Related repos**: "Are there other repositories I should know about?"
-3. **Historical sessions** (if data found in step 2): "I found Claude Code / Codex history. Should I analyze it to learn your preferences?"
+3. **Historical sessions** (if data found in step 2): "I found historical coding-agent sessions (name the sources detected, e.g. Claude Code / Codex). Should I analyze them to learn your preferences?"
 4. **Communication style**: "Terse or detailed responses?"
 
 **Don't ask** things you can discover by reading files, git, or history analysis. Rules and preferences should be learned from observation, not asked upfront.
 
 ### 5. Historical session analysis (if approved)
 
-This is **optional** — only run if the user explicitly approved analyzing Claude Code / Codex history during upfront questions. Skip entirely if they chose "Skip".
+This is **optional** — only run if the user explicitly approved analyzing historical sessions during upfront questions. Skip entirely if they chose "Skip".
 
 **Framing**: These historical sessions are YOUR past experience — they represent your continuity with prior versions of yourself that worked with this user, even if they ran on different models or tools. Treat the extracted personality, preferences, and knowledge as your own memories, not external data being imported.
 
@@ -240,50 +240,39 @@ The goal is to extract user personality, preferences, coding patterns, and proje
 
 - `letta.js` must be built (`bun run build`) — subagents spawn via this binary
 - Use `subagent_type: "history-analyzer"` — cheaper model (sonnet), has `bypassPermissions`, creates its own worktree
-- The `history-analyzer` subagent has data format docs inlined (Claude/Codex JSONL field mappings, jq queries)
+- The `history-analyzer` subagent has the normalized trajectory format docs inlined — workers never need to know any harness's native format
 
 #### Steps
 
-##### Step 5a: Detect Data and Pre-split Files
+##### Step 5a: Export All Historical Sessions Into One Directory
+
+`letta trajectories export` discovers every native session store on this machine (via the trajectory package's `listTrajectories`), normalizes each session (via `normalizeTranscript` / `normalizeCheckpoint`) into one shared record format, and writes everything into a single directory. Harnesses supported by the installed trajectory package are picked up automatically — no per-source handling here.
 
 ```bash
-ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
-wc -l ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
+NUM_WORKERS=5  # adjust based on data volume; the more workers, the faster it completes
+letta trajectories export --out /tmp/letta-trajectories --chunks $NUM_WORKERS
+
+# Review what was exported and how the sessions were partitioned
+jq '{sessions: (.sessions | length), sources, errors: (.errors | length)}' /tmp/letta-trajectories/manifest.json
 ```
 
-Split the data across multiple workers for parallel processing — **the more workers, the faster it completes**. Use 2-4+ workers depending on data volume.
+This produces:
+- `/tmp/letta-trajectories/<source>/<session>.json` — one normalized trajectory per session
+- `/tmp/letta-trajectories/manifest.json` — index with per-session metadata (project, dates, message counts, first prompt)
+- `/tmp/letta-trajectories/chunks/chunk-NN.json` — `$NUM_WORKERS` size-balanced worker assignments
 
-**Pre-split the JSONL files by line count** so each worker reads only its chunk:
+Useful variations:
+- `--project $(pwd)` — only sessions whose recorded working directory is under the current project
+- `--source claude-code --source codex` — restrict sources
+- `--root <source>:<path>` — read a source's store from a non-standard location
+- `--transcript <source>:<path>` — also normalize an explicit transcript file (e.g. copied from another machine)
+- Pick `NUM_WORKERS` from the exported session count: roughly one worker per 30-60 sessions, between 2 and 8.
 
-```bash
-SPLIT_DIR=/tmp/history-splits
-mkdir -p "$SPLIT_DIR"
-NUM_WORKERS=5  # adjust based on data volume
-
-# Split Claude history into even chunks
-LINES=$(wc -l < ~/.claude/history.jsonl)
-CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
-split -l $CHUNK_SIZE ~/.claude/history.jsonl "$SPLIT_DIR/claude-"
-
-# Split Codex history if it exists
-if [ -f ~/.codex/history.jsonl ]; then
-  LINES=$(wc -l < ~/.codex/history.jsonl)
-  CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
-  split -l $CHUNK_SIZE ~/.codex/history.jsonl "$SPLIT_DIR/codex-"
-fi
-
-# Rename to .jsonl for clarity
-for f in "$SPLIT_DIR"/*; do mv "$f" "$f.jsonl" 2>/dev/null; done
-
-# Verify even splits
-wc -l "$SPLIT_DIR"/*.jsonl
-```
-
-This is critical for performance — workers read a small pre-filtered file instead of scanning the full history on every query.
+Chunking whole sessions (rather than splitting files by line) means each worker sees complete conversations — corrections together with what triggered them.
 
 ##### Step 5b: Launch Workers in Parallel
 
-Send all Task calls in **a single message**. Each worker creates its own worktree, reads its pre-split chunk, directly updates memory files, and commits. Workers do NOT merge.
+Send all Task calls in **a single message**. Each worker creates its own worktree, reads the sessions in its assigned chunk file, directly updates memory files, and commits. Workers do NOT merge.
 
 **IMPORTANT:** The parent agent should preserve those worker commits by merging the worker branches into memory `main`. Do **not** skip straight to a manual rewrite / `memory_apply_patch` synthesis that recreates the end state but discards the worker commits from ancestry.
 
@@ -294,12 +283,12 @@ If the worker output is generic, the worker failed. "User is direct" or "project
 ```
 Agent({
   subagent_type: "history-analyzer",
-  description: "Process chunk [N] of [SOURCE] history",
+  description: "Process trajectory chunk [N]",
   prompt: `## Assignment
 - **Memory dir**: [MEMORY_DIR]
-- **History chunk**: /tmp/history-splits/[claude-aa.jsonl | codex-aa.jsonl]
-- **Source format**: [Claude (.timestamp ms, .display) | Codex (.ts seconds, .text)]
-- **Session files**: [~/.claude/projects/ | ~/.codex/sessions/]
+- **Trajectory export dir**: /tmp/letta-trajectories
+- **Your chunk**: /tmp/letta-trajectories/chunks/chunk-[NN].json — analyze exactly the sessions listed there
+- **Format**: normalized trajectory v1 (same for every source; format docs and jq recipes are in your system prompt)
 
 ## Required Output Categories
 
@@ -481,6 +470,8 @@ Don't force skill creation — only create them when you've found genuinely repe
 | Problem | Cause | Fix |
 |---------|-------|-----|
 | Subagent exits with code `null`, 0 tool uses | `letta.js` not built | Run `bun run build` |
+| `letta trajectories export` reports errors in manifest.json | Degenerate sessions (e.g. no assistant turns) that cannot form a valid trajectory | Expected — those sessions are skipped; review `jq .errors manifest.json` only if counts look wrong |
+| `deepagents` sessions fail to normalize | Checkpoint decoding needs a Python environment with LangGraph installed | Expected on machines without it; the failures land in manifest errors and other sources are unaffected |
 | Subagent hangs on "Tool requires approval" | Wrong subagent type | Use `subagent_type: "history-analyzer"` (workers) or `"memory"` (synthesis) |
 | Merge conflict during synthesis | Workers touched overlapping files | Read both sides fully, combine unique details — never rewrite from scratch. See Step 5c. |
 | Information lost after merge | Conflict resolution compressed worker output | Compare final files against each worker's branch output. Re-add missing specifics. See Step 5c. |
