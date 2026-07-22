@@ -26,6 +26,8 @@ import {
   FRONTMATTER_REGEX,
   getPersonalityBlockDefinitions,
   getPersonalityContent,
+  getPersonalityCreationTags,
+  getPersonalityDefaultMemoryFiles,
   getPersonalityOption,
   normalizeComparableContent,
   PERSONALITY_OPTIONS,
@@ -118,7 +120,7 @@ export async function buildCreateAgentOptionsForPersonality(params: {
     name: name ?? personality.label,
     description: description ?? personality.description,
     model: model ?? personality.defaultModel,
-    tags,
+    tags: [...getPersonalityCreationTags(personalityId), ...(tags ?? [])],
     memoryPromptMode: "memfs",
     memoryBlocks: buildPersonalityMemoryBlocks(
       personalityId,
@@ -181,14 +183,20 @@ export async function createAgentForPersonality(params: {
   Awaited<ReturnType<typeof import("@/agent/create")["createAgent"]>>
 > {
   const { createAgent } = await import("@/agent/create");
-  const result = await createAgent(
-    await buildCreateAgentOptionsForPersonality(params),
-  );
+  const createOptions = await buildCreateAgentOptionsForPersonality(params);
+  const result = await createAgent(createOptions);
 
   await enableMemfsForCreatedAgent({
     agentId: result.agent.id,
     agentTags: result.agent.tags,
   });
+
+  if (getPersonalityDefaultMemoryFiles(params.personalityId).length > 0) {
+    const { enableMemfsIfCloud } = await import("@/agent/memory-filesystem");
+    await enableMemfsIfCloud(result.agent.id, {
+      agentTags: result.agent.tags,
+    });
+  }
 
   return result;
 }
