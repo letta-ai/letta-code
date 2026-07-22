@@ -75,7 +75,7 @@ describe("Tutor default profile picture", () => {
     expect(metadata.width).toBe(512);
     expect(metadata.height).toBe(512);
     expect(statSync(assetPath).size).toBeLessThan(5 * 1024 * 1024);
-    expect(packageJson.files).toContain("assets/protected/tutor-profile.png");
+    expect(packageJson.files).toContain("assets/tutor-profile.png");
     expect(packageJson.files).not.toContain("assets");
   });
 

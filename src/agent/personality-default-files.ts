@@ -41,9 +41,9 @@ export interface SeedPersonalityDefaultMemoryFilesResult {
 function getBundledPersonalityAssetsPath(): string {
   const thisDir = dirname(fileURLToPath(import.meta.url));
   if (thisDir.replaceAll("\\", "/").endsWith("/src/agent")) {
-    return join(thisDir, "../../assets/protected");
+    return join(thisDir, "../../assets");
   }
-  return join(thisDir, "assets/protected");
+  return join(thisDir, "assets");
 }
 
 export function getPersonalityAssetPath(assetId: PersonalityAssetId): string {
