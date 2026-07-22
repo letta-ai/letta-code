@@ -11,6 +11,10 @@ import { getErrorMessage } from "@/utils/error";
 import { registerWithCloudRetry } from "@/websocket/listen-register";
 import { resolveListenerRegistrationOptions } from "@/websocket/listener/auth";
 import { resolveListenerIdentity } from "@/websocket/listener/identity";
+import {
+  claimListenerLock,
+  releaseListenerLock,
+} from "@/websocket/listener/instance-lock";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -121,6 +125,9 @@ export async function handleListen(
     }
 
     stopListenerClient();
+    // Release the single-run lock so this configured listener can start
+    // again (here or in another process). Safe if no lock is held.
+    await releaseListenerLock();
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -220,6 +227,26 @@ export async function handleListen(
     const identity = await resolveListenerIdentity(connectionName, {
       namespace: "listen",
     });
+
+    // Single-run guard: the SAME configured /listen listener must not run
+    // twice on this host (two TUIs racing one relay slot). Fails visibly —
+    // never kills the incumbent. Released on /remote off, disconnect,
+    // error, supersession, and startup failure below.
+    const lock = await claimListenerLock(identity.listenerInstanceId);
+    if (lock.kind === "held") {
+      updateCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        cmdId,
+        msg,
+        `✗ Listener "${connectionName}" is already running on this machine (pid ${lock.holder.pid}).\n\n` +
+          `Stop it first (/remote off in that session), or use a different --env-name.`,
+        false,
+        "finished",
+      );
+      ctx.setCommandRunning(false);
+      return;
+    }
 
     const resolveRegisterOptions = () =>
       resolveListenerRegistrationOptions(deviceId, connectionName, {
@@ -376,6 +403,9 @@ export async function handleListen(
               "finished",
             );
             ctx.setCommandRunning(false);
+            // Terminal for this /listen session — free the configured
+            // listener for a future start.
+            void releaseListenerLock();
           }
         },
         onDisconnected: () => {
@@ -390,6 +420,7 @@ export async function handleListen(
             "finished",
           );
           ctx.setCommandRunning(false);
+          void releaseListenerLock();
         },
         onError: (error: Error) => {
           updateCommandResult(
@@ -402,6 +433,7 @@ export async function handleListen(
             "finished",
           );
           ctx.setCommandRunning(false);
+          void releaseListenerLock();
         },
       });
     };
@@ -418,5 +450,8 @@ export async function handleListen(
       "finished",
     );
     ctx.setCommandRunning(false);
+    // Startup failed after the lock was acquired — release it so retrying
+    // /listen (or another process) can claim the configured listener.
+    await releaseListenerLock();
   }
 }
