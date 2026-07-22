@@ -31,7 +31,17 @@ type ListenerAuthOptions = {
 };
 
 type ListenerRegistrationOptions = ListenerAuthOptions & {
+  /**
+   * Legacy identity surface, retained ONLY as the fallback discriminator
+   * for sessions that predate explicit identities (LET-10085). New sessions
+   * resolve identity via resolveListenerIdentity() and never hit this.
+   */
   surface?: "server" | "listen";
+  /**
+   * Explicit stable listener identity. When set, it is used verbatim as
+   * the relay `listenerInstanceId`; the display name plays no part.
+   */
+  listenerInstanceId?: string;
 };
 
 const defaultListenerOAuthDeps: ListenerOAuthDeps = {
@@ -259,10 +269,12 @@ export async function resolveListenerRegistrationOptions(
     ...auth,
     deviceId,
     connectionName,
-    listenerInstanceId: deriveListenerInstanceId(
-      options.surface ?? "server",
-      connectionName,
-    ),
+    // Explicit identity wins (LET-10085). The name-derived fallback exists
+    // only for callers that have not adopted explicit identities yet; it
+    // preserves their previous slot so upgrades don't strand server rows.
+    listenerInstanceId:
+      options.listenerInstanceId ??
+      deriveListenerInstanceId(options.surface ?? "server", connectionName),
   };
 }
 

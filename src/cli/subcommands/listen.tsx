@@ -32,6 +32,11 @@ import {
   MissingListenerApiKeyError,
   resolveListenerRegistrationOptions,
 } from "@/websocket/listener/auth";
+import { resolveListenerIdentity } from "@/websocket/listener/identity";
+import {
+  claimListenerLock,
+  releaseListenerLock,
+} from "@/websocket/listener/instance-lock";
 import { flushRemoteSettingsWrites } from "@/websocket/listener/remote-settings";
 
 type ListenerProcessAnchor = {
@@ -298,6 +303,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best-effort cleanup — don't block exit
     }
+    await releaseListenerLock();
     await flushRemoteSettingsWrites();
     await flushListenerTelemetryEnd(`listener_${signal.toLowerCase()}`);
     process.exit(0);
@@ -321,6 +327,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     } catch {
       // Best effort — don't block exit on channel cleanup failure
     }
+    await releaseListenerLock();
     await flushRemoteSettingsWrites();
     await flushListenerTelemetryEnd(exitReason);
     process.exit(code);
@@ -430,6 +437,36 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   try {
     // Get device ID
     const deviceId = settingsManager.getOrCreateDeviceId();
+
+    // Resolve this listener's stable identity (LET-10085): spawner-provided
+    // env, else the identity persisted for this (project, env name), else a
+    // freshly minted persisted UUID. The display name is NOT the identity —
+    // same-named listeners elsewhere coexist on distinct relay slots.
+    const identity = resolveListenerIdentity(connectionName, {
+      namespace: "server",
+    });
+    sessionLog.log(
+      `listenerInstanceId: ${identity.listenerInstanceId} (${identity.source})`,
+    );
+
+    // Single-run guard: the SAME configured listener must not run twice on
+    // this host. Fails visibly — never kills the incumbent.
+    const lock = await claimListenerLock(identity.listenerInstanceId);
+    if (lock.kind === "held") {
+      console.error(
+        `Listener "${connectionName}" is already running on this machine (pid ${lock.holder.pid}).`,
+      );
+      console.error(
+        "Stop it first, or run a second listener under a different --env-name.",
+      );
+      await flushListenerTelemetryEnd("listener_already_running");
+      return 1;
+    }
+    if (lock.kind === "unavailable") {
+      // Advisory guard — log and continue rather than bricking startup.
+      sessionLog.log(`[InstanceLock] unavailable: ${lock.reason}`);
+    }
+
     const startupMode = await resolveListenerStartupMode(channelNames);
 
     if (
@@ -504,6 +541,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       registerOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
+        { listenerInstanceId: identity.listenerInstanceId },
       );
     } catch (authErr) {
       if (authErr instanceof MissingListenerApiKeyError) {
@@ -572,6 +610,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
+        { listenerInstanceId: identity.listenerInstanceId },
       );
       const result = await registerWithCloudRetry(nextRegisterOptions, {
         maxDurationMs: Infinity,

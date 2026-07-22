@@ -10,6 +10,7 @@ import { settingsManager } from "@/settings-manager";
 import { getErrorMessage } from "@/utils/error";
 import { registerWithCloudRetry } from "@/websocket/listen-register";
 import { resolveListenerRegistrationOptions } from "@/websocket/listener/auth";
+import { resolveListenerIdentity } from "@/websocket/listener/identity";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -214,10 +215,17 @@ export async function handleListen(
       "running",
     );
 
+    // Stable explicit identity for this configured /listen listener
+    // (LET-10085); the display name is not the identity.
+    const identity = resolveListenerIdentity(connectionName, {
+      namespace: "listen",
+    });
+
     const resolveRegisterOptions = () =>
       resolveListenerRegistrationOptions(deviceId, connectionName, {
         allowInteractiveOAuth: false,
         surface: "listen",
+        listenerInstanceId: identity.listenerInstanceId,
       });
 
     // Register with cloud, retrying transient failures with a bounded backoff.
