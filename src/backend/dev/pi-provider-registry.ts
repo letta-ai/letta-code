@@ -3,8 +3,8 @@ import type { Api, KnownProvider, Model } from "@earendil-works/pi-ai";
 // /compat import in the local backend (tracked upstream).
 import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import {
+  builtinProviders,
   getBuiltinModels,
-  getBuiltinProviders,
 } from "@earendil-works/pi-ai/providers/all";
 
 export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
@@ -115,6 +115,7 @@ export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
     openai: "gpt-5.5",
     "azure-openai-responses": "gpt-5.4",
     "openai-codex": "gpt-5.5",
+    radius: "auto",
     nvidia: "nvidia/nemotron-3-super-120b-a12b",
     deepseek: "deepseek-v4-pro",
     google: "gemini-3.1-pro-preview",
@@ -349,7 +350,12 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
 ];
 
 export const PI_PROVIDER_SPECS: readonly PiProviderSpec[] = [
-  ...getBuiltinProviders().map(makePiProviderSpec),
+  // Keyed off the provider collection (builtinProviders), not the generated
+  // static catalog: purely dynamic providers (e.g. "radius") have a factory
+  // but no catalog entry.
+  ...builtinProviders().map((provider) =>
+    makePiProviderSpec(provider.id as KnownProvider),
+  ),
   ...LOCAL_ENDPOINT_PROVIDER_SPECS,
 ];
 

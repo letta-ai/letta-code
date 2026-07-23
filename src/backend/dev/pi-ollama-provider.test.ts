@@ -136,9 +136,9 @@ describe("createOllamaPiProvider", () => {
     expect(provider.getModels()).toHaveLength(2);
 
     state.failTags = true;
-    expect(provider.refreshModels?.(testRefreshContext())).rejects.toThrow(
-      "connection refused",
-    );
+    await expect(
+      provider.refreshModels?.(testRefreshContext()),
+    ).rejects.toThrow("connection refused");
     expect(provider.getModels()).toHaveLength(2);
     expect(
       provider.getModels().find((m) => m.id === "qwen3.6:27b")?.input,

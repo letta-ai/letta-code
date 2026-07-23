@@ -181,10 +181,15 @@ export function createLocalEndpointPiProvider(
     auth: {
       apiKey: {
         name: `${options.name} API key`,
-        resolve: async ({ credential }) => ({
-          auth: { apiKey: credential?.key ?? options.apiKey ?? "not-needed" },
-          source: options.apiKey ? "local provider record" : "keyless",
-        }),
+        // Keyless local daemons pass "not-needed" through the connection's
+        // fallback key; a remote endpoint with no key at all resolves
+        // undefined so pi-ai treats it as unconfigured.
+        resolve: async ({ credential }) => {
+          const apiKey = credential?.key ?? options.apiKey;
+          return apiKey
+            ? { auth: { apiKey }, source: "local provider record" }
+            : undefined;
+        },
       },
     },
     // Static baseline stays empty: pi-ai merges the baseline with the

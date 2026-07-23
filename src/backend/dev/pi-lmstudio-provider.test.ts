@@ -118,7 +118,9 @@ describe("createLmStudioPiProvider", () => {
 
     state.failNative = true;
     state.failOpenAI = true;
-    expect(provider.refreshModels?.(testRefreshContext())).rejects.toThrow();
+    await expect(
+      provider.refreshModels?.(testRefreshContext()),
+    ).rejects.toThrow();
     expect(provider.getModels()).toHaveLength(1);
   });
 });

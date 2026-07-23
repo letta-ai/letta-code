@@ -344,6 +344,55 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     expect(resolved.model.input).toEqual(["text", "image"]);
   });
 
+  test("refreshAll never probes unconfigured remote endpoints or mods", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
+    storageDirs.push(storageDir);
+    const requested: string[] = [];
+    const recordingFetch = (async (input: string | URL | Request) => {
+      requested.push(String(input));
+      throw new Error("no endpoint in tests");
+    }) as unknown as typeof fetch;
+    const runtime = new LocalPiModelsRuntime({
+      storageDir,
+      fetchImpl: recordingFetch,
+    });
+
+    await runtime.refreshAll();
+
+    // Auto-detectable local daemons may be probed; the remote Ollama Cloud
+    // endpoint must not be touched without a configured record/env key.
+    expect(requested.some((url) => url.includes("ollama.com"))).toBe(false);
+  });
+
+  test("endpoint change drops the stored catalog instead of restoring stale models", async () => {
+    const serverA = startFakeOllama([
+      { id: "model-a:1b", capabilities: ["completion"] },
+    ]);
+    servers.push(serverA);
+    const storageDir = await setupOllamaStorage(serverA.url, storageDirs);
+    const runtime = new LocalPiModelsRuntime({ storageDir });
+
+    await runtime.refresh("ollama");
+    expect(runtime.getModel("ollama", "model-a:1b")).toBeDefined();
+
+    // Reconfigure to an endpoint that is offline: the old endpoint's catalog
+    // must not be restored from the models store by the failed refresh.
+    const serverB = startFakeOllama([]);
+    const deadUrl = serverB.url;
+    serverB.stop();
+    await createOrUpdateLocalProvider({
+      providerType: "ollama",
+      providerName: "ollama",
+      apiKey: "not-needed",
+      baseURL: deadUrl,
+      storageDir,
+    });
+
+    expect(runtime.getModels("ollama")).toHaveLength(0);
+    await expect(runtime.refresh("ollama")).rejects.toThrow();
+    expect(runtime.getModels("ollama")).toHaveLength(0);
+  });
+
   test("refresh failure retains last-known models and turns still resolve", async () => {
     const server = startFakeOllama([
       {
@@ -358,7 +407,7 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     await runtime.refresh("ollama");
     server.stop();
 
-    expect(runtime.refresh("ollama")).rejects.toThrow();
+    await expect(runtime.refresh("ollama")).rejects.toThrow();
     // /model keeps the last-known list rather than dropping the provider.
     const listed = await listLocalModels(storageDir, {
       fetch: failingDiscoveryFetch,

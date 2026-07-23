@@ -565,12 +565,13 @@ export async function resolvePiModelForAgent(
         `Unknown model "${modelId}" for registered provider "${provider}".`,
       );
     }
-    // Copy before handing to the mod's modifyModels so a mutating mod cannot
-    // corrupt the provider-published instance.
+    // Deep-copy before handing to the mod's modifyModels so a mutating mod
+    // cannot corrupt the provider-published instance (including nested
+    // arrays/objects like input, cost, and compat).
     const oauthModel =
       oauthCredentials && registeredProvider.config.oauth?.modifyModels
         ? (registeredProvider.config.oauth.modifyModels(
-            [{ ...runtimeModel }],
+            [structuredClone(runtimeModel)],
             oauthCredentials,
           )[0] ?? runtimeModel)
         : runtimeModel;

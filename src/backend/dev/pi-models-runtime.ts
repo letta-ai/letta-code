@@ -13,6 +13,7 @@ import { createModels, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import {
   getLocalProviderRecordByName,
+  listLocalProviderRecords,
   localProviderApiKeyFromRecord,
 } from "@/backend/local/local-provider-auth-store";
 import {
@@ -35,7 +36,10 @@ import {
   listRegisteredPiProviders,
 } from "./pi-provider-mod-registry";
 import { getPiProviderSpec, type PiProvider } from "./pi-provider-registry";
-import { resolveRegisteredPiProviderRuntimeConnection } from "./registered-pi-provider-runtime";
+import {
+  isRegisteredPiProviderConfigured,
+  resolveRegisteredPiProviderRuntimeConnection,
+} from "./registered-pi-provider-runtime";
 
 const CONFIGURED_DISCOVERY_TIMEOUT_MS = 2_000;
 const AUTODETECT_DISCOVERY_TIMEOUT_MS = 500;
@@ -174,6 +178,7 @@ export class LocalPiModelsRuntime {
     if (!registered) {
       if (this.modSignatures.delete(providerId)) {
         this.models.deleteProvider(providerId);
+        void this.modelsStore.delete(providerId);
       }
       return false;
     }
@@ -186,11 +191,15 @@ export class LocalPiModelsRuntime {
       connection.baseURL ?? "",
       connection.apiKey ?? "",
     ].join(" ");
+    const previousSignature = this.modSignatures.get(providerId);
     if (
-      this.modSignatures.get(providerId) === signature &&
+      previousSignature === signature &&
       this.models.getProvider(providerId)
     ) {
       return true;
+    }
+    if (previousSignature !== undefined && previousSignature !== signature) {
+      void this.modelsStore.delete(providerId);
     }
     this.models.setProvider(
       createModPiProvider({
@@ -210,15 +219,19 @@ export class LocalPiModelsRuntime {
       this.storageDir,
     );
     const signature = connectionSignature(connection);
+    const previousSignature = this.endpointSignatures.get(providerId);
     if (
-      this.endpointSignatures.get(providerId) === signature &&
+      previousSignature === signature &&
       this.models.getProvider(providerId)
     ) {
       return;
     }
-    // Connection changed: replace only this provider. The fresh instance
-    // starts with no models so stale discovery from the old endpoint cannot
-    // leak; the next refresh() repopulates from the new endpoint.
+    // Connection changed: replace only this provider and drop its persisted
+    // catalog, so stale discovery from the old endpoint cannot be restored
+    // by the next refresh. (InMemoryModelsStore deletes synchronously.)
+    if (previousSignature !== undefined && previousSignature !== signature) {
+      void this.modelsStore.delete(providerId);
+    }
     this.models.setProvider(
       create({
         baseURL: connection.baseURL,
@@ -269,10 +282,26 @@ export class LocalPiModelsRuntime {
    */
   async refreshAll(): Promise<void> {
     this.ensureManagedProviders();
-    const managedIds = new Set([
-      ...MANAGED_ENDPOINT_PROVIDERS.keys(),
-      ...listRegisteredPiProviders().map((provider) => provider.providerName),
-    ]);
+    // Only refresh providers the user configured (record/env) or that are
+    // explicitly auto-detectable local daemons. Never probe remote endpoints
+    // (Ollama Cloud) or invoke mod listModels hooks without configuration.
+    const records = listLocalProviderRecords(this.storageDir);
+    const managedIds = new Set<string>();
+    for (const providerId of MANAGED_ENDPOINT_PROVIDERS.keys()) {
+      const spec = getPiProviderSpec(providerId as PiProvider);
+      const connection = resolveLocalEndpointConnection(
+        providerId,
+        this.storageDir,
+      );
+      if (connection.configured || spec.autoDetectLocalEndpoint === true) {
+        managedIds.add(providerId);
+      }
+    }
+    for (const registered of listRegisteredPiProviders()) {
+      if (isRegisteredPiProviderConfigured(registered, records)) {
+        managedIds.add(registered.providerName);
+      }
+    }
     await Promise.all(
       [...managedIds].map(async (providerId) => {
         try {

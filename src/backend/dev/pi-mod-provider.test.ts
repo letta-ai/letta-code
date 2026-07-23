@@ -91,9 +91,9 @@ describe("createModPiProvider", () => {
     ).toEqual(["text", "image"]);
 
     fail = true;
-    expect(provider.refreshModels?.(testRefreshContext())).rejects.toThrow(
-      "endpoint down",
-    );
+    await expect(
+      provider.refreshModels?.(testRefreshContext()),
+    ).rejects.toThrow("endpoint down");
     expect(provider.getModels().map((m) => m.id)).toEqual([
       "static-seed",
       "dynamic-1",
