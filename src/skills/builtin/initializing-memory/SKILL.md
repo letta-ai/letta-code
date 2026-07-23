@@ -268,6 +268,11 @@ Useful variations:
 - `--transcript <source>:<path>` — also normalize an explicit transcript file (e.g. copied from another machine)
 - Pick `NUM_WORKERS` from the exported session count: roughly one worker per 30-60 sessions, between 2 and 8.
 
+To browse the export yourself (all source-agnostic):
+- `letta trajectories list` — sessions with dates, sources, and first prompts
+- `letta trajectories view <file|sessionId> [--tools] [--reasoning]` — one session as a readable conversation
+- `letta trajectories search <keyword> [--role user]` — search message content across all sessions
+
 Chunking whole sessions (rather than splitting files by line) means each worker sees complete conversations — corrections together with what triggered them.
 
 ##### Step 5b: Launch Workers in Parallel

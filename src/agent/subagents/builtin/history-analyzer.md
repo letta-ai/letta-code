@@ -136,6 +136,8 @@ Your prompt will specify a trajectory export directory and either a chunk file (
 - User messages with timestamps: `jq -r '.[] | select(.role == "user") | "\(.timestamp) \(.content)"' <file>`
 - Search across all sessions: `grep -l "some phrase" <export-dir>/*/*.json`
 
+The `letta` CLI offers the same reads pre-packaged: `letta trajectories view <file|sessionId> --out <export-dir> [--tools] [--reasoning]` renders a session as a readable conversation, and `letta trajectories search <keyword> --out <export-dir> [--role user]` searches message content across every session.
+
 Read sessions in chronological order (your chunk's `sessions` list is manifest-ordered by `startedAt`) so you see how the working relationship evolved. Use `userMessages`/`bytes` in the chunk entries to budget your attention — prioritize long, interaction-heavy sessions over one-prompt sessions.
 
 Look for **repeated patterns**, not isolated events:
