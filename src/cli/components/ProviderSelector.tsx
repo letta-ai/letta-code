@@ -20,7 +20,7 @@ import {
   formatChatGPTUsageQuotaRows,
   readChatGPTUsage,
 } from "@/providers/chatgpt-usage-service";
-import { normalizeChatGPTOAuthProviderName } from "@/providers/openai-codex-provider";
+import { normalizeOAuthProviderName } from "@/providers/openai-codex-provider";
 import { connectedRecordsForProvider } from "@/providers/provider-connections";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { type AwsProfile, parseAwsCredentials } from "@/utils/aws-credentials";
@@ -144,9 +144,8 @@ export function canConnectAnotherProvider(
   target: ProviderStorageTarget,
 ): boolean {
   return (
-    target === "api" &&
     provider.isOAuth === true &&
-    provider.providerType === "chatgpt_oauth"
+    (target === "local" || provider.providerType === "chatgpt_oauth")
   );
 }
 
@@ -808,7 +807,7 @@ export function ProviderSelector({
 
     let providerName: string;
     try {
-      providerName = normalizeChatGPTOAuthProviderName(providerNameInput);
+      providerName = normalizeOAuthProviderName(providerNameInput);
     } catch (error) {
       setProviderNameError(
         error instanceof Error ? error.message : String(error),

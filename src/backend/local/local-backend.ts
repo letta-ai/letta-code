@@ -52,7 +52,7 @@ import {
 import type { LocalMessage } from "./local-message";
 import {
   listLocalModels,
-  localModelSettingsForHandle,
+  localModelSettingsForStorage,
   resolveLocalModelConfig,
 } from "./local-model-config";
 import type {
@@ -313,7 +313,7 @@ export class LocalBackend extends HeadlessBackend {
       defaultAgentName: "Letta Code",
       defaultAgentModel: modelConfig.handle,
       defaultAgentModelSettings: modelConfig.modelSettings,
-      modelSettingsForModel: localModelSettingsForHandle,
+      modelSettingsForModel: localModelSettingsForStorage(options.storageDir),
       conversationIdPrefix: "local-conv-",
       storedMessageIdPrefix: "letta-msg-",
       localMessageIdPrefix: "ui-msg-",

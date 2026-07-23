@@ -15,12 +15,8 @@ import {
   normalizeModelHandleForRegistry,
 } from "@/agent/model";
 import { refreshModelCatalog } from "@/agent/remote-model-catalog";
-
-import {
-  buildByokProviderAliases,
-  isByokHandleForSelector,
-  listProviders,
-} from "@/providers/byok-providers";
+import { useByokProviderAliases } from "@/cli/hooks/use-byok-provider-aliases";
+import { isByokHandleForSelector } from "@/providers/byok-providers";
 import { settingsManager } from "@/settings-manager";
 import { colors } from "./colors";
 import {
@@ -28,8 +24,9 @@ import {
   filterModelsByAvailabilityForSelector,
   includeUnknownBackendHandleInRecommended,
   labelForBackendModel,
+  labelForByokProviderAlias,
   type ModelSelectorSelection,
-  registryHandleForBackendModel,
+  registryHandleForBackendModelOrAlias,
   registryHandleForByokAlias,
   toByokSelectorModel,
   toSelectorModelForHandle,
@@ -51,17 +48,19 @@ type ModelCategory =
   | "server-all";
 
 // Re-export for consumers that import from ModelSelector
-export { buildByokProviderAliases, isByokHandleForSelector };
-export type {
-  ModelSelectorSelection,
-  UiModel,
-} from "./model-selector-helpers";
+export {
+  buildByokProviderAliases,
+  isByokHandleForSelector,
+} from "@/providers/byok-providers";
+export type { ModelSelectorSelection, UiModel } from "./model-selector-helpers";
 export {
   filterModelsByAvailabilityForSelector,
   includeUnknownBackendHandleInRecommended,
   labelForBackendModel,
+  labelForByokProviderAlias,
   labelForChatGPTByokAlias,
   registryHandleForBackendModel,
+  registryHandleForBackendModelOrAlias,
   registryHandleForByokAlias,
   toByokSelectorModel,
   toSelectorModelForHandle,
@@ -196,9 +195,7 @@ export function ModelSelector({
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [showLoginAction, setShowLoginAction] = useState(false);
-  const [byokProviderAliases, setByokProviderAliases] = useState<
-    Record<string, string>
-  >(() => buildByokProviderAliases([]));
+  const byokProviderAliases = useByokProviderAliases(localModelCatalog);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -277,23 +274,6 @@ export function ModelSelector({
     loadModels.current(forceRefreshOnMount ?? false);
   }, [forceRefreshOnMount]);
 
-  useEffect(() => {
-    if (localModelCatalog) {
-      setByokProviderAliases(buildByokProviderAliases([]));
-      return;
-    }
-    (async () => {
-      try {
-        const providers = await listProviders();
-        if (!mountedRef.current) return;
-        setByokProviderAliases(buildByokProviderAliases(providers));
-      } catch {
-        if (!mountedRef.current) return;
-        setByokProviderAliases(buildByokProviderAliases([]));
-      }
-    })();
-  }, [localModelCatalog]);
-
   const pickPreferredStaticModel = useCallback(
     (handle: string, contextWindow?: number): UiModel | undefined => {
       const registryHandle = normalizeModelHandleForRegistry(handle) ?? handle;
@@ -367,9 +347,10 @@ export function ModelSelector({
   const modelsForBackendHandle = useCallback(
     (handle: string, includeUnknown: boolean): UiModel[] => {
       const providerType = providerTypesByHandle.get(handle);
-      const registryHandle = registryHandleForBackendModel(
+      const registryHandle = registryHandleForBackendModelOrAlias(
         handle,
         providerType,
+        byokProviderAliases,
       );
       const baseStaticModel = pickPreferredStaticModel(registryHandle);
       const fastRegistryHandle =
@@ -392,7 +373,11 @@ export function ModelSelector({
         ? withActualHandle(
             {
               ...baseStaticModel,
-              label: labelForBackendModel(baseStaticModel.label, providerType),
+              label: labelForByokProviderAlias(
+                labelForBackendModel(baseStaticModel.label, providerType),
+                handle,
+                byokProviderAliases,
+              ),
             },
             handle,
             registryHandle,
@@ -430,6 +415,7 @@ export function ModelSelector({
     [
       pickPreferredStaticModel,
       providerTypesByHandle,
+      byokProviderAliases,
       withActualHandle,
       withProviderTypeMetadata,
     ],

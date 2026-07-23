@@ -28,7 +28,6 @@ import {
   CHATGPT_FAST_SERVICE_TIER,
   getChatGptFastRegistryHandleForModelHandle,
   getModelInfoForLlmConfig,
-  getModelShortName,
   type ModelReasoningEffort,
 } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality-presets";
@@ -224,6 +223,7 @@ import {
 } from "./layout";
 import {
   buildModelHandleFromLlmConfig,
+  currentModelDisplayLabel,
   deriveReasoningEffort,
   getPreferredAgentModelHandle,
   inferReasoningEffortFromModelPreset,
@@ -927,28 +927,22 @@ export function App({
   // Use tier-aware resolution so the display matches the agent's reasoning effort
   // (e.g. "GPT-5.3-Codex" not just "GPT-5" for the first match).
   const currentModelDisplay = useMemo(() => {
-    if (startupModelDisplayOverride) return startupModelDisplayOverride;
-    if (!currentModelLabel) return null;
-    const info = getModelInfoForLlmConfig(currentModelLabel, {
-      reasoning_effort: derivedReasoningEffort ?? null,
-      enable_reasoner:
-        (llmConfig as { enable_reasoner?: boolean | null })?.enable_reasoner ??
+    return currentModelDisplayLabel({
+      modelHandle: currentModelLabel,
+      startupOverride: startupModelDisplayOverride,
+      providerType:
+        providerTypeFromModelSettings(effectiveModelSettings) ??
+        llmConfig?.model_endpoint_type ??
         null,
-      context_window: llmConfig?.context_window ?? null,
-      service_tier: currentModelServiceTier,
+      reasoningEffort: derivedReasoningEffort ?? null,
+      llmConfig,
+      serviceTier: currentModelServiceTier,
     });
-    if (info) {
-      return (info as { shortLabel?: string }).shortLabel ?? info.label;
-    }
-    return (
-      getModelShortName(currentModelLabel) ??
-      currentModelLabel.split("/").pop() ??
-      null
-    );
   }, [
     currentModelLabel,
     derivedReasoningEffort,
     currentModelServiceTier,
+    effectiveModelSettings,
     llmConfig,
     startupModelDisplayOverride,
   ]);

@@ -7,7 +7,10 @@ import {
   registerPiProvider,
 } from "@/backend/dev/pi-provider-mod-registry";
 import { listLocalModels } from "@/backend/local/local-model-config";
-import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth-store";
+import {
+  createOrUpdateLocalProvider,
+  setLocalOAuthProvider,
+} from "@/backend/local/local-provider-auth-store";
 
 describe("local model catalog", () => {
   afterEach(() => {
@@ -39,6 +42,49 @@ describe("local model catalog", () => {
         name: "DeepSeek V4 Flash Free",
         provider_type: "opencode",
       });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("lists models separately for each named OAuth connection", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-oauth-aliases-"));
+    try {
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "chatgpt-personal",
+        providerType: "chatgpt_oauth",
+        auth: {
+          type: "oauth",
+          access: "personal-token",
+          expires: Date.now() + 60_000,
+        },
+      });
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "claude-work",
+        providerType: "anthropic",
+        auth: {
+          type: "oauth",
+          access: "work-token",
+          expires: Date.now() + 60_000,
+        },
+      });
+
+      const models = await listLocalModels(storageDir);
+
+      expect(models).toContainEqual(
+        expect.objectContaining({
+          handle: "chatgpt-personal/gpt-5.6-sol",
+          provider_type: "chatgpt_oauth",
+        }),
+      );
+      expect(models).toContainEqual(
+        expect.objectContaining({
+          handle: "claude-work/claude-sonnet-4-6",
+          provider_type: "anthropic",
+        }),
+      );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

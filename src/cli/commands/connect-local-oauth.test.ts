@@ -127,4 +127,20 @@ describe("runLocalOAuthConnectFlow select prompts", () => {
       auth: { type: "oauth" },
     });
   });
+
+  test("persists a named OAuth connection under its alias", async () => {
+    const providerName = "fake-select-oauth-work";
+
+    const result = await runLocalOAuthConnectFlow(
+      { ...FAKE_BYOK_PROVIDER, providerName },
+      {
+        onStatus: () => {},
+        openBrowser: async () => {},
+      },
+    );
+
+    expect(result.providerName).toBe(providerName);
+    expect(getLocalProviderRecordByName(providerName)?.auth.type).toBe("oauth");
+    expect(getLocalProviderRecordByName(FAKE_PROVIDER_ID)).toBeNull();
+  });
 });

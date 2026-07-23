@@ -1,11 +1,17 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { getModelInfo, type ModelReasoningEffort } from "@/agent/model";
+import {
+  getModelInfo,
+  getModelInfoForLlmConfig,
+  getModelShortName,
+  type ModelReasoningEffort,
+} from "@/agent/model";
 import {
   mapModelHandleToLlmConfigPatch,
   resolveModelHandleFromLlmConfig,
 } from "@/agent/model-handles";
+import { PROVIDER_TYPE_TO_BASE_PROVIDER } from "@/providers/byok-providers";
 import { ERROR_FEEDBACK_HINT, PROVIDER_STATUS_PAGES } from "./constants";
 
 /**
@@ -134,6 +140,65 @@ export function providerTypeFromUpdateArgs(
   const providerType = updateArgs?.provider_type;
   return typeof providerType === "string" && providerType.length > 0
     ? providerType
+    : null;
+}
+
+export function labelModelDisplayForProviderAlias(input: {
+  label: string;
+  modelHandle: string | null | undefined;
+  providerType: string | null | undefined;
+}): string {
+  const slashIndex = input.modelHandle?.indexOf("/") ?? -1;
+  if (slashIndex <= 0 || !input.providerType) return input.label;
+
+  const providerAlias = input.modelHandle?.slice(0, slashIndex);
+  const baseProvider = PROVIDER_TYPE_TO_BASE_PROVIDER[input.providerType];
+  if (!providerAlias || !baseProvider || providerAlias === baseProvider) {
+    return input.label;
+  }
+
+  if (input.providerType === "chatgpt_oauth") {
+    const withAlias = input.label.replace(
+      /\s+\(ChatGPT\)$/,
+      ` (${providerAlias})`,
+    );
+    return withAlias === input.label
+      ? `${input.label} (${providerAlias})`
+      : withAlias;
+  }
+
+  return `${input.label} (${providerAlias})`;
+}
+
+export function currentModelDisplayLabel(input: {
+  modelHandle: string | null;
+  startupOverride: string | null;
+  providerType: string | null;
+  reasoningEffort: ModelReasoningEffort | null;
+  llmConfig: LlmConfig | null | undefined;
+  serviceTier: string | null;
+}): string | null {
+  if (input.startupOverride) return input.startupOverride;
+  if (!input.modelHandle) return null;
+  const info = getModelInfoForLlmConfig(input.modelHandle, {
+    reasoning_effort: input.reasoningEffort,
+    enable_reasoner:
+      (input.llmConfig as { enable_reasoner?: boolean | null })
+        ?.enable_reasoner ?? null,
+    context_window: input.llmConfig?.context_window ?? null,
+    service_tier: input.serviceTier,
+  });
+  const label = info
+    ? ((info as { shortLabel?: string }).shortLabel ?? info.label)
+    : (getModelShortName(input.modelHandle) ??
+      input.modelHandle.split("/").pop() ??
+      null);
+  return label
+    ? labelModelDisplayForProviderAlias({
+        label,
+        modelHandle: input.modelHandle,
+        providerType: input.providerType,
+      })
     : null;
 }
 

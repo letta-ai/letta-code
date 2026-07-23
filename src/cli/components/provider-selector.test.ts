@@ -300,14 +300,16 @@ describe("ProviderSelector connected provider actions", () => {
     ).toBe("2 connected");
   });
 
-  test("surfaces connect-another only for API ChatGPT OAuth providers", () => {
+  test("surfaces connect-another for OAuth providers in local storage", () => {
     const openai = getProviderConfigs("api").find(
       (provider) => provider.id === "openai",
     );
+    const claude = providerById("anthropic-oauth");
     if (!openai) throw new Error("Expected openai provider config");
 
     expect(canConnectAnotherProvider(codexProvider, "api")).toBe(true);
-    expect(canConnectAnotherProvider(codexProvider, "local")).toBe(false);
+    expect(canConnectAnotherProvider(codexProvider, "local")).toBe(true);
+    expect(canConnectAnotherProvider(claude, "local")).toBe(true);
     expect(canConnectAnotherProvider(openai, "api")).toBe(false);
     expect(connectAnotherProviderOption(codexProvider)).toBe(
       "Connect another ChatGPT / Codex plan",
