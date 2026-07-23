@@ -291,6 +291,58 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     expect(runtime.getModels("anthropic")).toBe(builtinBefore);
   });
 
+  test("llama.cpp models resolve through the runtime with /props capabilities", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({
+            data: [{ id: "/models/qwen3.6-27b.gguf", object: "model" }],
+          });
+        }
+        if (url.pathname === "/props") {
+          return Response.json({
+            modalities: { vision: true, audio: false },
+            default_generation_settings: { n_ctx: 32768 },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    servers.push({ url: "", chatBodies: [], stop: () => server.stop(true) });
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
+    storageDirs.push(storageDir);
+    await createOrUpdateLocalProvider({
+      providerType: "llama_cpp",
+      providerName: "llama-cpp",
+      apiKey: "not-needed",
+      baseURL: `http://localhost:${server.port}`,
+      storageDir,
+    });
+    const runtime = new LocalPiModelsRuntime({ storageDir });
+
+    const listed = await listLocalModels(storageDir, {
+      fetch: failingDiscoveryFetch,
+      modelsRuntime: runtime,
+    });
+    const entry = listed.find(
+      (model) => model.handle === "llama.cpp//models/qwen3.6-27b.gguf",
+    );
+    expect(entry).toBeDefined();
+    expect(entry?.max_context_window).toBe(32768);
+
+    const resolved = await resolvePiModelForAgent(
+      "llama.cpp//models/qwen3.6-27b.gguf",
+      {},
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    expect(resolved.model).toBe(
+      runtime.getModel("llama-cpp", "/models/qwen3.6-27b.gguf")!,
+    );
+    expect(resolved.model.input).toEqual(["text", "image"]);
+  });
+
   test("refresh failure retains last-known models and turns still resolve", async () => {
     const server = startFakeOllama([
       {

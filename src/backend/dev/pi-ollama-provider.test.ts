@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  createOllamaPiProvider,
-  ollamaModelFromShowResponse,
-  ollamaNativeBaseURL,
-} from "./pi-ollama-provider";
+import { localEndpointNativeBaseURL } from "./pi-local-endpoint-provider";
+import { createOllamaPiProvider } from "./pi-ollama-provider";
 
 interface FakeOllamaState {
   tags: unknown;
@@ -57,15 +54,15 @@ function qwenState(): FakeOllamaState {
   };
 }
 
-describe("ollamaNativeBaseURL", () => {
+describe("localEndpointNativeBaseURL", () => {
   test("strips a trailing /v1", () => {
-    expect(ollamaNativeBaseURL("http://localhost:11434/v1")).toBe(
+    expect(localEndpointNativeBaseURL("http://localhost:11434/v1")).toBe(
       "http://localhost:11434",
     );
-    expect(ollamaNativeBaseURL("http://localhost:11434/v1/")).toBe(
+    expect(localEndpointNativeBaseURL("http://localhost:11434/v1/")).toBe(
       "http://localhost:11434",
     );
-    expect(ollamaNativeBaseURL("http://localhost:11434")).toBe(
+    expect(localEndpointNativeBaseURL("http://localhost:11434")).toBe(
       "http://localhost:11434",
     );
   });
@@ -141,15 +138,55 @@ describe("createOllamaPiProvider", () => {
   });
 });
 
-describe("ollamaModelFromShowResponse", () => {
-  test("defaults context window when engine metadata is missing", () => {
-    const model = ollamaModelFromShowResponse({
-      modelId: "some-model",
-      baseURL: "http://localhost:11434",
-      show: { capabilities: ["completion"] },
+describe("createOllamaPiProvider as Ollama Cloud", () => {
+  test("publishes under the ollama-cloud provider id and sends the API key", async () => {
+    const state = qwenState();
+    const authHeaders: Array<string | undefined> = [];
+    const baseFetch = fakeOllamaFetch(state);
+    const fetchImpl = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      authHeaders.push(
+        (init?.headers as Record<string, string> | undefined)?.Authorization,
+      );
+      return baseFetch(input as never, init);
+    }) as typeof fetch;
+
+    const provider = createOllamaPiProvider({
+      providerId: "ollama-cloud",
+      baseURL: "https://ollama.example.test",
+      apiKey: "cloud-key",
+      fetchImpl,
     });
-    expect(model.contextWindow).toBe(128000);
-    expect(model.input).toEqual(["text"]);
-    expect(model.provider).toBe("ollama");
+    expect(provider.id).toBe("ollama-cloud");
+    expect(provider.name).toBe("Ollama Cloud");
+
+    await provider.refreshModels?.();
+    const qwen = provider.getModels().find((m) => m.id === "qwen3.6:27b");
+    expect(qwen?.provider).toBe("ollama-cloud");
+    expect(qwen?.input).toEqual(["text", "image"]);
+    expect(authHeaders.every((header) => header === "Bearer cloud-key")).toBe(
+      true,
+    );
+  });
+});
+
+describe("defaults when engine metadata is missing", () => {
+  test("publishes conservative defaults (text-only, default context window)", async () => {
+    const state: FakeOllamaState = {
+      tags: { models: [{ name: "some-model" }] },
+      show: { "some-model": { capabilities: ["completion"] } },
+      requests: [],
+    };
+    const provider = createOllamaPiProvider({
+      baseURL: "http://localhost:11434",
+      fetchImpl: fakeOllamaFetch(state),
+    });
+    await provider.refreshModels?.();
+    const model = provider.getModels().find((m) => m.id === "some-model");
+    expect(model?.contextWindow).toBe(128000);
+    expect(model?.input).toEqual(["text"]);
+    expect(model?.provider).toBe("ollama");
   });
 });
