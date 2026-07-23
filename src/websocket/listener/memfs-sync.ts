@@ -7,13 +7,17 @@
  * correctly — mirroring what the local headless path does during bootstrap.
  */
 
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { debugLog, debugWarn } from "@/utils/debug";
 import type { ListenerRuntime } from "./types";
 
 /**
  * Core sync logic — fetches agent, checks tag, clones/pulls repo.
  */
-async function syncMemfsForAgent(agentId: string): Promise<void> {
+async function syncMemfsForAgent(
+  agentId: string,
+  cachedAgent?: AgentState | null,
+): Promise<void> {
   const { settingsManager } = await import("@/settings-manager");
   if (settingsManager.isMemfsExplicitlyDisabled(agentId)) {
     // Worker-style agent deliberately created without a memfs (e.g. dream
@@ -29,10 +33,13 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
   // `include: ["agent.tags"]` is required — without it the API can return
   // empty tags for a correctly tagged agent, which previously made the
   // listener skip the memfs clone and run the agent as a blank slate
-  // (the Prod × DeepSeek incident).
-  const agent = await getBackend().retrieveAgent(agentId, {
-    include: ["agent.tags"],
-  });
+  // (the Prod × DeepSeek incident). A caller-provided cachedAgent must come
+  // from a tags-included fetch (the warmup fetch is) for the same reason.
+  const agent =
+    cachedAgent ??
+    (await getBackend().retrieveAgent(agentId, {
+      include: ["agent.tags"],
+    }));
 
   const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
   const { applyMemfsFlags, isLettaCloud } = await import(
@@ -64,8 +71,12 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
 
   debugLog("memfs-sync", `Syncing memfs for agent ${agentId}`);
 
+  // backgroundPull: an existing checkout serves the turn immediately while
+  // the pull refreshes it; only a missing repo blocks (on the clone). This
+  // keeps a slow git pull off the first-turn critical path.
   await applyMemfsFlags(agentId, undefined, {
     pullOnExistingRepo: true,
+    backgroundPull: true,
     agentTags: agent.tags,
     skipPromptUpdate: true,
   });
@@ -89,13 +100,14 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
 export async function ensureMemfsSyncedForAgent(
   listener: ListenerRuntime,
   agentId: string,
+  cachedAgent?: AgentState | null,
 ): Promise<boolean> {
   const existing = listener.memfsSyncedAgents.get(agentId);
   if (existing) {
     return existing;
   }
 
-  const promise = syncMemfsForAgent(agentId).then(
+  const promise = syncMemfsForAgent(agentId, cachedAgent).then(
     () => true,
     (err) => {
       // Non-fatal — agent can still process messages, just without local memory.

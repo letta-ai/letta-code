@@ -270,9 +270,11 @@ export type ListenerRuntime = {
   secretsDirtyAgents: Set<string>;
   pendingExternalToolCalls?: Map<string, PendingExternalToolCall>;
   /**
-   * Agent metadata warmups for listen-mode reminders. The cached promise is
-   * reused while the listener stays connected so first-turn reminders can join
-   * an in-flight sync warmup instead of fetching agent info again.
+   * Agent warm state (reminder metadata + full agent state with tags) keyed by
+   * agent. The cached promise is reused while the listener stays connected so
+   * first-turn reminders join an in-flight sync warmup instead of fetching
+   * agent info again, and turn prep reuses the agent state instead of issuing
+   * a blocking per-turn retrieve (a background refresh keeps it converging).
    */
   agentMetadataByAgent: Map<
     string,
@@ -280,6 +282,9 @@ export type ListenerRuntime = {
       name: string | null;
       description: string | null;
       lastRunAt: string | null;
+      agent:
+        | import("@letta-ai/letta-client/resources/agents/agents").AgentState
+        | null;
     } | null>
   >;
   lastEmittedStatus: "idle" | "receiving" | "processing" | null;

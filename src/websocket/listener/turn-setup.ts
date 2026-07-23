@@ -8,7 +8,6 @@ import {
   setCurrentAgentId,
   setCurrentAgentName,
 } from "@/agent/context";
-import { getBackend } from "@/backend";
 import type { Line } from "@/cli/helpers/accumulator";
 import {
   buildSharedReminderParts,
@@ -42,7 +41,11 @@ import type {
   IncomingMessage,
   StartListenerOptions,
 } from "./types";
-import { ensureListenerWarmStateForTurn } from "./warmup";
+import {
+  ensureListenerWarmStateForTurn,
+  getListenerAgentStateForTurn,
+  setListenerAgentWarmState,
+} from "./warmup";
 
 type PreparedToolContext = Awaited<
   ReturnType<typeof prepareToolExecutionContextForScope>
@@ -132,22 +135,32 @@ export async function prepareListenerTurn(params: {
   if (!isApprovalMessage) {
     try {
       try {
-        cachedAgent = (await getBackend().retrieveAgent(agentId, {
-          include: ["agent.tags"],
-        })) as AgentState;
-        const {
-          ensureLettaCodeOriginTag,
-          getMemoryPromptModeForAgent,
-          scheduleManagedSystemPromptUpdate,
-        } = await import("@/agent/system-prompt-versioning");
-        cachedAgent = await ensureLettaCodeOriginTag(cachedAgent);
-        scheduleManagedSystemPromptUpdate({
-          agent: cachedAgent,
-          memoryMode: getMemoryPromptModeForAgent(cachedAgent.id),
-          onUpdated: (updatedAgent) => {
-            cachedAgent = updatedAgent;
-          },
-        });
+        // Served from the session warm cache (background-refreshed) instead of
+        // a blocking per-turn retrieve; headless reuses its initial agent fetch
+        // for the whole run loop the same way.
+        cachedAgent = await getListenerAgentStateForTurn(
+          runtime.listener,
+          agentId,
+        );
+        if (cachedAgent) {
+          const {
+            ensureLettaCodeOriginTag,
+            getMemoryPromptModeForAgent,
+            scheduleManagedSystemPromptUpdate,
+          } = await import("@/agent/system-prompt-versioning");
+          const taggedAgent = await ensureLettaCodeOriginTag(cachedAgent);
+          if (taggedAgent !== cachedAgent) {
+            setListenerAgentWarmState(runtime.listener, taggedAgent);
+          }
+          cachedAgent = taggedAgent;
+          scheduleManagedSystemPromptUpdate({
+            agent: cachedAgent,
+            memoryMode: getMemoryPromptModeForAgent(cachedAgent.id),
+            onUpdated: (updatedAgent) => {
+              cachedAgent = updatedAgent;
+            },
+          });
+        }
       } catch (error) {
         debugWarn(
           "listen",
@@ -167,6 +180,7 @@ export async function prepareListenerTurn(params: {
           lastRunAt:
             (cachedAgent as { last_run_completion?: string | null })
               .last_run_completion ?? null,
+          agent: cachedAgent,
         };
       }
       setCurrentAgentName(
