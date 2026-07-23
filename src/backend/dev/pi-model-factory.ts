@@ -1,7 +1,6 @@
 import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 import {
-  getLocalOAuthApiKey,
   getLocalProviderRecordByName,
   type LocalProviderRecord,
   localProviderApiKeyFromRecord,
@@ -18,7 +17,6 @@ import {
   stripRegisteredProviderHandlePrefix,
 } from "./pi-provider-mod-registry";
 import {
-  builtinCatalogModels,
   expectedPiProviderList,
   getPiProviderSpec,
   isPiProvider,
@@ -29,10 +27,7 @@ import {
   resolveProviderFromProviderType,
   stripProviderHandlePrefix,
 } from "./pi-provider-registry";
-import {
-  getRegisteredPiProviderLocalNames,
-  resolveRegisteredPiProviderRuntimeConnection,
-} from "./registered-pi-provider-runtime";
+import { resolveRegisteredPiProviderRuntimeConnection } from "./registered-pi-provider-runtime";
 
 export const DEFAULT_PI_PROVIDER = "openai" satisfies PiProvider;
 export const UNSELECTED_LOCAL_MODEL_HANDLE = "local/default";
@@ -315,21 +310,6 @@ export function resolveZaiConnection(options: {
   return codingConnection;
 }
 
-function getCatalogModel(
-  provider: PiProvider,
-  modelId: string,
-): Model<Api> | undefined {
-  const spec = getPiProviderSpec(provider);
-  const piProvider = spec.piProvider;
-  if (!piProvider) return undefined;
-  const catalog = builtinCatalogModels(piProvider);
-  const fallbackModelId = fallbackCatalogModelId(piProvider, modelId);
-  return (catalog.find((model) => model.id === modelId) ??
-    catalog.find((model) => model.id === fallbackModelId)) as
-    | Model<Api>
-    | undefined;
-}
-
 function fallbackCatalogModelId(
   provider: string,
   modelId: string,
@@ -359,6 +339,16 @@ function withOverrides(
       : {}),
     ...(overrides.maxTokens ? { maxTokens: overrides.maxTokens } : {}),
   };
+}
+
+function nonNullHeaders(
+  headers: Record<string, string | null>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(
+      (entry): entry is [string, string] => entry[1] !== null,
+    ),
+  );
 }
 
 function mergeHeaders(
@@ -451,6 +441,15 @@ export async function resolvePiModelForAgent(
     process.env.LETTA_CODE_DEV_PI_MODEL ??
     "";
   const storageDir = options.localProviderAuthStorageDir;
+  // Every resolution goes through a pi-ai Models runtime: the backend's
+  // instance when threaded, otherwise a call-scoped one (tests, direct
+  // library use). The runtime owns model lookup and credential resolution;
+  // Models are never fabricated from name strings.
+  const modelsRuntime =
+    options.modelsRuntime ??
+    new LocalPiModelsRuntime({
+      ...(storageDir ? { storageDir } : {}),
+    });
   const preferredProviderType =
     typeof modelSettings.provider_type === "string"
       ? modelSettings.provider_type
@@ -494,37 +493,25 @@ export async function resolvePiModelForAgent(
     baseURL = zai.baseURL;
   }
 
-  if (connection.record?.auth.type === "oauth" && spec?.piProvider) {
-    const oauth = await getLocalOAuthApiKey({
-      providerId: spec.piProvider,
-      providerNames: spec.localProviderNames,
-      storageDir,
-    });
+  if (connection.record?.auth.type === "oauth") {
+    // The Models runtime is the credential source of truth: getAuth resolves
+    // the stored OAuth token through the auth.json adapter (refreshing under
+    // the store's write lock) and derives per-credential request auth such
+    // as GitHub Copilot's per-token base URL.
+    const authProviderId = registeredProvider
+      ? registeredProvider.providerName
+      : (spec?.piProvider ?? provider);
+    const authResult = await modelsRuntime.getAuth(authProviderId);
     connection = {
       ...connection,
-      apiKey: oauth?.apiKey,
+      apiKey: authResult?.auth.apiKey,
     };
-    oauthCredentials = oauth?.credentials;
-    // Per-credential request auth (e.g. GitHub Copilot's per-token base URL)
-    // comes from the provider's OAuthAuth.toAuth.
-    if (oauth?.baseUrl) baseURL = oauth.baseUrl;
-    if (oauth?.headers) headers = mergeHeaders(headers, oauth.headers);
-  }
-
-  if (
-    connection.record?.auth.type === "oauth" &&
-    registeredProvider?.config.oauth
-  ) {
-    const oauth = await getLocalOAuthApiKey({
-      providerId: registeredProvider.providerName,
-      providerNames: getRegisteredPiProviderLocalNames(registeredProvider),
-      storageDir,
-    });
-    connection = {
-      ...connection,
-      apiKey: oauth?.apiKey,
-    };
-    oauthCredentials = oauth?.credentials;
+    if (authResult?.auth.baseUrl) baseURL = authResult.auth.baseUrl;
+    if (authResult?.auth.headers) {
+      headers = mergeHeaders(headers, nonNullHeaders(authResult.auth.headers));
+    }
+    const stored = await modelsRuntime.getStoredCredential(authProviderId);
+    oauthCredentials = stored?.type === "oauth" ? stored : undefined;
   }
 
   if (provider === "amazon-bedrock") {
@@ -540,17 +527,6 @@ export async function resolvePiModelForAgent(
     connection.apiKey,
     registeredProvider?.config.authHeader,
   );
-
-  // Every resolution goes through a pi-ai Models runtime: the backend's
-  // instance when threaded, otherwise a call-scoped one (tests, direct
-  // library use). Runtime-managed providers never fabricate Models.
-  const modelsRuntime =
-    options.modelsRuntime ??
-    new LocalPiModelsRuntime({
-      ...(options.localProviderAuthStorageDir
-        ? { storageDir: options.localProviderAuthStorageDir }
-        : {}),
-    });
 
   let model: Model<Api>;
   if (registeredProvider) {
@@ -604,19 +580,37 @@ export async function resolvePiModelForAgent(
         ? withOverrides(runtimeModel, { headers, contextWindow, maxTokens })
         : runtimeModel;
   } else {
-    const catalogModel = getCatalogModel(spec.id, modelId);
+    const piProvider = spec.piProvider;
+    const fallbackModelId = piProvider
+      ? fallbackCatalogModelId(piProvider, modelId)
+      : undefined;
+    const catalogModel = piProvider
+      ? (modelsRuntime.getModel(piProvider, modelId) ??
+        (fallbackModelId
+          ? modelsRuntime.getModel(piProvider, fallbackModelId)
+          : undefined))
+      : undefined;
     if (!catalogModel) {
       throw new Error(
         `Unknown model "${modelId}" for provider "${provider}". ` +
           "Check the model handle or update the model catalog.",
       );
     }
-    model = withOverrides(catalogModel, {
-      baseURL,
-      headers,
-      contextWindow,
-      maxTokens,
-    });
+    // The runtime-published Model is the turn model. Clone only when an
+    // effective override applies; headers stay per-request stream options.
+    const overrides = {
+      ...(baseURL && baseURL !== catalogModel.baseUrl ? { baseURL } : {}),
+      ...(contextWindow && contextWindow !== catalogModel.contextWindow
+        ? { contextWindow }
+        : {}),
+      ...(maxTokens && maxTokens !== catalogModel.maxTokens
+        ? { maxTokens }
+        : {}),
+    };
+    model =
+      Object.keys(overrides).length > 0
+        ? withOverrides(catalogModel, overrides)
+        : catalogModel;
   }
 
   return {

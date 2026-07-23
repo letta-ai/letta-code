@@ -2,6 +2,7 @@ import type { Provider } from "@earendil-works/pi-ai";
 import {
   createLocalEndpointPiProvider,
   type LocalEndpointDiscover,
+  type LocalEndpointModelMetadata,
   modelIdsFromOpenAICompatibleList,
 } from "./pi-local-endpoint-provider";
 
@@ -47,46 +48,118 @@ function parseLlamaCppProps(data: unknown): LlamaCppServerProps {
 }
 
 /**
- * llama.cpp capability discovery: `/v1/models` lists the served model(s) and
- * the native `GET /props` reports the engine's authoritative modalities
- * (`modalities.vision`) and context size (`default_generation_settings.n_ctx`)
- * for the loaded model. llama-server serves one model per process, so the
- * props apply to every listed id. When `/props` is unavailable (older
- * server, proxy), each model falls back to its last-known published Model —
- * never to a model-name guess.
+ * Per-model metadata from the native `/models` catalog (router mode):
+ * `architecture.input_modalities` and `meta.n_ctx` per entry — the same
+ * contract upstream Pi's llama.cpp provider consumes. Returns undefined
+ * when no entry carries per-model metadata (plain OpenAI id list), so
+ * discovery falls back to `/props?model=<id>`.
+ */
+function parseLlamaCppNativeModels(
+  data: unknown,
+): Map<string, LocalEndpointModelMetadata> | undefined {
+  if (!data || typeof data !== "object") return undefined;
+  const container = data as { data?: unknown; models?: unknown };
+  const entries = Array.isArray(container.data)
+    ? container.data
+    : Array.isArray(container.models)
+      ? container.models
+      : undefined;
+  if (!entries) return undefined;
+
+  const parsed = new Map<string, LocalEndpointModelMetadata>();
+  let sawMetadata = false;
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as {
+      id?: unknown;
+      name?: unknown;
+      architecture?: unknown;
+      meta?: unknown;
+    };
+    const id = record.id ?? record.name;
+    if (typeof id !== "string" || id.length === 0) continue;
+    const architecture =
+      record.architecture && typeof record.architecture === "object"
+        ? (record.architecture as { input_modalities?: unknown })
+        : undefined;
+    const modalities = Array.isArray(architecture?.input_modalities)
+      ? architecture.input_modalities.filter(
+          (value): value is string => typeof value === "string",
+        )
+      : undefined;
+    const meta =
+      record.meta && typeof record.meta === "object"
+        ? (record.meta as { n_ctx?: unknown })
+        : undefined;
+    const contextLength =
+      typeof meta?.n_ctx === "number" && meta.n_ctx > 0
+        ? meta.n_ctx
+        : undefined;
+    if (modalities !== undefined || contextLength !== undefined) {
+      sawMetadata = true;
+    }
+    parsed.set(id, {
+      id,
+      ...(modalities !== undefined
+        ? { vision: modalities.includes("image") }
+        : {}),
+      ...(contextLength !== undefined ? { contextLength } : {}),
+    });
+  }
+  return sawMetadata ? parsed : undefined;
+}
+
+/**
+ * llama.cpp capability discovery with per-model metadata. Preference order:
+ *
+ * 1. Native `/models` catalog entries (`architecture.input_modalities`,
+ *    `meta.n_ctx`) — authoritative per model, including router mode where
+ *    one server hosts many models.
+ * 2. `GET /props?model=<id>` per model. Single-model servers ignore the
+ *    query parameter and return their global props, which is correct there;
+ *    router servers return the addressed model's props.
+ * 3. The model's last-known published Model, else text-only — one model's
+ *    metadata is never applied to another, and capabilities are never
+ *    guessed from the model name.
  */
 const llamaCppDiscover: LocalEndpointDiscover = async (context) => {
   const list = await context.fetchJson(`${context.openAIBaseURL}/models`);
-  const modelIds = modelIdsFromOpenAICompatibleList(list);
-
-  let props: LlamaCppServerProps | undefined;
-  try {
-    props = parseLlamaCppProps(
-      await context.fetchJson(`${context.nativeBaseURL}/props`),
-    );
-  } catch {
-    props = undefined;
+  const native = parseLlamaCppNativeModels(list);
+  if (native) {
+    return [...native.values()].map(context.buildModel);
   }
 
-  return modelIds.map((modelId) => {
-    if (props) {
-      return context.buildModel({
-        id: modelId,
-        ...(props.vision !== undefined ? { vision: props.vision } : {}),
-        ...(props.contextLength ? { contextLength: props.contextLength } : {}),
-      });
-    }
-    return (
-      context.lastKnown.get(modelId) ?? context.buildModel({ id: modelId })
-    );
-  });
+  const modelIds = modelIdsFromOpenAICompatibleList(list);
+  return Promise.all(
+    modelIds.map(async (modelId) => {
+      try {
+        const props = parseLlamaCppProps(
+          await context.fetchJson(
+            `${context.nativeBaseURL}/props?model=${encodeURIComponent(modelId)}`,
+          ),
+        );
+        return context.buildModel({
+          id: modelId,
+          ...(props.vision !== undefined ? { vision: props.vision } : {}),
+          ...(props.contextLength
+            ? { contextLength: props.contextLength }
+            : {}),
+        });
+      } catch {
+        return (
+          context.lastKnown.get(modelId) ?? context.buildModel({ id: modelId })
+        );
+      }
+    }),
+  );
 };
 
 /**
  * Real dynamic pi-ai Provider for a llama.cpp server. Replaces the Letta
  * connector that fabricated Models from name substrings; mirrors upstream
- * Pi's first-class llama.cpp provider design (engine metadata owns
- * capabilities). See `createLocalEndpointPiProvider` for shared semantics.
+ * Pi's first-class llama.cpp provider design (per-model engine metadata
+ * owns capabilities). See `createLocalEndpointPiProvider` for shared
+ * refresh/auth semantics.
  */
 export function createLlamaCppPiProvider(
   options: LlamaCppPiProviderOptions,

@@ -1,7 +1,10 @@
 import type {
   Api,
   AssistantMessageEventStream,
+  AuthResult,
   Context,
+  Credential,
+  CredentialStore,
   Model,
   ModelsApiStreamOptions,
   ModelsSimpleStreamOptions,
@@ -11,6 +14,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { createModels, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { createLocalPiCredentialStore } from "@/backend/local/local-pi-credential-store";
 import {
   getLocalProviderRecordByName,
   listLocalProviderRecords,
@@ -136,14 +140,39 @@ export class LocalPiModelsRuntime {
   private readonly endpointSignatures = new Map<string, string>();
   private readonly modSignatures = new Map<string, string>();
   private readonly modelsStore = new InMemoryModelsStore();
+  private readonly credentials: CredentialStore;
 
   constructor(options: LocalPiModelsRuntimeOptions = {}) {
     this.storageDir = options.storageDir;
     this.fetchImpl = options.fetchImpl;
-    this.models = createModels({ modelsStore: this.modelsStore });
+    // Letta's auth.json is the credential source of truth, adapted into the
+    // runtime so Models.getAuth() resolves stored keys and refreshes OAuth
+    // tokens under the store's write lock.
+    this.credentials = createLocalPiCredentialStore(options.storageDir);
+    this.models = createModels({
+      modelsStore: this.modelsStore,
+      credentials: this.credentials,
+    });
     for (const provider of builtinProviders()) {
       this.models.setProvider(provider);
     }
+  }
+
+  /**
+   * Resolve request auth for a provider through the runtime: stored
+   * credential (via the auth.json adapter, refreshing OAuth as needed) or
+   * the provider's ambient sources.
+   */
+  async getAuth(providerId: string): Promise<AuthResult | undefined> {
+    this.ensureManagedProviders(providerId);
+    return this.models.getAuth(providerId);
+  }
+
+  /** Stored (possibly just-refreshed) credential for a provider. */
+  async getStoredCredential(
+    providerId: string,
+  ): Promise<Credential | undefined> {
+    return this.credentials.read(providerId);
   }
 
   private refreshContext(providerId: string): RefreshModelsContext {

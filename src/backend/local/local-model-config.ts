@@ -16,7 +16,6 @@ import {
   builtinCatalogModels,
   getPiProviderSpec,
   isPiProvider,
-  listCatalogModelsForProvider,
   listConfiguredPiProviders,
   localModelHandle,
   localProviderType,
@@ -190,6 +189,31 @@ export function resolveLocalModelConfig(storageDir?: string): LocalModelConfig {
   };
 }
 
+/**
+ * Catalog handles for a static built-in provider, read from the runtime's
+ * registered provider (the same Model objects turn execution resolves).
+ */
+function catalogHandlesForProvider(
+  provider: PiProvider,
+  modelsRuntime: LocalPiModelsRuntime,
+): string[] {
+  const spec = getPiProviderSpec(provider);
+  const seen = new Set<string>();
+  const handles: string[] = [];
+  const add = (handle: string | undefined) => {
+    if (!handle || seen.has(handle)) return;
+    seen.add(handle);
+    handles.push(handle);
+  };
+  add(spec.defaultModel);
+  if (spec.piProvider && spec.catalogModelHandle) {
+    for (const model of modelsRuntime.getModels(spec.piProvider)) {
+      add(spec.catalogModelHandle(model));
+    }
+  }
+  return handles;
+}
+
 function providerForLocalModelListEntry(
   entry: LocalModelListEntry,
 ): PiProvider | undefined {
@@ -302,9 +326,9 @@ export async function listLocalModels(
       ? getPiProviderSpec(provider)
       : undefined;
     const catalogModel = providerSpec?.piProvider
-      ? builtinCatalogModels(providerSpec.piProvider).find(
-          (entry) => entry.id === modelId,
-        )
+      ? modelsRuntime
+          .getModels(providerSpec.piProvider)
+          .find((entry) => entry.id === modelId)
       : undefined;
     const providerType =
       options.modelEndpointType ?? localProviderTypeForModelConfig(provider);
@@ -378,7 +402,10 @@ export async function listLocalModels(
           };
         }
 
-        return { provider, models: listCatalogModelsForProvider(provider) };
+        return {
+          provider,
+          models: catalogHandlesForProvider(provider, modelsRuntime),
+        };
       },
     ),
   );

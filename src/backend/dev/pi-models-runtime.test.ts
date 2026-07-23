@@ -148,6 +148,23 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     );
   });
 
+  test("built-in catalog models resolve to the runtime-published instance", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
+    storageDirs.push(storageDir);
+    const runtime = new LocalPiModelsRuntime({ storageDir });
+
+    const resolved = await resolvePiModelForAgent(
+      "anthropic/claude-opus-4-8",
+      { provider_type: "anthropic" },
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    // The LET-10125 target invariant holds for built-ins too: with no
+    // effective overrides, the turn model IS the runtime-published instance.
+    expect(resolved.model).toBe(
+      runtime.getModel("anthropic", "claude-opus-4-8")!,
+    );
+  });
+
   test("/model listing and turn execution resolve the same provider-published Model", async () => {
     const server = startFakeOllama([
       {

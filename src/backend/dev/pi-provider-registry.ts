@@ -423,10 +423,12 @@ export function isResolvablePiModelHandle(model: string | undefined): boolean {
   if (!model || !provider) return false;
   const spec = getPiProviderSpec(provider);
   if (!spec.piProvider) return spec.createCustomModel === true;
+  const catalog = builtinCatalogModels(spec.piProvider);
+  // Purely dynamic providers (e.g. "radius") have no static catalog to check
+  // against; their handles resolve at runtime.
+  if (catalog.length === 0) return true;
   const modelId = stripProviderHandlePrefix(model, provider);
-  return builtinCatalogModels(spec.piProvider).some(
-    (entry) => entry.id === modelId,
-  );
+  return catalog.some((entry) => entry.id === modelId);
 }
 
 export function resolveProviderFromProviderType(
