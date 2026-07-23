@@ -116,7 +116,7 @@ Your prompt will specify a trajectory export directory and either a chunk file (
 
 **The export directory** (produced by `letta trajectories export`):
 - `manifest.json` — index of every exported session: `source`, `file` (relative path), `id` (native session id), `sessionId` (stable 10-char hash — the canonical key for "which session is this", also embedded in the filename), `project` (working dir), `model`, `startedAt`/`endedAt`, message/tool-call counts, and `firstUserPrompt` for skimming
-- `<source>/<session>.json` — one normalized session: a JSON **array** of records
+- `<source>/<startedAt>_<sessionId>.json` — one normalized session: a JSON **array** of records. Filenames sort chronologically, and the trailing `sessionId` hash is stable across re-exports.
 - `chunks/chunk-NN.json` — your assignment, when present: `{ chunk, outDir, sessions: [manifest entries] }`. Analyze exactly the sessions listed in your chunk.
 
 **Record format** (trajectory v1 — an ordered array; every conversational record has an ISO `timestamp`):

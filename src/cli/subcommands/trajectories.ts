@@ -1,9 +1,17 @@
+import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import {
   listAllTrajectories,
   runTrajectoryExport,
   type TrajectoryExportOptions,
 } from "@/cli/subcommands/trajectories/export";
+import {
+  filterSessions,
+  readManifest,
+  renderSession,
+  resolveSessionFile,
+  searchSessions,
+} from "@/cli/subcommands/trajectories/review";
 import {
   CHECKPOINT_SOURCE,
   listSupportedSources,
@@ -15,6 +23,10 @@ function printUsage(): void {
 Usage:
   letta trajectories export [options]
   letta trajectories detect [--json]
+  letta trajectories list [--out <dir>] [--source <name>] [--project <path>] [--json]
+  letta trajectories view <file|sessionId> [--out <dir>] [--tools] [--reasoning]
+  letta trajectories search <keyword> [--out <dir>] [--source <name>]
+                            [--project <path>] [--role user|assistant] [--json]
 
 Normalize historical coding-agent sessions into a single directory of
 trajectory-v1 JSON files, ready for review by memory workers. Discovery and
@@ -25,8 +37,11 @@ added later — is included automatically.
 
 Commands:
   export    Discover native session stores, normalize each session, and write
-            <out>/<source>/<session>.json plus a manifest.json index
+            <out>/<source>/<startedAt>_<sessionId>.json plus a manifest.json
   detect    Report how many sessions each source's local store holds
+  list      List exported sessions from the manifest
+  view      Render one exported session as a readable conversation
+  search    Search message content across all exported sessions
 
 Export options:
   --out <dir>                  Output directory (default: /tmp/letta-trajectories)
@@ -43,6 +58,10 @@ Export options:
                                partition sessions into n balanced worker chunks
   --json                       Emit the manifest as JSON on stdout
   -h, --help                   Show this help
+
+list/view/search read a directory produced by export (--out, default
+/tmp/letta-trajectories). view accepts a file path, a manifest-relative file,
+or a sessionId; --tools / --reasoning include tool and reasoning records.
 `.trim(),
   );
 }
@@ -56,6 +75,9 @@ const TRAJECTORIES_OPTIONS = {
   deepagents: { type: "string", multiple: true },
   project: { type: "string" },
   chunks: { type: "string" },
+  role: { type: "string" },
+  tools: { type: "boolean" },
+  reasoning: { type: "boolean" },
   json: { type: "boolean" },
 } as const;
 
@@ -108,6 +130,89 @@ async function runDetect(asJson: boolean): Promise<number> {
   return 0;
 }
 
+interface ReviewFlags {
+  dir: string;
+  source?: string;
+  project?: string;
+  asJson: boolean;
+}
+
+async function runList(flags: ReviewFlags): Promise<number> {
+  const manifest = await readManifest(flags.dir);
+  const sessions = filterSessions(manifest.sessions, flags);
+  if (flags.asJson) {
+    console.log(JSON.stringify({ sessions }, null, 2));
+    return 0;
+  }
+  for (const session of sessions) {
+    console.log(
+      `${(session.startedAt ?? "unknown").slice(0, 19)}  ${session.source}  msgs:${session.userMessages}  ${session.file}`,
+    );
+    if (session.firstUserPrompt) {
+      console.log(
+        `    ${session.firstUserPrompt.replace(/\s+/g, " ").slice(0, 90)}`,
+      );
+    }
+  }
+  console.log(
+    `\nTotal: ${sessions.length} session(s); errors: ${manifest.errors.length}; sources: ${Object.keys(manifest.sources).join(", ")}`,
+  );
+  return 0;
+}
+
+async function runView(
+  flags: ReviewFlags,
+  target: string | undefined,
+  options: { tools: boolean; reasoning: boolean },
+): Promise<number> {
+  if (!target) {
+    console.error(
+      "Usage: letta trajectories view <file|sessionId> [--out <dir>] [--tools] [--reasoning]",
+    );
+    return 1;
+  }
+  const path = await resolveSessionFile(flags.dir, target);
+  const records = JSON.parse(await readFile(path, "utf-8"));
+  console.log(renderSession(records, options));
+  return 0;
+}
+
+async function runSearch(
+  flags: ReviewFlags,
+  keyword: string | undefined,
+  role: string | undefined,
+): Promise<number> {
+  if (!keyword) {
+    console.error(
+      "Usage: letta trajectories search <keyword> [--out <dir>] [--source <name>] [--project <path>] [--role user|assistant]",
+    );
+    return 1;
+  }
+  if (role && role !== "user" && role !== "assistant") {
+    console.error(`Invalid --role "${role}": expected user or assistant`);
+    return 1;
+  }
+  const results = await searchSessions(flags.dir, keyword, {
+    source: flags.source,
+    project: flags.project,
+    role: role as "user" | "assistant" | undefined,
+  });
+  if (flags.asJson) {
+    console.log(JSON.stringify({ results }, null, 2));
+    return 0;
+  }
+  for (const { session, matches } of results) {
+    console.log(`--- ${session.file} ---`);
+    for (const match of matches) {
+      console.log(
+        `  [${(match.timestamp ?? "").slice(0, 19)}] ${match.role}: ${match.text}`,
+      );
+    }
+  }
+  console.log(`\n${results.length} session(s) matched "${keyword}"`);
+  return 0;
+}
+
 export function parseTrajectoriesArgs(argv: string[]) {
   return parseArgs({
     args: argv,
@@ -141,6 +246,30 @@ export async function runTrajectoriesSubcommand(
 
   if (action === "detect") {
     return runDetect(asJson);
+  }
+  if (action === "list" || action === "view" || action === "search") {
+    const flags: ReviewFlags = {
+      dir: parsed.values.out || DEFAULT_OUT_DIR,
+      source: parsed.values.source?.[0],
+      project: parsed.values.project,
+      asJson,
+    };
+    const [, target] = parsed.positionals;
+    try {
+      if (action === "list") return await runList(flags);
+      if (action === "view") {
+        return await runView(flags, target, {
+          tools: Boolean(parsed.values.tools),
+          reasoning: Boolean(parsed.values.reasoning),
+        });
+      }
+      return await runSearch(flags, target, parsed.values.role);
+    } catch (error) {
+      console.error(
+        `Error: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return 1;
+    }
   }
   if (action !== "export") {
     console.error(`Unknown command: ${action}`);
