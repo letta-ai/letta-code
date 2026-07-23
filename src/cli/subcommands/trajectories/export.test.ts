@@ -13,12 +13,10 @@ import { join } from "node:path";
 import {
   fileTimestamp,
   listAllTrajectories,
-  partitionSessions,
   runTrajectoryExport,
   sessionHash,
 } from "@/cli/subcommands/trajectories/export";
 import { listSupportedSources } from "@/cli/subcommands/trajectories/sources";
-import type { SessionManifestEntry } from "@/cli/subcommands/trajectories/types";
 
 const CLAUDE_CODE_SESSION = [
   JSON.stringify({
@@ -285,25 +283,6 @@ describe("trajectories export", () => {
     expect(manifest.sessions.map((s) => s.source)).toEqual(["claude-code"]);
   });
 
-  test("writes balanced worker chunk files covering every session", async () => {
-    const manifest = await runTrajectoryExport({
-      outDir,
-      sources: SEEDED_SOURCES,
-      roots,
-      chunks: 2,
-    });
-    expect(manifest.chunks).toHaveLength(2);
-
-    const chunked: string[] = [];
-    for (const chunkFile of manifest.chunks ?? []) {
-      const chunk = JSON.parse(
-        await readFile(join(outDir, chunkFile), "utf-8"),
-      );
-      chunked.push(...chunk.sessions.map((s: SessionManifestEntry) => s.file));
-    }
-    expect(chunked.sort()).toEqual(manifest.sessions.map((s) => s.file).sort());
-  });
-
   test("records normalization failures without aborting the export", async () => {
     const brokenDir = join(roots["claude-code"] ?? "", "-broken");
     await mkdir(brokenDir, { recursive: true });
@@ -354,7 +333,6 @@ describe("trajectories export", () => {
       outDir,
       sources: SEEDED_SOURCES,
       roots,
-      chunks: 3,
     });
     const manifest = await runTrajectoryExport({
       outDir,
@@ -381,40 +359,6 @@ describe("listSupportedSources", () => {
     ]) {
       expect(sources).toContain(expected);
     }
-  });
-});
-
-describe("partitionSessions", () => {
-  const session = (file: string, bytes: number): SessionManifestEntry => ({
-    source: "codex",
-    id: file,
-    sessionId: sessionHash("codex", file),
-    file,
-    sourcePath: `/tmp/${file}`,
-    records: 1,
-    userMessages: 1,
-    assistantMessages: 1,
-    toolCalls: 0,
-    reasoningRecords: 0,
-    bytes,
-    diagnostics: 0,
-  });
-
-  test("balances sessions across chunks by size", () => {
-    const partitions = partitionSessions(
-      [session("a", 100), session("b", 60), session("c", 50), session("d", 10)],
-      2,
-    );
-    expect(partitions).toHaveLength(2);
-    const totals = partitions.map((p) =>
-      p.reduce((sum, s) => sum + s.bytes, 0),
-    );
-    expect(Math.max(...totals)).toBeLessThanOrEqual(120);
-  });
-
-  test("never returns more chunks than sessions", () => {
-    const partitions = partitionSessions([session("a", 1)], 5);
-    expect(partitions).toHaveLength(1);
   });
 });
 

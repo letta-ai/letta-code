@@ -24,10 +24,7 @@ import {
   CHECKPOINT_SOURCE,
   listSupportedSources,
 } from "@/cli/subcommands/trajectories/sources";
-import type {
-  SessionManifestEntry,
-  TrajectoryManifest,
-} from "@/cli/subcommands/trajectories/types";
+import type { TrajectoryManifest } from "@/cli/subcommands/trajectories/types";
 
 export interface ExplicitTranscript {
   source: string;
@@ -51,14 +48,11 @@ export interface TrajectoryExportOptions {
   deepagents?: DeepAgentsCheckpointRef[];
   /** Keep only sessions whose recorded working directory starts with this path. */
   project?: string;
-  /** Also partition sessions into this many worker chunk files. */
-  chunks?: number;
   bounds?: NormalizationBounds;
   onProgress?: (message: string) => void;
 }
 
 const MANIFEST_NAME = "manifest.json";
-const CHUNKS_DIR = "chunks";
 const FIRST_PROMPT_MAX_CHARS = 200;
 const LIST_PAGE_LIMIT = 1000;
 
@@ -176,29 +170,6 @@ async function prepareOutDir(outDir: string): Promise<void> {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   await mkdir(outDir, { recursive: true });
-}
-
-/**
- * Balance sessions across `count` chunks by normalized size (greedy
- * largest-first bin packing) so parallel workers get comparable workloads.
- */
-export function partitionSessions(
-  sessions: SessionManifestEntry[],
-  count: number,
-): SessionManifestEntry[][] {
-  const bins = Array.from(
-    { length: Math.max(1, Math.min(count, Math.max(sessions.length, 1))) },
-    () => ({ bytes: 0, sessions: [] as SessionManifestEntry[] }),
-  );
-  const bySize = [...sessions].sort((a, b) => b.bytes - a.bytes);
-  for (const session of bySize) {
-    const target = bins.reduce((smallest, bin) =>
-      bin.bytes < smallest.bytes ? bin : smallest,
-    );
-    target.sessions.push(session);
-    target.bytes += session.bytes;
-  }
-  return bins.filter((bin) => bin.sessions.length > 0).map((b) => b.sessions);
 }
 
 /**
@@ -401,26 +372,6 @@ export async function runTrajectoryExport(
       join(options.outDir, file),
     );
     session.file = file;
-  }
-
-  if (options.chunks && options.chunks > 0 && manifest.sessions.length > 0) {
-    const partitions = partitionSessions(manifest.sessions, options.chunks);
-    await mkdir(join(options.outDir, CHUNKS_DIR), { recursive: true });
-    manifest.chunks = [];
-    for (const [index, sessions] of partitions.entries()) {
-      const name = `chunk-${String(index + 1).padStart(2, "0")}.json`;
-      const file = join(CHUNKS_DIR, name);
-      await writeFile(
-        join(options.outDir, file),
-        JSON.stringify(
-          { chunk: index + 1, outDir: options.outDir, sessions },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
-      manifest.chunks.push(file);
-    }
   }
 
   await writeFile(

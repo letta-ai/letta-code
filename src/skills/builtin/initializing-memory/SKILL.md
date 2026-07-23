@@ -249,35 +249,37 @@ The goal is to extract user personality, preferences, coding patterns, and proje
 `letta trajectories export` discovers every native session store on this machine (via the trajectory package's `listTrajectories`), normalizes each session (via `normalizeTranscript` / `normalizeCheckpoint`) into one shared record format, and writes everything into a single directory. Harnesses supported by the installed trajectory package are picked up automatically — no per-source handling here.
 
 ```bash
-NUM_WORKERS=5  # adjust based on data volume; the more workers, the faster it completes
-letta trajectories export --out /tmp/letta-trajectories --chunks $NUM_WORKERS
+letta trajectories export --out /tmp/letta-trajectories
 
-# Review what was exported and how the sessions were partitioned
-jq '{sessions: (.sessions | length), sources, errors: (.errors | length)}' /tmp/letta-trajectories/manifest.json
+# Review what was exported and the time span it covers
+jq '{sessions: (.sessions | length), sources, errors: (.errors | length), from: .sessions[0].startedAt, to: .sessions[-1].startedAt}' /tmp/letta-trajectories/manifest.json
 ```
 
 This produces:
-- `/tmp/letta-trajectories/<source>/<startedAt>_<sessionId>.json` — one normalized trajectory per session; the `sessionId` (a stable hash of the source-scoped native session id) does not change across re-exports, so it identifies which sessions have already been processed
-- `/tmp/letta-trajectories/manifest.json` — index with per-session metadata (`sessionId`, native `id`, project, dates, message counts, first prompt)
-- `/tmp/letta-trajectories/chunks/chunk-NN.json` — `$NUM_WORKERS` size-balanced worker assignments
+- `/tmp/letta-trajectories/<source>/<startedAt>_<sessionId>.json` — one normalized trajectory per session; filenames sort chronologically, and the `sessionId` (a stable hash of the source-scoped native session id) does not change across re-exports, so it identifies which sessions have already been processed
+- `/tmp/letta-trajectories/manifest.json` — index with per-session metadata (`sessionId`, native `id`, project, dates, message counts, first prompt), sorted by `startedAt`
 
 Useful variations:
 - `--project $(pwd)` — only sessions whose recorded working directory is under the current project
 - `--source claude-code --source codex` — restrict sources
 - `--root <source>:<path>` — read a source's store from a non-standard location
 - `--transcript <source>:<path>` — also normalize an explicit transcript file (e.g. copied from another machine)
-- Pick `NUM_WORKERS` from the exported session count: roughly one worker per 30-60 sessions, between 2 and 8.
 
 To browse the export yourself (all source-agnostic):
 - `letta trajectories list` — sessions with dates, sources, and first prompts
 - `letta trajectories view <file|sessionId> [--tools] [--reasoning]` — one session as a readable conversation
 - `letta trajectories search <keyword> [--role user]` — search message content across all sessions
 
-Chunking whole sessions (rather than splitting files by line) means each worker sees complete conversations — corrections together with what triggered them.
-
 ##### Step 5b: Launch Workers in Parallel
 
-Send all Task calls in **a single message**. Each worker creates its own worktree, reads the sessions in its assigned chunk file, directly updates memory files, and commits. Workers do NOT merge.
+Your job is to get the whole export directory processed; how you dispatch workers is up to you. Look at the directory (or the manifest) first, then split the work however makes sense. Two axes work well, alone or combined:
+
+- **By question** (often best): give different workers different focuses — e.g. one worker on understanding the user (identity, communication style, preferences, correction loops), another on the codebase and projects (conventions, gotchas, commands that worked). Focused workers go deeper, and their memory edits overlap less at aggregation time.
+- **By data slice**: session filenames start with `startedAt`, so contiguous time ranges are trivial (`ls` sorts chronologically); splitting by source folder or by project also works when the volume is large.
+
+Whatever the split, ensure every session gets read by at least one worker, and describe each worker's assignment (focus and/or slice) clearly in its prompt.
+
+Send all Task calls in **a single message**. Each worker creates its own worktree, reads its assigned sessions (complete conversations — corrections together with what triggered them), directly updates memory files, and commits. Workers do NOT merge.
 
 **IMPORTANT:** After workers finish, aggregate their proposed diffs into one synthesis commit (Step 5c) and then tie the worker branches into `main` with `git merge -s ours` so their commits stay in ancestry. Do **not** delete worker branches without that ancestry merge — it discards the worker commits from history.
 
@@ -288,16 +290,17 @@ If the worker output is generic, the worker failed. "User is direct" or "project
 ```
 Agent({
   subagent_type: "history-analyzer",
-  description: "Process trajectory chunk [N]",
+  description: "Analyze history: [focus and/or slice]",
   prompt: `## Assignment
 - **Memory dir**: [MEMORY_DIR]
 - **Trajectory export dir**: /tmp/letta-trajectories
-- **Your chunk**: /tmp/letta-trajectories/chunks/chunk-[NN].json — analyze exactly the sessions listed there
+- **Your sessions**: [describe the slice — e.g. "every session with startedAt from 2026-01 through 2026-03", "all codex/ sessions", or "the whole directory"; filenames start with startedAt so ls sorts chronologically]
+- **Focus**: [optional — e.g. "understanding the user: identity, communication style, preferences, correction loops" or "project/codebase context: conventions, gotchas, commands". Omit for full coverage.]
 - **Format**: normalized trajectory v1 (same for every source; format docs and jq recipes are in your system prompt)
 
-## Required Output Categories
+## Output Categories
 
-You MUST extract findings for ALL THREE categories:
+If a Focus is assigned, go deep on it and only note incidental findings from the other categories. Otherwise extract findings for ALL THREE:
 
 1. **User Personality & Identity**
    - How would you describe them as a person?

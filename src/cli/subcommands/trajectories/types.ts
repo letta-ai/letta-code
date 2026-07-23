@@ -56,6 +56,4 @@ export interface TrajectoryManifest {
   sources: Record<string, { discovered: number; exported: number }>;
   errors: TrajectoryExportError[];
   sessions: SessionManifestEntry[];
-  /** Relative paths of worker chunk files, when `--chunks` was requested. */
-  chunks?: string[];
 }

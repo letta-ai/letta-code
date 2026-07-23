@@ -54,8 +54,6 @@ Export options:
                                non-standard SQLite store; repeatable
   --project <path>             Keep only sessions whose recorded working
                                directory starts with this path
-  --chunks <n>                 Also write chunks/chunk-NN.json files that
-                               partition sessions into n balanced worker chunks
   --json                       Emit the manifest as JSON on stdout
   -h, --help                   Show this help
 
@@ -74,7 +72,6 @@ const TRAJECTORIES_OPTIONS = {
   transcript: { type: "string", multiple: true },
   deepagents: { type: "string", multiple: true },
   project: { type: "string" },
-  chunks: { type: "string" },
   role: { type: "string" },
   tools: { type: "boolean" },
   reasoning: { type: "boolean" },
@@ -306,13 +303,6 @@ export async function runTrajectoriesSubcommand(
         threadId: value.slice(separator + 1),
       };
     });
-    if (parsed.values.chunks) {
-      const chunks = Number.parseInt(parsed.values.chunks, 10);
-      if (!Number.isFinite(chunks) || chunks <= 0) {
-        throw new Error(`Invalid --chunks "${parsed.values.chunks}"`);
-      }
-      options.chunks = chunks;
-    }
   } catch (error) {
     console.error(
       `Error: ${error instanceof Error ? error.message : String(error)}`,
@@ -339,11 +329,6 @@ export async function runTrajectoriesSubcommand(
     if (manifest.errors.length > 0) {
       console.error(
         `${manifest.errors.length} session(s) failed to normalize (see manifest.json errors)`,
-      );
-    }
-    if (manifest.chunks) {
-      console.log(
-        `Wrote ${manifest.chunks.length} worker chunk file(s) under ${manifest.outDir}/chunks/`,
       );
     }
     console.log(`Manifest: ${manifest.outDir}/manifest.json`);
