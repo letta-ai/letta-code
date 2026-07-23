@@ -38,11 +38,36 @@ export function isValidListenerInstanceId(value: string): boolean {
 }
 
 /**
- * The spawner-assigned identity for this process, or null when none was
+ * `undefined` means the startup environment has not been consumed yet.
+ * After the first read, both a valid identity and the absence of one are
+ * cached for the lifetime of this listener process.
+ */
+let cachedSpawnerListenerInstanceId: string | null | undefined;
+
+/**
+ * The spawner-assigned identity for THIS process, or null when none was
  * provided (ordinary manual listeners — legacy name-derived identity
  * applies).
+ *
+ * Consume exactly once, then delete the transport variable from process.env.
+ * Registration and re-registration use the cache; Bash, subagents, and any
+ * nested `letta server` processes inherit the sanitized environment and
+ * therefore cannot impersonate the owning listener process's relay slot.
  */
 export function getSpawnerListenerInstanceId(): string | null {
+  if (cachedSpawnerListenerInstanceId !== undefined) {
+    return cachedSpawnerListenerInstanceId;
+  }
+
   const value = process.env[LISTENER_INSTANCE_ID_ENV];
-  return value && isValidListenerInstanceId(value) ? value : null;
+  delete process.env[LISTENER_INSTANCE_ID_ENV];
+  cachedSpawnerListenerInstanceId =
+    value && isValidListenerInstanceId(value) ? value : null;
+  return cachedSpawnerListenerInstanceId;
 }
+
+export const __listenerIdentityTestUtils = {
+  resetCachedSpawnerIdentity() {
+    cachedSpawnerListenerInstanceId = undefined;
+  },
+};
