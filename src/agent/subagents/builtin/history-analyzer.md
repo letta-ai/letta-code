@@ -215,7 +215,7 @@ Parent-Agent-ID: <ACTUAL_PARENT_AGENT_ID>"
 ## Rules
 
 - Work in your worktree — do NOT edit the memory dir directly
-- Do NOT merge into main — the parent agent handles merging
+- Do NOT merge into main — the parent agent reads every worker's diff and aggregates them
 - Preserve existing content — extend or refine, don't replace
 - Preserve specificity — specific quotes, correction counts, and file paths are more valuable than vague summaries. Don't compress away the details that give the parent agent its character and grounding.
 - **REQUIRED**: You MUST produce findings for all three output categories (Personality, Rules, Project). If any category lacks data, explicitly state why.
