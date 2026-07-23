@@ -255,6 +255,10 @@ export async function resolveListenerRegistrationOptions(
   connectionName: string,
   options: ListenerRegistrationOptions = {},
 ): Promise<RegisterOptions> {
+  // Consume the startup transport variable before the first await so no
+  // authentication hook or concurrently-spawned descendant can inherit it.
+  // Re-registration reads the same process-local cache.
+  const spawnerListenerInstanceId = getSpawnerListenerInstanceId();
   const auth = await resolveListenerAuth(deviceId, connectionName, options);
   return {
     ...auth,
@@ -263,7 +267,7 @@ export async function resolveListenerRegistrationOptions(
     // A spawner-assigned identity (Desktop slots, LET-10085) wins; manual
     // listeners keep their legacy name-derived identity unchanged.
     listenerInstanceId:
-      getSpawnerListenerInstanceId() ??
+      spawnerListenerInstanceId ??
       deriveListenerInstanceId(options.surface ?? "server", connectionName),
   };
 }
