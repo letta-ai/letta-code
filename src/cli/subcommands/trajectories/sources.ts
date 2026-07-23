@@ -14,7 +14,7 @@ const FALLBACK_SOURCES = [
   "codex",
   "deepagents",
   "hermes",
-  "letta",
+  "letta-code",
   "openclaw",
   "openhands",
 ];

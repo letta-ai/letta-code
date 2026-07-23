@@ -137,17 +137,10 @@ export function buildMaybeLaunchReflectionSubagent(params: {
   agentId: string;
   conversationId: string;
   reflectionSettings?: ReflectionSettings;
-  cachedAgent?: AgentState | null;
 }): (triggerSource: Exclude<ReflectionTrigger, "off">) => Promise<boolean> {
   return async (triggerSource) => {
-    const {
-      runtime,
-      socket,
-      agentId,
-      conversationId,
-      reflectionSettings,
-      cachedAgent,
-    } = params;
+    const { runtime, socket, agentId, conversationId, reflectionSettings } =
+      params;
 
     if (!agentId) {
       return false;
@@ -161,7 +154,6 @@ export function buildMaybeLaunchReflectionSubagent(params: {
       skipPendingWorktreeReminderScan: triggerSource === "compaction-event",
       reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
-      systemPrompt: cachedAgent?.system ?? undefined,
       recompileByConversation:
         runtime.listener.systemPromptRecompileByConversation,
       recompileQueuedByConversation:

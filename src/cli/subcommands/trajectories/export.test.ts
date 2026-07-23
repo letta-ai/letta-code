@@ -104,14 +104,16 @@ const CODEX_SESSION = [
 
 const LETTA_SESSION = [
   JSON.stringify({
-    role: "user",
-    content: "hello there",
-    date: "2026-07-01T12:00:00Z",
+    kind: "user",
+    text: "hello there",
+    captured_at: "2026-07-01T12:00:00Z",
+    source_message_id: "message-1",
   }),
   JSON.stringify({
-    role: "assistant",
-    content: "hi, done.",
-    date: "2026-07-01T12:00:05Z",
+    kind: "assistant",
+    text: "hi, done.",
+    captured_at: "2026-07-01T12:00:05Z",
+    source_message_id: "message-2",
   }),
 ].join("\n");
 
@@ -140,7 +142,13 @@ const OPENHANDS_EVENTS = [
 
 type SeededRoots = Record<string, string>;
 
-const SEEDED_SOURCES = ["claude-code", "codex", "letta", "openhands", "hermes"];
+const SEEDED_SOURCES = [
+  "claude-code",
+  "codex",
+  "letta-code",
+  "openhands",
+  "hermes",
+];
 
 async function seedStores(baseDir: string): Promise<SeededRoots> {
   const claudeRoot = join(baseDir, "claude-projects");
@@ -156,13 +164,14 @@ async function seedStores(baseDir: string): Promise<SeededRoots> {
   await mkdir(codexDay, { recursive: true });
   await writeFile(join(codexDay, "rollout-2026-03-30-s1.jsonl"), CODEX_SESSION);
 
-  const lettaRoot = join(baseDir, "letta-conversations");
-  const conversationKey = Buffer.from("conversation:local-conv-1").toString(
-    "base64url",
+  const lettaRoot = join(baseDir, "letta-transcripts");
+  const lettaConversation = join(
+    lettaRoot,
+    "agent-local-1",
+    "conversation-local-1",
   );
-  const lettaConversation = join(lettaRoot, conversationKey);
   await mkdir(lettaConversation, { recursive: true });
-  await writeFile(join(lettaConversation, "messages.jsonl"), LETTA_SESSION);
+  await writeFile(join(lettaConversation, "transcript.jsonl"), LETTA_SESSION);
 
   const openhandsRoot = join(baseDir, "openhands-sessions");
   const eventsDir = join(openhandsRoot, "conv-1", "events");
@@ -179,7 +188,7 @@ async function seedStores(baseDir: string): Promise<SeededRoots> {
   return {
     "claude-code": claudeRoot,
     codex: codexRoot,
-    letta: lettaRoot,
+    "letta-code": lettaRoot,
     openhands: openhandsRoot,
     hermes: hermesDb,
   };
@@ -268,9 +277,11 @@ describe("trajectories export", () => {
     expect(written.sessions).toHaveLength(SEEDED_SOURCES.length);
   });
 
-  test("letta sessions keep their decoded conversation ids", async () => {
-    const items = await listAllTrajectories("letta", roots.letta);
-    expect(items.map((item) => item.id)).toEqual(["conversation:local-conv-1"]);
+  test("letta-code sessions retain their agent and conversation ids", async () => {
+    const items = await listAllTrajectories("letta-code", roots["letta-code"]);
+    expect(items.map((item) => item.id)).toEqual([
+      "agent-local-1/conversation-local-1",
+    ]);
   });
 
   test("filters sessions by recorded project directory", async () => {
@@ -353,7 +364,7 @@ describe("listSupportedSources", () => {
       "codex",
       "deepagents",
       "hermes",
-      "letta",
+      "letta-code",
       "openclaw",
       "openhands",
     ]) {
@@ -374,7 +385,9 @@ describe("fileTimestamp", () => {
 describe("sessionHash", () => {
   test("is deterministic and scoped by source", () => {
     expect(sessionHash("codex", "s1")).toBe(sessionHash("codex", "s1"));
-    expect(sessionHash("codex", "s1")).not.toBe(sessionHash("letta", "s1"));
+    expect(sessionHash("codex", "s1")).not.toBe(
+      sessionHash("letta-code", "s1"),
+    );
     expect(sessionHash("codex", "s1")).toMatch(/^[0-9a-f]{10}$/);
   });
 });

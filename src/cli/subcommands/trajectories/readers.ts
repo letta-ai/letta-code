@@ -9,7 +9,7 @@ import type { TrajectoryListing } from "@letta-ai/trajectory";
  * item's `path` points at rather than by source name so future sources with a
  * familiar shape work without changes here:
  *
- * - a transcript file (claude-code, codex, letta, openclaw): read it
+ * - a transcript file (claude-code, codex, letta-code, openclaw): read it
  * - a session event directory (openhands): assemble the JSON event array
  * - a SQLite store (hermes): export the session's rows as the documented
  *   `{session, messages}` envelope

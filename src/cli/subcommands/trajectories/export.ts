@@ -172,16 +172,6 @@ async function prepareOutDir(outDir: string): Promise<void> {
   await mkdir(outDir, { recursive: true });
 }
 
-/**
- * Default store-root override for the letta source: the trajectory lister only
- * knows the standard `~/.letta/lc-local-backend` location, so honor this CLI's
- * `LETTA_LOCAL_BACKEND_DIR` env override when the caller has not pinned a root.
- */
-function lettaRootFromEnv(): string | undefined {
-  const dir = process.env.LETTA_LOCAL_BACKEND_DIR;
-  return dir ? join(dir, "conversations") : undefined;
-}
-
 export async function runTrajectoryExport(
   options: TrajectoryExportOptions,
 ): Promise<TrajectoryManifest> {
@@ -296,9 +286,7 @@ export async function runTrajectoryExport(
     );
 
   for (const source of requested) {
-    const root =
-      options.roots?.[source] ??
-      (source === "letta" ? lettaRootFromEnv() : undefined);
+    const root = options.roots?.[source];
     const items = await listAllTrajectories(source, root);
     sourceCounts(source);
     progress(`${source}: found ${items.length} session(s)`);

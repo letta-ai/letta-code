@@ -11,7 +11,6 @@ import {
   reflectionIntegrationShouldRecompile,
 } from "@/agent/memory-worktree";
 import { getSubagents } from "@/agent/subagent-state";
-import { getBackend } from "@/backend";
 import {
   getReflectionSettings,
   type ReflectionSettings,
@@ -148,7 +147,6 @@ export interface ReflectionLaunchOptions {
   /** Explicit model for this reflection subagent, if requested by the caller. */
   model?: string;
   instruction?: string;
-  systemPrompt?: string;
   /**
    * Replace the reflection task prompt entirely (advanced). The caller owns the
    * transcript/memory mechanics the default prompt provides ($TRANSCRIPT_PATH,
@@ -263,26 +261,6 @@ function schedulePendingReflectionLaunch(agentId: string): void {
       );
     });
   });
-}
-
-async function resolveSystemPrompt(
-  agentId: string,
-  systemPrompt: string | undefined,
-): Promise<string | undefined> {
-  if (systemPrompt) {
-    return systemPrompt;
-  }
-
-  try {
-    const agent = await getBackend().retrieveAgent(agentId);
-    return agent.system ?? undefined;
-  } catch {
-    debugLog(
-      "memory",
-      "Failed to fetch agent system prompt for reflection payload",
-    );
-    return undefined;
-  }
 }
 
 function resolveCompletionConversationId(
@@ -539,14 +517,9 @@ export async function launchReflectionSubagent(
   let releaseOnComplete = false;
   let preparedWorktree: ReflectionMemoryWorktree | undefined;
   try {
-    const systemPrompt = await resolveSystemPrompt(
-      agentId,
-      options.systemPrompt,
-    );
     const autoPayload = await buildAutoReflectionPayload(
       agentId,
       conversationId,
-      systemPrompt,
     );
     if (!autoPayload) {
       debugLog(

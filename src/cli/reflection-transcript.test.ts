@@ -15,7 +15,6 @@ import {
   buildParentMemorySnapshot,
   buildReflectionSelectorPrompt,
   buildReflectionSubagentPrompt,
-  filterSystemPromptForReflection,
   finalizeAutoReflectionPayload,
   finalizeMultiReflectionPayload,
   getReflectionTranscriptPaths,
@@ -84,8 +83,21 @@ describe("reflectionTranscript helper", () => {
     const payloadText = await readFile(payload.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
     expect(messages).toBeArray();
-    expect(messages).toContainEqual({ role: "user", content: "hello" });
-    expect(messages).toContainEqual({ role: "assistant", content: "hi there" });
+    expect(messages[0]).toEqual({ role: "meta", source: "letta-code" });
+    expect(messages).toContainEqual(
+      expect.objectContaining({ role: "user", content: "hello" }),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        role: "assistant",
+        content: "hi there",
+      }),
+    );
+    for (const message of messages.slice(1)) {
+      expect(message.timestamp).toMatch(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+      );
+    }
 
     await finalizeAutoReflectionPayload(
       agentId,
@@ -128,6 +140,12 @@ describe("reflectionTranscript helper", () => {
     if (!payload) return;
     expect(payload.startMessageId).toBe("u1");
     expect(payload.endMessageId).toBe("u1");
+    const payloadText = await readFile(payload.payloadPath, "utf-8");
+    const messages = JSON.parse(payloadText);
+    expect(messages.map((message: { role: string }) => message.role)).toEqual([
+      "meta",
+      "user",
+    ]);
 
     await finalizeAutoReflectionPayload(
       agentId,
@@ -150,6 +168,35 @@ describe("reflectionTranscript helper", () => {
 
     const retried = await buildAutoReflectionPayload(agentId, conversationId);
     expect(retried).not.toBeNull();
+  });
+
+  test("normalizes an assistant-only selected fragment", async () => {
+    await appendTranscriptDeltaJsonl(agentId, conversationId, [
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "standalone answer",
+        phase: "finished",
+        messageId: "a1",
+      },
+    ]);
+
+    const payload = await buildAutoReflectionPayload(agentId, conversationId);
+    expect(payload).not.toBeNull();
+    if (!payload) return;
+
+    const payloadText = await readFile(payload.payloadPath, "utf-8");
+    const messages = JSON.parse(payloadText);
+    expect(messages.map((message: { role: string }) => message.role)).toEqual([
+      "meta",
+      "assistant",
+    ]);
+    expect(messages[1]).toEqual(
+      expect.objectContaining({
+        content: "standalone answer",
+        timestamp: expect.any(String),
+      }),
+    );
   });
 
   test("v2 message-id state migrates from turn counts to assistant step counts", async () => {
@@ -276,11 +323,18 @@ describe("reflectionTranscript helper", () => {
 
     const payloadText = await readFile(payload.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
-    expect(messages).toContainEqual({ role: "user", content: "live user row" });
-    expect(messages).toContainEqual({
-      role: "assistant",
-      content: "live assistant row",
-    });
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        role: "user",
+        content: "live user row",
+      }),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        role: "assistant",
+        content: "live assistant row",
+      }),
+    );
 
     await finalizeAutoReflectionPayload(
       agentId,
@@ -832,8 +886,9 @@ describe("reflectionTranscript helper", () => {
     expect(prompt).toContain("<parent_memory>snapshot</parent_memory>");
   });
 
-  test("reflection payload drops tool call results and truncates args", async () => {
-    const longArgs = "a".repeat(500);
+  test("reflection payload normalizes bounded tool calls and results", async () => {
+    const longArgs = JSON.stringify({ pattern: "a".repeat(500) });
+    const longResult = `BEGIN:${"x".repeat(3_000)}:END`;
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
       { kind: "user", id: "u1", text: "run a search", messageId: "u1" },
       {
@@ -842,7 +897,7 @@ describe("reflectionTranscript helper", () => {
         toolCallId: "tc1",
         name: "Grep",
         argsText: longArgs,
-        resultText: "found 42 matches in 10 files",
+        resultText: longResult,
         resultOk: true,
         phase: "finished",
       },
@@ -862,29 +917,59 @@ describe("reflectionTranscript helper", () => {
     const payloadText = await readFile(payload.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
 
-    // Tool call should be present with truncated args
     const toolMsg = messages.find(
       (m: { tool_calls?: unknown[] }) => m.tool_calls,
     );
     expect(toolMsg).toBeDefined();
+    expect(toolMsg.timestamp).toBeString();
+    expect(toolMsg.tool_calls[0].id).toBe("tc1");
     expect(toolMsg.tool_calls[0].name).toBe("Grep");
-    expect(toolMsg.tool_calls[0].args).toContain("…[truncated]");
-    expect(toolMsg.tool_calls[0].args.length).toBeLessThan(longArgs.length);
-    // Tool result should NOT be present anywhere
-    expect(payloadText).not.toContain("found 42 matches");
-    // User and assistant messages should be present
-    expect(messages).toContainEqual({ role: "user", content: "run a search" });
-    expect(messages).toContainEqual({
-      role: "assistant",
-      content: "Found results",
-    });
+    const normalizedArgs = toolMsg.tool_calls[0].args;
+    expect(Array.from(normalizedArgs).length).toBeLessThanOrEqual(300);
+    expect(JSON.parse(normalizedArgs)).toBeObject();
+
+    const toolResult = messages.find(
+      (message: { role: string }) => message.role === "tool",
+    );
+    expect(toolResult).toEqual(
+      expect.objectContaining({
+        role: "tool",
+        tool_call_id: "tc1",
+        timestamp: expect.any(String),
+      }),
+    );
+    expect(Array.from(toolResult.content)).toHaveLength(2_500);
+    expect(toolResult.content).toStartWith("BEGIN:");
+    expect(toolResult.content).toEndWith(":END");
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        role: "user",
+        content: "run a search",
+      }),
+    );
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        role: "assistant",
+        content: "Found results",
+      }),
+    );
   });
 
-  test("reflection payload strips inline base64 images from text", async () => {
-    const userTextWithImage =
-      "Check this: ![screenshot](data:image/png;base64,iVBORw0KGgoAAAANS) and tell me what you see";
+  test("reflection payload drops runtime errors and has no parent system prompt", async () => {
     await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: userTextWithImage, messageId: "u1" },
+      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
+      {
+        kind: "error",
+        id: "error-1",
+        text: "temporary stream warning",
+      },
+      {
+        kind: "assistant",
+        id: "a1",
+        text: "hi",
+        phase: "finished",
+        messageId: "a1",
+      },
     ]);
 
     const payload = await buildAutoReflectionPayload(agentId, conversationId);
@@ -893,133 +978,14 @@ describe("reflectionTranscript helper", () => {
 
     const payloadText = await readFile(payload.payloadPath, "utf-8");
     const messages = JSON.parse(payloadText);
-    const userMsg = messages.find((m: { role: string }) => m.role === "user");
-    expect(userMsg.content).not.toContain("data:image/png;base64");
-    expect(userMsg.content).toContain("[image]");
-    expect(userMsg.content).toContain("Check this:");
-    expect(userMsg.content).toContain("and tell me what you see");
-  });
-
-  test("reflection payload prepends filtered system prompt when provided", async () => {
-    await appendTranscriptDeltaJsonl(agentId, conversationId, [
-      { kind: "user", id: "u1", text: "hello", messageId: "u1" },
-    ]);
-
-    const systemPrompt = [
-      "You are a helpful coding assistant.",
-      "",
-      "<memory>",
-      "<self>I am a persona block</self>",
-      "<human>User info here</human>",
-      "</memory>",
-      "",
-      "<available_skills>",
-      "skill1, skill2",
-      "</available_skills>",
-      "",
-      "Always be concise.",
-    ].join("\n");
-
-    const payload = await buildAutoReflectionPayload(
-      agentId,
-      conversationId,
-      systemPrompt,
-    );
-    expect(payload).not.toBeNull();
-    if (!payload) return;
-
-    const payloadText = await readFile(payload.payloadPath, "utf-8");
-    const messages = JSON.parse(payloadText);
-    // Filtered system prompt should be the first message
-    const systemMsg = messages[0];
-    expect(systemMsg.role).toBe("system");
-    expect(systemMsg.content).toContain("You are a helpful coding assistant.");
-    expect(systemMsg.content).toContain("Always be concise.");
-    // Dynamic sections should be stripped
-    expect(systemMsg.content).not.toContain("I am a persona block");
-    expect(systemMsg.content).not.toContain("User info here");
-    expect(systemMsg.content).not.toContain("skill1, skill2");
-    expect(systemMsg.content).not.toContain("<available_skills>");
-    // Transcript should follow
-    expect(messages).toContainEqual({ role: "user", content: "hello" });
-  });
-
-  test("filterSystemPromptForReflection strips all dynamic sections", () => {
-    const raw = [
-      "Core instructions here.",
-      "<memory><self>persona</self><human>user data</human></memory>",
-      "<system-reminder>This is a reminder</system-reminder>",
-      "<memory_metadata>agent-id: foo</memory_metadata>",
-      "<available_skills>skill list</available_skills>",
-      "Final instructions.",
-    ].join("\n");
-
-    const filtered = filterSystemPromptForReflection(raw);
-    expect(filtered).toContain("Core instructions here.");
-    expect(filtered).toContain("Final instructions.");
-    expect(filtered).not.toContain("persona");
-    expect(filtered).not.toContain("user data");
-    expect(filtered).not.toContain("This is a reminder");
-    expect(filtered).not.toContain("agent-id: foo");
-    expect(filtered).not.toContain("skill list");
-  });
-
-  test("filterSystemPromptForReflection strips standalone memory sub-tags", () => {
-    const raw = [
-      "You are Letta Code.",
-      "",
-      "<self>",
-      "I'm a coding assistant.",
-      "</self>",
-      "",
-      "<human>",
-      "The user likes TypeScript.",
-      "</human>",
-      "",
-      "Keep being helpful.",
-    ].join("\n");
-
-    const filtered = filterSystemPromptForReflection(raw);
-    expect(filtered).toContain("You are Letta Code.");
-    expect(filtered).toContain("Keep being helpful.");
-    expect(filtered).not.toContain("I'm a coding assistant.");
-    expect(filtered).not.toContain("The user likes TypeScript.");
-  });
-
-  test("filterSystemPromptForReflection strips the # Memory markdown section", () => {
-    const raw = [
-      "You are a persistent coding agent.",
-      "",
-      "# How you work",
-      "",
-      "Never modify code you haven't read.",
-      "",
-      "# Memory",
-      "",
-      "Your memory is projected onto the local memory filesystem.",
-      "",
-      "## Memory structure",
-      "",
-      "Files in system/ are pinned into your prompt.",
-      "",
-      "## Syncing",
-      "",
-      "```bash",
-      "git push",
-      "```",
-    ].join("\n");
-
-    const filtered = filterSystemPromptForReflection(raw);
-    expect(filtered).toContain("You are a persistent coding agent.");
-    expect(filtered).toContain("# How you work");
-    expect(filtered).toContain("Never modify code you haven't read.");
-    // Everything from "# Memory" onward should be stripped
-    expect(filtered).not.toContain("# Memory");
-    expect(filtered).not.toContain("memory filesystem");
-    expect(filtered).not.toContain("Memory structure");
-    expect(filtered).not.toContain("pinned into your prompt");
-    expect(filtered).not.toContain("Syncing");
-    expect(filtered).not.toContain("git push");
+    expect(messages[0]).toEqual({ role: "meta", source: "letta-code" });
+    expect(
+      messages.some((message: { role: string }) => message.role === "error"),
+    ).toBe(false);
+    expect(
+      messages.some((message: { role: string }) => message.role === "system"),
+    ).toBe(false);
+    expect(payloadText).not.toContain("temporary stream warning");
   });
 
   test("reflection selector prompt describes auto-only mode", () => {

@@ -206,7 +206,7 @@ Check what memory files already exist. Analyze what needs improvement.
 ```bash
 letta trajectories detect
 ```
-This reports every coding-agent session store found on this machine with session counts per source. Discovery comes from the installed `@letta-ai/trajectory` package (`listTrajectories`), so every harness it supports — Claude Code, Codex, Hermes, Letta local, OpenClaw, OpenHands, Deep Agents, and any added later — is covered automatically. You need this result BEFORE asking upfront questions so you know whether to include the history question.
+This reports every coding-agent session store found on this machine with session counts per source. Discovery comes from the installed `@letta-ai/trajectory` package (`listTrajectories`), so every harness it supports — Claude Code, Codex, Hermes, Letta Code, OpenClaw, OpenHands, Deep Agents, and any added later — is covered automatically. You need this result BEFORE asking upfront questions so you know whether to include the history question.
 
 ### 3. Identify the user from git
 Infer the user's identity from git context — don't ask them who they are:
@@ -723,4 +723,3 @@ git push
 **Use parallel tool calls wherever possible** — read multiple files in a single turn, write multiple memory files in a single turn. This dramatically reduces init time.
 **Write findings to memory as you go** — don't wait until the end.
 **Edit memory files directly via the filesystem** — memory is projected to `$MEMORY_DIR` specifically for ease of bulk modification. Use standard file tools (Read, Write, Edit) and git to manage changes during initialization.
-
