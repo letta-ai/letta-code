@@ -152,6 +152,7 @@ describe("Telegram rich draft streamer", () => {
       chatId: "chat-12345",
       threadId: "42",
       draftId: expect.any(Number),
+      source: telegramSource({ threadId: "42" }),
       richMessage: { markdown: "# Draft\n\nStill gener" },
     });
   });
@@ -186,8 +187,43 @@ describe("Telegram rich draft streamer", () => {
       chatId: "chat-12345",
       threadId: null,
       draftId: expect.any(Number),
+      source: telegramSource(),
       richMessage: { markdown: "# Private default" },
     });
+  });
+
+  test("disables rich drafts for multiple distinct source messages", () => {
+    upsertTelegramAccount(true);
+    const { sendRichMessageDraft } = registerTelegramAdapter();
+
+    const streamer = createChannelRichDraftStreamer({
+      batchId: "batch-multiple-messages",
+      sources: [
+        telegramSource({ messageId: "14280" }),
+        telegramSource({ messageId: "14281" }),
+      ],
+      debounceMs: 0,
+    });
+
+    expect(streamer).toBeNull();
+    expect(sendRichMessageDraft).not.toHaveBeenCalled();
+  });
+
+  test("disables rich drafts for conflicting source metadata", () => {
+    upsertTelegramAccount(true);
+    const { sendRichMessageDraft } = registerTelegramAdapter();
+
+    const streamer = createChannelRichDraftStreamer({
+      batchId: "batch-conflicting-source",
+      sources: [
+        telegramSource({ senderId: "sender-1" }),
+        telegramSource({ senderId: "sender-2" }),
+      ],
+      debounceMs: 0,
+    });
+
+    expect(streamer).toBeNull();
+    expect(sendRichMessageDraft).not.toHaveBeenCalled();
   });
 
   test("does not stream private Telegram send args when default rich messaging is disabled", async () => {

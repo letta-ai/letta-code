@@ -1,11 +1,23 @@
 import { expect, test } from "bun:test";
 import type { StreamDelta } from "@/types/protocol_v2";
-import { createChannelTurnProgressBuilder } from "./progress-builder";
+import { createChannelTurnProgressBuilder as createRawChannelTurnProgressBuilder } from "./progress-builder";
 
 import { sanitizeChannelProgressText } from "./progress-formatting";
 
+function createPresentationProgressBuilder() {
+  const builder = createRawChannelTurnProgressBuilder();
+  return {
+    buildUpdates(delta: unknown) {
+      return builder.buildUpdates(delta).map(({ toolInput, ...update }) => {
+        void toolInput;
+        return update;
+      });
+    },
+  };
+}
+
 test("channel progress labels client-side tool execution events", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "client_tool_start",
     run_id: "run-1",
@@ -31,7 +43,7 @@ test("channel progress labels client-side tool execution events", () => {
 });
 
 test("channel progress completes client-side tool rows from cached metadata", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   builder.buildUpdates({
     message_type: "client_tool_start",
     run_id: "run-1",
@@ -64,7 +76,7 @@ test("channel progress completes client-side tool rows from cached metadata", ()
 });
 
 test("channel progress waits for streamed exec_command descriptions", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   expect(
     builder.buildUpdates({
       message_type: "approval_request_message",
@@ -131,7 +143,7 @@ test("channel progress waits for streamed exec_command descriptions", () => {
 });
 
 test("channel progress remembers tool names across streamed Skill args", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   builder.buildUpdates({
     message_type: "approval_request_message",
     run_id: "run-1",
@@ -169,7 +181,7 @@ test("channel progress remembers tool names across streamed Skill args", () => {
 });
 
 test("channel progress renders approval request deltas as tool rows", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "approval_request_message",
     run_id: "run-1",
@@ -199,7 +211,7 @@ test("channel progress renders approval request deltas as tool rows", () => {
 });
 
 test("channel progress extracts tool details when arguments is an object", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "approval_request_message",
     run_id: "run-1",
@@ -229,7 +241,7 @@ test("channel progress extracts tool details when arguments is an object", () =>
 });
 
 test("channel progress falls back to shell command preview when description is missing", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -259,7 +271,7 @@ test("channel progress falls back to shell command preview when description is m
 });
 
 test("channel progress resolves details from accumulated args on tool return", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -301,7 +313,7 @@ test("channel progress resolves details from accumulated args on tool return", (
 });
 
 test("channel progress builders do not share accumulated state", () => {
-  const firstBuilder = createChannelTurnProgressBuilder();
+  const firstBuilder = createPresentationProgressBuilder();
   firstBuilder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -318,7 +330,7 @@ test("channel progress builders do not share accumulated state", () => {
 
   // A different turn's builder must not see the first turn's cached
   // arguments or tool names for the same tool_call_id.
-  const secondBuilder = createChannelTurnProgressBuilder();
+  const secondBuilder = createPresentationProgressBuilder();
   expect(
     secondBuilder.buildUpdates({
       message_type: "tool_return_message",
@@ -343,7 +355,7 @@ test("channel progress builders do not share accumulated state", () => {
 });
 
 test("channel progress maps canonical parallel tool return arrays", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "tool_return_message",
     run_id: "run-1",
@@ -390,7 +402,7 @@ test("channel progress sanitizes status text before adapters see it", () => {
 });
 
 test("channel progress maps lifecycle stream deltas to generic updates", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   expect(
     builder.buildUpdates({
       message_type: "retry",

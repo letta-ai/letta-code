@@ -27,6 +27,12 @@ import type {
   OutboundChannelMessage,
   SupportedChannelId,
 } from "@/channels/types";
+import {
+  buildMessageChannelRequest,
+  inferAccountIdFromChannelTurnSources,
+  resolveMessageChannelTurnSource,
+  resolveUniqueChannelTurnSource,
+} from "./message-channel-source";
 import type {
   MessageChannelArgs,
   NormalizedMessageChannelInput,
@@ -804,6 +810,7 @@ interface ResolvedMessageChannelExecutionContext {
   route: ChannelRoute;
   adapter: ChannelAdapter;
   plugin: Awaited<ReturnType<typeof loadChannelPlugin>>;
+  source?: ChannelTurnSource;
 }
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {
@@ -908,28 +915,6 @@ function normalizeMessageChannelInput(
   };
 }
 
-function buildMessageChannelRequest(
-  input: NormalizedMessageChannelInput,
-  chatId: string,
-  threadId?: string | null,
-): ChannelMessageActionRequest {
-  return {
-    action: input.action,
-    channel: input.channel,
-    chatId,
-    message: input.message,
-    replyToMessageId: input.replyToMessageId,
-    threadId: threadId ?? input.threadId ?? null,
-    messageId: input.messageId,
-    attachmentId: input.attachmentId,
-    emoji: input.emoji,
-    remove: input.remove,
-    mediaPath: input.mediaPath,
-    filename: input.filename,
-    title: input.title,
-  };
-}
-
 function buildSyntheticChannelRoute(params: {
   scope: { agentId: string; conversationId: string };
   accountId: string;
@@ -951,78 +936,10 @@ function buildSyntheticChannelRoute(params: {
   };
 }
 
-function inferAccountIdFromChannelTurnSources(params: {
-  input: NormalizedMessageChannelInput;
-  scope: { agentId: string; conversationId: string };
-  channelTurnSources?: ChannelTurnSource[];
-}): string | undefined {
-  const chatId = params.input.chatId;
-  if (!chatId) {
-    return undefined;
-  }
-
-  const accountIds = new Set<string>();
-  for (const source of params.channelTurnSources ?? []) {
-    if (
-      source.channel !== params.input.channel ||
-      source.chatId !== chatId ||
-      source.agentId !== params.scope.agentId ||
-      source.conversationId !== params.scope.conversationId
-    ) {
-      continue;
-    }
-    if (
-      params.input.threadId !== undefined &&
-      (source.threadId ?? null) !== (params.input.threadId ?? null)
-    ) {
-      continue;
-    }
-    if (source.accountId?.trim()) {
-      accountIds.add(source.accountId.trim());
-    }
-  }
-
-  return accountIds.size === 1 ? [...accountIds][0] : undefined;
-}
-
-function inferThreadIdFromChannelTurnSources(params: {
-  input: NormalizedMessageChannelInput;
-  scope: { agentId: string; conversationId: string };
-  accountId?: string;
-  channelTurnSources?: ChannelTurnSource[];
-}): string | null | undefined {
-  if (!params.input.chatId || params.input.threadId !== null) {
-    return undefined;
-  }
-
-  const threadIds = new Set<string | null>();
-  for (const source of params.channelTurnSources ?? []) {
-    if (
-      source.channel !== params.input.channel ||
-      source.chatId !== params.input.chatId ||
-      source.agentId !== params.scope.agentId ||
-      source.conversationId !== params.scope.conversationId
-    ) {
-      continue;
-    }
-    if (params.accountId && source.accountId !== params.accountId) {
-      continue;
-    }
-
-    const sourceThreadId = source.threadId ?? null;
-    const fallbackThreadId =
-      params.input.channel === "slack" && source.chatType !== "direct"
-        ? source.messageId
-        : null;
-    threadIds.add(sourceThreadId ?? fallbackThreadId ?? null);
-  }
-
-  return threadIds.size === 1 ? [...threadIds][0] : undefined;
-}
-
 async function resolveExplicitMessageChannelContext(params: {
   input: NormalizedMessageChannelInput;
   scope: { agentId: string; conversationId: string };
+  channelTurnSources?: ChannelTurnSource[];
 }): Promise<ResolvedMessageChannelExecutionContext | string> {
   if (params.input.channel !== "slack") {
     return `Error: Explicit MessageChannel targets are not supported on ${params.input.channel}.`;
@@ -1047,6 +964,13 @@ async function resolveExplicitMessageChannelContext(params: {
     account: eligibleAccount.account,
     target: params.input.target ?? "",
   });
+  const source = resolveUniqueChannelTurnSource({
+    input: { ...params.input, chatId: resolvedTarget.chatId },
+    scope: params.scope,
+    accountId: eligibleAccount.account.accountId,
+    threadId: resolvedTarget.threadId ?? null,
+    channelTurnSources: params.channelTurnSources,
+  });
 
   return {
     request: buildMessageChannelRequest(
@@ -1063,6 +987,7 @@ async function resolveExplicitMessageChannelContext(params: {
     }),
     adapter: eligibleAccount.adapter,
     plugin,
+    ...(source ? { source } : {}),
   };
 }
 
@@ -1127,16 +1052,14 @@ export async function message_channel(
       }
 
       const plugin = await loadChannelPlugin(input.channel);
-      const inferredThreadId = inferThreadIdFromChannelTurnSources({
-        input,
-        scope,
-        accountId: resolvedAccountId,
-        channelTurnSources: args.channelTurnSources,
-      });
-      const requestThreadId =
-        input.action === "download-file"
-          ? input.threadId
-          : (inferredThreadId ?? route.threadId ?? input.threadId);
+      const { threadId: requestThreadId, source } =
+        resolveMessageChannelTurnSource({
+          input,
+          scope,
+          accountId: route.accountId,
+          routeThreadId: route.threadId,
+          channelTurnSources: args.channelTurnSources,
+        });
       executionContext = {
         request: buildMessageChannelRequest(
           input,
@@ -1146,11 +1069,13 @@ export async function message_channel(
         route,
         adapter,
         plugin,
+        ...(source ? { source } : {}),
       };
     } else {
       executionContext = await resolveExplicitMessageChannelContext({
         input,
         scope,
+        channelTurnSources: args.channelTurnSources,
       });
     }
 
@@ -1158,7 +1083,7 @@ export async function message_channel(
       return executionContext;
     }
 
-    const { request, route, adapter, plugin } = executionContext;
+    const { request, route, adapter, plugin, source } = executionContext;
     if (!plugin.messageActions) {
       return `Error: Channel "${request.channel}" does not expose MessageChannel actions.`;
     }
@@ -1178,6 +1103,7 @@ export async function message_channel(
       request,
       route,
       adapter,
+      ...(source ? { source } : {}),
       formatText: (text) => formatOutboundChannelMessage(request.channel, text),
     });
   } catch (err) {

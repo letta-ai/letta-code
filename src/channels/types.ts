@@ -187,6 +187,11 @@ export interface ChannelTurnProgressUpdate {
   message: string;
   toolCallId?: string;
   toolName?: string;
+  /**
+   * Complete structured tool input for adapter-owned presentation. This value
+   * is not sanitized and must never be rendered directly.
+   */
+  toolInput?: Readonly<Record<string, unknown>>;
   /** Optional sanitized argument summary for expanded tool progress details. */
   toolDetails?: string;
   /**
@@ -437,6 +442,8 @@ export interface OutboundChannelMessage {
   parseMode?: string;
   /** Optional: rich structured message payload for channels that support it. */
   richMessage?: ChannelRichMessage;
+  /** Unique initiating channel message when this output belongs to a channel turn. */
+  source?: ChannelTurnSource;
   /** Optional: Signal-style text ranges (start:length:STYLE) for platforms that support rich text entities. */
   textStyle?: string[];
   /** Optional: attach a local file/media path for channels that support uploads. */
@@ -468,6 +475,8 @@ export interface OutboundChannelRichMessageDraft {
   threadId?: string | null;
   /** Stable non-zero platform draft identifier for animated updates. */
   draftId: number;
+  /** Unique initiating channel message when this draft belongs to a channel turn. */
+  source?: ChannelTurnSource;
   /** Rich structured message payload for the draft preview. */
   richMessage: ChannelRichMessage;
 }

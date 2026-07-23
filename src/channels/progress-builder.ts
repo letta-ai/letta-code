@@ -87,6 +87,12 @@ function toolNameForMessage(summary: ToolCallSummary | undefined): string {
   return summary?.name ? `: ${summary.name}` : "";
 }
 
+function getCompleteToolInput(
+  summary: ToolCallSummary | null | undefined,
+): Readonly<Record<string, unknown>> | undefined {
+  return parseToolArguments(summary?.argumentsText) ?? undefined;
+}
+
 /**
  * Builds sanitized channel progress updates from stream deltas for a single
  * turn. Instances accumulate fragmented tool-call arguments across deltas,
@@ -280,6 +286,7 @@ export function createChannelTurnProgressBuilder(
     for (const tool of tools) {
       const toolDetails = formatToolProgressDetails(tool, options);
       const toolTitle = formatToolProgressTitle(tool, "started");
+      const toolInput = getCompleteToolInput(tool);
       updates.push(
         withRunId(
           {
@@ -288,6 +295,7 @@ export function createChannelTurnProgressBuilder(
             message: `Preparing tool${toolNameForMessage(tool)}`,
             ...(tool.id ? { toolCallId: tool.id } : {}),
             ...(tool.name ? { toolName: tool.name } : {}),
+            ...(toolInput ? { toolInput } : {}),
             ...(toolDetails ? { toolDetails } : {}),
             ...(toolTitle ? { toolTitle } : {}),
           },
@@ -379,6 +387,7 @@ export function createChannelTurnProgressBuilder(
             toolWithAccumulatedArgs,
             status,
           );
+          const toolInput = getCompleteToolInput(toolWithAccumulatedArgs);
           updates.push(
             withRunId(
               {
@@ -387,6 +396,7 @@ export function createChannelTurnProgressBuilder(
                 message: status === "error" ? "Tool failed" : "Tool finished",
                 ...(summary.id ? { toolCallId: summary.id } : {}),
                 ...(summary.name ? { toolName: summary.name } : {}),
+                ...(toolInput ? { toolInput } : {}),
                 ...(toolDetails ? { toolDetails } : {}),
                 ...(status === "error" && errorDetails ? { errorDetails } : {}),
                 ...(toolTitle ? { toolTitle } : {}),
@@ -406,6 +416,7 @@ export function createChannelTurnProgressBuilder(
         const toolTitle = tool
           ? formatToolProgressTitle(tool, "started")
           : undefined;
+        const toolInput = getCompleteToolInput(tool);
         return [
           withRunId(
             {
@@ -414,6 +425,7 @@ export function createChannelTurnProgressBuilder(
               message: "Running tool",
               ...(tool?.id ? { toolCallId: tool.id } : {}),
               ...(tool?.name ? { toolName: tool.name } : {}),
+              ...(toolInput ? { toolInput } : {}),
               ...(toolDetails ? { toolDetails } : {}),
               ...(toolTitle ? { toolTitle } : {}),
             },
@@ -446,6 +458,7 @@ export function createChannelTurnProgressBuilder(
         const toolTitle = toolWithAccumulatedArgs
           ? formatToolProgressTitle(toolWithAccumulatedArgs, state)
           : undefined;
+        const toolInput = getCompleteToolInput(toolWithAccumulatedArgs);
         return [
           withRunId(
             {
@@ -454,6 +467,7 @@ export function createChannelTurnProgressBuilder(
               message: state === "error" ? "Tool failed" : "Tool finished",
               ...(tool?.id ? { toolCallId: tool.id } : {}),
               ...(tool?.name ? { toolName: tool.name } : {}),
+              ...(toolInput ? { toolInput } : {}),
               ...(toolDetails ? { toolDetails } : {}),
               ...(errorDetails ? { errorDetails } : {}),
               ...(toolTitle ? { toolTitle } : {}),

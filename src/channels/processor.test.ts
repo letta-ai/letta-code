@@ -120,15 +120,16 @@ describe("channel processor primitives", () => {
   });
 
   test("builds outbound channel messages from turn source", () => {
+    const source = {
+      channel: "slack",
+      accountId: "integration-1",
+      chatId: "C123",
+      threadId: "1700000000.000100",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    };
     const message = buildOutboundChannelMessageFromTurnSource({
-      turnSource: {
-        channel: "slack",
-        accountId: "integration-1",
-        chatId: "C123",
-        threadId: "1700000000.000100",
-        agentId: "agent-1",
-        conversationId: "conv-1",
-      },
+      turnSource: source,
       text: "response",
     });
 
@@ -137,6 +138,7 @@ describe("channel processor primitives", () => {
       accountId: "integration-1",
       chatId: "C123",
       threadId: "1700000000.000100",
+      source,
       text: "response",
       agentId: "agent-1",
       conversationId: "conv-1",

@@ -1,9 +1,23 @@
 import { expect, test } from "bun:test";
 import type { StreamDelta } from "@/types/protocol_v2";
-import { createChannelTurnProgressBuilder } from "./progress-builder";
+import { createChannelTurnProgressBuilder as createRawChannelTurnProgressBuilder } from "./progress-builder";
 
-test("channel progress converts tool call deltas without leaking args", () => {
-  const builder = createChannelTurnProgressBuilder();
+function createPresentationProgressBuilder(
+  ...args: Parameters<typeof createRawChannelTurnProgressBuilder>
+) {
+  const builder = createRawChannelTurnProgressBuilder(...args);
+  return {
+    buildUpdates(delta: unknown) {
+      return builder.buildUpdates(delta).map(({ toolInput, ...update }) => {
+        void toolInput;
+        return update;
+      });
+    },
+  };
+}
+
+test("channel progress keeps tool input out of user-facing presentation fields", () => {
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -29,7 +43,7 @@ test("channel progress converts tool call deltas without leaking args", () => {
 });
 
 test("channel progress uses web_search query as task details", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -59,7 +73,7 @@ test("channel progress uses web_search query as task details", () => {
 });
 
 test("channel progress uses Skill names as task details", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -89,7 +103,7 @@ test("channel progress uses Skill names as task details", () => {
 });
 
 test("channel progress uses Skill descriptions as task details when available", () => {
-  const builder = createChannelTurnProgressBuilder({
+  const builder = createPresentationProgressBuilder({
     skillDescriptionsByName: {
       "scheduling-tasks": "Schedules reminders and recurring tasks via cron.",
     },
@@ -123,7 +137,7 @@ test("channel progress uses Skill descriptions as task details when available", 
 });
 
 test("channel progress uses cached Skill names for streamed argument fragments", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   expect(
     builder.buildUpdates({
       message_type: "tool_call_message",
@@ -173,7 +187,7 @@ test("channel progress uses cached Skill names for streamed argument fragments",
 });
 
 test("channel progress recognizes namespaced Skill tool names", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -203,7 +217,7 @@ test("channel progress recognizes namespaced Skill tool names", () => {
 });
 
 test("channel progress does not duplicate singular Skill alias fragments", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const firstFragment = {
     tool_call_id: "call-1",
     name: "Skill",
@@ -253,7 +267,7 @@ test("channel progress does not duplicate singular Skill alias fragments", () =>
 });
 
 test("channel progress previews subagent prompts", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -286,7 +300,7 @@ test("channel progress previews subagent prompts", () => {
 });
 
 test("channel progress truncates subagent previews with ASCII ellipses", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -307,7 +321,7 @@ test("channel progress truncates subagent previews with ASCII ellipses", () => {
 });
 
 test("channel progress keeps subagent prompt previews across streamed fragments", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   expect(
     builder.buildUpdates({
       message_type: "tool_call_message",
@@ -356,7 +370,7 @@ test("channel progress keeps subagent prompt previews across streamed fragments"
 });
 
 test("channel progress previews fetch_webpage URLs", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -383,7 +397,7 @@ test("channel progress previews fetch_webpage URLs", () => {
 });
 
 test("channel progress builds file action titles with line counts", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -427,7 +441,7 @@ test("channel progress builds file action titles with line counts", () => {
 });
 
 test("channel progress builds failed file titles", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -471,7 +485,7 @@ test("channel progress builds failed file titles", () => {
 });
 
 test("channel progress keeps shell error output out of toolDetails (LET-9509)", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -518,7 +532,7 @@ test("channel progress keeps shell error output out of toolDetails (LET-9509)", 
 });
 
 test("channel progress emits only errorDetails when failed shell args never arrived", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "tool_return_message",
     run_id: "run-1",
@@ -546,7 +560,7 @@ test("channel progress emits only errorDetails when failed shell args never arri
 });
 
 test("channel progress uses Bash descriptions as task details", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",
@@ -576,7 +590,7 @@ test("channel progress uses Bash descriptions as task details", () => {
 });
 
 test("channel progress uses exec_command descriptions as task details", () => {
-  const builder = createChannelTurnProgressBuilder();
+  const builder = createPresentationProgressBuilder();
   const updates = builder.buildUpdates({
     message_type: "tool_call_message",
     run_id: "run-1",

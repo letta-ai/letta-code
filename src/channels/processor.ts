@@ -153,6 +153,7 @@ export function buildOutboundChannelMessageFromTurnSource(
     accountId: turnSource.accountId,
     chatId: turnSource.chatId,
     threadId: turnSource.threadId,
+    source: turnSource,
     text: params.text,
     agentId: turnSource.agentId,
     conversationId: turnSource.conversationId,
