@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { NormalizedRecord } from "@letta-ai/trajectory";
 import type {
   SessionManifestEntry,
@@ -50,7 +50,7 @@ export async function resolveSessionFile(
   target: string,
 ): Promise<string> {
   if (target.endsWith(".json")) {
-    const direct = target.includes("/") ? target : join(dir, target);
+    const direct = isAbsolute(target) ? target : join(dir, target);
     try {
       await readFile(direct, "utf-8");
       return direct;
