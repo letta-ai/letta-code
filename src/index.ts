@@ -2720,8 +2720,6 @@ async function main(): Promise<void> {
       });
     }
 
-    // At this point, loadingState is not "selecting", "selecting_global", or "selecting_conversation"
-    // (those are handled above), so it's safe to pass to App
     const appLoadingState = loadingState as Exclude<
       typeof loadingState,
       "selecting" | "selecting_global" | "selecting_conversation"
@@ -2731,6 +2729,7 @@ async function main(): Promise<void> {
       return React.createElement(App, {
         agentId: "loading",
         conversationId: "loading",
+        conversationSummary: resumeData?.conversationSummary ?? null,
         loadingState: appLoadingState,
         continueSession: isResumingSession,
         startupApproval: resumeData?.pendingApproval ?? null,
@@ -2755,6 +2754,7 @@ async function main(): Promise<void> {
       agentId,
       agentState,
       conversationId,
+      conversationSummary: resumeData?.conversationSummary ?? null,
       loadingState: appLoadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,

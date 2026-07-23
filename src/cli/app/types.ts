@@ -33,6 +33,7 @@ export type AppProps = {
   agentId: string;
   agentState?: AgentState | null;
   conversationId: string; // Required: created at startup
+  conversationSummary?: string | null;
   loadingState?: AppLoadingState;
   continueSession?: boolean;
   startupApproval?: ApprovalRequest | null; // Deprecated: use startupApprovals

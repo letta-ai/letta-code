@@ -372,13 +372,14 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         await maybeCarryOverActiveConversationModel(conversationId);
         setConversationIdAndRef(conversationId);
         setConversationAutoTitleEligibility(false);
-        setConversationSummary(null);
+        setConversationSummary(resumeData.conversationSummary ?? null);
 
         pendingConversationSwitchRef.current = {
           origin: "fork",
           conversationId,
           isDefault: false,
           messageCount: resumeData.messageHistory.length,
+          summary: resumeData.conversationSummary,
           messageHistory: resumeData.messageHistory,
         };
 

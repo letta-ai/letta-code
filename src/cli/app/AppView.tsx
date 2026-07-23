@@ -1210,19 +1210,17 @@ export function AppView(props: AppViewProps) {
                   });
 
                   try {
-                    // Validate conversation exists BEFORE updating state
-                    // (getResumeData throws 404/422 for non-existent conversations)
                     if (agentState) {
                       const resumeData = await getResumeDataFromBackend(
                         agentState,
                         convId,
                       );
-
-                      // Only update state after validation succeeds
+                      const resumedSummary =
+                        selectorContext?.summary ??
+                        resumeData.conversationSummary;
                       setConversationIdAndRef(convId);
                       setConversationAutoTitleEligibility(false);
-                      setConversationSummary(selectorContext?.summary ?? null);
-
+                      setConversationSummary(resumedSummary ?? null);
                       pendingConversationSwitchRef.current = {
                         origin: "resume-selector",
                         conversationId: convId,
@@ -1230,12 +1228,10 @@ export function AppView(props: AppViewProps) {
                         messageCount:
                           selectorContext?.messageCount ??
                           resumeData.messageHistory.length,
-                        summary: selectorContext?.summary,
+                        summary: resumedSummary,
                         messageHistory: resumeData.messageHistory,
                       };
-
                       settingsManager.persistSession(agentId, convId);
-
                       // Build success command with agent + conversation info
                       const currentAgentName =
                         agentState.name || "Unnamed Agent";
@@ -1489,15 +1485,18 @@ export function AppView(props: AppViewProps) {
                         agentState,
                         actualTargetConv,
                       );
+                      const resumedSummary = resumeData.conversationSummary;
 
                       setConversationIdAndRef(actualTargetConv);
                       setConversationAutoTitleEligibility(false);
+                      setConversationSummary(resumedSummary ?? null);
 
                       pendingConversationSwitchRef.current = {
                         origin: "search",
                         conversationId: actualTargetConv,
                         isDefault: actualTargetConv === "default",
                         messageCount: resumeData.messageHistory.length,
+                        summary: resumedSummary,
                         messageHistory: resumeData.messageHistory,
                         searchQuery: searchContext?.query,
                         searchMessage: searchContext?.message,
