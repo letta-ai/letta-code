@@ -68,6 +68,7 @@ import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
 import { toolFilter } from "./filter";
+import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import {
   functionToolForm,
   type JsonSchema,
@@ -1053,7 +1054,10 @@ export async function executeExternalTool(
       .join("\n");
 
     return {
-      toolReturn: textContent || JSON.stringify(result.content),
+      toolReturn: clampToolReturnContent(
+        textContent || JSON.stringify(result.content),
+        toolName,
+      ),
       status: result.isError ? "error" : "success",
     };
   } catch (error) {
@@ -2470,10 +2474,13 @@ async function executeModTool(
         redactions,
       );
       const toolStatus = getModToolStatus(result);
-      const flattenedResponse = scrubModToolReturnContent(
-        flattenToolResponse(result),
-        options.scopedAgentId,
-        redactions,
+      const flattenedResponse = clampToolReturnContent(
+        scrubModToolReturnContent(
+          flattenToolResponse(result),
+          options.scopedAgentId,
+          redactions,
+        ),
+        toolName,
       );
       const responseSize =
         typeof flattenedResponse === "string"
@@ -2752,20 +2759,8 @@ async function executeToolInner(
   }
 
   const internalName = resolveInternalToolName(name, activeRegistry);
-  if (!internalName) {
-    const availableTools = [
-      ...Array.from(activeRegistry.keys()),
-      ...Array.from(activeExternalTools.keys()),
-      ...Array.from(activeModTools.keys()),
-    ];
-    return {
-      toolReturn: `Tool not found: ${name}. Available tools: ${availableTools.join(", ")}`,
-      status: "error",
-    };
-  }
-
-  const tool = activeRegistry.get(internalName);
-  if (!tool) {
+  const tool = internalName ? activeRegistry.get(internalName) : undefined;
+  if (!internalName || !tool) {
     const availableTools = [
       ...Array.from(activeRegistry.keys()),
       ...Array.from(activeExternalTools.keys()),
@@ -2985,6 +2980,11 @@ async function executeToolInner(
         }
       }
 
+      flattenedResponse = clampToolReturnContent(
+        flattenedResponse,
+        internalName,
+      );
+
       // Track tool usage (calculate size for multimodal content)
       const responseSize =
         typeof flattenedResponse === "string"
@@ -3023,7 +3023,6 @@ async function executeToolInner(
         hookFeedback,
       );
 
-      // Return the full response (truncation happens in UI layer only)
       return {
         toolReturn: finalToolReturn,
         status: toolStatus,
