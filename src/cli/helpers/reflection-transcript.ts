@@ -1692,9 +1692,6 @@ export async function buildAutoReflectionPayload(
 
     const entries = entriesForSelection(rows, selection);
     const transcript = normalizeReflectionTranscript(entries);
-    if (!transcript || transcript === "[]") {
-      return null;
-    }
 
     const payloadPath = buildPayloadPath(paths.rootDir, "auto");
     await writeFile(payloadPath, transcript, "utf-8");
@@ -1834,9 +1831,6 @@ export async function buildMultiReflectionPayload(
 
       const entries = entriesForSelection(rows, selection);
       const transcript = normalizeReflectionTranscript(entries);
-      if (!transcript || transcript === "[]") {
-        return null;
-      }
       const approxChars = transcript.length;
       if (transcripts.length > 0 && totalChars + approxChars > maxTotalChars) {
         return null;
