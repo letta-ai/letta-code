@@ -84,7 +84,7 @@ export interface SubagentConfig {
   systemPrompt: string;
   /** Allowed tools - specific list or "all" (invalid names are ignored at runtime) */
   allowedTools: string[] | "all";
-  /** Recommended model - any model ID from models.json or full handle */
+  /** Recommended model - any runtime catalog model ID or full handle */
   recommendedModel: string;
   /** Skills to auto-load */
   skills: string[];

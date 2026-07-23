@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend/backend";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
 import { clearAvailableModelsCache } from "./available-models";
 import { preservableContextWindow } from "./model";
 import { updateAgentLLMConfig, updateConversationLLMConfig } from "./modify";
@@ -85,10 +89,12 @@ function useBackend(opts?: Parameters<typeof makeBackend>[0]) {
 let currentCalls: ReturnType<typeof makeBackend>["calls"];
 
 beforeEach(() => {
+  installRuntimeModelCatalogFixture();
   currentCalls = useBackend();
 });
 
 afterEach(() => {
+  clearRuntimeModelCatalogFixture();
   __testSetBackend(null);
   clearAvailableModelsCache();
 });

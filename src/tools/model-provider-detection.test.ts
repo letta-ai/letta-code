@@ -1,8 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
 import { isOpenAIModel } from "@/tools/manager";
 import { deriveToolsetFromModel } from "@/tools/toolset";
+
+beforeEach(installRuntimeModelCatalogFixture);
+afterEach(clearRuntimeModelCatalogFixture);
 
 describe("isOpenAIModel", () => {
   test("detects openai handles", () => {
@@ -21,7 +28,7 @@ describe("isOpenAIModel", () => {
     expect(isOpenAIModel("openai-codex/gpt-5.5")).toBe(true);
   });
 
-  test("detects chatgpt-plus-pro model ids via models.json metadata", () => {
+  test("detects chatgpt-plus-pro model ids via runtime metadata", () => {
     expect(isOpenAIModel("gpt-5.5-plus-pro-high")).toBe(true);
   });
 

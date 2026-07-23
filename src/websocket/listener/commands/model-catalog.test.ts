@@ -1,13 +1,20 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AvailableModel } from "@/agent/available-models";
 import { models } from "@/agent/model";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
 import {
   buildListModelsEntries,
   findAvailableModelForPreset,
 } from "./model-catalog";
 
+beforeEach(installRuntimeModelCatalogFixture);
+afterEach(clearRuntimeModelCatalogFixture);
+
 describe("listener model catalog", () => {
-  test("preserves models.json as the ordered preset overlay", () => {
+  test("preserves the ordered runtime preset overlay", () => {
     const entries = buildListModelsEntries();
 
     expect(entries).toHaveLength(models.length);
@@ -19,7 +26,7 @@ describe("listener model catalog", () => {
     });
   });
 
-  test("appends backend-native models absent from models.json", () => {
+  test("appends backend-native models absent from the runtime catalog", () => {
     const nativeModel: AvailableModel = {
       handle: "opencode/deepseek-v4-flash-free",
       label: "DeepSeek V4 Flash Free",

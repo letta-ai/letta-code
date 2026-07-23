@@ -1,52 +1,55 @@
-import { describe, expect, test } from "bun:test";
-import { MODEL_PRESETS, type ModelPreset } from "@/agent-presets";
-import { models } from "./model-catalog";
+import { afterEach, describe, expect, test } from "bun:test";
+import { getDefaultModel, models, resolveModel } from "@/agent/model-catalog";
 
-describe("browser-safe model preset export", () => {
-  test("exposes the same curated catalog used by the CLI", () => {
-    expect(MODEL_PRESETS).toBe(models);
-    expect(MODEL_PRESETS.length).toBeGreaterThan(0);
+afterEach(() => {
+  models.splice(0, models.length);
+});
+
+describe("runtime model catalog", () => {
+  test("exposes a stable live array for runtime catalog sources", () => {
+    const reference = models;
+    models.push({
+      id: "runtime-model",
+      handle: "provider/runtime-model",
+      label: "Runtime Model",
+      description: "",
+    });
+    expect(reference[0]?.id).toBe("runtime-model");
   });
 
-  test("includes presentation metadata and settings without claiming availability", () => {
-    const preset: ModelPreset | undefined = MODEL_PRESETS.find(
-      (entry) => entry.id === "gpt-5.6-luna-plus-pro-high",
-    );
-
-    expect(preset).toMatchObject({
-      handle: "chatgpt-plus-pro/gpt-5.6-luna",
-      label: "GPT-5.6 Luna (ChatGPT)",
-      isFeatured: true,
-      updateArgs: {
-        reasoning_effort: "high",
-      },
-    });
-    expect("available" in (preset ?? {})).toBe(false);
+  test("keeps managed Auto aliases available before cloud hydration", () => {
+    expect(resolveModel("auto")).toBe("letta/auto");
+    expect(resolveModel("auto-chat")).toBe("letta/auto-chat");
+    expect(getDefaultModel()).toBe("letta/auto");
   });
 
-  test("includes Kimi K3 direct and OpenRouter presets with Cloud-aligned limits", () => {
-    const direct = MODEL_PRESETS.find((entry) => entry.id === "kimi-k3");
-    const openrouter = MODEL_PRESETS.find(
-      (entry) => entry.id === "kimi-k3-openrouter",
+  test("resolves unique local pi-ai model IDs", () => {
+    models.push({
+      id: "claude-sonnet-4-6-medium",
+      handle: "anthropic/claude-sonnet-4-6",
+      label: "Claude Sonnet 4.6",
+      description: "",
+    });
+    expect(resolveModel("claude-sonnet-4-6")).toBe(
+      "anthropic/claude-sonnet-4-6",
     );
+  });
 
-    expect(direct).toMatchObject({
-      handle: "moonshot/kimi-k3",
-      label: "Kimi K3",
-      updateArgs: {
-        context_window: 1048576,
-        max_output_tokens: 131072,
+  test("does not guess ambiguous local model IDs", () => {
+    models.push(
+      {
+        id: "provider-a/shared",
+        handle: "provider-a/shared",
+        label: "Shared A",
+        description: "",
       },
-    });
-    expect(openrouter).toMatchObject({
-      handle: "openrouter/moonshotai/kimi-k3",
-      label: "Kimi K3",
-      updateArgs: {
-        context_window: 1048576,
-        max_output_tokens: 131072,
+      {
+        id: "provider-b/shared",
+        handle: "provider-b/shared",
+        label: "Shared B",
+        description: "",
       },
-    });
-    expect(direct?.updateArgs?.reasoning_effort).toBeUndefined();
-    expect(openrouter?.updateArgs?.reasoning_effort).toBeUndefined();
+    );
+    expect(resolveModel("shared")).toBeNull();
   });
 });

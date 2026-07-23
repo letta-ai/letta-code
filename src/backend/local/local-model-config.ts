@@ -1,4 +1,9 @@
-import type { Api, Model } from "@earendil-works/pi-ai";
+import {
+  type Api,
+  getSupportedThinkingLevels,
+  type Model,
+  type ModelThinkingLevel,
+} from "@earendil-works/pi-ai";
 import { getModels } from "@earendil-works/pi-ai/compat";
 import {
   DEFAULT_PI_PROVIDER,
@@ -51,9 +56,11 @@ interface LocalModelListEntry {
   max_context_window?: number;
   max_tokens?: number;
   model: string;
+  model_id?: string;
   model_endpoint_type: string;
   name: string;
   provider_type: string;
+  reasoning_levels?: ModelThinkingLevel[];
 }
 
 interface ListLocalModelsOptions {
@@ -72,6 +79,14 @@ function trimTrailingSlashes(value: string): string {
 function parsePositiveNumber(value: unknown): number | undefined {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function supportedThinkingLevelsForRegistration(
+  model: Pick<Model<Api>, "reasoning" | "thinkingLevelMap">,
+): ModelThinkingLevel[] {
+  // pi-ai's helper only reads reasoning and thinkingLevelMap. Registered mod
+  // models intentionally omit runtime-owned fields such as provider/baseUrl.
+  return getSupportedThinkingLevels(model as Model<Api>);
 }
 
 function modelIdsFromOpenAICompatibleResponse(data: unknown): string[] {
@@ -429,6 +444,7 @@ export async function listLocalModels(
       maxOutputTokens?: number;
       modelEndpointType?: string;
       name?: string;
+      reasoningLevels?: ModelThinkingLevel[];
     } = {},
   ) => {
     const handle =
@@ -464,15 +480,20 @@ export async function listLocalModels(
     const providerType =
       options.modelEndpointType ?? localProviderTypeForModelConfig(provider);
     const name = options.name ?? catalogModel?.name ?? modelId;
+    const reasoningLevels =
+      options.reasoningLevels ??
+      (catalogModel ? getSupportedThinkingLevels(catalogModel) : undefined);
     models.push({
       display_name: name,
       handle,
       ...(maxContextWindow ? { max_context_window: maxContextWindow } : {}),
       ...(maxOutputTokens ? { max_tokens: maxOutputTokens } : {}),
       model: handle,
+      model_id: modelId,
       model_endpoint_type: providerType,
       name,
       provider_type: providerType,
+      ...(reasoningLevels ? { reasoning_levels: reasoningLevels } : {}),
     });
   };
 
@@ -492,6 +513,7 @@ export async function listLocalModels(
           maxOutputTokens: model.maxTokens,
           modelEndpointType: provider.providerName,
           name: model.name,
+          reasoningLevels: supportedThinkingLevelsForRegistration(model),
         });
       }
     } catch {
@@ -502,6 +524,7 @@ export async function listLocalModels(
           maxOutputTokens: model.maxTokens,
           modelEndpointType: provider.providerName,
           name: model.name,
+          reasoningLevels: supportedThinkingLevelsForRegistration(model),
         });
       }
     }
