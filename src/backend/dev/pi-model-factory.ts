@@ -14,6 +14,7 @@ import {
   type LocalProviderTimeout,
   resolveLocalProviderTimeout,
 } from "@/backend/local/local-provider-timeout";
+import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
 import {
   getRegisteredPiProvider,
@@ -470,6 +471,20 @@ function normalizeLocalOpenAICompatibleBaseURL(
   return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 }
 
+function normalizeOpenAIResponsesProxyBaseURL(baseURL: string): string {
+  return baseURL.replace(/\/+$/, "");
+}
+
+function safeBaseURLTarget(baseURL: string | undefined): string {
+  if (!baseURL) return "<model-default>";
+  try {
+    const url = new URL(baseURL);
+    return `${url.host}${url.pathname}`;
+  } catch {
+    return "<invalid>";
+  }
+}
+
 function bedrockLocalProviderOptions(record: LocalProviderRecord | undefined): {
   providerOptions?: Record<string, unknown>;
   envOverrides?: Record<string, string | undefined>;
@@ -511,6 +526,7 @@ export async function resolvePiModelForAgent(
   const concreteModelHandle = normalizeOpenAICompatibleLocalModelHandle(
     isUnselectedLocalModelHandle(modelHandle) ? undefined : modelHandle,
   );
+  const storageDir = options.localProviderAuthStorageDir;
   const provider = options.provider
     ? resolvePiProvider(options.provider)
     : resolvePiProviderFromAgent(concreteModelHandle, modelSettings);
@@ -530,7 +546,6 @@ export async function resolvePiModelForAgent(
       : undefined) ??
     process.env.LETTA_CODE_DEV_PI_MODEL ??
     "";
-  const storageDir = options.localProviderAuthStorageDir;
   const preferredProviderType =
     typeof modelSettings.provider_type === "string"
       ? modelSettings.provider_type
@@ -585,6 +600,21 @@ export async function resolvePiModelForAgent(
       apiKey: oauth?.apiKey,
     };
     oauthCredentials = oauth?.credentials;
+  }
+
+  const usesChatGPTResponsesProxy =
+    provider === "openai-codex" &&
+    connection.record?.provider_type === "chatgpt_oauth" &&
+    connection.record.auth.type === "oauth" &&
+    Boolean(connection.record.base_url);
+  if (
+    usesChatGPTResponsesProxy &&
+    connection.record?.auth.type === "oauth" &&
+    connection.record.auth.accountId
+  ) {
+    headers = mergeHeaders(headers, {
+      "chatgpt-account-id": connection.record.auth.accountId,
+    });
   }
 
   if (
@@ -673,12 +703,19 @@ export async function resolvePiModelForAgent(
   } else {
     const catalogModel = getCatalogModel(spec.id, modelId, oauthCredentials);
     if (catalogModel) {
-      model = withOverrides(catalogModel, {
-        baseURL,
+      const baseModel = withOverrides(catalogModel, {
+        baseURL: usesChatGPTResponsesProxy
+          ? normalizeOpenAIResponsesProxyBaseURL(
+              connection.record?.base_url ?? baseURL ?? "",
+            )
+          : baseURL,
         headers,
         contextWindow,
         maxTokens,
       });
+      model = usesChatGPTResponsesProxy
+        ? { ...baseModel, api: "openai-responses" }
+        : baseModel;
     } else {
       const fallback = getModel(
         spec.piProvider ?? "openai",
@@ -690,14 +727,29 @@ export async function resolvePiModelForAgent(
             "Check the model handle or update the model catalog.",
         );
       }
-      model = withOverrides(fallback, {
-        baseURL,
+      const baseModel = withOverrides(fallback, {
+        baseURL: usesChatGPTResponsesProxy
+          ? normalizeOpenAIResponsesProxyBaseURL(
+              connection.record?.base_url ?? baseURL ?? "",
+            )
+          : baseURL,
         headers,
         contextWindow,
         maxTokens,
       });
+      model = usesChatGPTResponsesProxy
+        ? { ...baseModel, api: "openai-responses" }
+        : baseModel;
     }
   }
+
+  debugLog(
+    "pi-model-factory",
+    "local provider route api=%s host_path=%s api_key_present=%s",
+    model.api,
+    safeBaseURLTarget(model.baseUrl),
+    connection.apiKey ? "true" : "false",
+  );
 
   return {
     provider,
