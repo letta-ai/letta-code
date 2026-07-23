@@ -93,9 +93,9 @@ function buildModelSettings(
     settings = moonshotSettings;
   } else if (isOpenAI || isOpenRouter) {
     const openaiSettings: OpenAIModelSettings = {
-      provider_type: "openai",
+      provider_type: isOpenRouter ? "openrouter" : "openai",
       parallel_tool_calls: true,
-    };
+    } as OpenAIModelSettings;
     if (isOpenAICodex) {
       (openaiSettings as Record<string, unknown>).provider_type =
         "chatgpt_oauth";

@@ -8,6 +8,7 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
+import { getCachedModelReasoningCapabilities } from "@/agent/available-models";
 import {
   type ModelReasoningEffort,
   preservableContextWindow,
@@ -190,6 +191,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
       try {
         const {
           getChatGptFastRegistryHandleForModelHandle,
+          getPreferredReasoningOption: pref,
           getReasoningTierOptionsForHandle,
           normalizeModelHandleForRegistry,
           models,
@@ -346,12 +348,14 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             : modelUpdateArgs?.enable_reasoner === false
               ? "no"
               : null;
-        const selectedContextWindow = (
-          model.updateArgs as { context_window?: number } | undefined
-        )?.context_window;
+        const selectedContextWindow =
+          Number(model.updateArgs?.context_window) || undefined;
+        const reasoningCapabilities =
+          getCachedModelReasoningCapabilities()?.get(modelHandle);
         const reasoningTierOptions = getReasoningTierOptionsForHandle(
           registryHandle,
           selectedContextWindow,
+          reasoningCapabilities,
         ).map((option) => {
           const optionModel = models.find(
             (entry) => entry.id === option.modelId,
@@ -362,6 +366,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             ...((optionModel?.updateArgs as
               | Record<string, unknown>
               | undefined) ?? {}),
+            reasoning_effort: option.effort,
             ...(serviceTier !== undefined ? { service_tier: serviceTier } : {}),
             ...(providerType ? { provider_type: providerType } : {}),
           };
@@ -377,7 +382,6 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             },
           };
         });
-
         if (
           !opts?.skipReasoningPrompt &&
           (opts?.promptReasoning || activeOverlay === "model") &&
@@ -386,13 +390,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           const selectedEffort = (
             model.updateArgs as { reasoning_effort?: unknown } | undefined
           )?.reasoning_effort;
-          const preferredOption =
-            (typeof selectedEffort === "string" &&
-              reasoningTierOptions.find(
-                (option) => option.effort === selectedEffort,
-              )) ??
-            reasoningTierOptions.find((option) => option.effort === "medium") ??
-            reasoningTierOptions[0];
+          const preferredOption = pref(reasoningTierOptions, selectedEffort);
 
           if (preferredOption) {
             setModelReasoningPrompt({
