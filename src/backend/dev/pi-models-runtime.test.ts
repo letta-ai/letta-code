@@ -148,6 +148,96 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     );
   });
 
+  test("stored API keys resolve through the runtime's credential seam", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
+    storageDirs.push(storageDir);
+    await createOrUpdateLocalProvider({
+      providerType: "anthropic",
+      providerName: "lc-anthropic",
+      apiKey: "stored-key",
+      storageDir,
+    });
+    const runtime = new LocalPiModelsRuntime({ storageDir });
+    let getAuthCalls = 0;
+    const originalGetAuth = runtime.getAuth.bind(runtime);
+    runtime.getAuth = (providerId) => {
+      getAuthCalls += 1;
+      return originalGetAuth(providerId);
+    };
+
+    const resolved = await resolvePiModelForAgent(
+      "anthropic/claude-opus-4-8",
+      { provider_type: "anthropic" },
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    // API-key auth is resolved by Models.getAuth via the auth.json adapter,
+    // not by a parallel factory lookup.
+    expect(getAuthCalls).toBe(1);
+    expect(resolved.apiKey).toBe("stored-key");
+  });
+
+  test("radius/auto lists and resolves for a configured Radius gateway", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
+    storageDirs.push(storageDir);
+    await createOrUpdateLocalProvider({
+      providerType: "radius",
+      providerName: "radius",
+      apiKey: "radius-key",
+      storageDir,
+    });
+    // Radius's built-in provider fetches its gateway config with global
+    // fetch; stub it for the gateway URL only.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      if (url.includes("/v1/config")) {
+        return Response.json({
+          baseUrl: "https://gateway.example.test/v1",
+          models: [
+            {
+              id: "auto",
+              name: "Auto",
+              reasoning: false,
+              input: ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 200000,
+              maxTokens: 32000,
+            },
+          ],
+        });
+      }
+      return realFetch(input as never, init);
+    }) as typeof fetch;
+
+    try {
+      const runtime = new LocalPiModelsRuntime({
+        storageDir,
+        fetchImpl: failingDiscoveryFetch,
+      });
+      const listed = await listLocalModels(storageDir, {
+        fetch: failingDiscoveryFetch,
+        modelsRuntime: runtime,
+      });
+      expect(listed.some((model) => model.handle === "radius/auto")).toBe(true);
+
+      // The default handle a user selects from /model must resolve for the
+      // turn — the canonical refresh supplies Radius's credentialed context.
+      const resolved = await resolvePiModelForAgent(
+        "radius/auto",
+        { provider_type: "radius" },
+        { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+      );
+      expect(resolved.model.id).toBe("auto");
+      expect(resolved.model.provider).toBe("radius");
+      expect(resolved.apiKey).toBe("radius-key");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   test("built-in catalog models resolve to the runtime-published instance", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
     storageDirs.push(storageDir);

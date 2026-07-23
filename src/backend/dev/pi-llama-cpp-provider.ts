@@ -48,15 +48,16 @@ function parseLlamaCppProps(data: unknown): LlamaCppServerProps {
 }
 
 /**
- * Per-model metadata from the native `/models` catalog (router mode):
- * `architecture.input_modalities` and `meta.n_ctx` per entry — the same
- * contract upstream Pi's llama.cpp provider consumes. Returns undefined
- * when no entry carries per-model metadata (plain OpenAI id list), so
- * discovery falls back to `/props?model=<id>`.
+ * Per-model metadata from the native `/models` catalog, matching the current
+ * upstream Pi llama.cpp provider contract: entries carry `status.value`
+ * (only "loaded" models are selectable), `architecture.input_modalities`,
+ * and `meta.n_ctx` with `meta.n_ctx_train` as the fallback. Returns
+ * undefined when no entry carries per-model metadata (plain OpenAI id
+ * list), so discovery falls back to `/props?model=<id>`.
  */
 function parseLlamaCppNativeModels(
   data: unknown,
-): Map<string, LocalEndpointModelMetadata> | undefined {
+): LocalEndpointModelMetadata[] | undefined {
   if (!data || typeof data !== "object") return undefined;
   const container = data as { data?: unknown; models?: unknown };
   const entries = Array.isArray(container.data)
@@ -66,18 +67,23 @@ function parseLlamaCppNativeModels(
       : undefined;
   if (!entries) return undefined;
 
-  const parsed = new Map<string, LocalEndpointModelMetadata>();
+  const parsed: LocalEndpointModelMetadata[] = [];
   let sawMetadata = false;
   for (const entry of entries) {
     if (!entry || typeof entry !== "object") continue;
     const record = entry as {
       id?: unknown;
       name?: unknown;
+      status?: unknown;
       architecture?: unknown;
       meta?: unknown;
     };
     const id = record.id ?? record.name;
     if (typeof id !== "string" || id.length === 0) continue;
+    const status =
+      record.status && typeof record.status === "object"
+        ? (record.status as { value?: unknown }).value
+        : undefined;
     const architecture =
       record.architecture && typeof record.architecture === "object"
         ? (record.architecture as { input_modalities?: unknown })
@@ -89,46 +95,83 @@ function parseLlamaCppNativeModels(
       : undefined;
     const meta =
       record.meta && typeof record.meta === "object"
-        ? (record.meta as { n_ctx?: unknown })
+        ? (record.meta as { n_ctx?: unknown; n_ctx_train?: unknown })
         : undefined;
-    const contextLength =
+    const nCtx =
       typeof meta?.n_ctx === "number" && meta.n_ctx > 0
         ? meta.n_ctx
         : undefined;
-    if (modalities !== undefined || contextLength !== undefined) {
+    const nCtxTrain =
+      typeof meta?.n_ctx_train === "number" && meta.n_ctx_train > 0
+        ? meta.n_ctx_train
+        : undefined;
+    const contextLength = nCtx ?? nCtxTrain;
+    if (
+      status !== undefined ||
+      modalities !== undefined ||
+      contextLength !== undefined
+    ) {
       sawMetadata = true;
     }
-    parsed.set(id, {
-      id,
-      ...(modalities !== undefined
-        ? { vision: modalities.includes("image") }
-        : {}),
-      ...(contextLength !== undefined ? { contextLength } : {}),
-    });
+    // Upstream publishes only loaded models as selectable; entries without
+    // a status (single-model servers) are treated as loaded.
+    if (status !== undefined && status !== "loaded") continue;
+    parsed.push(
+      llamaCppModelMetadata(id, {
+        ...(modalities !== undefined
+          ? { vision: modalities.includes("image") }
+          : {}),
+        ...(contextLength !== undefined ? { contextLength } : {}),
+      }),
+    );
   }
   return sawMetadata ? parsed : undefined;
+}
+
+/** Upstream model construction: maxTokens = contextWindow, max_tokens field. */
+function llamaCppModelMetadata(
+  id: string,
+  input: { vision?: boolean; contextLength?: number },
+): LocalEndpointModelMetadata {
+  return {
+    id,
+    ...(input.vision !== undefined ? { vision: input.vision } : {}),
+    ...(input.contextLength
+      ? { contextLength: input.contextLength, maxTokens: input.contextLength }
+      : {}),
+    compat: {
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      maxTokensField: "max_tokens",
+    },
+  };
 }
 
 /**
  * llama.cpp capability discovery with per-model metadata. Preference order:
  *
- * 1. Native `/models` catalog entries (`architecture.input_modalities`,
- *    `meta.n_ctx`) — authoritative per model, including router mode where
- *    one server hosts many models.
- * 2. `GET /props?model=<id>` per model. Single-model servers ignore the
- *    query parameter and return their global props, which is correct there;
- *    router servers return the addressed model's props.
+ * 1. The native `/models` catalog (distinct from the OpenAI-compatible
+ *    `/v1/models` list): per-model `status`, `architecture.input_modalities`,
+ *    `meta.n_ctx`/`n_ctx_train` — authoritative per model, including router
+ *    mode where one server hosts many models; only loaded models publish.
+ * 2. `GET /props?model=<id>` per model from the `/v1/models` id list.
+ *    Single-model servers ignore the query parameter and return their
+ *    global props, which is correct there.
  * 3. The model's last-known published Model, else text-only — one model's
  *    metadata is never applied to another, and capabilities are never
  *    guessed from the model name.
  */
 const llamaCppDiscover: LocalEndpointDiscover = async (context) => {
-  const list = await context.fetchJson(`${context.openAIBaseURL}/models`);
-  const native = parseLlamaCppNativeModels(list);
-  if (native) {
-    return [...native.values()].map(context.buildModel);
+  try {
+    const native = parseLlamaCppNativeModels(
+      await context.fetchJson(`${context.nativeBaseURL}/models`),
+    );
+    if (native) return native.map(context.buildModel);
+  } catch {
+    // Native catalog unavailable; fall back to the OpenAI-compatible list.
   }
 
+  const list = await context.fetchJson(`${context.openAIBaseURL}/models`);
   const modelIds = modelIdsFromOpenAICompatibleList(list);
   return Promise.all(
     modelIds.map(async (modelId) => {
@@ -138,13 +181,14 @@ const llamaCppDiscover: LocalEndpointDiscover = async (context) => {
             `${context.nativeBaseURL}/props?model=${encodeURIComponent(modelId)}`,
           ),
         );
-        return context.buildModel({
-          id: modelId,
-          ...(props.vision !== undefined ? { vision: props.vision } : {}),
-          ...(props.contextLength
-            ? { contextLength: props.contextLength }
-            : {}),
-        });
+        return context.buildModel(
+          llamaCppModelMetadata(modelId, {
+            ...(props.vision !== undefined ? { vision: props.vision } : {}),
+            ...(props.contextLength
+              ? { contextLength: props.contextLength }
+              : {}),
+          }),
+        );
       } catch {
         return (
           context.lastKnown.get(modelId) ?? context.buildModel({ id: modelId })

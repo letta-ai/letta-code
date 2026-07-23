@@ -23,6 +23,10 @@ export interface LocalEndpointModelMetadata {
   vision?: boolean;
   thinking?: boolean;
   contextLength?: number;
+  /** Engine-specific output cap; defaults to the shared constant. */
+  maxTokens?: number;
+  /** Engine-specific OpenAI-compat overrides merged over the defaults. */
+  compat?: Model<"openai-completions">["compat"];
 }
 
 export interface LocalEndpointDiscoveryContext {
@@ -150,10 +154,11 @@ export function createLocalEndpointPiProvider(
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow:
         metadata.contextLength ?? LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
-      maxTokens: LOCAL_ENDPOINT_DEFAULT_MAX_TOKENS,
+      maxTokens: metadata.maxTokens ?? LOCAL_ENDPOINT_DEFAULT_MAX_TOKENS,
       compat: {
         supportsDeveloperRole: false,
         supportsReasoningEffort: false,
+        ...metadata.compat,
       },
     };
   }

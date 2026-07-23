@@ -476,6 +476,33 @@ export async function resolvePiModelForAgent(
   let envOverrides: Record<string, string | undefined> | undefined;
   let oauthCredentials: OAuthCredentials | undefined;
 
+  // The Models runtime is the credential source of truth for every provider
+  // and auth kind: getAuth resolves stored API keys and OAuth tokens through
+  // the auth.json adapter (refreshing OAuth under the store's write lock,
+  // falling back to the provider's ambient env sources) and derives
+  // per-credential request auth such as GitHub Copilot's per-token base URL.
+  // Letta keeps only non-credential connection config (base URLs, timeouts,
+  // zai endpoint choice, Bedrock env) plus spec-specific env fallbacks the
+  // upstream providers do not know about.
+  {
+    const authProviderId = registeredProvider
+      ? registeredProvider.providerName
+      : (spec?.piProvider ?? provider);
+    const authResult = await modelsRuntime.getAuth(authProviderId);
+    connection = {
+      ...connection,
+      apiKey: authResult?.auth.apiKey ?? connection.apiKey,
+    };
+    if (authResult?.auth.baseUrl) baseURL = authResult.auth.baseUrl;
+    if (authResult?.auth.headers) {
+      headers = mergeHeaders(headers, nonNullHeaders(authResult.auth.headers));
+    }
+    if (connection.record?.auth.type === "oauth") {
+      const stored = await modelsRuntime.getStoredCredential(authProviderId);
+      oauthCredentials = stored?.type === "oauth" ? stored : undefined;
+    }
+  }
+
   if (provider === "zai") {
     const zai = resolveZaiConnection({
       storageDir,
@@ -491,27 +518,6 @@ export async function resolvePiModelForAgent(
       timeout: zai.timeout,
     };
     baseURL = zai.baseURL;
-  }
-
-  if (connection.record?.auth.type === "oauth") {
-    // The Models runtime is the credential source of truth: getAuth resolves
-    // the stored OAuth token through the auth.json adapter (refreshing under
-    // the store's write lock) and derives per-credential request auth such
-    // as GitHub Copilot's per-token base URL.
-    const authProviderId = registeredProvider
-      ? registeredProvider.providerName
-      : (spec?.piProvider ?? provider);
-    const authResult = await modelsRuntime.getAuth(authProviderId);
-    connection = {
-      ...connection,
-      apiKey: authResult?.auth.apiKey,
-    };
-    if (authResult?.auth.baseUrl) baseURL = authResult.auth.baseUrl;
-    if (authResult?.auth.headers) {
-      headers = mergeHeaders(headers, nonNullHeaders(authResult.auth.headers));
-    }
-    const stored = await modelsRuntime.getStoredCredential(authProviderId);
-    oauthCredentials = stored?.type === "oauth" ? stored : undefined;
   }
 
   if (provider === "amazon-bedrock") {
@@ -584,10 +590,12 @@ export async function resolvePiModelForAgent(
     const fallbackModelId = piProvider
       ? fallbackCatalogModelId(piProvider, modelId)
       : undefined;
+    // resolveModel refreshes dynamic built-in catalogs (e.g. radius) on a
+    // miss; static catalogs resolve from the registered provider directly.
     const catalogModel = piProvider
-      ? (modelsRuntime.getModel(piProvider, modelId) ??
+      ? ((await modelsRuntime.resolveModel(piProvider, modelId)) ??
         (fallbackModelId
-          ? modelsRuntime.getModel(piProvider, fallbackModelId)
+          ? await modelsRuntime.resolveModel(piProvider, fallbackModelId)
           : undefined))
       : undefined;
     if (!catalogModel) {

@@ -10,14 +10,12 @@ import type {
   ModelsSimpleStreamOptions,
   MutableModels,
   Provider,
-  RefreshModelsContext,
 } from "@earendil-works/pi-ai";
 import { createModels, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { createLocalPiCredentialStore } from "@/backend/local/local-pi-credential-store";
 import {
   getLocalProviderRecordByName,
-  listLocalProviderRecords,
   localProviderApiKeyFromRecord,
 } from "@/backend/local/local-provider-auth-store";
 import {
@@ -40,10 +38,7 @@ import {
   listRegisteredPiProviders,
 } from "./pi-provider-mod-registry";
 import { getPiProviderSpec, type PiProvider } from "./pi-provider-registry";
-import {
-  isRegisteredPiProviderConfigured,
-  resolveRegisteredPiProviderRuntimeConnection,
-} from "./registered-pi-provider-runtime";
+import { resolveRegisteredPiProviderRuntimeConnection } from "./registered-pi-provider-runtime";
 
 const CONFIGURED_DISCOVERY_TIMEOUT_MS = 2_000;
 const AUTODETECT_DISCOVERY_TIMEOUT_MS = 500;
@@ -175,18 +170,6 @@ export class LocalPiModelsRuntime {
     return this.credentials.read(providerId);
   }
 
-  private refreshContext(providerId: string): RefreshModelsContext {
-    return {
-      store: {
-        read: () => this.modelsStore.read(providerId),
-        write: (entry) => this.modelsStore.write(providerId, entry),
-        delete: () => this.modelsStore.delete(providerId),
-      },
-      allowNetwork: true,
-      force: true,
-    };
-  }
-
   /** Providers whose models this runtime discovers and owns end-to-end. */
   isRuntimeManagedProvider(providerId: string): boolean {
     return (
@@ -303,54 +286,29 @@ export class LocalPiModelsRuntime {
   }
 
   /**
-   * Re-fetch every runtime-managed provider's model list concurrently.
-   * Per-provider fetch failures keep that provider's last-known list, so a
-   * transient endpoint outage does not brick turns or wipe /model. Built-in
-   * providers are not refreshed here — their catalogs are static and any
-   * dynamic upstream catalogs stay on pi-ai's own refresh cadence.
+   * Canonical catalog refresh: pi-ai's Models.refresh resolves each dynamic
+   * provider's effective credential (refreshing OAuth under the store lock),
+   * supplies its store-backed RefreshModelsContext, and skips unconfigured
+   * providers — so unconfigured remote endpoints and mod listModels hooks
+   * are never probed, while keyless local daemons ("not-needed") and
+   * credentialed dynamic built-ins (e.g. radius) refresh correctly.
+   * Per-provider fetch failures keep that provider's last-known list.
    */
   async refreshAll(): Promise<void> {
     this.ensureManagedProviders();
-    // Only refresh providers the user configured (record/env) or that are
-    // explicitly auto-detectable local daemons. Never probe remote endpoints
-    // (Ollama Cloud) or invoke mod listModels hooks without configuration.
-    const records = listLocalProviderRecords(this.storageDir);
-    const managedIds = new Set<string>();
-    for (const providerId of MANAGED_ENDPOINT_PROVIDERS.keys()) {
-      const spec = getPiProviderSpec(providerId as PiProvider);
-      const connection = resolveLocalEndpointConnection(
-        providerId,
-        this.storageDir,
-      );
-      if (connection.configured || spec.autoDetectLocalEndpoint === true) {
-        managedIds.add(providerId);
-      }
-    }
-    for (const registered of listRegisteredPiProviders()) {
-      if (isRegisteredPiProviderConfigured(registered, records)) {
-        managedIds.add(registered.providerName);
-      }
-    }
-    await Promise.all(
-      [...managedIds].map(async (providerId) => {
-        try {
-          await this.refresh(providerId);
-        } catch {
-          // Keep last-known models for this provider.
-        }
-      }),
-    );
+    await this.models.refresh({ force: true });
   }
 
   /**
-   * Refresh one provider with per-provider error semantics: rejects with the
-   * fetch error while the provider keeps serving its last-known list.
+   * Refresh with per-provider error semantics: rejects with the given
+   * provider's fetch error while the provider keeps serving its last-known
+   * list.
    */
   async refresh(providerId: string): Promise<void> {
     this.ensureManagedProviders(providerId);
-    const provider = this.models.getProvider(providerId);
-    if (!provider?.refreshModels) return;
-    await provider.refreshModels(this.refreshContext(providerId));
+    const result = await this.models.refresh({ force: true });
+    const error = result.errors.get(providerId);
+    if (error) throw error;
   }
 
   /**

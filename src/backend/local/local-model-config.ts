@@ -125,13 +125,18 @@ function registeredModelSettingsForProviderModel(
 function catalogModelSettingsForProviderModel(
   provider: PiProvider,
   modelId: string | undefined,
+  modelsRuntime?: LocalPiModelsRuntime,
 ): Record<string, unknown> | undefined {
   if (!modelId || !isPiProvider(provider)) return undefined;
   const spec = getPiProviderSpec(provider);
   if (!spec.piProvider) return undefined;
-  const model = builtinCatalogModels(spec.piProvider).find(
-    (entry) => entry.id === modelId,
-  );
+  // Read through the runtime when available so settings derive from the
+  // same published Model objects as listing and turn execution; the static
+  // catalog remains only for legacy synchronous callers without a runtime.
+  const catalog = modelsRuntime
+    ? modelsRuntime.getModels(spec.piProvider)
+    : builtinCatalogModels(spec.piProvider);
+  const model = catalog.find((entry) => entry.id === modelId);
   if (!model) return undefined;
   return {
     provider_type: localProviderTypeForModelConfig(provider),
@@ -142,6 +147,7 @@ function catalogModelSettingsForProviderModel(
 
 export function localModelSettingsForHandle(
   handle: string | undefined,
+  modelsRuntime?: LocalPiModelsRuntime,
 ): Record<string, unknown> | undefined {
   if (!handle) return undefined;
   const registeredProvider = resolveRegisteredPiProviderFromModelHandle(handle);
@@ -157,7 +163,7 @@ export function localModelSettingsForHandle(
   const modelId = stripProviderHandlePrefix(handle, provider);
   return (
     registeredModelSettingsForProviderModel(provider, modelId) ??
-    catalogModelSettingsForProviderModel(provider, modelId)
+    catalogModelSettingsForProviderModel(provider, modelId, modelsRuntime)
   );
 }
 
@@ -307,7 +313,7 @@ export async function listLocalModels(
         ? `${provider}/${model}`
         : localModelHandle(provider as PiProvider, model));
     if (models.some((entry) => entry.handle === handle)) return;
-    const modelSettings = localModelSettingsForHandle(handle);
+    const modelSettings = localModelSettingsForHandle(handle, modelsRuntime);
     const maxContextWindow =
       options.maxContextWindow ??
       (typeof modelSettings?.context_window_limit === "number"

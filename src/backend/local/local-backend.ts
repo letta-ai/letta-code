@@ -266,8 +266,7 @@ export class LocalBackend extends HeadlessBackend {
   constructor(options: LocalBackendOptions) {
     const localBackendRef: { current?: LocalBackend } = {};
     // One pi-ai Models runtime per backend instance: /model listing, turn
-    // execution, and compaction resolve models from the same provider
-    // registry, so they always see the same Model objects and capabilities.
+    // execution, and compaction resolve the same Model objects/credentials.
     const modelsRuntime =
       options.modelsRuntime ??
       new LocalPiModelsRuntime({ storageDir: options.storageDir });
@@ -280,7 +279,8 @@ export class LocalBackend extends HeadlessBackend {
       defaultAgentName: "Letta Code",
       defaultAgentModel: modelConfig.handle,
       defaultAgentModelSettings: modelConfig.modelSettings,
-      modelSettingsForModel: localModelSettingsForHandle,
+      modelSettingsForModel: (handle) =>
+        localModelSettingsForHandle(handle, modelsRuntime),
       conversationIdPrefix: "local-conv-",
       storedMessageIdPrefix: "letta-msg-",
       localMessageIdPrefix: "ui-msg-",
