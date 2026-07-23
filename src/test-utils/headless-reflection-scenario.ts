@@ -503,8 +503,12 @@ function assertScenario(summary: LiveReflectionSummary): void {
 
   const firstPayload = parsePayload(summary.firstPayloadText);
   assertTrue(
-    firstPayload.roles.includes("system"),
-    `Payload missing system message.\n${details}`,
+    firstPayload.roles[0] === "meta",
+    `Payload missing leading metadata record.\n${details}`,
+  );
+  assertTrue(
+    !firstPayload.roles.includes("system"),
+    `Payload unexpectedly includes a system message.\n${details}`,
   );
   assertTrue(
     firstPayload.roles.includes("user"),
