@@ -258,7 +258,7 @@ jq '{sessions: (.sessions | length), sources, errors: (.errors | length)}' /tmp/
 
 This produces:
 - `/tmp/letta-trajectories/<source>/<session>.json` — one normalized trajectory per session
-- `/tmp/letta-trajectories/manifest.json` — index with per-session metadata (project, dates, message counts, first prompt)
+- `/tmp/letta-trajectories/manifest.json` — index with per-session metadata (stable `sessionId`, project, dates, message counts, first prompt)
 - `/tmp/letta-trajectories/chunks/chunk-NN.json` — `$NUM_WORKERS` size-balanced worker assignments
 
 Useful variations:

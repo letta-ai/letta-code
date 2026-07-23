@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   mkdir,
   readdir,
@@ -65,6 +66,19 @@ const LIST_PAGE_LIMIT = 1000;
 export function fileTimestamp(startedAt: string | undefined): string {
   if (!startedAt) return "unknown-date";
   return startedAt.slice(0, 19).replace(/:/g, "-");
+}
+
+/**
+ * Stable session identifier: sha256 of the source-scoped native session id,
+ * shortened to 10 hex chars. Unlike a positional index, it does not change
+ * when other sessions appear or disappear between exports, so it can be used
+ * to track which sessions have already been processed.
+ */
+export function sessionHash(source: string, nativeId: string): string {
+  return createHash("sha256")
+    .update(`${source}:${nativeId}`)
+    .digest("hex")
+    .slice(0, 10);
 }
 
 /**
@@ -249,6 +263,7 @@ export async function runTrajectoryExport(
     manifest.sessions.push({
       source,
       id,
+      sessionId: sessionHash(source, id),
       file,
       sourcePath,
       ...stats,
@@ -368,16 +383,19 @@ export async function runTrajectoryExport(
     (a.startedAt ?? "").localeCompare(b.startedAt ?? ""),
   );
 
-  // Assign the final uniform filenames: <startedAt>_<index>.json, where the
-  // 1-based index is the session's position in the chronologically sorted
-  // manifest. Identical across sources, unique by construction, and `ls`
-  // within a source folder lists sessions in time order.
-  const width = Math.max(4, String(manifest.sessions.length).length);
-  for (const [index, session] of manifest.sessions.entries()) {
-    const file = join(
-      session.source,
-      `${fileTimestamp(session.startedAt)}_${String(index + 1).padStart(width, "0")}.json`,
-    );
+  // Assign the final uniform filenames: <startedAt>_<sessionId>.json. The
+  // timestamp keeps `ls` chronological within a source folder; the hashed
+  // native id makes the name stable across re-exports regardless of what
+  // other sessions exist. Collisions (same source, same native id — e.g. two
+  // --transcript files with the same basename) get a numeric suffix.
+  const usedFiles = new Set<string>();
+  for (const session of manifest.sessions) {
+    const base = `${fileTimestamp(session.startedAt)}_${session.sessionId}`;
+    let file = join(session.source, `${base}.json`);
+    for (let suffix = 2; usedFiles.has(file); suffix += 1) {
+      file = join(session.source, `${base}-${suffix}.json`);
+    }
+    usedFiles.add(file);
     await rename(
       join(options.outDir, session.file),
       join(options.outDir, file),

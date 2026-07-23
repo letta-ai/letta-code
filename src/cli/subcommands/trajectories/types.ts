@@ -10,7 +10,15 @@
 /** Per-session entry in the export manifest. */
 export interface SessionManifestEntry {
   source: string;
+  /** Source-native session identity (session/conversation/thread id). */
   id: string;
+  /**
+   * Stable session identifier: first 10 hex chars of sha256("<source>:<id>").
+   * Unlike a manifest position, it survives re-exports unchanged — use it to
+   * track which sessions have already been processed. Also embedded in the
+   * session's filename (<startedAt>_<sessionId>.json).
+   */
+  sessionId: string;
   /** Path of the normalized trajectory file, relative to the export dir. */
   file: string;
   /** Native store location this session was exported from. */

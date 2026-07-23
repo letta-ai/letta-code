@@ -115,7 +115,7 @@ This command is safe under the memory-subagent sandbox. Treat it as measurement 
 Your prompt will specify a trajectory export directory and either a chunk file (`chunks/chunk-NN.json`) or a list of session files. All sessions use the **same normalized format** regardless of which coding agent produced them.
 
 **The export directory** (produced by `letta trajectories export`):
-- `manifest.json` — index of every exported session: `source`, `file` (relative path), `project` (working dir), `model`, `startedAt`/`endedAt`, message/tool-call counts, and `firstUserPrompt` for skimming
+- `manifest.json` — index of every exported session: `source`, `file` (relative path), `id` (native session id), `sessionId` (stable 10-char hash — the canonical key for "which session is this", also embedded in the filename), `project` (working dir), `model`, `startedAt`/`endedAt`, message/tool-call counts, and `firstUserPrompt` for skimming
 - `<source>/<session>.json` — one normalized session: a JSON **array** of records
 - `chunks/chunk-NN.json` — your assignment, when present: `{ chunk, outDir, sessions: [manifest entries] }`. Analyze exactly the sessions listed in your chunk.
 
@@ -181,7 +181,7 @@ Each durable finding should include at least one of:
 - date range or source reference for future lookup
 - why the rule matters in practice
 
-You can also cite sessions if you want to note where something came from (e.g. `(from: codex/2026-03-30T05-38-34_0012.json)`); the manifest entry's `id` and `sourcePath` identify the native session and original store.
+You can also cite sessions if you want to note where something came from (e.g. `(from: codex/2026-03-30T05-38-34_3f2a9c81d4.json)`); the filename's trailing hash is the stable `sessionId`, and the manifest entry's `id` and `sourcePath` identify the native session and original store.
 
 ### 5. Commit
 

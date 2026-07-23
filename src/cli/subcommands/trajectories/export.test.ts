@@ -15,6 +15,7 @@ import {
   listAllTrajectories,
   partitionSessions,
   runTrajectoryExport,
+  sessionHash,
 } from "@/cli/subcommands/trajectories/export";
 import { listSupportedSources } from "@/cli/subcommands/trajectories/sources";
 import type { SessionManifestEntry } from "@/cli/subcommands/trajectories/types";
@@ -251,13 +252,14 @@ describe("trajectories export", () => {
     expect(hermes?.id).toBe("hermes-1");
     expect(hermes?.project).toBe("/workspace/hermes");
 
-    // Uniform chronological filenames: <startedAt>_<index>.json, with the
-    // index matching the session's position in the sorted manifest.
-    for (const [index, session] of manifest.sessions.entries()) {
+    // Uniform chronological filenames: <startedAt>_<sessionId>.json, where
+    // sessionId is the stable hash of the source-scoped native id.
+    for (const session of manifest.sessions) {
+      expect(session.sessionId).toBe(sessionHash(session.source, session.id));
       expect(session.file).toBe(
         join(
           session.source,
-          `${fileTimestamp(session.startedAt)}_${String(index + 1).padStart(4, "0")}.json`,
+          `${fileTimestamp(session.startedAt)}_${session.sessionId}.json`,
         ),
       );
     }
@@ -386,6 +388,7 @@ describe("partitionSessions", () => {
   const session = (file: string, bytes: number): SessionManifestEntry => ({
     source: "codex",
     id: file,
+    sessionId: sessionHash("codex", file),
     file,
     sourcePath: `/tmp/${file}`,
     records: 1,
@@ -421,5 +424,13 @@ describe("fileTimestamp", () => {
       "2026-03-06T14-15-22",
     );
     expect(fileTimestamp(undefined)).toBe("unknown-date");
+  });
+});
+
+describe("sessionHash", () => {
+  test("is deterministic and scoped by source", () => {
+    expect(sessionHash("codex", "s1")).toBe(sessionHash("codex", "s1"));
+    expect(sessionHash("codex", "s1")).not.toBe(sessionHash("letta", "s1"));
+    expect(sessionHash("codex", "s1")).toMatch(/^[0-9a-f]{10}$/);
   });
 });
