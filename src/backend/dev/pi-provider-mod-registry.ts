@@ -30,6 +30,22 @@ type PiProviderRegistryListener = () => void;
 
 const registeredProviders = new Map<string, RegisteredPiProvider>();
 const registryListeners = new Set<PiProviderRegistryListener>();
+const providerRevisions = new Map<string, number>();
+let revisionCounter = 0;
+
+function bumpProviderRevision(providerName: string): void {
+  revisionCounter += 1;
+  providerRevisions.set(providerName, revisionCounter);
+}
+
+/**
+ * Monotonic per-provider registration revision. Bumps on every register or
+ * unregister of that provider name, letting per-backend Models runtimes
+ * detect that a registration changed and rebuild only that provider.
+ */
+export function getRegisteredPiProviderRevision(providerName: string): number {
+  return providerRevisions.get(providerName) ?? 0;
+}
 
 function notifyRegistryListeners(): void {
   for (const listener of [...registryListeners]) {
@@ -103,6 +119,7 @@ export function registerPiProvider(
     ...(owner?.path ? { path: owner.path } : {}),
   };
   registeredProviders.set(providerName, registered);
+  bumpProviderRevision(providerName);
   registerPiOAuthProvider(providerName, registered.config);
   notifyRegistryListeners();
   return getRegisteredPiProvider(providerName) as RegisteredPiProvider;
@@ -116,6 +133,7 @@ export function unregisterPiProvider(
   if (!existing) return;
   if (ownerId && existing.ownerId && existing.ownerId !== ownerId) return;
   registeredProviders.delete(providerName);
+  bumpProviderRevision(providerName);
   unregisterPiOAuthProvider(providerName);
   notifyRegistryListeners();
 }
@@ -125,6 +143,7 @@ export function unregisterPiProvidersForOwner(ownerId: string): void {
   for (const [providerName, provider] of registeredProviders.entries()) {
     if (provider.ownerId === ownerId) {
       registeredProviders.delete(providerName);
+      bumpProviderRevision(providerName);
       unregisterPiOAuthProvider(providerName);
       changed = true;
     }
@@ -135,6 +154,7 @@ export function unregisterPiProvidersForOwner(ownerId: string): void {
 export function clearRegisteredPiProviders(): void {
   if (registeredProviders.size === 0) return;
   for (const providerName of registeredProviders.keys()) {
+    bumpProviderRevision(providerName);
     unregisterPiOAuthProvider(providerName);
   }
   registeredProviders.clear();

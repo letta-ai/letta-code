@@ -625,9 +625,13 @@ export async function resolvePiModelForAgent(
     registeredProvider?.config.authHeader,
   );
 
-  const registeredModels = registeredProvider
-    ? await listRegisteredPiProviderModels(registeredProvider, connection)
-    : undefined;
+  // With a Models runtime, registered providers publish their models as a
+  // real pi-ai Provider; the per-turn listModels round trip only remains for
+  // legacy callers without a runtime.
+  const registeredModels =
+    registeredProvider && !options.modelsRuntime
+      ? await listRegisteredPiProviderModels(registeredProvider, connection)
+      : undefined;
   const registeredModel = registeredModels?.find(
     (model) => model.id === modelId,
   );
@@ -641,7 +645,35 @@ export async function resolvePiModelForAgent(
     ? (normalizeLocalOpenAICompatibleBaseURL(spec.id, baseURL) ?? baseURL)
     : baseURL;
   let model: Model<Api>;
-  if (registeredModel && registeredProvider) {
+  if (registeredProvider && options.modelsRuntime) {
+    if (!modelId) {
+      throw new Error(
+        `No model selected for provider "${provider}". Choose an available model with /model.`,
+      );
+    }
+    const runtimeModel = await options.modelsRuntime.resolveModel(
+      provider,
+      modelId,
+    );
+    if (!runtimeModel) {
+      throw new Error(
+        `Unknown model "${modelId}" for registered provider "${provider}".`,
+      );
+    }
+    // Copy before handing to the mod's modifyModels so a mutating mod cannot
+    // corrupt the provider-published instance.
+    const oauthModel =
+      oauthCredentials && registeredProvider.config.oauth?.modifyModels
+        ? (registeredProvider.config.oauth.modifyModels(
+            [{ ...runtimeModel }],
+            oauthCredentials,
+          )[0] ?? runtimeModel)
+        : runtimeModel;
+    model =
+      contextWindow || maxTokens
+        ? withOverrides(oauthModel, { contextWindow, maxTokens })
+        : oauthModel;
+  } else if (registeredModel && registeredProvider) {
     const baseModel = registeredModelToPiModel({
       providerName: provider,
       config: registeredProvider.config,

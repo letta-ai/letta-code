@@ -489,6 +489,28 @@ export async function listLocalModels(
 
   for (const provider of registeredProviders) {
     if (!isRegisteredPiProviderConfigured(provider, records)) continue;
+    if (options.modelsRuntime) {
+      // The mod's provider in the Models runtime owns discovery. Refresh
+      // failure retains its last-known list, which is seeded from the static
+      // registration — same fallback the legacy path implemented by hand.
+      try {
+        await options.modelsRuntime.refresh(provider.providerName);
+      } catch {
+        // Keep last-known models.
+      }
+      for (const model of options.modelsRuntime.getModels(
+        provider.providerName,
+      )) {
+        addModel(provider.providerName, model.id, {
+          handle: `${provider.providerName}/${model.id}`,
+          maxContextWindow: model.contextWindow,
+          maxOutputTokens: model.maxTokens,
+          modelEndpointType: provider.providerName,
+          name: model.name,
+        });
+      }
+      continue;
+    }
     try {
       for (const model of await listRegisteredPiProviderModels(
         provider,
