@@ -8,6 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { normalizeTranscript } from "@letta-ai/trajectory";
 import { MEMORY_SYSTEM_DIR } from "@/agent/memory-filesystem";
 import { REFLECTION_PARENT_MEMORY_SNAPSHOT_CHAR_LIMIT } from "@/agent/subagents/context-budget";
 import { getBackend } from "@/backend";
@@ -650,95 +651,21 @@ function countAssistantRows(entries: TranscriptEntry[]): number {
 const TOOL_ARGS_TRUNCATE_LIMIT = 300;
 
 /**
- * Truncate text to a character limit, appending a marker when content is cut.
+ * Normalize a selected client-transcript fragment into the shared trajectory
+ * record format consumed by reflection agents.
  */
-function truncateArgs(
-  text: string | undefined,
-  limit: number,
-): string | undefined {
-  if (text === undefined) return undefined;
-  if (text.length <= limit) return text;
-  return `${text.slice(0, limit)}…[truncated]`;
-}
-
-/**
- * Strip inline base64 image data and data-URI image references from text.
- * This is a safety net — the accumulator's `extractTextPart` already drops
- * multimodal image_url parts, but pasted/inline base64 could still appear.
- */
-function stripImagesFromText(text: string): string {
-  // Strip data:image URIs (including surrounding markdown image syntax)
-  return text.replace(
-    /!\[[^\]]*\]\(data:image\/[^)]+\)|data:image\/[^\s"')]+/g,
-    "[image]",
-  );
-}
-
-/**
- * JSON message entry for the reflection payload.
- * Follows the ChatML-style format from the reference transcript spec.
- */
-type ReflectionMessage =
-  | { role: "system" | "user" | "reasoning" | "error"; content: string }
-  | {
-      role: "assistant";
-      content: string;
-    }
-  | {
-      role: "assistant";
-      content: null;
-      tool_calls: Array<{ name: string; args: string }>;
-    };
-
-/**
- * Serialize transcript entries (and optional filtered system prompt) into a
- * JSON message array for the reflection subagent.
- *
- * Output is a flat array of `{ role, content, tool_calls? }` objects.
- */
-function formatTaggedTranscript(
-  entries: TranscriptEntry[],
-  filteredSystemPrompt?: string,
-): string {
-  const messages: ReflectionMessage[] = [];
-
-  if (filteredSystemPrompt) {
-    messages.push({ role: "system", content: filteredSystemPrompt });
-  }
-
-  for (const entry of entries) {
-    switch (entry.kind) {
-      case "user":
-        messages.push({
-          role: "user",
-          content: stripImagesFromText(entry.text),
-        });
-        break;
-      case "assistant":
-        messages.push({
-          role: "assistant",
-          content: stripImagesFromText(entry.text),
-        });
-        break;
-      case "reasoning":
-        messages.push({ role: "reasoning", content: entry.text });
-        break;
-      case "error":
-        messages.push({ role: "error", content: entry.text });
-        break;
-      case "tool_call": {
-        const args =
-          truncateArgs(entry.argsText, TOOL_ARGS_TRUNCATE_LIMIT) ?? "{}";
-        messages.push({
-          role: "assistant",
-          content: null,
-          tool_calls: [{ name: entry.name ?? "unknown", args }],
-        });
-        break;
-      }
-    }
-  }
-  return JSON.stringify(messages, null, 2);
+function normalizeReflectionTranscript(entries: TranscriptEntry[]): string {
+  const transcript = entries.map((entry) => JSON.stringify(entry)).join("\n");
+  const { records } = normalizeTranscript({
+    source: "letta-code",
+    transcript,
+    sourceContext: { partial: true },
+    bounds: {
+      toolArguments: { maxCharacters: TOOL_ARGS_TRUNCATE_LIMIT },
+    },
+    filters: { toolResults: "include" },
+  });
+  return JSON.stringify(records, null, 2);
 }
 
 function lineToTranscriptEntry(
@@ -1153,42 +1080,6 @@ export async function appendExternalTranscriptEntries(
     await writeState(paths, state);
     return { appended: fresh.length, skipped };
   });
-}
-
-/**
- * Strip dynamic / noisy sections from a system prompt so the reflection agent
- * sees only the core behavioural instructions.
- *
- * Removes:
- * - XML blocks: `<memory>`, `<self>`, `<human>`, `<available_skills>`,
- *   `<system-reminder>`, `<memory_metadata>`
- * - The `# Memory` markdown section (operational memory-filesystem docs)
- */
-export function filterSystemPromptForReflection(raw: string): string {
-  // Remove XML-style blocks that carry dynamic/ephemeral content.
-  // Using [\s\S] instead of . so we cross newlines.
-  const tagsToStrip = [
-    "memory",
-    "self",
-    "human",
-    "available_skills",
-    "system-reminder",
-    "memory_metadata",
-  ];
-  let filtered = raw;
-  for (const tag of tagsToStrip) {
-    filtered = filtered.replace(
-      new RegExp(`<${tag}>[\\s\\S]*?</${tag}>`, "g"),
-      "",
-    );
-  }
-  // Strip the "# Memory" markdown section (and everything after it).
-  // This section contains operational memory-filesystem docs that the
-  // reflection agent doesn't need.
-  filtered = filtered.replace(/\n# Memory\n[\s\S]*$/, "");
-  // Collapse runs of 3+ blank lines into 2
-  filtered = filtered.replace(/\n{3,}/g, "\n\n");
-  return filtered.trim();
 }
 
 type TranscriptSelection = {
@@ -1783,7 +1674,6 @@ export async function getReflectionTranscriptState(
 export async function buildAutoReflectionPayload(
   agentId: string,
   conversationId: string,
-  systemPrompt?: string,
 ): Promise<AutoReflectionPayload | null> {
   return withStateLock(agentId, conversationId, async () => {
     const paths = getReflectionTranscriptPaths(agentId, conversationId);
@@ -1801,10 +1691,7 @@ export async function buildAutoReflectionPayload(
     }
 
     const entries = entriesForSelection(rows, selection);
-    const filteredSystemPrompt = systemPrompt
-      ? filterSystemPromptForReflection(systemPrompt) || undefined
-      : undefined;
-    const transcript = formatTaggedTranscript(entries, filteredSystemPrompt);
+    const transcript = normalizeReflectionTranscript(entries);
     if (!transcript || transcript === "[]") {
       return null;
     }
@@ -1837,7 +1724,6 @@ export interface BuildMultiReflectionPayloadOptions {
   agentId: string;
   instruction?: string;
   selectionPolicy: MultiReflectionSelectionPolicy;
-  systemPrompt?: string;
   maxReplayTurnsPerConversation?: number;
   maxTotalChars?: number;
 }
@@ -1907,7 +1793,6 @@ export async function buildMultiReflectionPayload(
     agentId,
     instruction,
     selectionPolicy,
-    systemPrompt,
     maxReplayTurnsPerConversation = 50,
     maxTotalChars = 150_000,
   } = options;
@@ -1920,9 +1805,6 @@ export async function buildMultiReflectionPayload(
   }
 
   const payloadRoot = await ensureAgentPayloadRoot(agentId);
-  const filteredSystemPrompt = systemPrompt
-    ? filterSystemPromptForReflection(systemPrompt) || undefined
-    : undefined;
   const transcripts: MultiReflectionTranscriptSlice[] = [];
   let totalChars = 0;
   let firstMessageId: string | undefined;
@@ -1951,7 +1833,7 @@ export async function buildMultiReflectionPayload(
       }
 
       const entries = entriesForSelection(rows, selection);
-      const transcript = formatTaggedTranscript(entries, filteredSystemPrompt);
+      const transcript = normalizeReflectionTranscript(entries);
       if (!transcript || transcript === "[]") {
         return null;
       }
