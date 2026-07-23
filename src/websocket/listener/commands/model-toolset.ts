@@ -50,6 +50,7 @@ import type {
   ConversationRuntime,
   ListenerRuntime,
 } from "@/websocket/listener/types";
+import { invalidateListenerAgentWarmState } from "@/websocket/listener/warmup";
 import {
   buildListModelsEntries,
   findAvailableModelForPreset,
@@ -470,6 +471,11 @@ export async function applyModelUpdateForRuntime(params: {
       ).model_settings as Record<string, unknown> | null | undefined) ?? null;
     appliedTo = "conversation";
   }
+
+  // The turn path serves agent state from the warm cache; drop it so the next
+  // turn sees the new model settings (and any memory-tool changes below)
+  // instead of a stale snapshot.
+  invalidateListenerAgentWarmState(listener, agentId);
 
   const toolsetPreference = settingsManager.getToolsetPreference(agentId);
   const previousToolNames = scopedRuntime.currentLoadedTools;

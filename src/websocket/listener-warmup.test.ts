@@ -13,18 +13,34 @@ import type { ListenerTransport } from "@/websocket/listener/transport";
 import {
   __listenerWarmupTestUtils,
   ensureListenerWarmStateForTurn,
-  type ListenerAgentMetadata,
+  getListenerAgentStateForTurn,
+  invalidateListenerAgentWarmState,
+  type ListenerAgentWarmState,
   scheduleListenerWarmupsAfterSync,
+  setListenerAgentWarmState,
 } from "@/websocket/listener/warmup";
+
+function makeWarmState(
+  overrides: Partial<ListenerAgentWarmState> = {},
+): ListenerAgentWarmState {
+  const name = overrides.name ?? "Listener Agent";
+  return {
+    name,
+    description: "Warmup target",
+    lastRunAt: "2026-05-02T06:00:00.000Z",
+    agent: {
+      id: "agent-1",
+      name,
+      tags: ["origin:letta-code"],
+    } as unknown as ListenerAgentWarmState["agent"],
+    ...overrides,
+  };
+}
 
 const memfsWarmupMock = mock(async () => true);
 const secretsWarmupMock = mock(async () => {});
 const fetchAgentMetadataMock = mock(
-  async (): Promise<ListenerAgentMetadata> => ({
-    name: "Listener Agent",
-    description: "Warmup target",
-    lastRunAt: "2026-05-02T06:00:00.000Z",
-  }),
+  async (): Promise<ListenerAgentWarmState> => makeWarmState(),
 );
 
 describe("listener warmup scheduling", () => {
@@ -45,7 +61,7 @@ describe("listener warmup scheduling", () => {
   test("sync warmup joins the first turn without duplicating agent metadata fetches", async () => {
     let resolveMemfs: (() => void) | undefined;
     let resolveSecrets: (() => void) | undefined;
-    let resolveMetadata: ((value: ListenerAgentMetadata) => void) | undefined;
+    let resolveMetadata: ((value: ListenerAgentWarmState) => void) | undefined;
 
     memfsWarmupMock.mockImplementationOnce(
       () =>
@@ -61,14 +77,14 @@ describe("listener warmup scheduling", () => {
     );
     fetchAgentMetadataMock.mockImplementationOnce(
       () =>
-        new Promise<ListenerAgentMetadata>((resolve) => {
+        new Promise<ListenerAgentWarmState>((resolve) => {
           resolveMetadata = resolve;
         }),
     );
     __listenerWarmupTestUtils.setWarmupDepsForTests({
       ensureMemfsSyncedForAgent: memfsWarmupMock,
       ensureSecretsHydratedForAgent: secretsWarmupMock,
-      fetchListenerAgentMetadata: fetchAgentMetadataMock,
+      fetchListenerAgentWarmState: fetchAgentMetadataMock,
     });
 
     const listener = __listenClientTestUtils.createListenerRuntime();
@@ -83,27 +99,107 @@ describe("listener warmup scheduling", () => {
       conversationId: "default",
     });
 
-    expect(memfsWarmupMock).toHaveBeenCalledTimes(2);
+    // Secrets hydration starts immediately; memfs waits for the shared agent
+    // fetch so it can reuse the fetched (tags-included) agent state.
+    expect(memfsWarmupMock).toHaveBeenCalledTimes(0);
     expect(secretsWarmupMock).toHaveBeenCalledTimes(2);
     expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(1);
+
+    const warmState = makeWarmState();
+    resolveMetadata?.(warmState);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(memfsWarmupMock).toHaveBeenCalledTimes(2);
+    expect((memfsWarmupMock.mock.calls[0] as unknown[])?.[2]).toBe(
+      warmState.agent,
+    );
 
     resolveMemfs?.();
     resolveSecrets?.();
-    resolveMetadata?.({
-      name: "Listener Agent",
-      description: "Warmup target",
-      lastRunAt: "2026-05-02T06:00:00.000Z",
-    });
 
-    await expect(turnWarmup).resolves.toEqual({
-      name: "Listener Agent",
-      description: "Warmup target",
-      lastRunAt: "2026-05-02T06:00:00.000Z",
-    });
+    await expect(turnWarmup).resolves.toEqual(warmState);
 
     expect(memfsWarmupMock).toHaveBeenCalledTimes(2);
     expect(secretsWarmupMock).toHaveBeenCalledTimes(2);
     expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("turn agent state serves the warm cache and refreshes in the background", async () => {
+    fetchAgentMetadataMock.mockImplementation(async () => makeWarmState());
+    __listenerWarmupTestUtils.setWarmupDepsForTests({
+      ensureMemfsSyncedForAgent: memfsWarmupMock,
+      ensureSecretsHydratedForAgent: secretsWarmupMock,
+      fetchListenerAgentWarmState: fetchAgentMetadataMock,
+    });
+    const listener = __listenClientTestUtils.createListenerRuntime();
+
+    await ensureListenerWarmStateForTurn(listener, {
+      agentId: "agent-1",
+      conversationId: "default",
+    });
+    expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(1);
+
+    // Cache hit: the turn gets the cached agent without a blocking fetch, and
+    // one background refresh is scheduled.
+    const refreshed = makeWarmState({ name: "Renamed Agent" });
+    fetchAgentMetadataMock.mockResolvedValueOnce(refreshed);
+    const agent = await getListenerAgentStateForTurn(listener, "agent-1");
+    expect(agent?.name).toBe("Listener Agent");
+
+    // Let the background refresh settle; the next turn sees the fresh state.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(2);
+    const nextAgent = await getListenerAgentStateForTurn(listener, "agent-1");
+    expect(nextAgent?.name).toBe("Renamed Agent");
+  });
+
+  test("invalidation forces the next turn to refetch agent state", async () => {
+    fetchAgentMetadataMock.mockImplementation(async () => makeWarmState());
+    __listenerWarmupTestUtils.setWarmupDepsForTests({
+      ensureMemfsSyncedForAgent: memfsWarmupMock,
+      ensureSecretsHydratedForAgent: secretsWarmupMock,
+      fetchListenerAgentWarmState: fetchAgentMetadataMock,
+    });
+    const listener = __listenClientTestUtils.createListenerRuntime();
+
+    await ensureListenerWarmStateForTurn(listener, {
+      agentId: "agent-1",
+      conversationId: "default",
+    });
+    expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(1);
+
+    invalidateListenerAgentWarmState(listener, "agent-1");
+    fetchAgentMetadataMock.mockResolvedValueOnce(
+      makeWarmState({ name: "Post Update Agent" }),
+    );
+    const agent = await getListenerAgentStateForTurn(listener, "agent-1");
+    expect(agent?.name).toBe("Post Update Agent");
+    expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(2);
+  });
+
+  test("setListenerAgentWarmState replaces the cache after local mutations", async () => {
+    fetchAgentMetadataMock.mockImplementation(async () => makeWarmState());
+    __listenerWarmupTestUtils.setWarmupDepsForTests({
+      ensureMemfsSyncedForAgent: memfsWarmupMock,
+      ensureSecretsHydratedForAgent: secretsWarmupMock,
+      fetchListenerAgentWarmState: fetchAgentMetadataMock,
+    });
+    const listener = __listenClientTestUtils.createListenerRuntime();
+
+    const tagged = makeWarmState({ name: "Tagged Agent" }).agent as NonNullable<
+      ListenerAgentWarmState["agent"]
+    >;
+    setListenerAgentWarmState(listener, tagged);
+
+    // ensure... does not schedule a refresh, so the seeded state is stable.
+    const warmState = await ensureListenerWarmStateForTurn(listener, {
+      agentId: "agent-1",
+      conversationId: "default",
+    });
+    expect(warmState?.name).toBe("Tagged Agent");
+    expect(fetchAgentMetadataMock).toHaveBeenCalledTimes(0);
+
+    const agent = await getListenerAgentStateForTurn(listener, "agent-1");
+    expect(agent?.name).toBe("Tagged Agent");
   });
 
   test("advertises scoped mod commands after background warmup", async () => {
@@ -142,14 +238,11 @@ describe("listener warmup scheduling", () => {
     __listenerWarmupTestUtils.setWarmupDepsForTests({
       ensureMemfsSyncedForAgent: async () => true,
       ensureSecretsHydratedForAgent: async () => {},
-      fetchListenerAgentMetadata: async () => ({
-        name: "Warmup Agent",
-        description: null,
-        lastRunAt: null,
-      }),
+      fetchListenerAgentWarmState: async () =>
+        makeWarmState({ name: "Warmup Agent", description: null }),
     });
 
-    let warmup: Promise<ListenerAgentMetadata | null> | undefined;
+    let warmup: Promise<ListenerAgentWarmState | null> | undefined;
     try {
       await replaySyncStateForRuntime(
         listener,
