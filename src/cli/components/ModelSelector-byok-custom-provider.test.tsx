@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { getReasoningTierOptionsForHandle } from "@/agent/model";
 import {
   buildByokProviderAliases,
@@ -9,6 +9,13 @@ import {
   registryHandleForByokAlias,
   toByokSelectorModel,
 } from "@/cli/components/ModelSelector";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
+
+beforeEach(installRuntimeModelCatalogFixture);
+afterEach(clearRuntimeModelCatalogFixture);
 
 describe("ModelSelector custom BYOK provider detection", () => {
   test("treats connected custom OpenAI providers as BYOK", () => {

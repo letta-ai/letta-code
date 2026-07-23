@@ -243,9 +243,8 @@ export function ModelSelector({
       }
 
       const cacheInfoBefore = getAvailableModelsCacheInfo();
-      // Refresh the curated catalog alongside availability so the preset
-      // list reflects cloud-canon data before this component re-renders
-      // (best-effort: on failure `models` keeps its current contents).
+      // Refresh the active runtime catalog alongside availability so cloud
+      // presets or local pi-ai metadata are ready before this re-renders.
       const [result] = await Promise.all([
         getAvailableModelHandles({ forceRefresh }),
         refreshModelCatalog(forceRefresh ? { force: true } : undefined).catch(
@@ -435,7 +434,7 @@ export function ModelSelector({
     ],
   );
 
-  // Supported models: models.json entries that are available
+  // Supported models: runtime catalog entries that are available
   // Featured models first, then non-featured, preserving JSON order within each group
   // If filterProvider is set, only show models from that provider
   const supportedModels = useMemo(() => {
@@ -537,7 +536,7 @@ export function ModelSelector({
     searchQuery,
   ]);
 
-  // Convert BYOK handle to base provider handle for models.json lookup
+  // Convert BYOK handle to base provider handle for runtime catalog lookup
   // e.g., "lc-anthropic/claude-3-5-haiku" -> "anthropic/claude-3-5-haiku"
   // e.g., "lc-gemini/gemini-2.0-flash" -> "google_ai/gemini-2.0-flash"
   const toBaseHandle = useCallback(
@@ -546,20 +545,20 @@ export function ModelSelector({
     [byokProviderAliases],
   );
 
-  // BYOK (recommended): BYOK API handles that have matching entries in models.json
+  // BYOK (recommended): BYOK API handles that have matching runtime catalog entries
   const byokModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
     // Get all BYOK handles from API
     const byokHandles = allApiHandles.filter(isByokHandle);
 
-    // Find models.json entries that match (using alias for lc-* providers)
+    // Find runtime catalog entries that match (using alias for lc-* providers)
     const matched: UiModel[] = [];
     for (const handle of byokHandles) {
       const baseHandle = toBaseHandle(handle);
       const staticModel = pickPreferredStaticModel(baseHandle);
       if (staticModel) {
-        // Use models.json data but with the BYOK handle as the ID
+        // Use runtime catalog data but with the BYOK handle as the ID
         matched.push(
           toByokSelectorModel(
             staticModel,
@@ -615,9 +614,9 @@ export function ModelSelector({
     return filtered;
   }, [availableHandles, allApiHandles, searchQuery, isByokHandle]);
 
-  // Server-recommended models: models.json entries available on the server.
-  // Discoverable local endpoint providers (Ollama, LM Studio, llama.cpp) do
-  // not have a static models.json catalog, so include their live-discovered
+  // Server-recommended models: runtime catalog entries available on the server.
+  // Discoverable local endpoint providers (Ollama, LM Studio, llama.cpp) may
+  // not have curated runtime presets, so include their live-discovered
   // handles here instead of hiding them until the user switches to "All".
   // Filter out letta/letta-free legacy model
   const serverRecommendedModels = useMemo(() => {

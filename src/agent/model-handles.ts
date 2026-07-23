@@ -99,12 +99,6 @@ function providerPrefix(modelHandle: string): string | null {
   return modelHandle.slice(0, slashIndex);
 }
 
-const MODEL_HANDLE_PROVIDER_PREFIXES = new Set(
-  models
-    .map((model) => providerPrefix(model.handle))
-    .filter((provider): provider is string => provider !== null),
-);
-
 const LOCAL_MODEL_PROVIDER_PREFIXES = new Set(
   LOCAL_MODEL_HANDLE_PREFIXES.map((prefix) => prefix.slice(0, -1)),
 );
@@ -112,7 +106,7 @@ const LOCAL_MODEL_PROVIDER_PREFIXES = new Set(
 function isKnownModelProviderPrefix(provider: string): boolean {
   return (
     KNOWN_LLM_CONFIG_ENDPOINT_TYPES.has(provider) ||
-    MODEL_HANDLE_PROVIDER_PREFIXES.has(provider) ||
+    models.some((model) => providerPrefix(model.handle) === provider) ||
     LOCAL_MODEL_PROVIDER_PREFIXES.has(provider)
   );
 }

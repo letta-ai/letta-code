@@ -365,9 +365,9 @@ export function App({
   systemInfoReminderEnabled = true,
   modsDisabled = false,
 }: AppProps) {
-  // Warm the model-access cache in the background so /model is fast on first
-  // open, and refresh the curated catalog from the cloud endpoint (bundled
-  // models.json stays as the offline/failure fallback).
+  // Warm model inventory and runtime catalog data in the background so
+  // /model is fast on first open. API mode retains its persisted cloud cache
+  // as a failure fallback; local mode projects the pi-ai inventory directly.
   useEffect(() => {
     prefetchAvailableModelHandles();
     prefetchModelCatalog();

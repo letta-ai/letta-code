@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   clearAvailableModelsCache,
   getAvailableModelHandles,
@@ -7,6 +7,10 @@ import { models } from "@/agent/model";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
 import {
   buildListModelsResponse,
   resolveModelForUpdate,
@@ -34,7 +38,9 @@ class NativeCatalogBackend extends FakeHeadlessBackend {
 }
 
 describe("listener native model selection", () => {
+  beforeEach(installRuntimeModelCatalogFixture);
   afterEach(() => {
+    clearRuntimeModelCatalogFixture();
     clearAvailableModelsCache();
     __testSetBackend(null);
   });

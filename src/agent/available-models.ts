@@ -6,9 +6,11 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 export type AvailableModel = {
   handle: string;
   label: string;
+  modelId?: string;
   maxContextWindow?: number;
   maxOutputTokens?: number;
   providerType?: string;
+  reasoningLevels?: string[];
 };
 
 type CacheEntry = {
@@ -111,14 +113,31 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
       providerTypes.set(model.handle, providerType);
     }
     if (model.handle) {
+      const localMetadata = model as unknown as {
+        model_id?: unknown;
+        reasoning_levels?: unknown;
+      };
       const label =
         (typeof model.display_name === "string" && model.display_name) ||
         (typeof model.name === "string" && model.name) ||
         (typeof model.model === "string" && model.model) ||
         model.handle;
+      const modelId =
+        typeof localMetadata.model_id === "string" &&
+        localMetadata.model_id.length > 0
+          ? localMetadata.model_id
+          : typeof model.model === "string" && model.model.length > 0
+            ? model.model
+            : undefined;
+      const reasoningLevels = Array.isArray(localMetadata.reasoning_levels)
+        ? localMetadata.reasoning_levels.filter(
+            (level): level is string => typeof level === "string",
+          )
+        : undefined;
       const availableModel = {
         handle: model.handle,
         label,
+        ...(modelId ? { modelId } : {}),
         ...(typeof model.max_context_window === "number"
           ? { maxContextWindow: model.max_context_window }
           : {}),
@@ -126,6 +145,7 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
           ? { maxOutputTokens: model.max_tokens }
           : {}),
         ...(providerType ? { providerType } : {}),
+        ...(reasoningLevels ? { reasoningLevels } : {}),
       };
       if (!modelsByHandle.has(model.handle)) {
         modelsByHandle.set(model.handle, availableModel);

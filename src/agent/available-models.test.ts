@@ -127,9 +127,11 @@ describe("available-models cache semantics", () => {
       {
         handle: "opencode/deepseek-v4-flash-free",
         display_name: "DeepSeek V4 Flash Free",
+        model_id: "deepseek-v4-flash-free",
         max_context_window: 200000,
         max_tokens: 32000,
         provider_type: "opencode",
+        reasoning_levels: ["off", "medium", "high"],
       },
     ];
 
@@ -139,9 +141,11 @@ describe("available-models cache semantics", () => {
       {
         handle: "opencode/deepseek-v4-flash-free",
         label: "DeepSeek V4 Flash Free",
+        modelId: "deepseek-v4-flash-free",
         maxContextWindow: 200000,
         maxOutputTokens: 32000,
         providerType: "opencode",
+        reasoningLevels: ["off", "medium", "high"],
       },
     ]);
     expect(getCachedAvailableModels()).toEqual(result.models);

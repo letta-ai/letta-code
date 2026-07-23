@@ -1,9 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
 import {
   createProviderFallbackState,
   maybeApplyProviderFallback,
 } from "@/websocket/listener/provider-fallback";
+
+beforeEach(installRuntimeModelCatalogFixture);
+afterEach(clearRuntimeModelCatalogFixture);
 
 function agentWithModel(
   model: string,

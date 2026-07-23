@@ -123,7 +123,7 @@ export function parseSetMaxContextArgs(
   return { value, override };
 }
 
-export function resolveModelJsonContextWindow(input: {
+export function resolveCatalogContextWindow(input: {
   modelId?: string | null;
   modelHandle?: string | null;
   llmConfig?: ModelConfigSnapshot | null;
@@ -228,7 +228,7 @@ function validateRequestedContextWindow(params: {
     value > defaultContextWindow
   ) {
     throw new Error(
-      `Context window cannot exceed the model.json default of ${formatContextWindowTokens(defaultContextWindow)} tokens. Use --override to apply a larger value.`,
+      `Context window cannot exceed the catalog default of ${formatContextWindowTokens(defaultContextWindow)} tokens. Use --override to apply a larger value.`,
     );
   }
 }
@@ -293,7 +293,7 @@ export async function applySetMaxContext(params: {
   const effectiveLlmConfig =
     params.currentLlmConfig ??
     ((agent.llm_config ?? null) as ModelConfigSnapshot | null);
-  const modelDefault = resolveModelJsonContextWindow({
+  const modelDefault = resolveCatalogContextWindow({
     modelId: params.currentModelId,
     modelHandle: effectiveModelHandle,
     llmConfig: effectiveLlmConfig,

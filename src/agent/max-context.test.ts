@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +7,7 @@ import {
   MIN_CONTEXT_WINDOW_TOKENS,
   parseContextWindowValue,
   parseSetMaxContextArgs,
-  resolveModelJsonContextWindow,
+  resolveCatalogContextWindow,
 } from "@/agent/max-context";
 import {
   __testSetBackend,
@@ -15,8 +15,15 @@ import {
   type ConversationCreateBody,
 } from "@/backend";
 import { LocalBackend } from "@/backend/local";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
+
+beforeEach(installRuntimeModelCatalogFixture);
 
 afterEach(() => {
+  clearRuntimeModelCatalogFixture();
   __testSetBackend(null);
 });
 
@@ -41,21 +48,21 @@ describe("max context command helpers", () => {
     );
   });
 
-  test("resolves model.json default context windows", () => {
+  test("resolves runtime catalog default context windows", () => {
     expect(
-      resolveModelJsonContextWindow({ modelId: "sonnet" }).contextWindow,
+      resolveCatalogContextWindow({ modelId: "sonnet" }).contextWindow,
     ).toBe(1_000_000);
     expect(
-      resolveModelJsonContextWindow({ modelId: "sonnet-4.6" }).contextWindow,
+      resolveCatalogContextWindow({ modelId: "sonnet-4.6" }).contextWindow,
     ).toBe(200_000);
     expect(
-      resolveModelJsonContextWindow({
+      resolveCatalogContextWindow({
         modelHandle: "anthropic/claude-sonnet-4-6",
         llmConfig: { reasoning_effort: "low", enable_reasoner: true },
       }).contextWindow,
     ).toBe(200_000);
     expect(
-      resolveModelJsonContextWindow({ modelHandle: "custom/model" })
+      resolveCatalogContextWindow({ modelHandle: "custom/model" })
         .contextWindow,
     ).toBeUndefined();
   });
@@ -94,7 +101,7 @@ describe("max context command helpers", () => {
           args: "1100000",
           currentModelId: "sonnet",
         }),
-      ).rejects.toThrow("model.json default of 1,000,000 tokens");
+      ).rejects.toThrow("catalog default of 1,000,000 tokens");
 
       const overrideResult = await applySetMaxContext({
         agentId: agent.id,
@@ -155,7 +162,7 @@ describe("max context command helpers", () => {
     }
   });
 
-  test("explains reset fallback for custom models without model.json defaults", async () => {
+  test("explains reset fallback for custom models without catalog defaults", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "max-context-custom-"));
     try {
       const backend = new LocalBackend({

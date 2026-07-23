@@ -1,24 +1,22 @@
 /**
  * Live model catalog refresh from the cloud catalog endpoint (LET-9792).
  *
- * The bundled models.json snapshot seeds `models` (see
- * `@/agent/model-catalog`) so the CLI always has a working catalog: offline,
- * pre-auth, on self-hosted servers, and on the local backend. On API
- * backends we attempt to refresh that catalog in place from
- * GET /v1/models/catalog, which is canon for curated model data — model
- * additions and metadata fixes then reach clients without a CLI release.
+ * API backends load curated presets from GET /v1/models/catalog. Local
+ * backends project their pi-ai inventory into the same CatalogModel shape.
  *
- * Failure policy: any fetch/parse problem leaves the current catalog
- * untouched (bundled snapshot or last successful refresh, whichever is
- * newer). A persisted disk cache (~/.letta/cache/model-catalog.json) is
- * loaded at startup so offline restarts keep the freshest known data rather
- * than regressing to the snapshot baked into the release.
+ * API catalogs are persisted at ~/.letta/cache/model-catalog.json so a
+ * temporary endpoint failure keeps the last successful catalog. There is no
+ * bundled catalog: cloud is canonical for API mode and pi-ai is canonical for
+ * local mode.
  */
 
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import {
+  type AvailableModel,
+  getAvailableModelHandles,
+} from "@/agent/available-models";
 import { type CatalogModel, models } from "@/agent/model-catalog";
 import { apiFetch, getApiRequestConfig } from "@/backend/api/request";
 import { resolveBackendMode } from "@/backend/backend-mode";
@@ -28,6 +26,7 @@ const CATALOG_PATH = "/v1/models/catalog";
 const REFRESH_TTL_MS = 5 * 60 * 1000; // matches available-models cache TTL
 const REQUEST_TIMEOUT_MS = 5_000;
 const CACHE_SCHEMA_VERSION = 1;
+const LOCAL_CATALOG_SOURCE = "local:pi-ai";
 
 let lastRefreshAt = 0;
 let activeCatalogSource: string | null = null;
@@ -38,18 +37,6 @@ let inflight: {
   promise: Promise<boolean>;
   token: symbol;
 } | null = null;
-
-function cloneCatalogModels(entries: readonly CatalogModel[]): CatalogModel[] {
-  return entries.map((entry) => ({
-    ...entry,
-    ...(entry.updateArgs ? { updateArgs: { ...entry.updateArgs } } : {}),
-  }));
-}
-
-const bundledCatalog = cloneCatalogModels(models);
-const bundledCatalogFingerprint = createHash("sha256")
-  .update(JSON.stringify(bundledCatalog))
-  .digest("hex");
 
 /** Entry shape returned by GET /v1/models/catalog. */
 interface RemoteCatalogEntry {
@@ -154,9 +141,9 @@ function isValidCachedModel(entry: unknown): entry is CatalogModel {
 }
 
 /**
- * Map a remote catalog entry to the bundled models.json entry shape.
+ * Map a remote catalog entry to the shared runtime catalog shape.
  *
- * The endpoint splits models.json's `updateArgs` into typed fields
+ * The endpoint splits the runtime catalog's `updateArgs` into typed fields
  * (contextWindow/maxOutputTokens) plus a `config` bag of provider knobs;
  * recombine them so every existing consumer of `model.updateArgs` keeps
  * working unchanged.
@@ -184,10 +171,13 @@ export function toCatalogModel(entry: RemoteCatalogEntry): CatalogModel {
 
 /**
  * Replace the live catalog contents in place so existing imports of `models`
- * observe the refreshed data. Refuses obviously-broken payloads (empty, or
- * missing an Auto/default entry) so a bad deploy can't blank the selector.
+ * observe refreshed data. Refuses empty or malformed payloads; cloud callers
+ * additionally require exactly one Auto/default entry.
  */
-export function applyCatalogModels(next: CatalogModel[]): boolean {
+export function applyCatalogModels(
+  next: CatalogModel[],
+  options: { requireManagedDefault?: boolean } = {},
+): boolean {
   if (
     next.length === 0 ||
     !next.every(isValidCachedModel) ||
@@ -195,11 +185,13 @@ export function applyCatalogModels(next: CatalogModel[]): boolean {
   ) {
     return false;
   }
-  const defaults = next.filter(
-    (model) => model.isDefault || model.id === "auto",
-  );
-  if (defaults.length !== 1) {
-    return false;
+  if (options.requireManagedDefault !== false) {
+    const defaults = next.filter(
+      (model) => model.isDefault || model.id === "auto",
+    );
+    if (defaults.length !== 1) {
+      return false;
+    }
   }
   models.splice(0, models.length, ...next);
   return true;
@@ -214,7 +206,6 @@ function persistCatalogCache(entries: CatalogModel[], source: string): void {
       JSON.stringify({
         schemaVersion: CACHE_SCHEMA_VERSION,
         source,
-        bundledCatalogFingerprint,
         fetchedAt: Date.now(),
         models: entries,
       }),
@@ -228,9 +219,8 @@ function persistCatalogCache(entries: CatalogModel[], source: string): void {
 
 /**
  * Load the persisted catalog cache (last successful refresh) into the live
- * catalog. Called once at startup, before any network fetch, so offline
- * sessions start from the freshest known data. Best-effort: missing or
- * malformed cache silently keeps the bundled snapshot.
+ * catalog. Called once at startup, before any network fetch, so temporary
+ * endpoint failures keep the freshest known cloud data.
  */
 export function loadPersistedModelCatalog(source: string): boolean {
   try {
@@ -241,20 +231,17 @@ export function loadPersistedModelCatalog(source: string): boolean {
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as {
       schemaVersion?: unknown;
       source?: unknown;
-      bundledCatalogFingerprint?: unknown;
       models?: unknown;
     };
     if (
       parsed.schemaVersion !== CACHE_SCHEMA_VERSION ||
       parsed.source !== normalizeCatalogSource(source) ||
-      parsed.bundledCatalogFingerprint !== bundledCatalogFingerprint ||
       !Array.isArray(parsed.models)
     ) {
       return false;
     }
     // Cache rows are CatalogModels persisted post-mapping; reject the whole
-    // cache on any invalid row (a corrupt cache should never beat the
-    // bundled snapshot).
+    // cache on any invalid row.
     if (!parsed.models.every(isValidCachedModel)) {
       return false;
     }
@@ -272,24 +259,112 @@ function activateCatalogSource(source: string | null): number {
   sourceGeneration += 1;
   lastRefreshAt = 0;
   persistedCacheSource = null;
-  models.splice(0, models.length, ...cloneCatalogModels(bundledCatalog));
+  models.splice(0, models.length);
   return sourceGeneration;
+}
+
+function modelIdFromHandle(handle: string): string {
+  const slashIndex = handle.indexOf("/");
+  return slashIndex === -1 ? handle : handle.slice(slashIndex + 1);
+}
+
+function uniqueLocalModelIds(
+  entries: readonly AvailableModel[],
+): Map<string, string> {
+  const handlesById = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    const id = entry.modelId ?? modelIdFromHandle(entry.handle);
+    const handles = handlesById.get(id) ?? new Set<string>();
+    handles.add(entry.handle);
+    handlesById.set(id, handles);
+  }
+  return new Map(
+    entries.map((entry) => {
+      const id = entry.modelId ?? modelIdFromHandle(entry.handle);
+      return [
+        entry.handle,
+        handlesById.get(id)?.size === 1 ? id : entry.handle,
+      ];
+    }),
+  );
+}
+
+function reasoningEffortForThinkingLevel(level: string): string {
+  return level === "off" ? "none" : level;
+}
+
+/** Project local pi-ai inventory into the shared runtime catalog shape. */
+export function toLocalCatalogModels(
+  entries: readonly AvailableModel[],
+): CatalogModel[] {
+  const ids = uniqueLocalModelIds(entries);
+  const catalog: CatalogModel[] = [];
+  for (const entry of entries) {
+    const baseId = ids.get(entry.handle) ?? entry.handle;
+    const levels = entry.reasoningLevels ?? [];
+    const variants = levels.length > 1 ? levels : [undefined];
+    for (const level of variants) {
+      const effort = level ? reasoningEffortForThinkingLevel(level) : undefined;
+      const updateArgs: Record<string, unknown> = {
+        ...(entry.providerType ? { provider_type: entry.providerType } : {}),
+        ...(typeof entry.maxContextWindow === "number"
+          ? { context_window: entry.maxContextWindow }
+          : {}),
+        ...(typeof entry.maxOutputTokens === "number"
+          ? { max_output_tokens: entry.maxOutputTokens }
+          : {}),
+        ...(effort
+          ? {
+              reasoning_effort: effort,
+              enable_reasoner: effort !== "none",
+            }
+          : {}),
+        parallel_tool_calls: true,
+      };
+      catalog.push({
+        id: effort ? `${baseId}-${effort}` : baseId,
+        handle: entry.handle,
+        label: entry.label,
+        description: "",
+        ...(Object.keys(updateArgs).length > 0 ? { updateArgs } : {}),
+      });
+    }
+  }
+  return catalog;
+}
+
+async function refreshLocalModelCatalog(options?: {
+  force?: boolean;
+}): Promise<boolean> {
+  const sourceChanged = activeCatalogSource !== LOCAL_CATALOG_SOURCE;
+  activateCatalogSource(LOCAL_CATALOG_SOURCE);
+  try {
+    const available = await getAvailableModelHandles(
+      options?.force || sourceChanged ? { forceRefresh: true } : undefined,
+    );
+    return applyCatalogModels(toLocalCatalogModels(available.models), {
+      requireManagedDefault: false,
+    });
+  } catch (error) {
+    debugLog("remote-model-catalog", "local pi-ai catalog refresh errored", {
+      error: String(error),
+    });
+    return false;
+  }
 }
 
 /**
  * Refresh the live model catalog from the cloud endpoint.
  *
- * No-op on the local backend, which gets its catalog from pi-ai. API servers
- * without the cloud catalog endpoint fall back to the bundled catalog.
- * Throttled by TTL and deduped in flight; failures never disturb the active
- * source's current catalog.
+ * Local mode uses backend.listModels()/pi-ai. API mode uses the authenticated
+ * cloud endpoint and persisted cache. Cloud requests are throttled by TTL and
+ * deduped in flight; failures never disturb a valid cache.
  */
 export async function refreshModelCatalog(options?: {
   force?: boolean;
 }): Promise<boolean> {
   if (resolveBackendMode() !== "api") {
-    activateCatalogSource(null);
-    return false;
+    return refreshLocalModelCatalog(options);
   }
 
   const requestConfig = await getApiRequestConfig();
@@ -375,5 +450,5 @@ export function __testResetRemoteModelCatalog(): void {
   activeCatalogSource = null;
   sourceGeneration += 1;
   persistedCacheSource = null;
-  models.splice(0, models.length, ...cloneCatalogModels(bundledCatalog));
+  models.splice(0, models.length);
 }

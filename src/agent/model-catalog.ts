@@ -1,20 +1,14 @@
 /**
- * The static model catalog (models.json) and pure handle resolution.
+ * The runtime model catalog and pure handle resolution.
  *
- * Split from `model.ts` so the catalog can be bundled into the browser-safe
- * `@letta-ai/letta-code/agent-presets` package export without dragging in
- * provider/backend modules. CLI code should keep importing from
- * `@/agent/model`, which re-exports this module.
+ * Cloud mode hydrates this catalog from GET /v1/models/catalog. Local mode
+ * hydrates it from the active backend's pi-ai model inventory. Keeping the
+ * array identity stable lets synchronous consumers observe source changes
+ * without bundling a second, independently-maintained model registry.
  */
 
-import modelsData from "@/models.json";
-
 /**
- * A curated model catalog entry in the bundled models.json shape.
- *
- * The same shape is produced by the cloud catalog endpoint
- * (GET /v1/models/catalog, mapped in `@/agent/remote-model-catalog`), so the
- * bundled snapshot and live remote data are interchangeable.
+ * A model catalog entry shared by cloud presets and local pi-ai models.
  */
 export interface CatalogModel {
   id: string;
@@ -29,42 +23,19 @@ export interface CatalogModel {
 }
 
 /**
- * The live model catalog. Seeded from the bundled models.json snapshot at
- * module load; on cloud (API) backends the array contents are refreshed in
- * place from GET /v1/models/catalog (see `@/agent/remote-model-catalog`), so
- * consumers that read at call time pick up live data without going async.
+ * The live model catalog. Startup initializes it before model resolution:
+ * cloud backends use GET /v1/models/catalog and local backends use pi-ai.
+ * Source changes replace the contents in place, so consumers that read at
+ * call time pick up current data without capturing a stale array reference.
  * Do not capture long-lived copies of the array contents.
  */
-export const models: CatalogModel[] = modelsData.models;
+export const models: CatalogModel[] = [];
 
-/**
- * Browser-safe presentation metadata for a curated Letta Code model preset.
- *
- * This is deliberately not an availability contract: connected providers,
- * local/custom models, and organization-specific hosted inventory remain
- * runtime concerns. Consumers may use presets for labels, descriptions,
- * ordering, and known settings while live API/device inventory decides what
- * is actually selectable.
- */
-export interface ModelPreset {
-  readonly id: string;
-  readonly handle: string;
-  readonly label: string;
-  readonly description: string;
-  readonly shortLabel?: string;
-  readonly isDefault?: boolean;
-  readonly isFeatured?: boolean;
-  readonly free?: boolean;
-  readonly updateArgs?: Readonly<Record<string, unknown>>;
-}
-
-/**
- * Curated model presentation presets bundled with Letta Code.
- *
- * Runtime model inventory is authoritative for availability. This export is
- * a readonly view over the same catalog used by the CLI's model resolver.
- */
-export const MODEL_PRESETS: readonly ModelPreset[] = models;
+const BUILTIN_MODEL_ALIASES = new Map([
+  ["auto", "letta/auto"],
+  ["auto-chat", "letta/auto-chat"],
+  ["auto-fast", "letta/auto-fast"],
+]);
 
 /**
  * Resolve a model by ID or handle
@@ -78,8 +49,24 @@ export function resolveModel(modelIdentifier: string): string | null {
   const byHandle = models.find((m) => m.handle === modelIdentifier);
   if (byHandle) return byHandle.handle;
 
-  // For self-hosted servers: if it looks like a handle (contains /), pass it through
-  // This allows using models not in models.json (e.g., from server's /v1/models)
+  const builtinHandle = BUILTIN_MODEL_ALIASES.get(modelIdentifier);
+  if (builtinHandle) return builtinHandle;
+
+  // Local pi-ai catalogs use provider-native model IDs as their short names.
+  // Only resolve a model portion when it identifies exactly one handle.
+  const matchingHandles = new Set(
+    models
+      .filter(
+        (model) =>
+          model.handle.split("/").slice(1).join("/") === modelIdentifier,
+      )
+      .map((model) => model.handle),
+  );
+  if (matchingHandles.size === 1) {
+    return [...matchingHandles][0] ?? null;
+  }
+
+  // Runtime/custom catalogs can contain handles not known at process startup.
   if (modelIdentifier.includes("/")) {
     return modelIdentifier;
   }
@@ -91,16 +78,19 @@ export function resolveModel(modelIdentifier: string): string | null {
  * Get the default model handle
  */
 export function getDefaultModel(): string {
-  // Prefer Auto when available in models.json.
+  if (models.length === 0) {
+    return BUILTIN_MODEL_ALIASES.get("auto") ?? "letta/auto";
+  }
+  // Prefer the managed Auto alias when the active catalog offers it.
   const autoModel = resolveModel("auto");
-  if (autoModel) return autoModel;
+  if (autoModel && models.some((model) => model.handle === autoModel)) {
+    return autoModel;
+  }
 
   const defaultModel = models.find((m) => m.isDefault);
   if (defaultModel) return defaultModel.handle;
 
-  const firstModel = models[0];
-  if (!firstModel) {
-    throw new Error("No models available in models.json");
-  }
-  return firstModel.handle;
+  // Local mode deliberately has no curated default; letta/auto tells the
+  // local backend to use its configured Pi provider/model.
+  return BUILTIN_MODEL_ALIASES.get("auto") ?? "letta/auto";
 }

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -12,6 +12,10 @@ import {
 } from "@/backend";
 import { LocalBackend } from "@/backend/local";
 import { settingsManager } from "@/settings-manager";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 
 /**
@@ -46,7 +50,10 @@ class MockSocket {
   }
 }
 
+beforeEach(installRuntimeModelCatalogFixture);
+
 afterEach(async () => {
+  clearRuntimeModelCatalogFixture();
   __testSetBackend(null);
   await settingsManager.reset();
 });

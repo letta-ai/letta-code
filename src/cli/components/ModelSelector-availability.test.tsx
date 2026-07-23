@@ -1,6 +1,13 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { models } from "@/agent/model";
 import { filterModelsByAvailabilityForSelector } from "@/cli/components/ModelSelector";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
+
+beforeEach(installRuntimeModelCatalogFixture);
+afterEach(clearRuntimeModelCatalogFixture);
 
 type StubModel = { handle: string; label: string };
 

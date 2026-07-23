@@ -9,6 +9,7 @@ import {
   loadPersistedModelCatalog,
   refreshModelCatalog,
   toCatalogModel,
+  toLocalCatalogModels,
 } from "@/agent/remote-model-catalog";
 import { setConfiguredBackendMode } from "@/backend/backend-mode";
 import { settingsManager } from "@/settings-manager";
@@ -18,10 +19,8 @@ await settingsManager.initialize();
 /**
  * Remote catalog refresh semantics (LET-9792).
  *
- * The bundled models.json snapshot must survive every failure mode: non-API
- * backends, HTTP errors, malformed payloads, and payloads that fail the
- * sanity gate (empty / no default entry). Only a valid payload may replace
- * the live catalog contents — in place, so existing `models` imports see it.
+ * Cloud mode accepts only a valid endpoint/cache payload. Local mode projects
+ * pi-ai inventory into the same live array, preserving array identity.
  */
 
 const originalFetch = globalThis.fetch;
@@ -142,7 +141,7 @@ describe("toCatalogModel", () => {
 describe("applyCatalogModels", () => {
   test("rejects empty payloads", () => {
     expect(applyCatalogModels([])).toBe(false);
-    expect(models.length).toBeGreaterThan(0);
+    expect(models).toEqual([]);
   });
 
   test("rejects payloads without a default/auto entry", () => {
@@ -187,13 +186,33 @@ describe("applyCatalogModels", () => {
 });
 
 describe("refreshModelCatalog", () => {
-  test("no-ops on the local backend", async () => {
-    setConfiguredBackendMode("local");
-    const fetchMock = mock(() => Promise.resolve(new Response("{}")));
-    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  test("projects local pi-ai metadata without requiring a managed default", () => {
+    const projected = toLocalCatalogModels([
+      {
+        handle: "anthropic/claude-sonnet-4-6",
+        modelId: "claude-sonnet-4-6",
+        label: "Claude Sonnet 4.6",
+        maxContextWindow: 200000,
+        maxOutputTokens: 128000,
+        providerType: "anthropic",
+        reasoningLevels: ["off", "medium", "high"],
+      },
+    ]);
 
-    expect(await refreshModelCatalog({ force: true })).toBe(false);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(projected.map((model) => model.id)).toEqual([
+      "claude-sonnet-4-6-none",
+      "claude-sonnet-4-6-medium",
+      "claude-sonnet-4-6-high",
+    ]);
+    expect(
+      applyCatalogModels(projected, { requireManagedDefault: false }),
+    ).toBe(true);
+    expect(models[2]?.updateArgs).toMatchObject({
+      context_window: 200000,
+      max_output_tokens: 128000,
+      provider_type: "anthropic",
+      reasoning_effort: "high",
+    });
   });
 
   test("applies a valid remote catalog", async () => {
@@ -231,7 +250,7 @@ describe("refreshModelCatalog", () => {
 
     expect(await refreshModelCatalog({ force: true })).toBe(false);
     expect(models.length).toBe(before);
-    expect(models[0]?.id).toBe("auto");
+    expect(models[0]).toBeUndefined();
   });
 
   test("rejects rows with invalid required mapping metadata", async () => {
@@ -274,7 +293,7 @@ describe("refreshModelCatalog", () => {
     });
     expect(await refreshModelCatalog({ force: true })).toBe(true);
 
-    restoreSnapshot(); // simulate a fresh process with only the bundled snapshot
+    restoreSnapshot(); // simulate a fresh process before cache hydration
     expect(models.find((m) => m.id === "persisted-model")).toBeUndefined();
 
     expect(loadPersistedModelCatalog("http://localhost:9999")).toBe(true);
@@ -322,7 +341,7 @@ describe("refreshModelCatalog", () => {
 
     expect(await refreshModelCatalog({ force: true })).toBe(false);
     expect(models.some((model) => model.id === "server-a-model")).toBe(false);
-    expect(models.length).toBe(snapshot.length);
+    expect(models).toEqual([]);
   });
 
   test("does not let an old server's late response overwrite the active catalog", async () => {

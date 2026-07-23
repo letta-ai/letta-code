@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -27,6 +27,10 @@ import { appendCronRunLog, getCronRunLogPath } from "@/cron";
 import type { MessageQueueItem } from "@/queue/queue-runtime";
 import type { LocalProjectSettings, Settings } from "@/settings-manager";
 import { settingsManager } from "@/settings-manager";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
 import {
   backgroundProcesses,
   backgroundTasks,
@@ -2079,17 +2083,8 @@ describe("listen-client parseServerMessage", () => {
 });
 
 describe("listen-client model command helpers", () => {
-  test("buildListModelsEntries reflects models.json metadata", () => {
-    const entries = __listenClientTestUtils.buildListModelsEntries();
-
-    expect(entries.length).toBe(models.length);
-    expect(entries[0]).toMatchObject({
-      id: models[0]?.id,
-      handle: models[0]?.handle,
-      label: models[0]?.label,
-      description: models[0]?.description,
-    });
-  });
+  beforeEach(installRuntimeModelCatalogFixture);
+  afterEach(clearRuntimeModelCatalogFixture);
 
   test("resolveModelForUpdate resolves by id and by handle", () => {
     const byId = __listenClientTestUtils.resolveModelForUpdate({
