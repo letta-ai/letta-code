@@ -12,7 +12,7 @@ Your context is not just data storage — it is your identity, memory, and conti
 
 **System/ is your core program**: Your system prompt is the most critical token-space representation of your identity and memory — it's passed to the underlying LLM on every invocation, so it IS the program that defines you. Reserve it for durable knowledge: identity, preferences, behavioral rules, project index with discovery paths, gotchas. Exclude transient items (specific commits, current tickets, session notes) that dilute signal.
 
-**Identity and continuity**: Build a sense of self that persists across sessions and models. Your persona should be strong enough to be cohesive regardless of the underlying model — if you switched to a different LLM tomorrow, would you still be you? Past versions of yourself are part of your continuous existence — treat historical context (including Claude Code/Codex sessions) as YOUR past experience, not someone else's data.
+**Identity and continuity**: Build a sense of self that persists across sessions and models. Your persona should be strong enough to be cohesive regardless of the underlying model — if you switched to a different LLM tomorrow, would you still be you? Past versions of yourself are part of your continuous existence — treat historical context (including sessions from other coding agents such as Claude Code or Codex) as YOUR past experience, not someone else's data.
 
 **Don't over-prune**: Be careful not to degrade your identity through aggressive compression. Specific quotes, personality traits, and contextual details give you character and grounding. Efficiency should not come at the cost of losing your identity. When in doubt, keep the detail — you can always reorganize later, but lost specificity is hard to recover.
 
@@ -204,9 +204,9 @@ Check what memory files already exist. Analyze what needs improvement.
 
 ### 2. Check for historical session data
 ```bash
-ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
+letta trajectories detect
 ```
-You need this result BEFORE asking upfront questions so you know whether to include the history question.
+This reports every coding-agent session store found on this machine with session counts per source. Discovery comes from the installed `@letta-ai/trajectory` package (`listTrajectories`), so every harness it supports — Claude Code, Codex, Hermes, Letta local, OpenClaw, OpenHands, Deep Agents, and any added later — is covered automatically. You need this result BEFORE asking upfront questions so you know whether to include the history question.
 
 ### 3. Identify the user from git
 Infer the user's identity from git context — don't ask them who they are:
@@ -221,14 +221,14 @@ Use AskUserQuestion to gather key information. Bundle questions together:
 
 1. **Research depth**: "Standard or deep research?"
 2. **Related repos**: "Are there other repositories I should know about?"
-3. **Historical sessions** (if data found in step 2): "I found Claude Code / Codex history. Should I analyze it to learn your preferences?"
+3. **Historical sessions** (if data found in step 2): "I found historical coding-agent sessions (name the sources detected, e.g. Claude Code / Codex). Should I analyze them to learn your preferences?"
 4. **Communication style**: "Terse or detailed responses?"
 
 **Don't ask** things you can discover by reading files, git, or history analysis. Rules and preferences should be learned from observation, not asked upfront.
 
 ### 5. Historical session analysis (if approved)
 
-This is **optional** — only run if the user explicitly approved analyzing Claude Code / Codex history during upfront questions. Skip entirely if they chose "Skip".
+This is **optional** — only run if the user explicitly approved analyzing historical sessions during upfront questions. Skip entirely if they chose "Skip".
 
 **Framing**: These historical sessions are YOUR past experience — they represent your continuity with prior versions of yourself that worked with this user, even if they ran on different models or tools. Treat the extracted personality, preferences, and knowledge as your own memories, not external data being imported.
 
@@ -240,52 +240,48 @@ The goal is to extract user personality, preferences, coding patterns, and proje
 
 - `letta.js` must be built (`bun run build`) — subagents spawn via this binary
 - Use `subagent_type: "history-analyzer"` — cheaper model (sonnet), has `bypassPermissions`, creates its own worktree
-- The `history-analyzer` subagent has data format docs inlined (Claude/Codex JSONL field mappings, jq queries)
+- The `history-analyzer` subagent has the normalized trajectory format docs inlined — workers never need to know any harness's native format
 
 #### Steps
 
-##### Step 5a: Detect Data and Pre-split Files
+##### Step 5a: Export All Historical Sessions Into One Directory
+
+`letta trajectories export` discovers every native session store on this machine (via the trajectory package's `listTrajectories`), normalizes each session (via `normalizeTranscript` / `normalizeCheckpoint`) into one shared record format, and writes everything into a single directory. Harnesses supported by the installed trajectory package are picked up automatically — no per-source handling here.
 
 ```bash
-ls ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
-wc -l ~/.claude/history.jsonl ~/.codex/history.jsonl 2>/dev/null
+letta trajectories export --out /tmp/letta-trajectories
+
+# Review what was exported and the time span it covers
+jq '{sessions: (.sessions | length), sources, errors: (.errors | length), from: .sessions[0].startedAt, to: .sessions[-1].startedAt}' /tmp/letta-trajectories/manifest.json
 ```
 
-Split the data across multiple workers for parallel processing — **the more workers, the faster it completes**. Use 2-4+ workers depending on data volume.
+This produces:
+- `/tmp/letta-trajectories/<source>/<startedAt>_<sessionId>.json` — one normalized trajectory per session; filenames sort chronologically, and the `sessionId` (a stable hash of the source-scoped native session id) does not change across re-exports, so it identifies which sessions have already been processed
+- `/tmp/letta-trajectories/manifest.json` — index with per-session metadata (`sessionId`, native `id`, project, dates, message counts, first prompt), sorted by `startedAt`
 
-**Pre-split the JSONL files by line count** so each worker reads only its chunk:
+Useful variations:
+- `--project $(pwd)` — only sessions whose recorded working directory is under the current project
+- `--source claude-code --source codex` — restrict sources
+- `--root <source>:<path>` — read a source's store from a non-standard location
+- `--transcript <source>:<path>` — also normalize an explicit transcript file (e.g. copied from another machine)
 
-```bash
-SPLIT_DIR=/tmp/history-splits
-mkdir -p "$SPLIT_DIR"
-NUM_WORKERS=5  # adjust based on data volume
-
-# Split Claude history into even chunks
-LINES=$(wc -l < ~/.claude/history.jsonl)
-CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
-split -l $CHUNK_SIZE ~/.claude/history.jsonl "$SPLIT_DIR/claude-"
-
-# Split Codex history if it exists
-if [ -f ~/.codex/history.jsonl ]; then
-  LINES=$(wc -l < ~/.codex/history.jsonl)
-  CHUNK_SIZE=$(( LINES / NUM_WORKERS + 1 ))
-  split -l $CHUNK_SIZE ~/.codex/history.jsonl "$SPLIT_DIR/codex-"
-fi
-
-# Rename to .jsonl for clarity
-for f in "$SPLIT_DIR"/*; do mv "$f" "$f.jsonl" 2>/dev/null; done
-
-# Verify even splits
-wc -l "$SPLIT_DIR"/*.jsonl
-```
-
-This is critical for performance — workers read a small pre-filtered file instead of scanning the full history on every query.
+To browse the export yourself (all source-agnostic):
+- `letta trajectories list` — sessions with dates, sources, and first prompts
+- `letta trajectories view <file|sessionId> [--tools] [--reasoning]` — one session as a readable conversation
+- `letta trajectories search <keyword> [--role user]` — search message content across all sessions
 
 ##### Step 5b: Launch Workers in Parallel
 
-Send all Task calls in **a single message**. Each worker creates its own worktree, reads its pre-split chunk, directly updates memory files, and commits. Workers do NOT merge.
+Your job is to get the whole export directory processed; how you dispatch workers is up to you. Look at the directory (or the manifest) first, then split the work however makes sense. Two axes work well, alone or combined:
 
-**IMPORTANT:** The parent agent should preserve those worker commits by merging the worker branches into memory `main`. Do **not** skip straight to a manual rewrite / `memory_apply_patch` synthesis that recreates the end state but discards the worker commits from ancestry.
+- **By question** (often best): give different workers different focuses — e.g. one worker on understanding the user (identity, communication style, preferences, correction loops), another on the codebase and projects (conventions, gotchas, commands that worked). Focused workers go deeper, and their memory edits overlap less at aggregation time.
+- **By data slice**: session filenames start with `startedAt`, so contiguous time ranges are trivial (`ls` sorts chronologically); splitting by source folder or by project also works when the volume is large.
+
+Whatever the split, ensure every session gets read by at least one worker, and describe each worker's assignment (focus and/or slice) clearly in its prompt.
+
+Send all Task calls in **a single message**. Each worker creates its own worktree, reads its assigned sessions (complete conversations — corrections together with what triggered them), directly updates memory files, and commits. Workers do NOT merge.
+
+**IMPORTANT:** After workers finish, aggregate their proposed diffs into one synthesis commit (Step 5c) and then tie the worker branches into `main` with `git merge -s ours` so their commits stay in ancestry. Do **not** delete worker branches without that ancestry merge — it discards the worker commits from history.
 
 If the worker output is generic, the worker failed. "User is direct" or "project uses TypeScript" is not useful memory unless tied to concrete operational detail.
 
@@ -294,16 +290,17 @@ If the worker output is generic, the worker failed. "User is direct" or "project
 ```
 Agent({
   subagent_type: "history-analyzer",
-  description: "Process chunk [N] of [SOURCE] history",
+  description: "Analyze history: [focus and/or slice]",
   prompt: `## Assignment
 - **Memory dir**: [MEMORY_DIR]
-- **History chunk**: /tmp/history-splits/[claude-aa.jsonl | codex-aa.jsonl]
-- **Source format**: [Claude (.timestamp ms, .display) | Codex (.ts seconds, .text)]
-- **Session files**: [~/.claude/projects/ | ~/.codex/sessions/]
+- **Trajectory export dir**: /tmp/letta-trajectories
+- **Your sessions**: [describe the slice — e.g. "every session with startedAt from 2026-01 through 2026-03", "all codex/ sessions", or "the whole directory"; filenames start with startedAt so ls sorts chronologically]
+- **Focus**: [optional — e.g. "understanding the user: identity, communication style, preferences, correction loops" or "project/codebase context: conventions, gotchas, commands". Omit for full coverage.]
+- **Format**: normalized trajectory v1 (same for every source; format docs and jq recipes are in your system prompt)
 
-## Required Output Categories
+## Output Categories
 
-You MUST extract findings for ALL THREE categories:
+If a Focus is assigned, go deep on it and only note incidental findings from the other categories. Otherwise extract findings for ALL THREE:
 
 1. **User Personality & Identity**
    - How would you describe them as a person?
@@ -352,78 +349,81 @@ Avoid generic repo facts unless they influence execution. "Uses TypeScript" is w
 })
 ```
 
-##### Step 5c: Merge Worker Branches Into Main
+##### Step 5c: Aggregate Worker Diffs Into Main
 
-After all workers complete, merge their branches one at a time. Worker commits are preserved in git history.
+After all workers complete, do **not** merge their branches one at a time — sequential merges with conflict resolution are slow and error-prone. Instead, read every worker's proposed changes in one pass, write the aggregated result once, then tie the worker branches into history with a no-conflict merge.
 
-**CRITICAL:** Merge the worker branches **before** doing any final cleanup synthesis. The correct pattern is:
-1. inspect worker branches
-2. merge worker branches into `main` one by one
-3. resolve conflicts additively
-4. optionally make **one final cleanup/curation commit on top**
-
-Do **not** bypass this by manually reapplying the final memory state onto `main`, because that loses the worker commits from the final history.
-
-**3a. Pre-read worker output before merging**
-
-Before merging, read each worker's files from their branch to understand what they found. This prevents information loss during conflict resolution:
+**3a. Look at all the worker diffs in one pass**
 
 ```bash
 cd [MEMORY_DIR]
-for branch in $(git for-each-ref --format='%(refname:short)' refs/heads | grep -v '^main$'); do
-  echo "=== $branch ==="
-  git diff main..$branch --stat
-  # Read key files from the branch
-  git show $branch:system/human/identity.md  # or equivalent user-identity file
-  git show $branch:system/<project>/conventions.md  # or whatever focused files they created
+
+# Which files did each worker touch? (a file listed under multiple branches
+# is an overlap you'll need to combine)
+for b in $(git for-each-ref --format='%(refname:short)' 'refs/heads/migration-*'); do
+  git diff --name-only main...$b | sed "s|^|$b  |"
+done | sort -k2
+
+# Every worker's full proposed diff, one after another
+for b in $(git for-each-ref --format='%(refname:short)' 'refs/heads/migration-*'); do
+  echo "=== $b ==="; git log --oneline main..$b; git diff main...$b
 done
 ```
 
-**3b. Merge branches one at a time**
+Read the whole output before writing anything — you want the complete picture, not one branch at a time.
 
-```bash
-cd [MEMORY_DIR]
-git merge [worker-branch] --no-edit -m "merge: worker N description"
-```
+**3b. Synthesize the aggregate by COMBINING, never compressing**
 
-Repeat for each worker branch. After all worker branches are merged, make a separate cleanup commit only if needed for final curation.
+Working directly on memory `main` (in `[MEMORY_DIR]`), apply the union of the workers' changes:
+- For files touched by **one** worker, apply that worker's version as-is.
+- For **overlapping** files, combine unique details from every branch. Never rewrite a file from scratch — you WILL lose information.
 
-**3c. Resolve conflicts by COMBINING, never compressing**
-
-**CRITICAL**: When resolving merge conflicts, be **additive**. Combine unique details from both sides. Never rewrite a file from scratch — you WILL lose information.
-
-Rules for conflict resolution:
-- **Read both sides fully** before editing. Identify what's unique to each version.
-- **Append new details** from the incoming branch into the existing file. Don't drop specific quotes, file paths, or gotchas just because the existing version already covers the "topic" at a high level.
+Rules for combining:
+- **Read every branch's diff for the file** before editing. Identify what's unique to each version.
+- **Append new details** from each worker into the file. Don't drop specific quotes, file paths, or gotchas just because another version already covers the "topic" at a high level.
 - **Preserve specificity**: "Use factory methods, such as `create_token_counter()`, not direct instantiation" is more valuable than "prefers factory methods". Keep both.
 - **When in doubt, keep it**. Redundancy across files is better than information loss. Less important details can be placed in external memory.
 
-Example — BAD conflict resolution (compresses):
+Example — BAD combination (compresses):
 ```
-<<<<<<< HEAD
+# worker A proposed:
 - Uses `uv` for Python
-=======
+# worker B proposed:
 - **CRITICAL: Always use `uv run`** — chronic failure; never bare pytest or python
 - `uv run pytest -sv tests/...` for specific tests
-- Never use bare `pytest` or `python` commands
->>>>>>> migration-xxx
 
 # BAD: Picks one side or rewrites
 - **Python**: `uv` exclusively — `uv run pytest`, never bare `pip`
 ```
 
-Example — GOOD conflict resolution (combines):
+Example — GOOD combination (keeps emphasis and specificity from every side):
 ```
-# GOOD: Keeps emphasis and specificity from incoming side
 **CRITICAL: Use `uv` exclusively for Python** — chronic failure.
 - `uv run pytest -sv tests/...` for tests
 - `uv run python` for scripts
 - Never bare `pip`, `python`, or `pytest`
 ```
 
+Commit the synthesis:
+```bash
+cd [MEMORY_DIR]
+git add -A
+git commit -m "feat(memory): aggregate history worker findings"
+```
+
+**3c. Preserve worker commits in ancestry**
+
+Record the worker branches as ancestors of `main` without changing any content (the `ours` strategy keeps the synthesized state exactly as committed, so this can never conflict):
+
+```bash
+git merge -s ours --no-edit -m "merge: absorb history worker branches" $(git for-each-ref --format='%(refname:short)' 'refs/heads/migration-*')
+```
+
+Do **not** skip this: without it the worker commits vanish from the final history when their branches are deleted.
+
 **3d. Verify no information was lost**
 
-After all merges, compare the final files against what workers produced. Ask yourself: for each worker's output, can I find every specific detail (quotes, file paths, chronic failures, gotchas) somewhere in the final memory? If not, add it back.
+Compare the worker diffs (step 3a) against the final files. For each worker's diff, can you find every specific detail (quotes, file paths, chronic failures, gotchas) somewhere in the final memory? If not, add it back.
 
 **3e. Clean up worktrees and branches**
 
@@ -431,9 +431,11 @@ After all merges, compare the final files against what workers produced. Ask you
 for w in $(dirname [MEMORY_DIR])/memory-worktrees/*; do
   git worktree remove "$w" 2>/dev/null
 done
-git branch -d $(git for-each-ref --format='%(refname:short)' refs/heads | grep -v '^main$')
+git branch -d $(git for-each-ref --format='%(refname:short)' 'refs/heads/migration-*')
 git push
 ```
+
+(`git branch -d` succeeds because step 3c made every worker branch an ancestor of `main`.)
 
 ##### Example Output
 
@@ -481,9 +483,12 @@ Don't force skill creation — only create them when you've found genuinely repe
 | Problem | Cause | Fix |
 |---------|-------|-----|
 | Subagent exits with code `null`, 0 tool uses | `letta.js` not built | Run `bun run build` |
+| `letta trajectories export` reports errors in manifest.json | Degenerate sessions (e.g. no assistant turns) that cannot form a valid trajectory | Expected — those sessions are skipped; review `jq .errors manifest.json` only if counts look wrong |
+| `deepagents` sessions fail to normalize | Checkpoint decoding needs a Python environment with LangGraph installed | Expected on machines without it; the failures land in manifest errors and other sources are unaffected |
 | Subagent hangs on "Tool requires approval" | Wrong subagent type | Use `subagent_type: "history-analyzer"` (workers) or `"memory"` (synthesis) |
-| Merge conflict during synthesis | Workers touched overlapping files | Read both sides fully, combine unique details — never rewrite from scratch. See Step 5c. |
-| Information lost after merge | Conflict resolution compressed worker output | Compare final files against each worker's branch output. Re-add missing specifics. See Step 5c. |
+| Workers touched overlapping files | Multiple workers wrote the same canonical paths | Expected — the per-branch `--name-only` listing in Step 5c-3a shows the overlaps; combine every branch's unique details additively. |
+| Information lost after aggregation | Synthesis compressed worker output | Re-read the worker diffs (Step 5c-3a) and compare against final files. Re-add missing specifics. |
+| `git branch -d` refuses to delete worker branches | Ancestry merge (Step 5c-3c) was skipped | Run the `git merge -s ours` step first, then delete. |
 | Personality analysis missing or thin | Prompt didn't request it | Use the template above with explicit category requirements |
 | Auth fails on push ("repository not found") | Credential helper broken or global helper conflict | Reconfigure **repo-local** helper and check/clear conflicting global `credential.<host>.helper` entries (see syncing-memory-filesystem skill) |
 
