@@ -187,6 +187,11 @@ export interface ChannelTurnProgressUpdate {
   message: string;
   toolCallId?: string;
   toolName?: string;
+  /**
+   * Complete structured tool input for adapter-owned presentation. This value
+   * is not sanitized and must never be rendered directly.
+   */
+  toolInput?: Readonly<Record<string, unknown>>;
   /** Optional sanitized argument summary for expanded tool progress details. */
   toolDetails?: string;
   /**
