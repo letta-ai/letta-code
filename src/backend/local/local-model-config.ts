@@ -6,6 +6,7 @@ import {
   type PiProvider,
   UNSELECTED_LOCAL_MODEL_HANDLE,
 } from "@/backend/dev/pi-model-factory";
+import type { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import {
   getRegisteredPiProvider,
   listRegisteredPiProviders,
@@ -60,6 +61,13 @@ interface ListLocalModelsOptions {
   fetch?: typeof fetch;
   discoveryTimeoutMs?: number;
   autoDetectDiscoveryTimeoutMs?: number;
+  /**
+   * Per-backend pi-ai Models runtime. Providers the runtime manages
+   * (currently Ollama) are listed from the provider-published Model objects
+   * instead of the bare-ID discovery below, so /model and turn execution see
+   * the same models and capabilities.
+   */
+  modelsRuntime?: LocalPiModelsRuntime;
 }
 
 const LOCAL_MODEL_DISCOVERY_TIMEOUT_MS = 2_000;
@@ -226,7 +234,7 @@ function isPiProviderForLocalModelHandle(
 async function discoverModelIdsForProvider(
   provider: PiProvider,
   records: readonly LocalProviderRecord[],
-  options: Required<ListLocalModelsOptions>,
+  options: Required<Omit<ListLocalModelsOptions, "modelsRuntime">>,
 ): Promise<string[]> {
   const spec = getPiProviderSpec(provider);
   const discovery = spec.localModelDiscovery;
@@ -373,6 +381,7 @@ export async function resolveAvailableLocalModelForTurn(input: {
   model?: string | null;
   modelSettings?: Record<string, unknown> | null;
   storageDir?: string;
+  modelsRuntime?: LocalPiModelsRuntime;
 }): Promise<{ model?: string; modelSettings: Record<string, unknown> }> {
   const baseSettings = { ...(input.modelSettings ?? {}) };
   if (
@@ -385,7 +394,9 @@ export async function resolveAvailableLocalModelForTurn(input: {
   const preferredProvider = resolveProviderFromProviderType(
     baseSettings.provider_type,
   );
-  const models = await listLocalModels(input.storageDir);
+  const models = await listLocalModels(input.storageDir, {
+    ...(input.modelsRuntime ? { modelsRuntime: input.modelsRuntime } : {}),
+  });
   const selected = preferredProvider
     ? models.find(
         (entry) => providerForLocalModelListEntry(entry) === preferredProvider,
@@ -520,7 +531,9 @@ export async function listLocalModels(
   ) {
     addModel(configured.provider, configured.model);
   }
-  const discoveryOptions: Required<ListLocalModelsOptions> = {
+  const discoveryOptions: Required<
+    Omit<ListLocalModelsOptions, "modelsRuntime">
+  > = {
     fetch: options.fetch ?? fetch,
     discoveryTimeoutMs:
       parsePositiveNumber(options.discoveryTimeoutMs) ??
@@ -536,37 +549,67 @@ export async function listLocalModels(
       isAutoDetectableLocalEndpointProvider(provider.id),
     ).map((provider) => provider.id),
   ]);
+  const modelsRuntime = options.modelsRuntime;
   const discoveryResults = await Promise.all(
-    [...providersToDiscover].map(async (provider) => {
-      if (registeredProvidersWithModels.has(provider)) {
-        return { provider, models: [] };
-      }
+    [...providersToDiscover].map(
+      async (
+        provider,
+      ): Promise<{
+        provider: PiProvider;
+        models: string[];
+        runtimeModels?: readonly Model<Api>[];
+      }> => {
+        if (registeredProvidersWithModels.has(provider)) {
+          return { provider, models: [] };
+        }
 
-      if (!isDiscoverableLocalProvider(provider)) {
-        return { provider, models: listCatalogModelsForProvider(provider) };
-      }
+        if (modelsRuntime?.isRuntimeManagedProvider(provider)) {
+          try {
+            await modelsRuntime.refresh(provider);
+          } catch {
+            // Refresh failure retains the provider's last-known model list
+            // instead of dropping it from /model.
+          }
+          return {
+            provider,
+            models: [],
+            runtimeModels: modelsRuntime.getModels(provider),
+          };
+        }
 
-      try {
-        const timeoutMs = configuredProviders.has(provider)
-          ? discoveryOptions.discoveryTimeoutMs
-          : discoveryOptions.autoDetectDiscoveryTimeoutMs;
-        const discoveredModels = await discoverModelIdsForProvider(
-          provider,
-          records,
-          { ...discoveryOptions, discoveryTimeoutMs: timeoutMs },
-        );
-        return { provider, models: discoveredModels };
-      } catch {
-        // Do not surface stale guessed models when a local provider is not
-        // reachable; simply omit that provider's catalog from /model.
-        return { provider, models: [] };
-      }
-    }),
+        if (!isDiscoverableLocalProvider(provider)) {
+          return { provider, models: listCatalogModelsForProvider(provider) };
+        }
+
+        try {
+          const timeoutMs = configuredProviders.has(provider)
+            ? discoveryOptions.discoveryTimeoutMs
+            : discoveryOptions.autoDetectDiscoveryTimeoutMs;
+          const discoveredModels = await discoverModelIdsForProvider(
+            provider,
+            records,
+            { ...discoveryOptions, discoveryTimeoutMs: timeoutMs },
+          );
+          return { provider, models: discoveredModels };
+        } catch {
+          // Do not surface stale guessed models when a local provider is not
+          // reachable; simply omit that provider's catalog from /model.
+          return { provider, models: [] };
+        }
+      },
+    ),
   );
 
   for (const result of discoveryResults) {
     for (const model of result.models) {
       addModel(result.provider, model);
+    }
+    for (const model of result.runtimeModels ?? []) {
+      addModel(result.provider, model.id, {
+        maxContextWindow: model.contextWindow,
+        maxOutputTokens: model.maxTokens,
+        name: model.name,
+      });
     }
   }
   return models;

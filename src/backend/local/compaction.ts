@@ -4,17 +4,14 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import {
-  complete,
-  completeSimple,
-  isContextOverflow,
-} from "@earendil-works/pi-ai/compat";
+import { isContextOverflow } from "@earendil-works/pi-ai/compat";
 import { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
 import {
   applyPiEnvOverrides,
   reasoningForSettings,
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
+import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalMessage } from "./local-message";
@@ -126,6 +123,7 @@ export interface LocalAllCompactionInput {
   clipChars?: number | null;
   abortSignal?: AbortSignal;
   localProviderAuthStorageDir?: string;
+  modelsRuntime?: LocalPiModelsRuntime;
 }
 
 export interface LocalSlidingWindowCompactionPlan {
@@ -361,15 +359,20 @@ function assistantMessageText(message: AssistantMessage): string {
     .join("\n");
 }
 
-async function defaultComplete(
-  model: Model<string>,
-  context: Context,
-  options?: SimpleStreamOptions & Record<string, unknown>,
-): Promise<AssistantMessage> {
-  if (model.api === "bedrock-converse-stream") {
-    return complete(model, context, options);
-  }
-  return completeSimple(model, context, options);
+// Summarization dispatches through the pi-ai Models runtime like turn
+// execution does; a compaction-only fallback runtime is created when the
+// caller (tests, direct library use) did not thread the backend's instance.
+function runtimeComplete(runtime: LocalPiModelsRuntime): LocalCompleteFunction {
+  return async (model, context, options) => {
+    if (model.api === "bedrock-converse-stream") {
+      return runtime
+        .stream(model as Model<string>, context, options as never)
+        .result();
+    }
+    return runtime
+      .streamSimple(model as Model<string>, context, options)
+      .result();
+  };
 }
 
 function isFableModel(model: Model<string>): boolean {
@@ -403,15 +406,24 @@ async function runGenerateText(
   defaultPrompt: string,
 ): Promise<{ text: string }> {
   const systemPrompt = input.prompt ?? defaultPrompt;
+  const modelsRuntime =
+    input.modelsRuntime ??
+    new LocalPiModelsRuntime({
+      storageDir: input.localProviderAuthStorageDir,
+    });
   let localModel = await resolveAvailableLocalModelForTurn({
     model: input.agent.model,
     modelSettings: input.agent.model_settings,
     storageDir: input.localProviderAuthStorageDir,
+    modelsRuntime,
   });
   let resolved = await resolvePiModelForAgent(
     localModel.model,
     localModel.modelSettings,
-    { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
+    {
+      localProviderAuthStorageDir: input.localProviderAuthStorageDir,
+      modelsRuntime,
+    },
   );
   if (
     resolved.model.api === "anthropic-messages" &&
@@ -428,14 +440,18 @@ async function runGenerateText(
         localModel.modelSettings,
       ),
       storageDir: input.localProviderAuthStorageDir,
+      modelsRuntime,
     });
     resolved = await resolvePiModelForAgent(
       localModel.model,
       localModel.modelSettings,
-      { localProviderAuthStorageDir: input.localProviderAuthStorageDir },
+      {
+        localProviderAuthStorageDir: input.localProviderAuthStorageDir,
+        modelsRuntime,
+      },
     );
   }
-  const run = input.complete ?? defaultComplete;
+  const run = input.complete ?? runtimeComplete(modelsRuntime);
   const context: Context = {
     systemPrompt,
     messages: [{ role: "user", content: transcript, timestamp: Date.now() }],

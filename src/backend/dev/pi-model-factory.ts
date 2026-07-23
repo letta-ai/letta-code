@@ -15,6 +15,7 @@ import {
   resolveLocalProviderTimeout,
 } from "@/backend/local/local-provider-timeout";
 import { isRecord } from "@/utils/type-guards";
+import type { LocalPiModelsRuntime } from "./pi-models-runtime";
 import {
   getRegisteredPiProvider,
   type PiProviderModelRegistration,
@@ -122,6 +123,13 @@ export interface PiModelFactoryOptions {
   model?: string;
   localProviderAuthStorageDir?: string;
   preferredProviderType?: string;
+  /**
+   * Per-backend pi-ai Models runtime. Providers managed by the runtime
+   * (currently Ollama) resolve to the complete Model object published by the
+   * provider that discovered it, instead of a Model fabricated from the
+   * model-name string.
+   */
+  modelsRuntime?: LocalPiModelsRuntime;
 }
 
 export interface ResolvedPiModel {
@@ -657,6 +665,28 @@ export async function resolvePiModelForAgent(
       `Unknown model "${modelId}" for provider "${provider}". ` +
         "Register the provider with models before using it.",
     );
+  } else if (options.modelsRuntime?.isRuntimeManagedProvider(spec.id)) {
+    if (!modelId) {
+      throw new Error(
+        `No model selected for provider "${provider}". Choose an available model with /model.`,
+      );
+    }
+    const runtimeModel = await options.modelsRuntime.resolveModel(
+      spec.id,
+      modelId,
+    );
+    if (!runtimeModel) {
+      throw new Error(
+        `Unknown model "${modelId}" for provider "${provider}". ` +
+          "Check that the model is installed on the endpoint or choose another model with /model.",
+      );
+    }
+    // The provider-published Model is authoritative (capabilities, context
+    // window, base URL). Only explicit agent settings may override it.
+    model =
+      contextWindow || maxTokens || headers
+        ? withOverrides(runtimeModel, { headers, contextWindow, maxTokens })
+        : runtimeModel;
   } else if (spec.createCustomModel) {
     if (!modelId) {
       throw new Error(
