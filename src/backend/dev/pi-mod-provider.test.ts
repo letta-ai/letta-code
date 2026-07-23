@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { testRefreshContext } from "@/test-utils/pi-refresh-context";
 import { createModPiProvider } from "./pi-mod-provider";
 import { resolvePiModelForAgent } from "./pi-model-factory";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
@@ -78,13 +79,25 @@ describe("createModPiProvider", () => {
     // Static declaration seeds the list before the first refresh.
     expect(provider.getModels().map((m) => m.id)).toEqual(["static-seed"]);
 
-    await provider.refreshModels?.();
-    expect(provider.getModels().map((m) => m.id)).toEqual(["dynamic-1"]);
-    expect(provider.getModels()[0]?.input).toEqual(["text", "image"]);
+    // pi-ai 0.81 merges the static baseline with the dynamic overlay by id;
+    // discoveries extend the declared baseline rather than replacing it.
+    await provider.refreshModels?.(testRefreshContext());
+    expect(provider.getModels().map((m) => m.id)).toEqual([
+      "static-seed",
+      "dynamic-1",
+    ]);
+    expect(
+      provider.getModels().find((m) => m.id === "dynamic-1")?.input,
+    ).toEqual(["text", "image"]);
 
     fail = true;
-    expect(provider.refreshModels?.()).rejects.toThrow("endpoint down");
-    expect(provider.getModels().map((m) => m.id)).toEqual(["dynamic-1"]);
+    expect(provider.refreshModels?.(testRefreshContext())).rejects.toThrow(
+      "endpoint down",
+    );
+    expect(provider.getModels().map((m) => m.id)).toEqual([
+      "static-seed",
+      "dynamic-1",
+    ]);
   });
 });
 
@@ -129,7 +142,8 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
     expect(runtime.getModel(PROVIDER, "v2-model")?.baseUrl).toBe(
       "https://api.acme.test/v2",
     );
-    expect(runtime.getModels("anthropic")).toBe(builtinBefore);
+    expect(runtime.getModels("anthropic")[0]).toBe(builtinBefore[0]!);
+    expect(runtime.getModels("anthropic")).toHaveLength(builtinBefore.length);
 
     unregisterPiProvider(PROVIDER);
     expect(runtime.isRuntimeManagedProvider(PROVIDER)).toBe(false);

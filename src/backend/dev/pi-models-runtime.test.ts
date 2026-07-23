@@ -288,7 +288,8 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     ]);
     expect(runtime.getModel("ollama", "model-a:1b")).toBeUndefined();
     // Other providers are untouched by the Ollama connection change.
-    expect(runtime.getModels("anthropic")).toBe(builtinBefore);
+    expect(runtime.getModels("anthropic")[0]).toBe(builtinBefore[0]!);
+    expect(runtime.getModels("anthropic")).toHaveLength(builtinBefore.length);
   });
 
   test("llama.cpp models resolve through the runtime with /props capabilities", async () => {

@@ -2,6 +2,7 @@ import type { Api, Model, Provider } from "@earendil-works/pi-ai";
 import { createProvider } from "@earendil-works/pi-ai";
 import { listLocalProviderRecords } from "@/backend/local/local-provider-auth-store";
 import { knownApiStreams } from "./pi-api-streams";
+import { modOAuthAuth } from "./pi-oauth";
 import type {
   PiProviderModelRegistration,
   PiProviderRegistration,
@@ -94,7 +95,7 @@ export function createModPiProvider(options: ModPiProviderOptions): Provider {
 
   // Only providers with a listModels hook are dynamic; static registrations
   // publish their declared models and never refresh.
-  const refreshModels = config.listModels
+  const fetchModels = config.listModels
     ? async (): Promise<readonly Model<Api>[]> => {
         const listConnection =
           await resolveRegisteredPiProviderListModelsConnection(registered, {
@@ -122,14 +123,21 @@ export function createModPiProvider(options: ModPiProviderOptions): Provider {
             credential?.key ??
             resolveRegisteredPiProviderRuntimeConnection(registered, storageDir)
               .apiKey;
-          return apiKey
-            ? { auth: { apiKey }, source: "local provider record" }
-            : undefined;
+          if (apiKey) {
+            return { auth: { apiKey }, source: "local provider record" };
+          }
+          // connect:false mods are explicitly keyless — report configured so
+          // the Models runtime refreshes them (mirrors
+          // isRegisteredPiProviderConfigured).
+          return config.connect === false ? { auth: {} } : undefined;
         },
       },
+      ...(config.oauth
+        ? { oauth: modOAuthAuth(providerName, config.oauth) }
+        : {}),
     },
     models: staticModels,
-    ...(refreshModels ? { refreshModels } : {}),
+    ...(fetchModels ? { fetchModels } : {}),
     api: knownApiStreams(),
   });
 }

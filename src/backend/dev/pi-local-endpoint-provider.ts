@@ -1,4 +1,8 @@
-import type { Model, Provider } from "@earendil-works/pi-ai";
+import type {
+  Model,
+  Provider,
+  RefreshModelsContext,
+} from "@earendil-works/pi-ai";
 import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 
@@ -52,8 +56,6 @@ export interface LocalEndpointPiProviderOptions {
   apiKey?: string;
   fetchImpl?: typeof fetch;
   discoveryTimeoutMs?: number;
-  /** Last-known models carried over from a replaced provider instance. */
-  initialModels?: readonly LocalEndpointModel[];
   discover: LocalEndpointDiscover;
 }
 
@@ -102,9 +104,7 @@ export function createLocalEndpointPiProvider(
     options.discoveryTimeoutMs ?? LOCAL_ENDPOINT_DISCOVERY_TIMEOUT_MS;
   const nativeBaseURL = localEndpointNativeBaseURL(options.baseURL);
   const openAIBaseURL = localEndpointOpenAIBaseURL(options.baseURL);
-  let lastKnown = new Map<string, LocalEndpointModel>(
-    (options.initialModels ?? []).map((model) => [model.id, model]),
-  );
+  let lastKnown = new Map<string, LocalEndpointModel>();
   const state = new Map<string, unknown>();
 
   async function fetchJson(
@@ -158,7 +158,10 @@ export function createLocalEndpointPiProvider(
     };
   }
 
-  async function refreshModels(): Promise<readonly LocalEndpointModel[]> {
+  async function fetchModels(
+    context: RefreshModelsContext,
+  ): Promise<readonly LocalEndpointModel[]> {
+    if (!context.allowNetwork) return [...lastKnown.values()];
     const models = await options.discover({
       fetchJson,
       nativeBaseURL,
@@ -184,8 +187,11 @@ export function createLocalEndpointPiProvider(
         }),
       },
     },
-    models: options.initialModels ?? [],
-    refreshModels,
+    // Static baseline stays empty: pi-ai merges the baseline with the
+    // dynamic overlay by id, and discovered engine models must disappear
+    // when the engine no longer lists them.
+    models: [],
+    fetchModels,
     api: openAICompletionsApi(),
   });
 }

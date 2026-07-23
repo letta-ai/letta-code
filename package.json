@@ -77,7 +77,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.80.6",
+    "@earendil-works/pi-ai": "^0.81.1",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "^0.1.1",
     "@pierre/diffs": "1.2.2",

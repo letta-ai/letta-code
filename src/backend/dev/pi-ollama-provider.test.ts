@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { testRefreshContext } from "@/test-utils/pi-refresh-context";
 import { localEndpointNativeBaseURL } from "./pi-local-endpoint-provider";
 import { createOllamaPiProvider } from "./pi-ollama-provider";
 
@@ -77,7 +78,7 @@ describe("createOllamaPiProvider", () => {
     });
 
     expect(provider.getModels()).toHaveLength(0);
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
 
     const qwen = provider.getModels().find((m) => m.id === "qwen3.6:27b");
     expect(qwen).toBeDefined();
@@ -107,13 +108,13 @@ describe("createOllamaPiProvider", () => {
       fetchImpl: fakeOllamaFetch(state),
     });
 
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     const showCalls = () =>
       state.requests.filter((url) => url.endsWith("/api/show")).length;
     expect(showCalls()).toBe(1);
 
     // Unchanged digest: refresh reuses the published Model, no metadata read.
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(showCalls()).toBe(1);
     expect(
       provider.getModels().find((m) => m.id === "qwen3.6:27b")?.input,
@@ -121,7 +122,7 @@ describe("createOllamaPiProvider", () => {
 
     // New digest (model updated): metadata is re-read.
     state.tags = { models: [{ name: "qwen3.6:27b", digest: "sha256-bbb" }] };
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(showCalls()).toBe(2);
   });
 
@@ -131,11 +132,13 @@ describe("createOllamaPiProvider", () => {
       baseURL: "http://localhost:11434",
       fetchImpl: fakeOllamaFetch(state),
     });
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(provider.getModels()).toHaveLength(2);
 
     state.failTags = true;
-    expect(provider.refreshModels?.()).rejects.toThrow("connection refused");
+    expect(provider.refreshModels?.(testRefreshContext())).rejects.toThrow(
+      "connection refused",
+    );
     expect(provider.getModels()).toHaveLength(2);
     expect(
       provider.getModels().find((m) => m.id === "qwen3.6:27b")?.input,
@@ -148,10 +151,10 @@ describe("createOllamaPiProvider", () => {
       baseURL: "http://localhost:11434",
       fetchImpl: fakeOllamaFetch(state),
     });
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
 
     state.failShowFor = new Set(["qwen3.6:27b"]);
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(
       provider.getModels().find((m) => m.id === "qwen3.6:27b")?.input,
     ).toEqual(["text", "image"]);
@@ -164,7 +167,7 @@ describe("createOllamaPiProvider", () => {
       baseURL: "http://localhost:11434",
       fetchImpl: fakeOllamaFetch(state),
     });
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(
       provider.getModels().find((m) => m.id === "qwen3.6:27b")?.input,
     ).toEqual(["text"]);
@@ -195,7 +198,7 @@ describe("createOllamaPiProvider as Ollama Cloud", () => {
     expect(provider.id).toBe("ollama-cloud");
     expect(provider.name).toBe("Ollama Cloud");
 
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     const qwen = provider.getModels().find((m) => m.id === "qwen3.6:27b");
     expect(qwen?.provider).toBe("ollama-cloud");
     expect(qwen?.input).toEqual(["text", "image"]);
@@ -216,7 +219,7 @@ describe("defaults when engine metadata is missing", () => {
       baseURL: "http://localhost:11434",
       fetchImpl: fakeOllamaFetch(state),
     });
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     const model = provider.getModels().find((m) => m.id === "some-model");
     expect(model?.contextWindow).toBe(128000);
     expect(model?.input).toEqual(["text"]);

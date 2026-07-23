@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { testRefreshContext } from "@/test-utils/pi-refresh-context";
 import { createLmStudioPiProvider } from "./pi-lmstudio-provider";
 
 interface FakeLmStudioState {
@@ -58,7 +59,7 @@ describe("createLmStudioPiProvider", () => {
         ],
       }),
     });
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
 
     const models = provider.getModels();
     const vlm = models.find((m) => m.id === "qwen3.6-27b");
@@ -83,7 +84,7 @@ describe("createLmStudioPiProvider", () => {
         openAIModelIds: ["llava-1.6-7b"],
       }),
     });
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(provider.getModels()[0]?.input).toEqual(["text"]);
   });
 
@@ -96,11 +97,11 @@ describe("createLmStudioPiProvider", () => {
       baseURL: "http://127.0.0.1:1234",
       fetchImpl: fakeLmStudioFetch(state),
     });
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(provider.getModels()[0]?.input).toEqual(["text", "image"]);
 
     state.failNative = true;
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(provider.getModels()[0]?.input).toEqual(["text", "image"]);
   });
 
@@ -112,12 +113,12 @@ describe("createLmStudioPiProvider", () => {
       baseURL: "http://127.0.0.1:1234",
       fetchImpl: fakeLmStudioFetch(state),
     });
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(provider.getModels()).toHaveLength(1);
 
     state.failNative = true;
     state.failOpenAI = true;
-    expect(provider.refreshModels?.()).rejects.toThrow();
+    expect(provider.refreshModels?.(testRefreshContext())).rejects.toThrow();
     expect(provider.getModels()).toHaveLength(1);
   });
 });

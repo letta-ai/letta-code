@@ -1,4 +1,4 @@
-import type { Model, Provider } from "@earendil-works/pi-ai";
+import type { Provider } from "@earendil-works/pi-ai";
 import {
   createLocalEndpointPiProvider,
   type LocalEndpointDiscover,
@@ -14,7 +14,6 @@ export interface LmStudioPiProviderOptions {
   apiKey?: string;
   fetchImpl?: typeof fetch;
   discoveryTimeoutMs?: number;
-  initialModels?: readonly Model<"openai-completions">[];
 }
 
 function stringArray(value: unknown): string[] {
@@ -98,7 +97,6 @@ export function createLmStudioPiProvider(
     ...(options.discoveryTimeoutMs
       ? { discoveryTimeoutMs: options.discoveryTimeoutMs }
       : {}),
-    ...(options.initialModels ? { initialModels: options.initialModels } : {}),
     discover: lmStudioDiscover,
   });
 }

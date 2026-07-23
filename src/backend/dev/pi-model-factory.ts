@@ -1,12 +1,5 @@
 import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
-import {
-  getOAuthProvider,
-  type OAuthCredentials,
-} from "@earendil-works/pi-ai/oauth";
-import {
-  getBuiltinModel,
-  getBuiltinModels,
-} from "@earendil-works/pi-ai/providers/all";
+import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 import {
   getLocalOAuthApiKey,
   getLocalProviderRecordByName,
@@ -25,6 +18,7 @@ import {
   stripRegisteredProviderHandlePrefix,
 } from "./pi-provider-mod-registry";
 import {
+  builtinCatalogModels,
   expectedPiProviderList,
   getPiProviderSpec,
   isPiProvider,
@@ -324,22 +318,16 @@ export function resolveZaiConnection(options: {
 function getCatalogModel(
   provider: PiProvider,
   modelId: string,
-  oauthCredentials?: OAuthCredentials,
 ): Model<Api> | undefined {
   const spec = getPiProviderSpec(provider);
   const piProvider = spec.piProvider;
   if (!piProvider) return undefined;
-  const catalog = getBuiltinModels(piProvider);
+  const catalog = builtinCatalogModels(piProvider);
   const fallbackModelId = fallbackCatalogModelId(piProvider, modelId);
-  const model = (catalog.find((model) => model.id === modelId) ??
+  return (catalog.find((model) => model.id === modelId) ??
     catalog.find((model) => model.id === fallbackModelId)) as
     | Model<Api>
     | undefined;
-  if (!model || !oauthCredentials) return model;
-
-  const oauthProvider = getOAuthProvider(piProvider);
-  return (oauthProvider?.modifyModels?.([model], oauthCredentials)[0] ??
-    model) as Model<Api>;
 }
 
 function fallbackCatalogModelId(
@@ -517,6 +505,10 @@ export async function resolvePiModelForAgent(
       apiKey: oauth?.apiKey,
     };
     oauthCredentials = oauth?.credentials;
+    // Per-credential request auth (e.g. GitHub Copilot's per-token base URL)
+    // comes from the provider's OAuthAuth.toAuth.
+    if (oauth?.baseUrl) baseURL = oauth.baseUrl;
+    if (oauth?.headers) headers = mergeHeaders(headers, oauth.headers);
   }
 
   if (
@@ -611,32 +603,19 @@ export async function resolvePiModelForAgent(
         ? withOverrides(runtimeModel, { headers, contextWindow, maxTokens })
         : runtimeModel;
   } else {
-    const catalogModel = getCatalogModel(spec.id, modelId, oauthCredentials);
-    if (catalogModel) {
-      model = withOverrides(catalogModel, {
-        baseURL,
-        headers,
-        contextWindow,
-        maxTokens,
-      });
-    } else {
-      const fallback = getBuiltinModel(
-        spec.piProvider ?? "openai",
-        modelId as never,
-      ) as Model<Api> | undefined;
-      if (!fallback) {
-        throw new Error(
-          `Unknown model "${modelId}" for provider "${provider}". ` +
-            "Check the model handle or update the model catalog.",
-        );
-      }
-      model = withOverrides(fallback, {
-        baseURL,
-        headers,
-        contextWindow,
-        maxTokens,
-      });
+    const catalogModel = getCatalogModel(spec.id, modelId);
+    if (!catalogModel) {
+      throw new Error(
+        `Unknown model "${modelId}" for provider "${provider}". ` +
+          "Check the model handle or update the model catalog.",
+      );
     }
+    model = withOverrides(catalogModel, {
+      baseURL,
+      headers,
+      contextWindow,
+      maxTokens,
+    });
   }
 
   return {

@@ -1,14 +1,15 @@
 import type {
   Api,
-  ApiStreamOptions,
   AssistantMessageEventStream,
   Context,
   Model,
+  ModelsApiStreamOptions,
+  ModelsSimpleStreamOptions,
   MutableModels,
   Provider,
-  SimpleStreamOptions,
+  RefreshModelsContext,
 } from "@earendil-works/pi-ai";
-import { createModels } from "@earendil-works/pi-ai";
+import { createModels, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import {
   getLocalProviderRecordByName,
@@ -130,14 +131,27 @@ export class LocalPiModelsRuntime {
   private readonly fetchImpl?: typeof fetch;
   private readonly endpointSignatures = new Map<string, string>();
   private readonly modSignatures = new Map<string, string>();
+  private readonly modelsStore = new InMemoryModelsStore();
 
   constructor(options: LocalPiModelsRuntimeOptions = {}) {
     this.storageDir = options.storageDir;
     this.fetchImpl = options.fetchImpl;
-    this.models = createModels();
+    this.models = createModels({ modelsStore: this.modelsStore });
     for (const provider of builtinProviders()) {
       this.models.setProvider(provider);
     }
+  }
+
+  private refreshContext(providerId: string): RefreshModelsContext {
+    return {
+      store: {
+        read: () => this.modelsStore.read(providerId),
+        write: (entry) => this.modelsStore.write(providerId, entry),
+        delete: () => this.modelsStore.delete(providerId),
+      },
+      allowNetwork: true,
+      force: true,
+    };
   }
 
   /** Providers whose models this runtime discovers and owns end-to-end. */
@@ -247,13 +261,38 @@ export class LocalPiModelsRuntime {
   }
 
   /**
-   * Re-fetch a dynamic provider's model list. Rejects on fetch failure; the
-   * provider keeps serving its last-known list so a transient endpoint outage
-   * does not brick turns or wipe /model.
+   * Re-fetch every runtime-managed provider's model list concurrently.
+   * Per-provider fetch failures keep that provider's last-known list, so a
+   * transient endpoint outage does not brick turns or wipe /model. Built-in
+   * providers are not refreshed here — their catalogs are static and any
+   * dynamic upstream catalogs stay on pi-ai's own refresh cadence.
+   */
+  async refreshAll(): Promise<void> {
+    this.ensureManagedProviders();
+    const managedIds = new Set([
+      ...MANAGED_ENDPOINT_PROVIDERS.keys(),
+      ...listRegisteredPiProviders().map((provider) => provider.providerName),
+    ]);
+    await Promise.all(
+      [...managedIds].map(async (providerId) => {
+        try {
+          await this.refresh(providerId);
+        } catch {
+          // Keep last-known models for this provider.
+        }
+      }),
+    );
+  }
+
+  /**
+   * Refresh one provider with per-provider error semantics: rejects with the
+   * fetch error while the provider keeps serving its last-known list.
    */
   async refresh(providerId: string): Promise<void> {
     this.ensureManagedProviders(providerId);
-    await this.models.refresh(providerId);
+    const provider = this.models.getProvider(providerId);
+    if (!provider?.refreshModels) return;
+    await provider.refreshModels(this.refreshContext(providerId));
   }
 
   /**
@@ -278,7 +317,7 @@ export class LocalPiModelsRuntime {
   stream<TApi extends Api>(
     model: Model<TApi>,
     context: Context,
-    options?: ApiStreamOptions<TApi>,
+    options?: ModelsApiStreamOptions<TApi>,
   ): AssistantMessageEventStream {
     this.ensureManagedProviders((model as Model<Api>).provider);
     return this.models.stream(model, context, options);
@@ -287,7 +326,7 @@ export class LocalPiModelsRuntime {
   streamSimple(
     model: Model<Api>,
     context: Context,
-    options?: SimpleStreamOptions,
+    options?: ModelsSimpleStreamOptions,
   ): AssistantMessageEventStream {
     this.ensureManagedProviders(model.provider);
     return this.models.streamSimple(model, context, options);

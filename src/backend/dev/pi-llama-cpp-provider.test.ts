@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { testRefreshContext } from "@/test-utils/pi-refresh-context";
 import { createLlamaCppPiProvider } from "./pi-llama-cpp-provider";
 
 interface FakeLlamaCppState {
@@ -39,7 +40,7 @@ describe("createLlamaCppPiProvider", () => {
         },
       }),
     });
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
 
     const model = provider.getModels()[0];
     expect(model?.provider).toBe("llama-cpp");
@@ -57,7 +58,7 @@ describe("createLlamaCppPiProvider", () => {
         props: { modalities: { vision: false } },
       }),
     });
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(provider.getModels()[0]?.input).toEqual(["text"]);
   });
 
@@ -70,11 +71,11 @@ describe("createLlamaCppPiProvider", () => {
       baseURL: "http://localhost:8080",
       fetchImpl: fakeLlamaCppFetch(state),
     });
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(provider.getModels()[0]?.input).toEqual(["text", "image"]);
 
     state.failProps = true;
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(provider.getModels()[0]?.input).toEqual(["text", "image"]);
   });
 
@@ -87,11 +88,13 @@ describe("createLlamaCppPiProvider", () => {
       baseURL: "http://localhost:8080",
       fetchImpl: fakeLlamaCppFetch(state),
     });
-    await provider.refreshModels?.();
+    await provider.refreshModels?.(testRefreshContext());
     expect(provider.getModels()).toHaveLength(1);
 
     state.failModels = true;
-    expect(provider.refreshModels?.()).rejects.toThrow("connection refused");
+    expect(provider.refreshModels?.(testRefreshContext())).rejects.toThrow(
+      "connection refused",
+    );
     expect(provider.getModels()).toHaveLength(1);
   });
 });

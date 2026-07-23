@@ -6,11 +6,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-  getOAuthApiKey,
-  type OAuthCredentials,
-} from "@earendil-works/pi-ai/oauth";
+import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 import type { ProviderResponse } from "@/backend/api/providers";
+import { getProviderOAuthAuth } from "@/backend/dev/pi-oauth";
 import { getRegisteredPiProvider } from "@/backend/dev/pi-provider-mod-registry";
 import {
   LOCAL_CHATGPT_PROVIDER_NAME,
@@ -432,18 +430,28 @@ export async function getLocalOAuthApiKey(input: {
   | {
       apiKey: string;
       credentials: OAuthCredentials;
+      baseUrl?: string;
+      headers?: Record<string, string>;
     }
   | undefined
 > {
   const record = localOAuthRecord(input.providerNames, input.storageDir);
   if (!record || record.auth.type !== "oauth") return undefined;
 
-  const result = await getOAuthApiKey(input.providerId, {
-    [input.providerId]: toPiOAuthCredentials(record.auth),
-  });
-  if (!result) return undefined;
+  // pi-ai 0.81: OAuth lives on the provider (Provider.auth.oauth). Refresh
+  // expired tokens through the provider's own flow, then derive request auth
+  // (apiKey plus per-credential baseUrl/headers, e.g. GitHub Copilot).
+  const oauth = getProviderOAuthAuth(input.providerId);
+  if (!oauth) return undefined;
 
-  const nextAuth = toLocalOAuthAuth(result.newCredentials, record.auth);
+  let credentials = toPiOAuthCredentials(record.auth);
+  if (Date.now() >= credentials.expires) {
+    credentials = await oauth.refresh({ type: "oauth", ...credentials });
+  }
+  const modelAuth = await oauth.toAuth({ type: "oauth", ...credentials });
+  if (!modelAuth.apiKey) return undefined;
+
+  const nextAuth = toLocalOAuthAuth(credentials, record.auth);
   if (!localOAuthAuthEquals(nextAuth, record.auth)) {
     setLocalOAuthProvider({
       providerName: record.name,
@@ -452,9 +460,18 @@ export async function getLocalOAuthApiKey(input: {
       storageDir: input.storageDir,
     });
   }
+  const headers = modelAuth.headers
+    ? Object.fromEntries(
+        Object.entries(modelAuth.headers).filter(
+          (entry): entry is [string, string] => entry[1] !== null,
+        ),
+      )
+    : undefined;
   return {
-    apiKey: result.apiKey,
-    credentials: result.newCredentials,
+    apiKey: modelAuth.apiKey,
+    credentials,
+    ...(modelAuth.baseUrl ? { baseUrl: modelAuth.baseUrl } : {}),
+    ...(headers && Object.keys(headers).length > 0 ? { headers } : {}),
   };
 }
 

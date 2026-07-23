@@ -1,5 +1,4 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   DEFAULT_PI_PROVIDER,
   isUnselectedLocalModelHandle,
@@ -14,6 +13,7 @@ import {
   stripRegisteredProviderHandlePrefix,
 } from "@/backend/dev/pi-provider-mod-registry";
 import {
+  builtinCatalogModels,
   getPiProviderSpec,
   isPiProvider,
   listCatalogModelsForProvider,
@@ -130,7 +130,7 @@ function catalogModelSettingsForProviderModel(
   if (!modelId || !isPiProvider(provider)) return undefined;
   const spec = getPiProviderSpec(provider);
   if (!spec.piProvider) return undefined;
-  const model = (getBuiltinModels(spec.piProvider) as Model<Api>[]).find(
+  const model = builtinCatalogModels(spec.piProvider).find(
     (entry) => entry.id === modelId,
   );
   if (!model) return undefined;
@@ -254,6 +254,9 @@ export async function listLocalModels(
     });
   const records = listLocalProviderRecords(storageDir);
   const providerNames = localProviderNamesFromRecords(records);
+  // One collection-wide refresh (pi-ai 0.81 semantics): configured dynamic
+  // providers re-fetch, per-provider failures keep last-known lists.
+  await modelsRuntime.refreshAll();
   const configured = resolveLocalModelConfig(storageDir);
   const models: LocalModelListEntry[] = [];
   const registeredProviders = listRegisteredPiProviders();
@@ -299,7 +302,7 @@ export async function listLocalModels(
       ? getPiProviderSpec(provider)
       : undefined;
     const catalogModel = providerSpec?.piProvider
-      ? (getBuiltinModels(providerSpec.piProvider) as Model<Api>[]).find(
+      ? builtinCatalogModels(providerSpec.piProvider).find(
           (entry) => entry.id === modelId,
         )
       : undefined;
@@ -320,14 +323,9 @@ export async function listLocalModels(
 
   for (const provider of registeredProviders) {
     if (!isRegisteredPiProviderConfigured(provider, records)) continue;
-    // The mod's provider in the Models runtime owns discovery. Refresh
-    // failure retains its last-known list, which is seeded from the static
-    // registration.
-    try {
-      await modelsRuntime.refresh(provider.providerName);
-    } catch {
-      // Keep last-known models.
-    }
+    // The mod's provider in the Models runtime owns discovery; the refresh
+    // above already re-fetched it (failure retains the last-known list,
+    // seeded from the static registration).
     for (const model of modelsRuntime.getModels(provider.providerName)) {
       addModel(provider.providerName, model.id, {
         handle: `${provider.providerName}/${model.id}`,
@@ -373,12 +371,6 @@ export async function listLocalModels(
         }
 
         if (modelsRuntime.isRuntimeManagedProvider(provider)) {
-          try {
-            await modelsRuntime.refresh(provider);
-          } catch {
-            // Refresh failure retains the provider's last-known model list
-            // instead of dropping it from /model.
-          }
           return {
             provider,
             models: [],

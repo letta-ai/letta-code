@@ -1,4 +1,4 @@
-import type { Model, Provider } from "@earendil-works/pi-ai";
+import type { Provider } from "@earendil-works/pi-ai";
 import {
   createLocalEndpointPiProvider,
   type LocalEndpointDiscover,
@@ -13,7 +13,6 @@ export interface LlamaCppPiProviderOptions {
   apiKey?: string;
   fetchImpl?: typeof fetch;
   discoveryTimeoutMs?: number;
-  initialModels?: readonly Model<"openai-completions">[];
 }
 
 interface LlamaCppServerProps {
@@ -101,7 +100,6 @@ export function createLlamaCppPiProvider(
     ...(options.discoveryTimeoutMs
       ? { discoveryTimeoutMs: options.discoveryTimeoutMs }
       : {}),
-    ...(options.initialModels ? { initialModels: options.initialModels } : {}),
     discover: llamaCppDiscover,
   });
 }

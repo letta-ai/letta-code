@@ -1,4 +1,4 @@
-import type { Model, Provider } from "@earendil-works/pi-ai";
+import type { Provider } from "@earendil-works/pi-ai";
 import {
   createLocalEndpointPiProvider,
   type LocalEndpointDiscover,
@@ -14,7 +14,6 @@ export interface OllamaPiProviderOptions {
   apiKey?: string;
   fetchImpl?: typeof fetch;
   discoveryTimeoutMs?: number;
-  initialModels?: readonly Model<"openai-completions">[];
   /** Defaults to the local Ollama provider; Ollama Cloud reuses this factory. */
   providerId?: string;
   name?: string;
@@ -145,7 +144,6 @@ export function createOllamaPiProvider(
     ...(options.discoveryTimeoutMs
       ? { discoveryTimeoutMs: options.discoveryTimeoutMs }
       : {}),
-    ...(options.initialModels ? { initialModels: options.initialModels } : {}),
     discover: ollamaDiscover,
   });
 }

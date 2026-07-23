@@ -3,7 +3,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
 import { getBuiltinModels as getModels } from "@earendil-works/pi-ai/providers/all";
 import {
   applyPiEnvOverrides,
@@ -11,6 +10,7 @@ import {
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
+import { getProviderOAuthAuth } from "@/backend/dev/pi-oauth";
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
@@ -183,7 +183,7 @@ describe("pi model factory", () => {
 
       expect(resolved.provider).toBe("openai-codex");
       expect(resolved.model.id).toBe("gpt-5.6-sol");
-      expect(resolved.model.contextWindow).toBe(372000);
+      expect(resolved.model.contextWindow).toBe(272000);
       expect(getSupportedThinkingLevels(resolved.model)).toContain("max");
       expect(
         reasoningForSettings(
@@ -521,7 +521,7 @@ describe("pi model factory", () => {
         { localProviderAuthStorageDir: storageDir },
       );
 
-      expect(getOAuthProvider("kilo")?.name).toBe("Kilo");
+      expect(getProviderOAuthAuth("kilo")?.name).toBe("Kilo");
       expect(refreshes).toHaveLength(1);
       expect(resolved.apiKey).toBe("oauth:refreshed-token");
       expect(resolved.model).toMatchObject({
