@@ -30,6 +30,12 @@ export interface LocalEndpointDiscoveryContext {
   openAIBaseURL: string;
   /** Models published by the previous refresh, for per-model fallback. */
   lastKnown: ReadonlyMap<string, LocalEndpointModel>;
+  /**
+   * Provider-instance scratch state persisted across refreshes, for
+   * engine-specific caching (e.g. skipping per-model metadata fetches when
+   * the engine reports an unchanged digest).
+   */
+  state: Map<string, unknown>;
   /** Builds the complete pi-ai Model from engine metadata. */
   buildModel(metadata: LocalEndpointModelMetadata): LocalEndpointModel;
 }
@@ -99,6 +105,7 @@ export function createLocalEndpointPiProvider(
   let lastKnown = new Map<string, LocalEndpointModel>(
     (options.initialModels ?? []).map((model) => [model.id, model]),
   );
+  const state = new Map<string, unknown>();
 
   async function fetchJson(
     url: string,
@@ -157,6 +164,7 @@ export function createLocalEndpointPiProvider(
       nativeBaseURL,
       openAIBaseURL,
       lastKnown,
+      state,
       buildModel,
     });
     lastKnown = new Map(models.map((model) => [model.id, model]));

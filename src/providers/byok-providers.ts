@@ -3,8 +3,8 @@
  * Unified module for managing custom LLM provider connections
  */
 
-import { getProviders } from "@earendil-works/pi-ai/compat";
 import { getOAuthProviders } from "@earendil-works/pi-ai/oauth";
+import { getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import {
   checkProviderApiKey as checkProviderApiKeyRequest,
   createOrUpdateProvider as createOrUpdateProviderRequest,
@@ -402,7 +402,7 @@ function localApiKeyProviderIds(): string[] {
   const oauthProviderIds = new Set(
     getOAuthProviders().map((provider) => provider.id),
   );
-  return getProviders().filter(
+  return getBuiltinProviders().filter(
     (provider) =>
       !oauthProviderIds.has(provider) ||
       PI_TUI_API_KEY_OAUTH_PROVIDER_IDS.has(provider),

@@ -26,18 +26,33 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
-function parseOllamaTags(data: unknown): string[] {
+interface OllamaTagEntry {
+  id: string;
+  digest?: string;
+}
+
+function parseOllamaTags(data: unknown): OllamaTagEntry[] {
   if (!data || typeof data !== "object") return [];
   const models = (data as { models?: unknown }).models;
   if (!Array.isArray(models)) return [];
   return models
-    .map((entry) => {
+    .map((entry): OllamaTagEntry | undefined => {
       if (!entry || typeof entry !== "object") return undefined;
-      const record = entry as { name?: unknown; model?: unknown };
+      const record = entry as {
+        name?: unknown;
+        model?: unknown;
+        digest?: unknown;
+      };
       const id = record.name ?? record.model;
-      return typeof id === "string" && id.length > 0 ? id : undefined;
+      if (typeof id !== "string" || id.length === 0) return undefined;
+      return {
+        id,
+        ...(typeof record.digest === "string" && record.digest.length > 0
+          ? { digest: record.digest }
+          : {}),
+      };
     })
-    .filter((id): id is string => id !== undefined);
+    .filter((entry): entry is OllamaTagEntry => entry !== undefined);
 }
 
 function parseOllamaShow(
@@ -76,25 +91,38 @@ function parseOllamaShow(
  */
 const ollamaDiscover: LocalEndpointDiscover = async (context) => {
   const tags = await context.fetchJson(`${context.nativeBaseURL}/api/tags`);
-  const modelIds = parseOllamaTags(tags);
-  return Promise.all(
-    modelIds.map(async (modelId) => {
+  const entries = parseOllamaTags(tags);
+  const digests =
+    (context.state.get("digests") as Map<string, string> | undefined) ??
+    new Map<string, string>();
+  const nextDigests = new Map<string, string>();
+  const models = await Promise.all(
+    entries.map(async ({ id: modelId, digest }) => {
+      // /api/show reads GGUF metadata from disk, which can take seconds for
+      // large models. The tag digest identifies the installed blob, so an
+      // unchanged digest means the last-known published Model is current.
+      const known = context.lastKnown.get(modelId);
+      if (known && digest && digests.get(modelId) === digest) {
+        nextDigests.set(modelId, digest);
+        return known;
+      }
       try {
         const show = await context.fetchJson(
           `${context.nativeBaseURL}/api/show`,
           { body: { model: modelId } },
         );
+        if (digest) nextDigests.set(modelId, digest);
         return context.buildModel(parseOllamaShow(modelId, show));
       } catch {
         // Metadata fetch failed for this one model: keep its last-known
         // published Model rather than guessing capabilities. A never-seen
         // model is published text-only until /api/show succeeds.
-        return (
-          context.lastKnown.get(modelId) ?? context.buildModel({ id: modelId })
-        );
+        return known ?? context.buildModel({ id: modelId });
       }
     }),
   );
+  context.state.set("digests", nextDigests);
+  return models;
 };
 
 /**

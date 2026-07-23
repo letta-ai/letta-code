@@ -4,7 +4,7 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { isContextOverflow } from "@earendil-works/pi-ai/compat";
+import { isContextOverflow } from "@earendil-works/pi-ai";
 import { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
 import {
   applyPiEnvOverrides,

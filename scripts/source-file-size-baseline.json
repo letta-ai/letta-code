@@ -1,7 +1,7 @@
 {
   "src/agent/client-skills.test.ts": 1196,
   "src/agent/memory-git.ts": 2129,
-  "src/backend/local-backend.test.ts": 2534,
+  "src/backend/local-backend.test.ts": 2532,
   "src/backend/local/local-backend.ts": 1031,
   "src/backend/local/local-store.ts": 3594,
   "src/backend/pi-stream-adapter.test.ts": 1304,

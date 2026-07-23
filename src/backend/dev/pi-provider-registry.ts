@@ -1,9 +1,11 @@
 import type { Api, KnownProvider, Model } from "@earendil-works/pi-ai";
+// getEnvApiKey has no non-compat entrypoint yet; it is the one remaining
+// /compat import in the local backend (tracked upstream).
+import { getEnvApiKey } from "@earendil-works/pi-ai/compat";
 import {
-  getEnvApiKey,
-  getModels,
-  getProviders,
-} from "@earendil-works/pi-ai/compat";
+  getBuiltinModels,
+  getBuiltinProviders,
+} from "@earendil-works/pi-ai/providers/all";
 
 export const LOCAL_CHATGPT_PROVIDER_NAME = "chatgpt-plus-pro";
 export const LOCAL_OPENAI_PROVIDER_NAME = "lc-openai";
@@ -219,7 +221,7 @@ function defaultModelForProvider(
   if (piTuiDefault) return `${handlePrefix}${piTuiDefault}`;
   // Match Pi TUI's no-explicit-default behavior for providers omitted from its
   // default map: use catalog order as the generic fallback.
-  const model = getModels(provider)[0] as Model<Api> | undefined;
+  const model = getBuiltinModels(provider)[0] as Model<Api> | undefined;
   return model ? `${handlePrefix}${model.id}` : `${handlePrefix}model`;
 }
 
@@ -331,7 +333,7 @@ const LOCAL_ENDPOINT_PROVIDER_SPECS: readonly PiProviderSpec[] = [
 ];
 
 export const PI_PROVIDER_SPECS: readonly PiProviderSpec[] = [
-  ...getProviders().map(makePiProviderSpec),
+  ...getBuiltinProviders().map(makePiProviderSpec),
   ...LOCAL_ENDPOINT_PROVIDER_SPECS,
 ];
 
@@ -400,7 +402,9 @@ export function isResolvablePiModelHandle(model: string | undefined): boolean {
   const spec = getPiProviderSpec(provider);
   if (!spec.piProvider) return spec.createCustomModel === true;
   const modelId = stripProviderHandlePrefix(model, provider);
-  return getModels(spec.piProvider).some((entry) => entry.id === modelId);
+  return getBuiltinModels(spec.piProvider).some(
+    (entry) => entry.id === modelId,
+  );
 }
 
 export function resolveProviderFromProviderType(
@@ -469,7 +473,7 @@ export function listCatalogModelsForProvider(provider: PiProvider): string[] {
 
   add(spec.defaultModel);
   if (spec.piProvider && spec.catalogModelHandle) {
-    for (const model of getModels(spec.piProvider)) {
+    for (const model of getBuiltinModels(spec.piProvider)) {
       add(spec.catalogModelHandle(model as Model<Api>));
     }
   }

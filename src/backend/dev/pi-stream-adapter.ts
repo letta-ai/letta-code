@@ -9,7 +9,8 @@ import type {
   TSchema,
   Usage,
 } from "@earendil-works/pi-ai";
-import { isContextOverflow, Type } from "@earendil-works/pi-ai/compat";
+import { isContextOverflow, Type } from "@earendil-works/pi-ai";
+
 import type { LocalCompactionStats } from "@/backend/local/compaction";
 import {
   emptyLocalUsage,

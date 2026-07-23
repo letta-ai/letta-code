@@ -1,9 +1,12 @@
 import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
-import { getModel, getModels } from "@earendil-works/pi-ai/compat";
 import {
   getOAuthProvider,
   type OAuthCredentials,
 } from "@earendil-works/pi-ai/oauth";
+import {
+  getBuiltinModel,
+  getBuiltinModels,
+} from "@earendil-works/pi-ai/providers/all";
 import {
   getLocalOAuthApiKey,
   getLocalProviderRecordByName,
@@ -15,11 +18,9 @@ import {
   resolveLocalProviderTimeout,
 } from "@/backend/local/local-provider-timeout";
 import { isRecord } from "@/utils/type-guards";
-import type { LocalPiModelsRuntime } from "./pi-models-runtime";
+import { LocalPiModelsRuntime } from "./pi-models-runtime";
 import {
   getRegisteredPiProvider,
-  type PiProviderModelRegistration,
-  type PiProviderRegistration,
   resolveRegisteredPiProviderFromModelHandle,
   stripRegisteredProviderHandlePrefix,
 } from "./pi-provider-mod-registry";
@@ -36,7 +37,6 @@ import {
 } from "./pi-provider-registry";
 import {
   getRegisteredPiProviderLocalNames,
-  listRegisteredPiProviderModels,
   resolveRegisteredPiProviderRuntimeConnection,
 } from "./registered-pi-provider-runtime";
 
@@ -124,10 +124,10 @@ export interface PiModelFactoryOptions {
   localProviderAuthStorageDir?: string;
   preferredProviderType?: string;
   /**
-   * Per-backend pi-ai Models runtime. Providers managed by the runtime
-   * (currently Ollama) resolve to the complete Model object published by the
-   * provider that discovered it, instead of a Model fabricated from the
-   * model-name string.
+   * Per-backend pi-ai Models runtime. Runtime-managed providers (local
+   * endpoints and mod registrations) resolve to the complete Model object
+   * published by the provider that discovered it; a call-scoped runtime is
+   * created when omitted. Models are never fabricated from name strings.
    */
   modelsRuntime?: LocalPiModelsRuntime;
 }
@@ -329,7 +329,7 @@ function getCatalogModel(
   const spec = getPiProviderSpec(provider);
   const piProvider = spec.piProvider;
   if (!piProvider) return undefined;
-  const catalog = getModels(piProvider);
+  const catalog = getBuiltinModels(piProvider);
   const fallbackModelId = fallbackCatalogModelId(piProvider, modelId);
   const model = (catalog.find((model) => model.id === modelId) ??
     catalog.find((model) => model.id === fallbackModelId)) as
@@ -349,39 +349,6 @@ function fallbackCatalogModelId(
   if (provider !== "openai") return undefined;
   const withoutReleaseDate = modelId.replace(/-\d{4}-\d{2}-\d{2}$/, "");
   return withoutReleaseDate === modelId ? undefined : withoutReleaseDate;
-}
-
-function customOpenAICompatibleModel(input: {
-  provider: PiProvider;
-  modelId: string;
-  baseURL: string;
-  contextWindow?: number;
-  maxTokens?: number;
-}): Model<"openai-completions"> {
-  return {
-    id: input.modelId,
-    name: input.modelId,
-    api: "openai-completions",
-    provider: input.provider,
-    baseUrl: input.baseURL,
-    reasoning:
-      input.modelId.includes("gpt-oss") ||
-      input.modelId.includes("qwen3") ||
-      input.modelId.includes("deepseek-r1"),
-    input:
-      input.modelId.includes("llava") ||
-      input.modelId.includes("vision") ||
-      input.modelId.includes("vl")
-        ? ["text", "image"]
-        : ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: input.contextWindow ?? 128000,
-    maxTokens: input.maxTokens ?? 32000,
-    compat: {
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
-    },
-  };
 }
 
 function withOverrides(
@@ -429,53 +396,10 @@ function withAuthHeader(
   };
 }
 
-function registeredModelToPiModel(input: {
-  providerName: string;
-  config: PiProviderRegistration;
-  model: PiProviderModelRegistration;
-  baseURL?: string;
-  headers?: Record<string, string>;
-}): Model<Api> {
-  const api = input.model.api ?? input.config.api;
-  if (!api) {
-    throw new Error(
-      `Provider "${input.providerName}" model "${input.model.id}" is missing an api`,
-    );
-  }
-  return {
-    id: input.model.id,
-    name: input.model.name,
-    api,
-    provider: input.providerName,
-    baseUrl: input.model.baseUrl ?? input.baseURL ?? "",
-    reasoning: input.model.reasoning,
-    ...(input.model.thinkingLevelMap
-      ? { thinkingLevelMap: input.model.thinkingLevelMap }
-      : {}),
-    input: input.model.input,
-    cost: input.model.cost,
-    contextWindow: input.model.contextWindow,
-    maxTokens: input.model.maxTokens,
-    ...(input.headers ? { headers: input.headers } : {}),
-    ...(input.model.compat ? { compat: input.model.compat } : {}),
-  } as Model<Api>;
-}
-
 function numericSetting(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
-}
-
-function normalizeLocalOpenAICompatibleBaseURL(
-  provider: PiProvider,
-  baseURL: string | undefined,
-): string | undefined {
-  if (!baseURL) return undefined;
-  if (!getPiProviderSpec(provider).localModelDiscovery) return baseURL;
-
-  const trimmed = baseURL.replace(/\/+$/, "");
-  return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 }
 
 function bedrockLocalProviderOptions(record: LocalProviderRecord | undefined): {
@@ -625,36 +549,25 @@ export async function resolvePiModelForAgent(
     registeredProvider?.config.authHeader,
   );
 
-  // With a Models runtime, registered providers publish their models as a
-  // real pi-ai Provider; the per-turn listModels round trip only remains for
-  // legacy callers without a runtime.
-  const registeredModels =
-    registeredProvider && !options.modelsRuntime
-      ? await listRegisteredPiProviderModels(registeredProvider, connection)
-      : undefined;
-  const registeredModel = registeredModels?.find(
-    (model) => model.id === modelId,
-  );
-  if (registeredModels && !registeredModel) {
-    throw new Error(
-      `Unknown model "${modelId}" for registered provider "${provider}".`,
-    );
-  }
+  // Every resolution goes through a pi-ai Models runtime: the backend's
+  // instance when threaded, otherwise a call-scoped one (tests, direct
+  // library use). Runtime-managed providers never fabricate Models.
+  const modelsRuntime =
+    options.modelsRuntime ??
+    new LocalPiModelsRuntime({
+      ...(options.localProviderAuthStorageDir
+        ? { storageDir: options.localProviderAuthStorageDir }
+        : {}),
+    });
 
-  const normalizedBaseURL = spec
-    ? (normalizeLocalOpenAICompatibleBaseURL(spec.id, baseURL) ?? baseURL)
-    : baseURL;
   let model: Model<Api>;
-  if (registeredProvider && options.modelsRuntime) {
+  if (registeredProvider) {
     if (!modelId) {
       throw new Error(
         `No model selected for provider "${provider}". Choose an available model with /model.`,
       );
     }
-    const runtimeModel = await options.modelsRuntime.resolveModel(
-      provider,
-      modelId,
-    );
+    const runtimeModel = await modelsRuntime.resolveModel(provider, modelId);
     if (!runtimeModel) {
       throw new Error(
         `Unknown model "${modelId}" for registered provider "${provider}".`,
@@ -673,40 +586,18 @@ export async function resolvePiModelForAgent(
       contextWindow || maxTokens
         ? withOverrides(oauthModel, { contextWindow, maxTokens })
         : oauthModel;
-  } else if (registeredModel && registeredProvider) {
-    const baseModel = registeredModelToPiModel({
-      providerName: provider,
-      config: registeredProvider.config,
-      model: registeredModel,
-      baseURL: normalizedBaseURL,
-      headers: mergeHeaders(headers, registeredModel.headers),
-    });
-    const oauthModel =
-      oauthCredentials && registeredProvider.config.oauth?.modifyModels
-        ? (registeredProvider.config.oauth.modifyModels(
-            [baseModel],
-            oauthCredentials,
-          )[0] ?? baseModel)
-        : baseModel;
-    model = withOverrides(oauthModel, {
-      contextWindow,
-      maxTokens,
-    });
   } else if (!spec) {
     throw new Error(
       `Unknown model "${modelId}" for provider "${provider}". ` +
         "Register the provider with models before using it.",
     );
-  } else if (options.modelsRuntime?.isRuntimeManagedProvider(spec.id)) {
+  } else if (modelsRuntime.isRuntimeManagedProvider(spec.id)) {
     if (!modelId) {
       throw new Error(
         `No model selected for provider "${provider}". Choose an available model with /model.`,
       );
     }
-    const runtimeModel = await options.modelsRuntime.resolveModel(
-      spec.id,
-      modelId,
-    );
+    const runtimeModel = await modelsRuntime.resolveModel(spec.id, modelId);
     if (!runtimeModel) {
       throw new Error(
         `Unknown model "${modelId}" for provider "${provider}". ` +
@@ -719,19 +610,6 @@ export async function resolvePiModelForAgent(
       contextWindow || maxTokens || headers
         ? withOverrides(runtimeModel, { headers, contextWindow, maxTokens })
         : runtimeModel;
-  } else if (spec.createCustomModel) {
-    if (!modelId) {
-      throw new Error(
-        `No model selected for provider "${provider}". Choose an available model with /model.`,
-      );
-    }
-    model = customOpenAICompatibleModel({
-      provider: spec.id,
-      modelId,
-      baseURL: normalizedBaseURL ?? spec.defaultBaseURL ?? "",
-      contextWindow,
-      maxTokens,
-    });
   } else {
     const catalogModel = getCatalogModel(spec.id, modelId, oauthCredentials);
     if (catalogModel) {
@@ -742,7 +620,7 @@ export async function resolvePiModelForAgent(
         maxTokens,
       });
     } else {
-      const fallback = getModel(
+      const fallback = getBuiltinModel(
         spec.piProvider ?? "openai",
         modelId as never,
       ) as Model<Api> | undefined;

@@ -1,12 +1,12 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { getModels } from "@earendil-works/pi-ai/compat";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import {
   DEFAULT_PI_PROVIDER,
   isUnselectedLocalModelHandle,
   type PiProvider,
   UNSELECTED_LOCAL_MODEL_HANDLE,
 } from "@/backend/dev/pi-model-factory";
-import type { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
+import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import {
   getRegisteredPiProvider,
   listRegisteredPiProviders,
@@ -26,15 +26,10 @@ import {
   resolveProviderFromProviderType,
   stripProviderHandlePrefix,
 } from "@/backend/dev/pi-provider-registry";
-import {
-  isRegisteredPiProviderConfigured,
-  listRegisteredPiProviderModels,
-  resolveRegisteredPiProviderListModelsConnection,
-} from "@/backend/dev/registered-pi-provider-runtime";
+import { isRegisteredPiProviderConfigured } from "@/backend/dev/registered-pi-provider-runtime";
 import {
   type LocalProviderRecord,
   listLocalProviderRecords,
-  localProviderApiKeyFromRecord,
 } from "./local-provider-auth-store";
 
 export interface LocalModelConfig {
@@ -59,162 +54,18 @@ interface LocalModelListEntry {
 
 interface ListLocalModelsOptions {
   fetch?: typeof fetch;
-  discoveryTimeoutMs?: number;
-  autoDetectDiscoveryTimeoutMs?: number;
   /**
-   * Per-backend pi-ai Models runtime. Providers the runtime manages
-   * (currently Ollama) are listed from the provider-published Model objects
-   * instead of the bare-ID discovery below, so /model and turn execution see
-   * the same models and capabilities.
+   * Per-backend pi-ai Models runtime that owns all dynamic model discovery.
+   * When omitted, a call-scoped runtime is created (honoring `fetch`), so
+   * /model and turn execution always read provider-published Model objects.
    */
   modelsRuntime?: LocalPiModelsRuntime;
-}
-
-const LOCAL_MODEL_DISCOVERY_TIMEOUT_MS = 2_000;
-const LOCAL_MODEL_AUTODETECT_DISCOVERY_TIMEOUT_MS = 500;
-
-function trimTrailingSlashes(value: string): string {
-  return value.replace(/\/+$/, "");
-}
-
-function parsePositiveNumber(value: unknown): number | undefined {
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function modelIdsFromOpenAICompatibleResponse(data: unknown): string[] {
-  if (!data || typeof data !== "object") return [];
-  const records = (data as { data?: unknown }).data;
-  if (!Array.isArray(records)) return [];
-  return records
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") return undefined;
-      const id = (entry as { id?: unknown }).id;
-      return typeof id === "string" && id.length > 0 ? id : undefined;
-    })
-    .filter((id): id is string => id !== undefined);
-}
-
-function modelIdsFromOllamaTagsResponse(data: unknown): string[] {
-  if (!data || typeof data !== "object") return [];
-  const records = (data as { models?: unknown }).models;
-  if (!Array.isArray(records)) return [];
-  return records
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") return undefined;
-      const record = entry as { name?: unknown; model?: unknown };
-      const id = record.name ?? record.model;
-      return typeof id === "string" && id.length > 0 ? id : undefined;
-    })
-    .filter((id): id is string => id !== undefined);
-}
-
-async function fetchJsonWithTimeout(
-  fetchImpl: typeof fetch,
-  url: string,
-  options: {
-    apiKey?: string;
-    timeoutMs: number;
-  },
-): Promise<unknown> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
-  try {
-    const headers: Record<string, string> = { Accept: "application/json" };
-    if (options.apiKey && options.apiKey !== "not-needed") {
-      headers.Authorization = `Bearer ${options.apiKey}`;
-    }
-    const response = await fetchImpl(url, {
-      method: "GET",
-      headers,
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    return response.json();
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function openAICompatibleModelListUrls(baseURL: string): string[] {
-  const base = trimTrailingSlashes(baseURL);
-  const urls = new Set<string>();
-  urls.add(`${base}/models`);
-  if (!base.endsWith("/v1")) {
-    urls.add(`${base}/v1/models`);
-  }
-  return [...urls];
-}
-
-function ollamaNativeModelListUrl(baseURL: string): string {
-  const url = new URL(baseURL);
-  url.pathname = url.pathname.replace(/\/?v1\/?$/, "");
-  return `${trimTrailingSlashes(url.toString())}/api/tags`;
-}
-
-async function discoverOpenAICompatibleModelIds(input: {
-  baseURL: string;
-  apiKey?: string;
-  fetchImpl: typeof fetch;
-  timeoutMs: number;
-}): Promise<string[]> {
-  let lastError: unknown;
-  for (const url of openAICompatibleModelListUrls(input.baseURL)) {
-    try {
-      const data = await fetchJsonWithTimeout(input.fetchImpl, url, input);
-      const ids = modelIdsFromOpenAICompatibleResponse(data);
-      if (ids.length > 0) return ids;
-      lastError = new Error("Invalid model list response");
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Failed to discover local models");
-}
-
-async function discoverOllamaModelIds(input: {
-  baseURL: string;
-  apiKey?: string;
-  fetchImpl: typeof fetch;
-  timeoutMs: number;
-}): Promise<string[]> {
-  try {
-    return await discoverOpenAICompatibleModelIds(input);
-  } catch (openAIError) {
-    try {
-      const data = await fetchJsonWithTimeout(
-        input.fetchImpl,
-        ollamaNativeModelListUrl(input.baseURL),
-        input,
-      );
-      const ids = modelIdsFromOllamaTagsResponse(data);
-      if (ids.length > 0) return ids;
-    } catch {
-      // Surface the OpenAI-compatible failure below; it is the endpoint used by
-      // the provider runtime and usually has the more relevant error.
-    }
-    throw openAIError instanceof Error
-      ? openAIError
-      : new Error("Failed to discover Ollama models");
-  }
 }
 
 function localProviderNamesFromRecords(
   records: readonly LocalProviderRecord[],
 ): Set<string> {
   return new Set(records.map((record) => record.name));
-}
-
-function providerRecordFor(
-  provider: PiProvider,
-  records: readonly LocalProviderRecord[],
-): LocalProviderRecord | undefined {
-  const names = getPiProviderSpec(provider).localProviderNames;
-  return records.find((record) => names.includes(record.name));
 }
 
 function isDiscoverableLocalProvider(provider: PiProvider): boolean {
@@ -229,35 +80,6 @@ function isPiProviderForLocalModelHandle(
   provider: PiProvider | string,
 ): provider is PiProvider {
   return isPiProvider(provider);
-}
-
-async function discoverModelIdsForProvider(
-  provider: PiProvider,
-  records: readonly LocalProviderRecord[],
-  options: Required<Omit<ListLocalModelsOptions, "modelsRuntime">>,
-): Promise<string[]> {
-  const spec = getPiProviderSpec(provider);
-  const discovery = spec.localModelDiscovery;
-  if (!discovery) return [];
-
-  const record = providerRecordFor(provider, records);
-  const baseURL =
-    record?.base_url ?? spec.baseUrlEnv?.() ?? spec.defaultBaseURL;
-  if (!baseURL) return [];
-  const apiKey = localProviderApiKeyFromRecord(record) ?? spec.apiKeyEnv?.();
-  const input = {
-    baseURL,
-    apiKey,
-    fetchImpl: options.fetch,
-    timeoutMs: options.discoveryTimeoutMs,
-  };
-
-  switch (discovery) {
-    case "ollama":
-      return discoverOllamaModelIds(input);
-    case "openai-compatible":
-      return discoverOpenAICompatibleModelIds(input);
-  }
 }
 
 export function resolveLocalProvider(storageDir?: string): PiProvider {
@@ -308,7 +130,7 @@ function catalogModelSettingsForProviderModel(
   if (!modelId || !isPiProvider(provider)) return undefined;
   const spec = getPiProviderSpec(provider);
   if (!spec.piProvider) return undefined;
-  const model = (getModels(spec.piProvider) as Model<Api>[]).find(
+  const model = (getBuiltinModels(spec.piProvider) as Model<Api>[]).find(
     (entry) => entry.id === modelId,
   );
   if (!model) return undefined;
@@ -421,6 +243,15 @@ export async function listLocalModels(
   storageDir?: string,
   options: ListLocalModelsOptions = {},
 ) {
+  // The Models runtime owns all dynamic discovery. The backend threads its
+  // instance; direct callers (tests, library use) get a call-scoped one that
+  // honors an injected fetch.
+  const modelsRuntime =
+    options.modelsRuntime ??
+    new LocalPiModelsRuntime({
+      ...(storageDir ? { storageDir } : {}),
+      ...(options.fetch ? { fetchImpl: options.fetch } : {}),
+    });
   const records = listLocalProviderRecords(storageDir);
   const providerNames = localProviderNamesFromRecords(records);
   const configured = resolveLocalModelConfig(storageDir);
@@ -468,7 +299,7 @@ export async function listLocalModels(
       ? getPiProviderSpec(provider)
       : undefined;
     const catalogModel = providerSpec?.piProvider
-      ? (getModels(providerSpec.piProvider) as Model<Api>[]).find(
+      ? (getBuiltinModels(providerSpec.piProvider) as Model<Api>[]).find(
           (entry) => entry.id === modelId,
         )
       : undefined;
@@ -489,54 +320,22 @@ export async function listLocalModels(
 
   for (const provider of registeredProviders) {
     if (!isRegisteredPiProviderConfigured(provider, records)) continue;
-    if (options.modelsRuntime) {
-      // The mod's provider in the Models runtime owns discovery. Refresh
-      // failure retains its last-known list, which is seeded from the static
-      // registration — same fallback the legacy path implemented by hand.
-      try {
-        await options.modelsRuntime.refresh(provider.providerName);
-      } catch {
-        // Keep last-known models.
-      }
-      for (const model of options.modelsRuntime.getModels(
-        provider.providerName,
-      )) {
-        addModel(provider.providerName, model.id, {
-          handle: `${provider.providerName}/${model.id}`,
-          maxContextWindow: model.contextWindow,
-          maxOutputTokens: model.maxTokens,
-          modelEndpointType: provider.providerName,
-          name: model.name,
-        });
-      }
-      continue;
-    }
+    // The mod's provider in the Models runtime owns discovery. Refresh
+    // failure retains its last-known list, which is seeded from the static
+    // registration.
     try {
-      for (const model of await listRegisteredPiProviderModels(
-        provider,
-        await resolveRegisteredPiProviderListModelsConnection(provider, {
-          records,
-          storageDir,
-        }),
-      )) {
-        addModel(provider.providerName, model.id, {
-          handle: `${provider.providerName}/${model.id}`,
-          maxContextWindow: model.contextWindow,
-          maxOutputTokens: model.maxTokens,
-          modelEndpointType: provider.providerName,
-          name: model.name,
-        });
-      }
+      await modelsRuntime.refresh(provider.providerName);
     } catch {
-      for (const model of provider.config.models ?? []) {
-        addModel(provider.providerName, model.id, {
-          handle: `${provider.providerName}/${model.id}`,
-          maxContextWindow: model.contextWindow,
-          maxOutputTokens: model.maxTokens,
-          modelEndpointType: provider.providerName,
-          name: model.name,
-        });
-      }
+      // Keep last-known models.
+    }
+    for (const model of modelsRuntime.getModels(provider.providerName)) {
+      addModel(provider.providerName, model.id, {
+        handle: `${provider.providerName}/${model.id}`,
+        maxContextWindow: model.contextWindow,
+        maxOutputTokens: model.maxTokens,
+        modelEndpointType: provider.providerName,
+        name: model.name,
+      });
     }
   }
 
@@ -553,17 +352,6 @@ export async function listLocalModels(
   ) {
     addModel(configured.provider, configured.model);
   }
-  const discoveryOptions: Required<
-    Omit<ListLocalModelsOptions, "modelsRuntime">
-  > = {
-    fetch: options.fetch ?? fetch,
-    discoveryTimeoutMs:
-      parsePositiveNumber(options.discoveryTimeoutMs) ??
-      LOCAL_MODEL_DISCOVERY_TIMEOUT_MS,
-    autoDetectDiscoveryTimeoutMs:
-      parsePositiveNumber(options.autoDetectDiscoveryTimeoutMs) ??
-      LOCAL_MODEL_AUTODETECT_DISCOVERY_TIMEOUT_MS,
-  };
   const configuredProviders = new Set(listConfiguredPiProviders(providerNames));
   const providersToDiscover = new Set([
     ...configuredProviders,
@@ -571,7 +359,6 @@ export async function listLocalModels(
       isAutoDetectableLocalEndpointProvider(provider.id),
     ).map((provider) => provider.id),
   ]);
-  const modelsRuntime = options.modelsRuntime;
   const discoveryResults = await Promise.all(
     [...providersToDiscover].map(
       async (
@@ -585,7 +372,7 @@ export async function listLocalModels(
           return { provider, models: [] };
         }
 
-        if (modelsRuntime?.isRuntimeManagedProvider(provider)) {
+        if (modelsRuntime.isRuntimeManagedProvider(provider)) {
           try {
             await modelsRuntime.refresh(provider);
           } catch {
@@ -599,25 +386,7 @@ export async function listLocalModels(
           };
         }
 
-        if (!isDiscoverableLocalProvider(provider)) {
-          return { provider, models: listCatalogModelsForProvider(provider) };
-        }
-
-        try {
-          const timeoutMs = configuredProviders.has(provider)
-            ? discoveryOptions.discoveryTimeoutMs
-            : discoveryOptions.autoDetectDiscoveryTimeoutMs;
-          const discoveredModels = await discoverModelIdsForProvider(
-            provider,
-            records,
-            { ...discoveryOptions, discoveryTimeoutMs: timeoutMs },
-          );
-          return { provider, models: discoveredModels };
-        } catch {
-          // Do not surface stale guessed models when a local provider is not
-          // reachable; simply omit that provider's catalog from /model.
-          return { provider, models: [] };
-        }
+        return { provider, models: listCatalogModelsForProvider(provider) };
       },
     ),
   );

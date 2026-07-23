@@ -2,11 +2,14 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModels, getProviders } from "@earendil-works/pi-ai/compat";
 import {
   getOAuthProvider,
   getOAuthProviders,
 } from "@earendil-works/pi-ai/oauth";
+import {
+  getBuiltinModels as getModels,
+  getBuiltinProviders as getProviders,
+} from "@earendil-works/pi-ai/providers/all";
 import {
   clearRegisteredPiProviders,
   registerPiProvider,

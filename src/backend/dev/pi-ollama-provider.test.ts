@@ -92,6 +92,39 @@ describe("createOllamaPiProvider", () => {
     expect(text?.reasoning).toBe(false);
   });
 
+  test("skips /api/show when the tag digest is unchanged", async () => {
+    const state: FakeOllamaState = {
+      tags: { models: [{ name: "qwen3.6:27b", digest: "sha256-aaa" }] },
+      show: {
+        "qwen3.6:27b": {
+          capabilities: ["completion", "vision", "tools", "thinking"],
+        },
+      },
+      requests: [],
+    };
+    const provider = createOllamaPiProvider({
+      baseURL: "http://localhost:11434",
+      fetchImpl: fakeOllamaFetch(state),
+    });
+
+    await provider.refreshModels?.();
+    const showCalls = () =>
+      state.requests.filter((url) => url.endsWith("/api/show")).length;
+    expect(showCalls()).toBe(1);
+
+    // Unchanged digest: refresh reuses the published Model, no metadata read.
+    await provider.refreshModels?.();
+    expect(showCalls()).toBe(1);
+    expect(
+      provider.getModels().find((m) => m.id === "qwen3.6:27b")?.input,
+    ).toEqual(["text", "image"]);
+
+    // New digest (model updated): metadata is re-read.
+    state.tags = { models: [{ name: "qwen3.6:27b", digest: "sha256-bbb" }] };
+    await provider.refreshModels?.();
+    expect(showCalls()).toBe(2);
+  });
+
   test("retains the last-known model list when refresh fails", async () => {
     const state = qwenState();
     const provider = createOllamaPiProvider({
