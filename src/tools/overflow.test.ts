@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { setCurrentAgentId } from "@/agent/context";
 import {
   cleanupOldOverflowFiles,
   ensureOverflowDirectory,
@@ -10,6 +11,10 @@ import {
   OVERFLOW_CONFIG,
   writeOverflowFile,
 } from "@/tools/impl/overflow";
+import {
+  clearSecretsCache,
+  initSecretsFromServer,
+} from "@/utils/secrets-store";
 
 describe("overflow utilities", () => {
   const testWorkingDir = "/test/project/path";
@@ -124,6 +129,29 @@ describe("overflow utilities", () => {
 
       expect(fs.existsSync(filePath)).toBe(true);
       expect(fs.readFileSync(filePath, "utf-8")).toBe(largeContent);
+    });
+
+    test("scrubs agent-scoped secrets before writing", async () => {
+      const agentId = "agent-overflow-scrub-test";
+      const secretValue = "supersecretoverflowvalue";
+      await initSecretsFromServer(agentId, {
+        secrets: [{ key: "OVERFLOW_TOKEN", value: secretValue }],
+      });
+      setCurrentAgentId(agentId);
+      try {
+        const filePath = writeOverflowFile(
+          `before ${secretValue} after`,
+          testWorkingDir,
+          "Bash",
+        );
+
+        const written = fs.readFileSync(filePath, "utf-8");
+        expect(written).not.toContain(secretValue);
+        expect(written).toBe("before OVERFLOW_TOKEN=<REDACTED> after");
+      } finally {
+        setCurrentAgentId(null);
+        clearSecretsCache(agentId);
+      }
     });
   });
 

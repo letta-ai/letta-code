@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { scrubSecretsFromString } from "@/tools/secret-substitution";
 
 /**
  * Configuration options for tool output overflow behavior.
@@ -69,6 +70,11 @@ export function ensureOverflowDirectory(workingDirectory: string): string {
 /**
  * Write tool output to an overflow file.
  *
+ * Secrets are scrubbed before writing: overflow captures tool output before
+ * the model-facing scrub in the tool manager runs, so without this the file
+ * would persist raw secret values that the agent context never sees. The
+ * agent scope resolves from the runtime context, same as the manager scrub.
+ *
  * @param content - Full content to write
  * @param workingDirectory - Current working directory (project root)
  * @param toolName - Name of the tool (optional, for filename)
@@ -89,8 +95,7 @@ export function writeOverflowFile(
 
   const filePath = path.join(overflowDir, filename);
 
-  // Write the content to the file
-  fs.writeFileSync(filePath, content, "utf-8");
+  fs.writeFileSync(filePath, scrubSecretsFromString(content), "utf-8");
 
   return filePath;
 }
