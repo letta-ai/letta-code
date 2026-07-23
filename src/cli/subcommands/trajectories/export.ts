@@ -3,7 +3,6 @@ import {
   mkdir,
   readdir,
   readFile,
-  rename,
   rm,
   stat,
   writeFile,
@@ -14,6 +13,7 @@ import {
   listTrajectories,
   type NormalizationBounds,
   type NormalizedRecord,
+  type NormalizeResult,
   normalizeCheckpoint,
   normalizeTranscript,
   type TrajectoryListing,
@@ -208,108 +208,92 @@ export async function runTrajectoryExport(
     sessions: [],
   };
 
-  // Session files get uniform chronological names (<startedAt>_<index>.json)
-  // whose index is only known once every session has been collected, so write
-  // under a temporary name first and rename after the final sort. Native
-  // session identity stays on the manifest entry's `id`.
-  let pendingSeq = 0;
-  const writeSession = async (
-    source: string,
-    id: string,
-    sourcePath: string,
-    records: NormalizedRecord[],
-    diagnosticsCount: number,
-    counts: { discovered: number; exported: number },
-  ): Promise<void> => {
-    const stats = collectStats(records);
-    if (options.project && !(stats.project ?? "").startsWith(options.project)) {
-      return;
-    }
-    pendingSeq += 1;
-    const file = join(source, `.pending-${pendingSeq}.json`);
-    const body = JSON.stringify(records);
-    await mkdir(join(options.outDir, source), { recursive: true });
-    await writeFile(join(options.outDir, file), body, "utf-8");
-    counts.exported += 1;
-    manifest.sessions.push({
-      source,
-      id,
-      sessionId: sessionHash(source, id),
-      file,
-      sourcePath,
-      ...stats,
-      records: records.length,
-      bytes: Buffer.byteLength(body),
-      diagnostics: diagnosticsCount,
-    });
-  };
-
   const sourceCounts = (source: string) => {
     const counts = manifest.sources[source] ?? { discovered: 0, exported: 0 };
     manifest.sources[source] = counts;
     return counts;
   };
 
-  const exportCheckpoint = async (
-    checkpoint: DeepAgentsCheckpointRef,
+  // Filenames are <startedAt>_<sessionId>.json: the timestamp keeps `ls`
+  // chronological within a source folder, and the hashed native id makes the
+  // name stable across re-exports regardless of what other sessions exist.
+  // Collisions (same source, same native id — e.g. two --transcript files
+  // with the same basename) get a numeric suffix.
+  const usedFiles = new Set<string>();
+  const exportSession = async (
+    source: string,
     id: string,
+    sourcePath: string,
+    normalize: () => Promise<NormalizeResult> | NormalizeResult,
   ): Promise<void> => {
-    const counts = sourceCounts(CHECKPOINT_SOURCE);
+    const counts = sourceCounts(source);
     counts.discovered += 1;
-    const sourcePath = `${checkpoint.path}#${checkpoint.threadId}`;
     try {
-      const { records, diagnostics } = await normalizeCheckpoint({
-        source: CHECKPOINT_SOURCE,
-        checkpoint: { path: checkpoint.path, threadId: checkpoint.threadId },
-        bounds: options.bounds,
-      });
-      await writeSession(
-        CHECKPOINT_SOURCE,
+      const { records, diagnostics } = await normalize();
+      const stats = collectStats(records);
+      if (
+        options.project &&
+        !(stats.project ?? "").startsWith(options.project)
+      ) {
+        return;
+      }
+      const sessionId = sessionHash(source, id);
+      const base = `${fileTimestamp(stats.startedAt)}_${sessionId}`;
+      let file = join(source, `${base}.json`);
+      for (let suffix = 2; usedFiles.has(file); suffix += 1) {
+        file = join(source, `${base}-${suffix}.json`);
+      }
+      usedFiles.add(file);
+      const body = JSON.stringify(records);
+      await mkdir(join(options.outDir, source), { recursive: true });
+      await writeFile(join(options.outDir, file), body, "utf-8");
+      counts.exported += 1;
+      manifest.sessions.push({
+        source,
         id,
+        sessionId,
+        file,
         sourcePath,
-        records,
-        diagnostics.length,
-        counts,
-      );
+        ...stats,
+        records: records.length,
+        bytes: Buffer.byteLength(body),
+        diagnostics: diagnostics.length,
+      });
     } catch (error) {
       manifest.errors.push({
-        source: CHECKPOINT_SOURCE,
+        source,
         sourcePath,
         error: error instanceof Error ? error.message : String(error),
       });
     }
   };
 
-  const exportTranscript = async (
+  const exportCheckpoint = (checkpoint: DeepAgentsCheckpointRef, id: string) =>
+    exportSession(
+      CHECKPOINT_SOURCE,
+      id,
+      `${checkpoint.path}#${checkpoint.threadId}`,
+      () =>
+        normalizeCheckpoint({
+          source: CHECKPOINT_SOURCE,
+          checkpoint: { path: checkpoint.path, threadId: checkpoint.threadId },
+          bounds: options.bounds,
+        }),
+    );
+
+  const exportTranscript = (
     source: string,
     id: string,
     sourcePath: string,
     load: () => Promise<string>,
-  ): Promise<void> => {
-    const counts = sourceCounts(source);
-    counts.discovered += 1;
-    try {
-      const { records, diagnostics } = normalizeTranscript({
+  ) =>
+    exportSession(source, id, sourcePath, async () =>
+      normalizeTranscript({
         source: source as TranscriptTrajectorySource,
         transcript: await load(),
         bounds: options.bounds,
-      });
-      await writeSession(
-        source,
-        id,
-        sourcePath,
-        records,
-        diagnostics.length,
-        counts,
-      );
-    } catch (error) {
-      manifest.errors.push({
-        source,
-        sourcePath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
+      }),
+    );
 
   for (const source of requested) {
     const root =
@@ -353,26 +337,6 @@ export async function runTrajectoryExport(
   manifest.sessions.sort((a, b) =>
     (a.startedAt ?? "").localeCompare(b.startedAt ?? ""),
   );
-
-  // Assign the final uniform filenames: <startedAt>_<sessionId>.json. The
-  // timestamp keeps `ls` chronological within a source folder; the hashed
-  // native id makes the name stable across re-exports regardless of what
-  // other sessions exist. Collisions (same source, same native id — e.g. two
-  // --transcript files with the same basename) get a numeric suffix.
-  const usedFiles = new Set<string>();
-  for (const session of manifest.sessions) {
-    const base = `${fileTimestamp(session.startedAt)}_${session.sessionId}`;
-    let file = join(session.source, `${base}.json`);
-    for (let suffix = 2; usedFiles.has(file); suffix += 1) {
-      file = join(session.source, `${base}-${suffix}.json`);
-    }
-    usedFiles.add(file);
-    await rename(
-      join(options.outDir, session.file),
-      join(options.outDir, file),
-    );
-    session.file = file;
-  }
 
   await writeFile(
     join(options.outDir, MANIFEST_NAME),
