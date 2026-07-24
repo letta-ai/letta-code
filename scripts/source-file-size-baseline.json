@@ -1,10 +1,10 @@
 {
   "src/agent/client-skills.test.ts": 1196,
   "src/agent/memory-git.ts": 2129,
-  "src/backend/local-backend.test.ts": 2534,
-  "src/backend/local/local-backend.ts": 1058,
+  "src/backend/local-backend.test.ts": 2532,
+  "src/backend/local/local-backend.ts": 1030,
   "src/backend/local/local-store.ts": 3594,
-  "src/backend/pi-stream-adapter.test.ts": 1442,
+  "src/backend/pi-stream-adapter.test.ts": 1304,
   "src/cli/app/AppCoordinator.tsx": 5204,
   "src/cli/app/AppView.tsx": 1750,
   "src/cli/app/use-approval-flow.ts": 1163,

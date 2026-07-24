@@ -19,7 +19,7 @@ import type {
   Model,
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { getModel } from "@earendil-works/pi-ai/compat";
+import { getBuiltinModel as getModel } from "@earendil-works/pi-ai/providers/all";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { ConversationMessageCreateBody } from "@/backend";
@@ -1140,7 +1140,7 @@ describe("local backend pi transcript", () => {
       (model) => model.handle,
     );
     const zaiHandles = handles.filter((handle) => handle.startsWith("zai/"));
-    expect(zaiHandles[0]).toBe("zai/glm-5.2");
+    expect(zaiHandles[0]).toBe("zai/glm-5.1");
     expect(handles).toContain("zai/glm-4.5-air");
     expect(handles).toContain("zai/glm-5.2");
     expect(handles).toContain("zai/glm-5.1");
@@ -1230,7 +1230,6 @@ describe("local backend pi transcript", () => {
 
     expect(calls).toEqual(
       expect.arrayContaining([
-        "http://localhost:11434/v1/models",
         "http://localhost:11434/api/tags",
         "http://127.0.0.1:1234/v1/models",
         "http://localhost:8080/v1/models",
@@ -1335,10 +1334,7 @@ describe("local backend pi transcript", () => {
     ).map((model) => model.handle);
 
     expect(calls).toEqual(
-      expect.arrayContaining([
-        "http://localhost:11434/v1/models",
-        "http://localhost:11434/api/tags",
-      ]),
+      expect.arrayContaining(["http://localhost:11434/api/tags"]),
     );
     expect(handles).toContain("ollama/qwen2.5-coder:7b");
     expect(handles).not.toContain("ollama/llama2");
@@ -1504,12 +1500,14 @@ describe("local backend pi transcript", () => {
     const fetchImpl = (async (input: unknown, init?: RequestInit) => {
       const url = typeof input === "string" ? input : String(input);
       calls.push(url);
-      if (url === "https://ollama.com/v1/models") {
+      if (url === "https://ollama.com/api/tags") {
         captured.authorization = new Headers(init?.headers).get(
           "Authorization",
         );
         return new Response(
-          JSON.stringify({ data: [{ id: "rnj-1:8b" }, { id: "glm-5.1" }] }),
+          JSON.stringify({
+            models: [{ name: "rnj-1:8b" }, { name: "glm-5.1" }],
+          }),
           { headers: { "content-type": "application/json" } },
         );
       }
@@ -1521,7 +1519,7 @@ describe("local backend pi transcript", () => {
     ).map((model) => model.handle);
 
     expect(calls).toEqual(
-      expect.arrayContaining(["https://ollama.com/v1/models"]),
+      expect.arrayContaining(["https://ollama.com/api/tags"]),
     );
     expect(captured.authorization).toBe("Bearer ollama-key");
     expect(handles).toContain("ollama-cloud/rnj-1:8b");

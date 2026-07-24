@@ -11,7 +11,8 @@
           "level": "error",
           "options": {
             "paths": {
-              "./telemetry": "Use @/telemetry instead of a relative import — relative paths cause the bundler to emit duplicate module copies, breaking the singleton."
+              "./telemetry": "Use @/telemetry instead of a relative import — relative paths cause the bundler to emit duplicate module copies, breaking the singleton.",
+              "@earendil-works/pi-ai/compat": "pi-ai's /compat entrypoint is its deprecated pre-Models-runtime surface (LET-10131). Use the root entrypoint, @earendil-works/pi-ai/providers/*, or the LocalPiModelsRuntime seam. Sole allowed exception: getEnvApiKey in pi-provider-registry.ts (no non-compat entrypoint upstream yet)."
             }
           }
         }
@@ -30,6 +31,23 @@
       "linter": {
         "rules": {
           "style": { "noDefaultExport": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["src/backend/dev/pi-provider-registry.ts"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "./telemetry": "Use @/telemetry instead of a relative import — relative paths cause the bundler to emit duplicate module copies, breaking the singleton."
+                }
+              }
+            }
+          }
         }
       }
     }

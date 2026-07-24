@@ -3,13 +3,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
-import { getModels } from "@earendil-works/pi-ai/compat";
-import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
+import { getBuiltinModels as getModels } from "@earendil-works/pi-ai/providers/all";
 import {
   applyPiEnvOverrides,
   reasoningForSettings,
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
+import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
+import { getProviderOAuthAuth } from "@/backend/dev/pi-oauth";
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
@@ -182,7 +183,7 @@ describe("pi model factory", () => {
 
       expect(resolved.provider).toBe("openai-codex");
       expect(resolved.model.id).toBe("gpt-5.6-sol");
-      expect(resolved.model.contextWindow).toBe(372000);
+      expect(resolved.model.contextWindow).toBe(272000);
       expect(getSupportedThinkingLevels(resolved.model)).toContain("max");
       expect(
         reasoningForSettings(
@@ -520,14 +521,18 @@ describe("pi model factory", () => {
         { localProviderAuthStorageDir: storageDir },
       );
 
-      expect(getOAuthProvider("kilo")?.name).toBe("Kilo");
+      expect(getProviderOAuthAuth("kilo")?.name).toBe("Kilo");
       expect(refreshes).toHaveLength(1);
       expect(resolved.apiKey).toBe("oauth:refreshed-token");
       expect(resolved.model).toMatchObject({
         id: "kilo-code",
         provider: "kilo",
         baseUrl: "https://refreshed-token.kilo.dev/v1",
-        headers: { Authorization: "Bearer oauth:refreshed-token" },
+      });
+      // Connection auth is per-request state carried in stream options, not
+      // baked into the provider-published Model.
+      expect(resolved.headers).toMatchObject({
+        Authorization: "Bearer oauth:refreshed-token",
       });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
@@ -581,14 +586,30 @@ describe("pi model factory", () => {
 
   test("normalizes wrapped llama.cpp handles and custom base URLs", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-llama-cpp-base-url-"));
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({
+            data: [{ id: "local-model", object: "model" }],
+          });
+        }
+        if (url.pathname === "/props") {
+          return Response.json({});
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
     try {
       await createOrUpdateLocalProvider({
         storageDir,
         providerType: "llama_cpp",
         providerName: "lc-llama-cpp",
         apiKey: "not-needed",
-        baseURL: "http://localhost:8088/",
+        baseURL: `http://localhost:${server.port}/`,
       });
+      const modelsRuntime = new LocalPiModelsRuntime({ storageDir });
 
       const native = await resolvePiModelForAgent(
         "llama.cpp/local-model",
@@ -597,7 +618,7 @@ describe("pi model factory", () => {
           context_window_limit: 128000,
           max_tokens: 32000,
         },
-        { localProviderAuthStorageDir: storageDir },
+        { localProviderAuthStorageDir: storageDir, modelsRuntime },
       );
       const wrapped = await resolvePiModelForAgent(
         "openai/llama.cpp/local-model",
@@ -606,7 +627,7 @@ describe("pi model factory", () => {
           context_window_limit: 128000,
           max_tokens: 32000,
         },
-        { localProviderAuthStorageDir: storageDir },
+        { localProviderAuthStorageDir: storageDir, modelsRuntime },
       );
 
       expect(native.provider).toBe("llama-cpp");
@@ -615,24 +636,38 @@ describe("pi model factory", () => {
         id: "local-model",
         api: "openai-completions",
         provider: "llama-cpp",
-        baseUrl: "http://localhost:8088/v1",
+        baseUrl: `http://localhost:${server.port}/v1`,
         contextWindow: 128000,
         maxTokens: 32000,
       });
     } finally {
+      server.stop(true);
       await rm(storageDir, { recursive: true, force: true });
     }
   });
 
   test("does not let local no-key placeholders mask LM Studio env API keys", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-lmstudio-env-key-"));
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/api/v0/models") {
+          return Response.json({
+            object: "list",
+            data: [{ id: "local-model", object: "model", type: "llm" }],
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
     try {
       await createOrUpdateLocalProvider({
         storageDir,
         providerType: "lmstudio",
         providerName: "lc-lmstudio",
         apiKey: "not-needed",
-        baseURL: "http://localhost:8000/v1",
+        baseURL: `http://localhost:${server.port}/v1`,
       });
 
       await withEnv({ LMSTUDIO_API_KEY: "1234" }, async () => {
@@ -645,6 +680,7 @@ describe("pi model factory", () => {
         expect(resolved.apiKey).toBe("1234");
       });
     } finally {
+      server.stop(true);
       await rm(storageDir, { recursive: true, force: true });
     }
   });
