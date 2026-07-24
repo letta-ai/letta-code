@@ -10,6 +10,7 @@ Run the local App Server using native v2 WebSocket frames.
 
 Options:
   --listen [url]  WebSocket listen URL. Defaults to an available loopback port
+  --openai-api  Serve OpenAI-compatible /v1/models and /v1/chat/completions routes (each agent is a model)
   --ws-auth <mode>  WebSocket auth mode for non-loopback listeners. Supported: capability-token, signed-bearer-token
   --ws-token-file <path>  Absolute path to the capability-token file
   --ws-token-sha256 <hex>  Hex-encoded SHA-256 digest of the capability token
@@ -23,7 +24,8 @@ Examples:
   letta server --listen
   letta server --listen ws://127.0.0.1:4500
   letta server --listen ws://0.0.0.0:4500 --ws-auth capability-token --ws-token-file /path/to/token
-  letta server --listen ws://0.0.0.0:4500 --ws-auth signed-bearer-token --ws-shared-secret-file /path/to/secret`,
+  letta server --listen ws://0.0.0.0:4500 --ws-auth signed-bearer-token --ws-shared-secret-file /path/to/secret
+  letta server --listen ws://127.0.0.1:4500 --openai-api`,
   );
 }
 
@@ -60,6 +62,7 @@ export async function runAppServerSubcommand(argv: string[]): Promise<number> {
       options: {
         help: { type: "boolean", short: "h" },
         listen: { type: "string" },
+        "openai-api": { type: "boolean" },
         "ws-auth": { type: "string" },
         "ws-token-file": { type: "string" },
         "ws-token-sha256": { type: "string" },
@@ -111,16 +114,23 @@ export async function runAppServerSubcommand(argv: string[]): Promise<number> {
           : undefined,
     });
 
+    const openaiApi = parsed.values["openai-api"] === true;
     const handle = await startAppServer({
       listen:
         typeof parsed.values.listen === "string"
           ? parsed.values.listen
           : undefined,
       websocketAuth,
+      openaiApi,
       onListening: (info) => {
         console.log(`Listening on ${info.url}`);
         console.log(`Control: ${info.controlUrl}`);
         console.log(`Stream:  ${info.streamUrl}`);
+        if (openaiApi) {
+          const openaiBase = new URL(info.url);
+          openaiBase.protocol = "http:";
+          console.log(`OpenAI:  ${openaiBase.origin}/v1`);
+        }
       },
       onLog: (message) => {
         console.error(message);

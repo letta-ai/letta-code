@@ -112,7 +112,7 @@ export default function activate(letta) {
 
 For commands with `runWhenBusy: true`, do not return `prompt` while the agent is running. Use the scoped conversation handle directly, update a panel/status if available, and return `{ type: "handled" }` quickly.
 
-Use `ctx.conversation` for conversation operations that should work across local and Constellation backends. The handle is bound to the active conversation and backend for that command invocation, so composed flows like fork-then-send stay on the same backend. Use `letta.client` only for server-specific API calls.
+Use `ctx.conversation` for conversation operations that should work across local and Letta Cloud backends. The handle is bound to the active conversation and backend for that command invocation, so composed flows like fork-then-send stay on the same backend. Use `letta.client` only for server-specific API calls.
 
 Common pattern:
 

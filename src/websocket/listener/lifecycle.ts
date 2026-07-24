@@ -106,6 +106,7 @@ import {
   safeEmitWsEvent,
   setActiveRuntime,
 } from "./runtime";
+import { notifyStreamObserversRuntimeStopped } from "./stream-observers";
 import {
   getListenerTransportKind,
   isListenerTransportOpen,
@@ -113,6 +114,7 @@ import {
   LocalListenerTransport,
 } from "./transport";
 import { handleIncomingMessage } from "./turn";
+import { escapeTaskNotificationSummary } from "./turn-events";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -125,13 +127,6 @@ import {
   scheduleListenerWarmupsAfterSync,
 } from "./warmup";
 import { stopAllWorktreeWatchers } from "./worktree-watcher";
-
-function escapeTaskNotificationSummary(summary: string): string {
-  return summary
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
 
 function trackListenerError(
   errorType: string,
@@ -405,6 +400,29 @@ function getParsedRuntimeScope(
         ? runtime.conversation_id
         : "default",
   };
+}
+
+function terminateControlAfterStreamClose(
+  runtime: ListenerRuntime,
+  streamSocket: WebSocket,
+): void {
+  if (runtime.streamSocket !== streamSocket) {
+    return;
+  }
+  runtime.streamSocket = null;
+  runtime.streamTransport = null;
+
+  const controlSocket = runtime.socket;
+  if (
+    controlSocket &&
+    (controlSocket.readyState === WebSocket.OPEN ||
+      controlSocket.readyState === WebSocket.CONNECTING)
+  ) {
+    // The stream channel has no independent replay or reconnect path. Closing
+    // control tears down the paired session so its normal reconnect/bootstrap
+    // flow restores one coherent connection instead of silently losing frames.
+    controlSocket.terminate();
+  }
 }
 
 async function waitForStreamSocketOpen(
@@ -913,6 +931,7 @@ export function stopRuntime(
   runtime: ListenerRuntime,
   suppressCallbacks: boolean,
 ): void {
+  notifyStreamObserversRuntimeStopped(runtime);
   disposeListenerModAdapter(runtime);
   rejectPendingExternalToolCalls(runtime, "Listener runtime stopped");
   setMessageQueueAdder(null); // Clear bridge for ALL stop paths
@@ -1321,10 +1340,7 @@ export async function attachOpenListenerSocket(
         );
       }
 
-      if (runtime.streamSocket === streamSocket) {
-        runtime.streamSocket = null;
-        runtime.streamTransport = null;
-      }
+      terminateControlAfterStreamClose(runtime, streamSocket);
     });
   }
 
@@ -1731,10 +1747,7 @@ async function connectWithRetry(
         );
       }
 
-      if (runtime.streamSocket === streamSocket) {
-        runtime.streamSocket = null;
-        runtime.streamTransport = null;
-      }
+      terminateControlAfterStreamClose(runtime, streamSocket);
     });
   }
 }

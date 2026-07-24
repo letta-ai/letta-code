@@ -1,6 +1,6 @@
 import { useInput } from "ink";
 import { useEffect, useRef, useState } from "react";
-import { ConstellationLoginView } from "@/auth/ConstellationLoginView";
+import { LettaLoginView } from "@/auth/LettaLoginView";
 import {
   LETTA_CLOUD_API_URL,
   validateCredentialsWithResult,
@@ -9,17 +9,17 @@ import { OverlayShell } from "@/cli/components/OverlayShell";
 import { Text } from "@/cli/components/Text";
 import { settingsManager } from "@/settings-manager";
 
-interface ConstellationLoginOverlayProps {
+interface LettaLoginOverlayProps {
   onComplete: () => void;
   onAlreadyLoggedIn: () => void;
   onCancel: () => void;
 }
 
-export function ConstellationLoginOverlay({
+export function LettaLoginOverlay({
   onComplete,
   onAlreadyLoggedIn,
   onCancel,
-}: ConstellationLoginOverlayProps) {
+}: LettaLoginOverlayProps) {
   const onAlreadyLoggedInRef = useRef(onAlreadyLoggedIn);
   const onCancelRef = useRef(onCancel);
   onAlreadyLoggedInRef.current = onAlreadyLoggedIn;
@@ -113,7 +113,7 @@ export function ConstellationLoginOverlay({
 
   if (preflight.status === "checking") {
     return (
-      <OverlayShell command="/login" title="Login to Constellation">
+      <OverlayShell command="/login" title="Sign in with Letta">
         <Text dimColor>Checking current credentials...</Text>
       </OverlayShell>
     );
@@ -121,7 +121,7 @@ export function ConstellationLoginOverlay({
 
   if (preflight.status === "error") {
     return (
-      <OverlayShell command="/login" title="Login to Constellation">
+      <OverlayShell command="/login" title="Sign in with Letta">
         <Text color="red">✗ Error: {preflight.message}</Text>
         <Text dimColor>Press Esc to cancel</Text>
       </OverlayShell>
@@ -129,8 +129,8 @@ export function ConstellationLoginOverlay({
   }
 
   return (
-    <OverlayShell command="/login" title="Login to Constellation">
-      <ConstellationLoginView onComplete={onComplete} onCancel={onCancel} />
+    <OverlayShell command="/login" title="Sign in with Letta">
+      <LettaLoginView onComplete={onComplete} onCancel={onCancel} />
     </OverlayShell>
   );
 }

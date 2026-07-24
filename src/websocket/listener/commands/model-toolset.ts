@@ -13,6 +13,7 @@ import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "@/agent/modify";
+import { refreshModelCatalog } from "@/agent/remote-model-catalog";
 import { getBackend } from "@/backend";
 import {
   buildByokProviderAliases,
@@ -649,6 +650,11 @@ export async function buildListModelsResponse(
       options.forceRefresh === true ? { forceRefresh: true } : undefined,
     ),
     listProviders(),
+    // Refresh the curated catalog alongside availability so preset entries
+    // reflect cloud-canon data (best-effort; bundled snapshot on failure).
+    refreshModelCatalog(
+      options.forceRefresh === true ? { force: true } : undefined,
+    ),
   ]);
 
   const availableHandles: string[] | null =

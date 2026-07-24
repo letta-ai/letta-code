@@ -1662,7 +1662,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        // Special handling for /login command - sign in to Letta Constellation
+        // Special handling for /login command - sign in with Letta
         if (trimmed === "/login") {
           openOverlay("login", "/login", "Opening login...", "Login dismissed");
           return { submitted: true };
@@ -1695,7 +1695,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             if (!hasEnvApiKey && !hasStoredCloudAuth) {
               cmd.finish(
-                "Already logged out. Run /login to sign into Constellation.",
+                "Already logged out. Run /login to sign in with Letta.",
                 true,
               );
               return { submitted: true };
@@ -3084,20 +3084,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               return { submitted: true };
             }
 
-            let systemPrompt: string | undefined;
-            try {
-              const agent = await getBackend().retrieveAgent(agentId);
-              systemPrompt = agent.system ?? undefined;
-            } catch {
-              // Non-fatal — the arena payload will just omit the system prompt.
-            }
-
             const reflectionConversationId =
               conversationIdRef.current ?? "default";
             const payload = await buildAutoReflectionPayload(
               agentId,
               reflectionConversationId,
-              systemPrompt,
             );
             if (!payload) {
               cmd.fail("No new transcript content to reflect on.");
@@ -3264,17 +3255,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             }
             reflectionReserved = true;
 
-            // Fetch the agent's system prompt so multi-transcript reflection
-            // payloads include the core behavioural instructions (filtered to
-            // strip dynamic content).
-            let systemPrompt: string | undefined;
-            try {
-              const agent = await getBackend().retrieveAgent(agentId);
-              systemPrompt = agent.system ?? undefined;
-            } catch {
-              // Non-fatal — the reflection payload will just omit the system prompt.
-            }
-
             if (reflectArgs.kind === "auto") {
               const autoPayload = await buildReflectionAutoPayload({
                 agentId,
@@ -3336,7 +3316,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                             candidatesPath: autoPayload.candidatesPath,
                           },
                           instruction: reflectArgs.instruction,
-                          systemPrompt,
                         });
                       if (!autoReflectionPayload) {
                         releaseReflectionReservation();
@@ -3452,7 +3431,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       conversationIds: reflectArgs.conversationIds,
                     },
               instruction: reflectArgs.instruction,
-              systemPrompt,
             });
 
             if (!reflectionPayload) {

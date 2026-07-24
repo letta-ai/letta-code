@@ -98,7 +98,6 @@ export async function completeSuccessfulListenerTurn(params: {
         agentId: params.agentId,
         conversationId: params.conversationId,
         reflectionSettings,
-        cachedAgent: params.getCachedAgent(),
       }),
     });
   } catch (error) {

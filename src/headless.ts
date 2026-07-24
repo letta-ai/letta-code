@@ -3742,7 +3742,6 @@ async function runBidirectionalMode(
       triggerSource,
       reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
-      systemPrompt: agent.system ?? undefined,
       recompileByConversation: systemPromptRecompileByConversation,
       recompileQueuedByConversation: queuedSystemPromptRecompileByConversation,
     });

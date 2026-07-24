@@ -11,7 +11,6 @@ import {
   type ReflectionMemoryWorktreeFinalizeResult,
   reflectionIntegrationConsumesTranscript,
 } from "@/agent/memory-worktree";
-import { getBackend } from "@/backend";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import {
   buildReflectionArenaHfChoiceRow,
@@ -644,18 +643,9 @@ async function markCandidateComplete(params: {
 export async function launchReflectionArena(
   options: LaunchReflectionArenaOptions,
 ): Promise<LaunchReflectionArenaResult> {
-  let systemPrompt: string | undefined;
-  try {
-    const agent = await getBackend().retrieveAgent(options.agentId);
-    systemPrompt = agent.system ?? undefined;
-  } catch {
-    // Non-fatal — the arena payload will just omit the system prompt.
-  }
-
   const payload = await buildAutoReflectionPayload(
     options.agentId,
     options.conversationId,
-    systemPrompt,
   );
   if (!payload) {
     return { launched: false, reason: "no_payload" };

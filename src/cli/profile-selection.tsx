@@ -164,7 +164,7 @@ function ProfileSelectionUI({
       if (fetchedOptions.length === 0) {
         const recentAgents = await getRecentAgentOptions({
           includeLocal: false,
-          includeConstellation: true,
+          includeCloud: true,
           limit: RECENT_FALLBACK_DISPLAY,
         });
 

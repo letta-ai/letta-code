@@ -93,9 +93,9 @@ function buildModelSettings(
     settings = moonshotSettings;
   } else if (isOpenAI || isOpenRouter) {
     const openaiSettings: OpenAIModelSettings = {
-      provider_type: "openai",
+      provider_type: isOpenRouter ? "openrouter" : "openai",
       parallel_tool_calls: true,
-    };
+    } as OpenAIModelSettings;
     if (isOpenAICodex) {
       (openaiSettings as Record<string, unknown>).provider_type =
         "chatgpt_oauth";
@@ -570,7 +570,7 @@ async function resolveCurrentModelHandle(
  *   a context window when one is not supplied, matching updateAgentLLMConfig.
  *
  * Routes through the supplied backend's updateAgent/updateConversation, so it
- * works for both local and constellation agents.
+ * works for both local and cloud agents.
  */
 export async function updateModelConfig(
   backend: Backend,

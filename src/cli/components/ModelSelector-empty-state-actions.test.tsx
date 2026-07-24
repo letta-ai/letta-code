@@ -22,7 +22,7 @@ describe("ModelSelector empty-state actions", () => {
       {
         id: "login",
         label: "/login",
-        description: "Sign in to Letta Constellation",
+        description: "Sign in with Letta",
       },
     ]);
   });

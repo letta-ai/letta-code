@@ -13,6 +13,7 @@ import { runModsSubcommand } from "./mods";
 import { asLegacyAppServerCommand, runServerSubcommand } from "./server";
 import { runSetupSubcommand } from "./setup";
 import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
+import { runTrajectoriesSubcommand } from "./trajectories";
 
 async function runUpdateSubcommand(): Promise<number> {
   const { manualUpdate } = await import("@/updater/auto-update");
@@ -103,6 +104,9 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runChannelsSubcommand(rest);
     case "local-backend":
       return runLocalBackendSubcommand(rest);
+    case "trajectories":
+    case "trajectory": // alias
+      return runTrajectoriesSubcommand(rest);
     default:
       return null;
   }

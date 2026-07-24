@@ -64,6 +64,8 @@ export interface IncomingMessage {
   type: "message";
   agentId?: string;
   conversationId?: string;
+  /** Queue this message as its own turn; never merge with other messages. */
+  noCoalesce?: boolean;
   channelTurnSources?: ChannelTurnSource[];
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];
@@ -85,6 +87,22 @@ export type ProcessQueuedTurn = (
   queuedTurn: IncomingMessage,
   dequeuedBatch: DequeuedBatch,
 ) => Promise<void>;
+
+/**
+ * An outbound v2 protocol message as delivered to in-process stream
+ * observers: the pre-envelope message payload plus its resolved runtime
+ * scope (agent/conversation) and optional subagent attribution.
+ */
+export interface ObservedProtocolV2Message {
+  type: string;
+  runtime: { agent_id?: string | null; conversation_id?: string | null };
+  subagent_id?: string;
+  [key: string]: unknown;
+}
+
+export type ListenerStreamObserver = (
+  message: ObservedProtocolV2Message,
+) => void;
 
 export interface PendingExternalToolCall {
   resolve: (result: ExternalToolCallResult) => void;
@@ -265,6 +283,13 @@ export type ListenerRuntime = {
     } | null>
   >;
   lastEmittedStatus: "idle" | "receiving" | "processing" | null;
+  /**
+   * In-process observers of outbound v2 protocol messages (e.g. the
+   * OpenAI-compat HTTP bridge). Each observer receives every emitted message
+   * with its resolved runtime scope, independent of socket routing, so
+   * protocol consumers can exist without owning a WebSocket.
+   */
+  streamObservers?: Set<ListenerStreamObserver>;
   /** Unsubscribe from subagent state store (set on socket open, cleared on close). */
   _unsubscribeSubagentState?: (() => void) | undefined;
   /** Unsubscribe from subagent stream events (set on socket open, cleared on close). */

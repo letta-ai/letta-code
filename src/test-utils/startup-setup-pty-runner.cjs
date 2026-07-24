@@ -125,7 +125,7 @@ async function main() {
     await waitForOutput(
       () => output,
       (current) =>
-        globalThis.stripAnsi(current).includes("> Login to Constellation"),
+        globalThis.stripAnsi(current).includes("> Sign in with Letta"),
       "up-arrow selection change",
     );
 

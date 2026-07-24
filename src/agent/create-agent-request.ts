@@ -20,6 +20,7 @@ import { getDefaultMemoryBlocks } from "./memory";
 import { getDefaultModel, resolveModel } from "./model-catalog";
 import {
   buildPersonalityMemoryBlocks,
+  getPersonalityCreationTags,
   getPersonalityOption,
   type PersonalityId,
   type PersonalityMemoryBlock,
@@ -88,7 +89,13 @@ export async function buildCreateAgentRequestForPersonality(params: {
       personalityId,
       defaultMemoryBlocks,
     ),
-    tags: buildCreatedAgentTags({ enableMemfs: true, tags: extraTags }),
+    tags: buildCreatedAgentTags({
+      enableMemfs: true,
+      tags: [
+        ...getPersonalityCreationTags(personalityId),
+        ...(extraTags ?? []),
+      ],
+    }),
     tools: [...DEFAULT_CREATED_AGENT_BASE_TOOLS],
     include_base_tools: false,
     include_base_tool_rules: false,

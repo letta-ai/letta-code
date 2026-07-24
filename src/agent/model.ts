@@ -32,6 +32,11 @@ export type ModelReasoningEffort =
   | "xhigh"
   | "max";
 
+type ReasoningCapabilities = {
+  supported_efforts?: ModelReasoningEffort[] | null;
+  mandatory?: boolean;
+};
+
 const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "none",
   "minimal",
@@ -113,10 +118,17 @@ function displayRegistryHandleForServiceTier(
 export function getReasoningTierOptionsForHandle(
   modelHandle: string,
   contextWindow?: number,
+  reasoningCapabilities?: ReasoningCapabilities | null,
 ): Array<{
   effort: ModelReasoningEffort;
   modelId: string;
 }> {
+  const providerOptions = getReasoningTierOptionsFromCapabilities(
+    modelHandle,
+    reasoningCapabilities,
+  );
+  if (providerOptions.length > 0) return providerOptions;
+
   const byEffort = new Map<ModelReasoningEffort, string>();
   const registryHandle =
     normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
@@ -163,6 +175,38 @@ export function getReasoningTierOptionsForHandle(
     const modelId = byEffort.get(effort);
     return modelId ? [{ effort, modelId }] : [];
   });
+}
+
+export function getReasoningTierOptionsFromCapabilities(
+  modelHandle: string,
+  capabilities?: ReasoningCapabilities | null,
+): Array<{
+  effort: ModelReasoningEffort;
+  modelId: string;
+}> {
+  if (!capabilities) return [];
+  const supportedEfforts = new Set<ModelReasoningEffort>(
+    capabilities.supported_efforts === null
+      ? REASONING_EFFORT_ORDER
+      : (capabilities.supported_efforts ?? []),
+  );
+  return REASONING_EFFORT_ORDER.filter(
+    (effort) =>
+      supportedEfforts.has(effort) &&
+      !(capabilities.mandatory === true && effort === "none"),
+  ).map((effort) => ({ effort, modelId: modelHandle }));
+}
+
+export function getPreferredReasoningOption<
+  T extends { effort: ModelReasoningEffort },
+>(options: T[], selectedEffort: unknown): T | undefined {
+  return (
+    (typeof selectedEffort === "string"
+      ? options.find((option) => option.effort === selectedEffort)
+      : undefined) ??
+    options.find((option) => option.effort === "medium") ??
+    options[0]
+  );
 }
 
 /**

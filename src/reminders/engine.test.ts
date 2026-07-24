@@ -117,6 +117,18 @@ describe("secrets info reminders", () => {
     expect(updated.appliedReminderIds).toContain("secrets-info");
     expect(text).toContain("The agent secrets were updated");
     expect(text).toContain("$PLAYGROUND_AGENT_ID");
+    expect(text).toContain(
+      "The Letta Code harness secret manager injects only secrets referenced as `$NAME` in a shell command",
+    );
+    expect(text).toContain('os.environ["API_KEY"]');
+    expect(text).toContain("process.env.API_KEY");
+    if (process.platform === "win32") {
+      expect(text).toContain("$env:API_KEY = $API_KEY; python script.py");
+      expect(text).toContain("$env:API_KEY = $API_KEY; bun run script.ts");
+    } else {
+      expect(text).toContain('API_KEY="$API_KEY" python3 script.py');
+      expect(text).toContain('API_KEY="$API_KEY" bun run script.ts');
+    }
   });
 
   test("re-emits secret names after a secrets refresh", async () => {

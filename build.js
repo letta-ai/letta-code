@@ -104,6 +104,18 @@ await Bun.build({
   features: features,
 });
 
+await Bun.build({
+  entrypoints: ["./src/utils/image-resize-worker.ts"],
+  outdir: ".",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "image-resize-worker.js",
+  },
+});
+
 // Add shebang to output file
 const outputPath = join(__dirname, "letta.js");
 let content = readFileSync(outputPath, "utf-8");

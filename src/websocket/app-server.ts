@@ -14,6 +14,11 @@ import {
   policyFromSettings,
 } from "@/websocket/app-server-auth";
 import {
+  handleOpenAiCompatRequest,
+  isOpenAiCompatPath,
+} from "@/websocket/app-server-openai";
+import { closeOpenAiBridgeRuntime } from "@/websocket/app-server-openai-turn";
+import {
   attachOpenListenerSocket,
   createRuntime,
   stopRuntime,
@@ -47,6 +52,8 @@ export interface StartAppServerOptions {
   listen?: string;
   websocketAuth?: AppServerWebsocketAuthSettings;
   connectionName?: string;
+  /** Serve OpenAI-compatible /v1/models and /v1/chat/completions routes. */
+  openaiApi?: boolean;
   onListening?: (info: AppServerListeningInfo) => void;
   onLog?: (message: string) => void;
   /** @internal Test override for the liveness ping cadence (ms). */
@@ -158,6 +165,9 @@ function attachStreamSocket(
     if (activeSession.runtime.streamSocket === socket) {
       activeSession.runtime.streamSocket = null;
       activeSession.runtime.streamTransport = null;
+      // The stream channel cannot replay or reconnect independently. Tear down
+      // control so the client re-establishes one coherent paired session.
+      terminateSocket(activeSession.controlSocket);
     }
   });
 }
@@ -367,6 +377,13 @@ export async function startAppServer(
       response.end("ok\n");
       return;
     }
+    if (options.openaiApi && isOpenAiCompatPath(requestUrl.pathname)) {
+      void handleOpenAiCompatRequest(request, response, {
+        authPolicy,
+        onLog: options.onLog,
+      });
+      return;
+    }
     response.writeHead(404);
     response.end();
   });
@@ -461,6 +478,9 @@ export async function startAppServer(
     ...resolvedInfo,
     close: async () => {
       clearInterval(heartbeatInterval);
+      if (options.openaiApi) {
+        closeOpenAiBridgeRuntime();
+      }
       const streamSocket = clearPendingStream();
       terminateSocket(streamSocket);
       if (activeSession) {

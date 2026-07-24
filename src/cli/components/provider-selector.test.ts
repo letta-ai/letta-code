@@ -6,7 +6,7 @@ import {
   connectedProviderSummary,
   fieldValuesFromProviderPlaceholders,
   filterProviderConfigs,
-  hasConstellationProviderStoreCredentials,
+  hasCloudProviderStoreCredentials,
   isChatGPTUsageProvider,
   isProviderTargetLoading,
   nextProviderConnectionName,
@@ -130,9 +130,9 @@ describe("ProviderSelector local provider API keys", () => {
   });
 });
 
-describe("ProviderSelector Constellation auth gating", () => {
-  test("requires Constellation credentials before showing provider-store tabs", () => {
-    const loggedOut = hasConstellationProviderStoreCredentials(
+describe("ProviderSelector Letta Cloud auth gating", () => {
+  test("requires Letta Cloud credentials before showing provider-store tabs", () => {
+    const loggedOut = hasCloudProviderStoreCredentials(
       { env: {}, refreshToken: undefined },
       {},
     );
@@ -142,21 +142,21 @@ describe("ProviderSelector Constellation auth gating", () => {
     expect(shouldShowProviderStoreTabs(null)).toBe(false);
   });
 
-  test("accepts env, stored API key, or refresh token as Constellation auth", () => {
+  test("accepts env, stored API key, or refresh token as Letta Cloud auth", () => {
     expect(
-      hasConstellationProviderStoreCredentials(
+      hasCloudProviderStoreCredentials(
         { env: {}, refreshToken: undefined },
         { LETTA_API_KEY: "env-key" },
       ),
     ).toBe(true);
     expect(
-      hasConstellationProviderStoreCredentials(
+      hasCloudProviderStoreCredentials(
         { env: { LETTA_API_KEY: "stored-key" }, refreshToken: undefined },
         {},
       ),
     ).toBe(true);
     expect(
-      hasConstellationProviderStoreCredentials(
+      hasCloudProviderStoreCredentials(
         { env: {}, refreshToken: "refresh-token" },
         {},
       ),
@@ -172,9 +172,16 @@ describe("ProviderSelector provider filtering", () => {
     expect(
       filterProviderConfigs(providers, "copilot").map((p) => p.id),
     ).toEqual(["github-copilot"]);
+    // pi-ai 0.81 ships subscription OAuth for radius and xai as well.
     expect(
       filterProviderConfigs(providers, "subscription").map((p) => p.id),
-    ).toEqual(["anthropic-oauth", "openai-codex-oauth", "github-copilot"]);
+    ).toEqual([
+      "anthropic-oauth",
+      "github-copilot",
+      "openai-codex-oauth",
+      "radius",
+      "xai",
+    ]);
   });
 
   test("matches provider aliases and restores all providers for blank query", () => {
@@ -212,6 +219,20 @@ describe("ProviderSelector multi-field defaults", () => {
           placeholder: "sk-...",
           secret: true,
         },
+      ]),
+    ).toEqual({});
+  });
+
+  test("does not prefill optional field placeholders", () => {
+    expect(
+      fieldValuesFromProviderPlaceholders([
+        {
+          key: "baseUrl",
+          label: "Base URL",
+          placeholder: "http://localhost:11434/v1",
+          required: false,
+        },
+        { key: "apiKey", label: "API Key", secret: true, required: false },
       ]),
     ).toEqual({});
   });

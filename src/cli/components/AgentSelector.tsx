@@ -40,7 +40,7 @@ interface AgentSelectorProps {
   allowPinActions?: boolean;
 }
 
-type TabId = "pinned" | "local" | "constellation" | "new";
+type TabId = "pinned" | "local" | "cloud" | "new";
 
 type ViewState =
   | { type: "list" }
@@ -53,7 +53,7 @@ type ViewState =
 
 const ALL_TABS: { id: TabId; label: string }[] = [
   { id: "pinned", label: "Pinned" },
-  { id: "constellation", label: "Constellation" },
+  { id: "cloud", label: "Cloud" },
   { id: "local", label: "Local" },
   { id: "new", label: "New" },
 ];
@@ -61,14 +61,14 @@ const ALL_TABS: { id: TabId; label: string }[] = [
 const TAB_DESCRIPTIONS: Record<TabId, string> = {
   pinned: "Save agents for easy access with /pin or Desktop favorites",
   local: "Local agents from this device",
-  constellation: "Hosted agents from Letta Constellation",
+  cloud: "Agents hosted in Letta Cloud",
   new: "Create a brand new agent",
 };
 
 const TAB_EMPTY_STATES: Record<TabId, string> = {
   pinned: "No pinned or favorite agents, use /pin to save",
   local: "No local agents found",
-  constellation: "No agents found",
+  cloud: "No agents found",
   new: "",
 };
 
@@ -173,7 +173,7 @@ export function AgentSelector({
   // If active tab is no longer visible (e.g. local tab hidden after deleting all local agents), fall back
   useEffect(() => {
     if (activeTab === "local" && !hasLocalAgents) {
-      setActiveTab("constellation");
+      setActiveTab("cloud");
     } else if (activeTab === "new" && !showNewTab) {
       setActiveTab("pinned");
     }
@@ -192,25 +192,17 @@ export function AgentSelector({
   const [localPage, setLocalPage] = useState(0);
   const [localLoaded, setLocalLoaded] = useState(false);
 
-  // Constellation tab state (fetches from API)
-  const [constellationAgents, setConstellationAgents] = useState<AgentState[]>(
-    [],
-  );
-  const [constellationCursor, setConstellationCursor] = useState<string | null>(
-    null,
-  );
-  const [constellationLoading, setConstellationLoading] = useState(false);
-  const [constellationLoadingMore, setConstellationLoadingMore] =
-    useState(false);
-  const [constellationHasMore, setConstellationHasMore] = useState(true);
-  const [constellationSelectedIndex, setConstellationSelectedIndex] =
-    useState(0);
-  const [constellationPage, setConstellationPage] = useState(0);
-  const [constellationError, setConstellationError] = useState<string | null>(
-    null,
-  );
-  const [constellationLoaded, setConstellationLoaded] = useState(false);
-  const [constellationQuery, setConstellationQuery] = useState<string>("");
+  // Cloud tab state (fetches from API)
+  const [cloudAgents, setCloudAgents] = useState<AgentState[]>([]);
+  const [cloudCursor, setCloudCursor] = useState<string | null>(null);
+  const [cloudLoading, setCloudLoading] = useState(false);
+  const [cloudLoadingMore, setCloudLoadingMore] = useState(false);
+  const [cloudHasMore, setCloudHasMore] = useState(true);
+  const [cloudSelectedIndex, setCloudSelectedIndex] = useState(0);
+  const [cloudPage, setCloudPage] = useState(0);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+  const [cloudLoaded, setCloudLoaded] = useState(false);
+  const [cloudQuery, setCloudQuery] = useState<string>("");
   const [hasCloudAuth, setHasCloudAuth] = useState<boolean | null>(null);
 
   // Search state (shared across list tabs)
@@ -267,8 +259,8 @@ export function AgentSelector({
     }
   }, []);
 
-  // Fetch Constellation agents from cloud API directly (not via getBackend, which may be local)
-  const fetchConstellationAgents = useCallback(
+  // Fetch Cloud agents from cloud API directly (not via getBackend, which may be local)
+  const fetchCloudAgents = useCallback(
     async (afterCursor?: string | null, query?: string) => {
       const { getClient } = await import("@/backend/api/client");
       const client = await getClient();
@@ -292,57 +284,52 @@ export function AgentSelector({
     [],
   );
 
-  // Load Constellation agents
-  const loadConstellationAgents = useCallback(
+  // Load Cloud agents
+  const loadCloudAgents = useCallback(
     async (query?: string) => {
-      setConstellationLoading(true);
-      setConstellationError(null);
+      setCloudLoading(true);
+      setCloudError(null);
       try {
-        const result = await fetchConstellationAgents(null, query);
-        setConstellationAgents(result.agents);
-        setConstellationCursor(result.nextCursor);
-        setConstellationHasMore(result.nextCursor !== null);
-        setConstellationPage(0);
-        setConstellationSelectedIndex(0);
-        setConstellationLoaded(true);
-        setConstellationQuery(query || "");
+        const result = await fetchCloudAgents(null, query);
+        setCloudAgents(result.agents);
+        setCloudCursor(result.nextCursor);
+        setCloudHasMore(result.nextCursor !== null);
+        setCloudPage(0);
+        setCloudSelectedIndex(0);
+        setCloudLoaded(true);
+        setCloudQuery(query || "");
       } catch (err) {
-        setConstellationError(err instanceof Error ? err.message : String(err));
+        setCloudError(err instanceof Error ? err.message : String(err));
       } finally {
-        setConstellationLoading(false);
+        setCloudLoading(false);
       }
     },
-    [fetchConstellationAgents],
+    [fetchCloudAgents],
   );
 
-  // Fetch more Constellation agents (pagination)
-  const fetchMoreConstellationAgents = useCallback(async () => {
-    if (
-      constellationLoadingMore ||
-      !constellationHasMore ||
-      !constellationCursor
-    )
-      return;
+  // Fetch more Cloud agents (pagination)
+  const fetchMoreCloudAgents = useCallback(async () => {
+    if (cloudLoadingMore || !cloudHasMore || !cloudCursor) return;
 
-    setConstellationLoadingMore(true);
+    setCloudLoadingMore(true);
     try {
-      const result = await fetchConstellationAgents(
-        constellationCursor,
+      const result = await fetchCloudAgents(
+        cloudCursor,
         activeQuery || undefined,
       );
-      setConstellationAgents((prev) => [...prev, ...result.agents]);
-      setConstellationCursor(result.nextCursor);
-      setConstellationHasMore(result.nextCursor !== null);
+      setCloudAgents((prev) => [...prev, ...result.agents]);
+      setCloudCursor(result.nextCursor);
+      setCloudHasMore(result.nextCursor !== null);
     } catch {
       // Silently fail on pagination errors
     } finally {
-      setConstellationLoadingMore(false);
+      setCloudLoadingMore(false);
     }
   }, [
-    constellationLoadingMore,
-    constellationHasMore,
-    constellationCursor,
-    fetchConstellationAgents,
+    cloudLoadingMore,
+    cloudHasMore,
+    cloudCursor,
+    fetchCloudAgents,
     activeQuery,
   ]);
 
@@ -361,21 +348,21 @@ export function AgentSelector({
     if (activeTab === "local" && !localLoaded && !localLoading) {
       loadLocalAgents();
     } else if (
-      activeTab === "constellation" &&
-      !constellationLoaded &&
-      !constellationLoading &&
+      activeTab === "cloud" &&
+      !cloudLoaded &&
+      !cloudLoading &&
       hasCloudAuth
     ) {
-      loadConstellationAgents();
+      loadCloudAgents();
     }
   }, [
     activeTab,
     localLoaded,
     localLoading,
     loadLocalAgents,
-    constellationLoaded,
-    constellationLoading,
-    loadConstellationAgents,
+    cloudLoaded,
+    cloudLoading,
+    loadCloudAgents,
     hasCloudAuth,
   ]);
 
@@ -387,20 +374,10 @@ export function AgentSelector({
 
   // Reload current tab when search query changes (only if query differs from cached)
   useEffect(() => {
-    if (
-      activeTab === "constellation" &&
-      hasCloudAuth &&
-      activeQuery !== constellationQuery
-    ) {
-      loadConstellationAgents(activeQuery || undefined);
+    if (activeTab === "cloud" && hasCloudAuth && activeQuery !== cloudQuery) {
+      loadCloudAgents(activeQuery || undefined);
     }
-  }, [
-    activeQuery,
-    activeTab,
-    constellationQuery,
-    loadConstellationAgents,
-    hasCloudAuth,
-  ]);
+  }, [activeQuery, activeTab, cloudQuery, loadCloudAgents, hasCloudAuth]);
 
   // Pagination calculations - Pinned (filter out 404 agents)
   const validPinnedAgents = pinnedAgents.filter((p) => p.agent !== null);
@@ -432,17 +409,14 @@ export function AgentSelector({
     localStartIndex + DISPLAY_PAGE_SIZE,
   );
 
-  // Pagination calculations - Constellation
-  const constellationTotalPages = Math.ceil(
-    constellationAgents.length / DISPLAY_PAGE_SIZE,
+  // Pagination calculations - Cloud
+  const cloudTotalPages = Math.ceil(cloudAgents.length / DISPLAY_PAGE_SIZE);
+  const cloudStartIndex = cloudPage * DISPLAY_PAGE_SIZE;
+  const cloudPageAgents = cloudAgents.slice(
+    cloudStartIndex,
+    cloudStartIndex + DISPLAY_PAGE_SIZE,
   );
-  const constellationStartIndex = constellationPage * DISPLAY_PAGE_SIZE;
-  const constellationPageAgents = constellationAgents.slice(
-    constellationStartIndex,
-    constellationStartIndex + DISPLAY_PAGE_SIZE,
-  );
-  const constellationCanGoNext =
-    constellationPage < constellationTotalPages - 1 || constellationHasMore;
+  const cloudCanGoNext = cloudPage < cloudTotalPages - 1 || cloudHasMore;
 
   // Current tab's state (computed)
   const currentLoading =
@@ -450,21 +424,20 @@ export function AgentSelector({
       ? pinnedLoading
       : activeTab === "local"
         ? localLoading
-        : constellationLoading;
-  const currentError =
-    activeTab === "constellation" ? constellationError : null;
+        : cloudLoading;
+  const currentError = activeTab === "cloud" ? cloudError : null;
   const currentAgents =
     activeTab === "pinned"
       ? pinnedPageAgents.map((p) => p.agent).filter(Boolean)
       : activeTab === "local"
         ? localPageAgents
-        : constellationPageAgents;
+        : cloudPageAgents;
   const setCurrentSelectedIndex =
     activeTab === "pinned"
       ? setPinnedSelectedIndex
       : activeTab === "local"
         ? setLocalSelectedIndex
-        : setConstellationSelectedIndex;
+        : setCloudSelectedIndex;
 
   // Submit search
   const submitSearch = useCallback(() => {
@@ -503,7 +476,7 @@ export function AgentSelector({
       // Reload pinned and invalidate cached tabs
       loadPinnedAgents();
       setLocalLoaded(false);
-      setConstellationLoaded(false);
+      setCloudLoaded(false);
     } catch {
       // Stay on confirmation screen on error
     } finally {
@@ -602,8 +575,8 @@ export function AgentSelector({
         if (selected?.id) {
           onSelect(selected.id, "local");
         }
-      } else if (activeTab === "constellation") {
-        const selected = constellationPageAgents[constellationSelectedIndex];
+      } else if (activeTab === "cloud") {
+        const selected = cloudPageAgents[cloudSelectedIndex];
         if (selected?.id) {
           onSelect(selected.id, "api");
         } else if (hasCloudAuth === false) {
@@ -634,9 +607,9 @@ export function AgentSelector({
           setLocalSelectedIndex(0);
         }
       } else {
-        if (constellationPage > 0) {
-          setConstellationPage((prev) => prev - 1);
-          setConstellationSelectedIndex(0);
+        if (cloudPage > 0) {
+          setCloudPage((prev) => prev - 1);
+          setCloudSelectedIndex(0);
         }
       }
     } else if (key.rightArrow) {
@@ -651,20 +624,17 @@ export function AgentSelector({
           setLocalPage((prev) => prev + 1);
           setLocalSelectedIndex(0);
         }
-      } else if (activeTab === "constellation" && constellationCanGoNext) {
-        const nextPageIndex = constellationPage + 1;
+      } else if (activeTab === "cloud" && cloudCanGoNext) {
+        const nextPageIndex = cloudPage + 1;
         const nextStartIndex = nextPageIndex * DISPLAY_PAGE_SIZE;
 
-        if (
-          nextStartIndex >= constellationAgents.length &&
-          constellationHasMore
-        ) {
-          fetchMoreConstellationAgents();
+        if (nextStartIndex >= cloudAgents.length && cloudHasMore) {
+          fetchMoreCloudAgents();
         }
 
-        if (nextStartIndex < constellationAgents.length) {
-          setConstellationPage(nextPageIndex);
-          setConstellationSelectedIndex(0);
+        if (nextStartIndex < cloudAgents.length) {
+          setCloudPage(nextPageIndex);
+          setCloudSelectedIndex(0);
         }
       }
     } else if (
@@ -698,8 +668,7 @@ export function AgentSelector({
         selectedAgentId = selectedAgent?.id ?? null;
         selectedIsLocal = true;
       } else {
-        selectedAgent =
-          constellationPageAgents[constellationSelectedIndex] ?? null;
+        selectedAgent = cloudPageAgents[cloudSelectedIndex] ?? null;
         selectedAgentId = selectedAgent?.id ?? null;
         selectedIsLocal = false;
       }
@@ -727,7 +696,7 @@ export function AgentSelector({
     agent: AgentState,
     _index: number,
     isSelected: boolean,
-    extra?: { backend?: "local" | "constellation" },
+    extra?: { backend?: "local" | "cloud" },
   ) => {
     const isCurrent = agent.id === currentAgentId;
     const isLocalAgent = isLocalAgentId(agent.id);
@@ -748,7 +717,7 @@ export function AgentSelector({
     const displayId = truncateAgentId(agent.id, availableForId);
 
     const backendLabel = extra?.backend
-      ? `${extra.backend === "local" ? "Local" : "Constellation"} · `
+      ? `${extra.backend === "local" ? "Local" : "Cloud"} · `
       : "";
 
     return (
@@ -823,17 +792,15 @@ export function AgentSelector({
     );
   };
 
-  // Render Constellation upsell (shown when not logged in)
-  const renderConstellationUpsell = () => (
+  // Render Cloud upsell (shown when not logged in)
+  const renderCloudUpsell = () => (
     <Box flexDirection="column" paddingLeft={2}>
-      <Text dimColor>
-        Connect to Letta Constellation to see hosted agents here.
-      </Text>
+      <Text dimColor>Sign in with Letta to see your agents here.</Text>
       <Box height={1} />
       <Box flexDirection="column">
         <Text color={colors.selector.itemHighlighted}>{"> /login"}</Text>
         <Box paddingLeft={2}>
-          <Text dimColor>Sign in to Letta Constellation</Text>
+          <Text dimColor>Sign in with Letta</Text>
         </Box>
       </Box>
     </Box>
@@ -895,9 +862,7 @@ export function AgentSelector({
         !currentLoading &&
         (activeTab === "pinned" ||
           (activeTab === "local" && localAgents.length > 0) ||
-          (activeTab === "constellation" &&
-            !constellationError &&
-            constellationAgents.length > 0))
+          (activeTab === "cloud" && !cloudError && cloudAgents.length > 0))
           ? (() => {
               const footerWidth = Math.max(0, terminalWidth - 2);
               if (activeTab === "pinned" && validPinnedAgents.length === 0) {
@@ -919,7 +884,7 @@ export function AgentSelector({
                   ? `Page ${pinnedPage + 1}/${pinnedTotalPages || 1}`
                   : activeTab === "local"
                     ? `Page ${localPage + 1}/${localTotalPages || 1}`
-                    : `Page ${constellationPage + 1}${constellationHasMore ? "+" : `/${constellationTotalPages || 1}`}${constellationLoadingMore ? " (loading...)" : ""}`;
+                    : `Page ${cloudPage + 1}${cloudHasMore ? "+" : `/${cloudTotalPages || 1}`}${cloudLoadingMore ? " (loading...)" : ""}`;
               const deleteHint = allowDelete ? " · Shift+D delete" : "";
               const selectedPinnedAgent =
                 activeTab === "pinned"
@@ -994,20 +959,20 @@ export function AgentSelector({
         </Box>
       )}
 
-      {/* Constellation upsell when not logged in */}
-      {activeTab === "constellation" &&
+      {/* Cloud upsell when not logged in */}
+      {activeTab === "cloud" &&
         !currentLoading &&
         hasCloudAuth === false &&
-        renderConstellationUpsell()}
+        renderCloudUpsell()}
 
       {/* Empty state */}
       {!currentLoading &&
         ((activeTab === "pinned" && validPinnedAgents.length === 0) ||
           (activeTab === "local" && localAgents.length === 0) ||
-          (activeTab === "constellation" &&
-            !constellationError &&
+          (activeTab === "cloud" &&
+            !cloudError &&
             hasCloudAuth &&
-            constellationAgents.length === 0)) && (
+            cloudAgents.length === 0)) && (
           <Box
             flexDirection="column"
             paddingLeft={activeTab === "pinned" ? 2 : 0}
@@ -1041,21 +1006,16 @@ export function AgentSelector({
         </Box>
       )}
 
-      {/* Constellation tab content */}
-      {activeTab === "constellation" &&
-        !constellationLoading &&
-        !constellationError &&
-        constellationAgents.length > 0 && (
+      {/* Cloud tab content */}
+      {activeTab === "cloud" &&
+        !cloudLoading &&
+        !cloudError &&
+        cloudAgents.length > 0 && (
           <Box flexDirection="column">
-            {constellationPageAgents.map((agent, index) =>
-              renderAgentItem(
-                agent,
-                index,
-                index === constellationSelectedIndex,
-                {
-                  backend: "constellation",
-                },
-              ),
+            {cloudPageAgents.map((agent, index) =>
+              renderAgentItem(agent, index, index === cloudSelectedIndex, {
+                backend: "cloud",
+              }),
             )}
           </Box>
         )}
@@ -1116,7 +1076,7 @@ export function AgentSelector({
                     : colors.selector.title
                 }
               >
-                Constellation
+                Cloud
               </Text>
               <Text color={colors.selector.title}> · </Text>
               <Text
@@ -1140,7 +1100,7 @@ export function AgentSelector({
           <Box paddingLeft={2}>
             <Text dimColor>
               {hasCloudAuth
-                ? `Enter create · Ctrl+B switch to ${newAgentBackendMode === "api" ? "Local" : "Constellation"} · Esc cancel`
+                ? `Enter create · Ctrl+B switch to ${newAgentBackendMode === "api" ? "Local" : "Cloud"} · Esc cancel`
                 : "Enter create · Esc cancel"}
             </Text>
           </Box>

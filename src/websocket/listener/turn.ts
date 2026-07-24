@@ -11,6 +11,7 @@ import {
   getRetryDelayMs,
   isEmptyResponseRetryable,
   normalizeStreamErrorTypeToStopReason,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import {
@@ -78,6 +79,7 @@ import {
   updateTurnInputMessagesPreservingOtids,
 } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
+import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
 import { createTurnInputSender } from "./turn-send";
 import { prepareListenerTurn } from "./turn-setup";
 import { setTurnLoopStatus } from "./turn-status";
@@ -86,6 +88,36 @@ import { seedInboundUserTranscriptLines } from "./turn-transcript";
 import type { ConversationRuntime, IncomingMessage } from "./types";
 
 export async function handleIncomingMessage(
+  msg: IncomingMessage,
+  socket: ListenerTransport,
+  runtime: ConversationRuntime,
+  onStatusChange?: (
+    status: "idle" | "receiving" | "processing",
+    connectionId: string,
+  ) => void,
+  connectionId?: string,
+  dequeuedBatchId: string = `batch-direct-${crypto.randomUUID()}`,
+  existingTurnLease?: TurnLease,
+): Promise<void> {
+  // Notify OTID-keyed turn observers (see turn-observers.ts) around the
+  // whole turn, regardless of which dispatch closure invoked it.
+  notifyTurnStarted(msg);
+  try {
+    await handleIncomingMessageInner(
+      msg,
+      socket,
+      runtime,
+      onStatusChange,
+      connectionId,
+      dequeuedBatchId,
+      existingTurnLease,
+    );
+  } finally {
+    notifyTurnFinished(msg);
+  }
+}
+
+async function handleIncomingMessageInner(
   msg: IncomingMessage,
   socket: ListenerTransport,
   runtime: ConversationRuntime,
@@ -505,7 +537,7 @@ export async function handleIncomingMessage(
             turnInput = rebuildTurnInputWithFreshDenials(
               turnInput,
               existingApprovals ?? [],
-              "Auto-denied: stale approval from interrupted session",
+              STALE_APPROVAL_RECOVERY_DENIAL_REASON,
             );
           } catch {
             turnInput = rebuildTurnInputWithFreshDenials(turnInput, [], "");
