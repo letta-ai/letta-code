@@ -1,6 +1,3 @@
-import { appendFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { performance } from "node:perf_hooks";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
@@ -50,6 +47,7 @@ import {
 } from "./device-status-cache";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { listListenerModCommands } from "./mod-commands";
+import { enqueueOutboundFrame, type OutboundFrameClass } from "./outbound-wire";
 import { getConversationPermissionModeState } from "./permission-mode";
 import {
   getConversationRuntime,
@@ -99,28 +97,6 @@ function buildModCommandsField(
   const modCommands = listListenerModCommands(listener, agentId);
   return modCommands.length > 0 ? { mod_commands: modCommands } : {};
 }
-const PROTOCOL_PERF_FLUSH_INTERVAL_MS = 1_000;
-const PROTOCOL_PERF_ENV_VALUES = new Set(["1", "true", "yes"]);
-const PROTOCOL_PERF_ENABLED = PROTOCOL_PERF_ENV_VALUES.has(
-  (process.env.LETTA_LISTENER_PERF ?? "").toLowerCase(),
-);
-const PROTOCOL_PERF_FILE = process.env.LETTA_LISTENER_PERF_FILE?.trim() || null;
-
-type ProtocolPerfBucket = {
-  count: number;
-  bytes: number;
-  stringifyMs: number;
-  sendMs: number;
-  maxBufferedBefore: number;
-  maxBufferedAfter: number;
-};
-
-const protocolPerfBuckets = new Map<string, ProtocolPerfBucket>();
-let protocolPerfFlushTimer: ReturnType<typeof setTimeout> | null = null;
-let protocolPerfWindowStartedAt = 0;
-let protocolPerfFileDirEnsured: string | null = null;
-let protocolPerfFileWarningEmitted = false;
-
 function getProtocolPerfKey(
   message: Omit<
     WsProtocolMessage,
@@ -132,166 +108,6 @@ function getProtocolPerfKey(
     return `${message.type}:${String(delta.message_type ?? "unknown")}`;
   }
   return message.type;
-}
-
-function scheduleProtocolPerfFlush(): void {
-  if (protocolPerfFlushTimer) {
-    return;
-  }
-  protocolPerfFlushTimer = setTimeout(() => {
-    protocolPerfFlushTimer = null;
-    flushProtocolPerfTelemetry();
-  }, PROTOCOL_PERF_FLUSH_INTERVAL_MS);
-  const timerWithUnref = protocolPerfFlushTimer as ReturnType<
-    typeof setTimeout
-  > & {
-    unref?: () => void;
-  };
-  timerWithUnref.unref?.();
-}
-
-function recordProtocolPerfTelemetry(
-  key: string,
-  sample: {
-    bytes: number;
-    stringifyMs: number;
-    sendMs: number;
-    bufferedBefore: number;
-    bufferedAfter: number;
-  },
-): void {
-  if (protocolPerfWindowStartedAt === 0) {
-    protocolPerfWindowStartedAt = Date.now();
-  }
-  const bucket = protocolPerfBuckets.get(key) ?? {
-    count: 0,
-    bytes: 0,
-    stringifyMs: 0,
-    sendMs: 0,
-    maxBufferedBefore: 0,
-    maxBufferedAfter: 0,
-  };
-  bucket.count += 1;
-  bucket.bytes += sample.bytes;
-  bucket.stringifyMs += sample.stringifyMs;
-  bucket.sendMs += sample.sendMs;
-  bucket.maxBufferedBefore = Math.max(
-    bucket.maxBufferedBefore,
-    sample.bufferedBefore,
-  );
-  bucket.maxBufferedAfter = Math.max(
-    bucket.maxBufferedAfter,
-    sample.bufferedAfter,
-  );
-  protocolPerfBuckets.set(key, bucket);
-  scheduleProtocolPerfFlush();
-}
-
-function writeProtocolPerfFile(
-  record: {
-    ts: string;
-    event: "protocol_emit";
-    window_ms: number;
-    totals: ProtocolPerfBucket;
-    buckets: Record<
-      string,
-      ProtocolPerfBucket & {
-        avg_bytes: number;
-        avg_stringify_ms: number;
-        avg_send_ms: number;
-      }
-    >;
-  },
-  fallbackLine: string,
-): void {
-  const filePath = PROTOCOL_PERF_FILE;
-  if (!filePath) {
-    console.error(fallbackLine);
-    return;
-  }
-
-  try {
-    const dir = dirname(filePath);
-    if (protocolPerfFileDirEnsured !== dir) {
-      mkdirSync(dir, { recursive: true });
-      protocolPerfFileDirEnsured = dir;
-    }
-    appendFileSync(filePath, `${JSON.stringify(record)}\n`, {
-      encoding: "utf8",
-    });
-  } catch (error) {
-    if (!protocolPerfFileWarningEmitted) {
-      protocolPerfFileWarningEmitted = true;
-      console.error(
-        `[Listen Perf] Failed to write LETTA_LISTENER_PERF_FILE=${filePath}`,
-        error,
-      );
-    }
-    console.error(fallbackLine);
-  }
-}
-
-function flushProtocolPerfTelemetry(): void {
-  if (protocolPerfBuckets.size === 0) {
-    protocolPerfWindowStartedAt = 0;
-    return;
-  }
-  const windowMs = Math.max(1, Date.now() - protocolPerfWindowStartedAt);
-  const totals: ProtocolPerfBucket = {
-    count: 0,
-    bytes: 0,
-    stringifyMs: 0,
-    sendMs: 0,
-    maxBufferedBefore: 0,
-    maxBufferedAfter: 0,
-  };
-  const buckets: Record<
-    string,
-    ProtocolPerfBucket & {
-      avg_bytes: number;
-      avg_stringify_ms: number;
-      avg_send_ms: number;
-    }
-  > = {};
-  const parts = [...protocolPerfBuckets.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, bucket]) => {
-      totals.count += bucket.count;
-      totals.bytes += bucket.bytes;
-      totals.stringifyMs += bucket.stringifyMs;
-      totals.sendMs += bucket.sendMs;
-      totals.maxBufferedBefore = Math.max(
-        totals.maxBufferedBefore,
-        bucket.maxBufferedBefore,
-      );
-      totals.maxBufferedAfter = Math.max(
-        totals.maxBufferedAfter,
-        bucket.maxBufferedAfter,
-      );
-      buckets[key] = {
-        ...bucket,
-        avg_bytes: bucket.count > 0 ? bucket.bytes / bucket.count : 0,
-        avg_stringify_ms:
-          bucket.count > 0 ? bucket.stringifyMs / bucket.count : 0,
-        avg_send_ms: bucket.count > 0 ? bucket.sendMs / bucket.count : 0,
-      };
-
-      const stringifyMs = bucket.stringifyMs.toFixed(2);
-      const sendMs = bucket.sendMs.toFixed(2);
-      return `${key}{count=${bucket.count},bytes=${bucket.bytes},stringify_ms=${stringifyMs},send_ms=${sendMs},max_buffered_before=${bucket.maxBufferedBefore},max_buffered_after=${bucket.maxBufferedAfter}}`;
-    });
-  writeProtocolPerfFile(
-    {
-      ts: new Date().toISOString(),
-      event: "protocol_emit",
-      window_ms: windowMs,
-      totals,
-      buckets,
-    },
-    `[Listen Perf] protocol_emit window_ms=${windowMs} ${parts.join(" ")}`,
-  );
-  protocolPerfBuckets.clear();
-  protocolPerfWindowStartedAt = 0;
 }
 
 const gitContextCache = new Map<
@@ -609,6 +425,47 @@ function isStreamChannelMessage(type: string): boolean {
   return STREAM_CHANNEL_MESSAGE_TYPES.has(type);
 }
 
+/**
+ * Stream-delta inner message types that must never be dropped under
+ * backpressure: they carry turn state the client cannot reconstruct from a
+ * later delta (tool lifecycle, approvals, terminal reasons). Text/reasoning
+ * deltas are recoverable via sync replay and may be shed instead.
+ */
+const CRITICAL_STREAM_DELTA_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  "approval_request_message",
+  "tool_call_message",
+  "tool_return_message",
+  "stop_reason",
+  "usage_statistics",
+]);
+
+/** Snapshot-style messages: a newer frame for the same scope supersedes a queued one. */
+const COALESCABLE_STATUS_MESSAGE_TYPES: ReadonlySet<string> = new Set([
+  "update_device_status",
+  "update_loop_status",
+  "update_queue",
+  "update_subagent_state",
+]);
+
+function classifyOutboundFrame(
+  message: Omit<
+    WsProtocolMessage,
+    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
+  >,
+): OutboundFrameClass {
+  if (message.type === "stream_delta" && "delta" in message) {
+    const delta = message.delta as { message_type?: unknown };
+    return CRITICAL_STREAM_DELTA_MESSAGE_TYPES.has(
+      String(delta.message_type ?? ""),
+    )
+      ? "critical"
+      : "delta";
+  }
+  return COALESCABLE_STATUS_MESSAGE_TYPES.has(message.type)
+    ? "status"
+    : "critical";
+}
+
 export function emitProtocolV2Message(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -639,52 +496,67 @@ export function emitProtocolV2Message(
   if (!runtimeScope) return;
   notifyStreamObservers(listener, message, runtimeScope);
   if (!isListenerTransportOpen(targetSocket)) return;
-  const eventSeq = nextEventSeq(listener);
-  if (eventSeq === null) return;
-  const outbound: WsProtocolMessage = {
-    ...message,
-    runtime: runtimeScope,
-    event_seq: eventSeq,
-    emitted_at: new Date().toISOString(),
-    idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
-  } as WsProtocolMessage;
-  const perfEnabled = PROTOCOL_PERF_ENABLED;
-  const stringifyStartedAt = perfEnabled ? performance.now() : 0;
-  let payload: string;
-  try {
-    payload = JSON.stringify(outbound);
-    const stringifyMs = perfEnabled
-      ? performance.now() - stringifyStartedAt
-      : 0;
-    const bufferedBefore = perfEnabled ? targetSocket.bufferedAmount : 0;
-    const sendStartedAt = perfEnabled ? performance.now() : 0;
-    targetSocket.send(payload);
-    if (perfEnabled) {
-      recordProtocolPerfTelemetry(getProtocolPerfKey(message), {
-        bytes: Buffer.byteLength(payload),
-        stringifyMs,
-        sendMs: performance.now() - sendStartedAt,
-        bufferedBefore,
-        bufferedAfter: targetSocket.bufferedAmount,
+
+  // The wire layer owns queueing, backpressure, and the actual send. The
+  // envelope is built at drain time so coalesced/dropped frames never consume
+  // an event_seq and the delivered stream stays gap-free.
+  const frameClass = classifyOutboundFrame(message);
+  enqueueOutboundFrame(targetSocket, {
+    typeLabel: message.type,
+    frameClass,
+    ...(frameClass === "status"
+      ? {
+          coalesceKey: `${message.type}:${runtimeScope.agent_id ?? ""}:${runtimeScope.conversation_id ?? ""}`,
+        }
+      : {}),
+    build: () => {
+      const eventSeq = nextEventSeq(listener);
+      if (eventSeq === null) return null;
+      const outbound: WsProtocolMessage = {
+        ...message,
+        runtime: runtimeScope,
+        event_seq: eventSeq,
+        emitted_at: new Date().toISOString(),
+        idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
+      } as WsProtocolMessage;
+      let payload: string;
+      try {
+        payload = JSON.stringify(outbound);
+      } catch (error) {
+        console.error(
+          `[Listen V2] Failed to emit ${message.type} (seq=${eventSeq})`,
+          error,
+        );
+        safeEmitWsEvent("send", "lifecycle", {
+          type: "_ws_send_error",
+          message_type: message.type,
+          event_seq: eventSeq,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      }
+      return {
+        payload,
+        perfKey: getProtocolPerfKey(message),
+        onSent: () => {
+          if (isDebugEnabled()) {
+            console.log(
+              `[Listen V2] Emitting ${message.type} (seq=${eventSeq})`,
+            );
+          }
+          safeEmitWsEvent("send", "protocol", outbound);
+        },
+      };
+    },
+    onSendError: (error) => {
+      console.error(`[Listen V2] Failed to emit ${message.type}`, error);
+      safeEmitWsEvent("send", "lifecycle", {
+        type: "_ws_send_error",
+        message_type: message.type,
+        error: error instanceof Error ? error.message : String(error),
       });
-    }
-  } catch (error) {
-    console.error(
-      `[Listen V2] Failed to emit ${message.type} (seq=${eventSeq})`,
-      error,
-    );
-    safeEmitWsEvent("send", "lifecycle", {
-      type: "_ws_send_error",
-      message_type: message.type,
-      event_seq: eventSeq,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return;
-  }
-  if (isDebugEnabled()) {
-    console.log(`[Listen V2] Emitting ${message.type} (seq=${eventSeq})`);
-  }
-  safeEmitWsEvent("send", "protocol", outbound);
+    },
+  });
 }
 
 export function emitDeviceStatusUpdate(
