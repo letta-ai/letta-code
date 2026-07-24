@@ -18,6 +18,15 @@ import {
 
 const PROVIDER = "modtest-acme";
 
+function oauthAccount(account: string) {
+  return {
+    type: "oauth" as const,
+    access: `access-${account}`,
+    refresh: `refresh-${account}`,
+    expires: Date.now() + 3_600_000,
+  };
+}
+
 function model(
   id: string,
   overrides: Partial<PiProviderModelRegistration> = {},
@@ -182,12 +191,7 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
       setLocalOAuthProvider({
         providerName: PROVIDER,
         providerType: PROVIDER,
-        auth: {
-          type: "oauth",
-          access: "access-a",
-          refresh: "refresh-a",
-          expires: Date.now() + 3_600_000,
-        },
+        auth: oauthAccount("a"),
         storageDir,
       });
       const runtime = new LocalPiModelsRuntime({
@@ -203,12 +207,7 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
       setLocalOAuthProvider({
         providerName: PROVIDER,
         providerType: PROVIDER,
-        auth: {
-          type: "oauth",
-          access: "access-b",
-          refresh: "refresh-b",
-          expires: Date.now() + 3_600_000,
-        },
+        auth: oauthAccount("b"),
         storageDir,
       });
       const turn = await runtime.resolveTurn(PROVIDER, "account-a-model");
@@ -241,16 +240,10 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
           return [model("account-a-model")];
         },
       });
-      const accountAuth = (account: string) => ({
-        type: "oauth" as const,
-        access: `access-${account}`,
-        refresh: `refresh-${account}`,
-        expires: Date.now() + 3_600_000,
-      });
       setLocalOAuthProvider({
         providerName: PROVIDER,
         providerType: PROVIDER,
-        auth: accountAuth("a"),
+        auth: oauthAccount("a"),
         storageDir,
       });
       const runtime = new LocalPiModelsRuntime({
@@ -271,7 +264,7 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
         setLocalOAuthProvider({
           providerName: PROVIDER,
           providerType: PROVIDER,
-          auth: accountAuth("b"),
+          auth: oauthAccount("b"),
           storageDir,
         });
       };
@@ -284,6 +277,122 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
       const turn = await runtime.resolveTurn(PROVIDER, "account-a-model");
       expect(turn.auth?.auth.apiKey).toBe("access-b");
       expect(turn.model).toBeUndefined();
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("switch during the on-miss catalog refresh resolves a consistent pair", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-mod-oauth-refresh-"));
+    const failingFetch = (async () => {
+      throw new Error("no local endpoint in tests");
+    }) as unknown as typeof fetch;
+    try {
+      // The login to account B completes while the on-miss refresh is
+      // running: the fresh catalog then reflects B while auth was already
+      // resolved as A — the mirror image of the auth-read race.
+      let switchAccounts: (() => void) | undefined = () => {
+        switchAccounts = undefined;
+        setLocalOAuthProvider({
+          providerName: PROVIDER,
+          providerType: PROVIDER,
+          auth: oauthAccount("b"),
+          storageDir,
+        });
+      };
+      registerPiProvider(PROVIDER, {
+        api: "openai-completions",
+        baseUrl: "https://api.acme.test/v1",
+        oauth: {
+          login: async () => {
+            throw new Error("not used in this test");
+          },
+          refreshToken: async (credentials) => credentials,
+          getApiKey: (credentials) => credentials.access,
+        },
+        listModels: (connection) => {
+          const account = String(connection.apiKey).replace("access-", "");
+          switchAccounts?.();
+          return [model(`catalog-${account}`)];
+        },
+      });
+      setLocalOAuthProvider({
+        providerName: PROVIDER,
+        providerType: PROVIDER,
+        auth: oauthAccount("a"),
+        storageDir,
+      });
+      const runtime = new LocalPiModelsRuntime({
+        storageDir,
+        fetchImpl: failingFetch,
+      });
+
+      const turn = await runtime.resolveTurn(PROVIDER, "catalog-b");
+      // Resolution retries until auth and catalog come from one identity.
+      expect(turn.auth?.auth.apiKey).toBe("access-b");
+      expect(turn.model?.id).toBe("catalog-b");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("retry exhaustion fails closed instead of returning a mismatched pair", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-mod-oauth-flap-"));
+    const failingFetch = (async () => {
+      throw new Error("no local endpoint in tests");
+    }) as unknown as typeof fetch;
+    try {
+      registerPiProvider(PROVIDER, {
+        api: "openai-completions",
+        baseUrl: "https://api.acme.test/v1",
+        oauth: {
+          login: async () => {
+            throw new Error("not used in this test");
+          },
+          refreshToken: async (credentials) => credentials,
+          getApiKey: (credentials) => credentials.access,
+        },
+        listModels: (connection) => [
+          model(`catalog-${String(connection.apiKey).replace("access-", "")}`),
+        ],
+      });
+      setLocalOAuthProvider({
+        providerName: PROVIDER,
+        providerType: PROVIDER,
+        auth: oauthAccount("a"),
+        storageDir,
+      });
+      const runtime = new LocalPiModelsRuntime({
+        storageDir,
+        fetchImpl: failingFetch,
+      });
+      await runtime.refreshAll();
+      expect(runtime.getModel(PROVIDER, "catalog-a")).toBeDefined();
+
+      // Pathological flapping: a different account lands after every
+      // credential read, so no attempt ever observes one stable identity.
+      // Resolution must fail closed rather than return whatever model/auth
+      // pairing the final attempt happened to assemble.
+      let generation = 0;
+      const internals = runtime as unknown as { credentials: CredentialStore };
+      const read = internals.credentials.read.bind(internals.credentials);
+      internals.credentials.read = async (providerId) => {
+        const credential = await read(providerId);
+        if (providerId === PROVIDER) {
+          generation += 1;
+          setLocalOAuthProvider({
+            providerName: PROVIDER,
+            providerType: PROVIDER,
+            auth: oauthAccount(`gen${generation}`),
+            storageDir,
+          });
+        }
+        return credential;
+      };
+
+      await expect(runtime.resolveTurn(PROVIDER, "catalog-a")).rejects.toThrow(
+        "changed repeatedly during turn resolution",
+      );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

@@ -281,7 +281,9 @@ export class LocalPiModelsRuntime {
    * `Models.getAuth` performs its own credential read — so after resolving,
    * verify the stored identity is still the one the invalidation snapshot
    * validated the catalog against. If it moved mid-flight, invalidate and
-   * retry with the new identity.
+   * retry with the new identity; if it is still moving when the retry
+   * budget is exhausted, fail closed (throw) rather than return a pair
+   * whose auth and catalog may come from different accounts.
    */
   async resolveTurn(
     providerId: string,
@@ -306,10 +308,13 @@ export class LocalPiModelsRuntime {
         }
         model = lookup();
       }
-      if (
-        attempt < MAX_TURN_RESOLUTION_RETRIES &&
-        (await this.credentialIdentityMovedSinceInvalidation(providerId))
-      ) {
+      if (await this.credentialIdentityMovedSinceInvalidation(providerId)) {
+        if (attempt >= MAX_TURN_RESOLUTION_RETRIES) {
+          throw new Error(
+            `Credentials for provider "${providerId}" changed repeatedly ` +
+              "during turn resolution; retry the request.",
+          );
+        }
         continue;
       }
       return { model, auth };
