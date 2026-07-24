@@ -166,7 +166,7 @@ test("prose-heavy tables fall back to records when columns become cramped", () =
   expect(layoutMarkdownTable(issue, 42).mode).toBe("stacked-records");
 });
 
-test("rendered tables use Codex-style row separators instead of boxes", async () => {
+test("rendered tables use borderless row separators instead of boxes", async () => {
   const output = await renderMarkdown(
     [
       "| Name | Status |",
