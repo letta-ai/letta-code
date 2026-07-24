@@ -24,7 +24,10 @@ function makeLocalTransport(options?: { bufferedAmount?: number }) {
 }
 
 /** WebSocket-kind fake (no `kind` field): supports terminate for kill tests. */
-function makeWsTransport(options?: { bufferedAmount?: number }) {
+function makeWsTransport(options?: {
+  bufferedAmount?: number;
+  bufferedAmountAfterSend?: number;
+}) {
   const sent: string[] = [];
   let terminated = false;
   const transport = {
@@ -32,6 +35,9 @@ function makeWsTransport(options?: { bufferedAmount?: number }) {
     bufferedAmount: options?.bufferedAmount ?? 0,
     send: (data: string) => {
       sent.push(data);
+      if (options?.bufferedAmountAfterSend !== undefined) {
+        transport.bufferedAmount = options.bufferedAmountAfterSend;
+      }
     },
     terminate: () => {
       terminated = true;
@@ -63,7 +69,7 @@ describe("outbound wire queue", () => {
     const { transport, sent } = makeLocalTransport();
 
     enqueueOutboundFrame(transport, frame("a", "critical"));
-    enqueueOutboundFrame(transport, frame("b", "delta"));
+    enqueueOutboundFrame(transport, frame("b", "critical"));
     enqueueOutboundFrame(transport, frame("c", "status"));
 
     expect(sent).toEqual(["a", "b", "c"]);
@@ -93,7 +99,7 @@ describe("outbound wire queue", () => {
       bufferedAmount: OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES,
     });
 
-    enqueueOutboundFrame(transport, frame("queued", "delta"));
+    enqueueOutboundFrame(transport, frame("queued", "critical"));
     expect(sent).toEqual([]);
     expect(getOutboundQueueStats(transport).queuedFrames).toBe(1);
 
@@ -114,7 +120,7 @@ describe("outbound wire queue", () => {
       ...frame("loop:v1", "status"),
       coalesceKey: "update_loop_status:agent:conv",
     });
-    enqueueOutboundFrame(transport, frame("delta:1", "delta"));
+    enqueueOutboundFrame(transport, frame("delta:1", "critical"));
     enqueueOutboundFrame(transport, {
       ...frame("loop:v2", "status"),
       coalesceKey: "update_loop_status:agent:conv",
@@ -134,29 +140,24 @@ describe("outbound wire queue", () => {
     expect(sent).toEqual(["loop:v2", "delta:1", "device:v1"]);
   });
 
-  test("drops oldest delta frames first when the queue overflows", async () => {
-    const { transport, sent, raw } = makeLocalTransport({
+  test("terminates instead of dropping unreplayable frames on overflow", () => {
+    const { transport, wasTerminated } = makeWsTransport({
       bufferedAmount: OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES,
     });
 
-    enqueueOutboundFrame(transport, frame("critical:1", "critical"));
     for (let i = 0; i < OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES; i += 1) {
-      enqueueOutboundFrame(transport, frame(`delta:${i}`, "delta"));
+      enqueueOutboundFrame(
+        transport,
+        frame(`status:${i}`, "status", { coalesceKey: `scope:${i}` }),
+      );
     }
+    enqueueOutboundFrame(transport, frame("stream-delta", "critical"));
 
-    const stats = getOutboundQueueStats(transport);
-    expect(stats.queuedFrames).toBe(OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES);
-    expect(stats.droppedDelta).toBe(1);
-    expect(stats.killed).toBe(false);
-
-    raw.bufferedAmount = 0;
-    await new Promise((resolve) =>
-      setTimeout(resolve, OUTBOUND_QUEUE_LIMITS.DRAIN_POLL_MS + 20),
-    );
-    // The critical frame survived; the oldest delta (delta:0) was shed.
-    expect(sent[0]).toBe("critical:1");
-    expect(sent).not.toContain("delta:0");
-    expect(sent).toContain("delta:1");
+    expect(wasTerminated()).toBe(true);
+    expect(getOutboundQueueStats(transport)).toEqual({
+      queuedFrames: 0,
+      killed: true,
+    });
   });
 
   test("terminates a websocket transport stalled past the kill threshold", () => {
@@ -170,6 +171,19 @@ describe("outbound wire queue", () => {
     const stats = getOutboundQueueStats(transport);
     expect(stats.killed).toBe(true);
     expect(stats.queuedFrames).toBe(0);
+  });
+
+  test("enforces the kill threshold after the final socket write", () => {
+    const { transport, sent, wasTerminated } = makeWsTransport({
+      bufferedAmountAfterSend:
+        OUTBOUND_QUEUE_LIMITS.KILL_THRESHOLD_BUFFERED_BYTES,
+    });
+
+    enqueueOutboundFrame(transport, frame("final", "critical"));
+
+    expect(sent).toEqual(["final"]);
+    expect(wasTerminated()).toBe(true);
+    expect(getOutboundQueueStats(transport).killed).toBe(true);
   });
 
   test("terminates when the queue overflows with only critical frames", () => {
@@ -197,7 +211,7 @@ describe("outbound wire queue", () => {
       },
     } as ListenerTransport;
 
-    enqueueOutboundFrame(transport, frame("stranded", "delta"));
+    enqueueOutboundFrame(transport, frame("stranded", "critical"));
     expect(getOutboundQueueStats(transport).queuedFrames).toBe(1);
 
     open = false;
@@ -208,7 +222,7 @@ describe("outbound wire queue", () => {
     expect(getOutboundQueueStats(transport).queuedFrames).toBe(0);
   });
 
-  test("a throwing send reports the error and continues with later frames", () => {
+  test("a throwing send kills the queue instead of skipping a frame", () => {
     const sent: string[] = [];
     let sendErrors = 0;
     const transport = {
@@ -230,6 +244,7 @@ describe("outbound wire queue", () => {
     enqueueOutboundFrame(transport, frame("after", "critical"));
 
     expect(sendErrors).toBe(1);
-    expect(sent).toEqual(["after"]);
+    expect(sent).toEqual([]);
+    expect(getOutboundQueueStats(transport).killed).toBe(true);
   });
 });

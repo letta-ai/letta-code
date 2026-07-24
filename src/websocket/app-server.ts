@@ -165,6 +165,9 @@ function attachStreamSocket(
     if (activeSession.runtime.streamSocket === socket) {
       activeSession.runtime.streamSocket = null;
       activeSession.runtime.streamTransport = null;
+      // The stream channel cannot replay or reconnect independently. Tear down
+      // control so the client re-establishes one coherent paired session.
+      terminateSocket(activeSession.controlSocket);
     }
   });
 }

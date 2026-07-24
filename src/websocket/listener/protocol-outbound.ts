@@ -425,20 +425,6 @@ function isStreamChannelMessage(type: string): boolean {
   return STREAM_CHANNEL_MESSAGE_TYPES.has(type);
 }
 
-/**
- * Stream-delta inner message types that must never be dropped under
- * backpressure: they carry turn state the client cannot reconstruct from a
- * later delta (tool lifecycle, approvals, terminal reasons). Text/reasoning
- * deltas are recoverable via sync replay and may be shed instead.
- */
-const CRITICAL_STREAM_DELTA_MESSAGE_TYPES: ReadonlySet<string> = new Set([
-  "approval_request_message",
-  "tool_call_message",
-  "tool_return_message",
-  "stop_reason",
-  "usage_statistics",
-]);
-
 /** Snapshot-style messages: a newer frame for the same scope supersedes a queued one. */
 const COALESCABLE_STATUS_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   "update_device_status",
@@ -453,14 +439,6 @@ function classifyOutboundFrame(
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
   >,
 ): OutboundFrameClass {
-  if (message.type === "stream_delta" && "delta" in message) {
-    const delta = message.delta as { message_type?: unknown };
-    return CRITICAL_STREAM_DELTA_MESSAGE_TYPES.has(
-      String(delta.message_type ?? ""),
-    )
-      ? "critical"
-      : "delta";
-  }
   return COALESCABLE_STATUS_MESSAGE_TYPES.has(message.type)
     ? "status"
     : "critical";

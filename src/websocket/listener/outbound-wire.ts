@@ -10,17 +10,15 @@
  * Design (borrowed from codex app-server, adapted to our topology — see
  * LET-10138): producers never interact with socket state; they enqueue into a
  * bounded queue drained by this module against `bufferedAmount` watermarks.
- * Codex disconnects a slow client on overflow, which works for N direct
- * clients; the listener has a single socket to the cloud relay, so overflow
- * degrades by frame class instead — snapshot ("status") frames coalesce
- * latest-wins, streaming text ("delta") frames drop oldest-first, and
- * turn-critical frames are never dropped. A socket stalled past the kill
- * threshold is terminated so the existing reconnect + sync-replay machinery
- * can restore a clean stream.
+ * Snapshot ("status") frames coalesce latest-wins while queued. All other
+ * frames are retained while the connection remains viable. If the bounded
+ * queue fills or the socket stalls, the transport is terminated instead of
+ * silently dropping stream deltas that the listener cannot replay. This
+ * follows Codex's disconnect-slow-client policy.
  *
  * Frames are serialized (and take their event_seq) inside `build()` at drain
- * time, so coalesced or dropped frames never consume sequence numbers and the
- * wire stream stays gap-free.
+ * time, so frames superseded or skipped before build do not consume sequence
+ * numbers.
  */
 
 import { appendFileSync, mkdirSync } from "node:fs";
@@ -33,16 +31,14 @@ import {
 } from "./transport";
 
 /**
- * How a frame degrades under backpressure.
- * - "critical": never dropped (tool returns, approvals, stop reasons,
- *   command responses). If only critical frames remain and the queue is
- *   still over capacity, the transport is considered stalled and killed.
+ * How a frame behaves under backpressure.
+ * - "critical": never dropped. If the queue reaches capacity, the transport
+ *   is considered stalled and terminated.
  * - "status": snapshot semantics — a newer frame with the same coalesceKey
  *   fully supersedes a queued one (loop status, device status, queue state).
- * - "delta": streaming text chunks; oldest are dropped first under pressure.
- *   The client recovers full content on the next sync replay.
+ *   A status frame without a newer replacement is still never dropped.
  */
-export type OutboundFrameClass = "critical" | "status" | "delta";
+export type OutboundFrameClass = "critical" | "status";
 
 export interface OutboundFrame {
   /** Message type label for logs/telemetry (not parsed). */
@@ -64,13 +60,11 @@ export interface OutboundFrame {
 /**
  * Queue and watermark limits.
  *
- * MAX_QUEUED_FRAMES follows codex's bounded-channel approach (they use 128
+ * MAX_QUEUED_FRAMES follows Codex's bounded-channel approach (they use 128
  * per connection); we allow more headroom because one relay socket carries
  * every conversation and status frames coalesce away. HIGH_WATERMARK pauses
  * draining while the socket's own buffer is congested; KILL_THRESHOLD treats
- * the socket as stalled — terminating it hands recovery to the reconnect +
- * sync-replay path, which restores state cleanly (codex's disconnect-slow-
- * client policy adapted to a single-pipe topology).
+ * the socket as stalled and terminates the paired connection.
  */
 export const OUTBOUND_QUEUE_LIMITS = {
   MAX_QUEUED_FRAMES: 512,
@@ -83,7 +77,6 @@ type OutboundQueueState = {
   frames: OutboundFrame[];
   pollTimer: ReturnType<typeof setTimeout> | null;
   draining: boolean;
-  droppedByClass: { status: number; delta: number };
   killed: boolean;
 };
 
@@ -96,7 +89,6 @@ function getQueueState(transport: ListenerTransport): OutboundQueueState {
       frames: [],
       pollTimer: null,
       draining: false,
-      droppedByClass: { status: 0, delta: 0 },
       killed: false,
     };
     queueByTransport.set(transport, state);
@@ -116,9 +108,7 @@ function terminateStalledTransport(
     state.pollTimer = null;
   }
   recordOutboundQueuePerf("queue:killed", 1);
-  console.error(
-    `[Listen Wire] Terminating stalled transport (${reason}); reconnect will resync`,
-  );
+  console.error(`[Listen Wire] Terminating stalled transport (${reason})`);
   if (getListenerTransportKind(transport) === "websocket") {
     const ws = transport as { terminate?: () => void; close?: () => void };
     try {
@@ -127,28 +117,6 @@ function terminateStalledTransport(
       // Socket already dead — reconnect logic owns it from here.
     }
   }
-}
-
-function dropOneFrameForCapacity(
-  transport: ListenerTransport,
-  state: OutboundQueueState,
-): void {
-  const dropOldestOfClass = (frameClass: OutboundFrameClass): boolean => {
-    const index = state.frames.findIndex((f) => f.frameClass === frameClass);
-    if (index === -1) return false;
-    const [dropped] = state.frames.splice(index, 1);
-    if (dropped && dropped.frameClass !== "critical") {
-      state.droppedByClass[dropped.frameClass] += 1;
-      recordOutboundQueuePerf(`queue:dropped:${dropped.frameClass}`, 1);
-    }
-    return true;
-  };
-
-  if (dropOldestOfClass("delta")) return;
-  if (dropOldestOfClass("status")) return;
-  // Only critical frames remain and the queue is over capacity: the consumer
-  // is not making progress. Reconnect + sync replay recovers all state.
-  terminateStalledTransport(transport, state, "queue full of critical frames");
 }
 
 /**
@@ -177,9 +145,9 @@ export function enqueueOutboundFrame(
   }
 
   state.frames.push(frame);
-  while (state.frames.length > OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES) {
-    dropOneFrameForCapacity(transport, state);
-    if (state.killed) return;
+  if (state.frames.length > OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES) {
+    terminateStalledTransport(transport, state, "outbound queue full");
+    return;
   }
   drainOutboundQueue(transport, state);
 }
@@ -205,7 +173,7 @@ function drainOutboundQueue(
   try {
     while (state.frames.length > 0) {
       if (!isListenerTransportOpen(transport)) {
-        // Closed socket: drop the backlog; reconnect sync-replay restores state.
+        // The connection is already lost; queued wire frames can no longer be delivered.
         state.frames = [];
         return;
       }
@@ -227,7 +195,8 @@ function drainOutboundQueue(
         built = frame.build();
       } catch (error) {
         frame.onSendError?.(error);
-        continue;
+        terminateStalledTransport(transport, state, "frame build failed");
+        return;
       }
       if (!built) continue;
       const stringifyMs = PERF_ENABLED ? performance.now() - buildStartedAt : 0;
@@ -236,27 +205,37 @@ function drainOutboundQueue(
         transport.send(built.payload);
       } catch (error) {
         frame.onSendError?.(error);
-        continue;
+        terminateStalledTransport(transport, state, "socket write failed");
+        return;
       }
+      const bufferedAfter = transport.bufferedAmount;
       if (PERF_ENABLED) {
         recordWirePerfSample(built.perfKey, {
           bytes: Buffer.byteLength(built.payload),
           stringifyMs,
           sendMs: performance.now() - sendStartedAt,
           bufferedBefore: buffered,
-          bufferedAfter: transport.bufferedAmount,
+          bufferedAfter,
         });
       }
       built.onSent?.();
-    }
-
-    const dropped = state.droppedByClass;
-    if (dropped.delta > 0 || dropped.status > 0) {
-      debugWarn(
-        "listen-wire",
-        `Outbound backpressure dropped frames before catching up (delta=${dropped.delta}, status=${dropped.status}); client resyncs on next replay`,
-      );
-      state.droppedByClass = { status: 0, delta: 0 };
+      if (
+        bufferedAfter >= OUTBOUND_QUEUE_LIMITS.KILL_THRESHOLD_BUFFERED_BYTES
+      ) {
+        terminateStalledTransport(
+          transport,
+          state,
+          "socket buffer exceeded kill threshold",
+        );
+        return;
+      }
+      if (
+        state.frames.length > 0 &&
+        bufferedAfter >= OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES
+      ) {
+        scheduleDrainPoll(transport, state);
+        return;
+      }
     }
   } finally {
     state.draining = false;
@@ -266,15 +245,11 @@ function drainOutboundQueue(
 /** Test/diagnostic visibility into a transport's queue. */
 export function getOutboundQueueStats(transport: ListenerTransport): {
   queuedFrames: number;
-  droppedDelta: number;
-  droppedStatus: number;
   killed: boolean;
 } {
   const state = queueByTransport.get(transport);
   return {
     queuedFrames: state?.frames.length ?? 0,
-    droppedDelta: state?.droppedByClass.delta ?? 0,
-    droppedStatus: state?.droppedByClass.status ?? 0,
     killed: state?.killed ?? false,
   };
 }
