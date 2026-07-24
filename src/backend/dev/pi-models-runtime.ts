@@ -46,6 +46,7 @@ import { resolveRegisteredPiProviderRuntimeConnection } from "./registered-pi-pr
 
 const CONFIGURED_DISCOVERY_TIMEOUT_MS = 2_000;
 const AUTODETECT_DISCOVERY_TIMEOUT_MS = 500;
+const MAX_TURN_RESOLUTION_RETRIES = 2;
 
 /**
  * Letta-documented environment aliases for env vars the upstream providers
@@ -275,6 +276,12 @@ export class LocalPiModelsRuntime {
    * and model lookup happen against the same provider state, so a
    * credential change can never pair the new account's auth with a stale
    * account's cached model. On a model miss, dynamic catalogs refresh once.
+   *
+   * Account writes (logins) are not serialized against resolution, and
+   * `Models.getAuth` performs its own credential read — so after resolving,
+   * verify the stored identity is still the one the invalidation snapshot
+   * validated the catalog against. If it moved mid-flight, invalidate and
+   * retry with the new identity.
    */
   async resolveTurn(
     providerId: string,
@@ -282,23 +289,46 @@ export class LocalPiModelsRuntime {
     fallbackModelId?: string,
   ): Promise<{ model: Model<Api> | undefined; auth: AuthResult | undefined }> {
     this.ensureManagedProviders(providerId);
-    await this.invalidateOnCredentialChange();
-    const auth = await this.models.getAuth(providerId);
     const lookup = () =>
       this.models.getModel(providerId, modelId) ??
       (fallbackModelId
         ? this.models.getModel(providerId, fallbackModelId)
         : undefined);
-    let model = lookup();
-    if (!model) {
-      try {
-        await this.models.refresh({ force: true });
-      } catch {
-        // Refresh failures keep last-known lists; the lookup below decides.
+    for (let attempt = 0; ; attempt++) {
+      await this.invalidateOnCredentialChange();
+      const auth = await this.models.getAuth(providerId);
+      let model = lookup();
+      if (!model) {
+        try {
+          await this.models.refresh({ force: true });
+        } catch {
+          // Refresh failures keep last-known lists; the lookup below decides.
+        }
+        model = lookup();
       }
-      model = lookup();
+      if (
+        attempt < MAX_TURN_RESOLUTION_RETRIES &&
+        (await this.credentialIdentityMovedSinceInvalidation(providerId))
+      ) {
+        continue;
+      }
+      return { model, auth };
     }
-    return { model, auth };
+  }
+
+  /**
+   * Detects an account switch that landed between the invalidation snapshot
+   * and auth/catalog resolution. Only account-scoped providers have a
+   * recorded identity to compare against — other catalogs do not vary by
+   * account, so a mid-flight credential change cannot mismatch them.
+   */
+  private async credentialIdentityMovedSinceInvalidation(
+    providerId: string,
+  ): Promise<boolean> {
+    const recorded = this.credentialSignatures.get(providerId);
+    if (recorded === undefined) return false;
+    const credential = await this.credentials.read(providerId);
+    return credentialIdentitySignature(credential) !== recorded;
   }
 
   /** Stored (possibly just-refreshed) credential for a provider. */

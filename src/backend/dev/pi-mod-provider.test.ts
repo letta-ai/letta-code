@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { CredentialStore } from "@earendil-works/pi-ai";
 import { localModelSettingsForHandle } from "@/backend/local/local-model-config";
 import { setLocalOAuthProvider } from "@/backend/local/local-provider-auth-store";
 import { testRefreshContext } from "@/test-utils/pi-refresh-context";
@@ -214,6 +215,75 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
       expect(turn.auth?.auth.apiKey).toBe("access-b");
       expect(turn.model).toBeUndefined();
       expect(runtime.getModels(PROVIDER)).toHaveLength(0);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("account switch during turn resolution cannot pair the old catalog with new auth", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-mod-oauth-race-"));
+    const failingFetch = (async () => {
+      throw new Error("no local endpoint in tests");
+    }) as unknown as typeof fetch;
+    try {
+      registerPiProvider(PROVIDER, {
+        api: "openai-completions",
+        baseUrl: "https://api.acme.test/v1",
+        oauth: {
+          login: async () => {
+            throw new Error("not used in this test");
+          },
+          refreshToken: async (credentials) => credentials,
+          getApiKey: (credentials) => credentials.access,
+        },
+        listModels: (connection) => {
+          if (connection.apiKey !== "access-a") throw new Error("unauthorized");
+          return [model("account-a-model")];
+        },
+      });
+      const accountAuth = (account: string) => ({
+        type: "oauth" as const,
+        access: `access-${account}`,
+        refresh: `refresh-${account}`,
+        expires: Date.now() + 3_600_000,
+      });
+      setLocalOAuthProvider({
+        providerName: PROVIDER,
+        providerType: PROVIDER,
+        auth: accountAuth("a"),
+        storageDir,
+      });
+      const runtime = new LocalPiModelsRuntime({
+        storageDir,
+        fetchImpl: failingFetch,
+      });
+      await runtime.refreshAll();
+      expect(runtime.getModel(PROVIDER, "account-a-model")).toBeDefined();
+
+      // Logins are not serialized against turn resolution: complete the
+      // switch to account B right after resolveTurn's invalidation snapshot
+      // reads account A, so the later auth read inside Models.getAuth sees
+      // B while the catalog was validated against A.
+      const internals = runtime as unknown as { credentials: CredentialStore };
+      const read = internals.credentials.read.bind(internals.credentials);
+      let switchAccounts: (() => void) | undefined = () => {
+        switchAccounts = undefined;
+        setLocalOAuthProvider({
+          providerName: PROVIDER,
+          providerType: PROVIDER,
+          auth: accountAuth("b"),
+          storageDir,
+        });
+      };
+      internals.credentials.read = async (providerId) => {
+        const credential = await read(providerId);
+        if (providerId === PROVIDER) switchAccounts?.();
+        return credential;
+      };
+
+      const turn = await runtime.resolveTurn(PROVIDER, "account-a-model");
+      expect(turn.auth?.auth.apiKey).toBe("access-b");
+      expect(turn.model).toBeUndefined();
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
