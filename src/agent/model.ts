@@ -32,6 +32,9 @@ export type ModelReasoningEffort =
   | "xhigh"
   | "max";
 
+/** Null means use the upstream provider's default and omit reasoning_effort. */
+export type ModelReasoningSelection = ModelReasoningEffort | null;
+
 type ReasoningCapabilities = {
   supported_efforts?: ModelReasoningEffort[] | null;
   mandatory?: boolean;
@@ -197,11 +200,21 @@ export function getReasoningTierOptionsFromCapabilities(
   ).map((effort) => ({ effort, modelId: modelHandle }));
 }
 
+export function getByokOpenAIReasoningTierOptions(modelHandle: string): Array<{
+  effort: ModelReasoningSelection;
+  modelId: string;
+}> {
+  return [null, ...REASONING_EFFORT_ORDER].map((effort) => ({
+    effort,
+    modelId: modelHandle,
+  }));
+}
+
 export function getPreferredReasoningOption<
-  T extends { effort: ModelReasoningEffort },
+  T extends { effort: ModelReasoningSelection },
 >(options: T[], selectedEffort: unknown): T | undefined {
   return (
-    (typeof selectedEffort === "string"
+    (selectedEffort === null || typeof selectedEffort === "string"
       ? options.find((option) => option.effort === selectedEffort)
       : undefined) ??
     options.find((option) => option.effort === "medium") ??

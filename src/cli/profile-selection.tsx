@@ -357,7 +357,7 @@ function ProfileSelectionUI({
             onComplete({
               type: "new_with_model",
               model: selectedOption.modelId,
-              reasoningEffort: selectedOption.effort,
+              reasoningEffort: selectedOption.effort ?? undefined,
             });
           }}
           onCancel={() => setModelReasoningPrompt(null)}

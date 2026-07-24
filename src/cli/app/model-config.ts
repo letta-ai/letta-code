@@ -23,21 +23,25 @@ export function deriveReasoningEffort(
       (providerType === "openai" ||
         providerType === "openai-codex" ||
         providerType === "chatgpt_oauth") &&
-      "reasoning" in modelSettings &&
-      modelSettings.reasoning
+      "reasoning" in modelSettings
     ) {
-      const re = (modelSettings.reasoning as { reasoning_effort?: string })
-        .reasoning_effort;
-      if (
-        re === "none" ||
-        re === "minimal" ||
-        re === "low" ||
-        re === "medium" ||
-        re === "high" ||
-        re === "xhigh" ||
-        re === "max"
-      )
-        return re;
+      const reasoning = modelSettings.reasoning;
+      if (reasoning === null) return null;
+      if (typeof reasoning === "object" && "reasoning_effort" in reasoning) {
+        const re = (reasoning as { reasoning_effort?: string | null })
+          .reasoning_effort;
+        if (re === null) return null;
+        if (
+          re === "none" ||
+          re === "minimal" ||
+          re === "low" ||
+          re === "medium" ||
+          re === "high" ||
+          re === "xhigh" ||
+          re === "max"
+        )
+          return re;
+      }
     }
 
     // Anthropic/Bedrock: effort field

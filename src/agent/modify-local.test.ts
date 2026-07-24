@@ -72,6 +72,18 @@ describe("local model updates", () => {
     });
   });
 
+  test("stores provider-default reasoning explicitly for custom OpenAI providers", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("custom/claude-opus-4-6", {
+        provider_type: "openai",
+        reasoning_effort: null,
+      }),
+    ).toMatchObject({
+      provider_type: "openai",
+      reasoning: null,
+    });
+  });
+
   afterEach(() => {
     configureBackendMode("api");
     clearAvailableModelsCache();

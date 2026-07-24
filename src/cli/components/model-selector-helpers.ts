@@ -31,6 +31,19 @@ export type ModelSelectorSelection = Pick<
   "id" | "handle" | "label" | "description" | "registryHandle" | "updateArgs"
 >;
 
+export function withProviderMetadataForSelector(
+  updateArgs: Record<string, unknown> | undefined,
+  providerType: string | undefined,
+  isByok: boolean,
+): Record<string, unknown> | undefined {
+  if (!providerType && !isByok) return updateArgs;
+  return {
+    ...(updateArgs ?? {}),
+    ...(providerType ? { provider_type: providerType } : {}),
+    ...(isByok ? { provider_category: "byok" } : {}),
+  };
+}
+
 export function labelForChatGPTByokAlias(
   label: string,
   handle: string,

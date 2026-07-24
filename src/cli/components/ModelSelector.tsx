@@ -34,6 +34,7 @@ import {
   toByokSelectorModel,
   toSelectorModelForHandle,
   type UiModel,
+  withProviderMetadataForSelector,
 } from "./model-selector-helpers";
 import { OverlayShell } from "./OverlayShell";
 import { TabBar } from "./TabBar";
@@ -65,6 +66,7 @@ export {
   registryHandleForByokAlias,
   toByokSelectorModel,
   toSelectorModelForHandle,
+  withProviderMetadataForSelector,
 } from "./model-selector-helpers";
 
 export function usesBackendModelCatalog(
@@ -355,13 +357,13 @@ export function ModelSelector({
       updateArgs: Record<string, unknown> | undefined,
     ): Record<string, unknown> | undefined => {
       const providerType = providerTypesByHandle.get(handle);
-      if (!providerType) return updateArgs;
-      return {
-        ...(updateArgs ?? {}),
-        provider_type: providerType,
-      };
+      return withProviderMetadataForSelector(
+        updateArgs,
+        providerType,
+        isByokHandleForSelector(handle, byokProviderAliases),
+      );
     },
-    [providerTypesByHandle],
+    [byokProviderAliases, providerTypesByHandle],
   );
 
   const modelsForBackendHandle = useCallback(

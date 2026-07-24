@@ -30,6 +30,7 @@ import {
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
+  type ModelReasoningSelection,
 } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality-presets";
 import { shouldRecommendDefaultPrompt } from "@/agent/prompt-assets";
@@ -773,9 +774,9 @@ export function App({
   const [modelReasoningPrompt, setModelReasoningPrompt] = useState<{
     modelLabel: string;
     initialModelId: string;
-    initialEffort?: ModelReasoningEffort;
+    initialEffort?: ModelReasoningSelection;
     options: Array<{
-      effort: ModelReasoningEffort;
+      effort: ModelReasoningSelection;
       modelId: string;
       selection?: ModelSelectorSelection;
     }>;
@@ -4463,6 +4464,7 @@ export function App({
     conversationIdRef,
     currentModelHandle,
     currentModelId,
+    currentReasoningEffort,
     currentToolset,
     isAgentBusy,
     llmConfig,

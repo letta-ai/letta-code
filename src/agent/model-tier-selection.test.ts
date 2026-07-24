@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  getByokOpenAIReasoningTierOptions,
   getChatGptFastRegistryHandleForModelHandle,
   getModelInfo,
   getModelInfoForLlmConfig,
@@ -219,6 +220,25 @@ describe("getModelInfoForLlmConfig", () => {
     expect(
       (noEffort?.updateArgs as { context_window?: number })?.context_window,
     ).toBe(9500000);
+  });
+});
+
+describe("getByokOpenAIReasoningTierOptions", () => {
+  test("offers provider default separately from every explicit effort", () => {
+    expect(
+      getByokOpenAIReasoningTierOptions("custom/claude-opus-4-6").map(
+        (option) => option.effort,
+      ),
+    ).toEqual([
+      null,
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
   });
 });
 

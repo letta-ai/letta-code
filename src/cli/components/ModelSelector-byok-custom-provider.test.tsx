@@ -8,6 +8,7 @@ import {
   registryHandleForBackendModel,
   registryHandleForByokAlias,
   toByokSelectorModel,
+  withProviderMetadataForSelector,
 } from "@/cli/components/ModelSelector";
 
 describe("ModelSelector custom BYOK provider detection", () => {
@@ -23,6 +24,16 @@ describe("ModelSelector custom BYOK provider detection", () => {
     expect(isByokHandleForSelector("openai-sarah/gpt-5.4-fast", aliases)).toBe(
       true,
     );
+  });
+
+  test("marks custom provider selections as BYOK", () => {
+    expect(withProviderMetadataForSelector({}, "openai", true)).toEqual({
+      provider_type: "openai",
+      provider_category: "byok",
+    });
+    expect(withProviderMetadataForSelector({}, "openai", false)).toEqual({
+      provider_type: "openai",
+    });
   });
 
   test("maps custom OpenAI provider handles back to base openai handles", () => {

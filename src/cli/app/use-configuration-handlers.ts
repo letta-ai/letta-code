@@ -11,6 +11,7 @@ import {
 import { getCachedModelReasoningCapabilities } from "@/agent/available-models";
 import {
   type ModelReasoningEffort,
+  type ModelReasoningSelection,
   preservableContextWindow,
   shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
@@ -58,9 +59,9 @@ import type {
 type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
-  initialEffort?: ModelReasoningEffort;
+  initialEffort?: ModelReasoningSelection;
   options: Array<{
-    effort: ModelReasoningEffort;
+    effort: ModelReasoningSelection;
     modelId: string;
     selection?: ModelSelectorSelection;
   }>;
@@ -85,6 +86,7 @@ type ConfigurationHandlersContext = {
   conversationIdRef: MutableRefObject<string>;
   currentModelHandle: string | null;
   currentModelId: string | null;
+  currentReasoningEffort: ModelReasoningSelection;
   currentToolset: ToolsetName | null;
   isAgentBusy: () => boolean;
   llmConfig: LlmConfig | null;
@@ -130,6 +132,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
     conversationIdRef,
     currentModelHandle,
     currentModelId,
+    currentReasoningEffort,
     currentToolset,
     isAgentBusy,
     llmConfig,
@@ -163,7 +166,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
       opts?: {
         promptReasoning?: boolean;
         skipReasoningPrompt?: boolean;
-        reasoningEffort?: ModelReasoningEffort;
+        reasoningEffort?: ModelReasoningSelection;
       },
     ) => {
       const inputSelection = typeof model === "string" ? null : model;
@@ -190,6 +193,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
 
       try {
         const {
+          getByokOpenAIReasoningTierOptions,
           getChatGptFastRegistryHandleForModelHandle,
           getPreferredReasoningOption: pref,
           getReasoningTierOptionsForHandle,
@@ -287,7 +291,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           const updateArgs: Record<string, unknown> = {
             ...(apiContextWindow ? { context_window: apiContextWindow } : {}),
             ...(providerType ? { provider_type: providerType } : {}),
-            ...(opts?.reasoningEffort
+            ...(opts && "reasoningEffort" in opts
               ? { reasoning_effort: opts.reasoningEffort }
               : {}),
           };
@@ -302,7 +306,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           } as unknown as (typeof models)[number];
         }
 
-        if (selectedModel && opts?.reasoningEffort) {
+        if (selectedModel && opts && "reasoningEffort" in opts) {
           selectedModel = {
             ...selectedModel,
             updateArgs: {
@@ -330,38 +334,47 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               reasoning_effort?: unknown;
               enable_reasoner?: unknown;
               service_tier?: unknown;
+              provider_category?: unknown;
             }
           | undefined;
         const rawReasoningEffort = modelUpdateArgs?.reasoning_effort;
+        const providerType = providerTypeFromUpdateArgs(modelUpdateArgs);
+        const isByokOpenAI =
+          modelUpdateArgs?.provider_category === "byok" &&
+          providerType === "openai";
         const usesDistinctXHighLabel = /Fable 5|Opus 4\.[78]|GPT-5\.6/.test(
           model.label,
         );
         const reasoningLevel =
-          typeof rawReasoningEffort === "string"
-            ? rawReasoningEffort === "none"
-              ? "no"
-              : rawReasoningEffort === "xhigh"
-                ? usesDistinctXHighLabel
-                  ? "extra-high"
-                  : "max"
-                : rawReasoningEffort
-            : modelUpdateArgs?.enable_reasoner === false
-              ? "no"
-              : null;
+          isByokOpenAI && rawReasoningEffort === null
+            ? "default"
+            : typeof rawReasoningEffort === "string"
+              ? rawReasoningEffort === "none"
+                ? "no"
+                : rawReasoningEffort === "xhigh"
+                  ? usesDistinctXHighLabel
+                    ? "extra-high"
+                    : "max"
+                  : rawReasoningEffort
+              : modelUpdateArgs?.enable_reasoner === false
+                ? "no"
+                : null;
         const selectedContextWindow =
           Number(model.updateArgs?.context_window) || undefined;
         const reasoningCapabilities =
           getCachedModelReasoningCapabilities()?.get(modelHandle);
-        const reasoningTierOptions = getReasoningTierOptionsForHandle(
-          registryHandle,
-          selectedContextWindow,
-          reasoningCapabilities,
-        ).map((option) => {
+        const baseReasoningTierOptions = isByokOpenAI
+          ? getByokOpenAIReasoningTierOptions(modelHandle)
+          : getReasoningTierOptionsForHandle(
+              registryHandle,
+              selectedContextWindow,
+              reasoningCapabilities,
+            );
+        const reasoningTierOptions = baseReasoningTierOptions.map((option) => {
           const optionModel = models.find(
             (entry) => entry.id === option.modelId,
           );
           const serviceTier = modelUpdateArgs?.service_tier;
-          const providerType = providerTypeFromUpdateArgs(modelUpdateArgs);
           const optionUpdateArgs = {
             ...((optionModel?.updateArgs as
               | Record<string, unknown>
@@ -369,6 +382,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             reasoning_effort: option.effort,
             ...(serviceTier !== undefined ? { service_tier: serviceTier } : {}),
             ...(providerType ? { provider_type: providerType } : {}),
+            ...(isByokOpenAI ? { provider_category: "byok" } : {}),
           };
           return {
             ...option,
@@ -387,9 +401,11 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           (opts?.promptReasoning || activeOverlay === "model") &&
           reasoningTierOptions.length > 1
         ) {
-          const selectedEffort = (
-            model.updateArgs as { reasoning_effort?: unknown } | undefined
-          )?.reasoning_effort;
+          const selectedEffort = isByokOpenAI
+            ? modelHandle === currentModelHandle
+              ? currentReasoningEffort
+              : (rawReasoningEffort ?? null)
+            : rawReasoningEffort;
           const preferredOption = pref(reasoningTierOptions, selectedEffort);
 
           if (preferredOption) {
@@ -514,15 +530,20 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           }
 
           // The API may not echo reasoning_effort back, so populate it from
-          // model.updateArgs as a reliable fallback.
+          // model.updateArgs as a reliable fallback. An explicit null is the
+          // custom provider's Default selection and must clear stale flat state.
+          const hasExplicitReasoningEffort =
+            modelUpdateArgs !== undefined &&
+            "reasoning_effort" in modelUpdateArgs;
           const rawEffort = modelUpdateArgs?.reasoning_effort;
-          const resolvedReasoningEffort =
-            typeof rawEffort === "string"
+          const resolvedReasoningEffort = hasExplicitReasoningEffort
+            ? typeof rawEffort === "string"
               ? rawEffort
-              : (deriveReasoningEffort(
-                  conversationModelSettings,
-                  llmConfigRef.current,
-                ) ?? null);
+              : null
+            : (deriveReasoningEffort(
+                conversationModelSettings,
+                llmConfigRef.current,
+              ) ?? null);
 
           if (isDefaultConversation) {
             setHasConversationModelOverride(false);
@@ -563,12 +584,14 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               llmConfigRef.current ??
               ({} as LlmConfig)),
             ...mapHandleToLlmConfigPatch(modelHandle, resolvedProviderType),
-            ...(typeof resolvedReasoningEffort === "string"
-              ? {
-                  reasoning_effort:
-                    resolvedReasoningEffort as ModelReasoningEffort,
-                }
-              : {}),
+            ...(hasExplicitReasoningEffort
+              ? { reasoning_effort: resolvedReasoningEffort }
+              : typeof resolvedReasoningEffort === "string"
+                ? {
+                    reasoning_effort:
+                      resolvedReasoningEffort as ModelReasoningEffort,
+                  }
+                : {}),
             ...(typeof resolvedContextWindow === "number"
               ? { context_window: resolvedContextWindow }
               : {}),

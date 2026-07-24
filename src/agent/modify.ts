@@ -100,16 +100,11 @@ function buildModelSettings(
       (openaiSettings as Record<string, unknown>).provider_type =
         "chatgpt_oauth";
     }
-    if (updateArgs?.reasoning_effort) {
-      openaiSettings.reasoning = {
-        reasoning_effort: updateArgs.reasoning_effort as
-          | "none"
-          | "minimal"
-          | "low"
-          | "medium"
-          | "high"
-          | "xhigh",
-      };
+    if (updateArgs && "reasoning_effort" in updateArgs) {
+      (openaiSettings as Record<string, unknown>).reasoning =
+        updateArgs.reasoning_effort === null
+          ? null
+          : { reasoning_effort: updateArgs.reasoning_effort };
     }
     const verbosity = updateArgs?.verbosity;
     if (verbosity === "low" || verbosity === "medium" || verbosity === "high") {
@@ -242,16 +237,11 @@ function buildModelSettings(
           ? updateArgs.parallel_tool_calls
           : true,
     };
-    if (updateArgs?.reasoning_effort) {
-      openaiProxySettings.reasoning = {
-        reasoning_effort: updateArgs.reasoning_effort as
-          | "none"
-          | "minimal"
-          | "low"
-          | "medium"
-          | "high"
-          | "xhigh",
-      };
+    if (updateArgs && "reasoning_effort" in updateArgs) {
+      (openaiProxySettings as Record<string, unknown>).reasoning =
+        updateArgs.reasoning_effort === null
+          ? null
+          : { reasoning_effort: updateArgs.reasoning_effort };
     }
     if (typeof updateArgs?.strict === "boolean") {
       (openaiProxySettings as Record<string, unknown>).strict =
