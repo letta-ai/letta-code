@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { localModelSettingsForHandle } from "@/backend/local/local-model-config";
+import { setLocalOAuthProvider } from "@/backend/local/local-provider-auth-store";
 import { testRefreshContext } from "@/test-utils/pi-refresh-context";
 import { createModPiProvider } from "./pi-mod-provider";
 import { resolvePiModelForAgent } from "./pi-model-factory";
@@ -148,6 +152,71 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
       { modelsRuntime: runtime },
     );
     expect(resolved.model).toBe(runtime.getModel(PROVIDER, "acme-large")!);
+  });
+
+  test("OAuth account switch on a dynamic mod drops the old account's catalog", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-mod-oauth-"));
+    // Local daemon autodetection must fail instantly so refresh never
+    // touches real endpoints; the mod's listModels hook needs no fetch.
+    const failingFetch = (async () => {
+      throw new Error("no local endpoint in tests");
+    }) as unknown as typeof fetch;
+    try {
+      registerPiProvider(PROVIDER, {
+        api: "openai-completions",
+        baseUrl: "https://api.acme.test/v1",
+        oauth: {
+          login: async () => {
+            throw new Error("not used in this test");
+          },
+          refreshToken: async (credentials) => credentials,
+          getApiKey: (credentials) => credentials.access,
+        },
+        listModels: (connection) => {
+          // The catalog is account-scoped: only account A publishes.
+          if (connection.apiKey !== "access-a") throw new Error("unauthorized");
+          return [model("account-a-model")];
+        },
+      });
+      setLocalOAuthProvider({
+        providerName: PROVIDER,
+        providerType: PROVIDER,
+        auth: {
+          type: "oauth",
+          access: "access-a",
+          refresh: "refresh-a",
+          expires: Date.now() + 3_600_000,
+        },
+        storageDir,
+      });
+      const runtime = new LocalPiModelsRuntime({
+        storageDir,
+        fetchImpl: failingFetch,
+      });
+      await runtime.refreshAll();
+      expect(runtime.getModel(PROVIDER, "account-a-model")).toBeDefined();
+
+      // Log in as account B. The mod reconstruction signature (revision/
+      // base URL/API key) cannot see this; credential-identity invalidation
+      // must — a turn may never pair B's auth with A's cached catalog.
+      setLocalOAuthProvider({
+        providerName: PROVIDER,
+        providerType: PROVIDER,
+        auth: {
+          type: "oauth",
+          access: "access-b",
+          refresh: "refresh-b",
+          expires: Date.now() + 3_600_000,
+        },
+        storageDir,
+      });
+      const turn = await runtime.resolveTurn(PROVIDER, "account-a-model");
+      expect(turn.auth?.auth.apiKey).toBe("access-b");
+      expect(turn.model).toBeUndefined();
+      expect(runtime.getModels(PROVIDER)).toHaveLength(0);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("unregistering a mod that overrides a built-in restores the built-in", async () => {

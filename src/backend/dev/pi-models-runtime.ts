@@ -183,7 +183,7 @@ export class LocalPiModelsRuntime {
   private readonly modelsStore = new InMemoryModelsStore();
   private readonly credentials: CredentialStore;
   private readonly dynamicBuiltinIds: ReadonlySet<string>;
-  private readonly builtinCredentialSignatures = new Map<string, string>();
+  private readonly credentialSignatures = new Map<string, string>();
 
   constructor(options: LocalPiModelsRuntimeOptions = {}) {
     this.storageDir = options.storageDir;
@@ -209,22 +209,49 @@ export class LocalPiModelsRuntime {
   }
 
   /**
-   * Dynamic built-in catalogs (e.g. Radius) are account-specific: when the
-   * stored credential's identity changes, drop the persisted catalog and
-   * rebuild the provider so one account's models cannot be listed while
-   * turns authenticate as another. Routine access-token refreshes keep the
-   * identity (volatile `access`/`expires` fields are excluded), so they do
-   * not clear last-known retention.
+   * Provider ids whose published catalog can vary with the stored account:
+   * dynamic built-ins (e.g. Radius) plus mod providers with a `listModels`
+   * hook. A mod registration owns its id either way — a static mod catalog
+   * overriding a dynamic built-in id is not account-scoped.
    */
-  private async invalidateDynamicBuiltinsOnCredentialChange(): Promise<void> {
-    for (const providerId of this.dynamicBuiltinIds) {
+  private accountScopedProviderIds(): Set<string> {
+    const ids = new Set(this.dynamicBuiltinIds);
+    for (const registered of listRegisteredPiProviders()) {
+      if (registered.config.listModels) ids.add(registered.providerName);
+      else ids.delete(registered.providerName);
+    }
+    return ids;
+  }
+
+  /**
+   * Account-scoped catalogs are invalidated when the stored credential's
+   * identity changes: drop the persisted catalog and rebuild the provider so
+   * one account's models cannot be listed — or resolved for a turn — while
+   * requests authenticate as another. This covers OAuth account switches on
+   * dynamic mods too, whose reconstruction signature (revision/base URL/API
+   * key) cannot see OAuth credentials. Routine access-token refreshes keep
+   * the identity (volatile `access`/`expires` fields are excluded), so they
+   * do not clear last-known retention.
+   */
+  private async invalidateOnCredentialChange(): Promise<void> {
+    for (const providerId of this.accountScopedProviderIds()) {
       const credential = await this.credentials.read(providerId);
       const signature = credentialIdentitySignature(credential);
-      const previous = this.builtinCredentialSignatures.get(providerId);
-      this.builtinCredentialSignatures.set(providerId, signature);
+      const previous = this.credentialSignatures.get(providerId);
+      this.credentialSignatures.set(providerId, signature);
       if (previous === undefined || previous === signature) continue;
       // InMemoryModelsStore deletes synchronously.
       void this.modelsStore.delete(providerId);
+      const registered = getRegisteredPiProvider(providerId);
+      if (registered) {
+        this.models.setProvider(
+          createModPiProvider({
+            registered,
+            ...(this.storageDir ? { storageDir: this.storageDir } : {}),
+          }),
+        );
+        continue;
+      }
       const fresh = builtinProviders().find(
         (provider) => provider.id === providerId,
       );
@@ -239,7 +266,7 @@ export class LocalPiModelsRuntime {
    */
   async getAuth(providerId: string): Promise<AuthResult | undefined> {
     this.ensureManagedProviders(providerId);
-    await this.invalidateDynamicBuiltinsOnCredentialChange();
+    await this.invalidateOnCredentialChange();
     return this.models.getAuth(providerId);
   }
 
@@ -255,7 +282,7 @@ export class LocalPiModelsRuntime {
     fallbackModelId?: string,
   ): Promise<{ model: Model<Api> | undefined; auth: AuthResult | undefined }> {
     this.ensureManagedProviders(providerId);
-    await this.invalidateDynamicBuiltinsOnCredentialChange();
+    await this.invalidateOnCredentialChange();
     const auth = await this.models.getAuth(providerId);
     const lookup = () =>
       this.models.getModel(providerId, modelId) ??
@@ -413,7 +440,7 @@ export class LocalPiModelsRuntime {
    */
   async refreshAll(): Promise<void> {
     this.ensureManagedProviders();
-    await this.invalidateDynamicBuiltinsOnCredentialChange();
+    await this.invalidateOnCredentialChange();
     await this.models.refresh({ force: true });
   }
 
@@ -424,7 +451,7 @@ export class LocalPiModelsRuntime {
    */
   async refresh(providerId: string): Promise<void> {
     this.ensureManagedProviders(providerId);
-    await this.invalidateDynamicBuiltinsOnCredentialChange();
+    await this.invalidateOnCredentialChange();
     // pi-ai refreshes the collection as a whole (configured dynamic
     // providers only); this method adds per-provider error semantics on top.
     const result = await this.models.refresh({ force: true });
@@ -441,7 +468,7 @@ export class LocalPiModelsRuntime {
     providerId: string,
     modelId: string,
   ): Promise<Model<Api> | undefined> {
-    await this.invalidateDynamicBuiltinsOnCredentialChange();
+    await this.invalidateOnCredentialChange();
     const known = this.getModel(providerId, modelId);
     if (known) return known;
     try {

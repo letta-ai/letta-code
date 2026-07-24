@@ -1,5 +1,4 @@
 import {
-  getLocalOAuthApiKey,
   getLocalProviderRecordByName,
   type LocalProviderRecord,
   localProviderApiKeyFromRecord,
@@ -13,7 +12,6 @@ import {
   resolveRegisteredPiProviderHeaders,
 } from "./pi-provider-mod-registry";
 import type {
-  PiProviderConnection,
   PiProviderModelRegistration,
   RegisteredPiProvider,
 } from "./pi-provider-mod-types";
@@ -72,35 +70,6 @@ export function isRegisteredPiProviderConfigured(
         : undefined) ||
       provider.config.connect === false,
   );
-}
-
-export async function resolveRegisteredPiProviderListModelsConnection(
-  provider: RegisteredPiProvider,
-  options: {
-    records: readonly LocalProviderRecord[];
-    storageDir?: string;
-  },
-): Promise<PiProviderConnection> {
-  const providerNames = getRegisteredPiProviderLocalNames(provider);
-  const record = findRegisteredPiProviderLocalRecord(provider, options.records);
-  const oauth =
-    record?.auth.type === "oauth" && provider.config.oauth
-      ? await getLocalOAuthApiKey({
-          providerId: provider.providerName,
-          providerNames,
-          storageDir: options.storageDir,
-        })
-      : undefined;
-  return {
-    id: provider.providerName,
-    providerName: provider.providerName,
-    baseUrl: record?.base_url ?? provider.config.baseUrl,
-    apiKey:
-      oauth?.apiKey ??
-      localProviderApiKeyFromRecord(record) ??
-      resolveRegisteredPiProviderApiKey(provider.config.apiKey),
-    headers: resolveRegisteredPiProviderHeaders(provider.config.headers),
-  };
 }
 
 export function resolveRegisteredPiProviderRuntimeConnection(
