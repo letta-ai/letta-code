@@ -8,8 +8,15 @@ import {
   getApprovedUsers,
   getPendingPairings,
   isUserApproved,
+  loadPairingStore,
   rollbackPairingApproval,
 } from "@/channels/pairing";
+import type { PairingStore } from "@/channels/types";
+
+function loadPairingStoreFixture(channelId: string, store: PairingStore): void {
+  __testOverrideLoadPairingStore(() => store);
+  loadPairingStore(channelId);
+}
 
 describe("pairing", () => {
   beforeEach(() => {
@@ -79,6 +86,149 @@ describe("pairing", () => {
     // Once consumed, a fresh request mints a new code.
     const code3 = createPairingCode("telegram", "user-1", "chat-1");
     expect(code3).not.toBe(code1);
+  });
+
+  test("reuses a pending code without retargeting chat or timestamps", () => {
+    const createdAt = new Date(Date.now() - 14 * 60_000).toISOString();
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    loadPairingStoreFixture("telegram", {
+      pending: [
+        {
+          accountId: "bot-a",
+          code: "ABC234",
+          senderId: "user-1",
+          senderName: "original-name",
+          chatId: "chat-original",
+          createdAt,
+          expiresAt,
+        },
+      ],
+      approved: [],
+    });
+
+    const code = createPairingCode(
+      "telegram",
+      "user-1",
+      "chat-later",
+      "later-name",
+      "bot-a",
+    );
+
+    expect(code).toBe("ABC234");
+    const pending = getPendingPairings("telegram", "bot-a");
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.chatId).toBe("chat-original");
+    expect(pending[0]?.senderName).toBe("original-name");
+    expect(pending[0]?.createdAt).toBe(createdAt);
+    expect(pending[0]?.expiresAt).toBe(expiresAt);
+  });
+
+  test("generates a new code after the existing pending code expires", () => {
+    const createdAt = new Date(Date.now() - 16 * 60_000).toISOString();
+    const expiresAt = new Date(Date.now() - 60_000).toISOString();
+    loadPairingStoreFixture("telegram", {
+      pending: [
+        {
+          accountId: "bot-a",
+          code: "XYZ789",
+          senderId: "user-1",
+          senderName: "old-name",
+          chatId: "chat-old",
+          createdAt,
+          expiresAt,
+        },
+      ],
+      approved: [],
+    });
+
+    const code = createPairingCode(
+      "telegram",
+      "user-1",
+      "chat-new",
+      "new-name",
+      "bot-a",
+    );
+
+    expect(code).not.toBe("XYZ789");
+    const pending = getPendingPairings("telegram", "bot-a");
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.code).toBe(code);
+    expect(pending[0]?.chatId).toBe("chat-new");
+    expect(pending[0]?.senderName).toBe("new-name");
+    expect(pending[0]?.createdAt).not.toBe(createdAt);
+    expect(pending[0]?.expiresAt).not.toBe(expiresAt);
+  });
+
+  test("scopes pending-code reuse by sender and account", () => {
+    const botAUser1 = createPairingCode(
+      "telegram",
+      "user-1",
+      "chat-a1",
+      "one",
+      "bot-a",
+    );
+    const botAUser2 = createPairingCode(
+      "telegram",
+      "user-2",
+      "chat-a2",
+      "two",
+      "bot-a",
+    );
+    const botBUser1 = createPairingCode(
+      "telegram",
+      "user-1",
+      "chat-b1",
+      "one-b",
+      "bot-b",
+    );
+
+    expect(
+      createPairingCode("telegram", "user-1", "ignored", "new", "bot-a"),
+    ).toBe(botAUser1);
+
+    const botAPending = getPendingPairings("telegram", "bot-a");
+    expect(botAPending).toHaveLength(2);
+    expect(botAPending[0]?.code).toBe(botAUser1);
+    expect(botAPending[0]?.senderId).toBe("user-1");
+    expect(botAPending[0]?.chatId).toBe("chat-a1");
+    expect(botAPending[1]?.code).toBe(botAUser2);
+    expect(botAPending[1]?.senderId).toBe("user-2");
+    expect(botAPending[1]?.chatId).toBe("chat-a2");
+
+    const botBPending = getPendingPairings("telegram", "bot-b");
+    expect(botBPending).toHaveLength(1);
+    expect(botBPending[0]?.code).toBe(botBUser1);
+    expect(botBPending[0]?.senderId).toBe("user-1");
+    expect(botBPending[0]?.chatId).toBe("chat-b1");
+  });
+
+  test("fails closed when duplicate pending codes are ambiguous", () => {
+    const expiresAt = new Date(Date.now() + 60_000).toISOString();
+    loadPairingStoreFixture("telegram", {
+      pending: [
+        {
+          accountId: "bot-a",
+          code: "DUP999",
+          senderId: "user-1",
+          chatId: "chat-1",
+          createdAt: new Date(Date.now() - 60_000).toISOString(),
+          expiresAt,
+        },
+        {
+          accountId: "bot-a",
+          code: "DUP999",
+          senderId: "user-2",
+          chatId: "chat-2",
+          createdAt: new Date(Date.now() - 30_000).toISOString(),
+          expiresAt,
+        },
+      ],
+      approved: [],
+    });
+
+    expect(consumePairingCode("telegram", "dup999", "bot-a")).toBeNull();
+    expect(getPendingPairings("telegram", "bot-a")).toHaveLength(2);
+    expect(getApprovedUsers("telegram", "bot-a")).toHaveLength(0);
   });
 
   test("isUserApproved returns false for unknown users", () => {
