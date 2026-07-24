@@ -16,13 +16,13 @@ import {
 import {
   assertSupportedChannelId,
   getSelectedChannelAccountWithSecrets,
-  refreshLoadedMessageChannelTool,
 } from "./service-shared";
 import {
   getChannelConfigSnapshotWithSecrets,
   isAccountConfigured,
   listChannelSummaries,
 } from "./service-snapshots";
+import { refreshLoadedMessageChannelTool } from "./service-tools";
 import type { ChannelConfigSnapshot, ChannelSummary } from "./service-types";
 import {
   isDiscordChannelAccount,

@@ -19,6 +19,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import type { CronChannelTarget } from "@/types/cron-channel-target";
 import { estimatePeriodMs, isValidCron } from "./parse-interval";
 
 // ── Types ───────────────────────────────────────────────────────────
@@ -36,6 +37,8 @@ export type CronRunReason =
   | "task_cancelled"
   | "invalid_cron"
   | "scheduler_error";
+
+export type { CronChannelTarget } from "@/types/cron-channel-target";
 
 export interface SchedulerOwner {
   pid: number;
@@ -56,6 +59,8 @@ export interface CronTask {
    * - any other string: enqueue into that existing conversation id
    */
   conversation_id: string;
+  /** Optional channel destinations to bind before the scheduled turn starts. */
+  channel_targets?: CronChannelTarget[];
 
   // Metadata
   name: string;
@@ -139,8 +144,47 @@ function emptyFile(): CronFileData {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeCronChannelTargets(
+  value: unknown,
+): CronChannelTarget[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+
+  const targets: CronChannelTarget[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    if (typeof entry.channel_id !== "string") continue;
+    if (typeof entry.chat_id !== "string" || entry.chat_id.length === 0) {
+      continue;
+    }
+    if (
+      entry.account_id !== undefined &&
+      typeof entry.account_id !== "string"
+    ) {
+      continue;
+    }
+    if (entry.label !== undefined && typeof entry.label !== "string") {
+      continue;
+    }
+
+    targets.push({
+      channel_id: entry.channel_id,
+      ...(entry.account_id !== undefined
+        ? { account_id: entry.account_id }
+        : {}),
+      chat_id: entry.chat_id,
+      ...(entry.label !== undefined ? { label: entry.label } : {}),
+    });
+  }
+
+  return targets.length > 0 ? targets : undefined;
+}
+
 function normalizeTask(task: CronTask): CronTask {
-  return {
+  const normalized: CronTask = {
     ...task,
     last_run_at: task.last_run_at ?? null,
     last_run_outcome: task.last_run_outcome ?? null,
@@ -150,6 +194,15 @@ function normalizeTask(task: CronTask): CronTask {
     missed_count: task.missed_count ?? 0,
     failed_count: task.failed_count ?? 0,
   };
+  const channelTargets = normalizeCronChannelTargets(
+    (task as { channel_targets?: unknown }).channel_targets,
+  );
+  if (channelTargets) {
+    normalized.channel_targets = channelTargets;
+  } else {
+    delete normalized.channel_targets;
+  }
+  return normalized;
 }
 
 function normalizeCronFileData(data: CronFileData): CronFileData {
@@ -485,6 +538,7 @@ export interface AddTaskInput {
   timezone?: string;
   recurring: boolean;
   prompt: string;
+  channel_targets?: CronChannelTarget[];
   scheduled_for?: Date; // for one-shots
 }
 
@@ -518,11 +572,13 @@ export function addTask(input: AddTaskInput): AddTaskResult {
     const taskId = generateTaskId();
     const timezone =
       input.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const channelTargets = normalizeCronChannelTargets(input.channel_targets);
 
     const task: CronTask = {
       id: taskId,
       agent_id: agentId,
       conversation_id: conversationId,
+      ...(channelTargets ? { channel_targets: channelTargets } : {}),
       name: input.name,
       description: input.description,
       cron: input.cron,
@@ -712,7 +768,9 @@ export function updateTask(
 ): CronTask | null {
   return withLock(() => {
     const data = readCronFile();
-    const task = data.tasks.find((t) => t.id === taskId);
+    const taskIndex = data.tasks.findIndex((t) => t.id === taskId);
+    if (taskIndex === -1) return null;
+    const task = data.tasks[taskIndex];
     if (!task) return null;
     const originalCron = task.cron;
     updater(task);
@@ -724,8 +782,10 @@ export function updateTask(
       task.last_run_reason = null;
       task.last_run_error = null;
     }
+    const normalizedTask = normalizeTask(task);
+    data.tasks[taskIndex] = normalizedTask;
     writeCronFile(data);
-    return { ...task };
+    return { ...normalizedTask };
   });
 }
 

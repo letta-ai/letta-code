@@ -13,6 +13,7 @@
  */
 
 import { getBackend } from "@/backend";
+import { getChannelRegistry } from "@/channels/registry";
 import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
 import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
 import { scheduleQueuePump } from "@/websocket/listener/queue";
@@ -29,6 +30,10 @@ import type {
   IncomingMessage,
   StartListenerOptions,
 } from "@/websocket/listener/types";
+import {
+  enqueueCronPromptWithChannelTargets,
+  validateCronChannelTargets,
+} from "./channel-targets";
 import {
   type CronRunOutcome,
   type CronRunReason,
@@ -63,6 +68,10 @@ type ProcessQueuedTurn = (
   queuedTurn: IncomingMessage,
   dequeuedBatch: DequeuedBatch,
 ) => Promise<void>;
+
+function getCronChannelAdapter(channelId: string, accountId?: string) {
+  return getChannelRegistry()?.getAdapter(channelId, accountId) ?? null;
+}
 
 interface SchedulerState {
   token: string;
@@ -161,6 +170,10 @@ function emitCronsUpdated(
       err instanceof Error ? err.message : err,
     );
   }
+}
+
+function getErrorText(err: unknown, fallback: string): string {
+  return err instanceof Error ? err.message : fallback;
 }
 
 // ── Core tick logic ─────────────────────────────────────────────────
@@ -281,6 +294,27 @@ async function fireCronTask(
     return false;
   }
 
+  try {
+    validateCronChannelTargets(task, getCronChannelAdapter);
+  } catch (err) {
+    const error = getErrorText(err, "failed to validate cron channel target");
+    setLastRunOutcome(task.id, {
+      outcome: "failed",
+      reason: "scheduler_error",
+      runAt: timing.schedulerNow,
+      error,
+    });
+    safeAppendCronRunLogForTask(task, {
+      status: "error",
+      outcome: "failed",
+      reason: "scheduler_error",
+      error,
+      runAtMs: timing.schedulerNow.getTime(),
+      scheduledFor: task.scheduled_for,
+    });
+    return false;
+  }
+
   let targetConversationId: string | undefined;
   try {
     targetConversationId = await resolveCronFireConversationId(task);
@@ -295,6 +329,7 @@ async function fireCronTask(
     return false;
   }
 
+  const runtimeConversationId = targetConversationId ?? "default";
   const rawRuntime = getOrCreateConversationRuntime(
     listener,
     task.agent_id,
@@ -328,14 +363,41 @@ async function fireCronTask(
 
   const text = wrapCronPrompt(task, timing);
 
-  const queuedItem = conversationRuntime.queueRuntime.enqueue({
-    kind: "cron_prompt",
-    source: "cron" as import("@/types/protocol").QueueItemSource,
-    text,
-    cronTaskId: task.id,
-    agentId: task.agent_id,
-    conversationId: targetConversationId ?? "default",
-  } as Omit<CronPromptQueueItem, "id" | "enqueuedAt">);
+  let queuedItem: CronPromptQueueItem | null;
+  try {
+    queuedItem = enqueueCronPromptWithChannelTargets({
+      queueRuntime: conversationRuntime.queueRuntime,
+      queueItem: {
+        kind: "cron_prompt",
+        source: "cron",
+        text,
+        cronTaskId: task.id,
+        agentId: task.agent_id,
+        conversationId: runtimeConversationId,
+      },
+      task,
+      conversationId: runtimeConversationId,
+      getAdapter: getCronChannelAdapter,
+    });
+  } catch (err) {
+    const error = getErrorText(err, "failed to bind cron channel target");
+    setLastRunOutcome(task.id, {
+      outcome: "failed",
+      reason: "scheduler_error",
+      runAt: timing.schedulerNow,
+      error,
+    });
+    safeAppendCronRunLogForTask(task, {
+      status: "error",
+      outcome: "failed",
+      reason: "scheduler_error",
+      error,
+      runAtMs: timing.schedulerNow.getTime(),
+      scheduledFor: task.scheduled_for,
+      conversationId: runtimeConversationId,
+    });
+    return false;
+  }
 
   if (!queuedItem) {
     setLastRunOutcome(task.id, {
@@ -390,9 +452,9 @@ async function fireCronTask(
     queueItemId: queuedItem.id,
     scheduledFor: task.scheduled_for,
     firedAt: nowIso,
-    conversationId: targetConversationId ?? "default",
+    conversationId: runtimeConversationId,
   });
-  emitCronsUpdated(socket, task, targetConversationId ?? "default");
+  emitCronsUpdated(socket, task, runtimeConversationId);
   return true;
 }
 

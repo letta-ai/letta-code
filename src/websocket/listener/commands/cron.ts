@@ -29,7 +29,7 @@ import {
   isCronRunsCommand,
   isCronTriggerCommand,
   isCronUpdateCommand,
-} from "@/websocket/listener/protocol-inbound";
+} from "@/websocket/listener/protocol-inbound-cron";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 export type CronCommand =
@@ -124,6 +124,7 @@ export async function handleCronCommand(
         timezone: parsed.timezone,
         recurring: parsed.recurring,
         prompt: parsed.prompt,
+        channel_targets: parsed.channel_targets,
         scheduled_for: scheduledFor,
       });
       safeSocketSend(
@@ -284,6 +285,13 @@ export async function handleCronCommand(
         }
         if (parsed.conversation_id !== undefined) {
           current.conversation_id = parsed.conversation_id;
+        }
+        if (parsed.channel_targets !== undefined) {
+          if (parsed.channel_targets.length > 0) {
+            current.channel_targets = parsed.channel_targets;
+          } else {
+            delete current.channel_targets;
+          }
         }
         if (parsed.cron !== undefined) current.cron = parsed.cron;
         if (parsed.timezone !== undefined) current.timezone = parsed.timezone;
