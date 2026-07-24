@@ -508,6 +508,32 @@ describe("app-server native websocket", () => {
     }
   });
 
+  test("closes the paired control channel when stream disconnects", async () => {
+    let handle: AppServerHandle | null = null;
+    try {
+      handle = await startAppServer({ listen: "ws://127.0.0.1:0" });
+
+      for (const order of ["stream-first", "control-first"] as const) {
+        const firstUrl =
+          order === "stream-first" ? handle.streamUrl : handle.controlUrl;
+        const secondUrl =
+          order === "stream-first" ? handle.controlUrl : handle.streamUrl;
+        const first = new WebSocket(firstUrl);
+        await waitForOpen(first);
+        const second = new WebSocket(secondUrl);
+        await waitForOpen(second);
+        const stream = order === "stream-first" ? first : second;
+        const control = order === "stream-first" ? second : first;
+
+        terminateClient(stream);
+        await waitForClientClose(control);
+        terminateClient(control);
+      }
+    } finally {
+      await handle?.close();
+    }
+  });
+
   test("starts a runtime over control and emits state frames over stream", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "letta-app-server-"));
     let handle: AppServerHandle | null = null;

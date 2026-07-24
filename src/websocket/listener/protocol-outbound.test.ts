@@ -4,9 +4,11 @@ import type { DequeuedBatch } from "@/queue/queue-runtime";
 import type { StreamDeltaMessage } from "@/types/protocol_v2";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { createRuntime as createListenerRuntime } from "@/websocket/listener/lifecycle";
+import { OUTBOUND_QUEUE_LIMITS } from "@/websocket/listener/outbound-wire";
 import {
   emitDequeuedUserMessage,
   emitDeviceStatusUpdateIfChanged,
+  emitProtocolV2Message,
 } from "@/websocket/listener/protocol-outbound";
 import type {
   ConversationRuntime,
@@ -18,9 +20,14 @@ class MockSocket {
   readyState = WebSocket.OPEN;
   bufferedAmount = 0;
   sentPayloads: string[] = [];
+  terminated = false;
 
   send(data: string): void {
     this.sentPayloads.push(data);
+  }
+
+  terminate(): void {
+    this.terminated = true;
   }
 }
 
@@ -51,6 +58,41 @@ function parseOnlyStreamDelta(socket: MockSocket): StreamDeltaMessage {
   expect(message.type).toBe("stream_delta");
   return message as StreamDeltaMessage;
 }
+
+describe("emitProtocolV2Message backpressure", () => {
+  test("never sheds stream deltas that snapshots cannot replay", () => {
+    const { runtime, socket } = createRuntime();
+    socket.bufferedAmount = OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
+
+    for (let i = 0; i <= OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES; i += 1) {
+      emitProtocolV2Message(socket as never, runtime, {
+        type: "stream_delta",
+        delta: {
+          message_type: "assistant_message",
+          content: `delta-${i}`,
+        },
+      } as never);
+    }
+
+    expect(socket.terminated).toBe(true);
+    expect(socket.sentPayloads).toEqual([]);
+  });
+
+  test("treats future protocol frame types as lossless by default", () => {
+    const { runtime, socket } = createRuntime();
+    socket.bufferedAmount = OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
+
+    for (let i = 0; i <= OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES; i += 1) {
+      emitProtocolV2Message(socket as never, runtime, {
+        type: "future_protocol_message",
+        content: `frame-${i}`,
+      } as never);
+    }
+
+    expect(socket.terminated).toBe(true);
+    expect(socket.sentPayloads).toEqual([]);
+  });
+});
 
 describe("emitDequeuedUserMessage", () => {
   test("emits cron_prompt-only turns as visible scheduled task user messages", () => {
