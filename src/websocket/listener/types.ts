@@ -69,6 +69,8 @@ export interface IncomingMessage {
   channelTurnSources?: ChannelTurnSource[];
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];
+  /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
+  excludeInteractiveTools?: boolean;
   messages: Array<
     (MessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;

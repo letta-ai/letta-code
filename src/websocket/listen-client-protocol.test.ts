@@ -934,6 +934,50 @@ describe("listen-client parseServerMessage", () => {
     expect(changeDeviceState?.type).toBe("change_device_state");
   });
 
+  test("accepts input create_message with exclude_interactive_tools", () => {
+    const msg = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            exclude_interactive_tools: true,
+          },
+        }),
+      ),
+    );
+    expect(msg?.type).toBe("input");
+    if (msg?.type === "input" && msg.payload.kind === "create_message") {
+      expect(msg.payload.exclude_interactive_tools).toBe(true);
+    }
+  });
+
+  test("rejects input create_message with non-boolean exclude_interactive_tools", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            exclude_interactive_tools: "yes",
+          },
+        }),
+      ),
+    );
+
+    expect(parsed).not.toBeNull();
+    expect(parsed?.type).toBe("__invalid_input");
+    if (parsed?.type === "__invalid_input") {
+      expect(parsed.reason).toContain(
+        "exclude_interactive_tools must be boolean",
+      );
+    }
+  });
+
   test("rejects input create_message with invalid client tool allowlist", () => {
     const parsed = parseServerMessage(
       Buffer.from(
