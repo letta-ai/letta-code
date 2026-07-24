@@ -533,7 +533,7 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
 });
 
 describe("listen-client channel model command wiring", () => {
-  test("wireChannelIngress routes channel /model through the model update helpers", () => {
+  test("wireChannelIngress routes channel model commands through the model update helpers", () => {
     const source = readListenerLifecycleSource();
 
     expect(source).toContain("registry.setModelHandler");

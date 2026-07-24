@@ -6,13 +6,17 @@ import {
   resolveChannelCommandGate,
 } from "./access-control";
 import { getChannelAccount, LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
+import type { ChannelStatusContext } from "./channel-status";
 import { tryHandleChannelSlashCommand } from "./commands";
 import { isDiscordGuildChannelAllowed } from "./discord/channel-gating";
 import { createPairingCode } from "./pairing";
 import type { ChannelCommandRouter } from "./registry-commands";
 import type { ChannelControlRequests } from "./registry-controls";
 import type { ChannelRegistryEvent } from "./registry-events";
-import type { ChannelInboundDelivery } from "./registry-handlers";
+import type {
+  ChannelInboundDelivery,
+  ChannelModelStatusHandler,
+} from "./registry-handlers";
 import {
   buildChannelTurnSource,
   buildPairingInstructions,
@@ -36,10 +40,49 @@ import {
 } from "./types";
 import { formatChannelNotification } from "./xml";
 
+export async function buildInboundChannelStatusContext(params: {
+  adapter: ChannelAdapter;
+  accountConfigured: boolean;
+  accountEnabled?: boolean;
+  route: ChannelRoute | null;
+  includeActiveModel?: boolean;
+  resolveModelStatus?: ChannelModelStatusHandler;
+}): Promise<ChannelStatusContext> {
+  let activeModel: ChannelStatusContext["activeModel"];
+
+  if (
+    params.includeActiveModel !== false &&
+    params.route &&
+    params.resolveModelStatus
+  ) {
+    try {
+      const status = await params.resolveModelStatus({
+        agentId: params.route.agentId,
+        conversationId: params.route.conversationId,
+      });
+      activeModel = {
+        modelLabel: status.modelLabel,
+        modelHandle: status.modelHandle,
+      };
+    } catch {
+      // Best-effort; status still works when model lookup is unavailable.
+    }
+  }
+
+  return {
+    adapterRunning: params.adapter.isRunning(),
+    accountConfigured: params.accountConfigured,
+    accountEnabled: params.accountEnabled,
+    route: params.route,
+    activeModel,
+  };
+}
+
 export function createChannelInboundRouter(deps: {
   controls: ChannelControlRequests;
   commands: ChannelCommandRouter;
   routes: ChannelRouteProvisioner;
+  getModelStatusHandler: () => ChannelModelStatusHandler | null;
   getAdapter: (channelId: string, accountId: string) => ChannelAdapter | null;
   dispatchTurnLifecycleEvent: (
     event: ChannelTurnLifecycleEvent,
@@ -116,13 +159,30 @@ export function createChannelInboundRouter(deps: {
       return statusRoute;
     };
 
+    const statusRoute = getStatusRoute();
+    const statusContext: ChannelStatusContext = {
+      adapterRunning: adapter.isRunning(),
+      accountConfigured: !!config,
+      accountEnabled: config?.enabled,
+      route: statusRoute,
+    };
+
     if (
       await tryHandleChannelSlashCommand(adapter, msg, {
-        statusContext: {
-          adapterRunning: adapter.isRunning(),
-          accountConfigured: !!config,
-          accountEnabled: config?.enabled,
-          route: getStatusRoute(),
+        statusContext,
+        resolveStatusContext: () => {
+          const includeActiveModel = senderAccess !== "pair";
+          const modelStatusHandler = includeActiveModel
+            ? deps.getModelStatusHandler()
+            : null;
+          return buildInboundChannelStatusContext({
+            adapter,
+            accountConfigured: statusContext.accountConfigured,
+            accountEnabled: statusContext.accountEnabled,
+            route: statusRoute,
+            includeActiveModel,
+            resolveModelStatus: modelStatusHandler ?? undefined,
+          });
         },
         handlers: {
           cancel: async (_command, commandMsg) =>

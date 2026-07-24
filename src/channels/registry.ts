@@ -38,6 +38,7 @@ import type {
   ChannelInboundDelivery,
   ChannelMessageHandler,
   ChannelModelHandler,
+  ChannelModelStatusHandler,
   ChannelReflectionHandler,
   ChannelReloadHandler,
 } from "./registry-handlers";
@@ -166,6 +167,7 @@ export class ChannelRegistry {
   private cancelHandler: ChannelCancelHandler | null = null;
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
+  private modelStatusHandler: ChannelModelStatusHandler | null = null;
   private reloadHandler: ChannelReloadHandler | null = null;
   private readonly buffer: ChannelInboundDelivery[] = [];
   private readonly controls: ChannelControlRequests;
@@ -203,6 +205,7 @@ export class ChannelRegistry {
       controls: this.controls,
       commands: this.commands,
       routes: this.routes,
+      getModelStatusHandler: () => this.modelStatusHandler,
       getAdapter: (channelId, accountId) =>
         this.getAdapter(channelId, accountId),
       dispatchTurnLifecycleEvent: (event) =>
@@ -435,8 +438,12 @@ export class ChannelRegistry {
     this.reflectionHandler = handler;
   }
 
-  setModelHandler(handler: ChannelModelHandler | null): void {
+  setModelHandler(
+    handler: ChannelModelHandler | null,
+    statusHandler: ChannelModelStatusHandler | null = null,
+  ): void {
     this.modelHandler = handler;
+    this.modelStatusHandler = statusHandler;
   }
 
   setReloadHandler(handler: ChannelReloadHandler | null): void {
@@ -686,6 +693,7 @@ export class ChannelRegistry {
     this.cancelHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
+    this.modelStatusHandler = null;
     this.reloadHandler = null;
   }
 
@@ -706,6 +714,7 @@ export class ChannelRegistry {
     this.cancelHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
+    this.modelStatusHandler = null;
     this.reloadHandler = null;
     this.controls.clearAll();
     this.unsubscribeWhatsAppState();

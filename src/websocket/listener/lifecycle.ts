@@ -682,7 +682,7 @@ export async function wireChannelIngress(
         ),
       };
     }
-  });
+  }, getCurrentModelStatusForRuntime);
 
   registry.setReloadHandler(async ({ runtime }) => {
     const scopedRuntime = getOrCreateScopedRuntime(

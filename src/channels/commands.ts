@@ -6,7 +6,12 @@ import {
   canonicalizeChannelCommandName,
   canRunChannelCommand,
 } from "./access-control";
+import {
+  buildChannelStatusMessage,
+  type ChannelStatusContext,
+} from "./channel-status";
 import { handleChannelFeedbackCommand } from "./feedback";
+import { formatChannelModelDisplay } from "./model-display";
 import { getChannelDisplayName } from "./plugin-registry";
 import type {
   ChannelAdapter,
@@ -80,15 +85,10 @@ export type ChannelSlashCommandHandlers = {
   ) => Promise<ChannelSlashCommandHandlerResult>;
 };
 
-export type ChannelStatusContext = {
-  adapterRunning: boolean;
-  accountConfigured: boolean;
-  accountEnabled?: boolean;
-  route: ChannelRoute | null;
-};
-
 export type ChannelSlashCommandOptions = {
   statusContext?: ChannelStatusContext;
+  /** Lazily enrich status data after the inbound message is parsed as /status. */
+  resolveStatusContext?: () => Promise<ChannelStatusContext>;
   handlers?: ChannelSlashCommandHandlers;
   enableBangCommands?: boolean;
   /** Admin/user tier gate for this sender; undefined disables gating. */
@@ -374,50 +374,6 @@ export function buildUnsupportedChannelCommandMessage(
   ].join("\n\n");
 }
 
-export function buildChannelStatusMessage(
-  msg: InboundChannelMessage,
-  context: ChannelStatusContext,
-): string {
-  const displayName = channelDisplayName(msg.channel);
-  const route = context.route;
-  const routeStatus = route
-    ? "Connected to a Letta agent conversation."
-    : "No route is connected for this chat yet.";
-  const accountStatus = !context.accountConfigured
-    ? "No channel account is configured for this receiver."
-    : context.accountEnabled === false
-      ? "Channel account is configured but disabled."
-      : "Channel account is configured and enabled.";
-
-  const lines = [
-    `${displayName} status`,
-    accountStatus,
-    `Listener: ${context.adapterRunning ? "running" : "stopped"}.`,
-    `Route: ${routeStatus}`,
-  ];
-
-  if (route) {
-    lines.push(`Agent: ${route.agentId}.`);
-    lines.push(`Conversation: ${route.conversationId}.`);
-    if (route.threadId) {
-      lines.push(`Thread: ${route.threadId}.`);
-    }
-    if (route.detached) {
-      lines.push("Slack thread is detached until the app is mentioned again.");
-    } else if (route.outboundEnabled === false) {
-      lines.push(
-        "Outbound replies are disabled until the app is mentioned again.",
-      );
-    }
-  } else {
-    lines.push(
-      "Send a normal non-command message here to get pairing or connection instructions.",
-    );
-  }
-
-  return lines.join("\n");
-}
-
 export function buildChannelNoRouteMessage(channelId: string): string {
   const displayName = channelDisplayName(channelId);
   return [
@@ -631,13 +587,9 @@ export function buildChannelCurrentModelMessage(
 ): string {
   const displayName = channelDisplayName(channelId);
   const scope = params.scope === "agent" ? "agent" : "conversation";
-  const handleText =
-    params.modelHandle && params.modelHandle !== params.modelLabel
-      ? ` (${params.modelHandle})`
-      : "";
   const switchCommand = modelCommandPrefix(channelId);
   return [
-    `${displayName} current ${scope} model: ${params.modelLabel}${handleText}.`,
+    `${displayName} current ${scope} model: ${formatChannelModelDisplay(params)}.`,
     `Use ${switchCommand} list to see available models, or ${switchCommand} <handle-or-id> to switch.`,
   ].join("\n");
 }
@@ -889,11 +841,13 @@ export async function tryHandleChannelSlashCommand(
         case "status":
           return buildChannelStatusMessage(
             msg,
-            options.statusContext ?? {
-              adapterRunning: adapter.isRunning(),
-              accountConfigured: false,
-              route: null,
-            },
+            options.resolveStatusContext
+              ? await options.resolveStatusContext()
+              : (options.statusContext ?? {
+                  adapterRunning: adapter.isRunning(),
+                  accountConfigured: false,
+                  route: null,
+                }),
           );
         case "pause":
           return handleScopedCommand({

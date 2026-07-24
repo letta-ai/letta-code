@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { buildChannelStatusMessage } from "@/channels/channel-status";
 import {
   buildChannelAlreadyActiveMessage,
   buildChannelAlreadyPausedMessage,
@@ -19,7 +20,6 @@ import {
   buildChannelNoRouteMessage,
   buildChannelPausedMessage,
   buildChannelResumedMessage,
-  buildChannelStatusMessage,
   buildUnsupportedChannelCommandMessage,
   listChannelSlashCommands,
   parseChannelBangCommand,
@@ -245,20 +245,26 @@ describe("channel slash commands", () => {
       timestamp: Date.now(),
     };
 
-    expect(
-      buildChannelStatusMessage(msg, {
-        adapterRunning: true,
-        accountConfigured: true,
-        accountEnabled: true,
-        route: {
-          chatId: "chat-1",
-          agentId: "agent-1",
-          conversationId: "conv-1",
-          enabled: true,
-          createdAt: "2026-05-15T00:00:00.000Z",
-        },
-      }),
-    ).toContain("Route: Connected to a Letta agent conversation.");
+    const connectedText = buildChannelStatusMessage(msg, {
+      adapterRunning: true,
+      accountConfigured: true,
+      accountEnabled: true,
+      activeModel: {
+        modelLabel: "GPT-5.6 Sol",
+        modelHandle: "openai/gpt-5.6-sol",
+      },
+      route: {
+        chatId: "chat-1",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        enabled: true,
+        createdAt: "2026-05-15T00:00:00.000Z",
+      },
+    });
+    expect(connectedText).toContain(
+      "Route: Connected to a Letta agent conversation.",
+    );
+    expect(connectedText).toContain("Model: GPT-5.6 Sol (openai/gpt-5.6-sol).");
 
     const unconnectedText = buildChannelStatusMessage(msg, {
       adapterRunning: false,
@@ -270,6 +276,59 @@ describe("channel slash commands", () => {
     );
     expect(unconnectedText).toContain("Listener: stopped.");
     expect(unconnectedText).toContain("No route is connected");
+  });
+
+  test("resolves enriched status context only for /status", async () => {
+    const replies: CapturedDirectReply[] = [];
+    const adapter = createReplyCapturingAdapter(replies);
+    let statusResolutions = 0;
+    const statusContext = {
+      adapterRunning: true,
+      accountConfigured: true,
+      route: null,
+    };
+    const options = {
+      statusContext,
+      resolveStatusContext: async () => {
+        statusResolutions += 1;
+        return {
+          ...statusContext,
+          activeModel: {
+            modelLabel: "GPT-5.6 Sol",
+            modelHandle: "openai/gpt-5.6-sol",
+          },
+        };
+      },
+    };
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "chat-1",
+      senderId: "user-1",
+      text: "hello",
+      timestamp: Date.now(),
+    };
+
+    await expect(
+      tryHandleChannelSlashCommand(adapter, msg, options),
+    ).resolves.toBe(false);
+    expect(statusResolutions).toBe(0);
+
+    await expect(
+      tryHandleChannelSlashCommand(adapter, { ...msg, text: "/help" }, options),
+    ).resolves.toBe(true);
+    expect(statusResolutions).toBe(0);
+
+    await expect(
+      tryHandleChannelSlashCommand(
+        adapter,
+        { ...msg, text: "/status" },
+        options,
+      ),
+    ).resolves.toBe(true);
+    expect(statusResolutions).toBe(1);
+    expect(replies.at(-1)?.text).toContain(
+      "Model: GPT-5.6 Sol (openai/gpt-5.6-sol).",
+    );
   });
 
   test("builds pause and resume route messages", () => {
@@ -630,6 +689,12 @@ describe("channel slash commands", () => {
         scope: "agent",
       }),
     ).toContain("Telegram current agent model");
+    expect(
+      buildChannelCurrentModelMessage("telegram", {
+        modelLabel: "custom/model",
+        modelHandle: "custom/model",
+      }),
+    ).toContain("model: custom/model.");
   });
 
   test("builds model selector-style command messages", () => {

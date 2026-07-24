@@ -33,6 +33,14 @@ export type ChannelModelHandler = (params: {
   modelPicker?: ChannelModelPickerData;
 }>;
 
+export type ChannelModelStatusHandler = (params: {
+  agentId: string;
+  conversationId: string;
+}) => Promise<{
+  modelLabel: string;
+  modelHandle: string | null;
+}>;
+
 export type ChannelReloadHandler = (params: {
   runtime: { agent_id: string; conversation_id: string };
 }) => Promise<{ handled: boolean; text?: string }>;
