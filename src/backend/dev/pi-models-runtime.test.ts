@@ -238,6 +238,28 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     }
   });
 
+  test("Letta env aliases resolve inside the runtime's auth context", async () => {
+    const saved = {
+      GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+      GOOGLE_GENERATIVE_AI_API_KEY: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+    };
+    delete process.env.GEMINI_API_KEY;
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY = "letta-alias-key";
+    try {
+      const runtime = new LocalPiModelsRuntime();
+      // Upstream google only reads GEMINI_API_KEY; the runtime's AuthContext
+      // maps Letta's documented alias so resolution stays inside pi-ai's
+      // provider auth — no factory-side ambient fallback exists.
+      const auth = await runtime.getAuth("google");
+      expect(auth?.auth.apiKey).toBe("letta-alias-key");
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   test("a runtime auth miss is not masked by a parallel factory lookup", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
     storageDirs.push(storageDir);

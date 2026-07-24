@@ -489,17 +489,15 @@ export async function resolvePiModelForAgent(
       ? registeredProvider.providerName
       : (spec?.piProvider ?? provider);
     const authResult = await modelsRuntime.getAuth(authProviderId);
-    // No fallback to the factory's own stored-record lookup: a runtime auth
-    // regression must surface, not be silently masked by a parallel
-    // credential path. Two named exceptions remain: (1) Letta-documented
-    // ambient env vars that upstream providers do not read (e.g.
-    // GOOGLE_GENERATIVE_AI_API_KEY — upstream google only reads
-    // GEMINI_API_KEY) plus the keyless local-daemon placeholder, and
-    // (2) zai's dual-record endpoint selection below.
+    // No factory-side credential fallback of any kind: stored records and
+    // ambient env resolve inside the runtime (Letta env aliases such as
+    // GOOGLE_GENERATIVE_AI_API_KEY are mapped in the runtime's AuthContext,
+    // and keyless local daemons resolve through their provider auth), so a
+    // runtime auth regression always surfaces. The one named exception is
+    // zai's dual-record endpoint selection below.
     connection = {
       ...connection,
-      apiKey:
-        authResult?.auth.apiKey ?? spec?.apiKeyEnv?.() ?? spec?.fallbackApiKey,
+      apiKey: authResult?.auth.apiKey,
     };
     if (authResult?.auth.baseUrl) baseURL = authResult.auth.baseUrl;
     if (authResult?.auth.headers) {

@@ -11,7 +11,11 @@ import type {
   MutableModels,
   Provider,
 } from "@earendil-works/pi-ai";
-import { createModels, InMemoryModelsStore } from "@earendil-works/pi-ai";
+import {
+  createModels,
+  defaultProviderAuthContext,
+  InMemoryModelsStore,
+} from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { createLocalPiCredentialStore } from "@/backend/local/local-pi-credential-store";
 import {
@@ -42,6 +46,34 @@ import { resolveRegisteredPiProviderRuntimeConnection } from "./registered-pi-pr
 
 const CONFIGURED_DISCOVERY_TIMEOUT_MS = 2_000;
 const AUTODETECT_DISCOVERY_TIMEOUT_MS = 500;
+
+/**
+ * Letta-documented environment aliases for env vars the upstream providers
+ * read. Resolved inside pi-ai's own auth resolution via AuthContext, so the
+ * factory never needs an ambient credential fallback of its own. Keep this
+ * list to exact, documented aliases only.
+ */
+const PROVIDER_ENV_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  // Upstream google reads GEMINI_API_KEY; Letta documents
+  // GOOGLE_GENERATIVE_AI_API_KEY.
+  GEMINI_API_KEY: ["GOOGLE_GENERATIVE_AI_API_KEY"],
+};
+
+function aliasedAuthContext() {
+  const base = defaultProviderAuthContext();
+  return {
+    env: async (name: string) => {
+      const direct = await base.env(name);
+      if (direct) return direct;
+      for (const alias of PROVIDER_ENV_ALIASES[name] ?? []) {
+        const value = await base.env(alias);
+        if (value) return value;
+      }
+      return undefined;
+    },
+    fileExists: (path: string) => base.fileExists(path),
+  };
+}
 
 export interface LocalPiModelsRuntimeOptions {
   storageDir?: string;
@@ -163,6 +195,7 @@ export class LocalPiModelsRuntime {
     this.models = createModels({
       modelsStore: this.modelsStore,
       credentials: this.credentials,
+      authContext: aliasedAuthContext(),
     });
     const builtins = builtinProviders();
     for (const provider of builtins) {
