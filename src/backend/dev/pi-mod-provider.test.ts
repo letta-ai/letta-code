@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { localModelSettingsForHandle } from "@/backend/local/local-model-config";
 import { testRefreshContext } from "@/test-utils/pi-refresh-context";
 import { createModPiProvider } from "./pi-mod-provider";
 import { resolvePiModelForAgent } from "./pi-model-factory";
@@ -75,13 +76,14 @@ describe("createModPiProvider", () => {
     const provider = createModPiProvider({
       registered: getRegisteredPiProvider(PROVIDER)!,
     });
+    const refreshContext = testRefreshContext();
 
     // Static declaration seeds the list before the first refresh.
     expect(provider.getModels().map((m) => m.id)).toEqual(["static-seed"]);
 
     // pi-ai 0.81 merges the static baseline with the dynamic overlay by id;
     // discoveries extend the declared baseline rather than replacing it.
-    await provider.refreshModels?.(testRefreshContext());
+    await provider.refreshModels?.(refreshContext);
     expect(provider.getModels().map((m) => m.id)).toEqual([
       "static-seed",
       "dynamic-1",
@@ -91,9 +93,9 @@ describe("createModPiProvider", () => {
     ).toEqual(["text", "image"]);
 
     fail = true;
-    await expect(
-      provider.refreshModels?.(testRefreshContext()),
-    ).rejects.toThrow("endpoint down");
+    await expect(provider.refreshModels?.(refreshContext)).rejects.toThrow(
+      "endpoint down",
+    );
     expect(provider.getModels().map((m) => m.id)).toEqual([
       "static-seed",
       "dynamic-1",
@@ -121,6 +123,51 @@ describe("LocalPiModelsRuntime mod provider integration", () => {
     );
     expect(resolved.model).toBe(runtime.getModel(PROVIDER, "acme-large")!);
     expect(resolved.model.provider).toBe(PROVIDER);
+  });
+
+  test("identity holds through the real selection path (persisted settings)", async () => {
+    registerPiProvider(PROVIDER, {
+      api: "openai-completions",
+      baseUrl: "https://api.acme.test/v1",
+      models: [model("acme-large")],
+    });
+    const runtime = new LocalPiModelsRuntime();
+
+    // Selecting a model persists its derived settings onto the agent —
+    // values equal to the published model's. A turn with those settings
+    // must still resolve the exact published instance (no clone).
+    const persisted = localModelSettingsForHandle(
+      `${PROVIDER}/acme-large`,
+      runtime,
+    );
+    expect(persisted).toMatchObject({ context_window_limit: 100000 });
+
+    const resolved = await resolvePiModelForAgent(
+      `${PROVIDER}/acme-large`,
+      persisted ?? {},
+      { modelsRuntime: runtime },
+    );
+    expect(resolved.model).toBe(runtime.getModel(PROVIDER, "acme-large")!);
+  });
+
+  test("unregistering a mod that overrides a built-in restores the built-in", async () => {
+    try {
+      registerPiProvider("openai-codex", {
+        api: "openai-codex-responses",
+        baseUrl: "https://proxy.example.test",
+        models: [model("proxy-model", { api: "openai-codex-responses" })],
+      });
+      const runtime = new LocalPiModelsRuntime();
+      expect(runtime.getModel("openai-codex", "proxy-model")).toBeDefined();
+
+      unregisterPiProvider("openai-codex");
+      // The built-in provider (and its catalog) must survive the mod.
+      const builtin = runtime.getModels("openai-codex");
+      expect(builtin.length).toBeGreaterThan(0);
+      expect(builtin.some((m) => m.id === "proxy-model")).toBe(false);
+    } finally {
+      unregisterPiProvider("openai-codex");
+    }
   });
 
   test("re-registration rebuilds only that provider; unregistration removes it", async () => {

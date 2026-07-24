@@ -239,7 +239,39 @@ export class LocalPiModelsRuntime {
    */
   async getAuth(providerId: string): Promise<AuthResult | undefined> {
     this.ensureManagedProviders(providerId);
+    await this.invalidateDynamicBuiltinsOnCredentialChange();
     return this.models.getAuth(providerId);
+  }
+
+  /**
+   * One consistent turn resolution: credential-identity invalidation, auth,
+   * and model lookup happen against the same provider state, so a
+   * credential change can never pair the new account's auth with a stale
+   * account's cached model. On a model miss, dynamic catalogs refresh once.
+   */
+  async resolveTurn(
+    providerId: string,
+    modelId: string,
+    fallbackModelId?: string,
+  ): Promise<{ model: Model<Api> | undefined; auth: AuthResult | undefined }> {
+    this.ensureManagedProviders(providerId);
+    await this.invalidateDynamicBuiltinsOnCredentialChange();
+    const auth = await this.models.getAuth(providerId);
+    const lookup = () =>
+      this.models.getModel(providerId, modelId) ??
+      (fallbackModelId
+        ? this.models.getModel(providerId, fallbackModelId)
+        : undefined);
+    let model = lookup();
+    if (!model) {
+      try {
+        await this.models.refresh({ force: true });
+      } catch {
+        // Refresh failures keep last-known lists; the lookup below decides.
+      }
+      model = lookup();
+    }
+    return { model, auth };
   }
 
   /** Stored (possibly just-refreshed) credential for a provider. */
@@ -270,6 +302,12 @@ export class LocalPiModelsRuntime {
       if (this.modSignatures.delete(providerId)) {
         this.models.deleteProvider(providerId);
         void this.modelsStore.delete(providerId);
+        // A mod that overrode a built-in provider id must not take the
+        // built-in with it when it unloads.
+        const builtin = builtinProviders().find(
+          (provider) => provider.id === providerId,
+        );
+        if (builtin) this.models.setProvider(builtin);
       }
       return false;
     }
@@ -403,6 +441,7 @@ export class LocalPiModelsRuntime {
     providerId: string,
     modelId: string,
   ): Promise<Model<Api> | undefined> {
+    await this.invalidateDynamicBuiltinsOnCredentialChange();
     const known = this.getModel(providerId, modelId);
     if (known) return known;
     try {

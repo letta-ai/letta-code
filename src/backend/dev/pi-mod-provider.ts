@@ -1,6 +1,10 @@
-import type { Api, Model, Provider } from "@earendil-works/pi-ai";
+import type {
+  Api,
+  Model,
+  Provider,
+  RefreshModelsContext,
+} from "@earendil-works/pi-ai";
 import { createProvider } from "@earendil-works/pi-ai";
-import { listLocalProviderRecords } from "@/backend/local/local-provider-auth-store";
 import { knownApiStreams } from "./pi-api-streams";
 import { modOAuthAuth } from "./pi-oauth";
 import type {
@@ -10,8 +14,8 @@ import type {
 } from "./pi-provider-mod-registry";
 import { resolveRegisteredPiProviderHeaders } from "./pi-provider-mod-registry";
 import {
+  getRegisteredPiProviderLocalRecord,
   listRegisteredPiProviderModels,
-  resolveRegisteredPiProviderListModelsConnection,
   resolveRegisteredPiProviderRuntimeConnection,
 } from "./registered-pi-provider-runtime";
 
@@ -94,18 +98,25 @@ export function createModPiProvider(options: ModPiProviderOptions): Provider {
   const staticModels = (config.models ?? []).map(toModel);
 
   // Only providers with a listModels hook are dynamic; static registrations
-  // publish their declared models and never refresh.
+  // publish their declared models and never refresh. Refresh auth comes
+  // solely from the RefreshModelsContext credential the Models runtime
+  // resolved (OAuth already refreshed under the store lock) — no parallel
+  // auth read here.
   const fetchModels = config.listModels
-    ? async (): Promise<readonly Model<Api>[]> => {
-        const listConnection =
-          await resolveRegisteredPiProviderListModelsConnection(registered, {
-            records: listLocalProviderRecords(storageDir),
-            storageDir,
-          });
-        const listed = await listRegisteredPiProviderModels(
+    ? async (context: RefreshModelsContext): Promise<readonly Model<Api>[]> => {
+        const record = getRegisteredPiProviderLocalRecord(
           registered,
-          listConnection,
+          storageDir,
         );
+        const apiKey =
+          context.credential?.type === "oauth"
+            ? config.oauth?.getApiKey(context.credential)
+            : context.credential?.key;
+        const listed = await listRegisteredPiProviderModels(registered, {
+          apiKey,
+          baseUrl: record?.base_url ?? config.baseUrl,
+          headers: declaredHeaders,
+        });
         return listed.map(toModel);
       }
     : undefined;
@@ -124,7 +135,17 @@ export function createModPiProvider(options: ModPiProviderOptions): Provider {
             resolveRegisteredPiProviderRuntimeConnection(registered, storageDir)
               .apiKey;
           if (apiKey) {
-            return { auth: { apiKey }, source: "local provider record" };
+            return {
+              auth: {
+                apiKey,
+                // authHeader mods carry their key as an explicit header;
+                // this is provider-owned auth, not factory-side shaping.
+                ...(config.authHeader
+                  ? { headers: { Authorization: `Bearer ${apiKey}` } }
+                  : {}),
+              },
+              source: "local provider record",
+            };
           }
           // connect:false mods are explicitly keyless — report configured so
           // the Models runtime refreshes them (mirrors
@@ -133,7 +154,7 @@ export function createModPiProvider(options: ModPiProviderOptions): Provider {
         },
       },
       ...(config.oauth
-        ? { oauth: modOAuthAuth(providerName, config.oauth) }
+        ? { oauth: modOAuthAuth(providerName, config.oauth, config) }
         : {}),
     },
     models: staticModels,

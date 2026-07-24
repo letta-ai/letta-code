@@ -32,7 +32,8 @@ import {
  * GitHub Copilot's enterpriseUrl) round-trip untouched.
  */
 
-function localNamesForProviderId(providerId: string): readonly string[] {
+/** Local auth.json record names that serve a pi-ai provider id. */
+export function localNamesForProviderId(providerId: string): readonly string[] {
   const registered = getRegisteredPiProvider(providerId);
   if (registered) {
     // A mod overriding a built-in provider id keeps that provider's local

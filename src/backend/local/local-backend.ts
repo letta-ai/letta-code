@@ -265,12 +265,11 @@ export class LocalBackend extends HeadlessBackend {
 
   constructor(options: LocalBackendOptions) {
     const localBackendRef: { current?: LocalBackend } = {};
-    // One pi-ai Models runtime per backend instance: /model listing, turn
-    // execution, and compaction resolve the same Model objects/credentials.
-    const modelsRuntime =
+    // One runtime per backend: listing/turns/compaction share Models state.
+    const runtime =
       options.modelsRuntime ??
       new LocalPiModelsRuntime({ storageDir: options.storageDir });
-    const modelConfig = resolveLocalModelConfig(options.storageDir);
+    const modelConfig = resolveLocalModelConfig(options.storageDir, runtime);
     const storeOptions: LocalStoreOptions = {
       storageDir: options.storageDir,
       seedDefaultAgent: false,
@@ -280,7 +279,7 @@ export class LocalBackend extends HeadlessBackend {
       defaultAgentModel: modelConfig.handle,
       defaultAgentModelSettings: modelConfig.modelSettings,
       modelSettingsForModel: (handle) =>
-        localModelSettingsForHandle(handle, modelsRuntime),
+        localModelSettingsForHandle(handle, runtime),
       conversationIdPrefix: "local-conv-",
       storedMessageIdPrefix: "letta-msg-",
       localMessageIdPrefix: "ui-msg-",
@@ -289,7 +288,7 @@ export class LocalBackend extends HeadlessBackend {
       options.defaultAgentId ?? "agent-local-default",
       createLocalExecutor(
         options,
-        modelsRuntime,
+        runtime,
         (input, error) =>
           localBackendRef.current?.compactAfterContextOverflow(input, error) ??
           Promise.resolve(null),
@@ -313,7 +312,7 @@ export class LocalBackend extends HeadlessBackend {
     this.memoryDir = options.memoryDir;
     this.complete = options.complete;
     this.memfsEnabledOverride = options.memfsEnabled;
-    this.piModelsRuntime = modelsRuntime;
+    this.piModelsRuntime = runtime;
   }
 
   /**

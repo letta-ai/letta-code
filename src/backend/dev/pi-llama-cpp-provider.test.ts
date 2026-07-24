@@ -105,7 +105,8 @@ describe("createLlamaCppPiProvider", () => {
       baseURL: "http://localhost:8080",
       fetchImpl: fakeLlamaCppFetch(state),
     });
-    await provider.refreshModels?.(testRefreshContext());
+    const refreshContext = testRefreshContext();
+    await provider.refreshModels?.(refreshContext);
 
     // Discovery reads the native catalog, not the OpenAI-compatible list.
     expect(state.requests).toContain("/models");
@@ -144,7 +145,8 @@ describe("createLlamaCppPiProvider", () => {
         requests: [],
       }),
     });
-    await provider.refreshModels?.(testRefreshContext());
+    const refreshContext = testRefreshContext();
+    await provider.refreshModels?.(refreshContext);
 
     // Upstream computes the fallback context first, then maxTokens equals it.
     const model = provider.getModels()[0];
@@ -172,7 +174,8 @@ describe("createLlamaCppPiProvider", () => {
         requests: [],
       }),
     });
-    await provider.refreshModels?.(testRefreshContext());
+    const refreshContext = testRefreshContext();
+    await provider.refreshModels?.(refreshContext);
     expect(provider.getModels().map((m) => m.id)).toEqual(["loaded.gguf"]);
   });
 
@@ -191,7 +194,8 @@ describe("createLlamaCppPiProvider", () => {
       baseURL: "http://localhost:8080/v1",
       fetchImpl: fakeLlamaCppFetch(state),
     });
-    await provider.refreshModels?.(testRefreshContext());
+    const refreshContext = testRefreshContext();
+    await provider.refreshModels?.(refreshContext);
 
     const model = provider.getModels()[0];
     expect(model?.input).toEqual(["text", "image"]);
@@ -214,11 +218,12 @@ describe("createLlamaCppPiProvider", () => {
       baseURL: "http://localhost:8080",
       fetchImpl: fakeLlamaCppFetch(state),
     });
-    await provider.refreshModels?.(testRefreshContext());
+    const refreshContext = testRefreshContext();
+    await provider.refreshModels?.(refreshContext);
     expect(provider.getModels()[0]?.input).toEqual(["text", "image"]);
 
     state.failProps = true;
-    await provider.refreshModels?.(testRefreshContext());
+    await provider.refreshModels?.(refreshContext);
     expect(provider.getModels()[0]?.input).toEqual(["text", "image"]);
   });
 
@@ -233,13 +238,14 @@ describe("createLlamaCppPiProvider", () => {
       baseURL: "http://localhost:8080",
       fetchImpl: fakeLlamaCppFetch(state),
     });
-    await provider.refreshModels?.(testRefreshContext());
+    const refreshContext = testRefreshContext();
+    await provider.refreshModels?.(refreshContext);
     expect(provider.getModels()).toHaveLength(1);
 
     state.failModels = true;
-    await expect(
-      provider.refreshModels?.(testRefreshContext()),
-    ).rejects.toThrow("connection refused");
+    await expect(provider.refreshModels?.(refreshContext)).rejects.toThrow(
+      "connection refused",
+    );
     expect(provider.getModels()).toHaveLength(1);
   });
 });

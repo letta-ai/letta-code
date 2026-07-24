@@ -13,7 +13,6 @@ import {
   stripRegisteredProviderHandlePrefix,
 } from "@/backend/dev/pi-provider-mod-registry";
 import {
-  builtinCatalogModels,
   getPiProviderSpec,
   isPiProvider,
   listConfiguredPiProviders,
@@ -105,38 +104,33 @@ function localProviderTypeForModelConfig(
     : provider;
 }
 
-function registeredModelSettingsForProviderModel(
-  provider: PiProvider | string,
-  modelId: string | undefined,
-): Record<string, unknown> | undefined {
-  if (!modelId) return undefined;
-  const registeredProvider = getRegisteredPiProvider(provider);
-  const registeredModel = registeredProvider?.config.models?.find(
-    (model) => model.id === modelId,
-  );
-  if (!registeredModel) return undefined;
-  return {
-    provider_type: localProviderTypeForModelConfig(provider),
-    context_window_limit: registeredModel.contextWindow,
-    max_tokens: registeredModel.maxTokens,
-  };
-}
-
-function catalogModelSettingsForProviderModel(
-  provider: PiProvider,
-  modelId: string | undefined,
+export function localModelSettingsForHandle(
+  handle: string | undefined,
   modelsRuntime?: LocalPiModelsRuntime,
 ): Record<string, unknown> | undefined {
-  if (!modelId || !isPiProvider(provider)) return undefined;
-  const spec = getPiProviderSpec(provider);
-  if (!spec.piProvider) return undefined;
-  // Read through the runtime when available so settings derive from the
-  // same published Model objects as listing and turn execution; the static
-  // catalog remains only for legacy synchronous callers without a runtime.
-  const catalog = modelsRuntime
-    ? modelsRuntime.getModels(spec.piProvider)
-    : builtinCatalogModels(spec.piProvider);
-  const model = catalog.find((entry) => entry.id === modelId);
+  if (!handle) return undefined;
+  const registeredName = resolveRegisteredPiProviderFromModelHandle(handle);
+  const provider = registeredName ?? resolveProviderFromModelHandle(handle);
+  if (!provider) return undefined;
+  const modelId = registeredName
+    ? stripRegisteredProviderHandlePrefix(handle, registeredName)
+    : stripProviderHandlePrefix(handle, provider as PiProvider);
+  if (!modelId) return undefined;
+
+  // Settings derive from the same runtime-published Model that listing and
+  // turn execution resolve — no registration or static-catalog re-reads.
+  const runtime =
+    modelsRuntime ?? new LocalPiModelsRuntime({ storageDir: undefined });
+  const runtimeProviderId = registeredName
+    ? registeredName
+    : isPiProvider(provider)
+      ? runtime.isRuntimeManagedProvider(provider)
+        ? provider
+        : getPiProviderSpec(provider).piProvider
+      : provider;
+  const model = runtimeProviderId
+    ? runtime.getModels(runtimeProviderId).find((entry) => entry.id === modelId)
+    : undefined;
   if (!model) return undefined;
   return {
     provider_type: localProviderTypeForModelConfig(provider),
@@ -145,45 +139,29 @@ function catalogModelSettingsForProviderModel(
   };
 }
 
-export function localModelSettingsForHandle(
-  handle: string | undefined,
+export function resolveLocalModelConfig(
+  storageDir?: string,
   modelsRuntime?: LocalPiModelsRuntime,
-): Record<string, unknown> | undefined {
-  if (!handle) return undefined;
-  const registeredProvider = resolveRegisteredPiProviderFromModelHandle(handle);
-  if (registeredProvider) {
-    return registeredModelSettingsForProviderModel(
-      registeredProvider,
-      stripRegisteredProviderHandlePrefix(handle, registeredProvider),
-    );
-  }
-
-  const provider = resolveProviderFromModelHandle(handle);
-  if (!provider) return undefined;
-  const modelId = stripProviderHandlePrefix(handle, provider);
-  return (
-    registeredModelSettingsForProviderModel(provider, modelId) ??
-    catalogModelSettingsForProviderModel(provider, modelId, modelsRuntime)
-  );
-}
-
-export function resolveLocalModelConfig(storageDir?: string): LocalModelConfig {
+): LocalModelConfig {
+  const runtime =
+    modelsRuntime ??
+    new LocalPiModelsRuntime({ ...(storageDir ? { storageDir } : {}) });
   const provider = resolveLocalProvider(storageDir);
-  const registeredProvider = getRegisteredPiProvider(provider);
-  const registeredModel = registeredProvider?.config.models?.[0];
-  const defaultModel = registeredProvider
-    ? undefined
-    : resolveLocalModel(provider);
+  const registeredName = getRegisteredPiProvider(provider)?.providerName;
+  const registeredModel = registeredName
+    ? runtime.getModels(registeredName)[0]
+    : undefined;
+  const defaultModel = registeredName ? undefined : resolveLocalModel(provider);
   const model =
     registeredModel?.id ??
-    (registeredProvider ? "default" : defaultModel) ??
+    (registeredName ? "default" : defaultModel) ??
     UNSELECTED_LOCAL_MODEL_HANDLE;
-  const handle = registeredProvider
+  const handle = registeredName
     ? `${provider}/${model}`
     : model === UNSELECTED_LOCAL_MODEL_HANDLE
       ? UNSELECTED_LOCAL_MODEL_HANDLE
       : localModelHandle(provider, model);
-  const modelSettings = localModelSettingsForHandle(handle);
+  const modelSettings = localModelSettingsForHandle(handle, runtime);
   return {
     provider,
     model,
@@ -290,11 +268,6 @@ export async function listLocalModels(
   const configured = resolveLocalModelConfig(storageDir);
   const models: LocalModelListEntry[] = [];
   const registeredProviders = listRegisteredPiProviders();
-  const registeredProvidersWithModels = new Set(
-    registeredProviders
-      .filter((provider) => provider.config.models !== undefined)
-      .map((provider) => provider.providerName),
-  );
   const addModel = (
     provider: PiProvider | string,
     model: string,
@@ -351,22 +324,6 @@ export async function listLocalModels(
     });
   };
 
-  for (const provider of registeredProviders) {
-    if (!isRegisteredPiProviderConfigured(provider, records)) continue;
-    // The mod's provider in the Models runtime owns discovery; the refresh
-    // above already re-fetched it (failure retains the last-known list,
-    // seeded from the static registration).
-    for (const model of modelsRuntime.getModels(provider.providerName)) {
-      addModel(provider.providerName, model.id, {
-        handle: `${provider.providerName}/${model.id}`,
-        maxContextWindow: model.contextWindow,
-        maxOutputTokens: model.maxTokens,
-        modelEndpointType: provider.providerName,
-        name: model.name,
-      });
-    }
-  }
-
   // Only add the configured model if its provider is actually reachable
   // (has keys/env configured). Otherwise we'd show models the user can't use.
   const configuredProviderIsConfigured = listConfiguredPiProviders(
@@ -375,31 +332,33 @@ export async function listLocalModels(
   if (
     isPiProviderForLocalModelHandle(configured.provider) &&
     !isDiscoverableLocalProvider(configured.provider) &&
-    !registeredProvidersWithModels.has(configured.provider) &&
+    !modelsRuntime.isRuntimeManagedProvider(configured.provider) &&
     configuredProviderIsConfigured
   ) {
     addModel(configured.provider, configured.model);
   }
   const configuredProviders = new Set(listConfiguredPiProviders(providerNames));
-  const providersToDiscover = new Set([
+  // One discovery projection for every provider class: configured built-ins,
+  // auto-detectable local endpoints, and configured mod registrations all
+  // resolve through the runtime-managed branch below or the runtime catalog.
+  const providersToDiscover = new Set<PiProvider | string>([
     ...configuredProviders,
     ...PI_PROVIDER_SPECS.filter((provider) =>
       isAutoDetectableLocalEndpointProvider(provider.id),
     ).map((provider) => provider.id),
+    ...registeredProviders
+      .filter((provider) => isRegisteredPiProviderConfigured(provider, records))
+      .map((provider) => provider.providerName),
   ]);
   const discoveryResults = await Promise.all(
     [...providersToDiscover].map(
       async (
         provider,
       ): Promise<{
-        provider: PiProvider;
+        provider: PiProvider | string;
         models: string[];
         runtimeModels?: readonly Model<Api>[];
       }> => {
-        if (registeredProvidersWithModels.has(provider)) {
-          return { provider, models: [] };
-        }
-
         if (modelsRuntime.isRuntimeManagedProvider(provider)) {
           return {
             provider,
@@ -410,7 +369,10 @@ export async function listLocalModels(
 
         return {
           provider,
-          models: catalogHandlesForProvider(provider, modelsRuntime),
+          models: catalogHandlesForProvider(
+            provider as PiProvider,
+            modelsRuntime,
+          ),
         };
       },
     ),
@@ -421,7 +383,18 @@ export async function listLocalModels(
       addModel(result.provider, model);
     }
     for (const model of result.runtimeModels ?? []) {
+      // A mod registration keeps its own name as the provider type, even
+      // when it overrides a built-in provider id.
+      const registeredName = getRegisteredPiProvider(result.provider)
+        ? String(result.provider)
+        : undefined;
       addModel(result.provider, model.id, {
+        ...(registeredName
+          ? {
+              handle: `${registeredName}/${model.id}`,
+              modelEndpointType: registeredName,
+            }
+          : {}),
         maxContextWindow: model.contextWindow,
         maxOutputTokens: model.maxTokens,
         name: model.name,

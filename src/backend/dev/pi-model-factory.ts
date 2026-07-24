@@ -1,5 +1,6 @@
 import type { Api, Model, ThinkingLevel } from "@earendil-works/pi-ai";
 import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
+import { localNamesForProviderId } from "@/backend/local/local-pi-credential-store";
 import {
   getLocalProviderRecordByName,
   type LocalProviderRecord,
@@ -27,7 +28,6 @@ import {
   resolveProviderFromProviderType,
   stripProviderHandlePrefix,
 } from "./pi-provider-registry";
-import { resolveRegisteredPiProviderRuntimeConnection } from "./registered-pi-provider-runtime";
 
 export const DEFAULT_PI_PROVIDER = "openai" satisfies PiProvider;
 export const UNSELECTED_LOCAL_MODEL_HANDLE = "local/default";
@@ -227,18 +227,15 @@ function localProviderRecord(
 
 function localProviderConnection(
   providerNames: readonly string[],
-  envValue: string | undefined,
   storageDir?: string,
 ): {
   apiKey?: string;
   baseURL?: string;
   timeout: LocalProviderTimeout;
-  headers?: Record<string, string>;
   record?: LocalProviderRecord;
 } {
   const record = localProviderRecord(providerNames, storageDir);
   return {
-    apiKey: localProviderApiKeyFromRecord(record) ?? envValue,
     baseURL: record?.base_url,
     timeout: resolveLocalProviderTimeout({
       configuredTimeout: record?.timeout,
@@ -362,18 +359,6 @@ function mergeHeaders(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-function withAuthHeader(
-  headers: Record<string, string> | undefined,
-  apiKey: string | undefined,
-  authHeader: boolean | undefined,
-): Record<string, string> | undefined {
-  if (!authHeader || !apiKey) return headers;
-  return {
-    ...headers,
-    Authorization: `Bearer ${apiKey}`,
-  };
-}
-
 function numericSetting(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value)
     ? value
@@ -455,58 +440,66 @@ export async function resolvePiModelForAgent(
       ? modelSettings.provider_type
       : options.preferredProviderType;
 
-  let connection = registeredProvider
-    ? resolveRegisteredPiProviderRuntimeConnection(
-        registeredProvider,
-        storageDir,
-      )
-    : spec
-      ? localProviderConnection(
-          spec.localProviderNames,
-          spec.apiKeyEnv?.() ?? spec.fallbackApiKey,
-          storageDir,
-        )
-      : {
-          timeout: resolveLocalProviderTimeout({ providerIds: [provider] }),
-        };
+  // Non-credential connection config only: the stored record's base URL and
+  // timeout plus spec defaults. All credential resolution happens in the
+  // runtime below.
+  const localNames = registeredProvider
+    ? localNamesForProviderId(provider)
+    : (spec?.localProviderNames ?? [provider]);
+  let connection = localProviderConnection(localNames, storageDir);
   let baseURL =
-    connection.baseURL ?? spec?.baseUrlEnv?.() ?? spec?.defaultBaseURL;
-  let headers = mergeHeaders(spec?.headers?.(), connection.headers);
+    connection.baseURL ??
+    spec?.baseUrlEnv?.() ??
+    spec?.defaultBaseURL ??
+    registeredProvider?.config.baseUrl;
+  let headers = mergeHeaders(spec?.headers?.());
   let providerOptions: Record<string, unknown> | undefined;
   let envOverrides: Record<string, string | undefined> | undefined;
   let oauthCredentials: OAuthCredentials | undefined;
 
-  // The Models runtime is the credential source of truth for every provider
-  // and auth kind: getAuth resolves stored API keys and OAuth tokens through
-  // the auth.json adapter (refreshing OAuth under the store's write lock,
-  // falling back to the provider's ambient env sources) and derives
-  // per-credential request auth such as GitHub Copilot's per-token base URL.
-  // Letta keeps only non-credential connection config (base URLs, timeouts,
-  // zai endpoint choice, Bedrock env) plus spec-specific env fallbacks the
-  // upstream providers do not know about.
-  {
-    const authProviderId = registeredProvider
-      ? registeredProvider.providerName
-      : (spec?.piProvider ?? provider);
-    const authResult = await modelsRuntime.getAuth(authProviderId);
-    // No factory-side credential fallback of any kind: stored records and
-    // ambient env resolve inside the runtime (Letta env aliases such as
-    // GOOGLE_GENERATIVE_AI_API_KEY are mapped in the runtime's AuthContext,
-    // and keyless local daemons resolve through their provider auth), so a
-    // runtime auth regression always surfaces. The one named exception is
-    // zai's dual-record endpoint selection below.
-    connection = {
-      ...connection,
-      apiKey: authResult?.auth.apiKey,
-    };
-    if (authResult?.auth.baseUrl) baseURL = authResult.auth.baseUrl;
-    if (authResult?.auth.headers) {
-      headers = mergeHeaders(headers, nonNullHeaders(authResult.auth.headers));
-    }
-    if (connection.record?.auth.type === "oauth") {
-      const stored = await modelsRuntime.getStoredCredential(authProviderId);
-      oauthCredentials = stored?.type === "oauth" ? stored : undefined;
-    }
+  if (!modelId) {
+    throw new Error(
+      `No model selected for provider "${provider}". Choose an available model with /model.`,
+    );
+  }
+
+  // One runtime resolution path for every provider class — registered mods,
+  // managed local endpoints, and built-in catalogs. resolveTurn returns the
+  // provider-published Model and the resolved auth from one consistent
+  // provider state (credential-identity invalidation applied first), so no
+  // registered/catalog/auth branching exists here.
+  const runtimeProviderId = registeredProvider
+    ? provider
+    : spec && modelsRuntime.isRuntimeManagedProvider(spec.id)
+      ? spec.id
+      : spec?.piProvider;
+  if (!runtimeProviderId) {
+    throw new Error(
+      `Unknown model "${modelId}" for provider "${provider}". ` +
+        "Register the provider with models before using it.",
+    );
+  }
+  const fallbackModelId =
+    !registeredProvider && spec?.piProvider
+      ? fallbackCatalogModelId(spec.piProvider, modelId)
+      : undefined;
+  const { model: publishedModel, auth: authResult } =
+    await modelsRuntime.resolveTurn(
+      runtimeProviderId,
+      modelId,
+      fallbackModelId,
+    );
+  // The runtime is the sole credential source (stored records, ambient env
+  // via the runtime's AuthContext aliases, per-credential OAuth request
+  // auth). The one named exception is zai's dual-record endpoint selection.
+  connection = { ...connection, apiKey: authResult?.auth.apiKey };
+  if (authResult?.auth.baseUrl) baseURL = authResult.auth.baseUrl;
+  if (authResult?.auth.headers) {
+    headers = mergeHeaders(headers, nonNullHeaders(authResult.auth.headers));
+  }
+  if (connection.record?.auth.type === "oauth") {
+    const stored = await modelsRuntime.getStoredCredential(runtimeProviderId);
+    oauthCredentials = stored?.type === "oauth" ? stored : undefined;
   }
 
   if (provider === "zai") {
@@ -532,100 +525,47 @@ export async function resolvePiModelForAgent(
     envOverrides = bedrock.envOverrides;
   }
 
-  const contextWindow = numericSetting(modelSettings.context_window_limit);
-  const maxTokens = numericSetting(modelSettings.max_tokens);
-  headers = withAuthHeader(
-    headers,
-    connection.apiKey,
-    registeredProvider?.config.authHeader,
-  );
-
-  let model: Model<Api>;
-  if (registeredProvider) {
-    if (!modelId) {
-      throw new Error(
-        `No model selected for provider "${provider}". Choose an available model with /model.`,
-      );
-    }
-    const runtimeModel = await modelsRuntime.resolveModel(provider, modelId);
-    if (!runtimeModel) {
-      throw new Error(
-        `Unknown model "${modelId}" for registered provider "${provider}".`,
-      );
-    }
-    // Deep-copy before handing to the mod's modifyModels so a mutating mod
-    // cannot corrupt the provider-published instance (including nested
-    // arrays/objects like input, cost, and compat).
-    const oauthModel =
-      oauthCredentials && registeredProvider.config.oauth?.modifyModels
-        ? (registeredProvider.config.oauth.modifyModels(
-            [structuredClone(runtimeModel)],
-            oauthCredentials,
-          )[0] ?? runtimeModel)
-        : runtimeModel;
-    model =
-      contextWindow || maxTokens
-        ? withOverrides(oauthModel, { contextWindow, maxTokens })
-        : oauthModel;
-  } else if (!spec) {
+  if (!publishedModel) {
     throw new Error(
       `Unknown model "${modelId}" for provider "${provider}". ` +
-        "Register the provider with models before using it.",
+        "Choose an available model with /model.",
     );
-  } else if (modelsRuntime.isRuntimeManagedProvider(spec.id)) {
-    if (!modelId) {
-      throw new Error(
-        `No model selected for provider "${provider}". Choose an available model with /model.`,
-      );
-    }
-    const runtimeModel = await modelsRuntime.resolveModel(spec.id, modelId);
-    if (!runtimeModel) {
-      throw new Error(
-        `Unknown model "${modelId}" for provider "${provider}". ` +
-          "Check that the model is installed on the endpoint or choose another model with /model.",
-      );
-    }
-    // The provider-published Model is authoritative (capabilities, context
-    // window, base URL). Only explicit agent settings may override it.
-    model =
-      contextWindow || maxTokens || headers
-        ? withOverrides(runtimeModel, { headers, contextWindow, maxTokens })
-        : runtimeModel;
-  } else {
-    const piProvider = spec.piProvider;
-    const fallbackModelId = piProvider
-      ? fallbackCatalogModelId(piProvider, modelId)
-      : undefined;
-    // resolveModel refreshes dynamic built-in catalogs (e.g. radius) on a
-    // miss; static catalogs resolve from the registered provider directly.
-    const catalogModel = piProvider
-      ? ((await modelsRuntime.resolveModel(piProvider, modelId)) ??
-        (fallbackModelId
-          ? await modelsRuntime.resolveModel(piProvider, fallbackModelId)
-          : undefined))
-      : undefined;
-    if (!catalogModel) {
-      throw new Error(
-        `Unknown model "${modelId}" for provider "${provider}". ` +
-          "Check the model handle or update the model catalog.",
-      );
-    }
-    // The runtime-published Model is the turn model. Clone only when an
-    // effective override applies; headers stay per-request stream options.
-    const overrides = {
-      ...(baseURL && baseURL !== catalogModel.baseUrl ? { baseURL } : {}),
-      ...(contextWindow && contextWindow !== catalogModel.contextWindow
-        ? { contextWindow }
-        : {}),
-      ...(maxTokens && maxTokens !== catalogModel.maxTokens
-        ? { maxTokens }
-        : {}),
-    };
-    model =
-      Object.keys(overrides).length > 0
-        ? withOverrides(catalogModel, overrides)
-        : catalogModel;
   }
+
+  // Mod product hook: per-credential model transformation. Deep-copied so a
+  // mutating mod cannot corrupt the provider-published instance.
+  const hookedModel =
+    oauthCredentials && registeredProvider?.config.oauth?.modifyModels
+      ? (registeredProvider.config.oauth.modifyModels(
+          [structuredClone(publishedModel)],
+          oauthCredentials,
+        )[0] ?? publishedModel)
+      : publishedModel;
+
+  // Effective-value overrides only: with none, the turn model IS the
+  // runtime-published instance — persisted selection settings that merely
+  // restate the published values never clone. Base URL overrides apply only
+  // to built-in catalog providers (managed endpoints and mods own their
+  // base URLs end-to-end).
+  const contextWindow = numericSetting(modelSettings.context_window_limit);
+  const maxTokens = numericSetting(modelSettings.max_tokens);
+  const allowBaseUrlOverride =
+    !registeredProvider &&
+    spec !== undefined &&
+    !modelsRuntime.isRuntimeManagedProvider(spec.id);
+  const overrides = {
+    ...(allowBaseUrlOverride && baseURL && baseURL !== hookedModel.baseUrl
+      ? { baseURL }
+      : {}),
+    ...(contextWindow && contextWindow !== hookedModel.contextWindow
+      ? { contextWindow }
+      : {}),
+    ...(maxTokens && maxTokens !== hookedModel.maxTokens ? { maxTokens } : {}),
+  };
+  const model: Model<Api> =
+    Object.keys(overrides).length > 0
+      ? withOverrides(hookedModel, overrides)
+      : hookedModel;
 
   return {
     provider,

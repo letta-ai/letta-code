@@ -66,6 +66,7 @@ function legacyCallbacksFromInteraction(
 export function modOAuthAuth(
   providerName: string,
   config: PiProviderOAuthConfig,
+  registration?: { authHeader?: boolean },
 ): OAuthAuth {
   return {
     name: config.name ?? providerName,
@@ -77,7 +78,15 @@ export function modOAuthAuth(
       type: "oauth",
       ...(await config.refreshToken(credential)),
     }),
-    toAuth: async (credential) => ({ apiKey: config.getApiKey(credential) }),
+    toAuth: async (credential) => {
+      const apiKey = config.getApiKey(credential);
+      return {
+        apiKey,
+        ...(registration?.authHeader
+          ? { headers: { Authorization: `Bearer ${apiKey}` } }
+          : {}),
+      };
+    },
   };
 }
 
@@ -90,7 +99,11 @@ export function getProviderOAuthAuth(
 ): OAuthAuth | undefined {
   const registered = getRegisteredPiProvider(providerId);
   if (registered?.config.oauth) {
-    return modOAuthAuth(registered.providerName, registered.config.oauth);
+    return modOAuthAuth(
+      registered.providerName,
+      registered.config.oauth,
+      registered.config,
+    );
   }
   return builtinOAuthAuths().get(providerId);
 }

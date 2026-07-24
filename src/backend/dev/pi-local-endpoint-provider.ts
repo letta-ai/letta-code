@@ -36,14 +36,21 @@ export interface LocalEndpointDiscoveryContext {
   nativeBaseURL: string;
   /** OpenAI-compatible base URL (with `/v1`), used for turn requests. */
   openAIBaseURL: string;
-  /** Models published by the previous refresh, for per-model fallback. */
+  /**
+   * Models from the last successful refresh, read from the pi-ai
+   * ModelsStore — the single source of last-known retention.
+   */
   lastKnown: ReadonlyMap<string, LocalEndpointModel>;
   /**
-   * Provider-instance scratch state persisted across refreshes, for
-   * engine-specific caching (e.g. skipping per-model metadata fetches when
-   * the engine reports an unchanged digest).
+   * Engine metadata fingerprints (e.g. Ollama tag digests) from the
+   * previous refresh, keyed by model id. Provider-instance-scoped: a
+   * connection change rebuilds the provider and discards them. Engines use
+   * this to skip expensive per-model metadata fetches when the installed
+   * artifact is unchanged; it never stores Model/capability data.
    */
-  state: Map<string, unknown>;
+  metadataFingerprints: ReadonlyMap<string, string>;
+  /** Fingerprints to persist for the next refresh; engines fill this in. */
+  nextMetadataFingerprints: Map<string, string>;
   /** Builds the complete pi-ai Model from engine metadata. */
   buildModel(metadata: LocalEndpointModelMetadata): LocalEndpointModel;
 }
@@ -108,8 +115,9 @@ export function createLocalEndpointPiProvider(
     options.discoveryTimeoutMs ?? LOCAL_ENDPOINT_DISCOVERY_TIMEOUT_MS;
   const nativeBaseURL = localEndpointNativeBaseURL(options.baseURL);
   const openAIBaseURL = localEndpointOpenAIBaseURL(options.baseURL);
-  let lastKnown = new Map<string, LocalEndpointModel>();
-  const state = new Map<string, unknown>();
+  // Provider-instance-scoped fingerprint cache (see
+  // LocalEndpointDiscoveryContext.metadataFingerprints).
+  let metadataFingerprints = new Map<string, string>();
 
   async function fetchJson(
     url: string,
@@ -166,16 +174,26 @@ export function createLocalEndpointPiProvider(
   async function fetchModels(
     context: RefreshModelsContext,
   ): Promise<readonly LocalEndpointModel[]> {
+    // Last-known models come solely from the pi-ai store (the same entry
+    // createProvider restores and persists); no parallel model cache.
+    const stored = (await context.store.read())?.models ?? [];
+    const lastKnown = new Map(
+      stored
+        .filter((model) => model.provider === options.id)
+        .map((model) => [model.id, model as LocalEndpointModel]),
+    );
     if (!context.allowNetwork) return [...lastKnown.values()];
+    const nextMetadataFingerprints = new Map<string, string>();
     const models = await options.discover({
       fetchJson,
       nativeBaseURL,
       openAIBaseURL,
       lastKnown,
-      state,
+      metadataFingerprints,
+      nextMetadataFingerprints,
       buildModel,
     });
-    lastKnown = new Map(models.map((model) => [model.id, model]));
+    metadataFingerprints = nextMetadataFingerprints;
     return models;
   }
 

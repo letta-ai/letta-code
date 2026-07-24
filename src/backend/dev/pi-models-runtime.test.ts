@@ -2,7 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listLocalModels } from "@/backend/local/local-model-config";
+import {
+  listLocalModels,
+  localModelSettingsForHandle,
+} from "@/backend/local/local-model-config";
 import { createOrUpdateLocalProvider } from "@/backend/local/local-provider-auth-store";
 import { resolvePiModelForAgent } from "./pi-model-factory";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
@@ -158,11 +161,11 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       storageDir,
     });
     const runtime = new LocalPiModelsRuntime({ storageDir });
-    let getAuthCalls = 0;
-    const originalGetAuth = runtime.getAuth.bind(runtime);
-    runtime.getAuth = (providerId) => {
-      getAuthCalls += 1;
-      return originalGetAuth(providerId);
+    let resolveTurnCalls = 0;
+    const originalResolveTurn = runtime.resolveTurn.bind(runtime);
+    runtime.resolveTurn = (providerId, modelId, fallbackModelId) => {
+      resolveTurnCalls += 1;
+      return originalResolveTurn(providerId, modelId, fallbackModelId);
     };
 
     const resolved = await resolvePiModelForAgent(
@@ -170,9 +173,10 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       { provider_type: "anthropic" },
       { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
     );
-    // API-key auth is resolved by Models.getAuth via the auth.json adapter,
-    // not by a parallel factory lookup.
-    expect(getAuthCalls).toBe(1);
+    // Auth and model resolve together in one runtime call (resolveTurn),
+    // with the API key coming from the auth.json adapter — no parallel
+    // factory lookup.
+    expect(resolveTurnCalls).toBe(1);
     expect(resolved.apiKey).toBe("stored-key");
   });
 
@@ -270,7 +274,17 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       storageDir,
     });
     const runtime = new LocalPiModelsRuntime({ storageDir });
-    runtime.getAuth = async () => undefined;
+    // Force the runtime's turn resolution to report no auth while still
+    // publishing the model.
+    const originalResolveTurn = runtime.resolveTurn.bind(runtime);
+    runtime.resolveTurn = async (providerId, modelId, fallbackModelId) => {
+      const result = await originalResolveTurn(
+        providerId,
+        modelId,
+        fallbackModelId,
+      );
+      return { ...result, auth: undefined };
+    };
 
     const savedEnv = {
       ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
@@ -351,6 +365,12 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
         apiKey: "key-b",
         storageDir,
       });
+      // Lookup path, no explicit refresh: resolveTurn applies the
+      // credential-identity invalidation itself, so the new account's auth
+      // can never pair with the stale account's cached model.
+      const turn = await runtime.resolveTurn("radius", "account-a-model");
+      expect(turn.model).toBeUndefined();
+
       await runtime.refreshAll();
       expect(runtime.getModels("radius")).toHaveLength(0);
     } finally {
@@ -406,6 +426,21 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     expect(resolved.model.input).toEqual(["text", "image"]);
     expect(resolved.model.reasoning).toBe(true);
     expect(resolved.model.contextWindow).toBe(262144);
+
+    // Identity survives the real selection path: settings persisted from
+    // the published model (restating its values) must not force a clone.
+    const persisted = localModelSettingsForHandle(
+      "ollama/qwen3.6:27b",
+      runtime,
+    );
+    const resolvedWithSettings = await resolvePiModelForAgent(
+      "ollama/qwen3.6:27b",
+      persisted ?? {},
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    expect(resolvedWithSettings.model).toBe(
+      runtime.getModel("ollama", "qwen3.6:27b")!,
+    );
   });
 
   test("vision model with no name marker keeps base64 image_url in the request payload", async () => {
@@ -481,7 +516,44 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     ).toBe(true);
   });
 
-  test("base URL update invalidates and refreshes only the Ollama provider", async () => {
+  test("refresh is collection-wide across dynamic providers (scoped refresh pending upstream pi-ai API)", async () => {
+    const ollamaServer = startFakeOllama([
+      { id: "model-a:1b", capabilities: ["completion"] },
+    ]);
+    servers.push(ollamaServer);
+    const llamaRequests: string[] = [];
+    const llamaServer = Bun.serve({
+      port: 0,
+      fetch(request) {
+        llamaRequests.push(new URL(request.url).pathname);
+        return Response.json({ data: [] });
+      },
+    });
+    servers.push({
+      url: "",
+      chatBodies: [],
+      stop: () => llamaServer.stop(true),
+    });
+    const storageDir = await setupOllamaStorage(ollamaServer.url, storageDirs);
+    await createOrUpdateLocalProvider({
+      providerType: "llama_cpp",
+      providerName: "llama-cpp",
+      apiKey: "not-needed",
+      baseURL: `http://localhost:${llamaServer.port}`,
+      storageDir,
+    });
+    const runtime = new LocalPiModelsRuntime({ storageDir });
+
+    // Documented post-merge exception: pi-ai 0.81 exposes only
+    // collection-wide refresh, so refreshing one provider re-fetches every
+    // materialized configured dynamic provider. This test states that
+    // honestly; a scoped refresh is an upstream ask.
+    runtime.getModels("llama-cpp"); // materialize the provider
+    await runtime.refresh("ollama");
+    expect(llamaRequests.length).toBeGreaterThan(0);
+  });
+
+  test("base URL update invalidates only the Ollama provider registration", async () => {
     const serverA = startFakeOllama([
       { id: "model-a:1b", capabilities: ["completion"] },
     ]);

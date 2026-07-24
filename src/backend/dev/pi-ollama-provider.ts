@@ -91,18 +91,18 @@ function parseOllamaShow(
 const ollamaDiscover: LocalEndpointDiscover = async (context) => {
   const tags = await context.fetchJson(`${context.nativeBaseURL}/api/tags`);
   const entries = parseOllamaTags(tags);
-  const digests =
-    (context.state.get("digests") as Map<string, string> | undefined) ??
-    new Map<string, string>();
-  const nextDigests = new Map<string, string>();
-  const models = await Promise.all(
+  return Promise.all(
     entries.map(async ({ id: modelId, digest }) => {
       // /api/show reads GGUF metadata from disk, which can take seconds for
       // large models. The tag digest identifies the installed blob, so an
       // unchanged digest means the last-known published Model is current.
       const known = context.lastKnown.get(modelId);
-      if (known && digest && digests.get(modelId) === digest) {
-        nextDigests.set(modelId, digest);
+      if (
+        known &&
+        digest &&
+        context.metadataFingerprints.get(modelId) === digest
+      ) {
+        context.nextMetadataFingerprints.set(modelId, digest);
         return known;
       }
       try {
@@ -110,7 +110,7 @@ const ollamaDiscover: LocalEndpointDiscover = async (context) => {
           `${context.nativeBaseURL}/api/show`,
           { body: { model: modelId } },
         );
-        if (digest) nextDigests.set(modelId, digest);
+        if (digest) context.nextMetadataFingerprints.set(modelId, digest);
         return context.buildModel(parseOllamaShow(modelId, show));
       } catch {
         // Metadata fetch failed for this one model: keep its last-known
@@ -120,8 +120,6 @@ const ollamaDiscover: LocalEndpointDiscover = async (context) => {
       }
     }),
   );
-  context.state.set("digests", nextDigests);
-  return models;
 };
 
 /**
