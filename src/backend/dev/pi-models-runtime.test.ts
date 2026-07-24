@@ -250,14 +250,29 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     const runtime = new LocalPiModelsRuntime({ storageDir });
     runtime.getAuth = async () => undefined;
 
-    const resolved = await resolvePiModelForAgent(
-      "anthropic/claude-opus-4-8",
-      { provider_type: "anthropic" },
-      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
-    );
-    // The runtime is the only credential source: if it cannot resolve auth,
-    // the stored key must NOT leak in through a factory-side record lookup.
-    expect(resolved.apiKey).toBeUndefined();
+    const savedEnv = {
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+      ANTHROPIC_OAUTH_TOKEN: process.env.ANTHROPIC_OAUTH_TOKEN,
+    };
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.ANTHROPIC_OAUTH_TOKEN;
+    try {
+      const resolved = await resolvePiModelForAgent(
+        "anthropic/claude-opus-4-8",
+        { provider_type: "anthropic" },
+        { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+      );
+      // The runtime is the only credential source: if it cannot resolve
+      // auth, the stored key must NOT leak in through a factory-side record
+      // lookup. (Ambient env is cleared above; the named env exception only
+      // covers vars upstream providers do not read.)
+      expect(resolved.apiKey).toBeUndefined();
+    } finally {
+      for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   test("radius drops the previous account's catalog when the credential changes", async () => {
