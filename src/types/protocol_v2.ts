@@ -734,6 +734,14 @@ export interface InputCreateMessagePayload {
    * external tools for the runtime remain available normally.
    */
   external_tool_scope_ids?: string[];
+  /**
+   * Exclude interactive user-input tools (AskUserQuestion and friends) from
+   * this turn's toolset. Intended for headless clients (SDK sessions,
+   * automation) that cannot surface mid-turn questions to a human. The
+   * excluded set is owned by the harness (interactive-policy), so new
+   * interactive tools are covered without client updates.
+   */
+  exclude_interactive_tools?: boolean;
 }
 
 export type InputApprovalResponsePayload = {

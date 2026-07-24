@@ -209,6 +209,11 @@ function summarizeInputPayload(payload: unknown): string[] {
       "external_tool_scope_ids",
       payload.external_tool_scope_ids,
     );
+    pushField(
+      fields,
+      "exclude_interactive_tools",
+      payload.exclude_interactive_tools,
+    );
   } else if (payload.kind === "approval_response") {
     pushField(fields, "request_id", payload.request_id);
     pushField(fields, "response", payload.response);
@@ -543,6 +548,7 @@ export function createListenerMessageHandler(
           conversationId: parsed.runtime.conversation_id,
           clientToolAllowlist: inputPayload.client_tool_allowlist,
           externalToolScopeIds: inputPayload.external_tool_scope_ids,
+          excludeInteractiveTools: inputPayload.exclude_interactive_tools,
           messages: inputPayload.messages,
         };
         const hasApprovalPayload = incoming.messages.some(

@@ -144,7 +144,11 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
-import { isInteractiveApprovalTool } from "./tools/interactive-policy";
+import {
+  INTERACTIVE_USER_INPUT_TOOL_NAMES,
+  isInteractiveApprovalTool,
+} from "./tools/interactive-policy";
+import type { ToolName } from "./tools/tool-definitions";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -462,7 +466,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     conversationId: params.conversationId,
     overrideModel: params.overrideModel,
     workingDirectory: getCurrentWorkingDirectory(),
-    exclude: ["AskUserQuestion"],
+    exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] as ToolName[],
     cachedAgent: params.cachedAgent,
     modContext: params.modContext,
     modEvents: params.modEvents,

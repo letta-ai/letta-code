@@ -168,6 +168,7 @@ function isInputCommand(value: unknown): value is InputCommand {
     messages?: unknown;
     client_tool_allowlist?: unknown;
     external_tool_scope_ids?: unknown;
+    exclude_interactive_tools?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
@@ -178,7 +179,9 @@ function isInputCommand(value: unknown): value is InputCommand {
       (payload.client_tool_allowlist === undefined ||
         isStringArray(payload.client_tool_allowlist)) &&
       (payload.external_tool_scope_ids === undefined ||
-        isStringArray(payload.external_tool_scope_ids))
+        isStringArray(payload.external_tool_scope_ids)) &&
+      (payload.exclude_interactive_tools === undefined ||
+        typeof payload.exclude_interactive_tools === "boolean")
     );
   }
   if (payload.kind === "approval_response") {
@@ -261,6 +264,7 @@ function getInvalidInputReason(value: unknown): {
     messages?: unknown;
     client_tool_allowlist?: unknown;
     external_tool_scope_ids?: unknown;
+    exclude_interactive_tools?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
@@ -281,6 +285,16 @@ function getInvalidInputReason(value: unknown): {
         runtime: candidate.runtime,
         reason:
           "Protocol violation: input.payload.client_tool_allowlist must be string[]",
+      };
+    }
+    if (
+      payload.exclude_interactive_tools !== undefined &&
+      typeof payload.exclude_interactive_tools !== "boolean"
+    ) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.payload.exclude_interactive_tools must be boolean",
       };
     }
     if (
