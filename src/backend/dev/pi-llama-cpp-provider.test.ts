@@ -116,9 +116,15 @@ describe("createLlamaCppPiProvider", () => {
     expect(multimodal?.provider).toBe("llama-cpp");
     expect(multimodal?.input).toEqual(["text", "image"]);
     expect(multimodal?.contextWindow).toBe(32768);
-    // Upstream contract: maxTokens = contextWindow, max_tokens field.
+    // Upstream contract: maxTokens = contextWindow plus the literal compat
+    // flag set upstream disables for llama.cpp.
     expect(multimodal?.maxTokens).toBe(32768);
-    expect(multimodal?.compat?.maxTokensField).toBe("max_tokens");
+    expect(multimodal?.compat).toMatchObject({
+      maxTokensField: "max_tokens",
+      supportsStore: false,
+      supportsUsageInStreaming: false,
+      supportsStrictMode: false,
+    });
 
     // The other model must not inherit the first model's capabilities —
     // a "vision" filename grants nothing — and n_ctx_train is the
@@ -126,6 +132,24 @@ describe("createLlamaCppPiProvider", () => {
     const textOnly = models.find((m) => m.id === "some-vision-model.gguf");
     expect(textOnly?.input).toEqual(["text"]);
     expect(textOnly?.contextWindow).toBe(8192);
+  });
+
+  test("missing engine context falls back to contextWindow-sized maxTokens", async () => {
+    const provider = createLlamaCppPiProvider({
+      baseURL: "http://localhost:8080",
+      fetchImpl: fakeLlamaCppFetch({
+        models: [
+          { id: "no-ctx.gguf", status: "loaded", inputModalities: ["text"] },
+        ],
+        requests: [],
+      }),
+    });
+    await provider.refreshModels?.(testRefreshContext());
+
+    // Upstream computes the fallback context first, then maxTokens equals it.
+    const model = provider.getModels()[0];
+    expect(model?.contextWindow).toBe(128000);
+    expect(model?.maxTokens).toBe(128000);
   });
 
   test("only loaded models publish from a router catalog", async () => {

@@ -238,6 +238,89 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     }
   });
 
+  test("a runtime auth miss is not masked by a parallel factory lookup", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
+    storageDirs.push(storageDir);
+    await createOrUpdateLocalProvider({
+      providerType: "anthropic",
+      providerName: "lc-anthropic",
+      apiKey: "stored-direct",
+      storageDir,
+    });
+    const runtime = new LocalPiModelsRuntime({ storageDir });
+    runtime.getAuth = async () => undefined;
+
+    const resolved = await resolvePiModelForAgent(
+      "anthropic/claude-opus-4-8",
+      { provider_type: "anthropic" },
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    // The runtime is the only credential source: if it cannot resolve auth,
+    // the stored key must NOT leak in through a factory-side record lookup.
+    expect(resolved.apiKey).toBeUndefined();
+  });
+
+  test("radius drops the previous account's catalog when the credential changes", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
+    storageDirs.push(storageDir);
+    await createOrUpdateLocalProvider({
+      providerType: "radius",
+      providerName: "radius",
+      apiKey: "key-a",
+      storageDir,
+    });
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      if (url.includes("/v1/config")) {
+        const auth = new Headers(init?.headers).get("authorization");
+        if (auth !== "Bearer key-a") {
+          return new Response("unauthorized", { status: 401 });
+        }
+        return Response.json({
+          baseUrl: "https://gateway.example.test/v1",
+          models: [
+            {
+              id: "account-a-model",
+              name: "Account A",
+              reasoning: false,
+              input: ["text"],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 200000,
+              maxTokens: 32000,
+            },
+          ],
+        });
+      }
+      return realFetch(input as never, init);
+    }) as typeof fetch;
+
+    try {
+      const runtime = new LocalPiModelsRuntime({
+        storageDir,
+        fetchImpl: failingDiscoveryFetch,
+      });
+      await runtime.refreshAll();
+      expect(runtime.getModel("radius", "account-a-model")).toBeDefined();
+
+      // Switching accounts: the new credential fails against the gateway,
+      // and account A's catalog must not survive as "last known".
+      await createOrUpdateLocalProvider({
+        providerType: "radius",
+        providerName: "radius",
+        apiKey: "key-b",
+        storageDir,
+      });
+      await runtime.refreshAll();
+      expect(runtime.getModels("radius")).toHaveLength(0);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   test("built-in catalog models resolve to the runtime-published instance", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
     storageDirs.push(storageDir);

@@ -107,6 +107,20 @@ function resolveLocalEndpointConnection(
   };
 }
 
+/**
+ * Stable credential identity: API keys compare by value; OAuth compares by
+ * everything except the volatile access token/expiry (refresh token,
+ * account/enterprise fields), so token rotation is not an identity change.
+ */
+function credentialIdentitySignature(
+  credential: Credential | undefined,
+): string {
+  if (!credential) return "none";
+  if (credential.type === "api_key") return `api_key ${credential.key ?? ""}`;
+  const { access: _access, expires: _expires, ...identity } = credential;
+  return `oauth ${JSON.stringify(identity)}`;
+}
+
 function connectionSignature(connection: LocalEndpointConnection): string {
   return [
     connection.baseURL,
@@ -136,6 +150,8 @@ export class LocalPiModelsRuntime {
   private readonly modSignatures = new Map<string, string>();
   private readonly modelsStore = new InMemoryModelsStore();
   private readonly credentials: CredentialStore;
+  private readonly dynamicBuiltinIds: ReadonlySet<string>;
+  private readonly builtinCredentialSignatures = new Map<string, string>();
 
   constructor(options: LocalPiModelsRuntimeOptions = {}) {
     this.storageDir = options.storageDir;
@@ -148,8 +164,38 @@ export class LocalPiModelsRuntime {
       modelsStore: this.modelsStore,
       credentials: this.credentials,
     });
-    for (const provider of builtinProviders()) {
+    const builtins = builtinProviders();
+    for (const provider of builtins) {
       this.models.setProvider(provider);
+    }
+    this.dynamicBuiltinIds = new Set(
+      builtins
+        .filter((provider) => provider.refreshModels !== undefined)
+        .map((provider) => provider.id),
+    );
+  }
+
+  /**
+   * Dynamic built-in catalogs (e.g. Radius) are account-specific: when the
+   * stored credential's identity changes, drop the persisted catalog and
+   * rebuild the provider so one account's models cannot be listed while
+   * turns authenticate as another. Routine access-token refreshes keep the
+   * identity (volatile `access`/`expires` fields are excluded), so they do
+   * not clear last-known retention.
+   */
+  private async invalidateDynamicBuiltinsOnCredentialChange(): Promise<void> {
+    for (const providerId of this.dynamicBuiltinIds) {
+      const credential = await this.credentials.read(providerId);
+      const signature = credentialIdentitySignature(credential);
+      const previous = this.builtinCredentialSignatures.get(providerId);
+      this.builtinCredentialSignatures.set(providerId, signature);
+      if (previous === undefined || previous === signature) continue;
+      // InMemoryModelsStore deletes synchronously.
+      void this.modelsStore.delete(providerId);
+      const fresh = builtinProviders().find(
+        (provider) => provider.id === providerId,
+      );
+      if (fresh) this.models.setProvider(fresh);
     }
   }
 
@@ -296,6 +342,7 @@ export class LocalPiModelsRuntime {
    */
   async refreshAll(): Promise<void> {
     this.ensureManagedProviders();
+    await this.invalidateDynamicBuiltinsOnCredentialChange();
     await this.models.refresh({ force: true });
   }
 
@@ -306,6 +353,9 @@ export class LocalPiModelsRuntime {
    */
   async refresh(providerId: string): Promise<void> {
     this.ensureManagedProviders(providerId);
+    await this.invalidateDynamicBuiltinsOnCredentialChange();
+    // pi-ai refreshes the collection as a whole (configured dynamic
+    // providers only); this method adds per-provider error semantics on top.
     const result = await this.models.refresh({ force: true });
     const error = result.errors.get(providerId);
     if (error) throw error;

@@ -6,7 +6,7 @@ import type {
 import { createProvider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 
-const LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW = 128000;
+export const LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW = 128000;
 const LOCAL_ENDPOINT_DEFAULT_MAX_TOKENS = 32000;
 const LOCAL_ENDPOINT_DISCOVERY_TIMEOUT_MS = 2_000;
 

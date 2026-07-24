@@ -263,7 +263,7 @@ export async function resolveAvailableLocalModelForTurn(input: {
     model: selected.handle,
     modelSettings: {
       ...baseSettings,
-      ...localModelSettingsForHandle(selected.handle),
+      ...localModelSettingsForHandle(selected.handle, input.modelsRuntime),
       provider_type: selected.model_endpoint_type,
     },
   };

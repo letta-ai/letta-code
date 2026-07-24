@@ -489,9 +489,13 @@ export async function resolvePiModelForAgent(
       ? registeredProvider.providerName
       : (spec?.piProvider ?? provider);
     const authResult = await modelsRuntime.getAuth(authProviderId);
+    // No generic fallback to the factory's own record/env lookup: a runtime
+    // auth regression must surface, not be silently masked by a parallel
+    // credential path. The only named exception is zai's dual-record
+    // endpoint selection below.
     connection = {
       ...connection,
-      apiKey: authResult?.auth.apiKey ?? connection.apiKey,
+      apiKey: authResult?.auth.apiKey,
     };
     if (authResult?.auth.baseUrl) baseURL = authResult.auth.baseUrl;
     if (authResult?.auth.headers) {

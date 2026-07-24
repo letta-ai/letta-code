@@ -142,12 +142,16 @@ export function createLocalPiCredentialStore(
           return next;
         }
         if (next.key) {
-          // createOrUpdateLocalProvider preserves the record's non-credential
-          // config (base URL, timeout) when one exists.
+          // Read-modify-write: every non-credential record field survives
+          // (createOrUpdateLocalProvider keeps base URL/timeout itself, but
+          // Bedrock's access key/region/profile must be re-supplied).
           await createOrUpdateLocalProvider({
             providerName,
             providerType: record?.provider_type ?? providerId,
             apiKey: next.key,
+            ...(record?.access_key ? { accessKey: record.access_key } : {}),
+            ...(record?.region ? { region: record.region } : {}),
+            ...(record?.profile ? { profile: record.profile } : {}),
             storageDir,
           });
         }

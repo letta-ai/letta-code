@@ -1,6 +1,7 @@
 import type { Provider } from "@earendil-works/pi-ai";
 import {
   createLocalEndpointPiProvider,
+  LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
   type LocalEndpointDiscover,
   type LocalEndpointModelMetadata,
   modelIdsFromOpenAICompatibleList,
@@ -128,21 +129,29 @@ function parseLlamaCppNativeModels(
   return sawMetadata ? parsed : undefined;
 }
 
-/** Upstream model construction: maxTokens = contextWindow, max_tokens field. */
+/**
+ * Upstream model construction: the fallback context applies first and
+ * maxTokens always equals the effective contextWindow; compat flags match
+ * the current upstream llama.cpp provider literally.
+ */
 function llamaCppModelMetadata(
   id: string,
   input: { vision?: boolean; contextLength?: number },
 ): LocalEndpointModelMetadata {
+  const contextLength =
+    input.contextLength ?? LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW;
   return {
     id,
     ...(input.vision !== undefined ? { vision: input.vision } : {}),
-    ...(input.contextLength
-      ? { contextLength: input.contextLength, maxTokens: input.contextLength }
-      : {}),
+    contextLength,
+    maxTokens: contextLength,
     compat: {
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
       maxTokensField: "max_tokens",
+      supportsStore: false,
+      supportsUsageInStreaming: false,
+      supportsStrictMode: false,
     },
   };
 }
