@@ -200,11 +200,41 @@ export function getReasoningTierOptionsFromCapabilities(
   ).map((effort) => ({ effort, modelId: modelHandle }));
 }
 
-export function getByokOpenAIReasoningTierOptions(modelHandle: string): Array<{
+export function withReasoningEffortUpdateArg(
+  updateArgs: Record<string, unknown> | undefined,
+  reasoningEffort: ModelReasoningSelection | undefined,
+): Record<string, unknown> | undefined {
+  if (reasoningEffort === undefined) return updateArgs;
+  return {
+    ...(updateArgs ?? {}),
+    reasoning_effort: reasoningEffort,
+  };
+}
+
+export function getByokOpenAIReasoningTierOptions(
+  modelHandle: string,
+  options?: {
+    registryHandle?: string;
+    contextWindow?: number;
+    reasoningCapabilities?: ReasoningCapabilities | null;
+  },
+): Array<{
   effort: ModelReasoningSelection;
   modelId: string;
 }> {
-  return [null, ...REASONING_EFFORT_ORDER].map((effort) => ({
+  const registryHandle = options?.registryHandle ?? modelHandle;
+  const hasReportedCapabilities = options?.reasoningCapabilities != null;
+  const knownOptions = hasReportedCapabilities
+    ? getReasoningTierOptionsFromCapabilities(
+        registryHandle,
+        options.reasoningCapabilities,
+      )
+    : getReasoningTierOptionsForHandle(registryHandle, options?.contextWindow);
+  const efforts =
+    hasReportedCapabilities || knownOptions.length > 0
+      ? knownOptions.map((option) => option.effort)
+      : REASONING_EFFORT_ORDER;
+  return [null, ...efforts].map((effort) => ({
     effort,
     modelId: modelHandle,
   }));

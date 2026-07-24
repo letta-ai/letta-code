@@ -34,6 +34,22 @@ describe("ModelSelector custom BYOK provider detection", () => {
     expect(withProviderMetadataForSelector({}, "openai", false)).toEqual({
       provider_type: "openai",
     });
+    expect(withProviderMetadataForSelector({}, "openai", true, true)).toEqual({
+      provider_type: "openai",
+      provider_category: "byok",
+      openai_compatible_proxy: true,
+    });
+  });
+
+  test("uses known OpenAI metadata for direct-provider aliases", () => {
+    expect(registryHandleForBackendModel("lc-openai/gpt-5.4", "openai")).toBe(
+      "openai/gpt-5.4",
+    );
+    expect(
+      getReasoningTierOptionsForHandle(
+        registryHandleForBackendModel("lc-openai/gpt-5.4", "openai"),
+      ).map((option) => option.effort),
+    ).toEqual(["none", "low", "medium", "high", "xhigh"]);
   });
 
   test("maps custom OpenAI provider handles back to base openai handles", () => {

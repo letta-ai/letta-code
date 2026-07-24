@@ -18,9 +18,10 @@ import {
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
   getResumeRefreshArgs,
-  type ModelReasoningEffort,
+  type ModelReasoningSelection,
   preservableContextWindow,
   resolveModel,
+  withReasoningEffortUpdateArg,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
@@ -1543,7 +1544,7 @@ async function main(): Promise<void> {
     const [
       selectedServerModelReasoningEffort,
       setSelectedServerModelReasoningEffort,
-    ] = useState<ModelReasoningEffort | null>(null);
+    ] = useState<ModelReasoningSelection | undefined>(undefined);
     const [customApiDefaultModel, setCustomApiDefaultModel] = useState<
       string | null
     >(null);
@@ -2217,12 +2218,10 @@ async function main(): Promise<void> {
           const modelForUpdateArgs =
             personalityOptions?.model ?? effectiveModel;
           const baseUpdateArgs = getModelUpdateArgs(modelForUpdateArgs);
-          const updateArgs = selectedServerModelReasoningEffort
-            ? {
-                ...(baseUpdateArgs ?? {}),
-                reasoning_effort: selectedServerModelReasoningEffort,
-              }
-            : baseUpdateArgs;
+          const updateArgs = withReasoningEffortUpdateArg(
+            baseUpdateArgs,
+            selectedServerModelReasoningEffort,
+          );
           const result = await createAgent({
             ...(personalityOptions ?? {}),
             model: modelForUpdateArgs,
@@ -2707,11 +2706,11 @@ async function main(): Promise<void> {
         },
         onCreateNewWithModel: (
           modelHandle: string,
-          reasoningEffort?: ModelReasoningEffort,
+          reasoningEffort?: ModelReasoningSelection,
         ) => {
           setUserRequestedNewAgent(true);
           setSelectedServerModel(modelHandle);
-          setSelectedServerModelReasoningEffort(reasoningEffort ?? null);
+          setSelectedServerModelReasoningEffort(reasoningEffort);
           setLoadingState("assembling");
         },
         onExit: () => {

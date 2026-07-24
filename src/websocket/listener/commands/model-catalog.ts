@@ -2,6 +2,7 @@ import type { AvailableModel } from "@/agent/available-models";
 import { models } from "@/agent/model";
 import { resolvePiModelIdentity } from "@/backend/dev/pi-provider-registry";
 import type { ListModelsResponseModelEntry } from "@/types/protocol_v2";
+import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 
 function buildPresetEntry(
   model: (typeof models)[number],
@@ -24,12 +25,41 @@ function buildPresetEntry(
   };
 }
 
+function availableModelUpdateArgs(
+  model: AvailableModel,
+): Record<string, unknown> | undefined {
+  const updateArgs = {
+    ...(model.providerType ? { provider_type: model.providerType } : {}),
+    ...(model.openAICompatibleProxy
+      ? { [OPENAI_COMPATIBLE_PROXY_UPDATE_ARG]: true }
+      : {}),
+  };
+  return Object.keys(updateArgs).length > 0 ? updateArgs : undefined;
+}
+
+function withAvailableModelMetadata(
+  entry: ListModelsResponseModelEntry,
+  model: AvailableModel,
+): ListModelsResponseModelEntry {
+  const availableUpdateArgs = availableModelUpdateArgs(model);
+  return {
+    ...entry,
+    handle: model.handle,
+    ...(availableUpdateArgs
+      ? { updateArgs: { ...(entry.updateArgs ?? {}), ...availableUpdateArgs } }
+      : {}),
+  };
+}
+
 function buildNativeEntry(model: AvailableModel): ListModelsResponseModelEntry {
   return {
     id: model.handle,
     handle: model.handle,
     label: model.label,
     description: "",
+    ...(availableModelUpdateArgs(model)
+      ? { updateArgs: availableModelUpdateArgs(model) }
+      : {}),
   };
 }
 
@@ -58,7 +88,9 @@ export function buildListModelsEntries(
       entry.handle,
       availableModels,
     );
-    return availableModel ? { ...entry, handle: availableModel.handle } : entry;
+    return availableModel
+      ? withAvailableModelMetadata(entry, availableModel)
+      : entry;
   });
   const presetHandles = new Set(presetEntries.map((entry) => entry.handle));
   const nativeHandles = new Set<string>();

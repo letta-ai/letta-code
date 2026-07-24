@@ -41,6 +41,7 @@ import { settingsManager } from "@/settings-manager";
 import { getToolNames } from "@/tools/manager";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import { formatToolsetName } from "@/tools/toolset-labels";
+import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 
 import {
   deriveReasoningEffort,
@@ -236,10 +237,16 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           handle: string,
           providerType?: string,
         ) => {
-          if (providerType !== "chatgpt_oauth") return handle;
+          if (providerType !== "chatgpt_oauth" && providerType !== "openai") {
+            return handle;
+          }
           const slashIndex = handle.indexOf("/");
           if (slashIndex === -1) return handle;
-          return `${OPENAI_CODEX_PROVIDER_NAME}/${handle.slice(slashIndex + 1)}`;
+          const registryProvider =
+            providerType === "chatgpt_oauth"
+              ? OPENAI_CODEX_PROVIDER_NAME
+              : "openai";
+          return `${registryProvider}/${handle.slice(slashIndex + 1)}`;
         };
         selectedModel = inputSelection
           ? {
@@ -335,18 +342,19 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
               enable_reasoner?: unknown;
               service_tier?: unknown;
               provider_category?: unknown;
+              openai_compatible_proxy?: unknown;
             }
           | undefined;
         const rawReasoningEffort = modelUpdateArgs?.reasoning_effort;
         const providerType = providerTypeFromUpdateArgs(modelUpdateArgs);
-        const isByokOpenAI =
-          modelUpdateArgs?.provider_category === "byok" &&
+        const isOpenAICompatibleProxy =
+          modelUpdateArgs?.[OPENAI_COMPATIBLE_PROXY_UPDATE_ARG] === true &&
           providerType === "openai";
         const usesDistinctXHighLabel = /Fable 5|Opus 4\.[78]|GPT-5\.6/.test(
           model.label,
         );
         const reasoningLevel =
-          isByokOpenAI && rawReasoningEffort === null
+          isOpenAICompatibleProxy && rawReasoningEffort === null
             ? "default"
             : typeof rawReasoningEffort === "string"
               ? rawReasoningEffort === "none"
@@ -361,10 +369,16 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
                 : null;
         const selectedContextWindow =
           Number(model.updateArgs?.context_window) || undefined;
+        const capabilitiesMap = getCachedModelReasoningCapabilities();
         const reasoningCapabilities =
-          getCachedModelReasoningCapabilities()?.get(modelHandle);
-        const baseReasoningTierOptions = isByokOpenAI
-          ? getByokOpenAIReasoningTierOptions(modelHandle)
+          capabilitiesMap?.get(modelHandle) ??
+          capabilitiesMap?.get(registryHandle);
+        const baseReasoningTierOptions = isOpenAICompatibleProxy
+          ? getByokOpenAIReasoningTierOptions(modelHandle, {
+              registryHandle,
+              contextWindow: selectedContextWindow,
+              reasoningCapabilities,
+            })
           : getReasoningTierOptionsForHandle(
               registryHandle,
               selectedContextWindow,
@@ -382,7 +396,12 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
             reasoning_effort: option.effort,
             ...(serviceTier !== undefined ? { service_tier: serviceTier } : {}),
             ...(providerType ? { provider_type: providerType } : {}),
-            ...(isByokOpenAI ? { provider_category: "byok" } : {}),
+            ...(isOpenAICompatibleProxy
+              ? {
+                  provider_category: "byok",
+                  [OPENAI_COMPATIBLE_PROXY_UPDATE_ARG]: true,
+                }
+              : {}),
           };
           return {
             ...option,
@@ -401,7 +420,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           (opts?.promptReasoning || activeOverlay === "model") &&
           reasoningTierOptions.length > 1
         ) {
-          const selectedEffort = isByokOpenAI
+          const selectedEffort = isOpenAICompatibleProxy
             ? modelHandle === currentModelHandle
               ? currentReasoningEffort
               : (rawReasoningEffort ?? null)
@@ -694,6 +713,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
       consumeOverlayCommand,
       currentModelHandle,
       currentModelId,
+      currentReasoningEffort,
       currentToolset,
       isAgentBusy,
       maybeRecordToolsetChangeReminder,

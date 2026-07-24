@@ -125,7 +125,7 @@ export interface ModUpdateLlmConfigOptions {
   /** Model handle, e.g. "anthropic/claude-opus-4-8". Omit to keep the current model. */
   model?: string;
   /** Reasoning effort tier. Omit to leave reasoning settings untouched. */
-  reasoningEffort?: ModelReasoningEffort;
+  reasoningEffort?: ModelReasoningEffort | null;
   /** Context window limit. Omit to leave the current limit untouched. */
   contextWindow?: number;
   /**

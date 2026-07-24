@@ -8,8 +8,15 @@ import { Box, useInput } from "ink";
 import React, { useCallback, useEffect, useState } from "react";
 import { isLocalAgentId } from "@/agent/agent-id";
 import {
+  type AvailableModel,
+  getCachedAvailableModels,
+  getCachedModelReasoningCapabilities,
+  type ReasoningCapabilities,
+} from "@/agent/available-models";
+import {
+  getByokOpenAIReasoningTierOptions,
   getReasoningTierOptionsForHandle,
-  type ModelReasoningEffort,
+  type ModelReasoningSelection,
 } from "@/agent/model";
 import { getBackendForMode } from "@/backend";
 import { listPinnedAgentsForCurrentUser } from "@/cli/helpers/pinned-agent-listing";
@@ -17,8 +24,30 @@ import { getRecentAgentOptions } from "@/cli/helpers/recent-agent-options";
 import { settingsManager } from "@/settings-manager";
 import { colors } from "./components/colors";
 import { ModelReasoningSelector } from "./components/ModelReasoningSelector";
+import { registryHandleForBackendModel } from "./components/model-selector-helpers";
 import { Text } from "./components/Text";
 import { WelcomeScreen } from "./components/WelcomeScreen";
+
+export function getNewAgentReasoningOptions(
+  modelHandle: string,
+  availableModel?: AvailableModel,
+  reasoningCapabilities?: ReasoningCapabilities | null,
+): Array<{ effort: ModelReasoningSelection; modelId: string }> {
+  const registryHandle = registryHandleForBackendModel(
+    modelHandle,
+    availableModel?.providerType,
+  );
+  return availableModel?.openAICompatibleProxy
+    ? getByokOpenAIReasoningTierOptions(modelHandle, {
+        registryHandle,
+        reasoningCapabilities,
+      })
+    : getReasoningTierOptionsForHandle(
+        registryHandle,
+        undefined,
+        reasoningCapabilities,
+      );
+}
 
 interface ProfileOption {
   name: string | null;
@@ -32,7 +61,7 @@ interface ProfileSelectionResult {
   agentId?: string;
   profileName?: string | null;
   model?: string;
-  reasoningEffort?: ModelReasoningEffort;
+  reasoningEffort?: ModelReasoningSelection;
 }
 
 const MAX_DISPLAY = 3;
@@ -107,8 +136,8 @@ function ProfileSelectionUI({
   const [modelReasoningPrompt, setModelReasoningPrompt] = useState<{
     model: string;
     initialModelId: string;
-    initialEffort?: ModelReasoningEffort;
-    options: Array<{ effort: ModelReasoningEffort; modelId: string }>;
+    initialEffort?: ModelReasoningSelection;
+    options: Array<{ effort: ModelReasoningSelection; modelId: string }>;
   } | null>(null);
 
   const loadOptions = useCallback(async () => {
@@ -237,11 +266,26 @@ function ProfileSelectionUI({
       } else if (key.return) {
         const selected = filteredModels[modelSelectedIndex];
         if (selected) {
-          const reasoningOptions = getReasoningTierOptionsForHandle(selected);
+          const availableModel = getCachedAvailableModels()?.find(
+            (model) => model.handle === selected,
+          );
+          const registryHandle = registryHandleForBackendModel(
+            selected,
+            availableModel?.providerType,
+          );
+          const capabilities = getCachedModelReasoningCapabilities();
+          const reasoningOptions = getNewAgentReasoningOptions(
+            selected,
+            availableModel,
+            capabilities?.get(selected) ?? capabilities?.get(registryHandle),
+          );
           if (reasoningOptions.length > 1) {
             const preferredOption =
-              reasoningOptions.find((option) => option.effort === "medium") ??
-              reasoningOptions[0];
+              (availableModel?.openAICompatibleProxy
+                ? reasoningOptions.find((option) => option.effort === null)
+                : reasoningOptions.find(
+                    (option) => option.effort === "medium",
+                  )) ?? reasoningOptions[0];
             if (preferredOption) {
               setModelReasoningPrompt({
                 model: selected,
@@ -357,7 +401,7 @@ function ProfileSelectionUI({
             onComplete({
               type: "new_with_model",
               model: selectedOption.modelId,
-              reasoningEffort: selectedOption.effort ?? undefined,
+              reasoningEffort: selectedOption.effort,
             });
           }}
           onCancel={() => setModelReasoningPrompt(null)}
@@ -545,7 +589,7 @@ export function ProfileSelectionInline({
   /** Called when user selects a model from serverModelsForNewAgent */
   onCreateNewWithModel?: (
     model: string,
-    reasoningEffort?: ModelReasoningEffort,
+    reasoningEffort?: ModelReasoningSelection,
   ) => void;
   onExit: () => void;
 }) {

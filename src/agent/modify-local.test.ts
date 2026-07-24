@@ -84,6 +84,22 @@ describe("local model updates", () => {
     });
   });
 
+  test("strips internal proxy classification before building public settings", () => {
+    expect(
+      __modifyTestUtils.updateArgsForModelSettings(
+        {
+          provider_type: "openai",
+          reasoning_effort: null,
+          openai_compatible_proxy: true,
+        },
+        { useBackendModelCatalog: false },
+      ),
+    ).toEqual({
+      provider_type: "openai",
+      reasoning_effort: null,
+    });
+  });
+
   afterEach(() => {
     configureBackendMode("api");
     clearAvailableModelsCache();

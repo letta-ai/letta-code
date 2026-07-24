@@ -73,6 +73,24 @@ export function deriveReasoningEffort(
   return null;
 }
 
+export function reasoningEffortLlmConfigPatch(
+  modelSettings: AgentState["model_settings"] | null | undefined,
+  llmConfig: LlmConfig | null | undefined,
+): { reasoning_effort?: ModelReasoningEffort | null } {
+  const effort = deriveReasoningEffort(modelSettings, llmConfig);
+  if (typeof effort === "string") {
+    return { reasoning_effort: effort };
+  }
+  if (
+    modelSettings?.provider_type === "openai" &&
+    Object.hasOwn(modelSettings, "reasoning") &&
+    modelSettings.reasoning === null
+  ) {
+    return { reasoning_effort: null };
+  }
+  return {};
+}
+
 export function inferReasoningEffortFromModelPreset(
   modelId: string | null | undefined,
   modelHandle: string | null | undefined,

@@ -230,6 +230,7 @@ import {
   inferReasoningEffortFromModelPreset,
   mapHandleToLlmConfigPatch,
   providerTypeFromModelSettings,
+  reasoningEffortLlmConfigPatch,
 } from "./model-config";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
@@ -3413,9 +3414,10 @@ export function App({
             effectiveModelHandle,
             providerTypeFromModelSettings(resolvedConversationModelSettings),
           ),
-          ...(typeof reasoningEffort === "string"
-            ? { reasoning_effort: reasoningEffort }
-            : {}),
+          ...reasoningEffortLlmConfigPatch(
+            resolvedConversationModelSettings,
+            agentState.llm_config,
+          ),
           ...(typeof resolvedConversationContextWindowLimit === "number"
             ? { context_window: resolvedConversationContextWindowLimit }
             : {}),
@@ -4074,7 +4076,7 @@ export function App({
   const reasoningCycleInFlightRef = useRef(false);
   const reasoningCycleDesiredRef = useRef<{
     modelHandle: string;
-    effort: string;
+    effort: ModelReasoningSelection;
     modelId: string;
     providerType?: string | null;
     serviceTier?: string | null;

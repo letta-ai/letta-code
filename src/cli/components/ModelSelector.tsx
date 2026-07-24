@@ -7,6 +7,7 @@ import {
   getAvailableModelsCacheInfo,
   getCachedModelHandles,
   getCachedModelProviderTypes,
+  getCachedOpenAICompatibleProxyHandles,
 } from "@/agent/available-models";
 import {
   CHATGPT_FAST_SERVICE_TIER,
@@ -18,6 +19,7 @@ import { refreshModelCatalog } from "@/agent/remote-model-catalog";
 
 import {
   buildByokProviderAliases,
+  buildOpenAICompatibleProxyProviderNames,
   isByokHandleForSelector,
   listProviders,
 } from "@/providers/byok-providers";
@@ -201,6 +203,12 @@ export function ModelSelector({
   const [byokProviderAliases, setByokProviderAliases] = useState<
     Record<string, string>
   >(() => buildByokProviderAliases([]));
+  const [openAICompatibleProxyHandles, setOpenAICompatibleProxyHandles] =
+    useState<Set<string>>(
+      () => getCachedOpenAICompatibleProxyHandles() ?? new Set(),
+    );
+  const [openAICompatibleProxyProviders, setOpenAICompatibleProxyProviders] =
+    useState<Set<string>>(new Set());
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -260,6 +268,9 @@ export function ModelSelector({
       setAvailableHandles(result.handles);
       setAllApiHandles(Array.from(result.handles));
       setProviderTypesByHandle(new Map(result.providerTypes));
+      setOpenAICompatibleProxyHandles(
+        new Set(result.openAICompatibleProxyHandles),
+      );
       setIsCached(!forceRefresh && cacheInfoBefore.isFresh);
       setIsLoading(false);
       setRefreshing(false);
@@ -272,6 +283,7 @@ export function ModelSelector({
       setAvailableHandles(null);
       setAllApiHandles([]);
       setProviderTypesByHandle(new Map());
+      setOpenAICompatibleProxyHandles(new Set());
     }
   });
 
@@ -282,6 +294,7 @@ export function ModelSelector({
   useEffect(() => {
     if (localModelCatalog) {
       setByokProviderAliases(buildByokProviderAliases([]));
+      setOpenAICompatibleProxyProviders(new Set());
       return;
     }
     (async () => {
@@ -289,9 +302,13 @@ export function ModelSelector({
         const providers = await listProviders();
         if (!mountedRef.current) return;
         setByokProviderAliases(buildByokProviderAliases(providers));
+        setOpenAICompatibleProxyProviders(
+          buildOpenAICompatibleProxyProviderNames(providers),
+        );
       } catch {
         if (!mountedRef.current) return;
         setByokProviderAliases(buildByokProviderAliases([]));
+        setOpenAICompatibleProxyProviders(new Set());
       }
     })();
   }, [localModelCatalog]);
@@ -357,13 +374,22 @@ export function ModelSelector({
       updateArgs: Record<string, unknown> | undefined,
     ): Record<string, unknown> | undefined => {
       const providerType = providerTypesByHandle.get(handle);
+      const providerName = handle.split("/")[0];
       return withProviderMetadataForSelector(
         updateArgs,
         providerType,
         isByokHandleForSelector(handle, byokProviderAliases),
+        openAICompatibleProxyHandles.has(handle) ||
+          (providerName !== undefined &&
+            openAICompatibleProxyProviders.has(providerName)),
       );
     },
-    [byokProviderAliases, providerTypesByHandle],
+    [
+      byokProviderAliases,
+      openAICompatibleProxyHandles,
+      openAICompatibleProxyProviders,
+      providerTypesByHandle,
+    ],
   );
 
   const modelsForBackendHandle = useCallback(

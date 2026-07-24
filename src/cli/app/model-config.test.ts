@@ -6,6 +6,7 @@ import {
   mapHandleToLlmConfigPatch,
   providerTypeFromModelSettings,
   providerTypeFromUpdateArgs,
+  reasoningEffortLlmConfigPatch,
 } from "./model-config";
 
 describe("model config helpers", () => {
@@ -73,6 +74,22 @@ describe("model config helpers", () => {
     } as LlmConfig;
 
     expect(deriveReasoningEffort(modelSettings, llmConfig)).toBeNull();
+    expect(reasoningEffortLlmConfigPatch(modelSettings, llmConfig)).toEqual({
+      reasoning_effort: null,
+    });
+  });
+
+  test("does not interpret an absent reasoning field as provider Default", () => {
+    const modelSettings = {
+      provider_type: "openai",
+    } as unknown as AgentState["model_settings"];
+    const llmConfig = {
+      reasoning_effort: "high",
+    } as LlmConfig;
+
+    expect(reasoningEffortLlmConfigPatch(modelSettings, llmConfig)).toEqual({
+      reasoning_effort: "high",
+    });
   });
 
   test("does not expose Moonshot reasoning controls", () => {

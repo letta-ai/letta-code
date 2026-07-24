@@ -5,6 +5,7 @@ import {
   models,
   normalizeModelHandleForRegistry,
 } from "@/agent/model";
+import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 
 const CHATGPT_OAUTH_BASE_PROVIDER = "openai-codex";
 const CHATGPT_LABEL_SUFFIX_PATTERN = /\s+\(ChatGPT\)$/;
@@ -35,12 +36,16 @@ export function withProviderMetadataForSelector(
   updateArgs: Record<string, unknown> | undefined,
   providerType: string | undefined,
   isByok: boolean,
+  isOpenAICompatibleProxy = false,
 ): Record<string, unknown> | undefined {
-  if (!providerType && !isByok) return updateArgs;
+  if (!providerType && !isByok && !isOpenAICompatibleProxy) return updateArgs;
   return {
     ...(updateArgs ?? {}),
     ...(providerType ? { provider_type: providerType } : {}),
     ...(isByok ? { provider_category: "byok" } : {}),
+    ...(isOpenAICompatibleProxy
+      ? { [OPENAI_COMPATIBLE_PROXY_UPDATE_ARG]: true }
+      : {}),
   };
 }
 
@@ -91,7 +96,7 @@ export function registryHandleForBackendModel(
     return normalizedHandle;
   }
 
-  if (providerType === "chatgpt_oauth") {
+  if (providerType === "chatgpt_oauth" || providerType === "openai") {
     const slashIndex = handle.indexOf("/");
     if (slashIndex > 0) {
       const directHandle = `openai/${handle.slice(slashIndex + 1)}`;

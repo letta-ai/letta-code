@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import {
+  getReasoningCycleTierOptions,
   resolveReasoningCycleModelHandle,
   resolveReasoningCycleTierLookupHandle,
   serviceTierForReasoningCycle,
@@ -136,6 +137,49 @@ describe("resolveReasoningCycleTierLookupHandle", () => {
         provider_type: "ollama_cloud",
       } as unknown as AgentState["model_settings"]),
     ).toBe("ollama-cloud/local-model");
+  });
+});
+
+describe("getReasoningCycleTierOptions", () => {
+  test("includes Default only for OpenAI-compatible proxies", () => {
+    expect(
+      getReasoningCycleTierOptions({
+        modelHandle: "proxy/claude-opus-4-6",
+        tierLookupHandle: "proxy/claude-opus-4-6",
+        openAICompatibleProxy: true,
+      }).map((option) => option.effort),
+    ).toEqual([
+      null,
+      "none",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+
+    expect(
+      getReasoningCycleTierOptions({
+        modelHandle: "openai/gpt-5.4",
+        tierLookupHandle: "openai/gpt-5.4",
+        openAICompatibleProxy: false,
+      }).map((option) => option.effort),
+    ).toEqual(["none", "low", "medium", "high", "xhigh"]);
+  });
+
+  test("uses reported proxy capabilities before the generic ladder", () => {
+    expect(
+      getReasoningCycleTierOptions({
+        modelHandle: "proxy/arbitrary-model",
+        tierLookupHandle: "proxy/arbitrary-model",
+        openAICompatibleProxy: true,
+        reasoningCapabilities: {
+          supported_efforts: ["minimal", "high"],
+          mandatory: false,
+        },
+      }).map((option) => option.effort),
+    ).toEqual([null, "minimal", "high"]);
   });
 });
 

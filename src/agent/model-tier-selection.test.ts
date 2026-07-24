@@ -5,9 +5,11 @@ import {
   getChatGptFastRegistryHandleForModelHandle,
   getModelInfo,
   getModelInfoForLlmConfig,
+  getPreferredReasoningOption,
   getReasoningTierOptionsForHandle,
   models,
   shouldPreserveContextWindowForModelSelection,
+  withReasoningEffortUpdateArg,
 } from "@/agent/model";
 
 describe("getModelInfo", () => {
@@ -223,8 +225,22 @@ describe("getModelInfoForLlmConfig", () => {
   });
 });
 
+describe("withReasoningEffortUpdateArg", () => {
+  test("preserves explicit provider Default while leaving undefined untouched", () => {
+    expect(
+      withReasoningEffortUpdateArg({ provider_type: "openai" }, null),
+    ).toEqual({
+      provider_type: "openai",
+      reasoning_effort: null,
+    });
+    expect(
+      withReasoningEffortUpdateArg({ provider_type: "openai" }, undefined),
+    ).toEqual({ provider_type: "openai" });
+  });
+});
+
 describe("getByokOpenAIReasoningTierOptions", () => {
-  test("offers provider default separately from every explicit effort", () => {
+  test("offers provider default separately from every explicit effort when metadata is absent", () => {
     expect(
       getByokOpenAIReasoningTierOptions("custom/claude-opus-4-6").map(
         (option) => option.effort,
@@ -239,6 +255,39 @@ describe("getByokOpenAIReasoningTierOptions", () => {
       "xhigh",
       "max",
     ]);
+  });
+
+  test("prefers canonical model tiers over the generic proxy ladder", () => {
+    expect(
+      getByokOpenAIReasoningTierOptions("custom/gpt-5.4", {
+        registryHandle: "openai/gpt-5.4",
+      }).map((option) => option.effort),
+    ).toEqual([null, "none", "low", "medium", "high", "xhigh"]);
+  });
+
+  test("prefers provider-reported capabilities over the generic proxy ladder", () => {
+    expect(
+      getByokOpenAIReasoningTierOptions("custom/arbitrary-model", {
+        reasoningCapabilities: {
+          supported_efforts: ["low", "high"],
+          mandatory: false,
+        },
+      }).map((option) => option.effort),
+    ).toEqual([null, "low", "high"]);
+    expect(
+      getByokOpenAIReasoningTierOptions("custom/gpt-5.6", {
+        registryHandle: "openai/gpt-5.6",
+        reasoningCapabilities: {
+          supported_efforts: [],
+          mandatory: false,
+        },
+      }).map((option) => option.effort),
+    ).toEqual([null]);
+  });
+
+  test("restores explicit Default when the same proxy selector is reopened", () => {
+    const options = getByokOpenAIReasoningTierOptions("custom/arbitrary-model");
+    expect(getPreferredReasoningOption(options, null)?.effort).toBeNull();
   });
 });
 
