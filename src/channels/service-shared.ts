@@ -1,4 +1,3 @@
-import { refreshDynamicChannelToolsInLoadedRegistry } from "@/tools/manager";
 import {
   getChannelAccount,
   getChannelAccountWithSecrets,
@@ -7,10 +6,6 @@ import {
 } from "./accounts";
 import { isSupportedChannelId } from "./plugin-registry";
 import type { ChannelAccount, SupportedChannelId } from "./types";
-
-export async function refreshLoadedMessageChannelTool(): Promise<void> {
-  await refreshDynamicChannelToolsInLoadedRegistry();
-}
 
 export function assertSupportedChannelId(
   channelId: string,

@@ -1,8 +1,4 @@
-import {
-  getChannelAccount,
-  LEGACY_CHANNEL_ACCOUNT_ID,
-  upsertChannelAccount,
-} from "./accounts";
+import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { getPendingPairings, loadPairingStore } from "./pairing";
 import { completePairing } from "./registry";
 import {
@@ -12,13 +8,8 @@ import {
   loadRoutes,
   removeRoute,
   removeRouteInMemory,
-  setRouteInMemory,
 } from "./routing";
-import {
-  assertSupportedChannelId,
-  getErrorMessage,
-  getSelectedChannelAccount,
-} from "./service-shared";
+import { assertSupportedChannelId, getErrorMessage } from "./service-shared";
 import type {
   ChannelRouteSnapshot,
   ChannelTargetSnapshot,
@@ -35,7 +26,8 @@ import type {
   ChannelRoute,
   PendingPairing,
 } from "./types";
-import { isTelegramChannelAccount } from "./types";
+
+export { updateChannelRouteLive } from "./service-route-bindings";
 
 function getSelectedRouteByChatId(
   channelId: string,
@@ -276,104 +268,6 @@ export function bindChannelTarget(
     chatId: route.chatId,
     route: toRouteSnapshot(channelId, route),
   };
-}
-
-export function updateChannelRouteLive(
-  channelId: string,
-  chatId: string,
-  agentId: string,
-  conversationId: string,
-  accountId?: string,
-): ChannelRouteSnapshot {
-  assertSupportedChannelId(channelId);
-  loadRoutes(channelId);
-
-  const existingRoute = getSelectedRouteByChatId(channelId, chatId, accountId);
-  const selectedAccount = existingRoute
-    ? null
-    : getSelectedChannelAccount(channelId, accountId);
-  if (!existingRoute && !selectedAccount) {
-    throw new Error(
-      accountId
-        ? `Channel account "${accountId}" was not found for ${channelId}.`
-        : `Channel "${channelId}" is not configured. Configure it first.`,
-    );
-  }
-
-  const resolvedAccountId =
-    existingRoute?.accountId ?? selectedAccount?.accountId ?? accountId;
-  const existingAccount = resolvedAccountId
-    ? getChannelAccount(channelId, resolvedAccountId)
-    : null;
-
-  if (!existingRoute && !existingAccount) {
-    throw new Error(
-      `Channel account "${resolvedAccountId}" was not found for ${channelId}.`,
-    );
-  }
-
-  if (existingAccount && isTelegramChannelAccount(existingAccount)) {
-    upsertChannelAccount(channelId, {
-      ...existingAccount,
-      binding: {
-        agentId,
-        conversationId,
-      },
-      updatedAt: new Date().toISOString(),
-    });
-  }
-
-  const updatedRoute: ChannelRoute = {
-    ...(existingRoute ?? {
-      accountId: resolvedAccountId,
-      chatId,
-      enabled: true,
-      createdAt: new Date().toISOString(),
-    }),
-    agentId,
-    conversationId,
-    outboundEnabled: existingRoute?.outboundEnabled ?? true,
-    updatedAt: new Date().toISOString(),
-  };
-
-  try {
-    addRoute(channelId, updatedRoute);
-  } catch (error) {
-    removeRouteInMemory(
-      channelId,
-      chatId,
-      resolvedAccountId,
-      existingRoute?.threadId,
-    );
-    if (existingRoute) {
-      setRouteInMemory(channelId, existingRoute);
-    }
-
-    if (existingAccount && isTelegramChannelAccount(existingAccount)) {
-      try {
-        upsertChannelAccount(channelId, existingAccount);
-      } catch (rollbackError) {
-        throw new Error(
-          `Failed to update channel route: ${getErrorMessage(
-            error,
-            "Failed to save route",
-          )}. Failed to restore account binding: ${getErrorMessage(
-            rollbackError,
-            "Account rollback failed",
-          )}`,
-        );
-      }
-    }
-
-    throw new Error(
-      `Failed to update channel route: ${getErrorMessage(
-        error,
-        "Failed to save route",
-      )}. Changes were rolled back.`,
-    );
-  }
-
-  return toRouteSnapshot(channelId, updatedRoute);
 }
 
 export function listChannelRouteSnapshots(params?: {
