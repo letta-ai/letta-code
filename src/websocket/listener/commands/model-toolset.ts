@@ -136,20 +136,16 @@ function providerTypeFromModelSettings(
 function updateArgsFromAvailableModel(
   model:
     | {
-        providerType?: string;
         openAICompatibleProxy?: boolean;
       }
     | null
     | undefined,
 ): Record<string, unknown> | undefined {
-  if (!model) return undefined;
-  const updateArgs = {
-    ...(model.providerType ? { provider_type: model.providerType } : {}),
-    ...(model.openAICompatibleProxy
-      ? { [OPENAI_COMPATIBLE_PROXY_UPDATE_ARG]: true }
-      : {}),
+  if (!model?.openAICompatibleProxy) return undefined;
+  return {
+    provider_type: "openai",
+    [OPENAI_COMPATIBLE_PROXY_UPDATE_ARG]: true,
   };
-  return Object.keys(updateArgs).length > 0 ? updateArgs : undefined;
 }
 
 function withContextWindow(

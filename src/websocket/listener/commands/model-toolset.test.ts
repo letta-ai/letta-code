@@ -33,12 +33,14 @@ class NativeCatalogBackend extends FakeHeadlessBackend {
         handle: "proxy/claude-opus-4-6",
         display_name: "Claude Opus 4.6",
         provider_type: "openai",
+        provider_category: "byok",
         model_endpoint: "https://proxy.example.com/openai/v1",
       },
       {
         handle: "lc-openai/gpt-5.4",
         display_name: "GPT-5.4",
         provider_type: "openai",
+        provider_category: "byok",
         model_endpoint: "https://api.openai.com/v1",
       },
     ] as never;
@@ -63,7 +65,7 @@ describe("listener native model selection", () => {
       id: "opencode/deepseek-v4-flash-free",
       handle: "opencode/deepseek-v4-flash-free",
       label: "DeepSeek V4 Flash Free",
-      updateArgs: { provider_type: "opencode" },
+      updateArgs: undefined,
     });
   });
 
@@ -80,7 +82,6 @@ describe("listener native model selection", () => {
       handle: "opencode/deepseek-v4-flash-free",
       label: "DeepSeek V4 Flash Free",
       description: "",
-      updateArgs: { provider_type: "opencode" },
     });
     expect(response.entries).toContainEqual({
       id: "proxy/claude-opus-4-6",
@@ -95,7 +96,7 @@ describe("listener native model selection", () => {
     expect(
       response.entries.find((entry) => entry.handle === "lc-openai/gpt-5.4")
         ?.updateArgs,
-    ).toEqual({ provider_type: "openai" });
+    ).toBeUndefined();
   });
 
   test("applies explicit proxy effort from a device update without leaking it to direct OpenAI", async () => {
@@ -117,7 +118,7 @@ describe("listener native model selection", () => {
         model_id: "lc-openai/gpt-5.4",
         reasoning_effort: null,
       })?.updateArgs,
-    ).toEqual({ provider_type: "openai" });
+    ).toBeUndefined();
   });
 
   test("preserves a native handle id if the availability cache was cleared", () => {
