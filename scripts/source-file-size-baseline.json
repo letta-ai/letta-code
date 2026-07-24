@@ -35,7 +35,7 @@
   "src/permissions/read-only-shell.ts": 2009,
   "src/providers/chatgpt-usage-service.ts": 1112,
   "src/settings-manager.test.ts": 1669,
-  "src/settings-manager.ts": 2113,
+  "src/settings-manager.ts": 2109,
   "src/tools/impl/enter-worktree.ts": 1260,
   "src/tools/impl/message-channel.ts": 1187,
   "src/tools/manager.ts": 3281,

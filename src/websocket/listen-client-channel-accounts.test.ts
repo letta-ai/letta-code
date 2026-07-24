@@ -83,17 +83,17 @@ function findMessage(
   return parseMessages(socket).find((message) => message.type === type);
 }
 
-async function expectCommandCompletesWithoutSecretFlush(
+async function expectCommandWaitsForSecretFlush(
   commandPromise: Promise<void>,
 ): Promise<void> {
   const result = await Promise.race([
     commandPromise.then(() => "completed" as const),
-    new Promise<"timed-out">((resolve) => {
-      setTimeout(() => resolve("timed-out"), 250);
+    new Promise<"pending">((resolve) => {
+      setTimeout(() => resolve("pending"), 250);
     }),
   ]);
 
-  expect(result).toBe("completed");
+  expect(result).toBe("pending");
 }
 
 describe("channel account list responses", () => {
@@ -490,7 +490,7 @@ describe("channel account list responses", () => {
     }
   });
 
-  test("Telegram account protocol commands complete while keyring writes are pending", async () => {
+  test("Telegram account protocol commands await keyring writes before responding", async () => {
     setupInMemoryChannelStores();
 
     const pendingSecretOperations: Array<() => void> = [];
@@ -536,7 +536,14 @@ describe("channel account list responses", () => {
         runtime,
       );
       commandPromises.push(createPromise);
-      await expectCommandCompletesWithoutSecretFlush(createPromise);
+      await expectCommandWaitsForSecretFlush(createPromise);
+
+      expect(
+        findMessage(socket, "channel_account_create_response"),
+      ).toBeUndefined();
+      expect(pendingSecretOperations).toHaveLength(1);
+      pendingSecretOperations.shift()?.();
+      await createPromise;
 
       expect(
         findMessage(socket, "channel_account_create_response"),
@@ -562,7 +569,7 @@ describe("channel account list responses", () => {
           },
         },
       });
-      expect(pendingSecretOperations).toHaveLength(1);
+      expect(pendingSecretOperations).toHaveLength(0);
 
       const updatePromise = sendChannelCommand(
         {
@@ -585,7 +592,14 @@ describe("channel account list responses", () => {
         runtime,
       );
       commandPromises.push(updatePromise);
-      await expectCommandCompletesWithoutSecretFlush(updatePromise);
+      await expectCommandWaitsForSecretFlush(updatePromise);
+
+      expect(
+        findMessage(socket, "channel_account_update_response"),
+      ).toBeUndefined();
+      expect(pendingSecretOperations).toHaveLength(1);
+      pendingSecretOperations.shift()?.();
+      await updatePromise;
 
       expect(
         findMessage(socket, "channel_account_update_response"),
@@ -605,7 +619,7 @@ describe("channel account list responses", () => {
           },
         },
       });
-      expect(pendingSecretOperations).toHaveLength(2);
+      expect(pendingSecretOperations).toHaveLength(0);
 
       const deletePromise = sendChannelCommand(
         {
@@ -618,7 +632,14 @@ describe("channel account list responses", () => {
         runtime,
       );
       commandPromises.push(deletePromise);
-      await expectCommandCompletesWithoutSecretFlush(deletePromise);
+      await expectCommandWaitsForSecretFlush(deletePromise);
+
+      expect(
+        findMessage(socket, "channel_account_delete_response"),
+      ).toBeUndefined();
+      expect(pendingSecretOperations).toHaveLength(1);
+      pendingSecretOperations.shift()?.();
+      await deletePromise;
 
       expect(
         findMessage(socket, "channel_account_delete_response"),
@@ -629,9 +650,8 @@ describe("channel account list responses", () => {
         account_id: "telegram-bot",
         deleted: true,
       });
-      // Delete is intentionally non-hydrating for the LCD command path, so it
-      // should not enqueue another keyring operation before responding.
-      expect(pendingSecretOperations).toHaveLength(2);
+      // Delete removes the keyring entry without reading it first.
+      expect(pendingSecretOperations).toHaveLength(0);
     } finally {
       for (const resolveSecretOperation of pendingSecretOperations.splice(0)) {
         resolveSecretOperation();

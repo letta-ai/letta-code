@@ -9,6 +9,7 @@ export function createIsolatedCliTestEnv(
 
   Object.assign(env, {
     LETTA_DISABLE_SESSION_PERSIST: "1",
+    LETTA_SKIP_KEYCHAIN_CHECK: "1",
     DISABLE_AUTOUPDATER: "1",
   });
 

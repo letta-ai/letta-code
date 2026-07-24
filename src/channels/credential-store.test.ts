@@ -15,6 +15,7 @@ import {
   getChannelAccountWithSecrets,
   hydrateChannelAccountSecrets,
   removeChannelAccountWithSecrets,
+  upsertChannelAccount,
   upsertChannelAccountWithSecrets,
 } from "@/channels/accounts";
 import { __testOverrideChannelsRoot } from "@/channels/config";
@@ -139,6 +140,63 @@ describe("channel credential storage", () => {
 
     expect(hydrated?.botToken).toBe("xoxb-secret");
     expect(hydrated?.appToken).toBe("xapp-secret");
+  });
+
+  test("sync saves keep hydrated keyring credentials redacted", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    await upsertChannelAccountWithSecrets("slack", makeSlackAccount());
+    clearChannelAccountStores();
+    const hydrated = (await getChannelAccountWithSecrets(
+      "slack",
+      "slack-account",
+    )) as SlackChannelAccount | null;
+    if (!hydrated) {
+      throw new Error("Expected hydrated Slack account");
+    }
+
+    upsertChannelAccount("slack", { ...hydrated, enabled: false });
+
+    const persistedText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+    expect(persistedText).not.toContain("xoxb-secret");
+    expect(persistedText).not.toContain("xapp-secret");
+    expect(persistedText).toContain("__letta_secret_refs");
+  });
+
+  test("keyring write failure does not persist dangling secret refs", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    __setChannelSecretStoreOverrideForTests({
+      get: async () => null,
+      set: async () => {
+        throw new Error("keyring rejected secret");
+      },
+      delete: async () => false,
+    });
+
+    await expect(
+      upsertChannelAccountWithSecrets("slack", makeSlackAccount()),
+    ).rejects.toThrow("keyring rejected secret");
+
+    expect(existsSync(join(channelsRoot, "slack", "accounts.json"))).toBe(
+      false,
+    );
+  });
+
+  test("sync keyring save keeps plaintext until secrets are persisted", () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    upsertChannelAccount("slack", makeSlackAccount());
+
+    const persistedText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+    expect(persistedText).toContain("xoxb-secret");
+    expect(persistedText).toContain("xapp-secret");
+    expect(persistedText).not.toContain("__letta_secret_refs");
   });
 
   test("keyring mode migrates existing plaintext tokens out of accounts.json", async () => {

@@ -78,7 +78,6 @@ export const LEGACY_CHANNEL_ACCOUNT_ID = "__legacy_migrated__";
 const stores = new Map<string, ChannelAccountStore>();
 const CHANNEL_SECRET_REFS_KEY = "__letta_secret_refs";
 const SECRET_PRESENT_PLACEHOLDER = "__letta_channel_secret_present__";
-const pendingSecretWrites: Promise<unknown>[] = [];
 
 type ChannelAccountWithSecretRefs = ChannelAccount & {
   [CHANNEL_SECRET_REFS_KEY]?: Record<string, true>;
@@ -172,38 +171,57 @@ function applySecretPlaceholders(account: ChannelAccount): void {
   }
 }
 
-function queueSecretWrite(promise: Promise<unknown>): void {
-  pendingSecretWrites.push(
-    promise.catch(() => {
-      // Best-effort background secret persistence. Foreground commands that
-      // need to validate credentials surface errors explicitly; detached secret
-      // writes should not spam startup logs or crash the process.
-    }),
-  );
-}
-
-function prepareAccountForStorage(account: ChannelAccount): ChannelAccount {
+function prepareAccountForStorage(
+  account: ChannelAccount,
+  options: { redactPersistedSecrets?: boolean } = {},
+): ChannelAccount {
   const cloned = cloneAccount(account) as ChannelAccountWithSecretRefs;
   if (getCachedChannelCredentialsStoreMode() !== "keyring") {
     delete cloned[CHANNEL_SECRET_REFS_KEY];
     return cloned;
   }
 
+  const existingSecretRefs = cloned[CHANNEL_SECRET_REFS_KEY];
   delete cloned[CHANNEL_SECRET_REFS_KEY];
   for (const fieldPath of getSecretFieldPaths(cloned)) {
     const value = getSecretValueFromAccount(cloned, fieldPath);
     if (typeof value === "string" && value.trim().length > 0) {
-      markSecretRef(cloned, fieldPath);
-      if (!isSecretPlaceholder(value)) {
-        queueSecretWrite(
-          setChannelSecret(cloned.channel, cloned.accountId, fieldPath, value),
-        );
+      if (
+        isSecretPlaceholder(value) ||
+        existingSecretRefs?.[fieldPath] === true ||
+        options.redactPersistedSecrets
+      ) {
+        markSecretRef(cloned, fieldPath);
+        deleteSecretValueFromAccount(cloned, fieldPath);
       }
-      deleteSecretValueFromAccount(cloned, fieldPath);
     }
   }
 
   return cloned;
+}
+
+async function persistAccountSecretsForKeyring(
+  account: ChannelAccount,
+): Promise<void> {
+  if (getCachedChannelCredentialsStoreMode() !== "keyring") {
+    return;
+  }
+
+  await Promise.all(
+    getSecretFieldPaths(account).flatMap((fieldPath) => {
+      const value = getSecretValueFromAccount(account, fieldPath);
+      if (
+        typeof value !== "string" ||
+        value.trim().length === 0 ||
+        isSecretPlaceholder(value)
+      ) {
+        return [];
+      }
+      return [
+        setChannelSecret(account.channel, account.accountId, fieldPath, value),
+      ];
+    }),
+  );
 }
 
 function cloneAccount<T extends ChannelAccount>(account: T): T {
@@ -552,10 +570,13 @@ export function loadChannelAccounts(channelId: string): void {
   stores.set(channelId, { accounts: [] });
 }
 
-function saveChannelAccounts(channelId: string): void {
+function saveChannelAccounts(
+  channelId: string,
+  options: { redactPersistedSecrets?: boolean } = {},
+): void {
   const store = getStore(channelId);
   const writeAccounts = store.accounts.map((account) => {
-    const cloned = prepareAccountForStorage(account);
+    const cloned = prepareAccountForStorage(account, options);
     // Canonicalize: convert camelCase keys to snake_case for storage
     for (const [snakeKey, camelKey] of Object.entries(SNAKE_TO_CAMEL)) {
       const value = (cloned as unknown as Record<string, unknown>)[camelKey];
@@ -587,10 +608,8 @@ function saveChannelAccounts(channelId: string): void {
 }
 
 export async function flushPendingChannelSecretWrites(): Promise<void> {
-  while (pendingSecretWrites.length > 0) {
-    const writes = pendingSecretWrites.splice(0, pendingSecretWrites.length);
-    await Promise.all(writes);
-  }
+  // Writes are awaited before redaction now. Keep this exported helper as a
+  // compatibility no-op for tests and callers from older channel code paths.
 }
 
 export async function hydrateChannelAccountSecrets(
@@ -632,7 +651,7 @@ export async function hydrateChannelAccountSecrets(
   }
 
   if (migratedPlaintextSecrets) {
-    saveChannelAccounts(channelId);
+    saveChannelAccounts(channelId, { redactPersistedSecrets: true });
     await flushPendingChannelSecretWrites();
   }
 }
@@ -666,9 +685,10 @@ export async function getChannelAccountWithSecrets(
   return getChannelAccount(channelId, accountId);
 }
 
-export function upsertChannelAccount(
+function upsertChannelAccountInternal(
   channelId: string,
   account: ChannelAccount,
+  saveOptions: { redactPersistedSecrets?: boolean } = {},
 ): ChannelAccount {
   const store = getStore(channelId);
   const next = cloneAccount(account);
@@ -680,8 +700,15 @@ export function upsertChannelAccount(
   } else {
     store.accounts.push(next);
   }
-  saveChannelAccounts(channelId);
+  saveChannelAccounts(channelId, saveOptions);
   return cloneAccount(next);
+}
+
+export function upsertChannelAccount(
+  channelId: string,
+  account: ChannelAccount,
+): ChannelAccount {
+  return upsertChannelAccountInternal(channelId, account);
 }
 
 export async function upsertChannelAccountWithSecrets(
@@ -689,7 +716,11 @@ export async function upsertChannelAccountWithSecrets(
   account: ChannelAccount,
 ): Promise<ChannelAccount> {
   await getActiveChannelCredentialsStoreMode();
-  const next = upsertChannelAccount(channelId, account);
+  await persistAccountSecretsForKeyring(account);
+  const next = upsertChannelAccountInternal(channelId, account, {
+    redactPersistedSecrets:
+      getCachedChannelCredentialsStoreMode() === "keyring",
+  });
   await flushPendingChannelSecretWrites();
   return next;
 }
@@ -714,7 +745,7 @@ export async function removeChannelAccountWithSecrets(
   channelId: string,
   accountId: string,
 ): Promise<boolean> {
-  await hydrateChannelAccountSecrets(channelId);
+  await getActiveChannelCredentialsStoreMode();
   const account = getChannelAccount(channelId, accountId);
   if (account && getCachedChannelCredentialsStoreMode() === "keyring") {
     await Promise.all(

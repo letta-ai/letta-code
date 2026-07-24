@@ -125,12 +125,6 @@ if (content.startsWith("#!")) {
   content = content.slice(content.indexOf("\n") + 1);
 }
 
-// Patch secrets requirement back in for node build
-content = content.replace(
-  `(()=>{throw new Error("Cannot require module "+"bun");})().secrets`,
-  `globalThis.Bun.secrets`,
-);
-
 const withShebang = `#!/usr/bin/env node
 ${content}`;
 await Bun.write(outputPath, withShebang);
