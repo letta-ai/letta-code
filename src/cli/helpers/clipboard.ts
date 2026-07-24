@@ -317,3 +317,215 @@ export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult
     return { error: `Image paste failed: ${message}` };
   }
 }
+
+/**
+ * Detect available clipboard tool on Linux.
+ * Returns the command and args to read image data from clipboard,
+ * or null if no clipboard tool is available.
+ */
+function getLinuxClipboardTool(): { cmd: string; args: string[] } | null {
+  // Wayland: wl-paste
+  try {
+    execFileSync("which", ["wl-paste"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return { cmd: "wl-paste", args: ["-t", "image/png"] };
+  } catch {}
+
+  // X11: xclip
+  try {
+    execFileSync("which", ["xclip"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return {
+      cmd: "xclip",
+      args: ["-selection", "clipboard", "-t", "image/png", "-o"],
+    };
+  } catch {}
+
+  // X11: xsel (no image type support, but try anyway)
+  try {
+    execFileSync("which", ["xsel"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return { cmd: "xsel", args: ["--clipboard", "--output"] };
+  } catch {}
+
+  return null;
+}
+
+/**
+ * Check if the Linux clipboard contains an image.
+ * Uses wl-paste (Wayland) or xclip (X11) to read image data.
+ */
+function getLinuxClipboardImage(): Buffer | null {
+  const tool = getLinuxClipboardTool();
+  if (!tool) return null;
+
+  try {
+    const buffer = execFileSync(tool.cmd, tool.args, {
+      encoding: "buffer",
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: 50 * 1024 * 1024, // 50MB max
+    });
+
+    // xsel may return text data, so verify it looks like image data
+    // PNG files start with the magic bytes: 89 50 4E 47
+    if (buffer.length > 0) {
+      // Check for PNG magic bytes
+      if (
+        buffer.length >= 4 &&
+        buffer[0] === 0x89 &&
+        buffer[1] === 0x50 &&
+        buffer[2] === 0x4e &&
+        buffer[3] === 0x47
+      ) {
+        return buffer;
+      }
+      // Check for JPEG magic bytes: FF D8 FF
+      if (
+        buffer.length >= 3 &&
+        buffer[0] === 0xff &&
+        buffer[1] === 0xd8 &&
+        buffer[2] === 0xff
+      ) {
+        return buffer;
+      }
+      // Check for GIF magic bytes: 47 49 46 38
+      if (
+        buffer.length >= 4 &&
+        buffer[0] === 0x47 &&
+        buffer[1] === 0x49 &&
+        buffer[2] === 0x46 &&
+        buffer[3] === 0x38
+      ) {
+        return buffer;
+      }
+      // Check for WebP magic bytes: 52 49 46 46 ... 57 45 42 50
+      if (
+        buffer.length >= 12 &&
+        buffer[0] === 0x52 &&
+        buffer[1] === 0x49 &&
+        buffer[2] === 0x46 &&
+        buffer[3] === 0x46 &&
+        buffer[8] === 0x57 &&
+        buffer[9] === 0x45 &&
+        buffer[10] === 0x42 &&
+        buffer[11] === 0x50
+      ) {
+        return buffer;
+      }
+      // Check for BMP magic bytes: 42 4D
+      if (buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d) {
+        return buffer;
+      }
+      // If using wl-paste with explicit image type, trust the output
+      if (tool.cmd === "wl-paste") {
+        return buffer;
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
+/**
+ * Detect image format from buffer magic bytes.
+ */
+function detectImageMediaType(buffer: Buffer): string {
+  if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return "image/png";
+  }
+  if (
+    buffer.length >= 3 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff
+  ) {
+    return "image/jpeg";
+  }
+  if (
+    buffer.length >= 4 &&
+    buffer[0] === 0x47 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x38
+  ) {
+    return "image/gif";
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  if (buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d) {
+    return "image/bmp";
+  }
+  return "image/png"; // default
+}
+
+/**
+ * Import image from Linux clipboard, resize if needed, return placeholder.
+ * Uses wl-paste (Wayland) or xclip (X11) to read image data.
+ * Resizes large images to fit within API limits (2000x2000).
+ */
+export async function tryImportClipboardImageLinux(): Promise<ClipboardImageResult> {
+  if (process.platform !== "linux") return null;
+
+  const buffer = getLinuxClipboardImage();
+  if (!buffer) return null;
+
+  try {
+    const mediaType = detectImageMediaType(buffer);
+
+    // Resize if needed
+    const resized = await resizeImageIfNeeded(buffer, mediaType);
+
+    // Store in registry
+    const id = allocateImage({
+      data: resized.data,
+      mediaType: resized.mediaType,
+    });
+
+    return {
+      placeholder: `[Image #${id}]`,
+      resized: resized.resized,
+      width: resized.width,
+      height: resized.height,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { error: `Image paste failed: ${message}` };
+  }
+}
+
+/**
+ * Cross-platform clipboard image import.
+ * Dispatches to the appropriate platform-specific implementation.
+ */
+export async function tryImportClipboardImage(): Promise<ClipboardImageResult> {
+  if (process.platform === "darwin") {
+    return tryImportClipboardImageMac();
+  }
+  if (process.platform === "linux") {
+    return tryImportClipboardImageLinux();
+  }
+  return null;
+}
