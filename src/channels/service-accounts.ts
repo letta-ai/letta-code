@@ -14,16 +14,13 @@ import {
   createAccountFromPatch,
   mergeAccountPatch,
 } from "./service-account-model";
-import {
-  assertSupportedChannelId,
-  getErrorMessage,
-  refreshLoadedMessageChannelTool,
-} from "./service-shared";
+import { assertSupportedChannelId, getErrorMessage } from "./service-shared";
 import {
   isAccountConfigured,
   resolveChannelAccountDisplayName,
   toAccountSnapshot,
 } from "./service-snapshots";
+import { refreshLoadedMessageChannelTool } from "./service-tools";
 import type { ChannelAccountSnapshot } from "./service-types";
 import { loadTargetStore, removeChannelTargetsForAccount } from "./targets";
 import type { ChannelAccount } from "./types";

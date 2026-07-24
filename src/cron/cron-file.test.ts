@@ -98,6 +98,87 @@ describe("addTask", () => {
     expect(result.task.conversation_id).toBe("new");
   });
 
+  test("persists channel targets only when provided", () => {
+    const legacy = addTask(makeInput());
+    expect(legacy.task.channel_targets).toBeUndefined();
+
+    const result = addTask(
+      makeInput({
+        channel_targets: [
+          {
+            channel_id: "discord",
+            account_id: "acct-1",
+            chat_id: "chat-1",
+            label: "Ops room",
+          },
+          {
+            channel_id: "discord",
+            chat_id: "chat-2",
+          },
+        ],
+      }),
+    );
+
+    expect(result.task.channel_targets).toEqual([
+      {
+        channel_id: "discord",
+        account_id: "acct-1",
+        chat_id: "chat-1",
+        label: "Ops room",
+      },
+      {
+        channel_id: "discord",
+        chat_id: "chat-2",
+      },
+    ]);
+    expect(getTask(legacy.task.id)?.channel_targets).toBeUndefined();
+    expect(getTask(result.task.id)?.channel_targets).toEqual(
+      result.task.channel_targets,
+    );
+  });
+
+  test("normalizes empty persisted channel target arrays away", () => {
+    const { task } = addTask(makeInput());
+    const data = readCronFile();
+    const persistedTask = data.tasks.find(
+      (candidate) => candidate.id === task.id,
+    );
+    if (!persistedTask) throw new Error("expected persisted task");
+    persistedTask.channel_targets = [];
+    writeFileSync(_CRON_PATH, JSON.stringify(data, null, 2));
+
+    expect(readCronFile().tasks[0]?.channel_targets).toBeUndefined();
+  });
+
+  test("updates and clears persisted channel targets", () => {
+    const { task } = addTask(makeInput());
+
+    expect(
+      updateTask(task.id, (current) => {
+        current.channel_targets = [
+          {
+            channel_id: "slack",
+            account_id: "workspace-1",
+            chat_id: "C123",
+          },
+        ];
+      })?.channel_targets,
+    ).toEqual([
+      {
+        channel_id: "slack",
+        account_id: "workspace-1",
+        chat_id: "C123",
+      },
+    ]);
+
+    expect(
+      updateTask(task.id, (current) => {
+        current.channel_targets = [];
+      })?.channel_targets,
+    ).toBeUndefined();
+    expect(getTask(task.id)?.channel_targets).toBeUndefined();
+  });
+
   test("creates a one-shot task", () => {
     const scheduledFor = new Date(Date.now() + 60000);
     const result = addTask(
