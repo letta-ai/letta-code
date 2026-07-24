@@ -106,17 +106,22 @@ function findNextWordBoundary(text: string, cursorPos: number): number {
 
 type WordDirection = "left" | "right";
 
+// Match word-navigation arrow sequences: CSI 1 ; modifier [CD]
+// Kitty keyboard protocol modifier encoding is 1 + bit-sum
+// (shift=1, alt=2, ctrl=4, super=8):
+//   3=Alt, 4=Alt+Shift, 5=Ctrl, 6=Ctrl+Shift,
+//   7=Alt+Ctrl, 8=Alt+Ctrl+Shift, 9=Super
 // biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
-const OPTION_LEFT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|7|8|9)D$/;
+const WORD_NAV_LEFT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|5|6|7|8|9)D$/;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: Terminal escape sequences require ESC control character
-const OPTION_RIGHT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|7|8|9)C$/;
+const WORD_NAV_RIGHT_PATTERN = /^\u001b\[(?:1;)?(?:3|4|5|6|7|8|9)C$/;
 
-function detectOptionWordDirection(sequence: string): WordDirection | null {
+function detectWordNavigationDirection(sequence: string): WordDirection | null {
   if (!sequence.startsWith("\u001b")) return null;
   if (sequence === "\u001bb" || sequence === "\u001bB") return "left";
   if (sequence === "\u001bf" || sequence === "\u001bF") return "right";
-  if (OPTION_LEFT_PATTERN.test(sequence)) return "left";
-  if (OPTION_RIGHT_PATTERN.test(sequence)) return "right";
+  if (WORD_NAV_LEFT_PATTERN.test(sequence)) return "left";
+  if (WORD_NAV_RIGHT_PATTERN.test(sequence)) return "right";
   return null;
 }
 
@@ -558,13 +563,15 @@ export function PasteAwareTextInput({
       // Option+Delete sequences (check first as they're exact matches)
       // - iTerm2/some terminals: ESC + DEL (\x1b\x7f)
       // - Some terminals: ESC + Backspace (\x1b\x08)
-      // - Warp: Ctrl+W (\x17)
+      // - Warp/legacy: Ctrl+W (\x17)
+      // - Kitty protocol: Ctrl+W sent as CSI-u (\x1b[119;5u)
       // Note: macOS Terminal sends plain \x7f (same as regular delete) - no modifier info
       if (
         sequence === "\x1b\x7f" ||
         sequence === "\x1b\x08" ||
         sequence === "\x1b\b" ||
-        sequence === "\x17"
+        sequence === "\x17" ||
+        sequence === "\x1b[119;5u"
       ) {
         deletePreviousWord();
         return;
@@ -574,7 +581,7 @@ export function PasteAwareTextInput({
       if (sequence.length <= 32 && sequence.includes("\u001b")) {
         const parts = sequence.split("\u001b");
         for (let i = 1; i < parts.length; i++) {
-          const dir = detectOptionWordDirection(`\u001b${parts[i]}`);
+          const dir = detectWordNavigationDirection(`\u001b${parts[i]}`);
           if (dir === "left") {
             moveCursorToPreviousWord();
             return;
