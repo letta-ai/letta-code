@@ -1,9 +1,13 @@
-import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import type {
+  AgentCreateParams,
+  AgentState,
+} from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   Conversation,
   ConversationCreateParams,
 } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type WebSocket from "ws";
+import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
 import { getBackend } from "@/backend";
 import { migratePermissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
@@ -129,6 +133,25 @@ function validateRuntimeStartShape(parsed: RuntimeStartCommand): void {
   }
 }
 
+/**
+ * Match the CLI's own created-agent defaults: when the client does not
+ * specify server-side tools, attach the harness default set and disable the
+ * Letta agent type's base tools/rules so server defaults never leak in.
+ */
+export function applyCreatedAgentServerToolDefaults(
+  body: AgentCreateParams,
+): AgentCreateParams {
+  if (body.tools !== undefined || body.include_base_tools !== undefined) {
+    return body;
+  }
+  return {
+    ...body,
+    tools: [...DEFAULT_CREATED_AGENT_BASE_TOOLS],
+    include_base_tools: false,
+    include_base_tool_rules: false,
+  };
+}
+
 async function resolveRuntimeStartAgent(
   parsed: RuntimeStartCommand,
   created: CreatedResources,
@@ -138,9 +161,12 @@ async function resolveRuntimeStartAgent(
     const withMemfs = parsed.create_agent.memfs !== false;
     const { prepareRawCreateAgentBodyForMemfs, enableMemfsIfCloud } =
       await import("@/agent/memory-filesystem");
+    const requestedBody = applyCreatedAgentServerToolDefaults(
+      parsed.create_agent.body,
+    );
     const body = withMemfs
-      ? await prepareRawCreateAgentBodyForMemfs(parsed.create_agent.body)
-      : parsed.create_agent.body;
+      ? await prepareRawCreateAgentBodyForMemfs(requestedBody)
+      : requestedBody;
     const agent = await backend.createAgent(body);
     if (withMemfs) {
       // Finish memfs setup (settings, repo clone, legacy tool detach) without
