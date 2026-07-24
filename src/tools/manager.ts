@@ -2878,6 +2878,13 @@ async function executeToolInner(
         }
       }
 
+      // Inject parent scope for Bash tool
+      if (internalName === "Bash") {
+        if (options?.parentScope) {
+          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
+        }
+      }
+
       // Inject scoped metadata for Skill tool.
       // In listener/desktop mode, relying on global agent context is unsafe
       // because multiple agent/conversation scopes can overlap in one process.
