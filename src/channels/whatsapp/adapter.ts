@@ -36,6 +36,11 @@ const DEDUPE_MAX_SIZE = 5000;
 const RECONNECT_MAX_MS = 30_000;
 const MAX_MENTION_PATTERN_LENGTH = 256;
 const MENTION_MATCH_TEXT_MAX_LENGTH = 2000;
+const RAPID_DISCONNECT_LIMIT = 5;
+const RAPID_DISCONNECT_WINDOW_MS = 60_000;
+// A brief open inside a reconnect loop is not stable enough to forgive
+// prior disconnects. Clear the loop window only after this much uptime.
+const STABLE_OPEN_RESET_MS = RAPID_DISCONNECT_WINDOW_MS;
 
 type EventEmitterLike = {
   on?: (event: string, handler: (payload: unknown) => void) => void;
@@ -196,10 +201,12 @@ export function createWhatsAppAdapter(
   let stopping = false;
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let stableOpenTimer: ReturnType<typeof setTimeout> | null = null;
   let selfPhoneJid: string | null = null;
   let selfLid: string | null = null;
   let connectedAtMs = 0;
   let connectionGeneration = 0;
+  let recentDisconnects: number[] = [];
   let releaseSocketLease: (() => void) | null = null;
   let downloadContentFromMessage:
     | ((message: unknown, type: string) => Promise<AsyncIterable<Uint8Array>>)
@@ -232,7 +239,14 @@ export function createWhatsAppAdapter(
     );
   }
 
+  function clearStableOpenTimer(): void {
+    if (!stableOpenTimer) return;
+    clearTimeout(stableOpenTimer);
+    stableOpenTimer = null;
+  }
+
   function clearActiveSocket(closeWebSocket: boolean): void {
+    clearStableOpenTimer();
     const currentSock = sock;
     const releaseLease = releaseSocketLease;
     sock = null;
@@ -245,6 +259,24 @@ export function createWhatsAppAdapter(
       }
     }
     releaseLease?.();
+  }
+
+  function clearReconnectTimer(): void {
+    if (!reconnectTimer) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  function scheduleStableOpenReset(generation: number): void {
+    clearStableOpenTimer();
+    const timer = setTimeout(() => {
+      if (stableOpenTimer !== timer) return;
+      stableOpenTimer = null;
+      if (generation !== connectionGeneration || stopping || !running) return;
+      reconnectAttempts = 0;
+      recentDisconnects = [];
+    }, STABLE_OPEN_RESET_MS);
+    stableOpenTimer = timer;
   }
 
   async function ensureRuntimeHelpers(): Promise<void> {
@@ -267,6 +299,7 @@ export function createWhatsAppAdapter(
     );
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
+      if (stopping || !running) return;
       void connect().catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         setWhatsAppConnectionState(account.accountId, {
@@ -291,7 +324,7 @@ export function createWhatsAppAdapter(
       onConnectionUpdate(update) {
         if (generation !== connectionGeneration) return;
         if (update.connection === "open") {
-          reconnectAttempts = 0;
+          scheduleStableOpenReset(generation);
           selfPhoneJid = stripDeviceSuffix(sock?.user?.id ?? null) || null;
           selfLid = stripDeviceSuffix(sock?.user?.lid ?? null) || null;
           const mode = account.selfChatMode
@@ -308,6 +341,7 @@ export function createWhatsAppAdapter(
           if (isWhatsAppConflictDisconnect(update)) {
             running = false;
             stopping = true;
+            clearReconnectTimer();
             const message =
               typeof error.message === "string"
                 ? error.message
@@ -319,6 +353,25 @@ export function createWhatsAppAdapter(
             console.warn(
               `[WhatsApp:${account.accountId}] disconnected due to session conflict; not reconnecting automatically. Stop any other WhatsApp server using this account/auth session, then restart this server.`,
             );
+            return;
+          }
+          // Guardrail: detect rapid disconnect loops (e.g. session conflict
+          // that doesn't trigger the explicit conflict-disconnect path).
+          const now = Date.now();
+          recentDisconnects = recentDisconnects.filter(
+            (ts) => now - ts <= RAPID_DISCONNECT_WINDOW_MS,
+          );
+          recentDisconnects.push(now);
+          if (recentDisconnects.length > RAPID_DISCONNECT_LIMIT) {
+            running = false;
+            stopping = true;
+            clearReconnectTimer();
+            const loopMessage = `WhatsApp disconnected ${recentDisconnects.length} times in ${RAPID_DISCONNECT_WINDOW_MS / 1000}s; stopping to avoid reconnect loop. Another client may be competing for this session. Restart the server to retry.`;
+            setWhatsAppConnectionState(account.accountId, {
+              status: "error",
+              lastError: loopMessage,
+            });
+            console.warn(`[WhatsApp:${account.accountId}] ${loopMessage}`);
             return;
           }
           scheduleReconnect(
@@ -523,10 +576,7 @@ export function createWhatsAppAdapter(
       if (!running) return;
       stopping = true;
       running = false;
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
+      clearReconnectTimer();
       connectionGeneration += 1;
       clearActiveSocket(true);
       setWhatsAppConnectionState(account.accountId, { status: "disconnected" });
