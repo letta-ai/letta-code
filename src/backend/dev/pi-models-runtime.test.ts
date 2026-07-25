@@ -643,6 +643,60 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     expect(resolved.model.input).toEqual(["text", "image"]);
   });
 
+  test("unloaded llama.cpp router models preserve provider identity from listing through turns", async () => {
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        requests.push(url.pathname);
+        if (url.pathname === "/models") {
+          return Response.json({
+            data: [
+              {
+                id: "Qwen3.6-27B",
+                status: { value: "unloaded" },
+                architecture: { input_modalities: ["text", "image"] },
+                meta: { n_ctx: 32768 },
+              },
+            ],
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    servers.push({ url: "", chatBodies: [], stop: () => server.stop(true) });
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
+    storageDirs.push(storageDir);
+    await createOrUpdateLocalProvider({
+      providerType: "llama_cpp",
+      providerName: "llama-cpp",
+      apiKey: "not-needed",
+      baseURL: `http://localhost:${server.port}`,
+      storageDir,
+    });
+    const runtime = new LocalPiModelsRuntime({ storageDir });
+
+    const listed = await listLocalModels(storageDir, {
+      fetch: failingDiscoveryFetch,
+      modelsRuntime: runtime,
+    });
+    const entry = listed.find(
+      (model) => model.handle === "llama.cpp/Qwen3.6-27B",
+    );
+    expect(entry?.max_context_window).toBe(32768);
+
+    const published = runtime.getModel("llama-cpp", "Qwen3.6-27B")!;
+    const resolved = await resolvePiModelForAgent(
+      "llama.cpp/Qwen3.6-27B",
+      {},
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    expect(resolved.model).toBe(published);
+    expect(resolved.model.input).toEqual(["text", "image"]);
+    expect(requests).not.toContain("/v1/models");
+  });
+
   test("refreshAll never probes unconfigured remote endpoints or mods", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
     storageDirs.push(storageDir);
