@@ -9,15 +9,23 @@ import {
   useCallback,
 } from "react";
 import {
+  getCachedAvailableModels,
+  getCachedModelReasoningCapabilities,
+  type ReasoningCapabilities,
+} from "@/agent/available-models";
+import {
   CHATGPT_FAST_SERVICE_TIER,
+  getByokOpenAIReasoningTierOptions,
   getChatGptFastRegistryHandleForModelHandle,
+  getReasoningTierOptionsForHandle,
   isLocalModelHandle,
-  type ModelReasoningEffort,
+  type ModelReasoningSelection,
   normalizeModelHandleForRegistry,
   preservableContextWindow,
 } from "@/agent/model";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
+import { isOpenAICompatibleProxyEndpoint } from "@/utils/openai-endpoint";
 
 import {
   deriveReasoningEffort,
@@ -28,7 +36,7 @@ import type { CommandStarter } from "./types";
 
 type ReasoningCycleDesired = {
   modelHandle: string;
-  effort: string;
+  effort: ModelReasoningSelection;
   modelId: string;
   providerType?: string | null;
   serviceTier?: string | null;
@@ -168,6 +176,30 @@ export function resolveReasoningCycleTierLookupHandle(
   }
 
   return `${registryProvider}/${modelName}`;
+}
+
+export function getReasoningCycleTierOptions(params: {
+  modelHandle: string;
+  tierLookupHandle: string;
+  contextWindow?: number;
+  openAICompatibleProxy: boolean;
+  reasoningCapabilities?: ReasoningCapabilities | null;
+}): Array<{ id: string; effort: ModelReasoningSelection }> {
+  const options = params.openAICompatibleProxy
+    ? getByokOpenAIReasoningTierOptions(params.modelHandle, {
+        registryHandle: params.tierLookupHandle,
+        contextWindow: params.contextWindow,
+        reasoningCapabilities: params.reasoningCapabilities,
+      })
+    : getReasoningTierOptionsForHandle(
+        params.tierLookupHandle,
+        params.contextWindow,
+        params.reasoningCapabilities,
+      );
+  return options.map((option) => ({
+    id: option.modelId,
+    effort: option.effort,
+  }));
 }
 
 export function useReasoningCycle(ctx: ReasoningCycleContext) {
@@ -351,7 +383,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
                   : conversationModelSettings,
               ),
             ),
-            reasoning_effort: resolvedReasoningEffort as ModelReasoningEffort,
+            reasoning_effort: resolvedReasoningEffort,
             ...(typeof resolvedConversationContextWindowLimit === "number"
               ? { context_window: resolvedConversationContextWindowLimit }
               : {}),
@@ -366,11 +398,13 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
           reasoningCyclePatchedAgentStateRef.current = false;
 
           const display =
-            desired.effort === "medium"
-              ? "med"
-              : desired.effort === "minimal"
-                ? "low"
-                : desired.effort;
+            desired.effort === null
+              ? "default"
+              : desired.effort === "medium"
+                ? "med"
+                : desired.effort === "minimal"
+                  ? "low"
+                  : desired.effort;
           cmd.finish(`Reasoning set to ${display}`, true);
         } catch (error) {
           const errorDetails = formatErrorDetails(error, agentId);
@@ -453,22 +487,32 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
       if (!modelHandle) return;
 
       // Derive current effort from effective model settings (conversation override aware)
-      const currentEffort =
-        deriveReasoningEffort(modelSettingsForEffort, current) ?? "none";
+      const currentEffort = deriveReasoningEffort(
+        modelSettingsForEffort,
+        current,
+      );
       const tierLookupHandle = resolveReasoningCycleTierLookupHandle(
         modelHandle,
         modelSettingsForEffort,
       );
 
-      const { getReasoningTierOptionsForHandle } = await import(
-        "@/agent/model"
+      const availableModel = getCachedAvailableModels()?.find(
+        (model) => model.handle === modelHandle,
       );
-      const tiers = getReasoningTierOptionsForHandle(tierLookupHandle).map(
-        (option) => ({
-          id: option.modelId,
-          effort: option.effort,
-        }),
-      );
+      const openAICompatibleProxy =
+        availableModel?.openAICompatibleProxy === true ||
+        (current?.provider_category === "byok" &&
+          providerType === "openai" &&
+          isOpenAICompatibleProxyEndpoint(current.model_endpoint));
+      const capabilities = getCachedModelReasoningCapabilities();
+      const tiers = getReasoningCycleTierOptions({
+        modelHandle,
+        tierLookupHandle,
+        contextWindow: current?.context_window ?? undefined,
+        openAICompatibleProxy,
+        reasoningCapabilities:
+          capabilities?.get(modelHandle) ?? capabilities?.get(tierLookupHandle),
+      });
 
       // Only enable cycling when there are multiple tiers for the same handle.
       if (tiers.length < 2) return;
@@ -479,7 +523,8 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
         ? "xhigh"
         : "max";
 
-      const order = [
+      const order: ModelReasoningSelection[] = [
+        null,
         "none",
         "minimal",
         "low",
@@ -488,7 +533,7 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
         "xhigh",
         "max",
       ];
-      const rank = (effort: string): number => {
+      const rank = (effort: ModelReasoningSelection): number => {
         const idx = order.indexOf(effort);
         return idx >= 0 ? idx : 999;
       };
@@ -531,17 +576,14 @@ export function useReasoningCycle(ctx: ReasoningCycleContext) {
               ...prev,
               model_settings: {
                 ...ms,
-                reasoning: {
-                  ...(ms as { reasoning?: Record<string, unknown> }).reasoning,
-                  reasoning_effort: next.effort as
-                    | "none"
-                    | "minimal"
-                    | "low"
-                    | "medium"
-                    | "high"
-                    | "xhigh"
-                    | "max",
-                },
+                reasoning:
+                  next.effort === null
+                    ? null
+                    : {
+                        ...(ms as { reasoning?: Record<string, unknown> })
+                          .reasoning,
+                        reasoning_effort: next.effort,
+                      },
               },
             } as AgentState;
           }

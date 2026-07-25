@@ -12,9 +12,10 @@ import type { Backend } from "@/backend";
 import { getBackend } from "@/backend";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
 import { debugLog } from "@/utils/debug";
+import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import { isRecord } from "@/utils/type-guards";
 import { getModelContextWindow } from "./available-models";
-import { getModelInfo, type ModelReasoningEffort } from "./model";
+import { getModelInfo, type ModelReasoningSelection } from "./model";
 
 type ModelSettings =
   | OpenAIModelSettings
@@ -100,16 +101,11 @@ function buildModelSettings(
       (openaiSettings as Record<string, unknown>).provider_type =
         "chatgpt_oauth";
     }
-    if (updateArgs?.reasoning_effort) {
-      openaiSettings.reasoning = {
-        reasoning_effort: updateArgs.reasoning_effort as
-          | "none"
-          | "minimal"
-          | "low"
-          | "medium"
-          | "high"
-          | "xhigh",
-      };
+    if (updateArgs && "reasoning_effort" in updateArgs) {
+      (openaiSettings as Record<string, unknown>).reasoning =
+        updateArgs.reasoning_effort === null
+          ? null
+          : { reasoning_effort: updateArgs.reasoning_effort };
     }
     const verbosity = updateArgs?.verbosity;
     if (verbosity === "low" || verbosity === "medium" || verbosity === "high") {
@@ -242,16 +238,11 @@ function buildModelSettings(
           ? updateArgs.parallel_tool_calls
           : true,
     };
-    if (updateArgs?.reasoning_effort) {
-      openaiProxySettings.reasoning = {
-        reasoning_effort: updateArgs.reasoning_effort as
-          | "none"
-          | "minimal"
-          | "low"
-          | "medium"
-          | "high"
-          | "xhigh",
-      };
+    if (updateArgs && "reasoning_effort" in updateArgs) {
+      (openaiProxySettings as Record<string, unknown>).reasoning =
+        updateArgs.reasoning_effort === null
+          ? null
+          : { reasoning_effort: updateArgs.reasoning_effort };
     }
     if (typeof updateArgs?.strict === "boolean") {
       (openaiProxySettings as Record<string, unknown>).strict =
@@ -287,15 +278,20 @@ function buildModelSettings(
 
 export const __modifyTestUtils = {
   buildModelSettings,
+  updateArgsForModelSettings,
 };
 
 function updateArgsForModelSettings(
   updateArgs: Record<string, unknown> | undefined,
   options: { useBackendModelCatalog: boolean },
 ): Record<string, unknown> | undefined {
-  if (!options.useBackendModelCatalog || !updateArgs) return updateArgs;
+  if (!updateArgs) return updateArgs;
   return Object.fromEntries(
-    Object.entries(updateArgs).filter(([key]) => key !== "max_output_tokens"),
+    Object.entries(updateArgs).filter(
+      ([key]) =>
+        key !== OPENAI_COMPATIBLE_PROXY_UPDATE_ARG &&
+        (!options.useBackendModelCatalog || key !== "max_output_tokens"),
+    ),
   );
 }
 
@@ -504,7 +500,7 @@ export interface ModelConfigUpdate {
   /** Model handle, e.g. "anthropic/claude-opus-4-8". Omit to keep the current model. */
   model?: string;
   /** Reasoning effort tier. Omit to leave reasoning settings untouched. */
-  reasoningEffort?: ModelReasoningEffort;
+  reasoningEffort?: ModelReasoningSelection;
   /** Context window limit. Omit to leave the current limit untouched. */
   contextWindow?: number;
 }

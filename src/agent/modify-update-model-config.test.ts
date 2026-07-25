@@ -77,6 +77,22 @@ describe("updateModelConfig", () => {
     expect(calls.retrieveAgent).toBe(1);
   });
 
+  test("explicit null reasoning persists provider Default instead of leaving High", async () => {
+    const { backend, calls } = makeBackend({
+      agentModel: "openai/gpt-5.4",
+    });
+    await updateModelConfig(backend, conversationTarget, {
+      reasoningEffort: null,
+    });
+
+    expect(calls.updateConversation).toHaveLength(1);
+    expect(calls.updateConversation[0]?.body.model_settings).toEqual({
+      provider_type: "openai",
+      parallel_tool_calls: true,
+      reasoning: null,
+    });
+  });
+
   test("model change rebuilds settings and honors an explicit context window", async () => {
     const { backend, calls } = makeBackend();
     await updateModelConfig(backend, conversationTarget, {

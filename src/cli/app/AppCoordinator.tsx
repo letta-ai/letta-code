@@ -30,6 +30,7 @@ import {
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
+  type ModelReasoningSelection,
 } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality-presets";
 import { shouldRecommendDefaultPrompt } from "@/agent/prompt-assets";
@@ -229,6 +230,7 @@ import {
   inferReasoningEffortFromModelPreset,
   mapHandleToLlmConfigPatch,
   providerTypeFromModelSettings,
+  reasoningEffortLlmConfigPatch,
 } from "./model-config";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
@@ -773,9 +775,9 @@ export function App({
   const [modelReasoningPrompt, setModelReasoningPrompt] = useState<{
     modelLabel: string;
     initialModelId: string;
-    initialEffort?: ModelReasoningEffort;
+    initialEffort?: ModelReasoningSelection;
     options: Array<{
-      effort: ModelReasoningEffort;
+      effort: ModelReasoningSelection;
       modelId: string;
       selection?: ModelSelectorSelection;
     }>;
@@ -3412,9 +3414,10 @@ export function App({
             effectiveModelHandle,
             providerTypeFromModelSettings(resolvedConversationModelSettings),
           ),
-          ...(typeof reasoningEffort === "string"
-            ? { reasoning_effort: reasoningEffort }
-            : {}),
+          ...reasoningEffortLlmConfigPatch(
+            resolvedConversationModelSettings,
+            agentState.llm_config,
+          ),
           ...(typeof resolvedConversationContextWindowLimit === "number"
             ? { context_window: resolvedConversationContextWindowLimit }
             : {}),
@@ -4073,7 +4076,7 @@ export function App({
   const reasoningCycleInFlightRef = useRef(false);
   const reasoningCycleDesiredRef = useRef<{
     modelHandle: string;
-    effort: string;
+    effort: ModelReasoningSelection;
     modelId: string;
     providerType?: string | null;
     serviceTier?: string | null;
@@ -4463,6 +4466,7 @@ export function App({
     conversationIdRef,
     currentModelHandle,
     currentModelId,
+    currentReasoningEffort,
     currentToolset,
     isAgentBusy,
     llmConfig,

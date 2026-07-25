@@ -1599,6 +1599,16 @@ export interface UpdateModelPayload {
   model_id?: string;
   /** Optional direct handle override (e.g. "anthropic/claude-sonnet-4-6") */
   model_handle?: string;
+  /** Explicit effort for an OpenAI-compatible proxy; null restores provider Default. */
+  reasoning_effort?:
+    | "none"
+    | "minimal"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh"
+    | "max"
+    | null;
 }
 
 export interface UpdateModelCommand {

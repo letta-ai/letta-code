@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
+import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import {
   deriveReasoningEffort,
   mapHandleToLlmConfigPatch,
   providerTypeFromModelSettings,
   providerTypeFromUpdateArgs,
+  reasoningEffortLlmConfigPatch,
 } from "./model-config";
 
 describe("model config helpers", () => {
@@ -59,6 +62,34 @@ describe("model config helpers", () => {
         null,
       ),
     ).toBe("max");
+  });
+
+  test("lets an explicit provider default clear stale legacy effort", () => {
+    const modelSettings = {
+      provider_type: "openai",
+      reasoning: null,
+    } as unknown as AgentState["model_settings"];
+    const llmConfig = {
+      reasoning_effort: "high",
+    } as LlmConfig;
+
+    expect(deriveReasoningEffort(modelSettings, llmConfig)).toBeNull();
+    expect(reasoningEffortLlmConfigPatch(modelSettings, llmConfig)).toEqual({
+      reasoning_effort: null,
+    });
+  });
+
+  test("does not interpret an absent reasoning field as provider Default", () => {
+    const modelSettings = {
+      provider_type: "openai",
+    } as unknown as AgentState["model_settings"];
+    const llmConfig = {
+      reasoning_effort: "high",
+    } as LlmConfig;
+
+    expect(reasoningEffortLlmConfigPatch(modelSettings, llmConfig)).toEqual({
+      reasoning_effort: "high",
+    });
   });
 
   test("does not expose Moonshot reasoning controls", () => {

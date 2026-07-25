@@ -7,7 +7,10 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { pinAgentForCurrentUser } from "@/agent/favorites";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
-import type { ModelReasoningEffort } from "@/agent/model";
+import type {
+  ModelReasoningEffort,
+  ModelReasoningSelection,
+} from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality-presets";
 import type { SessionStats } from "@/agent/stats";
 import { getBackend } from "@/backend";
@@ -110,9 +113,9 @@ type ModelSelectorOptions = {
 type ModelReasoningPrompt = {
   modelLabel: string;
   initialModelId: string;
-  initialEffort?: ModelReasoningEffort;
+  initialEffort?: ModelReasoningSelection;
   options: Array<{
-    effort: ModelReasoningEffort;
+    effort: ModelReasoningSelection;
     modelId: string;
     selection?: ModelSelectorSelection;
   }>;
@@ -216,7 +219,7 @@ type AppViewProps = {
     opts?: {
       promptReasoning?: boolean;
       skipReasoningPrompt?: boolean;
-      reasoningEffort?: ModelReasoningEffort;
+      reasoningEffort?: ModelReasoningSelection;
     },
   ) => Promise<void>;
   handlePasteError: (message: string) => void;

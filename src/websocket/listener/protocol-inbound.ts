@@ -1002,17 +1002,28 @@ export function isUpdateModelCommand(
   const payload = c.payload as {
     model_id?: unknown;
     model_handle?: unknown;
+    reasoning_effort?: unknown;
   };
   const hasModelId =
     payload.model_id === undefined || typeof payload.model_id === "string";
   const hasModelHandle =
     payload.model_handle === undefined ||
     typeof payload.model_handle === "string";
+  const hasReasoningEffort =
+    payload.reasoning_effort === undefined ||
+    payload.reasoning_effort === null ||
+    payload.reasoning_effort === "none" ||
+    payload.reasoning_effort === "minimal" ||
+    payload.reasoning_effort === "low" ||
+    payload.reasoning_effort === "medium" ||
+    payload.reasoning_effort === "high" ||
+    payload.reasoning_effort === "xhigh" ||
+    payload.reasoning_effort === "max";
   const hasAtLeastOne =
     typeof payload.model_id === "string" ||
     typeof payload.model_handle === "string";
 
-  return hasModelId && hasModelHandle && hasAtLeastOne;
+  return hasModelId && hasModelHandle && hasReasoningEffort && hasAtLeastOne;
 }
 
 export function isUpdateToolsetCommand(

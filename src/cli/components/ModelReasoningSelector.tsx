@@ -1,6 +1,6 @@
 import { Box, useInput } from "ink";
 import { useEffect, useMemo, useState } from "react";
-import type { ModelReasoningEffort } from "@/agent/model";
+import type { ModelReasoningSelection } from "@/agent/model";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { colors } from "./colors";
 import type { ModelSelectorSelection } from "./ModelSelector";
@@ -10,7 +10,7 @@ const SOLID_LINE = "─";
 const EFFORT_BLOCK = "▌";
 
 interface ReasoningOption {
-  effort: ModelReasoningEffort;
+  effort: ModelReasoningSelection;
   modelId: string;
   selection?: ModelSelectorSelection;
 }
@@ -19,15 +19,16 @@ interface ModelReasoningSelectorProps {
   modelLabel: string;
   options: ReasoningOption[];
   initialModelId: string;
-  initialEffort?: ModelReasoningEffort;
+  initialEffort?: ModelReasoningSelection;
   onSelect: (option: ReasoningOption) => void;
   onCancel: () => void;
 }
 
 function formatEffortLabel(
-  effort: ModelReasoningEffort,
+  effort: ModelReasoningSelection,
   hasDistinctMaxTier: boolean,
 ): string {
+  if (effort === null) return "Default";
   if (effort === "none") return "Off";
   if (effort === "xhigh") return hasDistinctMaxTier ? "Extra-High" : "Max";
   if (effort === "max") return "Max";
@@ -67,7 +68,10 @@ export function ModelReasoningSelector({
 
   const selectedOption = options[selectedIndex] ?? options[0];
   const effortOptions = useMemo(
-    () => options.filter((option) => option.effort !== "none"),
+    () =>
+      options.filter(
+        (option) => option.effort !== null && option.effort !== "none",
+      ),
     [options],
   );
   const hasDistinctMaxTier = useMemo(
@@ -77,7 +81,8 @@ export function ModelReasoningSelector({
   const totalBars = Math.max(effortOptions.length, 1);
   const selectedBars = useMemo(() => {
     if (!selectedOption) return 0;
-    if (selectedOption.effort === "none") return 0;
+    if (selectedOption.effort === null || selectedOption.effort === "none")
+      return 0;
     const effortIndex = effortOptions.findIndex(
       (option) => option.effort === selectedOption.effort,
     );
