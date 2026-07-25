@@ -36,6 +36,7 @@ import {
   updateLocalProvider,
 } from "@/backend/local/local-provider-auth-store";
 import type { LocalProviderTimeout } from "@/backend/local/local-provider-timeout";
+import { isOpenAICompatibleProxyEndpoint } from "@/utils/openai-endpoint";
 
 export type { ProviderResponse } from "@/backend/api/providers";
 
@@ -547,6 +548,26 @@ export { PROVIDER_TYPE_TO_BASE_PROVIDER };
  * metadata so all built-in providers are covered. Connected providers are
  * layered on top to support custom provider names.
  */
+export function buildOpenAICompatibleProxyProviderNames(
+  connectedProviders: Array<
+    Pick<
+      ProviderResponse,
+      "name" | "provider_type" | "provider_category" | "base_url"
+    >
+  >,
+): Set<string> {
+  return new Set(
+    connectedProviders
+      .filter(
+        (provider) =>
+          provider.provider_category === "byok" &&
+          provider.provider_type === "openai" &&
+          isOpenAICompatibleProxyEndpoint(provider.base_url),
+      )
+      .map((provider) => provider.name),
+  );
+}
+
 export function buildByokProviderAliases(
   connectedProviders: Array<
     Pick<ProviderResponse, "name" | "provider_type">

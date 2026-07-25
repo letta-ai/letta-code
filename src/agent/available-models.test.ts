@@ -24,7 +24,9 @@ type FakeModel = {
   max_context_window?: number;
   max_tokens?: number;
   model?: string;
+  model_endpoint?: string;
   name?: string;
+  provider_category?: "base" | "byok";
   provider_type?: string;
 };
 
@@ -41,6 +43,7 @@ const {
   getAvailableModelHandles,
   getCachedAvailableModels,
   getCachedModelHandles,
+  getCachedOpenAICompatibleProxyHandles,
 } = await import("@/agent/available-models");
 
 function deferred<T>() {
@@ -145,6 +148,54 @@ describe("available-models cache semantics", () => {
       },
     ]);
     expect(getCachedAvailableModels()).toEqual(result.models);
+  });
+
+  test("classifies custom OpenAI endpoints without classifying the official API", async () => {
+    listModelsImpl = async () => [
+      {
+        handle: "proxy/claude-opus-4-6",
+        provider_category: "byok",
+        provider_type: "openai",
+        model_endpoint: "https://proxy.example.com/openai/v1",
+      },
+      {
+        handle: "lc-openai/gpt-5.4",
+        provider_category: "byok",
+        provider_type: "openai",
+        model_endpoint: "https://api.openai.com/v1",
+      },
+      {
+        handle: "hosted/internal-openai-model",
+        provider_category: "base",
+        provider_type: "openai",
+        model_endpoint: "https://internal.example.com/v1",
+      },
+    ];
+
+    const result = await getAvailableModelHandles();
+
+    expect([...result.openAICompatibleProxyHandles]).toEqual([
+      "proxy/claude-opus-4-6",
+    ]);
+    expect([...(getCachedOpenAICompatibleProxyHandles() ?? [])]).toEqual([
+      "proxy/claude-opus-4-6",
+    ]);
+    expect(result.models).toContainEqual({
+      handle: "proxy/claude-opus-4-6",
+      label: "proxy/claude-opus-4-6",
+      providerType: "openai",
+      providerCategory: "byok",
+      modelEndpoint: "https://proxy.example.com/openai/v1",
+      openAICompatibleProxy: true,
+    });
+    expect(
+      result.models.find((model) => model.handle === "lc-openai/gpt-5.4"),
+    ).not.toHaveProperty("openAICompatibleProxy");
+    expect(
+      result.models.find(
+        (model) => model.handle === "hosted/internal-openai-model",
+      ),
+    ).not.toHaveProperty("openAICompatibleProxy");
   });
 
   test("clearAvailableModelsCache drops the inflight fetch so the next call refetches", async () => {

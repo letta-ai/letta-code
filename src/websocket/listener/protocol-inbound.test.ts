@@ -3,6 +3,7 @@ import {
   isChannelAccountCreateCommand,
   isChannelAccountUpdateCommand,
   isChannelSetConfigCommand,
+  isUpdateModelCommand,
   parseServerMessage,
 } from "@/websocket/listener/protocol-inbound";
 
@@ -17,6 +18,38 @@ describe("app-server protocol hard cut", () => {
   ])("rejects legacy command %s", (type) => {
     const parsed = parseServerMessage(Buffer.from(JSON.stringify({ type })));
     expect(parsed).toBeNull();
+  });
+});
+
+describe("update model protocol-inbound validator", () => {
+  const base = {
+    type: "update_model",
+    request_id: "model-1",
+    runtime: { agent_id: "agent-1", conversation_id: "default" },
+  };
+
+  test("accepts explicit proxy effort and provider Default", () => {
+    expect(
+      isUpdateModelCommand({
+        ...base,
+        payload: { model_handle: "proxy/model", reasoning_effort: "high" },
+      }),
+    ).toBe(true);
+    expect(
+      isUpdateModelCommand({
+        ...base,
+        payload: { model_handle: "proxy/model", reasoning_effort: null },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects unknown effort values", () => {
+    expect(
+      isUpdateModelCommand({
+        ...base,
+        payload: { model_handle: "proxy/model", reasoning_effort: "ultra" },
+      }),
+    ).toBe(false);
   });
 });
 
