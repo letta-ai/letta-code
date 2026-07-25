@@ -90,6 +90,9 @@ function getIntroText(
   if (reason === "cwd_changed") {
     return "The working directory for this conversation has changed. Updated environment context follows.";
   }
+  if (reason === "environment_changed") {
+    return "The execution environment for this conversation has changed. Updated environment context follows.";
+  }
   switch (source) {
     case "listen":
       return "This conversation is now connected to a Letta Code execution environment.";
