@@ -18,6 +18,7 @@ import {
   listChannelAccounts,
   upsertChannelAccount,
 } from "@/channels/accounts";
+import { listOutboundDeliveryTargets } from "@/channels/outbound-targets";
 import {
   getApprovedUsers,
   getPendingPairings,
@@ -61,6 +62,9 @@ Usage:
   letta channels route add [options]          Add a route
   letta channels route remove [options]       Remove a route
   letta channels bind [options]               Bind a Slack app to an agent
+  letta channels targets [options]            List outbound delivery targets
+                                              for an agent (--agent, optional
+                                              --conversation, --channel)
   letta channels pair [options]               Approve pairing + bind to agent
 
 Bind options (Slack only):
@@ -333,6 +337,35 @@ function handleRouteList(
     console.log(JSON.stringify(routes, null, 2));
   }
 
+  return 0;
+}
+
+function handleTargets(
+  values: ReturnType<typeof parseChannelsArgs>["values"],
+): number {
+  const agentId = getAgentId(values.agent);
+  if (!agentId) {
+    console.error("Error: --agent or LETTA_AGENT_ID required.");
+    return 1;
+  }
+
+  const channelId = values.channel;
+  if (channelId && !isSupportedChannelId(channelId)) {
+    console.error(
+      `Unknown channel: "${channelId}". Supported: ${getSupportedChannelIds().join(", ")}`,
+    );
+    return 1;
+  }
+
+  const targets = listOutboundDeliveryTargets({
+    agentId,
+    conversationId: values.conversation,
+    channel: channelId,
+  }).map((target) => ({
+    ...target,
+    spec: `${target.channel}:${target.chatId}`,
+  }));
+  console.log(JSON.stringify(targets, null, 2));
   return 0;
 }
 
@@ -624,13 +657,15 @@ export async function runChannelsSubcommand(argv: string[]): Promise<number> {
       return handleBind(values);
     case "pair":
       return await handlePair(values);
+    case "targets":
+      return handleTargets(values);
     default:
       if (!action) {
         printUsage();
         return 0;
       }
       console.error(
-        `Unknown channels action: "${action}". Use: install, configure, status, route, bind, pair`,
+        `Unknown channels action: "${action}". Use: install, configure, status, route, bind, pair, targets`,
       );
       return 1;
   }

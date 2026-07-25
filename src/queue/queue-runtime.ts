@@ -1,4 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import type { ChannelTurnSource } from "@/channels/types";
 import type {
   QueueBlockedReason,
   QueueClearedReason,
@@ -71,6 +72,13 @@ export type CronPromptQueueItem = QueueItemBase & {
   text: string;
   /** Cron task ID for tracing. */
   cronTaskId: string;
+  /**
+   * Runtime-attested channel sources for this scheduled turn. Set by the
+   * scheduler when the task has a validated delivery target; authorizes
+   * MessageChannel sends for the fire-time conversation (which may have
+   * no persisted routes, e.g. conversation_id "new").
+   */
+  channelTurnSources?: ChannelTurnSource[];
 };
 
 export type ModContinueQueueItem = QueueItemBase & {

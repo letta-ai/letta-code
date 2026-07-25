@@ -68,6 +68,7 @@ import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
 import { toolFilter } from "./filter";
+import { injectMessageChannelRuntimeArgs } from "./impl/message-channel-args";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import {
   functionToolForm,
@@ -2888,17 +2889,10 @@ async function executeToolInner(
         enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
       }
 
-      // Inject parent scope for MessageChannel tool (per-execution, not global singleton)
+      // Inject runtime scope for MessageChannel (per-execution, not global
+      // singleton); model-supplied authorization args are always dropped.
       if (internalName === "MessageChannel") {
-        if (options?.parentScope) {
-          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
-        }
-        if (options?.channelTurnSources?.length) {
-          enhancedArgs = {
-            ...enhancedArgs,
-            channelTurnSources: options.channelTurnSources,
-          };
-        }
+        enhancedArgs = injectMessageChannelRuntimeArgs(enhancedArgs, options);
       }
 
       // Inject the execution context id for tools that need to mutate

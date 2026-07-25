@@ -141,7 +141,14 @@ function collectBatchChannelTurnSources(
 
   for (const item of batch.items) {
     const template = runtime.queuedMessagesByItemId.get(item.id);
-    for (const source of template?.channelTurnSources ?? []) {
+    // Cron items carry runtime-attested sources directly (the scheduler
+    // enqueues them without a queued-message template).
+    const itemSources =
+      item.kind === "cron_prompt" ? (item.channelTurnSources ?? []) : [];
+    for (const source of [
+      ...(template?.channelTurnSources ?? []),
+      ...itemSources,
+    ]) {
       const key = getChannelTurnSourceKey(source);
       if (seen.has(key)) {
         continue;

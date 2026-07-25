@@ -142,9 +142,49 @@ export function getIntendedCronOccurrence(
   return occurrence;
 }
 
+function formatDeliveryLines(
+  task: CronTask,
+  options?: CronPromptOptions,
+): string[] {
+  const delivery = task.delivery;
+  if (!delivery) {
+    return [];
+  }
+
+  if (options?.deliveryAvailable === false) {
+    return [
+      `Note: this schedule's channel delivery target (${delivery.label ?? delivery.chat_id} on ${delivery.channel}) is no longer available. Do not attempt to send channel messages for it.`,
+      "",
+    ];
+  }
+
+  const toolArgs: Record<string, string> = {
+    action: "send",
+    channel: delivery.channel,
+    chat_id: delivery.chat_id,
+  };
+  if (delivery.account_id) {
+    toolArgs.accountId = delivery.account_id;
+  }
+  return [
+    `Channel delivery (optional): if this run produces something worth reporting, send it to ${delivery.label ?? delivery.chat_id} with the MessageChannel tool: ${JSON.stringify(toolArgs)}. If there is nothing worth reporting, do not send anything.`,
+    "",
+  ];
+}
+
+export interface CronPromptOptions {
+  /**
+   * Whether the schedule's delivery target still resolved at fire time.
+   * Defaults to true; the scheduler passes false when re-validation
+   * fails so the agent gets a note instead of a dead tool call.
+   */
+  deliveryAvailable?: boolean;
+}
+
 export function formatCronPrompt(
   task: CronTask,
   timing: CronPromptTiming,
+  options?: CronPromptOptions,
 ): string {
   const timezone = typeof task.timezone === "string" ? task.timezone : "";
   const lines = [
@@ -159,6 +199,7 @@ export function formatCronPrompt(
     "",
     "You are running autonomously: no user is watching this turn and questions will not be answered. Deliver results through your available channels or record them in memory, and work until the task is done or genuinely blocked.",
     "",
+    ...formatDeliveryLines(task, options),
     `Prompt: ${task.prompt}`,
   ];
   return lines.join("\n");

@@ -45,6 +45,15 @@ export interface SchedulerOwner {
   boot_id?: string | null;
 }
 
+export interface CronDelivery {
+  channel: string;
+  chat_id: string;
+  account_id?: string;
+  thread_id?: string | null;
+  /** Human-readable target name captured at creation (display only). */
+  label?: string;
+}
+
 export interface CronTask {
   // Identity
   id: string;
@@ -68,6 +77,14 @@ export interface CronTask {
 
   // Content
   prompt: string;
+
+  /**
+   * Optional outbound channel delivery target for scheduled runs.
+   * Validated against the agent's routes at creation, re-validated and
+   * attested via channelTurnSources at fire time. The agent chooses at
+   * run time whether to actually send.
+   */
+  delivery?: CronDelivery | null;
 
   // Lifecycle
   status: CronTaskStatus;
@@ -486,6 +503,7 @@ export interface AddTaskInput {
   recurring: boolean;
   prompt: string;
   scheduled_for?: Date; // for one-shots
+  delivery?: CronDelivery | null;
 }
 
 export interface AddTaskResult {
@@ -554,6 +572,7 @@ export function addTask(input: AddTaskInput): AddTaskResult {
       scheduled_for: input.scheduled_for?.toISOString() ?? null,
       fired_at: null,
       missed_at: null,
+      delivery: input.delivery ?? null,
     };
 
     data.tasks.push(task);

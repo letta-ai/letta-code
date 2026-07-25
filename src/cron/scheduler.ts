@@ -13,6 +13,8 @@
  */
 
 import { getBackend } from "@/backend";
+import { resolveAgentDeliveryTarget } from "@/channels/outbound-targets";
+import type { ChannelTurnSource } from "@/channels/types";
 import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
 import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
 import { scheduleQueuePump } from "@/websocket/listener/queue";
@@ -114,8 +116,53 @@ export function minuteKey(date: Date): string {
 export function wrapCronPrompt(
   task: CronTask,
   timing: CronPromptTiming,
+  options?: { deliveryAvailable?: boolean },
 ): string {
-  return formatCronPrompt(task, timing);
+  return formatCronPrompt(task, timing, options);
+}
+
+/**
+ * Re-validate the task's delivery target and build the runtime-attested
+ * turn source that authorizes MessageChannel sends for this fire.
+ *
+ * conversationId must match the scope the queued turn will execute
+ * under — for "new" targets that is the conversation created for this
+ * fire, which has no persisted routes; the returned source is what
+ * authorizes sending there.
+ */
+function resolveCronDeliverySources(
+  task: CronTask,
+  conversationId: string,
+): { available: boolean; sources?: ChannelTurnSource[] } {
+  const delivery = task.delivery;
+  if (!delivery) {
+    return { available: true };
+  }
+
+  const resolved = resolveAgentDeliveryTarget({
+    agentId: task.agent_id,
+    channel: delivery.channel,
+    chatId: delivery.chat_id,
+    accountId: delivery.account_id,
+  });
+  if (typeof resolved === "string") {
+    return { available: false };
+  }
+
+  return {
+    available: true,
+    sources: [
+      {
+        channel: resolved.channel,
+        accountId: resolved.accountId,
+        chatId: resolved.chatId,
+        chatType: resolved.chatType,
+        threadId: delivery.thread_id ?? resolved.threadId ?? null,
+        agentId: task.agent_id,
+        conversationId,
+      },
+    ],
+  };
 }
 
 function getCronConversationSummary(task: CronTask): string {
@@ -326,7 +373,11 @@ async function fireCronTask(
     rawRuntime,
   );
 
-  const text = wrapCronPrompt(task, timing);
+  const queueConversationId = targetConversationId ?? "default";
+  const delivery = resolveCronDeliverySources(task, queueConversationId);
+  const text = wrapCronPrompt(task, timing, {
+    deliveryAvailable: delivery.available,
+  });
 
   const queuedItem = conversationRuntime.queueRuntime.enqueue({
     kind: "cron_prompt",
@@ -334,7 +385,8 @@ async function fireCronTask(
     text,
     cronTaskId: task.id,
     agentId: task.agent_id,
-    conversationId: targetConversationId ?? "default",
+    conversationId: queueConversationId,
+    ...(delivery.sources ? { channelTurnSources: delivery.sources } : {}),
   } as Omit<CronPromptQueueItem, "id" | "enqueuedAt">);
 
   if (!queuedItem) {
@@ -390,9 +442,12 @@ async function fireCronTask(
     queueItemId: queuedItem.id,
     scheduledFor: task.scheduled_for,
     firedAt: nowIso,
-    conversationId: targetConversationId ?? "default",
+    conversationId: queueConversationId,
+    ...(task.delivery && !delivery.available
+      ? { summary: "delivery_target_unavailable" }
+      : {}),
   });
-  emitCronsUpdated(socket, task, targetConversationId ?? "default");
+  emitCronsUpdated(socket, task, queueConversationId);
   return true;
 }
 

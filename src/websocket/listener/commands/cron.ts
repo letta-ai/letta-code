@@ -1,6 +1,8 @@
 import type WebSocket from "ws";
+import { resolveAgentDeliveryTarget } from "@/channels/outbound-targets";
 import {
   addTask as addCronTask,
+  type CronDelivery,
   deleteAllTasks as deleteAllCronTasks,
   deleteTask as deleteCronTask,
   getCronRunLogPath,
@@ -19,7 +21,7 @@ import type {
   CronRunsCommand,
   CronTriggerCommand,
   CronUpdateCommand,
-} from "@/types/protocol_v2";
+} from "@/types/protocol-cron";
 import {
   isCronAddCommand,
   isCronDeleteAllCommand,
@@ -29,7 +31,7 @@ import {
   isCronRunsCommand,
   isCronTriggerCommand,
   isCronUpdateCommand,
-} from "@/websocket/listener/protocol-inbound";
+} from "@/websocket/listener/protocol-inbound-cron";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 export type CronCommand =
@@ -47,6 +49,28 @@ type CronCommandContext = {
   safeSocketSend: SafeSocketSend;
   runDetachedListenerTask: RunDetachedListenerTask;
 };
+
+function resolveCronDeliveryInput(
+  agentId: string,
+  delivery: NonNullable<CronAddCommand["delivery"]>,
+): CronDelivery {
+  const resolved = resolveAgentDeliveryTarget({
+    agentId,
+    channel: delivery.channel,
+    chatId: delivery.chat_id,
+    accountId: delivery.account_id,
+  });
+  if (typeof resolved === "string") {
+    throw new Error(resolved.replace(/^Error: /, ""));
+  }
+  return {
+    channel: resolved.channel,
+    chat_id: resolved.chatId,
+    ...(resolved.accountId ? { account_id: resolved.accountId } : {}),
+    thread_id: resolved.threadId,
+    label: resolved.label,
+  };
+}
 
 function emitCronsUpdated(
   socket: WebSocket,
@@ -115,6 +139,9 @@ export async function handleCronCommand(
       if (scheduledFor && Number.isNaN(scheduledFor.getTime())) {
         throw new Error("Invalid scheduled_for timestamp");
       }
+      const delivery = parsed.delivery
+        ? resolveCronDeliveryInput(parsed.agent_id, parsed.delivery)
+        : null;
       const result = addCronTask({
         agent_id: parsed.agent_id,
         conversation_id: parsed.conversation_id,
@@ -125,6 +152,7 @@ export async function handleCronCommand(
         recurring: parsed.recurring,
         prompt: parsed.prompt,
         scheduled_for: scheduledFor,
+        delivery,
       });
       safeSocketSend(
         socket,

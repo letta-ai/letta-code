@@ -32,7 +32,12 @@ import {
 } from "@/backend/api/schedules";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import {
+  listOutboundDeliveryTargets,
+  resolveAgentDeliveryTarget,
+} from "@/channels/outbound-targets";
+import {
   addTask,
+  type CronDelivery,
   deleteAllTasks,
   deleteTask,
   getCronRunLogPath,
@@ -86,6 +91,14 @@ Add options:
                          \`letta environments list\`) instead of the agent's
                          cloud sandbox. Falls back to the sandbox if the
                          computer is offline at fire time.
+  --deliver <spec>       (local runner only) Optional outbound delivery
+                         target for scheduled runs, as channel:chat_id
+                         (e.g. telegram:8675309, slack:C0123ABC). Must be
+                         a chat with an outbound-enabled route for this
+                         agent (see \`letta channels targets\`). The agent
+                         decides at run time whether to send.
+  --deliver-account <id> Channel account ID when multiple accounts can
+                         deliver to the same chat.
 
 List/filter options:
   --agent <id>           Filter by agent ID
@@ -119,6 +132,8 @@ const CRON_OPTIONS = {
   "run-id": { type: "string" },
   runner: { type: "string" },
   computer: { type: "string" },
+  deliver: { type: "string" },
+  "deliver-account": { type: "string" },
 } as const;
 
 type CronArgValues = ReturnType<typeof parseCronArgs>["values"];
@@ -134,6 +149,22 @@ function parseCronArgs(argv: string[]) {
 
 function getAgentId(fromArgs?: string): string {
   return fromArgs || process.env.LETTA_AGENT_ID || "";
+}
+
+/** Parse a `channel:chat_id` delivery spec (chat_id may itself contain ":"). */
+export function parseDeliverSpec(
+  spec: string,
+): { channel: string; chatId: string } | null {
+  const separator = spec.indexOf(":");
+  if (separator <= 0 || separator === spec.length - 1) {
+    return null;
+  }
+  const channel = spec.slice(0, separator).trim().toLowerCase();
+  const chatId = spec.slice(separator + 1).trim();
+  if (!channel || !chatId) {
+    return null;
+  }
+  return { channel, chatId };
 }
 
 function getConversationId(fromArgs?: string): string {
@@ -379,6 +410,50 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     }
   }
 
+  const deliverSpec = values.deliver?.trim();
+  let delivery: CronDelivery | null = null;
+  if (deliverSpec) {
+    if (resolved.runner === "cloud") {
+      console.error(
+        "Error: --deliver requires the local runner. Channel adapters run in this device's listener; a cloud-sandbox run has no channel access. Re-run with --runner local.",
+      );
+      return 1;
+    }
+    const parsedSpec = parseDeliverSpec(deliverSpec);
+    if (!parsedSpec) {
+      console.error(
+        `Error: invalid --deliver spec "${deliverSpec}". Expected channel:chat_id (e.g. telegram:8675309, slack:C0123ABC).`,
+      );
+      return 1;
+    }
+    const target = resolveAgentDeliveryTarget({
+      agentId,
+      channel: parsedSpec.channel,
+      chatId: parsedSpec.chatId,
+      accountId: values["deliver-account"],
+    });
+    if (typeof target === "string") {
+      console.error(target);
+      const available = listOutboundDeliveryTargets({ agentId });
+      if (available.length > 0) {
+        console.error("\nAvailable delivery targets:");
+        for (const candidate of available) {
+          console.error(
+            `  ${candidate.channel}:${candidate.chatId}\t${candidate.label}`,
+          );
+        }
+      }
+      return 1;
+    }
+    delivery = {
+      channel: target.channel,
+      chat_id: target.chatId,
+      ...(target.accountId ? { account_id: target.accountId } : {}),
+      thread_id: target.threadId,
+      label: target.label,
+    };
+  }
+
   if (resolved.runner === "cloud") {
     return handleCloudAdd({
       agentId,
@@ -404,6 +479,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
       recurring,
       prompt,
       scheduled_for: scheduledFor,
+      delivery,
     });
 
     const output: Record<string, unknown> = {
@@ -419,6 +495,9 @@ async function handleAdd(values: CronArgValues): Promise<number> {
 
     if (result.task.scheduled_for) {
       output.scheduled_for = result.task.scheduled_for;
+    }
+    if (result.task.delivery) {
+      output.delivery = result.task.delivery;
     }
     if (result.task.expires_at) {
       output.expires_at = result.task.expires_at;

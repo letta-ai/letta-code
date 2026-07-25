@@ -27,6 +27,10 @@ import type {
   OutboundChannelMessage,
   SupportedChannelId,
 } from "@/channels/types";
+import {
+  buildSyntheticChannelRoute,
+  resolveGrantChannelRoute,
+} from "./message-channel-grants";
 import type {
   MessageChannelArgs,
   NormalizedMessageChannelInput,
@@ -930,27 +934,6 @@ function buildMessageChannelRequest(
   };
 }
 
-function buildSyntheticChannelRoute(params: {
-  scope: { agentId: string; conversationId: string };
-  accountId: string;
-  chatId: string;
-  chatType?: ChannelRoute["chatType"];
-  threadId?: string | null;
-}): ChannelRoute {
-  const now = new Date().toISOString();
-  return {
-    accountId: params.accountId,
-    chatId: params.chatId,
-    chatType: params.chatType,
-    threadId: params.threadId ?? null,
-    agentId: params.scope.agentId,
-    conversationId: params.scope.conversationId,
-    enabled: true,
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
 function inferAccountIdFromChannelTurnSources(params: {
   input: NormalizedMessageChannelInput;
   scope: { agentId: string; conversationId: string };
@@ -1104,13 +1087,25 @@ export async function message_channel(
           scope,
           channelTurnSources: args.channelTurnSources,
         });
-      const route: ChannelRoute | null = registry.getRouteForScope(
+      let route: ChannelRoute | null = registry.getRouteForScope(
         input.channel,
         input.chatId,
         scope.agentId,
         scope.conversationId,
         resolvedAccountId,
       );
+      if (!route) {
+        // No persisted route — a runtime-attested turn source for this
+        // exact scope + chat still authorizes the send (e.g. a scheduled
+        // run delivering into a conversation created at fire time).
+        route = resolveGrantChannelRoute({
+          channel: input.channel,
+          chatId: input.chatId,
+          accountId: resolvedAccountId,
+          scope,
+          channelTurnSources: args.channelTurnSources,
+        });
+      }
       if (!route) {
         return resolvedAccountId
           ? `Error: No route for chat_id "${input.chatId}" on "${input.channel}" account "${resolvedAccountId}" for this agent/conversation.`

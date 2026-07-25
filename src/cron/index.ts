@@ -3,6 +3,7 @@ export {
   type AddTaskResult,
   addTask,
   type CancelReason,
+  type CronDelivery,
   type CronRunOutcome,
   type CronRunReason,
   type CronTask,
