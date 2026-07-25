@@ -74,7 +74,7 @@ if (useMagick) {
 }
 
 await Bun.build({
-  entrypoints: ["./src/index.ts"],
+  entrypoints: ["./src/standalone-entry.ts"],
   outdir: ".",
   target: "node",
   format: "esm",
