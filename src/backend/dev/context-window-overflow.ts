@@ -54,5 +54,6 @@ export function isContextWindowOverflowError(error: unknown): boolean {
     "request too large",
     "request_too_large",
     "model_context_window_exceeded",
+    "max_tokens_exceeded",
   ].some((marker) => haystack.includes(marker));
 }
