@@ -5288,7 +5288,7 @@ describe("listen-client capability-gated approval flow", () => {
       "default",
     );
     const scheduleQueuePumpMock = mock(() => {});
-    const cancelConversationMock = mock(async () => {});
+    const cancelRunMock = mock(async () => {});
 
     beginTestTurn(runtime, {
       initialStatus: "PROCESSING_API_RESPONSE",
@@ -5313,7 +5313,7 @@ describe("listen-client capability-gated approval flow", () => {
       },
       {
         scheduleQueuePump: scheduleQueuePumpMock,
-        cancelConversation: cancelConversationMock,
+        cancelRun: cancelRunMock,
       },
     );
 
@@ -5330,7 +5330,7 @@ describe("listen-client capability-gated approval flow", () => {
       expect.objectContaining({ connectionId: "conn-1" }),
       expect.any(Function),
     );
-    expect(cancelConversationMock).toHaveBeenCalledWith("agent-1", "default");
+    expect(cancelRunMock).toHaveBeenCalledWith("agent-1", "run-active");
 
     const outbound = socket.sentPayloads.map((payload) => JSON.parse(payload));
     const interruptedStatus = outbound.find(
