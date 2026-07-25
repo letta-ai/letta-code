@@ -21,6 +21,52 @@ describe("app-server protocol hard cut", () => {
   });
 });
 
+describe("input protocol-inbound validators", () => {
+  test("accepts create_message with interactive tools excluded", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            exclude_interactive_tools: true,
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("input");
+    if (parsed?.type === "input" && parsed.payload.kind === "create_message") {
+      expect(parsed.payload.exclude_interactive_tools).toBe(true);
+    }
+  });
+
+  test("rejects non-boolean exclude_interactive_tools", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            exclude_interactive_tools: "yes",
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("__invalid_input");
+    if (parsed?.type === "__invalid_input") {
+      expect(parsed.reason).toContain(
+        "exclude_interactive_tools must be boolean",
+      );
+    }
+  });
+});
+
 describe("update model protocol-inbound validator", () => {
   const base = {
     type: "update_model",
