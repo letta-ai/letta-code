@@ -148,7 +148,6 @@ import {
   INTERACTIVE_USER_INPUT_TOOL_NAMES,
   isInteractiveApprovalTool,
 } from "./tools/interactive-policy";
-import type { ToolName } from "./tools/tool-definitions";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -466,7 +465,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     conversationId: params.conversationId,
     overrideModel: params.overrideModel,
     workingDirectory: getCurrentWorkingDirectory(),
-    exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] as ToolName[],
+    exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES],
     cachedAgent: params.cachedAgent,
     modContext: params.modContext,
     modEvents: params.modEvents,

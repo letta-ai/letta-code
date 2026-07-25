@@ -7,6 +7,7 @@ import type {
   ConversationCreateParams,
 } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type WebSocket from "ws";
+import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
 import { getBackend } from "@/backend";
 import { migratePermissionMode } from "@/permissions/mode";
@@ -141,7 +142,11 @@ function validateRuntimeStartShape(parsed: RuntimeStartCommand): void {
 export function applyCreatedAgentServerToolDefaults(
   body: AgentCreateParams,
 ): AgentCreateParams {
-  if (body.tools !== undefined || body.include_base_tools !== undefined) {
+  if (
+    body.tools !== undefined ||
+    body.include_base_tools !== undefined ||
+    body.include_base_tool_rules !== undefined
+  ) {
     return body;
   }
   return {
@@ -164,10 +169,17 @@ async function resolveRuntimeStartAgent(
     const requestedBody = applyCreatedAgentServerToolDefaults(
       parsed.create_agent.body,
     );
+    const appliedHarnessToolDefaults =
+      requestedBody !== parsed.create_agent.body;
     const body = withMemfs
       ? await prepareRawCreateAgentBodyForMemfs(requestedBody)
       : requestedBody;
-    const agent = await backend.createAgent(body);
+    const agent = appliedHarnessToolDefaults
+      ? await createAgentWithBaseToolsRecovery(
+          (tools) => backend.createAgent({ ...body, tools }),
+          [...DEFAULT_CREATED_AGENT_BASE_TOOLS],
+        )
+      : await backend.createAgent(body);
     if (withMemfs) {
       // Finish memfs setup (settings, repo clone, legacy tool detach) without
       // blocking runtime start. The tag is already stamped at creation, so

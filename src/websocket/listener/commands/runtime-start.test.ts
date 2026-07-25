@@ -32,4 +32,13 @@ describe("applyCreatedAgentServerToolDefaults", () => {
 
     expect(applyCreatedAgentServerToolDefaults(input)).toBe(input);
   });
+
+  test("keeps explicit base-tool rules untouched even without tools", () => {
+    const input = {
+      name: "Agent",
+      include_base_tool_rules: true,
+    } as unknown as AgentCreateParams;
+
+    expect(applyCreatedAgentServerToolDefaults(input)).toBe(input);
+  });
 });
