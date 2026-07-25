@@ -172,9 +172,16 @@ describe("ProviderSelector provider filtering", () => {
     expect(
       filterProviderConfigs(providers, "copilot").map((p) => p.id),
     ).toEqual(["github-copilot"]);
+    // pi-ai 0.81 ships subscription OAuth for radius and xai as well.
     expect(
       filterProviderConfigs(providers, "subscription").map((p) => p.id),
-    ).toEqual(["anthropic-oauth", "openai-codex-oauth", "github-copilot"]);
+    ).toEqual([
+      "anthropic-oauth",
+      "github-copilot",
+      "openai-codex-oauth",
+      "radius",
+      "xai",
+    ]);
   });
 
   test("matches provider aliases and restores all providers for blank query", () => {

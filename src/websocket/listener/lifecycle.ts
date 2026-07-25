@@ -399,6 +399,29 @@ function getParsedRuntimeScope(
   };
 }
 
+function terminateControlAfterStreamClose(
+  runtime: ListenerRuntime,
+  streamSocket: WebSocket,
+): void {
+  if (runtime.streamSocket !== streamSocket) {
+    return;
+  }
+  runtime.streamSocket = null;
+  runtime.streamTransport = null;
+
+  const controlSocket = runtime.socket;
+  if (
+    controlSocket &&
+    (controlSocket.readyState === WebSocket.OPEN ||
+      controlSocket.readyState === WebSocket.CONNECTING)
+  ) {
+    // The stream channel has no independent replay or reconnect path. Closing
+    // control tears down the paired session so its normal reconnect/bootstrap
+    // flow restores one coherent connection instead of silently losing frames.
+    controlSocket.terminate();
+  }
+}
+
 async function waitForStreamSocketOpen(
   streamSocket: WebSocket,
   runtime: ListenerRuntime,
@@ -1322,10 +1345,7 @@ export async function attachOpenListenerSocket(
         );
       }
 
-      if (runtime.streamSocket === streamSocket) {
-        runtime.streamSocket = null;
-        runtime.streamTransport = null;
-      }
+      terminateControlAfterStreamClose(runtime, streamSocket);
     });
   }
 
@@ -1732,10 +1752,7 @@ async function connectWithRetry(
         );
       }
 
-      if (runtime.streamSocket === streamSocket) {
-        runtime.streamSocket = null;
-        runtime.streamTransport = null;
-      }
+      terminateControlAfterStreamClose(runtime, streamSocket);
     });
   }
 }

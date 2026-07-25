@@ -521,6 +521,33 @@ describe("accumulator usage statistics", () => {
     );
   });
 
+  test("separates adjacent final reasoning headings before finalization", () => {
+    const buffers = createBuffers();
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-final-heading",
+      otid: "reasoning-otid-final-heading",
+      reasoning: "**Planning protocol build error handling**",
+    } as unknown as LettaStreamingResponse);
+
+    onChunk(buffers, {
+      message_type: "reasoning_message",
+      id: "reasoning-msg-final-heading",
+      otid: "reasoning-otid-final-heading",
+      reasoning: "**Evaluating event sequence handling**",
+    } as unknown as LettaStreamingResponse);
+
+    markCurrentLineAsFinished(buffers);
+
+    const line = buffers.byId.get("reasoning-msg-final-heading");
+    expect(line?.kind).toBe("reasoning");
+    expect(line && "text" in line ? line.text : "").toBe(
+      "**Planning protocol build error handling**\n\n**Evaluating event sequence handling**",
+    );
+    expect(line && "phase" in line ? line.phase : "").toBe("finished");
+  });
+
   test("retrofits a blank line when a streamed reasoning heading spans multiple chunks", () => {
     const buffers = createBuffers();
 

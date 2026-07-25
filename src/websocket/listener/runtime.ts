@@ -1,6 +1,7 @@
 import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
 import type { PendingControlRequest } from "@/types/protocol_v2";
+import { getWorkingDirectoryScopeKey } from "./cwd";
 import {
   normalizeConversationId,
   normalizeCwdAgentId,
@@ -57,6 +58,101 @@ export function clearRuntimeTimers(runtime: ListenerRuntime): void {
   }
 }
 
+/**
+ * How long an evicted conversation's worktree watcher may stay alive waiting
+ * for the conversation to come back. Runtime eviction is routine (it fires
+ * after every quiescent turn), and the watcher's job is to track worktree
+ * changes for an attached client *between* turns — so it must survive
+ * eviction, but not for the life of the process. Without this, one live
+ * fs.watch loop accumulates per conversation ever touched (LET-10138).
+ */
+export const WORKTREE_WATCHER_IDLE_STOP_MS = 30 * 60 * 1000;
+
+type WatcherIdleStop = {
+  timer: ReturnType<typeof setTimeout>;
+  /** Structural view of WorktreeWatcherState; a type import would cycle. */
+  watcher: { abort: AbortController };
+};
+
+const watcherIdleStopsByListener = new WeakMap<
+  ListenerRuntime,
+  Map<string, WatcherIdleStop>
+>();
+
+function scheduleWorktreeWatcherIdleStop(
+  listener: ListenerRuntime,
+  runtime: ConversationRuntime,
+): void {
+  const scopeKey = getWorkingDirectoryScopeKey(
+    runtime.agentId,
+    runtime.conversationId,
+  );
+  const watcher = listener.worktreeWatcherByConversation.get(scopeKey);
+  if (!watcher) return;
+
+  let stops = watcherIdleStopsByListener.get(listener);
+  if (!stops) {
+    stops = new Map();
+    watcherIdleStopsByListener.set(listener, stops);
+  }
+  const existing = stops.get(scopeKey);
+  if (existing) {
+    if (existing.watcher === watcher) return;
+    clearTimeout(existing.timer);
+  }
+
+  const timer = setTimeout(() => {
+    fireWatcherIdleStop(listener, scopeKey, watcher);
+  }, WORKTREE_WATCHER_IDLE_STOP_MS);
+  (timer as { unref?: () => void }).unref?.();
+  stops.set(scopeKey, { timer, watcher });
+}
+
+function fireWatcherIdleStop(
+  listener: ListenerRuntime,
+  scopeKey: string,
+  watcher: WatcherIdleStop["watcher"],
+): void {
+  watcherIdleStopsByListener.get(listener)?.delete(scopeKey);
+  // Only stop the watcher this timer was scheduled for; a CWD change may
+  // have replaced it with a fresh one that is still in use.
+  if (listener.worktreeWatcherByConversation.get(scopeKey) === watcher) {
+    watcher.abort.abort();
+    listener.worktreeWatcherByConversation.delete(scopeKey);
+  }
+}
+
+export const __watcherIdleStopTestUtils = {
+  /** Fire every pending idle stop immediately (tests cannot wait 30 minutes). */
+  firePending(listener: ListenerRuntime): void {
+    const stops = watcherIdleStopsByListener.get(listener);
+    if (!stops) return;
+    for (const [scopeKey, pending] of [...stops.entries()]) {
+      clearTimeout(pending.timer);
+      fireWatcherIdleStop(listener, scopeKey, pending.watcher);
+    }
+  },
+  hasPending(listener: ListenerRuntime, scopeKey: string): boolean {
+    return watcherIdleStopsByListener.get(listener)?.has(scopeKey) ?? false;
+  },
+};
+
+/** The conversation is active again: keep its worktree watcher running. */
+function cancelWorktreeWatcherIdleStop(
+  listener: ListenerRuntime,
+  agentId?: string | null,
+  conversationId?: string | null,
+): void {
+  const stops = watcherIdleStopsByListener.get(listener);
+  if (!stops) return;
+  const scopeKey = getWorkingDirectoryScopeKey(agentId, conversationId);
+  const pending = stops.get(scopeKey);
+  if (pending) {
+    clearTimeout(pending.timer);
+    stops.delete(scopeKey);
+  }
+}
+
 export function evictConversationRuntimeIfIdle(
   runtime: ConversationRuntime,
 ): boolean {
@@ -82,6 +178,7 @@ export function evictConversationRuntimeIfIdle(
   }
 
   runtime.listener.conversationRuntimes.delete(runtime.key);
+  scheduleWorktreeWatcherIdleStop(runtime.listener, runtime);
   for (const [requestId, runtimeKey] of runtime.listener
     .approvalRuntimeKeyByRequestId) {
     if (runtimeKey === runtime.key) {
@@ -147,6 +244,11 @@ export function createConversationRuntime(
   const normalizedAgentId = normalizeCwdAgentId(agentId);
   const normalizedConversationId = normalizeConversationId(conversationId);
   const runtimeKey = getConversationRuntimeKey(
+    normalizedAgentId,
+    normalizedConversationId,
+  );
+  cancelWorktreeWatcherIdleStop(
+    listener,
     normalizedAgentId,
     normalizedConversationId,
   );

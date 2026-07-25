@@ -428,7 +428,7 @@ describe("connect subcommand", () => {
 
     expect(exitCode).toBe(1);
     expect(stderr.join("\n")).toContain(
-      "Unknown ChatGPT Plus/Pro (Codex Subscription) login method: carrier-pigeon",
+      "Unknown OpenAI (ChatGPT Plus/Pro) login method: carrier-pigeon",
     );
     expect(stderr.join("\n")).toContain("Available: browser, device_code");
   });

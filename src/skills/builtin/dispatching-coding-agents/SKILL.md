@@ -44,12 +44,8 @@ Different agents have different strengths. Track what works in your memory over 
 ### Categories
 
 **Codex:**
-- `gpt-5.3-codex` — Frontier reasoning. Best for the hardest debugging and complex tasks.
-  - Strengths: Best reasoning, excellent at debugging, best option for the hardest tasks
-  - Weaknesses: Slow with long trajectories, compactions can destroy trajectories
-- `gpt-5.4` — Latest frontier model. Fast and general-purpose.
-  - Strengths: Easier for humans to understand, general-purpose, faster
-  - Weaknesses: More likely to make silly errors than gpt-5.3-codex
+- Use the configured default model. Model catalogs and account access change frequently, so only pass `--model` when the user explicitly requests one.
+- If a requested model is rejected, inspect the installed CLI and account configuration rather than guessing another model name.
 
 **Claude Code:**
 - `opus` — Excellent writer. Best for docs, refactors, open-ended tasks, and vague instructions.
@@ -57,8 +53,7 @@ Different agents have different strengths. Track what works in your memory over 
   - Weaknesses: Tends to generate "slop", writing excessive quantities of code unnecessarily. Can hang on large repos.
 
 ### Cost and speed tradeoffs
-- Frontier models (`gpt-5.3-codex`, Opus) are slower and more expensive — use for tasks that justify it
-- Fast models (`gpt-5.4`) are good for quick checks and simple tasks
+- Use each CLI's configured default model unless the task requires a model the user explicitly requested
 - Use `--max-budget-usd N` (Claude Code) to cap spend on exploratory tasks
 
 ### Known quirks
@@ -102,20 +97,20 @@ Run Claude Code and Codex simultaneously on the same question via separate Bash 
 ### Background dispatch — keep working while they run
 Use `run_in_background: true` on the Bash call to dispatch async. Continue your own work, then check results with `TaskOutput` when ready.
 
-### Deep investigation — frontier models
-For hard problems, use the strongest available models:
+### Deep investigation
+For hard problems, use the configured model in a writable sandbox:
 ```bash
-codex exec "YOUR PROMPT" -m gpt-5.3-codex --full-auto -C /path/to/repo
+codex exec "YOUR PROMPT" --sandbox workspace-write -C /path/to/repo
 ```
 
-Claude Code does not support a `-C` working-directory flag. Run the Bash tool with its `workdir` set to the target repo, or `cd /path/to/repo && claude ...` inside the shell command. Use `--add-dir` only to grant access to additional directories outside the current working directory.
+Claude Code does not support a `-C` working-directory flag. Use `cd /path/to/repo && claude ...` inside the Bash command. Use `--add-dir` only to grant access to additional directories outside the current working directory.
 
 ### Code review — cross-agent validation
 Have one agent write code or create a plan, then dispatch another to review:
 ```bash
 # Codex has a native review command:
 codex review --uncommitted    # Review all local changes
-codex exec review "Focus on error handling and edge cases" -m gpt-5.4 --full-auto
+codex exec review "Focus on error handling and edge cases"
 
 # Claude Code — pass the diff inline:
 claude -p "Review the following diff for correctness, edge cases, and missed error handling:\n\n$(git diff)" \
@@ -125,8 +120,7 @@ claude -p "Review the following diff for correctness, edge cases, and missed err
 ### Get outside feedback on your work
 Write your plan or analysis to a file, then ask a subagent to critique it:
 ```bash
-# Run this from the target repo, or set the Bash tool's workdir to the repo.
-claude -p "Read /tmp/my-plan.md and critique it. What am I missing? What could go wrong?" \
+cd /path/to/repo && claude -p "Read /tmp/my-plan.md and critique it. What am I missing? What could go wrong?" \
   --model opus --dangerously-skip-permissions
 ```
 
@@ -149,7 +143,7 @@ claude -p "YOUR PROMPT" --model MODEL --dangerously-skip-permissions
 |------|---------|
 | `-p` / `--print` | Non-interactive mode, prints response and exits |
 | `--dangerously-skip-permissions` | Skip approval prompts (prevents stale approval errors on timeout) |
-| `--model MODEL` | Alias (`sonnet`, `opus`) or full name (`claude-sonnet-4-6`) |
+| `--model MODEL` | Alias or model name accepted by the installed CLI; omit to use the configured default |
 | `--effort LEVEL` | `low`, `medium`, `high` — controls reasoning depth |
 | `--append-system-prompt "..."` | Inject additional system instructions |
 | `--allowedTools "Bash Edit Read"` | Restrict available tools |
@@ -157,19 +151,19 @@ claude -p "YOUR PROMPT" --model MODEL --dangerously-skip-permissions
 | `--add-dir DIR` | Allow access to an additional directory; does not change the working directory |
 | `--output-format json` | Structured output with `session_id`, `cost_usd`, `duration_ms` |
 
-Set Claude Code's working directory via the surrounding shell/tool invocation, not a Claude flag. In Letta Code, pass `workdir` to the Bash tool. In a raw shell, use `cd /path/to/repo && claude ...`.
+Set Claude Code's working directory with `cd /path/to/repo && claude ...` in the Bash command, not with a Claude flag.
 
 ### Codex
 
 ```bash
-codex exec "YOUR PROMPT" -m gpt-5.3-codex --full-auto
+codex exec "YOUR PROMPT" --sandbox workspace-write
 ```
 
 | Flag | Purpose |
 |------|---------|
 | `exec` | Non-interactive mode |
-| `-m MODEL` | `gpt-5.3-codex` (frontier), `gpt-5.4` (fast), `gpt-5.3-codex-spark` (ultra-fast), `gpt-5.2-codex`, `gpt-5.2` |
-| `--full-auto` | Auto-approve all commands in sandbox |
+| `-m MODEL` | Model accepted by the installed CLI; omit to use the configured default |
+| `--sandbox MODE` | Select a read-only or writable sandbox |
 | `-C DIR` | Set working directory |
 | `--search` | Enable web search tool |
 | `review` | Native code review — `codex review --uncommitted` or `codex exec review "prompt"` |

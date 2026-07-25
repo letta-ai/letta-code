@@ -6,25 +6,20 @@ import type {
 
 export type PiProviderInputType = "text" | "image";
 
-export interface PiProviderModelRegistration {
-  id: string;
-  name: string;
+/**
+ * A mod's model declaration, derived directly from pi-ai's Model type
+ * (LET-10130): the provider is implied by the registration, and `api`/
+ * `baseUrl` may be inherited from the provider-level config, so those
+ * fields are relaxed. Everything else — capability inputs, cost, context
+ * window, compat overrides — is pi-ai's own vocabulary.
+ */
+export type PiProviderModelRegistration = Omit<
+  Model<Api>,
+  "api" | "provider" | "baseUrl"
+> & {
   api?: Api;
   baseUrl?: string;
-  reasoning: boolean;
-  thinkingLevelMap?: Model<Api>["thinkingLevelMap"];
-  input: PiProviderInputType[];
-  cost: {
-    input: number;
-    output: number;
-    cacheRead: number;
-    cacheWrite: number;
-  };
-  contextWindow: number;
-  maxTokens: number;
-  headers?: Record<string, string>;
-  compat?: Model<Api>["compat"];
-}
+};
 
 export interface PiProviderConnection {
   id: string;
