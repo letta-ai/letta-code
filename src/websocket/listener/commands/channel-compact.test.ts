@@ -9,7 +9,7 @@ import { settingsManager } from "@/settings-manager";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { getWorkingDirectoryScopeKey } from "@/websocket/listener/cwd";
 import type { ListenerTransport } from "@/websocket/listener/transport";
-import { createChannelCompactHandler } from "./compact";
+import { createChannelCompactHandler } from "./channel-compact";
 
 class MockSocket {
   readyState = WebSocket.OPEN;

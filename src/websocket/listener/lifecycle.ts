@@ -43,8 +43,8 @@ import {
   uniqueChannelTurnSources,
 } from "./channel-turn-session";
 import { handleReloadCommand } from "./commands";
+import { createChannelCompactHandler } from "./commands/channel-compact";
 import { handleChannelRegistryEvent } from "./commands/channels";
-import { createChannelCompactHandler } from "./commands/compact";
 import { createChannelContextHandler } from "./commands/context";
 import { createChannelConversationHandler } from "./commands/conversation";
 import {
