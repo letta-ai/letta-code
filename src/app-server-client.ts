@@ -1,4 +1,8 @@
 import { isAppServerInfoResponseMessage } from "./types/app-server-info";
+
+export type { AppServerInfoResponseMessage } from "./types/app-server-info";
+export { isAppServerInfoResponseMessage } from "./types/app-server-info";
+
 import type {
   AbortMessageCommand,
   AbortMessageResponseMessage,

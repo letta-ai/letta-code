@@ -3,9 +3,9 @@ import {
   type AppServerSocketLike,
   type AppServerSocketOptions,
   createAppServerClient,
+  isAppServerInfoResponseMessage,
   resolveAppServerChannelUrl,
 } from "./app-server-client";
-import { isAppServerInfoResponseMessage } from "./types/app-server-info";
 
 type Listener = (event: unknown) => void;
 
