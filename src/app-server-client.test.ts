@@ -858,6 +858,41 @@ describe("app-server client", () => {
     });
   });
 
+  test("supports forward-compatible compatibility adapter requests", async () => {
+    const client = createAppServerClient({
+      url: "ws://127.0.0.1:4500",
+      WebSocket: FakeSocket,
+    });
+    const pending = client.requestRaw<{ type: string; request_id: string }>(
+      {
+        type: "future_command",
+        request_id: "future-1",
+      },
+      {
+        predicate: (
+          message,
+        ): message is {
+          type: string;
+          request_id: string;
+        } =>
+          typeof message === "object" &&
+          message !== null &&
+          "type" in message &&
+          message.type === "future_response",
+      },
+    );
+
+    FakeSocket.instances[0]?.receive({
+      type: "future_response",
+      request_id: "future-1",
+    });
+
+    await expect(pending).resolves.toEqual({
+      type: "future_response",
+      request_id: "future-1",
+    });
+  });
+
   test("times out unanswered requests", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();

@@ -102,6 +102,23 @@ export type AppServerRequestBody = Record<string, unknown> & {
   request_id?: string;
 };
 
+export type AppServerRawCommand = Record<string, unknown> & {
+  type: string;
+  request_id?: string;
+};
+
+export type AppServerRawResponse = Record<string, unknown> & {
+  type: string;
+  request_id?: string;
+};
+
+export interface AppServerRawRequestOptions<
+  TResponse extends AppServerRawResponse,
+> {
+  timeoutMs?: number;
+  predicate: (message: unknown) => message is TResponse;
+}
+
 type PendingRequest = {
   resolve: (message: WsProtocolMessage) => void;
   reject: (error: Error) => void;
@@ -394,6 +411,46 @@ export class AppServerClient {
       handler(command);
     }
     this.control.send(JSON.stringify(command));
+  }
+
+  /**
+   * Send a forward-compatible protocol command from a compatibility adapter.
+   * Prefer the typed wrappers above this boundary for normal product code.
+   */
+  sendRaw(command: AppServerRawCommand): void {
+    this.control.send(JSON.stringify(command));
+  }
+
+  /**
+   * Request a forward-compatible response without mirroring the full protocol
+   * union in a downstream compatibility adapter.
+   */
+  requestRaw<TResponse extends AppServerRawResponse>(
+    command: AppServerRawCommand & { request_id: string },
+    options: AppServerRawRequestOptions<TResponse>,
+  ): Promise<TResponse> {
+    const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(command.request_id);
+        reject(new Error(`Timed out waiting for ${command.request_id}`));
+      }, timeoutMs);
+
+      this.pending.set(command.request_id, {
+        resolve: (message) => resolve(message as unknown as TResponse),
+        reject,
+        predicate: options.predicate,
+        timeout,
+      });
+
+      try {
+        this.sendRaw(command);
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pending.delete(command.request_id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   }
 
   request<TMessage extends WsProtocolMessage = WsProtocolMessage>(
