@@ -1,6 +1,17 @@
 import { Box, useInput } from "ink";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { clearAvailableModelsCache } from "@/agent/available-models";
+import {
+  getPiProviderRegistryRevision,
+  subscribePiProviderRegistry,
+} from "@/backend/dev/pi-provider-mod-registry";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   type AuthMethod,
@@ -253,14 +264,13 @@ export function ProviderSelector({
   const [awsProfiles, setAwsProfiles] = useState<AwsProfile[]>([]);
   const [profileIndex, setProfileIndex] = useState(0);
   const [isLoadingProfiles, setIsLoadingProfiles] = useState(false);
-  const providers = useMemo(
-    () => getProviderConfigs(selectedTarget),
-    [selectedTarget],
+  useSyncExternalStore(
+    subscribePiProviderRegistry,
+    getPiProviderRegistryRevision,
+    getPiProviderRegistryRevision,
   );
-  const filteredProviders = useMemo(
-    () => filterProviderConfigs(providers, searchQuery),
-    [providers, searchQuery],
-  );
+  const providers = getProviderConfigs(selectedTarget);
+  const filteredProviders = filterProviderConfigs(providers, searchQuery);
   const showProviderStoreTabs =
     shouldShowProviderStoreTabs(hasCloudCredentials);
   const connectedProviders = useMemo(

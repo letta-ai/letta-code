@@ -1,6 +1,13 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, useInput } from "ink";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   clearAvailableModelsCache,
   getAvailableModelHandles,
@@ -16,6 +23,10 @@ import {
   normalizeModelHandleForRegistry,
 } from "@/agent/model";
 import { refreshModelCatalog } from "@/agent/remote-model-catalog";
+import {
+  getPiProviderRegistryRevision,
+  subscribePiProviderRegistry,
+} from "@/backend/dev/pi-provider-mod-registry";
 
 import {
   buildByokProviderAliases,
@@ -209,6 +220,12 @@ export function ModelSelector({
     );
   const [openAICompatibleProxyProviders, setOpenAICompatibleProxyProviders] =
     useState<Set<string>>(new Set());
+  const providerRegistryRevision = useSyncExternalStore(
+    subscribePiProviderRegistry,
+    getPiProviderRegistryRevision,
+    getPiProviderRegistryRevision,
+  );
+  const previousProviderRegistryRevision = useRef(providerRegistryRevision);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -288,8 +305,12 @@ export function ModelSelector({
   });
 
   useEffect(() => {
+    if (previousProviderRegistryRevision.current !== providerRegistryRevision) {
+      previousProviderRegistryRevision.current = providerRegistryRevision;
+      clearAvailableModelsCache();
+    }
     loadModels.current(forceRefreshOnMount ?? false);
-  }, [forceRefreshOnMount]);
+  }, [forceRefreshOnMount, providerRegistryRevision]);
 
   useEffect(() => {
     if (localModelCatalog) {
