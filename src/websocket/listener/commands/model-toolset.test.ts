@@ -1,14 +1,23 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import { join } from "node:path";
 import {
   clearAvailableModelsCache,
   getAvailableModelHandles,
 } from "@/agent/available-models";
 import { models } from "@/agent/model";
-import type { Backend } from "@/backend";
+import type {
+  AgentCreateBody,
+  Backend,
+  ConversationCreateBody,
+} from "@/backend";
 import { __testSetBackend } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import { LocalBackend } from "@/backend/local";
 import {
   buildListModelsResponse,
+  getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
 } from "./model-toolset";
 
@@ -150,5 +159,43 @@ describe("listener native model selection", () => {
       label: preset?.label,
       updateArgs: { provider_type: "google" },
     });
+  });
+
+  test("reports conversation model_settings context_window_limit before agent defaults", async () => {
+    const storageDir = await mkdtemp(
+      join(os.tmpdir(), "model-toolset-context-window-"),
+    );
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Context Window Agent",
+        model: "openai/gpt-5.5",
+        context_window_limit: 200000,
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+      await backend.updateConversation(conversation.id, {
+        model_settings: {
+          context_window_limit: 123456,
+        },
+      } as Parameters<typeof backend.updateConversation>[1]);
+
+      await expect(
+        getCurrentModelStatusForRuntime({
+          agentId: agent.id,
+          conversationId: conversation.id,
+        }),
+      ).resolves.toMatchObject({
+        contextWindow: 123456,
+        scope: "conversation",
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 });

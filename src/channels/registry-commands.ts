@@ -19,9 +19,15 @@ import {
   buildChannelReloadUnavailableMessage,
   buildChannelResumedMessage,
 } from "./commands";
+import { buildChannelCompactUnavailableMessage } from "./compact-command";
+import { buildChannelContextUnavailableMessage } from "./context-command";
+import { buildChannelConversationUnavailableMessage } from "./conversation-command";
 import type { ChannelRegistryEvent } from "./registry-events";
 import type {
   ChannelCancelHandler,
+  ChannelCompactHandler,
+  ChannelContextHandler,
+  ChannelConversationHandler,
   ChannelModelHandler,
   ChannelReflectionHandler,
   ChannelReloadHandler,
@@ -53,6 +59,9 @@ export function createChannelCommandRouter(deps: {
     threadId?: string | null,
   ) => ChannelRoute | null;
   getCancelHandler: () => ChannelCancelHandler | null;
+  getCompactHandler: () => ChannelCompactHandler | null;
+  getConversationHandler: () => ChannelConversationHandler | null;
+  getContextHandler: () => ChannelContextHandler | null;
   getReflectionHandler: () => ChannelReflectionHandler | null;
   getReloadHandler: () => ChannelReloadHandler | null;
   getModelHandler: () => ChannelModelHandler | null;
@@ -182,6 +191,91 @@ export function createChannelCommandRouter(deps: {
         }),
       ),
     };
+  }
+
+  async function handleCompactSlashCommand(
+    command: { args: string },
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = loadAndFindRawRouteForMessage(msg);
+    if (!route?.enabled) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    const compactHandler = deps.getCompactHandler();
+    if (!compactHandler) {
+      return {
+        handled: true,
+        text: buildChannelCompactUnavailableMessage(msg.channel),
+      };
+    }
+
+    return compactHandler({
+      channelId: msg.channel,
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+      args: command.args || undefined,
+    });
+  }
+
+  async function handleConversationSlashCommand(
+    command: { args: string },
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = loadAndFindRawRouteForMessage(msg);
+    if (!route?.enabled) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    const conversationHandler = deps.getConversationHandler();
+    if (!conversationHandler) {
+      return {
+        handled: true,
+        text: buildChannelConversationUnavailableMessage(msg.channel),
+      };
+    }
+
+    return conversationHandler({
+      channelId: msg.channel,
+      route,
+      args: command.args || undefined,
+    });
+  }
+
+  async function handleContextSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = loadAndFindRawRouteForMessage(msg);
+    if (!route?.enabled) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    const contextHandler = deps.getContextHandler();
+    if (!contextHandler) {
+      return {
+        handled: true,
+        text: buildChannelContextUnavailableMessage(msg.channel),
+      };
+    }
+
+    return contextHandler({
+      channelId: msg.channel,
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+    });
   }
 
   async function handleDetachSlashCommand(
@@ -472,6 +566,9 @@ export function createChannelCommandRouter(deps: {
   return {
     handleCancelSlashCommand,
     handleChatSlashCommand,
+    handleCompactSlashCommand,
+    handleConversationSlashCommand,
+    handleContextSlashCommand,
     handleDetachSlashCommand,
     handleModelSlashCommand,
     handleNewConversationSlashCommand,

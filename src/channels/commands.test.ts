@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolveChannelCommandGate } from "@/channels/access-control";
 import {
   buildChannelAlreadyActiveMessage,
   buildChannelAlreadyPausedMessage,
@@ -26,6 +27,7 @@ import {
   parseChannelSlashCommand,
   tryHandleChannelSlashCommand,
 } from "@/channels/commands";
+import { buildChannelContextUsageMessage } from "@/channels/context-command";
 import {
   __testOverrideSubmitChannelFeedback,
   buildChannelFeedbackFailedMessage,
@@ -198,6 +200,9 @@ describe("channel slash commands", () => {
       "cancel",
       "chat",
       "feedback",
+      "compact",
+      "context",
+      "conv",
       "model",
       "reflection",
     ]) {
@@ -210,7 +215,10 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).not.toContain("MessageChannel");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /compact, /context, /conv, /model, /reflection.",
+    );
+    expect(text).toContain(
+      "Conversation commands: /conv new [title], /conv list [last_conversation_id], /conv switch <conversation_id>, /conv fork [title].",
     );
 
     const slackText = buildChannelHelpMessage("slack");
@@ -227,6 +235,20 @@ describe("channel slash commands", () => {
     expect(slackText).toContain("@agent /model list - show available models");
     expect(slackText).toContain(
       "@agent /model <handle-or-id> - switch this thread's model",
+    );
+    expect(slackText).toContain("@agent /context - show context window usage");
+    expect(slackText).toContain("@agent /compact - compact this thread");
+    expect(slackText).toContain(
+      "@agent /conv - manage this thread's conversation",
+    );
+    expect(slackText).toContain(
+      "@agent /conv list [last_conversation_id] - show recent conversations for the routed agent",
+    );
+    expect(slackText).toContain(
+      "@agent /conv switch <conversation_id> - switch this thread to a conversation",
+    );
+    expect(slackText).toContain(
+      "@agent /conv fork [title] - fork this thread's conversation",
     );
     expect(slackText).toContain("@agent /feedback <message>");
     expect(slackText).toContain("@agent /detach");
@@ -259,6 +281,34 @@ describe("channel slash commands", () => {
         },
       }),
     ).toContain("Route: Connected to a Letta agent conversation.");
+    expect(
+      buildChannelStatusMessage(msg, {
+        adapterRunning: true,
+        accountConfigured: true,
+        accountEnabled: true,
+        route: {
+          chatId: "chat-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          enabled: true,
+          createdAt: "2026-05-15T00:00:00.000Z",
+        },
+      }),
+    ).toContain("Conversation: `conv-1`");
+    expect(
+      buildChannelStatusMessage(msg, {
+        adapterRunning: true,
+        accountConfigured: true,
+        accountEnabled: true,
+        route: {
+          chatId: "chat-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          enabled: true,
+          createdAt: "2026-05-15T00:00:00.000Z",
+        },
+      }),
+    ).not.toContain("```");
 
     const unconnectedText = buildChannelStatusMessage(msg, {
       adapterRunning: false,
@@ -290,15 +340,108 @@ describe("channel slash commands", () => {
     expect(buildChannelPausedMessage("telegram", route)).toContain(
       "Telegram paused agent routing",
     );
+    expect(buildChannelPausedMessage("telegram", route)).toContain(
+      "Conversation: `conv-1`",
+    );
     expect(buildChannelAlreadyPausedMessage("telegram")).toContain(
       "already paused",
     );
     expect(buildChannelResumedMessage("telegram", route)).toContain(
       "Telegram resumed agent routing",
     );
+    expect(buildChannelResumedMessage("telegram", route)).toContain(
+      "Conversation: `conv-1`",
+    );
     expect(buildChannelAlreadyActiveMessage("telegram")).toContain(
       "already active",
     );
+  });
+
+  test("/conv list is denied when no admin list explicitly grants conversation access", async () => {
+    const replies: CapturedDirectReply[] = [];
+    let handlerCalls = 0;
+    const gate = resolveChannelCommandGate({
+      account: {
+        accountId: "acct-telegram",
+        dmPolicy: "open",
+        allowedUsers: [],
+      },
+      channelId: "telegram",
+      senderId: "user-1",
+    });
+
+    const handled = await tryHandleChannelSlashCommand(
+      createReplyCapturingAdapter(replies),
+      {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        chatId: "123",
+        senderId: "user-1",
+        senderName: "Alice",
+        text: "/conv list",
+        timestamp: Date.now(),
+        messageId: "77",
+        chatType: "direct",
+      },
+      {
+        commandGate: gate,
+        handlers: {
+          conv: async () => {
+            handlerCalls += 1;
+            return { handled: true, text: "listed conversations" };
+          },
+        },
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(handlerCalls).toBe(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.text).toContain("/conv list is limited to admins");
+  });
+
+  test("/conv switch runs when a non-admin is explicitly allowed to use /conv", async () => {
+    const replies: CapturedDirectReply[] = [];
+    const handlerArgs: string[] = [];
+    const gate = resolveChannelCommandGate({
+      account: {
+        accountId: "acct-telegram",
+        dmPolicy: "open",
+        allowedUsers: [],
+        adminUsers: ["admin-1"],
+        userAllowedCommands: ["conv"],
+      },
+      channelId: "telegram",
+      senderId: "user-1",
+    });
+
+    const handled = await tryHandleChannelSlashCommand(
+      createReplyCapturingAdapter(replies),
+      {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        chatId: "123",
+        senderId: "user-1",
+        senderName: "Alice",
+        text: "/conv switch conv-2",
+        timestamp: Date.now(),
+        messageId: "77",
+        chatType: "direct",
+      },
+      {
+        commandGate: gate,
+        handlers: {
+          conv: async (command) => {
+            handlerArgs.push(command.args);
+            return { handled: true, text: "switched conversations" };
+          },
+        },
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(handlerArgs).toEqual(["switch conv-2"]);
+    expect(replies[0]?.text).toBe("switched conversations");
   });
 
   test("builds feedback command messages", () => {
@@ -602,6 +745,13 @@ describe("channel slash commands", () => {
         "https://chat.letta.com/chat/agent-1?conversation=conv-1",
       ),
     ).toContain("Slack chat for this route");
+    expect(
+      buildChannelChatLinkMessage(
+        "slack",
+        route,
+        "https://chat.letta.com/chat/agent-1?conversation=conv-1",
+      ),
+    ).toContain("Conversation: `conv-1`");
     expect(buildChannelChatUnavailableMessage("telegram", route)).toContain(
       "chat UI is not available",
     );
@@ -610,6 +760,9 @@ describe("channel slash commands", () => {
     );
     expect(buildChannelNewConversationMessage("slack", route)).toContain(
       "started a new conversation",
+    );
+    expect(buildChannelNewConversationMessage("slack", route)).toContain(
+      "Conversation: `conv-1`",
     );
   });
 
@@ -630,6 +783,37 @@ describe("channel slash commands", () => {
         scope: "agent",
       }),
     ).toContain("Telegram current agent model");
+  });
+
+  test("builds plain channel context usage messages", () => {
+    expect(
+      buildChannelContextUsageMessage("telegram", {
+        usedTokens: 12_345,
+        contextWindow: 200_000,
+        modelLabel: "Claude Sonnet 4.6",
+        scope: "conversation",
+      }),
+    ).toBe(
+      "Telegram context usage\n12,345 / 200,000 tokens used (6%).\n187,655 tokens remaining.\nModel: Claude Sonnet 4.6 (conversation).",
+    );
+
+    expect(
+      buildChannelContextUsageMessage("slack", {
+        usedTokens: 12_345,
+        contextWindow: null,
+        modelLabel: "unknown",
+      }),
+    ).toContain("Context window size is unknown.");
+
+    expect(
+      buildChannelContextUsageMessage("discord", {
+        usedTokens: 0,
+        contextWindow: 128_000,
+        modelLabel: "GPT-5",
+      }),
+    ).toBe(
+      "Context data is not available yet. Run a turn in this conversation, then try /context again.",
+    );
   });
 
   test("builds model selector-style command messages", () => {
@@ -774,17 +958,17 @@ describe("channel slash commands", () => {
   });
 
   test("builds a useful unsupported-command response", () => {
-    const command = parseChannelSlashCommand("/compact now");
+    const command = parseChannelSlashCommand("/teleport now");
     expect(command).not.toBeNull();
     if (!command) {
-      throw new Error("Expected /compact to parse as a channel slash command");
+      throw new Error("Expected /teleport to parse as a channel slash command");
     }
 
     const text = buildUnsupportedChannelCommandMessage("telegram", command);
-    expect(text).toContain("Telegram received /compact now");
+    expect(text).toContain("Telegram received /teleport now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection.",
+      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /compact, /context, /conv, /model, /reflection.",
     );
     expect(text).toContain("without a leading slash");
 

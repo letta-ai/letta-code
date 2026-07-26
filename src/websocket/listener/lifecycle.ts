@@ -43,7 +43,10 @@ import {
   uniqueChannelTurnSources,
 } from "./channel-turn-session";
 import { handleReloadCommand } from "./commands";
+import { createChannelCompactHandler } from "./commands/channel-compact";
 import { handleChannelRegistryEvent } from "./commands/channels";
+import { createChannelContextHandler } from "./commands/context";
+import { createChannelConversationHandler } from "./commands/conversation";
 import {
   applyModelUpdateForRuntime,
   buildListModelsResponse,
@@ -540,9 +543,7 @@ export async function wireChannelIngress(
   registry.setEventHandler((event) => {
     handleChannelRegistryEvent(event, socket, listener, safeSocketSend);
   });
-
   await recoverPendingChannelControlRequests(listener);
-
   registry.setApprovalResponseHandler(async ({ runtime, response }) =>
     handleApprovalResponseInput(listener, {
       runtime,
@@ -552,7 +553,6 @@ export async function wireChannelIngress(
       processQueuedTurn,
     }),
   );
-
   registry.setCancelHandler(async ({ runtime }) =>
     handleAbortMessageInput(listener, {
       command: {
@@ -566,7 +566,9 @@ export async function wireChannelIngress(
       processQueuedTurn,
     }),
   );
-
+  registry.setContextHandler(createChannelContextHandler(listener));
+  registry.setCompactHandler(createChannelCompactHandler(listener, socket));
+  registry.setConversationHandler(createChannelConversationHandler(listener));
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
     if (!modelIdentifier) {
       try {
@@ -646,7 +648,6 @@ export async function wireChannelIngress(
         };
       }
     }
-
     const resolvedModel = resolveModelForUpdate({
       model_id: modelIdentifier,
       model_handle: modelIdentifier,
@@ -661,7 +662,6 @@ export async function wireChannelIngress(
         ),
       };
     }
-
     try {
       const scopedRuntime = getOrCreateScopedRuntime(
         listener,

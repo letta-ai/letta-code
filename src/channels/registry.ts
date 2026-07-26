@@ -35,6 +35,9 @@ import {
 import type { ChannelRegistryEvent } from "./registry-events";
 import type {
   ChannelCancelHandler,
+  ChannelCompactHandler,
+  ChannelContextHandler,
+  ChannelConversationHandler,
   ChannelInboundDelivery,
   ChannelMessageHandler,
   ChannelModelHandler,
@@ -164,6 +167,9 @@ export class ChannelRegistry {
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
   private approvalResponseHandler: ChannelApprovalResponseHandler | null = null;
   private cancelHandler: ChannelCancelHandler | null = null;
+  private compactHandler: ChannelCompactHandler | null = null;
+  private conversationHandler: ChannelConversationHandler | null = null;
+  private contextHandler: ChannelContextHandler | null = null;
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
   private reloadHandler: ChannelReloadHandler | null = null;
@@ -195,6 +201,9 @@ export class ChannelRegistry {
       getRoute: (channel, chatId, accountId, threadId) =>
         this.getRoute(channel, chatId, accountId, threadId),
       getCancelHandler: () => this.cancelHandler,
+      getCompactHandler: () => this.compactHandler,
+      getConversationHandler: () => this.conversationHandler,
+      getContextHandler: () => this.contextHandler,
       getReflectionHandler: () => this.reflectionHandler,
       getReloadHandler: () => this.reloadHandler,
       getModelHandler: () => this.modelHandler,
@@ -429,6 +438,18 @@ export class ChannelRegistry {
 
   setCancelHandler(handler: ChannelCancelHandler | null): void {
     this.cancelHandler = handler;
+  }
+
+  setCompactHandler(handler: ChannelCompactHandler | null): void {
+    this.compactHandler = handler;
+  }
+
+  setConversationHandler(handler: ChannelConversationHandler | null): void {
+    this.conversationHandler = handler;
+  }
+
+  setContextHandler(handler: ChannelContextHandler | null): void {
+    this.contextHandler = handler;
   }
 
   setReflectionHandler(handler: ChannelReflectionHandler | null): void {
@@ -684,6 +705,9 @@ export class ChannelRegistry {
     this.eventHandler = null;
     this.approvalResponseHandler = null;
     this.cancelHandler = null;
+    this.compactHandler = null;
+    this.conversationHandler = null;
+    this.contextHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
     this.reloadHandler = null;
@@ -704,6 +728,9 @@ export class ChannelRegistry {
     this.eventHandler = null;
     this.approvalResponseHandler = null;
     this.cancelHandler = null;
+    this.compactHandler = null;
+    this.conversationHandler = null;
+    this.contextHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
     this.reloadHandler = null;

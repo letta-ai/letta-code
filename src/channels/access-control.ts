@@ -315,6 +315,20 @@ export function canRunChannelCommand(
   );
 }
 
+export function canRunPrivilegedChannelCommand(
+  gate: ChannelCommandGate | undefined,
+  commandName: string,
+): boolean {
+  if (!gate) {
+    return false;
+  }
+  if (gate.enabled && gate.isAdmin) {
+    return true;
+  }
+  const canonical = canonicalizeChannelCommandName(commandName);
+  return gate.allowedCommands.includes(canonical);
+}
+
 function runnableCommandsForUser(gate: ChannelCommandGate): string[] {
   const seen = new Set<string>();
   const runnable: string[] = [];
@@ -350,6 +364,20 @@ export function buildChannelCommandDeniedMessage(
     `${channelDisplayName(channelId)}: /${normalizeCommandName(commandName)} ${restriction}.`,
     `Commands you can run: ${runnable}. Use /whoami to see your access.`,
   ].join("\n");
+}
+
+export function buildChannelPrivilegedCommandDeniedMessage(
+  channelId: string,
+  commandName: string,
+  gate: ChannelCommandGate | undefined,
+): string {
+  return buildChannelCommandDeniedMessage(
+    channelId,
+    commandName,
+    gate?.enabled
+      ? gate
+      : { enabled: true, isAdmin: false, allowedCommands: [] },
+  );
 }
 
 export function buildChannelWhoamiMessage(

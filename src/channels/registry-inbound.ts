@@ -55,6 +55,9 @@ export function createChannelInboundRouter(deps: {
     if (!adapter) return;
 
     const config = getChannelAccount(msg.channel, accountId);
+    if (config?.enabled === false) {
+      return;
+    }
 
     // Sender access gate: one decision for every surface (DMs, groups,
     // and every channel's auto-route path), evaluated before control
@@ -129,6 +132,12 @@ export function createChannelInboundRouter(deps: {
             deps.commands.handleCancelSlashCommand(commandMsg),
           chat: async (_command, commandMsg) =>
             deps.commands.handleChatSlashCommand(commandMsg),
+          compact: async (command, commandMsg) =>
+            deps.commands.handleCompactSlashCommand(command, commandMsg),
+          conv: async (command, commandMsg) =>
+            deps.commands.handleConversationSlashCommand(command, commandMsg),
+          context: async (_command, commandMsg) =>
+            deps.commands.handleContextSlashCommand(commandMsg),
           detach: async (_command, commandMsg) =>
             deps.commands.handleDetachSlashCommand(commandMsg),
           model: async (command, commandMsg) =>

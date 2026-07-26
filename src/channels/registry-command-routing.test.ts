@@ -216,7 +216,7 @@ describe("ChannelRegistry command routing", () => {
       chatId: "123",
       senderId: "456",
       senderName: "Alice",
-      text: "/compact now",
+      text: "/teleport now",
       timestamp: Date.now(),
       messageId: "77",
       chatType: "direct",
@@ -229,7 +229,7 @@ describe("ChannelRegistry command routing", () => {
       replyToMessageId: "77",
     });
     expect(replies[0]?.text).toContain(
-      "Telegram received /compact now, but that slash command is not supported in channels yet.",
+      "Telegram received /teleport now, but that slash command is not supported in channels yet.",
     );
   });
 
@@ -312,7 +312,7 @@ describe("ChannelRegistry command routing", () => {
       "Route: Connected to a Letta agent conversation.",
     );
     expect(replies[0]?.text).toContain("Agent: agent-status.");
-    expect(replies[0]?.text).toContain("Conversation: conv-status.");
+    expect(replies[0]?.text).toContain("Conversation: `conv-status`");
   });
 
   test("/pause and /resume update the current route without agent delivery", async () => {
@@ -654,7 +654,7 @@ describe("ChannelRegistry command routing", () => {
     expect(replies[0]?.text).toContain(
       "https://chat.letta.com/chat/agent-1?conversation=conv-1",
     );
-    expect(replies[0]?.text).toContain("Conversation: conv-1.");
+    expect(replies[0]?.text).toContain("Conversation: `conv-1`");
   });
 
   test("/model invokes the channel model handler for the routed conversation", async () => {

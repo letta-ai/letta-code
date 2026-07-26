@@ -1,12 +1,22 @@
 import type { ListModelsResponseModelEntry } from "@/types/protocol_v2";
 import {
   buildChannelCommandDeniedMessage,
+  buildChannelPrivilegedCommandDeniedMessage,
   buildChannelWhoamiMessage,
   type ChannelCommandGate,
   canonicalizeChannelCommandName,
   canRunChannelCommand,
+  canRunPrivilegedChannelCommand,
 } from "./access-control";
+import {
+  CHANNEL_SLASH_COMMANDS,
+  type ChannelSlashCommandDefinition,
+  SLACK_MENTION_COMMAND_NAMES,
+  SLACK_MENTION_SLASH_COMMAND_EXAMPLES,
+} from "./command-definitions";
+import { requiresPrivilegedChannelConversationAccess } from "./conversation-command";
 import { handleChannelFeedbackCommand } from "./feedback";
+import { formatChannelInlineCode } from "./message-formatting";
 import { getChannelDisplayName } from "./plugin-registry";
 import type {
   ChannelAdapter,
@@ -15,19 +25,15 @@ import type {
   InboundChannelMessage,
 } from "./types";
 
-export type ChannelSlashCommandKind = "direct" | "agent-scoped";
+export type {
+  ChannelSlashCommandDefinition,
+  ChannelSlashCommandKind,
+} from "./command-definitions";
 
 export type ParsedChannelSlashCommand = {
   name: string;
   args: string;
   raw: string;
-};
-
-export type ChannelSlashCommandDefinition = {
-  name: string;
-  aliases?: string[];
-  kind: ChannelSlashCommandKind;
-  summary: string;
 };
 
 export type ChannelSlashCommandHandlerResult = {
@@ -41,43 +47,24 @@ type ChannelDirectReplyPayload = {
   modelPicker?: ChannelModelPickerData;
 };
 
+type ChannelSlashCommandHandler = (
+  command: ParsedChannelSlashCommand,
+  msg: InboundChannelMessage,
+) => Promise<ChannelSlashCommandHandlerResult>;
+
 export type ChannelSlashCommandHandlers = {
-  cancel?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  chat?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  detach?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  model?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  newConversation?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  pause?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  reflection?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  reload?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  resume?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
+  cancel?: ChannelSlashCommandHandler;
+  chat?: ChannelSlashCommandHandler;
+  compact?: ChannelSlashCommandHandler;
+  conv?: ChannelSlashCommandHandler;
+  context?: ChannelSlashCommandHandler;
+  detach?: ChannelSlashCommandHandler;
+  model?: ChannelSlashCommandHandler;
+  newConversation?: ChannelSlashCommandHandler;
+  pause?: ChannelSlashCommandHandler;
+  reflection?: ChannelSlashCommandHandler;
+  reload?: ChannelSlashCommandHandler;
+  resume?: ChannelSlashCommandHandler;
 };
 
 export type ChannelStatusContext = {
@@ -95,75 +82,16 @@ export type ChannelSlashCommandOptions = {
   commandGate?: ChannelCommandGate;
 };
 
-const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
-  {
-    name: "help",
-    kind: "direct",
-    summary: "Show channel usage guidance.",
-  },
-  {
-    name: "status",
-    kind: "direct",
-    summary: "Show this chat's channel connection status.",
-  },
-  {
-    name: "whoami",
-    kind: "direct",
-    summary: "Show your access tier and runnable commands here.",
-  },
-  {
-    name: "pause",
-    kind: "direct",
-    summary: "Pause agent routing for this chat.",
-  },
-  {
-    name: "resume",
-    kind: "direct",
-    summary: "Resume agent routing for this chat.",
-  },
-  {
-    name: "cancel",
-    kind: "agent-scoped",
-    summary: "Cancel the in-progress agent turn for this chat.",
-  },
-  {
-    name: "chat",
-    kind: "direct",
-    summary: "Show the Letta web chat link for this channel route.",
-  },
-  {
-    name: "feedback",
-    kind: "direct",
-    summary: "Send feedback about Letta Code from this routed chat.",
-  },
-  {
-    name: "model",
-    kind: "agent-scoped",
-    summary:
-      "Show, list, or switch the model for this chat's routed conversation.",
-  },
-  {
-    name: "reflection",
-    aliases: ["reflect"],
-    kind: "agent-scoped",
-    summary: "Start a memory reflection pass for this conversation.",
-  },
-];
-
-const SLACK_MENTION_COMMAND_NAMES = [
-  "help",
-  "detach",
-  "model",
-  "new",
-  "reload",
-] as const;
-
 function channelDisplayName(channelId: string): string {
   try {
     return getChannelDisplayName(channelId);
   } catch {
     return channelId;
   }
+}
+
+function formatChannelConversationId(conversationId: string): string {
+  return `Conversation: ${formatChannelInlineCode(conversationId)}`;
 }
 
 export function listChannelSlashCommands(): ChannelSlashCommandDefinition[] {
@@ -268,22 +196,6 @@ function supportedCommandsText(prefix: "/" | "!" = "/"): string {
     .join(", ");
 }
 
-const SLACK_MENTION_SLASH_COMMAND_EXAMPLES = [
-  "@agent /help",
-  "@agent /status",
-  "@agent /whoami",
-  "@agent /model",
-  "@agent /model list",
-  "@agent /model <handle-or-id>",
-  "@agent /cancel",
-  "@agent /chat",
-  "@agent /feedback <message>",
-  "@agent /reflection",
-  "@agent /detach",
-  "@agent /new",
-  "@agent /reload",
-] as const;
-
 function supportedSlackMentionSlashCommandsText(): string {
   return SLACK_MENTION_SLASH_COMMAND_EXAMPLES.join(", ");
 }
@@ -329,6 +241,13 @@ export function buildChannelHelpMessage(channelId: string): string {
       "@agent /model - show this thread's current model",
       "@agent /model list - show available models",
       "@agent /model <handle-or-id> - switch this thread's model",
+      "@agent /context - show context window usage",
+      "@agent /compact - compact this thread's routed conversation",
+      "@agent /conv - manage this thread's conversation",
+      "@agent /conv new [title] - start a fresh conversation",
+      "@agent /conv list [last_conversation_id] - show recent conversations for the routed agent",
+      "@agent /conv switch <conversation_id> - switch this thread to a conversation",
+      "@agent /conv fork [title] - fork this thread's conversation",
       "@agent /status - show route and listener status",
       "@agent /cancel - cancel the current turn",
       "@agent /chat - show the web chat link",
@@ -346,6 +265,7 @@ export function buildChannelHelpMessage(channelId: string): string {
     `${displayName} is connected to Letta Code.`,
     "Send a normal message here and the connected agent will reply in this chat.",
     `Supported slash commands here: ${supportedCommandsText()}.`,
+    "Conversation commands: /conv new [title], /conv list [last_conversation_id], /conv switch <conversation_id>, /conv fork [title].",
     "If this chat is not connected yet, send any non-command message and follow the pairing instructions.",
   ].join("\n\n");
 }
@@ -398,7 +318,7 @@ export function buildChannelStatusMessage(
 
   if (route) {
     lines.push(`Agent: ${route.agentId}.`);
-    lines.push(`Conversation: ${route.conversationId}.`);
+    lines.push(formatChannelConversationId(route.conversationId));
     if (route.threadId) {
       lines.push(`Thread: ${route.threadId}.`);
     }
@@ -432,9 +352,9 @@ export function buildChannelPausedMessage(
 ): string {
   const displayName = channelDisplayName(channelId);
   const conversation = route.conversationId
-    ? ` Conversation: ${route.conversationId}.`
+    ? `\n${formatChannelConversationId(route.conversationId)}`
     : "";
-  return `${displayName} paused agent routing for this chat.${conversation} Send /resume here to turn replies back on.`;
+  return `${displayName} paused agent routing for this chat.${conversation}\nSend /resume here to turn replies back on.`;
 }
 
 export function buildChannelAlreadyPausedMessage(channelId: string): string {
@@ -447,9 +367,9 @@ export function buildChannelResumedMessage(
 ): string {
   const displayName = channelDisplayName(channelId);
   const conversation = route.conversationId
-    ? ` Conversation: ${route.conversationId}.`
+    ? `\n${formatChannelConversationId(route.conversationId)}`
     : "";
-  return `${displayName} resumed agent routing for this chat.${conversation} Normal messages here will go to the connected agent again.`;
+  return `${displayName} resumed agent routing for this chat.${conversation}\nNormal messages here will go to the connected agent again.`;
 }
 
 export function buildChannelAlreadyActiveMessage(channelId: string): string {
@@ -487,7 +407,7 @@ export function buildChannelChatLinkMessage(
   return [
     `${displayName} chat for this route: ${chatUrl}`,
     `Agent: ${route.agentId}.`,
-    `Conversation: ${route.conversationId}.`,
+    formatChannelConversationId(route.conversationId),
   ].join("\n");
 }
 
@@ -521,7 +441,7 @@ export function buildChannelNewConversationMessage(
   route: ChannelRoute,
 ): string {
   const displayName = channelDisplayName(channelId);
-  return `${displayName} started a new conversation for this chat. Conversation: ${route.conversationId}.`;
+  return `${displayName} started a new conversation for this chat.\n${formatChannelConversationId(route.conversationId)}`;
 }
 
 export function buildChannelNewConversationUnavailableMessage(
@@ -919,6 +839,34 @@ export async function tryHandleChannelSlashCommand(
             msg,
             command,
             handler: options.handlers?.chat,
+          });
+        case "compact":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.compact,
+          });
+        case "conv":
+          if (
+            requiresPrivilegedChannelConversationAccess(command.args) &&
+            !canRunPrivilegedChannelCommand(options.commandGate, canonicalName)
+          ) {
+            return buildChannelPrivilegedCommandDeniedMessage(
+              msg.channel,
+              command.raw,
+              options.commandGate,
+            );
+          }
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.conv,
+          });
+        case "context":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.context,
           });
         case "feedback":
           return handleChannelFeedbackCommand({
