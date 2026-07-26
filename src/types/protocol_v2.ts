@@ -75,6 +75,7 @@ export interface CronTask {
   id: string;
   agent_id: string;
   conversation_id: string;
+  channel_targets?: import("./cron-channel-target").CronChannelTarget[];
   name: string;
   description: string;
   cron: string;
@@ -1689,7 +1690,6 @@ export interface CronListCommand {
   /** Optional conversation filter. */
   conversation_id?: string;
 }
-
 export interface CronAddCommand {
   type: "cron_add";
   /** Echoed back in the response for request correlation. */
@@ -1702,6 +1702,7 @@ export interface CronAddCommand {
    * - any other string: existing conversation id
    */
   conversation_id?: string;
+  channel_targets?: import("./cron-channel-target").CronChannelTarget[];
   name: string;
   description: string;
   cron: string;
@@ -1711,7 +1712,6 @@ export interface CronAddCommand {
   /** Optional ISO timestamp for one-shot tasks. */
   scheduled_for?: string | null;
 }
-
 export interface CronGetCommand {
   type: "cron_get";
   /** Echoed back in the response for request correlation. */
@@ -1731,7 +1731,6 @@ export interface CronRunsCommand {
   /** Optional run id filter. */
   run_id?: string;
 }
-
 export interface CronTriggerCommand {
   type: "cron_trigger";
   /** Echoed back in the response for request correlation. */
@@ -1747,6 +1746,7 @@ export interface CronUpdateCommand {
   name?: string;
   description?: string;
   conversation_id?: string;
+  channel_targets?: import("./cron-channel-target").CronChannelTarget[];
   cron?: string;
   timezone?: string;
   recurring?: boolean;
