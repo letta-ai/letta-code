@@ -16,6 +16,7 @@ import type {
   ConversationRetrieveCommand,
   ConversationUpdateCommand,
 } from "@/types/protocol_v2";
+import { isConversationForkCommand } from "@/websocket/listener/management-protocol-inbound";
 import {
   isAgentCreateCommand,
   isAgentDeleteCommand,
@@ -24,7 +25,6 @@ import {
   isAgentUpdateCommand,
   isConversationCompactCommand,
   isConversationCreateCommand,
-  isConversationForkCommand,
   isConversationListCommand,
   isConversationMessagesListCommand,
   isConversationRecompileCommand,

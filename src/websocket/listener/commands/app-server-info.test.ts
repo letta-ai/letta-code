@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { APP_SERVER_PROTOCOL_VERSION } from "@/types/protocol_v2";
+import { APP_SERVER_PROTOCOL_VERSION } from "@/types/app-server-info";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
 import { buildAppServerInfoResponse } from "./app-server-info";
 

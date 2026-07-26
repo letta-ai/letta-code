@@ -10,7 +10,6 @@ import type {
   AgentListCommand,
   AgentRetrieveCommand,
   AgentUpdateCommand,
-  AppServerInfoCommand,
   ChangeDeviceStateCommand,
   ChannelAccountBindCommand,
   ChannelAccountCreateCommand,
@@ -37,7 +36,6 @@ import type {
   ConnectProviderCommand,
   ConversationCompactCommand,
   ConversationCreateCommand,
-  ConversationForkCommand,
   ConversationListCommand,
   ConversationMessagesListCommand,
   ConversationRecompileCommand,
@@ -111,6 +109,10 @@ function isExperimentId(value: unknown): value is ExperimentId {
 }
 
 import { isValidApprovalResponseBody } from "./approval";
+import {
+  isAppServerInfoCommand,
+  isConversationForkCommand,
+} from "./management-protocol-inbound";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
 export type ServerLifecycleMessage = {
@@ -1243,18 +1245,6 @@ export function isSkillDisableCommand(
   );
 }
 
-export function isAppServerInfoCommand(
-  value: unknown,
-): value is AppServerInfoCommand {
-  if (!value || typeof value !== "object") return false;
-  const command = value as { type?: unknown; request_id?: unknown };
-  return (
-    command.type === "app_server_info" &&
-    typeof command.request_id === "string" &&
-    command.request_id.length > 0
-  );
-}
-
 export function isCreateAgentCommand(
   value: unknown,
 ): value is CreateAgentCommand {
@@ -1437,24 +1427,6 @@ export function isConversationRecompileCommand(
   };
   return (
     c.type === "conversation_recompile" &&
-    typeof c.request_id === "string" &&
-    typeof c.conversation_id === "string" &&
-    (c.body === undefined || isObjectRecord(c.body))
-  );
-}
-
-export function isConversationForkCommand(
-  value: unknown,
-): value is ConversationForkCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    conversation_id?: unknown;
-    body?: unknown;
-  };
-  return (
-    c.type === "conversation_fork" &&
     typeof c.request_id === "string" &&
     typeof c.conversation_id === "string" &&
     (c.body === undefined || isObjectRecord(c.body))

@@ -259,6 +259,24 @@ describe("agent/conversation management protocol-inbound validators", () => {
       body: [],
     },
     {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { message_id: 123 },
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { message_id: "" },
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { hidden: "yes" },
+    },
+    {
       type: "conversation_messages_list",
       request_id: "r10",
       conversation_id: "conv-1",

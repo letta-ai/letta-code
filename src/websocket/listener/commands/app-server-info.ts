@@ -4,7 +4,7 @@ import {
   APP_SERVER_PROTOCOL_VERSION,
   type AppServerInfoCommand,
   type AppServerInfoResponseMessage,
-} from "@/types/protocol_v2";
+} from "@/types/app-server-info";
 import { getVersion } from "@/version";
 
 export interface AppServerInfoCommandContext {

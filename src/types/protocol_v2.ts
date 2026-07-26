@@ -30,6 +30,11 @@ import type {
   MessageListParams,
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type {
+  AppServerInfoCommand,
+  AppServerInfoResponseMessage,
+} from "./app-server-info";
+import type { ConversationForkBody } from "./conversation-fork-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 
@@ -1801,31 +1806,6 @@ export interface SkillsUpdatedMessage {
   timestamp: number;
 }
 
-export const APP_SERVER_PROTOCOL_VERSION = 1;
-
-export interface AppServerInfoCommand {
-  type: "app_server_info";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-}
-
-export interface AppServerInfoResponseMessage {
-  type: "app_server_info_response";
-  request_id: string;
-  /** Synchronous post-auth capability discovery has no domain failure variant. */
-  success: true;
-  backend: "local" | "api";
-  letta_code_version: string;
-  protocol_version: typeof APP_SERVER_PROTOCOL_VERSION;
-  capabilities: {
-    agent_management: boolean;
-    conversation_management: boolean;
-    memory_management: boolean;
-    runtime_start: boolean;
-    split_channels: boolean;
-  };
-}
-
 export interface CreateAgentCommand {
   type: "create_agent";
   /** Echoed back in the response for request correlation. */
@@ -1926,15 +1906,6 @@ export interface ConversationRecompileCommand {
   conversation_id: string;
   /** Body/query forwarded to the Letta conversations recompile API. */
   body?: ConversationRecompileParams;
-}
-
-export interface ConversationForkBody {
-  /** Agent ID for agent-direct mode with the default conversation. */
-  agent_id?: string | null;
-  /** Whether the forked conversation should be hidden. */
-  hidden?: boolean;
-  /** Optional projected message ID to fork through, inclusive. */
-  message_id?: string;
 }
 
 export interface ConversationForkCommand {
