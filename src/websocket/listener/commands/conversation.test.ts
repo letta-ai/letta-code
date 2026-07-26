@@ -12,6 +12,7 @@ import {
   clearAllRoutes,
   getRoute,
 } from "@/channels/routing";
+import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { createChannelConversationHandler } from "./conversation";
 
 afterEach(() => {
@@ -39,8 +40,10 @@ describe("channel conversation command handler", () => {
     });
 
     expect(result.text).toContain("Slack conversation");
-    expect(result.text).toContain("Current: conv-1");
+    expect(result.text).toContain("Current conversation: `conv-1`");
+    expect(result.text).not.toContain("```");
     expect(result.text).toContain("@agent /conv new [title]");
+    expect(result.text).toContain("@agent /conv list [last_conversation_id]");
     expect(result.text).toContain("@agent /conv fork [title]");
   });
 
@@ -92,7 +95,7 @@ describe("channel conversation command handler", () => {
         throw new Error("Expected created conversation to be listed");
       }
       expect(result.text).toBe(
-        `Telegram started a new conversation ${created.id} for this chat.`,
+        `Telegram started a new conversation for this chat: \`${created.id}\``,
       );
       expect(getRoute("telegram", "123", "acct-telegram")?.conversationId).toBe(
         created.id,
@@ -144,7 +147,7 @@ describe("channel conversation command handler", () => {
       });
 
       expect(result.text).toBe(
-        `Telegram switched this chat to conversation ${target.id}.`,
+        `Telegram switched this chat to conversation: \`${target.id}\``,
       );
       expect(getRoute("telegram", "123", "acct-telegram")?.conversationId).toBe(
         target.id,
@@ -201,7 +204,7 @@ describe("channel conversation command handler", () => {
       });
 
       expect(result.text).toBe(
-        `Telegram cannot switch to ${otherConversation.id} because it belongs to a different agent.`,
+        `Telegram cannot switch to this conversation because it belongs to a different agent: \`${otherConversation.id}\``,
       );
       expect(getRoute("telegram", "123", "acct-telegram")?.conversationId).toBe(
         source.id,
@@ -260,7 +263,7 @@ describe("channel conversation command handler", () => {
         throw new Error("Expected forked conversation to be listed");
       }
       expect(result.text).toContain(
-        `Telegram forked this chat from ${source.id} to ${forked.id}.`,
+        `Telegram forked this chat.\nFrom: \`${source.id}\`\nTo: \`${forked.id}\``,
       );
       expect(getRoute("telegram", "123", "acct-telegram")?.conversationId).toBe(
         forked.id,
@@ -318,7 +321,7 @@ describe("channel conversation command handler", () => {
       expect((forked as { agent_id?: string }).agent_id).toBe(agent.id);
       expect(forked.summary).toBe("Default fork");
       expect(result.text).toContain(
-        `Telegram forked this chat from default to ${forkedConversationId}.`,
+        `Telegram forked this chat.\nFrom: \`default\`\nTo: \`${forkedConversationId}\``,
       );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
@@ -366,7 +369,9 @@ describe("channel conversation command handler", () => {
       },
     ]);
     expect(result.text).toContain("recent conversations for routed agent");
-    expect(result.text).toContain("Showing up to 8 conversations.");
+    expect(result.text).toContain(
+      "Showing 2 recent conversations newest first. Page size is 8.",
+    );
     expect(result.text).not.toContain("show more");
   });
 
@@ -395,9 +400,11 @@ describe("channel conversation command handler", () => {
       args: "list",
     });
 
-    expect(result.text).toContain("- conv-8 - Conversation 8");
+    expect(result.text).toContain("Conversation 8: `conv-8`");
     expect(result.text).not.toContain("conv-9");
-    expect(result.text).toContain("Use /conv list conv-8 to show more.");
+    expect(result.text).toContain(
+      "Use /conv list `conv-8` to show older conversations.",
+    );
   });
 
   test("/conv failures do not leak backend error details to the channel", async () => {
@@ -501,9 +508,118 @@ describe("channel conversation command handler", () => {
       expect(updatedConversationId).toBeString();
       expect(updatedConversationId).not.toBe(source.id);
       expect(result.text).toContain(
-        `Telegram forked this chat from ${source.id} to ${updatedConversationId}`,
+        `Telegram forked this chat.\nFrom: \`${source.id}\`\nTo: \`${updatedConversationId}\``,
       );
-      expect(result.text).toContain("could not set the title");
+      expect(result.text).toContain("the title could not be set");
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("/conv route mutations are refused while the routed conversation has queued work", async () => {
+    let backendCalls = 0;
+    __testSetBackend({
+      createConversation: async () => {
+        backendCalls += 1;
+        throw new Error("should not create while busy");
+      },
+      retrieveConversation: async () => {
+        backendCalls += 1;
+        throw new Error("should not retrieve while busy");
+      },
+      forkConversation: async () => {
+        backendCalls += 1;
+        throw new Error("should not fork while busy");
+      },
+    } as never);
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const route = {
+      accountId: "acct-telegram",
+      chatId: "123",
+      chatType: "direct" as const,
+      threadId: null,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-05-19T00:00:00.000Z",
+    };
+    const scopedRuntime = __listenClientTestUtils.getOrCreateScopedRuntime(
+      listener,
+      route.agentId,
+      route.conversationId,
+    );
+    scopedRuntime.pendingTurns = 1;
+    const handler = createChannelConversationHandler(listener);
+
+    for (const args of ["new Busy branch", "switch conv-2", "fork Busy fork"]) {
+      const result = await handler({
+        channelId: "telegram",
+        route,
+        args,
+      });
+
+      expect(result.text).toBe(
+        "Telegram cannot change conversations while this chat has an active or queued turn. Wait for it to finish or run /cancel, then try again.",
+      );
+    }
+    expect(backendCalls).toBe(0);
+  });
+
+  test("/conv switch reactivates detached Slack thread routes", async () => {
+    const storageDir = await mkdtemp(
+      join(os.tmpdir(), "channel-conv-switch-detached-"),
+    );
+    try {
+      __testOverrideLoadRoutes(() => null);
+      __testOverrideSaveRoutes(() => {});
+
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Channel Conversation Agent",
+      } as AgentCreateBody);
+      const source = await backend.createConversation({
+        agent_id: agent.id,
+        summary: "Source conversation",
+      } as never);
+      const target = await backend.createConversation({
+        agent_id: agent.id,
+        summary: "Target conversation",
+      } as never);
+      const route = {
+        accountId: "acct-slack",
+        chatId: "C123",
+        chatType: "channel" as const,
+        threadId: "1712790000.000050",
+        agentId: agent.id,
+        conversationId: source.id,
+        enabled: true,
+        createdAt: "2026-05-19T00:00:00.000Z",
+        detached: true,
+        outboundEnabled: false,
+      };
+      addRoute("slack", route);
+
+      const handler = createChannelConversationHandler();
+      const result = await handler({
+        channelId: "slack",
+        route,
+        args: `switch ${target.id}`,
+      });
+
+      expect(result.text).toBe(
+        `Slack switched this chat to conversation: \`${target.id}\``,
+      );
+      expect(
+        getRoute("slack", "C123", "acct-slack", "1712790000.000050"),
+      ).toMatchObject({
+        conversationId: target.id,
+        detached: false,
+        outboundEnabled: true,
+      });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

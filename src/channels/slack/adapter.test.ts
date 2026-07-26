@@ -67,7 +67,7 @@ test("slack adapter start does not re-run bolt init", async () => {
   expect(app?.start).toHaveBeenCalledTimes(1);
 });
 
-test("slack adapter forwards native channel slash commands as channel slash input", async () => {
+test("slack adapter forwards only native /cancel slash commands as channel slash input", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -85,10 +85,14 @@ test("slack adapter forwards native channel slash commands as channel slash inpu
 
   await adapter.start();
   const app = FakeSlackApp.instances[0];
-  const handler = app?.commandHandlers.get("/cancel");
+  if (!app) {
+    throw new Error("Expected Slack app instance");
+  }
+  const handler = app.commandHandlers.get("/cancel");
   if (!handler) {
     throw new Error("Expected /cancel command handler");
   }
+  expect([...app.commandHandlers.keys()].sort()).toEqual(["/cancel"]);
 
   const ack = mock(async () => {});
   await handler({
@@ -104,26 +108,8 @@ test("slack adapter forwards native channel slash commands as channel slash inpu
     ack,
   });
 
-  const modelHandler = app?.commandHandlers.get("/model");
-  if (!modelHandler) {
-    throw new Error("Expected /model command handler");
-  }
-
-  await modelHandler({
-    command: {
-      command: "/model",
-      text: "openai/gpt-5",
-      user_id: "U123",
-      user_name: "Alice",
-      channel_id: "C123",
-      channel_name: "eng",
-      trigger_id: "trigger-2",
-    },
-    ack,
-  });
-
-  expect(ack).toHaveBeenCalledTimes(2);
-  expect(messages).toHaveLength(2);
+  expect(ack).toHaveBeenCalledTimes(1);
+  expect(messages).toHaveLength(1);
   expect(messages[0]).toMatchObject({
     channel: "slack",
     accountId: "slack-test-account",
@@ -133,18 +119,6 @@ test("slack adapter forwards native channel slash commands as channel slash inpu
     chatLabel: "eng",
     text: "/cancel",
     messageId: "trigger-1",
-    threadId: null,
-    chatType: "channel",
-  });
-  expect(messages[1]).toMatchObject({
-    channel: "slack",
-    accountId: "slack-test-account",
-    chatId: "C123",
-    senderId: "U123",
-    senderName: "Alice",
-    chatLabel: "eng",
-    text: "/model openai/gpt-5",
-    messageId: "trigger-2",
     threadId: null,
     chatType: "channel",
   });

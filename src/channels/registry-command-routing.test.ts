@@ -312,7 +312,7 @@ describe("ChannelRegistry command routing", () => {
       "Route: Connected to a Letta agent conversation.",
     );
     expect(replies[0]?.text).toContain("Agent: agent-status.");
-    expect(replies[0]?.text).toContain("Conversation: conv-status.");
+    expect(replies[0]?.text).toContain("Conversation: `conv-status`");
   });
 
   test("/pause and /resume update the current route without agent delivery", async () => {
@@ -654,7 +654,7 @@ describe("ChannelRegistry command routing", () => {
     expect(replies[0]?.text).toContain(
       "https://chat.letta.com/chat/agent-1?conversation=conv-1",
     );
-    expect(replies[0]?.text).toContain("Conversation: conv-1.");
+    expect(replies[0]?.text).toContain("Conversation: `conv-1`");
   });
 
   test("/model invokes the channel model handler for the routed conversation", async () => {

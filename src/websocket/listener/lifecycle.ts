@@ -568,7 +568,7 @@ export async function wireChannelIngress(
   );
   registry.setContextHandler(createChannelContextHandler(listener));
   registry.setCompactHandler(createChannelCompactHandler(listener, socket));
-  registry.setConversationHandler(createChannelConversationHandler());
+  registry.setConversationHandler(createChannelConversationHandler(listener));
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
     if (!modelIdentifier) {
       try {

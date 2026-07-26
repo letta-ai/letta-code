@@ -32,6 +32,7 @@ const VALID_COMPACT_MODES = new Set<CompactMode>([
 ]);
 
 class CompactUsageError extends Error {}
+class CompactBlockedError extends Error {}
 
 function compactHelpOutput(): string {
   return [
@@ -72,15 +73,21 @@ export async function handleCompactCommand(
     );
   }
 
+  const workingDirectory = getConversationWorkingDirectory(
+    conversationRuntime.listener,
+    agentId,
+    conversationRuntime.conversationId,
+  );
   const preCompactResult = await runPreCompactHooks(
     undefined,
     undefined,
     agentId,
     conversationRuntime.conversationId,
+    workingDirectory,
   );
   if (preCompactResult.blocked) {
     const feedback = preCompactResult.feedback.join("\n") || "Blocked by hook";
-    throw new Error(`Compact blocked: ${feedback}`);
+    throw new CompactBlockedError(`Compact blocked: ${feedback}`);
   }
 
   const backend = getBackend();
@@ -117,11 +124,7 @@ export async function handleCompactCommand(
     try {
       const reflectionSettings = getReflectionSettings(
         agentId,
-        getConversationWorkingDirectory(
-          conversationRuntime.listener,
-          agentId,
-          conversationRuntime.conversationId,
-        ),
+        workingDirectory,
       );
       if (
         reflectionSettings.trigger === "compaction-event" &&
@@ -184,7 +187,10 @@ export function createChannelCompactHandler(
         text: await handleCompactCommand(socket, scopedRuntime, args),
       };
     } catch (error) {
-      if (error instanceof CompactUsageError) {
+      if (
+        error instanceof CompactUsageError ||
+        error instanceof CompactBlockedError
+      ) {
         return {
           handled: true,
           text: error.message,

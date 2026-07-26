@@ -13,6 +13,7 @@ import {
   SLACK_MENTION_SLASH_COMMAND_EXAMPLES,
 } from "./command-definitions";
 import { handleChannelFeedbackCommand } from "./feedback";
+import { formatChannelInlineCode } from "./message-formatting";
 import { getChannelDisplayName } from "./plugin-registry";
 import type {
   ChannelAdapter,
@@ -84,6 +85,10 @@ function channelDisplayName(channelId: string): string {
   } catch {
     return channelId;
   }
+}
+
+function formatChannelConversationId(conversationId: string): string {
+  return `Conversation: ${formatChannelInlineCode(conversationId)}`;
 }
 
 export function listChannelSlashCommands(): ChannelSlashCommandDefinition[] {
@@ -237,8 +242,8 @@ export function buildChannelHelpMessage(channelId: string): string {
       "@agent /compact - compact this thread's routed conversation",
       "@agent /conv - manage this thread's conversation",
       "@agent /conv new [title] - start a fresh conversation",
-      "@agent /conv list [after_id] - show recent conversations for the routed agent",
-      "@agent /conv switch <id> - switch this thread to a conversation",
+      "@agent /conv list [last_conversation_id] - show recent conversations for the routed agent",
+      "@agent /conv switch <conversation_id> - switch this thread to a conversation",
       "@agent /conv fork [title] - fork this thread's conversation",
       "@agent /status - show route and listener status",
       "@agent /cancel - cancel the current turn",
@@ -257,7 +262,7 @@ export function buildChannelHelpMessage(channelId: string): string {
     `${displayName} is connected to Letta Code.`,
     "Send a normal message here and the connected agent will reply in this chat.",
     `Supported slash commands here: ${supportedCommandsText()}.`,
-    "Conversation commands: /conv new [title], /conv list [after_id], /conv switch <id>, /conv fork [title].",
+    "Conversation commands: /conv new [title], /conv list [last_conversation_id], /conv switch <conversation_id>, /conv fork [title].",
     "If this chat is not connected yet, send any non-command message and follow the pairing instructions.",
   ].join("\n\n");
 }
@@ -310,7 +315,7 @@ export function buildChannelStatusMessage(
 
   if (route) {
     lines.push(`Agent: ${route.agentId}.`);
-    lines.push(`Conversation: ${route.conversationId}.`);
+    lines.push(formatChannelConversationId(route.conversationId));
     if (route.threadId) {
       lines.push(`Thread: ${route.threadId}.`);
     }
@@ -344,9 +349,9 @@ export function buildChannelPausedMessage(
 ): string {
   const displayName = channelDisplayName(channelId);
   const conversation = route.conversationId
-    ? ` Conversation: ${route.conversationId}.`
+    ? `\n${formatChannelConversationId(route.conversationId)}`
     : "";
-  return `${displayName} paused agent routing for this chat.${conversation} Send /resume here to turn replies back on.`;
+  return `${displayName} paused agent routing for this chat.${conversation}\nSend /resume here to turn replies back on.`;
 }
 
 export function buildChannelAlreadyPausedMessage(channelId: string): string {
@@ -359,9 +364,9 @@ export function buildChannelResumedMessage(
 ): string {
   const displayName = channelDisplayName(channelId);
   const conversation = route.conversationId
-    ? ` Conversation: ${route.conversationId}.`
+    ? `\n${formatChannelConversationId(route.conversationId)}`
     : "";
-  return `${displayName} resumed agent routing for this chat.${conversation} Normal messages here will go to the connected agent again.`;
+  return `${displayName} resumed agent routing for this chat.${conversation}\nNormal messages here will go to the connected agent again.`;
 }
 
 export function buildChannelAlreadyActiveMessage(channelId: string): string {
@@ -399,7 +404,7 @@ export function buildChannelChatLinkMessage(
   return [
     `${displayName} chat for this route: ${chatUrl}`,
     `Agent: ${route.agentId}.`,
-    `Conversation: ${route.conversationId}.`,
+    formatChannelConversationId(route.conversationId),
   ].join("\n");
 }
 
@@ -433,7 +438,7 @@ export function buildChannelNewConversationMessage(
   route: ChannelRoute,
 ): string {
   const displayName = channelDisplayName(channelId);
-  return `${displayName} started a new conversation for this chat. Conversation: ${route.conversationId}.`;
+  return `${displayName} started a new conversation for this chat.\n${formatChannelConversationId(route.conversationId)}`;
 }
 
 export function buildChannelNewConversationUnavailableMessage(

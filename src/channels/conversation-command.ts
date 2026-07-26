@@ -1,3 +1,4 @@
+import { formatChannelInlineCode } from "./message-formatting";
 import { getChannelDisplayName } from "./plugin-registry";
 import type { ChannelRoute } from "./types";
 
@@ -30,6 +31,21 @@ function commandPrefix(channelId: string): string {
 function formatTitle(title?: string | null): string {
   const trimmed = title?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : "Untitled";
+}
+
+function formatConversationId(conversationId: string): string {
+  return formatChannelInlineCode(conversationId);
+}
+
+function formatConversationListEntry(
+  route: ChannelRoute,
+  entry: ChannelConversationListEntry,
+): string {
+  const current = entry.current ?? entry.id === route.conversationId;
+  const suffix = current ? " (current)" : "";
+  return `${formatTitle(entry.summary)}${suffix}: ${formatConversationId(
+    entry.id,
+  )}`;
 }
 
 export function parseChannelConversationCommand(
@@ -72,13 +88,13 @@ export function buildChannelConversationMenuMessage(
   const prefix = commandPrefix(channelId);
   return [
     `${displayName} conversation`,
-    `Current: ${route.conversationId}`,
+    `Current conversation: ${formatConversationId(route.conversationId)}`,
     `Agent: ${route.agentId}`,
     "",
     "Actions:",
     `  ${prefix}/conv new [title] - start a fresh conversation`,
-    `  ${prefix}/conv list [after_id] - show recent conversations for the routed agent`,
-    `  ${prefix}/conv switch <id> - switch this chat to a conversation`,
+    `  ${prefix}/conv list [last_conversation_id] - show recent conversations, or older conversations after the last shown id`,
+    `  ${prefix}/conv switch <conversation_id> - switch this chat to a conversation`,
     `  ${prefix}/conv fork [title] - fork the current conversation`,
   ].join("\n");
 }
@@ -97,19 +113,28 @@ export function buildChannelConversationListMessage(
   }
 
   const lastEntry = entries.at(-1);
-  return [
+  const lines = [
     `${displayName} recent conversations for routed agent`,
-    `Showing up to ${limit} conversations.`,
-    ...entries.map((entry) => {
-      const current = entry.id === route.conversationId ? " (current)" : "";
-      return `- ${entry.id}${current} - ${formatTitle(entry.summary)}`;
-    }),
+    `Showing ${entries.length} recent ${
+      entries.length === 1 ? "conversation" : "conversations"
+    } newest first. Page size is ${limit}.`,
     "",
-    `Use ${prefix}/conv switch <id> to switch this chat.`,
-    ...(options.hasMore && lastEntry
-      ? [`Use ${prefix}/conv list ${lastEntry.id} to show more.`]
-      : []),
-  ].join("\n");
+  ];
+  for (const [index, entry] of entries.entries()) {
+    if (index > 0) lines.push("");
+    lines.push(formatConversationListEntry(route, entry));
+  }
+  lines.push(
+    `Use ${prefix}/conv switch <conversation_id> to switch this chat.`,
+  );
+  if (options.hasMore && lastEntry) {
+    lines.push(
+      `Use ${prefix}/conv list ${formatConversationId(
+        lastEntry.id,
+      )} to show older conversations.`,
+    );
+  }
+  return lines.join("\n");
 }
 
 export function buildChannelConversationNewMessage(
@@ -117,7 +142,7 @@ export function buildChannelConversationNewMessage(
   conversationId: string,
 ): string {
   const displayName = channelDisplayName(channelId);
-  return `${displayName} started a new conversation ${conversationId} for this chat.`;
+  return `${displayName} started a new conversation for this chat: ${formatConversationId(conversationId)}`;
 }
 
 export function buildChannelConversationSwitchedMessage(
@@ -125,7 +150,7 @@ export function buildChannelConversationSwitchedMessage(
   conversationId: string,
 ): string {
   const displayName = channelDisplayName(channelId);
-  return `${displayName} switched this chat to conversation ${conversationId}.`;
+  return `${displayName} switched this chat to conversation: ${formatConversationId(conversationId)}`;
 }
 
 export function buildChannelConversationForkedMessage(
@@ -134,7 +159,11 @@ export function buildChannelConversationForkedMessage(
   forkedConversationId: string,
 ): string {
   const displayName = channelDisplayName(channelId);
-  return `${displayName} forked this chat from ${sourceConversationId} to ${forkedConversationId}.`;
+  return [
+    `${displayName} forked this chat.`,
+    `From: ${formatConversationId(sourceConversationId)}`,
+    `To: ${formatConversationId(forkedConversationId)}`,
+  ].join("\n");
 }
 
 export function buildChannelConversationForkedTitleFailedMessage(
@@ -142,8 +171,15 @@ export function buildChannelConversationForkedTitleFailedMessage(
   sourceConversationId: string,
   forkedConversationId: string,
 ): string {
-  const displayName = channelDisplayName(channelId);
-  return `${displayName} forked this chat from ${sourceConversationId} to ${forkedConversationId}, but could not set the title. This chat is now using the fork.`;
+  return [
+    buildChannelConversationForkedMessage(
+      channelId,
+      sourceConversationId,
+      forkedConversationId,
+    ),
+    "",
+    "This chat is now using the fork, but the title could not be set.",
+  ].join("\n");
 }
 
 export function buildChannelConversationInvalidMessage(
@@ -167,7 +203,7 @@ export function buildChannelConversationWrongAgentMessage(
   conversationId: string,
 ): string {
   const displayName = channelDisplayName(channelId);
-  return `${displayName} cannot switch to ${conversationId} because it belongs to a different agent.`;
+  return `${displayName} cannot switch to this conversation because it belongs to a different agent: ${formatConversationId(conversationId)}`;
 }
 
 export function buildChannelConversationUnavailableMessage(
@@ -175,4 +211,9 @@ export function buildChannelConversationUnavailableMessage(
 ): string {
   const displayName = channelDisplayName(channelId);
   return `${displayName} cannot use /conv because the listener is not ready yet. Try again in a moment.`;
+}
+
+export function buildChannelConversationBusyMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} cannot change conversations while this chat has an active or queued turn. Wait for it to finish or run /cancel, then try again.`;
 }

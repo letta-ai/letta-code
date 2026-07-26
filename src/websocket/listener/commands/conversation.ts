@@ -6,6 +6,7 @@ import type {
 } from "@/backend";
 import { getBackend } from "@/backend";
 import {
+  buildChannelConversationBusyMessage,
   buildChannelConversationFailedMessage,
   buildChannelConversationForkedMessage,
   buildChannelConversationForkedTitleFailedMessage,
@@ -22,6 +23,8 @@ import type { ChannelConversationHandler } from "@/channels/registry-handlers";
 import { addRoute } from "@/channels/routing";
 import type { ChannelRoute } from "@/channels/types";
 import { debugWarn } from "@/utils/debug";
+import { getConversationRuntime } from "@/websocket/listener/runtime";
+import type { ListenerRuntime } from "@/websocket/listener/types";
 
 const CHANNEL_CONVERSATION_LIST_LIMIT = 8;
 const CHANNEL_CONVERSATION_FETCH_LIMIT = CHANNEL_CONVERSATION_LIST_LIMIT + 1;
@@ -89,11 +92,19 @@ function updateChannelConversationRoute(
   route: ChannelRoute,
   conversationId: string,
 ): ChannelRoute {
+  const shouldReactivate =
+    route.detached === true || route.outboundEnabled === false;
   const updatedRoute: ChannelRoute = {
     ...route,
     conversationId,
     enabled: true,
     updatedAt: new Date().toISOString(),
+    ...(shouldReactivate
+      ? {
+          detached: false,
+          outboundEnabled: true,
+        }
+      : {}),
   };
   addRoute(channelId, updatedRoute);
   return updatedRoute;
@@ -109,10 +120,53 @@ function toConversationListEntries(
   }));
 }
 
-export function createChannelConversationHandler(): ChannelConversationHandler {
+function isConversationMutationAction(
+  action: ReturnType<typeof parseChannelConversationCommand>["action"],
+): boolean {
+  return action === "new" || action === "switch" || action === "fork";
+}
+
+function hasActiveOrQueuedWork(
+  listener: ListenerRuntime | undefined,
+  route: ChannelRoute,
+): boolean {
+  if (!listener) {
+    return false;
+  }
+  const runtime = getConversationRuntime(
+    listener,
+    route.agentId,
+    route.conversationId,
+  );
+  if (!runtime) {
+    return false;
+  }
+  return (
+    runtime.isProcessing ||
+    runtime.pendingTurns > 0 ||
+    runtime.queuePumpActive ||
+    runtime.queuePumpScheduled ||
+    runtime.activeChannelTurn !== null ||
+    (runtime.queueRuntime?.length ?? 0) > 0
+  );
+}
+
+export function createChannelConversationHandler(
+  listener?: ListenerRuntime,
+): ChannelConversationHandler {
   return async ({ channelId, route, args }) => {
     const parsed = parseChannelConversationCommand(args);
     const backend = getBackend();
+
+    if (
+      isConversationMutationAction(parsed.action) &&
+      hasActiveOrQueuedWork(listener, route)
+    ) {
+      return {
+        handled: true,
+        text: buildChannelConversationBusyMessage(channelId),
+      };
+    }
 
     try {
       switch (parsed.action) {

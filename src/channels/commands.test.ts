@@ -217,7 +217,7 @@ describe("channel slash commands", () => {
       "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /compact, /context, /conv, /model, /reflection.",
     );
     expect(text).toContain(
-      "Conversation commands: /conv new [title], /conv list [after_id], /conv switch <id>, /conv fork [title].",
+      "Conversation commands: /conv new [title], /conv list [last_conversation_id], /conv switch <conversation_id>, /conv fork [title].",
     );
 
     const slackText = buildChannelHelpMessage("slack");
@@ -241,7 +241,10 @@ describe("channel slash commands", () => {
       "@agent /conv - manage this thread's conversation",
     );
     expect(slackText).toContain(
-      "@agent /conv list [after_id] - show recent conversations for the routed agent",
+      "@agent /conv list [last_conversation_id] - show recent conversations for the routed agent",
+    );
+    expect(slackText).toContain(
+      "@agent /conv switch <conversation_id> - switch this thread to a conversation",
     );
     expect(slackText).toContain(
       "@agent /conv fork [title] - fork this thread's conversation",
@@ -277,6 +280,34 @@ describe("channel slash commands", () => {
         },
       }),
     ).toContain("Route: Connected to a Letta agent conversation.");
+    expect(
+      buildChannelStatusMessage(msg, {
+        adapterRunning: true,
+        accountConfigured: true,
+        accountEnabled: true,
+        route: {
+          chatId: "chat-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          enabled: true,
+          createdAt: "2026-05-15T00:00:00.000Z",
+        },
+      }),
+    ).toContain("Conversation: `conv-1`");
+    expect(
+      buildChannelStatusMessage(msg, {
+        adapterRunning: true,
+        accountConfigured: true,
+        accountEnabled: true,
+        route: {
+          chatId: "chat-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          enabled: true,
+          createdAt: "2026-05-15T00:00:00.000Z",
+        },
+      }),
+    ).not.toContain("```");
 
     const unconnectedText = buildChannelStatusMessage(msg, {
       adapterRunning: false,
@@ -308,11 +339,17 @@ describe("channel slash commands", () => {
     expect(buildChannelPausedMessage("telegram", route)).toContain(
       "Telegram paused agent routing",
     );
+    expect(buildChannelPausedMessage("telegram", route)).toContain(
+      "Conversation: `conv-1`",
+    );
     expect(buildChannelAlreadyPausedMessage("telegram")).toContain(
       "already paused",
     );
     expect(buildChannelResumedMessage("telegram", route)).toContain(
       "Telegram resumed agent routing",
+    );
+    expect(buildChannelResumedMessage("telegram", route)).toContain(
+      "Conversation: `conv-1`",
     );
     expect(buildChannelAlreadyActiveMessage("telegram")).toContain(
       "already active",
@@ -620,6 +657,13 @@ describe("channel slash commands", () => {
         "https://chat.letta.com/chat/agent-1?conversation=conv-1",
       ),
     ).toContain("Slack chat for this route");
+    expect(
+      buildChannelChatLinkMessage(
+        "slack",
+        route,
+        "https://chat.letta.com/chat/agent-1?conversation=conv-1",
+      ),
+    ).toContain("Conversation: `conv-1`");
     expect(buildChannelChatUnavailableMessage("telegram", route)).toContain(
       "chat UI is not available",
     );
@@ -628,6 +672,9 @@ describe("channel slash commands", () => {
     );
     expect(buildChannelNewConversationMessage("slack", route)).toContain(
       "started a new conversation",
+    );
+    expect(buildChannelNewConversationMessage("slack", route)).toContain(
+      "Conversation: `conv-1`",
     );
   });
 
