@@ -1,6 +1,7 @@
 import type { Provider } from "@earendil-works/pi-ai";
 import {
   createLocalEndpointPiProvider,
+  LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
   type LocalEndpointDiscover,
   type LocalEndpointModelMetadata,
 } from "./pi-local-endpoint-provider";
@@ -72,12 +73,20 @@ function parseOllamaShow(
   const contextLength = architecture
     ? modelInfo?.[`${architecture}.context_length`]
     : undefined;
+  // /api/show reports the model's architectural training maximum, not the
+  // context allocated by the Ollama runner. Use the same conservative 128K
+  // harness default as pi-ai custom models; users can raise it explicitly
+  // with /context-limit when their Ollama runtime is configured for more.
+  const harnessContextLength =
+    typeof contextLength === "number" && contextLength > 0
+      ? Math.min(contextLength, LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW)
+      : undefined;
   return {
     id: modelId,
     vision: capabilities.includes("vision"),
     thinking: capabilities.includes("thinking"),
-    ...(typeof contextLength === "number" && contextLength > 0
-      ? { contextLength }
+    ...(harnessContextLength !== undefined
+      ? { contextLength: harnessContextLength }
       : {}),
   };
 }
