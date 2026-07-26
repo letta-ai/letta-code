@@ -3121,7 +3121,7 @@ export class LocalStore {
     const agentsDir = join(this.storageDir, "agents");
     if (existsSync(agentsDir)) {
       for (const file of readdirSync(agentsDir)) {
-        if (!file.endsWith(".json")) continue;
+        if (!file.endsWith(".json") || file.startsWith("._")) continue;
         const raw = readJsonFile<unknown>(join(agentsDir, file));
         const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
         if (agent?.id) {
