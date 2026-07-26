@@ -63,5 +63,11 @@ describe("Signal target helpers", () => {
     ).toBe(true);
     expect(signalAllowedUsersIncludes(["uuid-1"], "uuid-1")).toBe(true);
     expect(signalAllowedUsersIncludes(["uuid-1"], "uuid-2")).toBe(false);
+    expect(
+      signalAllowedUsersIncludes(
+        ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+        "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      ),
+    ).toBe(false);
   });
 });

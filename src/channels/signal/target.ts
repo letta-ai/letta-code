@@ -119,7 +119,8 @@ export function normalizeSignalPhone(value: string | null | undefined): string {
   const withoutPrefix = trimmed.toLowerCase().startsWith("signal:")
     ? trimmed.slice("signal:".length)
     : trimmed;
-  return withoutPrefix.replace(/[^0-9+]/g, "");
+  const normalized = withoutPrefix.replace(/[\s().-]+/g, "");
+  return /^\+?\d+$/.test(normalized) ? normalized : "";
 }
 
 export function signalAllowedUsersIncludes(

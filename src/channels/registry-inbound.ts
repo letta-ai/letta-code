@@ -55,6 +55,9 @@ export function createChannelInboundRouter(deps: {
     if (!adapter) return;
 
     const config = getChannelAccount(msg.channel, accountId);
+    if (config?.enabled === false) {
+      return;
+    }
 
     // Sender access gate: one decision for every surface (DMs, groups,
     // and every channel's auto-route path), evaluated before control
