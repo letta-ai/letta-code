@@ -129,6 +129,8 @@ export function createChannelInboundRouter(deps: {
             deps.commands.handleCancelSlashCommand(commandMsg),
           chat: async (_command, commandMsg) =>
             deps.commands.handleChatSlashCommand(commandMsg),
+          context: async (_command, commandMsg) =>
+            deps.commands.handleContextSlashCommand(commandMsg),
           detach: async (_command, commandMsg) =>
             deps.commands.handleDetachSlashCommand(commandMsg),
           model: async (command, commandMsg) =>

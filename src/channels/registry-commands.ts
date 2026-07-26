@@ -19,9 +19,11 @@ import {
   buildChannelReloadUnavailableMessage,
   buildChannelResumedMessage,
 } from "./commands";
+import { buildChannelContextUnavailableMessage } from "./context-command";
 import type { ChannelRegistryEvent } from "./registry-events";
 import type {
   ChannelCancelHandler,
+  ChannelContextHandler,
   ChannelModelHandler,
   ChannelReflectionHandler,
   ChannelReloadHandler,
@@ -53,6 +55,7 @@ export function createChannelCommandRouter(deps: {
     threadId?: string | null,
   ) => ChannelRoute | null;
   getCancelHandler: () => ChannelCancelHandler | null;
+  getContextHandler: () => ChannelContextHandler | null;
   getReflectionHandler: () => ChannelReflectionHandler | null;
   getReloadHandler: () => ChannelReloadHandler | null;
   getModelHandler: () => ChannelModelHandler | null;
@@ -182,6 +185,34 @@ export function createChannelCommandRouter(deps: {
         }),
       ),
     };
+  }
+
+  async function handleContextSlashCommand(
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = loadAndFindRawRouteForMessage(msg);
+    if (!route?.enabled) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    const contextHandler = deps.getContextHandler();
+    if (!contextHandler) {
+      return {
+        handled: true,
+        text: buildChannelContextUnavailableMessage(msg.channel),
+      };
+    }
+
+    return contextHandler({
+      channelId: msg.channel,
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+    });
   }
 
   async function handleDetachSlashCommand(
@@ -472,6 +503,7 @@ export function createChannelCommandRouter(deps: {
   return {
     handleCancelSlashCommand,
     handleChatSlashCommand,
+    handleContextSlashCommand,
     handleDetachSlashCommand,
     handleModelSlashCommand,
     handleNewConversationSlashCommand,

@@ -91,6 +91,7 @@ export type CurrentModelStatus = {
   modelHandle: string | null;
   modelLabel: string;
   scope: "agent" | "conversation";
+  contextWindow: number | null;
 };
 
 function inferProviderTypeFromRegistryHandle(
@@ -224,6 +225,10 @@ export async function getCurrentModelStatusForRuntime(params: {
     modelHandle: snapshot.modelHandle,
     modelLabel: modelInfo?.label ?? snapshot.modelHandle ?? "unknown",
     scope: params.conversationId === "default" ? "agent" : "conversation",
+    contextWindow:
+      typeof snapshot.llmConfig?.context_window === "number"
+        ? snapshot.llmConfig.context_window
+        : null,
   };
 }
 

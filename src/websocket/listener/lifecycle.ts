@@ -44,6 +44,7 @@ import {
 } from "./channel-turn-session";
 import { handleReloadCommand } from "./commands";
 import { handleChannelRegistryEvent } from "./commands/channels";
+import { createChannelContextHandler } from "./commands/context";
 import {
   applyModelUpdateForRuntime,
   buildListModelsResponse,
@@ -540,7 +541,6 @@ export async function wireChannelIngress(
   registry.setEventHandler((event) => {
     handleChannelRegistryEvent(event, socket, listener, safeSocketSend);
   });
-
   await recoverPendingChannelControlRequests(listener);
 
   registry.setApprovalResponseHandler(async ({ runtime, response }) =>
@@ -566,7 +566,7 @@ export async function wireChannelIngress(
       processQueuedTurn,
     }),
   );
-
+  registry.setContextHandler(createChannelContextHandler(listener));
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
     if (!modelIdentifier) {
       try {

@@ -23,6 +23,11 @@ export type ChannelReflectionHandler = (params: {
   runtime: { agent_id: string; conversation_id: string };
 }) => Promise<{ handled: boolean; text?: string }>;
 
+export type ChannelContextHandler = (params: {
+  channelId: string;
+  runtime: { agent_id: string; conversation_id: string };
+}) => Promise<{ handled: boolean; text?: string }>;
+
 export type ChannelModelHandler = (params: {
   channelId: string;
   runtime: { agent_id: string; conversation_id: string };

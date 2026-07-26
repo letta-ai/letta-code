@@ -41,43 +41,22 @@ type ChannelDirectReplyPayload = {
   modelPicker?: ChannelModelPickerData;
 };
 
+type ChannelSlashCommandHandler = (
+  command: ParsedChannelSlashCommand,
+  msg: InboundChannelMessage,
+) => Promise<ChannelSlashCommandHandlerResult>;
+
 export type ChannelSlashCommandHandlers = {
-  cancel?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  chat?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  detach?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  model?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  newConversation?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  pause?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  reflection?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  reload?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  resume?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
+  cancel?: ChannelSlashCommandHandler;
+  chat?: ChannelSlashCommandHandler;
+  context?: ChannelSlashCommandHandler;
+  detach?: ChannelSlashCommandHandler;
+  model?: ChannelSlashCommandHandler;
+  newConversation?: ChannelSlashCommandHandler;
+  pause?: ChannelSlashCommandHandler;
+  reflection?: ChannelSlashCommandHandler;
+  reload?: ChannelSlashCommandHandler;
+  resume?: ChannelSlashCommandHandler;
 };
 
 export type ChannelStatusContext = {
@@ -136,6 +115,7 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     kind: "direct",
     summary: "Send feedback about Letta Code from this routed chat.",
   },
+  { name: "context", kind: "agent-scoped", summary: "Show context usage." },
   {
     name: "model",
     kind: "agent-scoped",
@@ -275,6 +255,7 @@ const SLACK_MENTION_SLASH_COMMAND_EXAMPLES = [
   "@agent /model",
   "@agent /model list",
   "@agent /model <handle-or-id>",
+  "@agent /context",
   "@agent /cancel",
   "@agent /chat",
   "@agent /feedback <message>",
@@ -329,6 +310,7 @@ export function buildChannelHelpMessage(channelId: string): string {
       "@agent /model - show this thread's current model",
       "@agent /model list - show available models",
       "@agent /model <handle-or-id> - switch this thread's model",
+      "@agent /context - show context window usage",
       "@agent /status - show route and listener status",
       "@agent /cancel - cancel the current turn",
       "@agent /chat - show the web chat link",
@@ -919,6 +901,12 @@ export async function tryHandleChannelSlashCommand(
             msg,
             command,
             handler: options.handlers?.chat,
+          });
+        case "context":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.context,
           });
         case "feedback":
           return handleChannelFeedbackCommand({

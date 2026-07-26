@@ -26,6 +26,7 @@ import {
   parseChannelSlashCommand,
   tryHandleChannelSlashCommand,
 } from "@/channels/commands";
+import { buildChannelContextUsageMessage } from "@/channels/context-command";
 import {
   __testOverrideSubmitChannelFeedback,
   buildChannelFeedbackFailedMessage,
@@ -198,6 +199,7 @@ describe("channel slash commands", () => {
       "cancel",
       "chat",
       "feedback",
+      "context",
       "model",
       "reflection",
     ]) {
@@ -210,7 +212,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).not.toContain("MessageChannel");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /context, /model, /reflection.",
     );
 
     const slackText = buildChannelHelpMessage("slack");
@@ -228,6 +230,7 @@ describe("channel slash commands", () => {
     expect(slackText).toContain(
       "@agent /model <handle-or-id> - switch this thread's model",
     );
+    expect(slackText).toContain("@agent /context - show context window usage");
     expect(slackText).toContain("@agent /feedback <message>");
     expect(slackText).toContain("@agent /detach");
     expect(slackText).toContain("@agent /reload");
@@ -632,6 +635,37 @@ describe("channel slash commands", () => {
     ).toContain("Telegram current agent model");
   });
 
+  test("builds plain channel context usage messages", () => {
+    expect(
+      buildChannelContextUsageMessage("telegram", {
+        usedTokens: 12_345,
+        contextWindow: 200_000,
+        modelLabel: "Claude Sonnet 4.6",
+        scope: "conversation",
+      }),
+    ).toBe(
+      "Telegram context usage\n12,345 / 200,000 tokens used (6%).\n187,655 tokens remaining.\nModel: Claude Sonnet 4.6 (conversation).",
+    );
+
+    expect(
+      buildChannelContextUsageMessage("slack", {
+        usedTokens: 12_345,
+        contextWindow: null,
+        modelLabel: "unknown",
+      }),
+    ).toContain("Context window size is unknown.");
+
+    expect(
+      buildChannelContextUsageMessage("discord", {
+        usedTokens: 0,
+        contextWindow: 128_000,
+        modelLabel: "GPT-5",
+      }),
+    ).toBe(
+      "Context data is not available yet. Run a turn in this conversation, then try /context again.",
+    );
+  });
+
   test("builds model selector-style command messages", () => {
     const text = buildChannelModelListMessage("slack", {
       entries: [
@@ -784,7 +818,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram received /compact now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection.",
+      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /context, /model, /reflection.",
     );
     expect(text).toContain("without a leading slash");
 
