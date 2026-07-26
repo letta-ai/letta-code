@@ -1,5 +1,5 @@
 import type SlackApp from "@slack/bolt";
-import { SLACK_NATIVE_SLASH_COMMAND_NAMES } from "@/channels/command-definitions";
+import { listChannelSlashCommands } from "@/channels/commands";
 import { SLACK_MODEL_SELECT_ACTION_ID } from "@/channels/slack/model-picker-blocks";
 import type {
   ChannelAdapter,
@@ -372,8 +372,10 @@ export function createSlackIngressController(params: {
         );
       }
     };
-    for (const name of SLACK_NATIVE_SLASH_COMMAND_NAMES) {
-      app.command(`/${name}`, handleCommand);
+    for (const definition of listChannelSlashCommands()) {
+      for (const name of [definition.name, ...(definition.aliases ?? [])]) {
+        app.command(`/${name}`, handleCommand);
+      }
     }
 
     const actionRegistrar = app as unknown as {

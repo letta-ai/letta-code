@@ -69,8 +69,6 @@ export const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
   },
 ];
 
-export const SLACK_NATIVE_SLASH_COMMAND_NAMES = ["cancel"] as const;
-
 export const SLACK_MENTION_COMMAND_NAMES = [
   "help",
   "detach",

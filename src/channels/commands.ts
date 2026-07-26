@@ -1,10 +1,12 @@
 import type { ListModelsResponseModelEntry } from "@/types/protocol_v2";
 import {
   buildChannelCommandDeniedMessage,
+  buildChannelPrivilegedCommandDeniedMessage,
   buildChannelWhoamiMessage,
   type ChannelCommandGate,
   canonicalizeChannelCommandName,
   canRunChannelCommand,
+  canRunPrivilegedChannelCommand,
 } from "./access-control";
 import {
   CHANNEL_SLASH_COMMANDS,
@@ -12,6 +14,7 @@ import {
   SLACK_MENTION_COMMAND_NAMES,
   SLACK_MENTION_SLASH_COMMAND_EXAMPLES,
 } from "./command-definitions";
+import { requiresPrivilegedChannelConversationAccess } from "./conversation-command";
 import { handleChannelFeedbackCommand } from "./feedback";
 import { formatChannelInlineCode } from "./message-formatting";
 import { getChannelDisplayName } from "./plugin-registry";
@@ -844,6 +847,16 @@ export async function tryHandleChannelSlashCommand(
             handler: options.handlers?.compact,
           });
         case "conv":
+          if (
+            requiresPrivilegedChannelConversationAccess(command.args) &&
+            !canRunPrivilegedChannelCommand(options.commandGate, canonicalName)
+          ) {
+            return buildChannelPrivilegedCommandDeniedMessage(
+              msg.channel,
+              command.raw,
+              options.commandGate,
+            );
+          }
           return handleScopedCommand({
             msg,
             command,

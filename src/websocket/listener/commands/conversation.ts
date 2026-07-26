@@ -5,6 +5,7 @@ import type {
   ConversationUpdateBody,
 } from "@/backend";
 import { getBackend } from "@/backend";
+import { getChannelAccount } from "@/channels/accounts";
 import {
   buildChannelConversationBusyMessage,
   buildChannelConversationFailedMessage,
@@ -21,8 +22,17 @@ import {
 } from "@/channels/conversation-command";
 import type { ChannelConversationHandler } from "@/channels/registry-handlers";
 import { addRoute } from "@/channels/routing";
-import type { ChannelRoute } from "@/channels/types";
+import {
+  type ChannelDefaultPermissionMode,
+  type ChannelRoute,
+  isDiscordChannelAccount,
+  isSlackChannelAccount,
+} from "@/channels/types";
 import { debugWarn } from "@/utils/debug";
+import {
+  getOrCreateConversationPermissionModeStateRef,
+  persistPermissionModeMapForRuntime,
+} from "@/websocket/listener/permission-mode";
 import { getConversationRuntime } from "@/websocket/listener/runtime";
 import type { ListenerRuntime } from "@/websocket/listener/types";
 
@@ -37,9 +47,13 @@ function getPageItems<T>(page: unknown): T[] {
   if (page && typeof page === "object") {
     const candidate = page as {
       getPaginatedItems?: () => T[];
+      items?: unknown;
     };
     if (typeof candidate.getPaginatedItems === "function") {
       return candidate.getPaginatedItems();
+    }
+    if (Array.isArray(candidate.items)) {
+      return candidate.items as T[];
     }
   }
 
@@ -108,6 +122,52 @@ function updateChannelConversationRoute(
   };
   addRoute(channelId, updatedRoute);
   return updatedRoute;
+}
+
+function getDefaultPermissionModeForRoute(
+  channelId: string,
+  route: ChannelRoute,
+): ChannelDefaultPermissionMode | null {
+  if (!route.accountId) {
+    return null;
+  }
+  const account = getChannelAccount(channelId, route.accountId);
+  if (!account) {
+    return null;
+  }
+  if (isSlackChannelAccount(account) || isDiscordChannelAccount(account)) {
+    return account.defaultPermissionMode;
+  }
+  return null;
+}
+
+function seedChannelConversationDefaultPermissionMode(params: {
+  channelId: string;
+  listener: ListenerRuntime | undefined;
+  route: ChannelRoute;
+  conversationId: string;
+}): void {
+  if (!params.listener) {
+    return;
+  }
+  const defaultPermissionMode = getDefaultPermissionModeForRoute(
+    params.channelId,
+    params.route,
+  );
+  if (!defaultPermissionMode) {
+    return;
+  }
+
+  const permissionModeState = getOrCreateConversationPermissionModeStateRef(
+    params.listener,
+    params.route.agentId,
+    params.conversationId,
+  );
+  if (permissionModeState.mode === defaultPermissionMode) {
+    return;
+  }
+  permissionModeState.mode = defaultPermissionMode;
+  persistPermissionModeMapForRuntime(params.listener);
 }
 
 function toConversationListEntries(
@@ -214,6 +274,12 @@ export function createChannelConversationHandler(
             ...(parsed.title ? { summary: parsed.title } : {}),
           } as ConversationCreateBody);
           updateChannelConversationRoute(channelId, route, conversation.id);
+          seedChannelConversationDefaultPermissionMode({
+            channelId,
+            listener,
+            route,
+            conversationId: conversation.id,
+          });
           return {
             handled: true,
             text: buildChannelConversationNewMessage(
@@ -259,6 +325,12 @@ export function createChannelConversationHandler(
               : {}),
           });
           updateChannelConversationRoute(channelId, route, forked.id);
+          seedChannelConversationDefaultPermissionMode({
+            channelId,
+            listener,
+            route,
+            conversationId: forked.id,
+          });
           if (parsed.title) {
             try {
               await backend.updateConversation(forked.id, {

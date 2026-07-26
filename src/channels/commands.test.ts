@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolveChannelCommandGate } from "@/channels/access-control";
 import {
   buildChannelAlreadyActiveMessage,
   buildChannelAlreadyPausedMessage,
@@ -354,6 +355,93 @@ describe("channel slash commands", () => {
     expect(buildChannelAlreadyActiveMessage("telegram")).toContain(
       "already active",
     );
+  });
+
+  test("/conv list is denied when no admin list explicitly grants conversation access", async () => {
+    const replies: CapturedDirectReply[] = [];
+    let handlerCalls = 0;
+    const gate = resolveChannelCommandGate({
+      account: {
+        accountId: "acct-telegram",
+        dmPolicy: "open",
+        allowedUsers: [],
+      },
+      channelId: "telegram",
+      senderId: "user-1",
+    });
+
+    const handled = await tryHandleChannelSlashCommand(
+      createReplyCapturingAdapter(replies),
+      {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        chatId: "123",
+        senderId: "user-1",
+        senderName: "Alice",
+        text: "/conv list",
+        timestamp: Date.now(),
+        messageId: "77",
+        chatType: "direct",
+      },
+      {
+        commandGate: gate,
+        handlers: {
+          conv: async () => {
+            handlerCalls += 1;
+            return { handled: true, text: "listed conversations" };
+          },
+        },
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(handlerCalls).toBe(0);
+    expect(replies).toHaveLength(1);
+    expect(replies[0]?.text).toContain("/conv list is limited to admins");
+  });
+
+  test("/conv switch runs when a non-admin is explicitly allowed to use /conv", async () => {
+    const replies: CapturedDirectReply[] = [];
+    const handlerArgs: string[] = [];
+    const gate = resolveChannelCommandGate({
+      account: {
+        accountId: "acct-telegram",
+        dmPolicy: "open",
+        allowedUsers: [],
+        adminUsers: ["admin-1"],
+        userAllowedCommands: ["conv"],
+      },
+      channelId: "telegram",
+      senderId: "user-1",
+    });
+
+    const handled = await tryHandleChannelSlashCommand(
+      createReplyCapturingAdapter(replies),
+      {
+        channel: "telegram",
+        accountId: "acct-telegram",
+        chatId: "123",
+        senderId: "user-1",
+        senderName: "Alice",
+        text: "/conv switch conv-2",
+        timestamp: Date.now(),
+        messageId: "77",
+        chatType: "direct",
+      },
+      {
+        commandGate: gate,
+        handlers: {
+          conv: async (command) => {
+            handlerArgs.push(command.args);
+            return { handled: true, text: "switched conversations" };
+          },
+        },
+      },
+    );
+
+    expect(handled).toBe(true);
+    expect(handlerArgs).toEqual(["switch conv-2"]);
+    expect(replies[0]?.text).toBe("switched conversations");
   });
 
   test("builds feedback command messages", () => {

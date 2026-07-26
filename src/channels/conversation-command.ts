@@ -80,6 +80,13 @@ export function parseChannelConversationCommand(
   }
 }
 
+export function requiresPrivilegedChannelConversationAccess(
+  args?: string,
+): boolean {
+  const parsed = parseChannelConversationCommand(args);
+  return parsed.action === "list" || parsed.action === "switch";
+}
+
 export function buildChannelConversationMenuMessage(
   channelId: string,
   route: ChannelRoute,

@@ -6,6 +6,11 @@ import type { Conversation } from "@letta-ai/letta-client/resources/conversation
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
 import {
+  __testOverrideLoadChannelAccounts,
+  __testOverrideSaveChannelAccounts,
+  clearChannelAccountStores,
+} from "@/channels/accounts";
+import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
   addRoute,
@@ -13,13 +18,23 @@ import {
   getRoute,
 } from "@/channels/routing";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
+import { getConversationPermissionModeState } from "@/websocket/listener/permission-mode";
+import {
+  flushRemoteSettingsWrites,
+  resetRemoteSettingsCache,
+} from "@/websocket/listener/remote-settings";
 import { createChannelConversationHandler } from "./conversation";
 
-afterEach(() => {
+afterEach(async () => {
   __testSetBackend(null);
   clearAllRoutes();
+  clearChannelAccountStores();
   __testOverrideLoadRoutes(null);
   __testOverrideSaveRoutes(null);
+  __testOverrideLoadChannelAccounts(null);
+  __testOverrideSaveChannelAccounts(null);
+  resetRemoteSettingsCache();
+  await flushRemoteSettingsWrites();
 });
 
 describe("channel conversation command handler", () => {
@@ -105,6 +120,90 @@ describe("channel conversation command handler", () => {
     }
   });
 
+  test("/conv new seeds default permission mode for Slack-created conversations", async () => {
+    const storageDir = await mkdtemp(
+      join(os.tmpdir(), "channel-conv-new-permission-"),
+    );
+    const fakeHome = join(storageDir, "home");
+    const originalHome = process.env.HOME;
+    try {
+      process.env.HOME = fakeHome;
+      resetRemoteSettingsCache();
+      __testOverrideLoadRoutes(() => null);
+      __testOverrideSaveRoutes(() => {});
+      __testOverrideLoadChannelAccounts(() => [
+        {
+          channel: "slack",
+          accountId: "acct-slack",
+          enabled: true,
+          mode: "socket",
+          botToken: "xoxb-test-token",
+          appToken: "xapp-test-token",
+          agentId: "agent-1",
+          defaultPermissionMode: "standard",
+          dmPolicy: "open",
+          allowedUsers: [],
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        },
+      ]);
+      __testOverrideSaveChannelAccounts(() => {});
+
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Channel Conversation Agent",
+      } as AgentCreateBody);
+      const source = await backend.createConversation({
+        agent_id: agent.id,
+        summary: "Source conversation",
+      } as never);
+      const route = {
+        accountId: "acct-slack",
+        chatId: "C123",
+        chatType: "channel" as const,
+        threadId: "1712790000.000050",
+        agentId: agent.id,
+        conversationId: source.id,
+        enabled: true,
+        createdAt: "2026-05-19T00:00:00.000Z",
+      };
+      addRoute("slack", route);
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const handler = createChannelConversationHandler(listener);
+      await handler({
+        channelId: "slack",
+        route,
+        args: "new Standard-mode branch",
+      });
+
+      const conversationId = getRoute(
+        "slack",
+        "C123",
+        "acct-slack",
+        "1712790000.000050",
+      )?.conversationId;
+      expect(conversationId).toBeString();
+      expect(
+        getConversationPermissionModeState(listener, agent.id, conversationId)
+          .mode,
+      ).toBe("standard");
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      resetRemoteSettingsCache();
+      await flushRemoteSettingsWrites();
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("/conv switch validates ownership and updates the channel route", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "channel-conv-switch-"));
     try {
@@ -153,6 +252,88 @@ describe("channel conversation command handler", () => {
         target.id,
       );
     } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("/conv fork seeds default permission mode for Discord-created conversations", async () => {
+    const storageDir = await mkdtemp(
+      join(os.tmpdir(), "channel-conv-fork-permission-"),
+    );
+    const fakeHome = join(storageDir, "home");
+    const originalHome = process.env.HOME;
+    try {
+      process.env.HOME = fakeHome;
+      resetRemoteSettingsCache();
+      __testOverrideLoadRoutes(() => null);
+      __testOverrideSaveRoutes(() => {});
+      __testOverrideLoadChannelAccounts(() => [
+        {
+          channel: "discord",
+          accountId: "acct-discord",
+          enabled: true,
+          token: "discord-token",
+          agentId: "agent-1",
+          defaultPermissionMode: "acceptEdits",
+          dmPolicy: "open",
+          allowedUsers: [],
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        },
+      ]);
+      __testOverrideSaveChannelAccounts(() => {});
+
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Channel Conversation Agent",
+      } as AgentCreateBody);
+      const source = await backend.createConversation({
+        agent_id: agent.id,
+        summary: "Source conversation",
+      } as never);
+      const route = {
+        accountId: "acct-discord",
+        chatId: "discord-channel-1",
+        chatType: "channel" as const,
+        threadId: "discord-thread-1",
+        agentId: agent.id,
+        conversationId: source.id,
+        enabled: true,
+        createdAt: "2026-05-19T00:00:00.000Z",
+      };
+      addRoute("discord", route);
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const handler = createChannelConversationHandler(listener);
+      await handler({
+        channelId: "discord",
+        route,
+        args: "fork Accept edits branch",
+      });
+
+      const conversationId = getRoute(
+        "discord",
+        "discord-channel-1",
+        "acct-discord",
+        "discord-thread-1",
+      )?.conversationId;
+      expect(conversationId).toBeString();
+      expect(
+        getConversationPermissionModeState(listener, agent.id, conversationId)
+          .mode,
+      ).toBe("acceptEdits");
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      resetRemoteSettingsCache();
+      await flushRemoteSettingsWrites();
       await rm(storageDir, { recursive: true, force: true });
     }
   });
