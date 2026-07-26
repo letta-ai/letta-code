@@ -1,8 +1,9 @@
 import {
-  buildChannelContextUnavailableMessage,
+  buildChannelContextFailedMessage,
   buildChannelContextUsageMessage,
 } from "@/channels/context-command";
 import type { ChannelContextHandler } from "@/channels/registry-handlers";
+import { debugWarn } from "@/utils/debug";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import type { ListenerRuntime } from "@/websocket/listener/types";
 import { getCurrentModelStatusForRuntime } from "./model-toolset";
@@ -31,10 +32,17 @@ export function createChannelContextHandler(
           scope: status.scope,
         }),
       };
-    } catch {
+    } catch (error) {
+      debugWarn(
+        "channels",
+        "Failed to load channel context usage for %s/%s: %s",
+        runtime.agent_id,
+        runtime.conversation_id,
+        error instanceof Error ? (error.stack ?? error.message) : String(error),
+      );
       return {
         handled: true,
-        text: buildChannelContextUnavailableMessage(channelId),
+        text: buildChannelContextFailedMessage(channelId),
       };
     }
   };

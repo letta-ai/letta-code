@@ -14,3 +14,8 @@ export function buildChannelCompactUnavailableMessage(
   const displayName = channelDisplayName(channelId);
   return `${displayName} cannot use /compact because the listener is not ready yet. Try again in a moment.`;
 }
+
+export function buildChannelCompactFailedMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} could not compact this conversation right now. Try again in a moment.`;
+}

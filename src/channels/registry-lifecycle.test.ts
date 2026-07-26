@@ -83,6 +83,80 @@ describe("ChannelRegistry lifecycle", () => {
     expect(registry.isReady()).toBe(true);
   });
 
+  test.each(["pause", "stopAll"] as const)(
+    "%s clears listener-backed channel command handlers",
+    async (lifecycle) => {
+      const replies: string[] = [];
+      const handlerCalls: string[] = [];
+      const registry = new ChannelRegistry();
+      registry.setMessageHandler(() => {});
+      registry.setCompactHandler(async () => {
+        handlerCalls.push("compact");
+        return { handled: true, text: "stale compact" };
+      });
+      registry.setConversationHandler(async () => {
+        handlerCalls.push("conv");
+        return { handled: true, text: "stale conv" };
+      });
+      registry.setContextHandler(async () => {
+        handlerCalls.push("context");
+        return { handled: true, text: "stale context" };
+      });
+      registry.setReady();
+      registry.registerAdapter({
+        id: "telegram:acct-telegram",
+        channelId: "telegram",
+        accountId: "acct-telegram",
+        name: "Telegram",
+        start: async () => {},
+        stop: async () => {},
+        isRunning: () => true,
+        sendMessage: async () => ({ messageId: "msg-1" }),
+        sendDirectReply: async (_chatId, text) => {
+          replies.push(text);
+        },
+        onMessage: undefined,
+      });
+      addRoute("telegram", {
+        accountId: "acct-telegram",
+        chatId: "chat-1",
+        chatType: "direct",
+        threadId: null,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        enabled: true,
+        createdAt: "2026-07-09T00:00:00.000Z",
+      });
+
+      if (lifecycle === "pause") {
+        registry.pause();
+      } else {
+        await registry.stopAll();
+      }
+
+      const adapter = registry.getAdapter("telegram", "acct-telegram");
+      for (const text of ["/compact", "/conv", "/context"]) {
+        await adapter?.onMessage?.({
+          channel: "telegram",
+          accountId: "acct-telegram",
+          chatId: "chat-1",
+          senderId: "user-1",
+          text,
+          timestamp: Date.now(),
+          messageId: `msg-${text}`,
+          chatType: "direct",
+        });
+      }
+
+      expect(handlerCalls).toEqual([]);
+      expect(replies).toEqual([
+        "Telegram cannot use /compact because the listener is not ready yet. Try again in a moment.",
+        "Telegram cannot use /conv because the listener is not ready yet. Try again in a moment.",
+        "Telegram cannot use /context because the listener is not ready yet. Try again in a moment.",
+      ]);
+    },
+  );
+
   test("stopAll() destroys the singleton", async () => {
     const registry = new ChannelRegistry();
     expect(getChannelRegistry()).toBe(registry);

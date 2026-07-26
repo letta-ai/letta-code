@@ -705,6 +705,9 @@ export class ChannelRegistry {
     this.eventHandler = null;
     this.approvalResponseHandler = null;
     this.cancelHandler = null;
+    this.compactHandler = null;
+    this.conversationHandler = null;
+    this.contextHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
     this.reloadHandler = null;
@@ -725,6 +728,9 @@ export class ChannelRegistry {
     this.eventHandler = null;
     this.approvalResponseHandler = null;
     this.cancelHandler = null;
+    this.compactHandler = null;
+    this.conversationHandler = null;
+    this.contextHandler = null;
     this.reflectionHandler = null;
     this.modelHandler = null;
     this.reloadHandler = null;

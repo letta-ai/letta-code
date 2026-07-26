@@ -3,7 +3,7 @@ import type { ChannelRoute } from "./types";
 
 export type ParsedChannelConversationCommand =
   | { action: "menu" }
-  | { action: "list" }
+  | { action: "list"; afterId?: string }
   | { action: "new"; title?: string }
   | { action: "switch"; conversationId: string }
   | { action: "fork"; title?: string }
@@ -36,7 +36,7 @@ export function parseChannelConversationCommand(
   args?: string,
 ): ParsedChannelConversationCommand {
   const trimmed = args?.trim() ?? "";
-  if (!trimmed || trimmed === "help") {
+  if (!trimmed || trimmed.toLowerCase() === "help") {
     return { action: "menu" };
   }
 
@@ -46,7 +46,7 @@ export function parseChannelConversationCommand(
 
   switch (action) {
     case "list":
-      return { action: "list" };
+      return tail ? { action: "list", afterId: tail } : { action: "list" };
     case "new":
       return tail ? { action: "new", title: tail } : { action: "new" };
     case "switch":
@@ -77,7 +77,7 @@ export function buildChannelConversationMenuMessage(
     "",
     "Actions:",
     `  ${prefix}/conv new [title] - start a fresh conversation`,
-    `  ${prefix}/conv list - show recent conversations`,
+    `  ${prefix}/conv list [after_id] - show recent conversations for the routed agent`,
     `  ${prefix}/conv switch <id> - switch this chat to a conversation`,
     `  ${prefix}/conv fork [title] - fork the current conversation`,
   ].join("\n");
@@ -87,21 +87,28 @@ export function buildChannelConversationListMessage(
   channelId: string,
   route: ChannelRoute,
   entries: ChannelConversationListEntry[],
+  options: { hasMore?: boolean; limit?: number } = {},
 ): string {
   const displayName = channelDisplayName(channelId);
   const prefix = commandPrefix(channelId);
+  const limit = options.limit ?? 8;
   if (entries.length === 0) {
     return `${displayName} has no recent conversations for this agent. Use ${prefix}/conv new [title] to start one.`;
   }
 
+  const lastEntry = entries.at(-1);
   return [
-    `${displayName} recent conversations`,
+    `${displayName} recent conversations for routed agent`,
+    `Showing up to ${limit} conversations.`,
     ...entries.map((entry) => {
       const current = entry.id === route.conversationId ? " (current)" : "";
       return `- ${entry.id}${current} - ${formatTitle(entry.summary)}`;
     }),
     "",
     `Use ${prefix}/conv switch <id> to switch this chat.`,
+    ...(options.hasMore && lastEntry
+      ? [`Use ${prefix}/conv list ${lastEntry.id} to show more.`]
+      : []),
   ].join("\n");
 }
 
@@ -130,6 +137,15 @@ export function buildChannelConversationForkedMessage(
   return `${displayName} forked this chat from ${sourceConversationId} to ${forkedConversationId}.`;
 }
 
+export function buildChannelConversationForkedTitleFailedMessage(
+  channelId: string,
+  sourceConversationId: string,
+  forkedConversationId: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} forked this chat from ${sourceConversationId} to ${forkedConversationId}, but could not set the title. This chat is now using the fork.`;
+}
+
 export function buildChannelConversationInvalidMessage(
   channelId: string,
   route: ChannelRoute,
@@ -141,10 +157,9 @@ export function buildChannelConversationInvalidMessage(
 export function buildChannelConversationFailedMessage(
   channelId: string,
   action: string,
-  error: string,
 ): string {
   const displayName = channelDisplayName(channelId);
-  return `${displayName} could not ${action}: ${error}`;
+  return `${displayName} could not ${action} right now. Try again in a moment.`;
 }
 
 export function buildChannelConversationWrongAgentMessage(

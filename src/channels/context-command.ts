@@ -61,3 +61,8 @@ export function buildChannelContextUnavailableMessage(
   const displayName = channelDisplayName(channelId);
   return `${displayName} cannot use /context because the listener is not ready yet. Try again in a moment.`;
 }
+
+export function buildChannelContextFailedMessage(channelId: string): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} could not load context usage right now. Try again in a moment.`;
+}

@@ -8,6 +8,7 @@ import { getBackend } from "@/backend";
 import {
   buildChannelConversationFailedMessage,
   buildChannelConversationForkedMessage,
+  buildChannelConversationForkedTitleFailedMessage,
   buildChannelConversationInvalidMessage,
   buildChannelConversationListMessage,
   buildChannelConversationMenuMessage,
@@ -20,6 +21,10 @@ import {
 import type { ChannelConversationHandler } from "@/channels/registry-handlers";
 import { addRoute } from "@/channels/routing";
 import type { ChannelRoute } from "@/channels/types";
+import { debugWarn } from "@/utils/debug";
+
+const CHANNEL_CONVERSATION_LIST_LIMIT = 8;
+const CHANNEL_CONVERSATION_FETCH_LIMIT = CHANNEL_CONVERSATION_LIST_LIMIT + 1;
 
 function getPageItems<T>(page: unknown): T[] {
   if (Array.isArray(page)) {
@@ -36,6 +41,42 @@ function getPageItems<T>(page: unknown): T[] {
   }
 
   return [];
+}
+
+function getPageHasMore(items: unknown[]): boolean {
+  return items.length > CHANNEL_CONVERSATION_LIST_LIMIT;
+}
+
+function failureActionLabel(action: string): string {
+  switch (action) {
+    case "list":
+      return "list conversations";
+    case "new":
+      return "start a conversation";
+    case "switch":
+      return "switch conversations";
+    case "fork":
+      return "fork this conversation";
+    default:
+      return "manage conversations";
+  }
+}
+
+function debugLogConversationCommandFailure(params: {
+  action: string;
+  route: ChannelRoute;
+  error: unknown;
+}): void {
+  debugWarn(
+    "channels",
+    "Failed to run channel /conv %s for %s/%s: %s",
+    params.action,
+    params.route.agentId,
+    params.route.conversationId,
+    params.error instanceof Error
+      ? (params.error.stack ?? params.error.message)
+      : String(params.error),
+  );
 }
 
 function conversationAgentId(conversation: Conversation): string | null {
@@ -92,14 +133,24 @@ export function createChannelConversationHandler(): ChannelConversationHandler {
         case "list": {
           const page = await backend.listConversations({
             agent_id: route.agentId,
-            limit: 8,
+            limit: CHANNEL_CONVERSATION_FETCH_LIMIT,
+            order: "desc",
+            order_by: "last_message_at",
+            ...(parsed.afterId ? { after: parsed.afterId } : {}),
           } as ConversationListBody);
+          const pageItems = getPageItems<Conversation>(page);
           return {
             handled: true,
             text: buildChannelConversationListMessage(
               channelId,
               route,
-              toConversationListEntries(getPageItems<Conversation>(page)),
+              toConversationListEntries(
+                pageItems.slice(0, CHANNEL_CONVERSATION_LIST_LIMIT),
+              ),
+              {
+                hasMore: getPageHasMore(pageItems),
+                limit: CHANNEL_CONVERSATION_LIST_LIMIT,
+              },
             ),
           };
         }
@@ -153,12 +204,28 @@ export function createChannelConversationHandler(): ChannelConversationHandler {
               ? { agentId: route.agentId }
               : {}),
           });
-          if (parsed.title) {
-            await backend.updateConversation(forked.id, {
-              summary: parsed.title,
-            } as ConversationUpdateBody);
-          }
           updateChannelConversationRoute(channelId, route, forked.id);
+          if (parsed.title) {
+            try {
+              await backend.updateConversation(forked.id, {
+                summary: parsed.title,
+              } as ConversationUpdateBody);
+            } catch (error) {
+              debugLogConversationCommandFailure({
+                action: "fork title update",
+                route: { ...route, conversationId: forked.id },
+                error,
+              });
+              return {
+                handled: true,
+                text: buildChannelConversationForkedTitleFailedMessage(
+                  channelId,
+                  sourceConversationId,
+                  forked.id,
+                ),
+              };
+            }
+          }
           return {
             handled: true,
             text: buildChannelConversationForkedMessage(
@@ -172,12 +239,12 @@ export function createChannelConversationHandler(): ChannelConversationHandler {
     } catch (error) {
       const action =
         parsed.action === "invalid" ? "manage conversations" : parsed.action;
+      debugLogConversationCommandFailure({ action, route, error });
       return {
         handled: true,
         text: buildChannelConversationFailedMessage(
           channelId,
-          action,
-          error instanceof Error ? error.message : String(error),
+          failureActionLabel(action),
         ),
       };
     }

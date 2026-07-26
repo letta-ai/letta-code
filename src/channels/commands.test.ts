@@ -216,6 +216,9 @@ describe("channel slash commands", () => {
     expect(text).toContain(
       "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /compact, /context, /conv, /model, /reflection.",
     );
+    expect(text).toContain(
+      "Conversation commands: /conv new [title], /conv list [after_id], /conv switch <id>, /conv fork [title].",
+    );
 
     const slackText = buildChannelHelpMessage("slack");
     expect(slackText).not.toContain("MessageChannel");
@@ -236,6 +239,12 @@ describe("channel slash commands", () => {
     expect(slackText).toContain("@agent /compact - compact this thread");
     expect(slackText).toContain(
       "@agent /conv - manage this thread's conversation",
+    );
+    expect(slackText).toContain(
+      "@agent /conv list [after_id] - show recent conversations for the routed agent",
+    );
+    expect(slackText).toContain(
+      "@agent /conv fork [title] - fork this thread's conversation",
     );
     expect(slackText).toContain("@agent /feedback <message>");
     expect(slackText).toContain("@agent /detach");

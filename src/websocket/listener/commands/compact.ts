@@ -1,13 +1,14 @@
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
+import { buildChannelCompactFailedMessage } from "@/channels/compact-command";
 import type { ChannelCompactHandler } from "@/channels/registry-handlers";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { runPreCompactHooks } from "@/hooks";
 import { settingsManager } from "@/settings-manager";
-import { debugLog } from "@/utils/debug";
+import { debugLog, debugWarn } from "@/utils/debug";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { getConversationWorkingDirectory } from "@/websocket/listener/cwd";
 import type { ListenerTransport } from "@/websocket/listener/transport";
@@ -29,6 +30,8 @@ const VALID_COMPACT_MODES = new Set<CompactMode>([
   "self_compact_all",
   "self_compact_sliding_window",
 ]);
+
+class CompactUsageError extends Error {}
 
 function compactHelpOutput(): string {
   return [
@@ -64,7 +67,9 @@ export async function handleCompactCommand(
 
   const modeArg = rawModeArg as CompactMode | undefined;
   if (modeArg && !VALID_COMPACT_MODES.has(modeArg)) {
-    throw new Error(`Invalid mode "${modeArg}". Run /compact help for usage.`);
+    throw new CompactUsageError(
+      `Invalid mode "${modeArg}". Run /compact help for usage.`,
+    );
   }
 
   const preCompactResult = await runPreCompactHooks(
@@ -166,7 +171,7 @@ export function createChannelCompactHandler(
   listener: ListenerRuntime,
   socket: ListenerTransport,
 ): ChannelCompactHandler {
-  return async ({ runtime, args }) => {
+  return async ({ channelId, runtime, args }) => {
     const scopedRuntime = getOrCreateScopedRuntime(
       listener,
       runtime.agent_id,
@@ -179,9 +184,23 @@ export function createChannelCompactHandler(
         text: await handleCompactCommand(socket, scopedRuntime, args),
       };
     } catch (error) {
+      if (error instanceof CompactUsageError) {
+        return {
+          handled: true,
+          text: error.message,
+        };
+      }
+
+      debugWarn(
+        "channels",
+        "Failed to compact channel conversation for %s/%s: %s",
+        runtime.agent_id,
+        runtime.conversation_id,
+        error instanceof Error ? (error.stack ?? error.message) : String(error),
+      );
       return {
         handled: true,
-        text: `Failed to compact conversation: ${error instanceof Error ? error.message : String(error)}`,
+        text: buildChannelCompactFailedMessage(channelId),
       };
     }
   };

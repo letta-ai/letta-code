@@ -236,6 +236,10 @@ export function buildChannelHelpMessage(channelId: string): string {
       "@agent /context - show context window usage",
       "@agent /compact - compact this thread's routed conversation",
       "@agent /conv - manage this thread's conversation",
+      "@agent /conv new [title] - start a fresh conversation",
+      "@agent /conv list [after_id] - show recent conversations for the routed agent",
+      "@agent /conv switch <id> - switch this thread to a conversation",
+      "@agent /conv fork [title] - fork this thread's conversation",
       "@agent /status - show route and listener status",
       "@agent /cancel - cancel the current turn",
       "@agent /chat - show the web chat link",
@@ -253,6 +257,7 @@ export function buildChannelHelpMessage(channelId: string): string {
     `${displayName} is connected to Letta Code.`,
     "Send a normal message here and the connected agent will reply in this chat.",
     `Supported slash commands here: ${supportedCommandsText()}.`,
+    "Conversation commands: /conv new [title], /conv list [after_id], /conv switch <id>, /conv fork [title].",
     "If this chat is not connected yet, send any non-command message and follow the pairing instructions.",
   ].join("\n\n");
 }

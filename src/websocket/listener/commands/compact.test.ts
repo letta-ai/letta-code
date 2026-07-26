@@ -23,6 +23,25 @@ afterEach(() => {
 });
 
 describe("channel compact command handler", () => {
+  test("returns usage feedback for invalid compact modes", async () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const socket = new MockSocket();
+    const handler = createChannelCompactHandler(
+      listener,
+      socket as unknown as ListenerTransport,
+    );
+
+    const result = await handler({
+      channelId: "telegram",
+      runtime: { agent_id: "agent-1", conversation_id: "default" },
+      args: "slide",
+    });
+
+    expect(result.text).toBe(
+      'Invalid mode "slide". Run /compact help for usage.',
+    );
+  });
+
   test("runs manual compaction for the routed conversation", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "channel-compact-"));
     try {
@@ -78,6 +97,63 @@ describe("channel compact command handler", () => {
         },
       });
     } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not leak compaction error details to the channel", async () => {
+    const storageDir = await mkdtemp(
+      join(os.tmpdir(), "channel-compact-failure-"),
+    );
+    const originalConsoleError = console.error;
+    const originalLettaDebug = process.env.LETTA_DEBUG;
+    const logged: unknown[][] = [];
+    try {
+      class FailingCompactBackend extends LocalBackend {
+        override async compactConversationMessages(): ReturnType<
+          LocalBackend["compactConversationMessages"]
+        > {
+          throw new Error("provider token secret-token");
+        }
+      }
+
+      console.error = (...args: unknown[]) => {
+        logged.push(args);
+      };
+      process.env.LETTA_DEBUG = "1";
+      const backend = new FailingCompactBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Channel Compact Agent",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const socket = new MockSocket();
+      const handler = createChannelCompactHandler(
+        listener,
+        socket as unknown as ListenerTransport,
+      );
+
+      const result = await handler({
+        channelId: "telegram",
+        runtime: { agent_id: agent.id, conversation_id: "default" },
+      });
+
+      expect(result.text).toBe(
+        "Telegram could not compact this conversation right now. Try again in a moment.",
+      );
+      expect(result.text).not.toContain("secret-token");
+      expect(JSON.stringify(logged)).toContain("secret-token");
+    } finally {
+      console.error = originalConsoleError;
+      if (originalLettaDebug === undefined) {
+        delete process.env.LETTA_DEBUG;
+      } else {
+        process.env.LETTA_DEBUG = originalLettaDebug;
+      }
       await rm(storageDir, { recursive: true, force: true });
     }
   });

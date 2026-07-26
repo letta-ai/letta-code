@@ -161,6 +161,34 @@ function withContextWindow(
   };
 }
 
+function numericRecordProperty(
+  record: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function modelSettingsContextWindow(
+  record: Record<string, unknown>,
+): number | undefined {
+  const modelSettings = record.model_settings;
+  if (
+    !modelSettings ||
+    typeof modelSettings !== "object" ||
+    Array.isArray(modelSettings)
+  ) {
+    return undefined;
+  }
+
+  return numericRecordProperty(
+    modelSettings as Record<string, unknown>,
+    "context_window_limit",
+  );
+}
+
 async function getCurrentModelScopeSnapshot(params: {
   agentId: string;
   conversationId: string;
@@ -175,11 +203,11 @@ async function getCurrentModelScopeSnapshot(params: {
           agent.llm_config as ModelScopeSnapshot["llmConfig"],
         );
   const agentContextWindow =
-    typeof agentRecord.context_window_limit === "number"
-      ? agentRecord.context_window_limit
-      : typeof agent.llm_config?.context_window === "number"
-        ? agent.llm_config.context_window
-        : undefined;
+    numericRecordProperty(agentRecord, "context_window_limit") ??
+    modelSettingsContextWindow(agentRecord) ??
+    (typeof agent.llm_config?.context_window === "number"
+      ? agent.llm_config.context_window
+      : undefined);
 
   if (params.conversationId === "default") {
     return {
@@ -200,9 +228,8 @@ async function getCurrentModelScopeSnapshot(params: {
       ? conversationRecord.model
       : null;
   const conversationContextWindow =
-    typeof conversationRecord.context_window_limit === "number"
-      ? conversationRecord.context_window_limit
-      : undefined;
+    numericRecordProperty(conversationRecord, "context_window_limit") ??
+    modelSettingsContextWindow(conversationRecord);
 
   return {
     modelHandle: conversationModel ?? agentModelHandle,
