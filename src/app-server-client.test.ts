@@ -3,6 +3,7 @@ import {
   type AppServerSocketLike,
   type AppServerSocketOptions,
   createAppServerClient,
+  isAppServerInfoResponseMessage,
   resolveAppServerChannelUrl,
 } from "./app-server-client";
 
@@ -141,6 +142,41 @@ describe("app-server client", () => {
       backend: "local",
       protocol_version: 1,
     });
+  });
+
+  test("validates the complete App Server capability response", () => {
+    const response = {
+      type: "app_server_info_response",
+      request_id: "info-1",
+      success: true,
+      backend: "local",
+      letta_code_version: "0.29.2",
+      protocol_version: 2,
+      capabilities: {
+        agent_management: true,
+        conversation_management: true,
+        memory_management: true,
+        runtime_start: true,
+        split_channels: true,
+      },
+    };
+
+    expect(isAppServerInfoResponseMessage(response)).toBe(true);
+    expect(
+      isAppServerInfoResponseMessage({
+        ...response,
+        capabilities: {
+          ...response.capabilities,
+          split_channels: "yes",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isAppServerInfoResponseMessage({
+        ...response,
+        protocol_version: "2",
+      }),
+    ).toBe(false);
   });
 
   test("connects both sockets and resolves request_id responses", async () => {
@@ -819,6 +855,45 @@ describe("app-server client", () => {
     expect(await responsePromise).toMatchObject({
       type: "agent_list_response",
       success: true,
+    });
+  });
+
+  test("supports forward-compatible compatibility adapter requests", async () => {
+    const client = createAppServerClient({
+      url: "ws://127.0.0.1:4500",
+      WebSocket: FakeSocket,
+    });
+    const sent: string[] = [];
+    client.onSend((command) => sent.push(command.type));
+
+    const pending = client.requestRaw<{ type: string; request_id: string }>(
+      {
+        type: "future_command",
+        request_id: "future-1",
+      },
+      {
+        predicate: (
+          message,
+        ): message is {
+          type: string;
+          request_id: string;
+        } =>
+          typeof message === "object" &&
+          message !== null &&
+          "type" in message &&
+          message.type === "future_response",
+      },
+    );
+    expect(sent).toEqual(["future_command"]);
+
+    FakeSocket.instances[0]?.receive({
+      type: "future_response",
+      request_id: "future-1",
+    });
+
+    await expect(pending).resolves.toEqual({
+      type: "future_response",
+      request_id: "future-1",
     });
   });
 

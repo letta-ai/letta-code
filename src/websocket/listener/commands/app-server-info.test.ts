@@ -28,7 +28,7 @@ describe("app-server info protocol", () => {
     ).toBeNull();
   });
 
-  test("reports backend, version, and required Desktop capabilities", () => {
+  test("reports backend, version, and required client capabilities", () => {
     expect(
       buildAppServerInfoResponse(
         { type: "app_server_info", request_id: "info-2" },
