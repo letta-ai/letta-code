@@ -42,14 +42,25 @@ describe("createLmStudioPiProvider", () => {
             id: "qwen3.6-27b",
             object: "model",
             type: "vlm",
+            state: "loaded",
+            loaded_context_length: 81920,
             max_context_length: 262144,
           },
           {
             id: "smol-text-3b",
             object: "model",
             type: "llm",
+            state: "not-loaded",
             capabilities: ["tool_use"],
             max_context_length: 8192,
+          },
+          {
+            id: "large-unloaded-27b",
+            object: "model",
+            type: "llm",
+            state: "not-loaded",
+            loaded_context_length: 32768,
+            max_context_length: 262144,
           },
           {
             id: "text-embedding-nomic",
@@ -66,11 +77,19 @@ describe("createLmStudioPiProvider", () => {
     const vlm = models.find((m) => m.id === "qwen3.6-27b");
     expect(vlm?.provider).toBe("lmstudio");
     expect(vlm?.input).toEqual(["text", "image"]);
-    expect(vlm?.contextWindow).toBe(262144);
+    // LM Studio exposes both the loaded runtime allocation and the model's
+    // architectural maximum; the running allocation is authoritative.
+    expect(vlm?.contextWindow).toBe(81920);
 
     const llm = models.find((m) => m.id === "smol-text-3b");
     expect(llm?.input).toEqual(["text"]);
     expect(llm?.contextWindow).toBe(8192);
+    expect(llm?.maxTokens).toBe(8192);
+
+    const unloaded = models.find((m) => m.id === "large-unloaded-27b");
+    // A stale loaded_context_length on an unloaded entry must not win; its
+    // architectural maximum falls back to the conservative harness default.
+    expect(unloaded?.contextWindow).toBe(128000);
 
     // Embedding models are excluded from the chat model list.
     expect(models.some((m) => m.id === "text-embedding-nomic")).toBe(false);

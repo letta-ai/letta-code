@@ -444,12 +444,12 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
 
     // /context-limit remains an explicit per-conversation escape hatch when
     // the user's Ollama runtime is configured above the conservative default.
-    const resolvedWithContextOverride = await resolvePiModelForAgent(
+    const resolvedWithExplicitContext = await resolvePiModelForAgent(
       "ollama/qwen3.6:27b",
       { context_window_limit: 262144 },
       { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
     );
-    expect(resolvedWithContextOverride.model.contextWindow).toBe(262144);
+    expect(resolvedWithExplicitContext.model.contextWindow).toBe(262144);
   });
 
   test("vision model with no name marker keeps base64 image_url in the request payload", async () => {

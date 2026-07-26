@@ -106,6 +106,12 @@ describe("createLlamaCppPiProvider", () => {
           inputModalities: ["text"],
           nCtxTrain: 8192,
         },
+        {
+          id: "large-context.gguf",
+          status: "loaded",
+          inputModalities: ["text"],
+          nCtx: 262144,
+        },
       ],
       requests: [],
     };
@@ -141,6 +147,11 @@ describe("createLlamaCppPiProvider", () => {
     const textOnly = models.find((m) => m.id === "some-vision-model.gguf");
     expect(textOnly?.input).toEqual(["text"]);
     expect(textOnly?.contextWindow).toBe(8192);
+    expect(textOnly?.maxTokens).toBe(8192);
+
+    const largeContext = models.find((m) => m.id === "large-context.gguf");
+    expect(largeContext?.contextWindow).toBe(128000);
+    expect(largeContext?.maxTokens).toBe(128000);
   });
 
   test("missing engine context falls back to contextWindow-sized maxTokens", async () => {

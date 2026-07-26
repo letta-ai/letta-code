@@ -1,7 +1,6 @@
 import type { Provider } from "@earendil-works/pi-ai";
 import {
   createLocalEndpointPiProvider,
-  LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
   type LocalEndpointDiscover,
   type LocalEndpointModelMetadata,
 } from "./pi-local-endpoint-provider";
@@ -73,20 +72,12 @@ function parseOllamaShow(
   const contextLength = architecture
     ? modelInfo?.[`${architecture}.context_length`]
     : undefined;
-  // /api/show reports the model's architectural training maximum, not the
-  // context allocated by the Ollama runner. Use the same conservative 128K
-  // harness default as pi-ai custom models; users can raise it explicitly
-  // with /context-limit when their Ollama runtime is configured for more.
-  const harnessContextLength =
-    typeof contextLength === "number" && contextLength > 0
-      ? Math.min(contextLength, LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW)
-      : undefined;
   return {
     id: modelId,
     vision: capabilities.includes("vision"),
     thinking: capabilities.includes("thinking"),
-    ...(harnessContextLength !== undefined
-      ? { contextLength: harnessContextLength }
+    ...(typeof contextLength === "number" && contextLength > 0
+      ? { contextLength }
       : {}),
   };
 }
@@ -95,7 +86,8 @@ function parseOllamaShow(
  * Ollama capability discovery: `/api/tags` lists installed models and
  * `POST /api/show` reports authoritative capabilities per model
  * (`["completion", "vision", "tools", "thinking"]`) plus engine context
- * length. Model names are never consulted for capabilities.
+ * maximum. The shared provider applies the conservative harness default;
+ * model names are never consulted for capabilities.
  */
 const ollamaDiscover: LocalEndpointDiscover = async (context) => {
   const tags = await context.fetchJson(`${context.nativeBaseURL}/api/tags`);
