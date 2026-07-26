@@ -365,13 +365,22 @@ describe("app-server native websocket", () => {
     }
   });
 
-  test("rejects browser-origin websocket upgrades", async () => {
+  test("rejects origin-bearing websocket upgrades without auth", async () => {
     let handle: AppServerHandle | null = null;
+    const logs: string[] = [];
     try {
-      handle = await startAppServer({ listen: "ws://127.0.0.1:0" });
+      handle = await startAppServer({
+        listen: "ws://127.0.0.1:0",
+        onLog: (message) => logs.push(message),
+      });
       await expectWebSocketOpenFailure(handle.controlUrl, {
         Origin: "https://evil.example",
       });
+      await expectWebSocketOpenFailure(handle.controlUrl, { Origin: "" });
+      expect(logs).toEqual([
+        expect.stringContaining("--ws-auth capability-token"),
+        expect.stringContaining("--ws-auth capability-token"),
+      ]);
     } finally {
       await handle?.close();
     }
@@ -423,10 +432,14 @@ describe("app-server native websocket", () => {
       await expectWebSocketOpenFailure(controlUrl);
       await expectWebSocketOpenFailure(controlUrl, {
         Authorization: "Bearer wrong-token",
+        Origin: "http://localhost:8081",
       });
 
       control = new WebSocket(controlUrl, {
-        headers: { Authorization: "Bearer super-secret-token" },
+        headers: {
+          Authorization: "Bearer super-secret-token",
+          Origin: "http://localhost:8081",
+        },
       });
       await waitForOpen(control);
     } finally {
@@ -464,6 +477,7 @@ describe("app-server native websocket", () => {
       });
       await expectWebSocketOpenFailure(controlUrl, {
         Authorization: `Bearer ${expiredToken}`,
+        Origin: "http://localhost:8081",
       });
 
       const validToken = signedBearerToken(sharedSecret, {
@@ -472,7 +486,10 @@ describe("app-server native websocket", () => {
         aud: "codex-app-server",
       });
       control = new WebSocket(controlUrl, {
-        headers: { Authorization: `Bearer ${validToken}` },
+        headers: {
+          Authorization: `Bearer ${validToken}`,
+          Origin: "http://localhost:8081",
+        },
       });
       await waitForOpen(control);
     } finally {
