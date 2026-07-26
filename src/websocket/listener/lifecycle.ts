@@ -46,6 +46,7 @@ import { handleReloadCommand } from "./commands";
 import { handleChannelRegistryEvent } from "./commands/channels";
 import { createChannelCompactHandler } from "./commands/compact";
 import { createChannelContextHandler } from "./commands/context";
+import { createChannelConversationHandler } from "./commands/conversation";
 import {
   applyModelUpdateForRuntime,
   buildListModelsResponse,
@@ -567,6 +568,7 @@ export async function wireChannelIngress(
   );
   registry.setContextHandler(createChannelContextHandler(listener));
   registry.setCompactHandler(createChannelCompactHandler(listener, socket));
+  registry.setConversationHandler(createChannelConversationHandler());
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
     if (!modelIdentifier) {
       try {
@@ -646,7 +648,6 @@ export async function wireChannelIngress(
         };
       }
     }
-
     const resolvedModel = resolveModelForUpdate({
       model_id: modelIdentifier,
       model_handle: modelIdentifier,
@@ -661,7 +662,6 @@ export async function wireChannelIngress(
         ),
       };
     }
-
     try {
       const scopedRuntime = getOrCreateScopedRuntime(
         listener,

@@ -37,6 +37,7 @@ import type {
   ChannelCancelHandler,
   ChannelCompactHandler,
   ChannelContextHandler,
+  ChannelConversationHandler,
   ChannelInboundDelivery,
   ChannelMessageHandler,
   ChannelModelHandler,
@@ -167,6 +168,7 @@ export class ChannelRegistry {
   private approvalResponseHandler: ChannelApprovalResponseHandler | null = null;
   private cancelHandler: ChannelCancelHandler | null = null;
   private compactHandler: ChannelCompactHandler | null = null;
+  private conversationHandler: ChannelConversationHandler | null = null;
   private contextHandler: ChannelContextHandler | null = null;
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
@@ -200,6 +202,7 @@ export class ChannelRegistry {
         this.getRoute(channel, chatId, accountId, threadId),
       getCancelHandler: () => this.cancelHandler,
       getCompactHandler: () => this.compactHandler,
+      getConversationHandler: () => this.conversationHandler,
       getContextHandler: () => this.contextHandler,
       getReflectionHandler: () => this.reflectionHandler,
       getReloadHandler: () => this.reloadHandler,
@@ -439,6 +442,10 @@ export class ChannelRegistry {
 
   setCompactHandler(handler: ChannelCompactHandler | null): void {
     this.compactHandler = handler;
+  }
+
+  setConversationHandler(handler: ChannelConversationHandler | null): void {
+    this.conversationHandler = handler;
   }
 
   setContextHandler(handler: ChannelContextHandler | null): void {

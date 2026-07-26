@@ -131,6 +131,8 @@ export function createChannelInboundRouter(deps: {
             deps.commands.handleChatSlashCommand(commandMsg),
           compact: async (command, commandMsg) =>
             deps.commands.handleCompactSlashCommand(command, commandMsg),
+          conv: async (command, commandMsg) =>
+            deps.commands.handleConversationSlashCommand(command, commandMsg),
           context: async (_command, commandMsg) =>
             deps.commands.handleContextSlashCommand(commandMsg),
           detach: async (_command, commandMsg) =>
