@@ -152,6 +152,18 @@ await Bun.build({
   },
 });
 
+await Bun.build({
+  entrypoints: ["./src/app-server-client.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "cjs",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "app-server-client.cjs",
+  },
+});
+
 // Browser-safe agent creation presets (personalities, prompts, tags) for
 // surfaces that create Letta Code agents through Core (e.g. the chat web app).
 await Bun.build({
@@ -216,5 +228,5 @@ console.log("   Output: dist/types/protocol.d.ts");
 
 console.log("✅ Build complete!");
 console.log(`   Output: letta.js`);
-console.log("   Output: dist/app-server-client.js");
+console.log("   Output: dist/app-server-client.js and .cjs");
 console.log(`   Size: ${(Bun.file(outputPath).size / 1024).toFixed(0)}KB`);

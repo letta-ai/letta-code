@@ -13,7 +13,8 @@ export interface AppServerInfoResponseMessage {
   success: true;
   backend: "local" | "api";
   letta_code_version: string;
-  protocol_version: typeof APP_SERVER_PROTOCOL_VERSION;
+  /** Wire value reported by the server; clients compare it with their supported version. */
+  protocol_version: number;
   capabilities: {
     agent_management: boolean;
     conversation_management: boolean;
@@ -21,4 +22,39 @@ export interface AppServerInfoResponseMessage {
     runtime_start: boolean;
     split_channels: boolean;
   };
+}
+
+export function isAppServerInfoResponseMessage(
+  message: unknown,
+): message is AppServerInfoResponseMessage {
+  if (!message || typeof message !== "object" || Array.isArray(message)) {
+    return false;
+  }
+
+  const candidate = message as Record<string, unknown>;
+  const capabilities = candidate.capabilities;
+  if (
+    !capabilities ||
+    typeof capabilities !== "object" ||
+    Array.isArray(capabilities)
+  ) {
+    return false;
+  }
+
+  const capabilityRecord = capabilities as Record<string, unknown>;
+  return (
+    candidate.type === "app_server_info_response" &&
+    typeof candidate.request_id === "string" &&
+    candidate.request_id.length > 0 &&
+    candidate.success === true &&
+    (candidate.backend === "local" || candidate.backend === "api") &&
+    typeof candidate.letta_code_version === "string" &&
+    typeof candidate.protocol_version === "number" &&
+    Number.isInteger(candidate.protocol_version) &&
+    typeof capabilityRecord.agent_management === "boolean" &&
+    typeof capabilityRecord.conversation_management === "boolean" &&
+    typeof capabilityRecord.memory_management === "boolean" &&
+    typeof capabilityRecord.runtime_start === "boolean" &&
+    typeof capabilityRecord.split_channels === "boolean"
+  );
 }

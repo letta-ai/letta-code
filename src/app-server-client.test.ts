@@ -5,6 +5,7 @@ import {
   createAppServerClient,
   resolveAppServerChannelUrl,
 } from "./app-server-client";
+import { isAppServerInfoResponseMessage } from "./types/app-server-info";
 
 type Listener = (event: unknown) => void;
 
@@ -141,6 +142,41 @@ describe("app-server client", () => {
       backend: "local",
       protocol_version: 1,
     });
+  });
+
+  test("validates the complete App Server capability response", () => {
+    const response = {
+      type: "app_server_info_response",
+      request_id: "info-1",
+      success: true,
+      backend: "local",
+      letta_code_version: "0.29.2",
+      protocol_version: 2,
+      capabilities: {
+        agent_management: true,
+        conversation_management: true,
+        memory_management: true,
+        runtime_start: true,
+        split_channels: true,
+      },
+    };
+
+    expect(isAppServerInfoResponseMessage(response)).toBe(true);
+    expect(
+      isAppServerInfoResponseMessage({
+        ...response,
+        capabilities: {
+          ...response.capabilities,
+          split_channels: "yes",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isAppServerInfoResponseMessage({
+        ...response,
+        protocol_version: "2",
+      }),
+    ).toBe(false);
   });
 
   test("connects both sockets and resolves request_id responses", async () => {

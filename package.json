@@ -18,6 +18,8 @@
     "vendor",
     "dist/app-server-client.js",
     "dist/app-server-client.js.map",
+    "dist/app-server-client.cjs",
+    "dist/app-server-client.cjs.map",
     "dist/agent-presets.js",
     "dist/agent-presets.js.map",
     "dist/channels-public.js",
@@ -35,7 +37,9 @@
     "./app-server-client": {
       "types": "./dist/types/app-server-client.d.ts",
       "browser": "./dist/app-server-client.js",
-      "import": "./dist/app-server-client.js"
+      "import": "./dist/app-server-client.js",
+      "require": "./dist/app-server-client.cjs",
+      "default": "./dist/app-server-client.js"
     },
     "./protocol": {
       "types": "./dist/types/types/protocol.d.ts"

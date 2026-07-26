@@ -1,3 +1,4 @@
+import { isAppServerInfoResponseMessage } from "./types/app-server-info";
 import type {
   AbortMessageCommand,
   AbortMessageResponseMessage,
@@ -465,8 +466,7 @@ export class AppServerClient {
       },
       {
         ...options,
-        predicate: (message): message is AppServerInfoResponseMessage =>
-          message.type === "app_server_info_response",
+        predicate: isAppServerInfoResponseMessage,
       },
     );
   }
