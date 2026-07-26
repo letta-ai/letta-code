@@ -30,6 +30,11 @@ import type {
   MessageListParams,
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type {
+  AppServerInfoCommand,
+  AppServerInfoResponseMessage,
+} from "./app-server-info";
+import type { ConversationForkBody } from "./conversation-fork-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 
@@ -1903,13 +1908,6 @@ export interface ConversationRecompileCommand {
   body?: ConversationRecompileParams;
 }
 
-export interface ConversationForkBody {
-  /** Agent ID for agent-direct mode with the default conversation. */
-  agent_id?: string | null;
-  /** Whether the forked conversation should be hidden. */
-  hidden?: boolean;
-}
-
 export interface ConversationForkCommand {
   type: "conversation_fork";
   /** Echoed back in the response for request correlation. */
@@ -2808,6 +2806,7 @@ export type WsProtocolCommand =
   | SkillEnableCommand
   | SkillDisableCommand
   | CreateAgentCommand
+  | AppServerInfoCommand
   | AgentListCommand
   | AgentRetrieveCommand
   | AgentCreateCommand
@@ -2906,6 +2905,7 @@ export type WsProtocolMessage =
   | SkillDisableResponseMessage
   | SkillsUpdatedMessage
   | CreateAgentResponseMessage
+  | AppServerInfoResponseMessage
   | AgentListResponseMessage
   | AgentRetrieveResponseMessage
   | AgentCreateResponseMessage

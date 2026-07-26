@@ -32,6 +32,7 @@ import type {
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalCompactionStats } from "./compaction";
+import { selectLocalMessagesForFork } from "./local-conversation-fork";
 import { listLocalConversations } from "./local-conversation-list";
 import {
   emptyLocalUsage,
@@ -51,6 +52,7 @@ import {
   projectedMessageLookupKeys,
   projectLocalMessageToStoredMessages,
   removeOrphanLocalToolResults,
+  sourceLocalMessageIdFromStoredMessageId,
   withProjectedMessageDates,
 } from "./local-message-projection";
 import {
@@ -493,13 +495,6 @@ function getIncludedMessageTypes(
     (item): item is string => typeof item === "string" && item.length > 0,
   );
   return messageTypes.length > 0 ? new Set(messageTypes) : undefined;
-}
-
-function sourceLocalMessageIdFromStoredMessageId(messageId: string): string {
-  const variantSeparator = messageId.search(/:(assistant|reasoning|tool):/);
-  return variantSeparator >= 0
-    ? messageId.slice(0, variantSeparator)
-    : messageId;
 }
 
 function toStoredOutputFields(chunk: Record<string, unknown>) {
@@ -1583,7 +1578,7 @@ export class LocalStore {
 
   forkConversation(
     conversationId: string,
-    options: { agentId?: string; hidden?: boolean } = {},
+    options: { agentId?: string; hidden?: boolean; messageId?: string } = {},
   ): { id: string } {
     const source = this.findConversation(
       conversationId,
@@ -1597,6 +1592,15 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Agent", targetAgentId);
     }
     this.ensureAgent(targetAgentId);
+    const sourceMessages = selectLocalMessagesForFork(
+      this.localMessagesForConversation(source.id, source.agent_id),
+      options.messageId,
+      source.agent_id,
+      source.id,
+    );
+    if (!sourceMessages) {
+      throw new LocalBackendNotFoundError("Message", options.messageId ?? "");
+    }
     const forkedConversationId = this.nextConversationId(targetAgentId);
     const forked = createLocalConversationRecord(
       forkedConversationId,
@@ -1612,10 +1616,6 @@ export class LocalStore {
           ? { hidden: options.hidden }
           : {}),
       } as Partial<ConversationCreateBody>,
-    );
-    const sourceMessages = this.localMessagesForConversation(
-      source.id,
-      source.agent_id,
     );
     const forkedMessages = sourceMessages.map((message) =>
       this.cloneLocalMessageForConversation(message, forked.id, targetAgentId),

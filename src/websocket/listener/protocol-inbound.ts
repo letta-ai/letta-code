@@ -36,7 +36,6 @@ import type {
   ConnectProviderCommand,
   ConversationCompactCommand,
   ConversationCreateCommand,
-  ConversationForkCommand,
   ConversationListCommand,
   ConversationMessagesListCommand,
   ConversationRecompileCommand,
@@ -110,6 +109,10 @@ function isExperimentId(value: unknown): value is ExperimentId {
 }
 
 import { isValidApprovalResponseBody } from "./approval";
+import {
+  isAppServerInfoCommand,
+  isConversationForkCommand,
+} from "./management-protocol-inbound";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
 export type ServerLifecycleMessage = {
@@ -1430,24 +1433,6 @@ export function isConversationRecompileCommand(
   );
 }
 
-export function isConversationForkCommand(
-  value: unknown,
-): value is ConversationForkCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    conversation_id?: unknown;
-    body?: unknown;
-  };
-  return (
-    c.type === "conversation_fork" &&
-    typeof c.request_id === "string" &&
-    typeof c.conversation_id === "string" &&
-    (c.body === undefined || isObjectRecord(c.body))
-  );
-}
-
 export function isConversationMessagesListCommand(
   value: unknown,
 ): value is ConversationMessagesListCommand {
@@ -2240,6 +2225,7 @@ export function parseServerMessage(
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
+      isAppServerInfoCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
       isAgentListCommand(parsed) ||
       isAgentRetrieveCommand(parsed) ||

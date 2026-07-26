@@ -175,7 +175,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "conversation_fork",
       request_id: "r11",
       conversation_id: "conv-1",
-      body: { hidden: true },
+      body: { hidden: true, message_id: "msg-1" },
     },
     {
       type: "conversation_messages_list",
@@ -257,6 +257,24 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r9",
       conversation_id: "conv-1",
       body: [],
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { message_id: 123 },
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { message_id: "" },
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { hidden: "yes" },
     },
     {
       type: "conversation_messages_list",

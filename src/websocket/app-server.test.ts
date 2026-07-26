@@ -398,6 +398,27 @@ describe("app-server native websocket", () => {
         }),
       });
       const controlUrl = loopbackChannelUrl(handle.controlUrl);
+      const infoUrl = new URL(controlUrl);
+      infoUrl.protocol = "http:";
+      infoUrl.pathname = "/app-server-info";
+      infoUrl.search = "";
+
+      expect((await fetch(infoUrl)).status).toBe(401);
+      expect(
+        (
+          await fetch(infoUrl, {
+            headers: { Authorization: "Bearer wrong-token" },
+          })
+        ).status,
+      ).toBe(401);
+      const infoResponse = await fetch(infoUrl, {
+        headers: { Authorization: "Bearer super-secret-token" },
+      });
+      expect(infoResponse.status).toBe(200);
+      expect(await infoResponse.json()).toMatchObject({
+        type: "app_server_info_response",
+        protocol_version: 1,
+      });
 
       await expectWebSocketOpenFailure(controlUrl);
       await expectWebSocketOpenFailure(controlUrl, {
