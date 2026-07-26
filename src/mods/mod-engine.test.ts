@@ -1789,6 +1789,12 @@ describe("mod engine", () => {
       writeFileSync(
         modPath,
         `export default async function(letta) {
+          letta.tools.register({
+            name: "reload_tool",
+            description: "Stale tool",
+            parameters: { type: "object", properties: {} },
+            run() { return "stale"; },
+          });
           globalThis.__lettaModStarted?.();
           await globalThis.__lettaModGate;
           letta.commands.register({
@@ -1808,6 +1814,12 @@ describe("mod engine", () => {
       writeFileSync(
         modPath,
         `export default function(letta) {
+          letta.tools.register({
+            name: "reload_tool",
+            description: "Fresh tool",
+            parameters: { type: "object", properties: {} },
+            run() { return "fresh"; },
+          });
           letta.commands.register({
             id: "fresh-command",
             description: "Fresh command",
@@ -1820,6 +1832,12 @@ describe("mod engine", () => {
       expect(Object.keys(engine.getSnapshot().commands)).toEqual([
         "fresh-command",
       ]);
+      expect(getModToolDefinition("reload_tool")?.description).toBe(
+        "Fresh tool",
+      );
+      expect(getModErrorDiagnostics(engine.getSnapshot().diagnostics)).toEqual(
+        [],
+      );
 
       releaseFirstReload();
       await firstReload;
@@ -1827,6 +1845,9 @@ describe("mod engine", () => {
       const snapshot = engine.getSnapshot();
       expect(snapshot.generation).toBe(2);
       expect(Object.keys(snapshot.commands)).toEqual(["fresh-command"]);
+      expect(getModToolDefinition("reload_tool")?.description).toBe(
+        "Fresh tool",
+      );
 
       engine.dispose();
     } finally {
