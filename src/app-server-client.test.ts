@@ -863,6 +863,9 @@ describe("app-server client", () => {
       url: "ws://127.0.0.1:4500",
       WebSocket: FakeSocket,
     });
+    const sent: string[] = [];
+    client.onSend((command) => sent.push(command.type));
+
     const pending = client.requestRaw<{ type: string; request_id: string }>(
       {
         type: "future_command",
@@ -881,6 +884,7 @@ describe("app-server client", () => {
           message.type === "future_response",
       },
     );
+    expect(sent).toEqual(["future_command"]);
 
     FakeSocket.instances[0]?.receive({
       type: "future_response",

@@ -25,6 +25,18 @@ import type {
 
 export type AppServerChannel = "control" | "stream";
 
+export type AppServerRawCommand = Record<string, unknown> & {
+  type: string;
+  request_id?: string;
+};
+
+export type AppServerRawResponse = Record<string, unknown> & {
+  type: string;
+  request_id?: string;
+};
+
+export type AppServerSendCommand = WsProtocolCommand | AppServerRawCommand;
+
 /**
  * Receives every parsed protocol frame from both app-server websocket channels.
  * Treat this as the primary event stream: app-server may emit replay or turn
@@ -36,8 +48,8 @@ export type AppServerMessageHandler = (
   channel: AppServerChannel,
 ) => void;
 
-/** Called synchronously before a protocol command is written to the control socket. */
-export type AppServerSendHandler = (command: WsProtocolCommand) => void;
+/** Called synchronously before a typed or raw command is written to the control socket. */
+export type AppServerSendHandler = (command: AppServerSendCommand) => void;
 
 export interface AppServerDisconnectEvent {
   channel: AppServerChannel;
@@ -99,16 +111,6 @@ export type AppServerRequestCommandWithId = AppServerRequestCommand & {
 };
 
 export type AppServerRequestBody = Record<string, unknown> & {
-  request_id?: string;
-};
-
-export type AppServerRawCommand = Record<string, unknown> & {
-  type: string;
-  request_id?: string;
-};
-
-export type AppServerRawResponse = Record<string, unknown> & {
-  type: string;
   request_id?: string;
 };
 
@@ -407,6 +409,10 @@ export class AppServerClient {
   }
 
   send(command: WsProtocolCommand): void {
+    this.writeCommand(command);
+  }
+
+  private writeCommand(command: AppServerSendCommand): void {
     for (const handler of this.sendHandlers) {
       handler(command);
     }
@@ -418,7 +424,7 @@ export class AppServerClient {
    * Prefer the typed wrappers above this boundary for normal product code.
    */
   sendRaw(command: AppServerRawCommand): void {
-    this.control.send(JSON.stringify(command));
+    this.writeCommand(command);
   }
 
   /**
