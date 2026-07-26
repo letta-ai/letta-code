@@ -18,6 +18,7 @@ import {
   isOpenAiCompatPath,
 } from "@/websocket/app-server-openai";
 import { closeOpenAiBridgeRuntime } from "@/websocket/app-server-openai-turn";
+import { getAppServerInfoResponse } from "@/websocket/listener/commands/app-server-info";
 import {
   attachOpenListenerSocket,
   createRuntime,
@@ -375,6 +376,21 @@ export async function startAppServer(
     if (requestUrl.pathname === "/healthz") {
       response.writeHead(200, { "content-type": "text/plain" });
       response.end("ok\n");
+      return;
+    }
+    if (requestUrl.pathname === "/app-server-info") {
+      const authError = authorizeUpgrade(request.headers, authPolicy);
+      if (authError) {
+        response.writeHead(authError.statusCode, {
+          "content-type": "application/json",
+        });
+        response.end(JSON.stringify({ error: authError.message }));
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      // Keep capability discovery identical across HTTP and WebSocket; HTTP
+      // transport owns correlation, so this request id is only a shape marker.
+      response.end(JSON.stringify(getAppServerInfoResponse("http-info")));
       return;
     }
     if (options.openaiApi && isOpenAiCompatPath(requestUrl.pathname)) {

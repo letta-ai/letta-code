@@ -1801,6 +1801,31 @@ export interface SkillsUpdatedMessage {
   timestamp: number;
 }
 
+export const APP_SERVER_PROTOCOL_VERSION = 1;
+
+export interface AppServerInfoCommand {
+  type: "app_server_info";
+  /** Echoed back in the response for request correlation. */
+  request_id: string;
+}
+
+export interface AppServerInfoResponseMessage {
+  type: "app_server_info_response";
+  request_id: string;
+  /** Synchronous post-auth capability discovery has no domain failure variant. */
+  success: true;
+  backend: "local" | "api";
+  letta_code_version: string;
+  protocol_version: typeof APP_SERVER_PROTOCOL_VERSION;
+  capabilities: {
+    agent_management: boolean;
+    conversation_management: boolean;
+    memory_management: boolean;
+    runtime_start: boolean;
+    split_channels: boolean;
+  };
+}
+
 export interface CreateAgentCommand {
   type: "create_agent";
   /** Echoed back in the response for request correlation. */
@@ -1908,6 +1933,8 @@ export interface ConversationForkBody {
   agent_id?: string | null;
   /** Whether the forked conversation should be hidden. */
   hidden?: boolean;
+  /** Optional projected message ID to fork through, inclusive. */
+  message_id?: string;
 }
 
 export interface ConversationForkCommand {
@@ -2808,6 +2835,7 @@ export type WsProtocolCommand =
   | SkillEnableCommand
   | SkillDisableCommand
   | CreateAgentCommand
+  | AppServerInfoCommand
   | AgentListCommand
   | AgentRetrieveCommand
   | AgentCreateCommand
@@ -2906,6 +2934,7 @@ export type WsProtocolMessage =
   | SkillDisableResponseMessage
   | SkillsUpdatedMessage
   | CreateAgentResponseMessage
+  | AppServerInfoResponseMessage
   | AgentListResponseMessage
   | AgentRetrieveResponseMessage
   | AgentCreateResponseMessage

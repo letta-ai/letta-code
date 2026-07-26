@@ -175,7 +175,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "conversation_fork",
       request_id: "r11",
       conversation_id: "conv-1",
-      body: { hidden: true },
+      body: { hidden: true, message_id: "msg-1" },
     },
     {
       type: "conversation_messages_list",

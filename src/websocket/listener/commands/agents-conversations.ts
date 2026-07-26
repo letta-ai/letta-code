@@ -421,6 +421,9 @@ export async function handleAgentConversationManagementCommand(
           ...(typeof parsed.body?.hidden === "boolean"
             ? { hidden: parsed.body.hidden }
             : {}),
+          ...(typeof parsed.body?.message_id === "string"
+            ? { messageId: parsed.body.message_id }
+            : {}),
           ...(actingUserRequestOptions(parsed.acting_user_id) ?? {}),
         },
       );

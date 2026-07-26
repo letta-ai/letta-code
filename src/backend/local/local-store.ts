@@ -1583,7 +1583,7 @@ export class LocalStore {
 
   forkConversation(
     conversationId: string,
-    options: { agentId?: string; hidden?: boolean } = {},
+    options: { agentId?: string; hidden?: boolean; messageId?: string } = {},
   ): { id: string } {
     const source = this.findConversation(
       conversationId,
@@ -1597,6 +1597,22 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Agent", targetAgentId);
     }
     this.ensureAgent(targetAgentId);
+    let sourceMessages = this.localMessagesForConversation(
+      source.id,
+      source.agent_id,
+    );
+    if (options.messageId) {
+      const sourceMessageId = sourceLocalMessageIdFromStoredMessageId(
+        options.messageId,
+      );
+      const cutoff = sourceMessages.findIndex(
+        (message) => message.id === sourceMessageId,
+      );
+      if (cutoff < 0) {
+        throw new LocalBackendNotFoundError("Message", options.messageId);
+      }
+      sourceMessages = sourceMessages.slice(0, cutoff + 1);
+    }
     const forkedConversationId = this.nextConversationId(targetAgentId);
     const forked = createLocalConversationRecord(
       forkedConversationId,
@@ -1612,10 +1628,6 @@ export class LocalStore {
           ? { hidden: options.hidden }
           : {}),
       } as Partial<ConversationCreateBody>,
-    );
-    const sourceMessages = this.localMessagesForConversation(
-      source.id,
-      source.agent_id,
     );
     const forkedMessages = sourceMessages.map((message) =>
       this.cloneLocalMessageForConversation(message, forked.id, targetAgentId),

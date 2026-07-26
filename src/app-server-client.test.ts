@@ -108,6 +108,41 @@ describe("app-server client", () => {
     ).toThrow(/auth token must not be empty/);
   });
 
+  test("requests App Server capabilities before starting a runtime", async () => {
+    const { client, control, stream } = createFakeClient();
+    const opened = client.connect();
+    control.open();
+    stream.open();
+    await opened;
+
+    const responsePromise = client.info();
+    expect(JSON.parse(control.sent[0] ?? "{}")).toEqual({
+      type: "app_server_info",
+      request_id: "app-server-info-1",
+    });
+
+    control.receive({
+      type: "app_server_info_response",
+      request_id: "app-server-info-1",
+      success: true,
+      backend: "local",
+      letta_code_version: "0.29.1",
+      protocol_version: 1,
+      capabilities: {
+        agent_management: true,
+        conversation_management: true,
+        memory_management: true,
+        runtime_start: true,
+        split_channels: true,
+      },
+    });
+
+    await expect(responsePromise).resolves.toMatchObject({
+      backend: "local",
+      protocol_version: 1,
+    });
+  });
+
   test("connects both sockets and resolves request_id responses", async () => {
     const { client, control, stream } = createFakeClient();
     const opened = client.connect();

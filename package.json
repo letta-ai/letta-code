@@ -30,7 +30,7 @@
   "exports": {
     ".": "./letta.js",
     "./app-server-protocol": {
-      "types": "./dist/types/app-server-protocol.d.ts"
+      "types": "./dist/types/types/app-server-protocol.d.ts"
     },
     "./app-server-client": {
       "types": "./dist/types/app-server-client.d.ts",
@@ -38,7 +38,7 @@
       "import": "./dist/app-server-client.js"
     },
     "./protocol": {
-      "types": "./dist/types/protocol.d.ts"
+      "types": "./dist/types/types/protocol.d.ts"
     },
     "./agent-presets": {
       "types": "./dist/types/agent-presets.d.ts",
@@ -151,7 +151,7 @@
         "./dist/types/agent-presets.d.ts"
       ],
       "app-server-protocol": [
-        "./dist/types/app-server-protocol.d.ts"
+        "./dist/types/types/app-server-protocol.d.ts"
       ],
       "app-server-client": [
         "./dist/types/app-server-client.d.ts"
@@ -163,7 +163,7 @@
         "./dist/types/channels-slack.d.ts"
       ],
       "protocol": [
-        "./dist/types/protocol.d.ts"
+        "./dist/types/types/protocol.d.ts"
       ]
     }
   }

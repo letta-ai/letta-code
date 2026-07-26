@@ -1,6 +1,7 @@
 import type {
   AbortMessageCommand,
   AbortMessageResponseMessage,
+  AppServerInfoResponseMessage,
   ConversationListCommand,
   ConversationListResponseMessage,
   ExternalToolCallRequestMessage,
@@ -449,6 +450,25 @@ export class AppServerClient {
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
+  }
+
+  info(
+    options: Omit<
+      AppServerRequestOptions<AppServerInfoResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<AppServerInfoResponseMessage> {
+    return this.request(
+      {
+        type: "app_server_info",
+        request_id: this.nextRequestId("app-server-info"),
+      },
+      {
+        ...options,
+        predicate: (message): message is AppServerInfoResponseMessage =>
+          message.type === "app_server_info_response",
+      },
+    );
   }
 
   runtimeStart(

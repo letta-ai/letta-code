@@ -20,6 +20,7 @@ import {
 } from "@/websocket/terminal-handler";
 import { handleExecuteCommand } from "./commands";
 import { handleAgentConversationManagementProtocolCommand } from "./commands/agents-conversations";
+import { handleAppServerInfoCommand } from "./commands/app-server-info";
 import {
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
@@ -427,6 +428,11 @@ export function createListenerMessageHandler(
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
         });
+        return;
+      }
+
+      if (parsed.type === "app_server_info") {
+        handleAppServerInfoCommand(parsed, { socket, safeSocketSend });
         return;
       }
 

@@ -10,6 +10,7 @@ import type {
   AgentListCommand,
   AgentRetrieveCommand,
   AgentUpdateCommand,
+  AppServerInfoCommand,
   ChangeDeviceStateCommand,
   ChannelAccountBindCommand,
   ChannelAccountCreateCommand,
@@ -1242,6 +1243,18 @@ export function isSkillDisableCommand(
   );
 }
 
+export function isAppServerInfoCommand(
+  value: unknown,
+): value is AppServerInfoCommand {
+  if (!value || typeof value !== "object") return false;
+  const command = value as { type?: unknown; request_id?: unknown };
+  return (
+    command.type === "app_server_info" &&
+    typeof command.request_id === "string" &&
+    command.request_id.length > 0
+  );
+}
+
 export function isCreateAgentCommand(
   value: unknown,
 ): value is CreateAgentCommand {
@@ -2240,6 +2253,7 @@ export function parseServerMessage(
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
+      isAppServerInfoCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
       isAgentListCommand(parsed) ||
       isAgentRetrieveCommand(parsed) ||
