@@ -199,6 +199,7 @@ describe("channel slash commands", () => {
       "cancel",
       "chat",
       "feedback",
+      "compact",
       "context",
       "model",
       "reflection",
@@ -212,7 +213,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).not.toContain("MessageChannel");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /context, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /compact, /context, /model, /reflection.",
     );
 
     const slackText = buildChannelHelpMessage("slack");
@@ -231,6 +232,7 @@ describe("channel slash commands", () => {
       "@agent /model <handle-or-id> - switch this thread's model",
     );
     expect(slackText).toContain("@agent /context - show context window usage");
+    expect(slackText).toContain("@agent /compact - compact this thread");
     expect(slackText).toContain("@agent /feedback <message>");
     expect(slackText).toContain("@agent /detach");
     expect(slackText).toContain("@agent /reload");
@@ -808,17 +810,17 @@ describe("channel slash commands", () => {
   });
 
   test("builds a useful unsupported-command response", () => {
-    const command = parseChannelSlashCommand("/compact now");
+    const command = parseChannelSlashCommand("/teleport now");
     expect(command).not.toBeNull();
     if (!command) {
-      throw new Error("Expected /compact to parse as a channel slash command");
+      throw new Error("Expected /teleport to parse as a channel slash command");
     }
 
     const text = buildUnsupportedChannelCommandMessage("telegram", command);
-    expect(text).toContain("Telegram received /compact now");
+    expect(text).toContain("Telegram received /teleport now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /context, /model, /reflection.",
+      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /compact, /context, /model, /reflection.",
     );
     expect(text).toContain("without a leading slash");
 

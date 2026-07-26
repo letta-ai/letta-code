@@ -44,6 +44,7 @@ import {
 } from "./channel-turn-session";
 import { handleReloadCommand } from "./commands";
 import { handleChannelRegistryEvent } from "./commands/channels";
+import { createChannelCompactHandler } from "./commands/compact";
 import { createChannelContextHandler } from "./commands/context";
 import {
   applyModelUpdateForRuntime,
@@ -542,7 +543,6 @@ export async function wireChannelIngress(
     handleChannelRegistryEvent(event, socket, listener, safeSocketSend);
   });
   await recoverPendingChannelControlRequests(listener);
-
   registry.setApprovalResponseHandler(async ({ runtime, response }) =>
     handleApprovalResponseInput(listener, {
       runtime,
@@ -552,7 +552,6 @@ export async function wireChannelIngress(
       processQueuedTurn,
     }),
   );
-
   registry.setCancelHandler(async ({ runtime }) =>
     handleAbortMessageInput(listener, {
       command: {
@@ -567,6 +566,7 @@ export async function wireChannelIngress(
     }),
   );
   registry.setContextHandler(createChannelContextHandler(listener));
+  registry.setCompactHandler(createChannelCompactHandler(listener, socket));
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
     if (!modelIdentifier) {
       try {

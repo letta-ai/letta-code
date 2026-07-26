@@ -1,34 +1,25 @@
 import { spawn } from "node:child_process";
 import type WebSocket from "ws";
 import { actingUserRequestOptions } from "@/agent/acting-user";
-import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
   applySetMaxContext,
   formatSetMaxContextResult,
 } from "@/agent/max-context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { REMEMBER_PROMPT } from "@/agent/prompt-assets";
-import type { ConversationMessageCompactBody } from "@/backend";
 import { getBackend } from "@/backend";
 import { refreshCustomCommands } from "@/cli/commands/custom";
-import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import {
   buildDoctorMessage,
   buildInitMessage,
   gatherInitGitContext,
 } from "@/cli/helpers/init-command";
-import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import {
   formatSkillNameFrontmatterRepairReport,
   repairMissingSkillNameFrontmatter,
 } from "@/cli/helpers/skill-name-frontmatter-repair";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
-import {
-  DEFAULT_SUMMARIZATION_MODEL,
-  SYSTEM_REMINDER_CLOSE,
-  SYSTEM_REMINDER_OPEN,
-} from "@/constants";
-import { runPreCompactHooks } from "@/hooks";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import type { ModCommand } from "@/mods/types";
 import { settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
@@ -39,8 +30,8 @@ import type {
   StreamDelta,
 } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
+import { handleCompactCommand } from "./commands/compact";
 import { markSecretsReminderRefreshPending } from "./commands/secrets";
-import { getConversationWorkingDirectory } from "./cwd";
 import {
   ensureListenerAgentModAdapter,
   reloadListenerModAdapter,
@@ -58,7 +49,6 @@ import {
   invalidateSecretsCacheForAgent,
 } from "./secrets-sync";
 import { handleIncomingMessage } from "./turn";
-import { buildMaybeLaunchReflectionSubagent } from "./turn-events";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
@@ -422,151 +412,6 @@ function emitSlashCommandEnd(
     ...fields,
   };
   emitCanonicalMessageDelta(socket, runtime, endDelta as StreamDelta, scope);
-}
-
-type CompactMode =
-  | "all"
-  | "sliding_window"
-  | "self_compact_all"
-  | "self_compact_sliding_window";
-
-const VALID_COMPACT_MODES = new Set<CompactMode>([
-  "all",
-  "sliding_window",
-  "self_compact_all",
-  "self_compact_sliding_window",
-]);
-
-function compactHelpOutput(): string {
-  return [
-    "/compact help",
-    "",
-    "Summarize conversation history (compaction).",
-    "",
-    "USAGE",
-    "  /compact                   — compact with default mode",
-    "  /compact all               — compact all messages",
-    "  /compact sliding_window    — compact with sliding window",
-    "  /compact self_compact_all  — compact with self compact all",
-    "  /compact self_compact_sliding_window  — compact with self compact sliding window",
-    "  /compact help              — show this help",
-  ].join("\n");
-}
-
-/** /compact — Summarize conversation history through the active Backend. */
-async function handleCompactCommand(
-  socket: WebSocket,
-  conversationRuntime: ConversationRuntime,
-  args: string | undefined,
-): Promise<string> {
-  const agentId = conversationRuntime.agentId;
-  if (!agentId) {
-    throw new Error("No agent ID available for /compact command");
-  }
-
-  const rawModeArg = args?.trim().split(/\s+/)[0];
-  if (rawModeArg === "help") {
-    return compactHelpOutput();
-  }
-
-  const modeArg = rawModeArg as CompactMode | undefined;
-  if (modeArg && !VALID_COMPACT_MODES.has(modeArg)) {
-    throw new Error(`Invalid mode "${modeArg}". Run /compact help for usage.`);
-  }
-
-  const preCompactResult = await runPreCompactHooks(
-    undefined,
-    undefined,
-    agentId,
-    conversationRuntime.conversationId,
-  );
-  if (preCompactResult.blocked) {
-    const feedback = preCompactResult.feedback.join("\n") || "Blocked by hook";
-    throw new Error(`Compact blocked: ${feedback}`);
-  }
-
-  const backend = getBackend();
-  const modeDisplay = modeArg ? ` (mode: ${modeArg})` : "";
-
-  try {
-    let compactParams: ConversationMessageCompactBody | undefined;
-    if (modeArg) {
-      const agent = await backend.retrieveAgent(agentId);
-      compactParams = {
-        compaction_settings: {
-          mode: modeArg,
-          model:
-            agent.compaction_settings?.model?.trim() ||
-            DEFAULT_SUMMARIZATION_MODEL,
-        },
-      } as ConversationMessageCompactBody;
-    }
-
-    const compactBody =
-      conversationRuntime.conversationId === "default"
-        ? ({
-            agent_id: agentId,
-            ...(compactParams ?? {}),
-          } as ConversationMessageCompactBody)
-        : compactParams;
-
-    const result = await backend.compactConversationMessages(
-      conversationRuntime.conversationId,
-      compactBody,
-    );
-
-    // Launching reflection is best-effort — never fail the /compact itself.
-    try {
-      const reflectionSettings = getReflectionSettings(
-        agentId,
-        getConversationWorkingDirectory(
-          conversationRuntime.listener,
-          agentId,
-          conversationRuntime.conversationId,
-        ),
-      );
-      if (
-        reflectionSettings.trigger === "compaction-event" &&
-        settingsManager.isMemfsEnabled(agentId)
-      ) {
-        void buildMaybeLaunchReflectionSubagent({
-          runtime: conversationRuntime,
-          socket,
-          agentId,
-          conversationId: conversationRuntime.conversationId,
-        })("compaction-event");
-      }
-    } catch (reflectionError) {
-      debugLog(
-        "memory",
-        "Skipping post-compaction reflection:",
-        reflectionError instanceof Error
-          ? reflectionError.message
-          : String(reflectionError),
-      );
-    }
-    void regenerateConversationDescription(conversationRuntime.conversationId);
-
-    return [
-      `Compaction completed${modeDisplay}. Message buffer length reduced from ${result.num_messages_before} to ${result.num_messages_after}.`,
-      "",
-      `Summary: ${result.summary}`,
-    ].join("\n");
-  } catch (error) {
-    const apiError = error as {
-      status?: number;
-      error?: { detail?: string };
-    };
-    const detail = apiError?.error?.detail;
-    if (
-      apiError?.status === 400 &&
-      detail?.includes("Summarization failed to reduce the number of messages")
-    ) {
-      return "Compaction run, but the number of messages is the same";
-    }
-
-    throw new Error(formatErrorDetails(error, agentId));
-  }
 }
 
 /**

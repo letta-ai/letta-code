@@ -49,6 +49,7 @@ type ChannelSlashCommandHandler = (
 export type ChannelSlashCommandHandlers = {
   cancel?: ChannelSlashCommandHandler;
   chat?: ChannelSlashCommandHandler;
+  compact?: ChannelSlashCommandHandler;
   context?: ChannelSlashCommandHandler;
   detach?: ChannelSlashCommandHandler;
   model?: ChannelSlashCommandHandler;
@@ -114,6 +115,11 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     name: "feedback",
     kind: "direct",
     summary: "Send feedback about Letta Code from this routed chat.",
+  },
+  {
+    name: "compact",
+    kind: "agent-scoped",
+    summary: "Compact this chat's routed conversation.",
   },
   { name: "context", kind: "agent-scoped", summary: "Show context usage." },
   {
@@ -256,6 +262,7 @@ const SLACK_MENTION_SLASH_COMMAND_EXAMPLES = [
   "@agent /model list",
   "@agent /model <handle-or-id>",
   "@agent /context",
+  "@agent /compact",
   "@agent /cancel",
   "@agent /chat",
   "@agent /feedback <message>",
@@ -311,6 +318,7 @@ export function buildChannelHelpMessage(channelId: string): string {
       "@agent /model list - show available models",
       "@agent /model <handle-or-id> - switch this thread's model",
       "@agent /context - show context window usage",
+      "@agent /compact - compact this thread's routed conversation",
       "@agent /status - show route and listener status",
       "@agent /cancel - cancel the current turn",
       "@agent /chat - show the web chat link",
@@ -901,6 +909,12 @@ export async function tryHandleChannelSlashCommand(
             msg,
             command,
             handler: options.handlers?.chat,
+          });
+        case "compact":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.compact,
           });
         case "context":
           return handleScopedCommand({

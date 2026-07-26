@@ -19,10 +19,12 @@ import {
   buildChannelReloadUnavailableMessage,
   buildChannelResumedMessage,
 } from "./commands";
+import { buildChannelCompactUnavailableMessage } from "./compact-command";
 import { buildChannelContextUnavailableMessage } from "./context-command";
 import type { ChannelRegistryEvent } from "./registry-events";
 import type {
   ChannelCancelHandler,
+  ChannelCompactHandler,
   ChannelContextHandler,
   ChannelModelHandler,
   ChannelReflectionHandler,
@@ -55,6 +57,7 @@ export function createChannelCommandRouter(deps: {
     threadId?: string | null,
   ) => ChannelRoute | null;
   getCancelHandler: () => ChannelCancelHandler | null;
+  getCompactHandler: () => ChannelCompactHandler | null;
   getContextHandler: () => ChannelContextHandler | null;
   getReflectionHandler: () => ChannelReflectionHandler | null;
   getReloadHandler: () => ChannelReloadHandler | null;
@@ -185,6 +188,36 @@ export function createChannelCommandRouter(deps: {
         }),
       ),
     };
+  }
+
+  async function handleCompactSlashCommand(
+    command: { args: string },
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = loadAndFindRawRouteForMessage(msg);
+    if (!route?.enabled) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    const compactHandler = deps.getCompactHandler();
+    if (!compactHandler) {
+      return {
+        handled: true,
+        text: buildChannelCompactUnavailableMessage(msg.channel),
+      };
+    }
+
+    return compactHandler({
+      channelId: msg.channel,
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+      args: command.args || undefined,
+    });
   }
 
   async function handleContextSlashCommand(
@@ -503,6 +536,7 @@ export function createChannelCommandRouter(deps: {
   return {
     handleCancelSlashCommand,
     handleChatSlashCommand,
+    handleCompactSlashCommand,
     handleContextSlashCommand,
     handleDetachSlashCommand,
     handleModelSlashCommand,

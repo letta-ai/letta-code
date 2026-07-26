@@ -19,6 +19,12 @@ export type ChannelCancelHandler = (params: {
   runtime: { agent_id: string; conversation_id: string };
 }) => Promise<boolean>;
 
+export type ChannelCompactHandler = (params: {
+  channelId: string;
+  runtime: { agent_id: string; conversation_id: string };
+  args?: string;
+}) => Promise<{ handled: boolean; text?: string }>;
+
 export type ChannelReflectionHandler = (params: {
   runtime: { agent_id: string; conversation_id: string };
 }) => Promise<{ handled: boolean; text?: string }>;
