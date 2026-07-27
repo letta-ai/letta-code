@@ -96,7 +96,6 @@ import { recoverApprovalStateForSync } from "./recovery";
 import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
-  evictConversationRuntimeIfIdle,
   getActiveRuntime,
   getOrCreateConversationRuntime,
   getRecoveredApprovalStateForScope,
@@ -109,6 +108,7 @@ import {
   isListenerTransportOpen,
   type ListenerTransport,
   LocalListenerTransport,
+  RebindingListenerTransport,
 } from "./transport";
 import { handleIncomingMessage } from "./turn";
 import { escapeTaskNotificationSummary } from "./turn-events";
@@ -402,9 +402,12 @@ function getParsedRuntimeScope(
 function terminateControlAfterStreamClose(
   runtime: ListenerRuntime,
   streamSocket: WebSocket,
+  code: number,
+  reason: Buffer,
 ): void {
-  if (runtime.streamSocket !== streamSocket) {
-    return;
+  if (runtime.streamSocket !== streamSocket) return;
+  if (code === 1000 && reason.toString() === "Replaced by new connection") {
+    runtime.intentionallyClosed = true;
   }
   runtime.streamSocket = null;
   runtime.streamTransport = null;
@@ -415,9 +418,6 @@ function terminateControlAfterStreamClose(
     (controlSocket.readyState === WebSocket.OPEN ||
       controlSocket.readyState === WebSocket.CONNECTING)
   ) {
-    // The stream channel has no independent replay or reconnect path. Closing
-    // control tears down the paired session so its normal reconnect/bootstrap
-    // flow restores one coherent connection instead of silently losing frames.
     controlSocket.terminate();
   }
 }
@@ -538,7 +538,12 @@ export async function wireChannelIngress(
   });
 
   registry.setEventHandler((event) => {
-    handleChannelRegistryEvent(event, socket, listener, safeSocketSend);
+    handleChannelRegistryEvent(
+      event,
+      listener.socket ?? socket,
+      listener,
+      safeSocketSend,
+    );
   });
 
   await recoverPendingChannelControlRequests(listener);
@@ -1061,6 +1066,14 @@ export async function startConnectedListenerRuntime(
       };
       emitDeviceStatusUpdate(transport, conversationRuntime, scope);
       emitLoopStatusUpdate(transport, conversationRuntime, scope);
+      if (conversationRuntime.queueRuntime?.isEmpty === false) {
+        scheduleQueuePump(
+          conversationRuntime,
+          transport,
+          opts as StartListenerOptions,
+          processQueuedTurn,
+        );
+      }
     }
   }
 
@@ -1242,7 +1255,7 @@ export async function attachOpenListenerSocket(
   runtime.socket = socket;
   runtime.streamSocket = streamSocket;
   installExternalToolBridge(runtime);
-  const transport = socket;
+  const transport = new RebindingListenerTransport(() => runtime.socket);
   const processQueuedTurn: ProcessQueuedTurn = async (
     queuedTurn: IncomingMessage,
     dequeuedBatch: DequeuedBatch,
@@ -1345,7 +1358,7 @@ export async function attachOpenListenerSocket(
         );
       }
 
-      terminateControlAfterStreamClose(runtime, streamSocket);
+      terminateControlAfterStreamClose(runtime, streamSocket, code, reason);
     });
   }
 
@@ -1558,7 +1571,7 @@ async function connectWithRetry(
 
   runtime.socket = socket;
   runtime.streamSocket = streamSocket;
-  const transport = socket;
+  const transport = new RebindingListenerTransport(() => runtime.socket);
   const processQueuedTurn: ProcessQueuedTurn = async (
     queuedTurn: IncomingMessage,
     dequeuedBatch: DequeuedBatch,
@@ -1619,55 +1632,23 @@ async function connectWithRetry(
   );
 
   socket.on("close", (code: number, reason: Buffer) => {
-    if (runtime !== getActiveRuntime()) {
-      return;
-    }
-
+    if (runtime !== getActiveRuntime() || runtime.socket !== socket) return;
+    const reasonText = reason.toString();
     safeEmitWsEvent("recv", "lifecycle", {
       type: "_ws_close",
       code,
-      reason: reason.toString(),
+      reason: reasonText,
     });
-
     fileCommandSession.dispose();
-
-    // Stop cron scheduler on disconnect
-    stopCronScheduler();
-
-    // Pause channel delivery on disconnect (adapters keep polling, messages buffer).
-    // On reconnect, wireChannelIngress() re-registers the handler and calls setReady().
-    const channelRegistry = getChannelRegistry();
-    if (channelRegistry) {
-      channelRegistry.pause();
-    }
-
-    // Clear the bridge before queue clearing to prevent a race where a task
-    // completion enqueues into a shutting-down runtime.
-    setMessageQueueAdder(null);
-
-    // Single authoritative queue clear for all close paths
-    // (intentional and unintentional). Must fire before early returns.
-    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      conversationRuntime.queuedMessagesByItemId.clear();
-      if (conversationRuntime.queueRuntime) {
-        conversationRuntime.queueRuntime.clear("shutdown");
-      }
-    }
-
     if (isDebugEnabled()) {
       console.log(
-        `[Listen] WebSocket disconnected (code: ${code}, reason: ${reason.toString()})`,
+        `[Listen] WebSocket disconnected (code: ${code}, reason: ${reasonText})`,
       );
     }
 
     clearRuntimeTimers(runtime);
     killAllTerminals();
-    runtime._unsubscribeSubagentState?.();
-    runtime._unsubscribeSubagentState = undefined;
-    runtime._unsubscribeSubagentStreamEvents?.();
-    runtime._unsubscribeSubagentStreamEvents = undefined;
-    clearListenerWarmState(runtime);
-    if (streamSocket) {
+    if (streamSocket && runtime.streamSocket === streamSocket) {
       streamSocket.removeAllListeners();
       if (
         streamSocket.readyState === WebSocket.OPEN ||
@@ -1675,36 +1656,51 @@ async function connectWithRetry(
       ) {
         streamSocket.close();
       }
+      runtime.streamSocket = null;
+      runtime.streamTransport = null;
     }
     runtime.socket = null;
-    runtime.streamSocket = null;
-    runtime.streamTransport = null;
-    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      rejectPendingApprovalResolvers(
-        conversationRuntime,
-        "WebSocket disconnected",
-      );
-      clearConversationRuntimeState(conversationRuntime);
-      evictConversationRuntimeIfIdle(conversationRuntime);
-    }
+    runtime.transport = null;
+    const terminalClose =
+      runtime.intentionallyClosed ||
+      code === 1008 ||
+      (code === 1000 && reasonText === "Replaced by new connection");
+    if (terminalClose) {
+      stopCronScheduler();
+      const channelRegistry = getChannelRegistry();
+      if (channelRegistry) {
+        channelRegistry.pause();
+      }
+      setMessageQueueAdder(null);
+      runtime._unsubscribeSubagentState?.();
+      runtime._unsubscribeSubagentState = undefined;
+      runtime._unsubscribeSubagentStreamEvents?.();
+      runtime._unsubscribeSubagentStreamEvents = undefined;
+      clearListenerWarmState(runtime);
+      if (getActiveRuntime() === runtime) {
+        setActiveRuntime(null);
+      }
+      stopRuntime(runtime, true);
 
-    if (runtime.intentionallyClosed) {
+      if (code === 1008) {
+        if (isDebugEnabled()) {
+          console.log("[Listen] Environment not found, re-registering...");
+        }
+        if (opts.onNeedsReregister) {
+          opts.onNeedsReregister();
+        } else {
+          opts.onDisconnected();
+        }
+        return;
+      }
+
       opts.onDisconnected();
       return;
     }
 
-    // 1008: Environment not found - need to re-register
-    if (code === 1008) {
-      if (isDebugEnabled()) {
-        console.log("[Listen] Environment not found, re-registering...");
-      }
-      // Stop retry loop and signal that we need to re-register
-      if (opts.onNeedsReregister) {
-        opts.onNeedsReregister();
-      } else {
-        opts.onDisconnected();
-      }
-      return;
+    const channelRegistry = getChannelRegistry();
+    if (channelRegistry) {
+      channelRegistry.pause();
     }
 
     // If we had connected before, restart backoff from zero for this outage window.
@@ -1752,7 +1748,7 @@ async function connectWithRetry(
         );
       }
 
-      terminateControlAfterStreamClose(runtime, streamSocket);
+      terminateControlAfterStreamClose(runtime, streamSocket, code, reason);
     });
   }
 }

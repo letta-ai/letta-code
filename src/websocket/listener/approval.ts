@@ -6,7 +6,7 @@ import {
   emitProtocolV2Message,
 } from "./protocol-outbound";
 import { evictConversationRuntimeIfIdle } from "./runtime";
-import { isListenerTransportOpen, type ListenerTransport } from "./transport";
+import type { ListenerTransport } from "./transport";
 import type { TurnLease } from "./turn-lifecycle";
 import { setCommandLoopStatus, setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime } from "./types";
@@ -246,8 +246,8 @@ export function requestApprovalOverWS(
   requestId: string,
   controlRequest: ControlRequest,
 ): Promise<ApprovalResponseBody> {
-  if (!isListenerTransportOpen(socket)) {
-    return Promise.reject(new Error("WebSocket not open"));
+  if (runtime.listener.intentionallyClosed) {
+    return Promise.reject(new Error("Listener runtime stopped"));
   }
 
   const abortSignal = turnLease.signal;
