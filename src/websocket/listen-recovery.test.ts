@@ -19,6 +19,8 @@ import type {
   ChannelControlRequestEvent,
 } from "@/channels/types";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
+import { createConnectionRequestKey } from "@/websocket/listener/connection";
+import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import type { ConversationRuntime } from "@/websocket/listener/types";
 
 const {
@@ -235,6 +237,54 @@ describe("resolvePendingApprovalBatchId original behavior preserved", () => {
 });
 
 describe("channel control request recovery", () => {
+  test("recognizes a live pending approval stored under a composite key", async () => {
+    const replies: Array<{
+      chatId: string;
+      text: string;
+      replyToMessageId?: string;
+    }> = [];
+    const event = createPendingControlRequestEvent();
+    __testOverrideLoadPendingControlRequestStore(() => ({
+      requests: [event],
+    }));
+
+    const registry = new ChannelRegistry();
+    registry.registerAdapter(createAdapter(replies));
+    const listener = createListenerRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const requestKey = createConnectionRequestKey("client-a", event.requestId);
+    runtime.pendingApprovalResolvers.set(requestKey, {
+      requestId: event.requestId,
+      connectionIds: new Set(["client-a"]),
+      resolve: () => {},
+      reject: () => {},
+      controlRequest: {
+        type: "control_request",
+        request_id: event.requestId,
+        request: {
+          subtype: "can_use_tool",
+          tool_name: event.toolName,
+          input: event.input,
+          tool_call_id: "tool-call-1",
+          permission_suggestions: [],
+          blocked_path: null,
+        },
+      },
+    });
+    listener.approvalRuntimeKeyByRequestId.set(requestKey, runtime.key);
+    let backendRecoveryCalls = 0;
+
+    await recoverPendingChannelControlRequests(listener, {
+      recoverApprovalStateForSync: async () => {
+        backendRecoveryCalls += 1;
+      },
+    });
+
+    expect(backendRecoveryCalls).toBe(0);
+    expect(replies).toHaveLength(1);
+    expect(registry.hasPendingControlRequest(event.requestId)).toBe(true);
+  });
+
   test("redelivers persisted channel prompts that are still pending after boot", async () => {
     const replies: Array<{
       chatId: string;

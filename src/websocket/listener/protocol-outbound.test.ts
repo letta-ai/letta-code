@@ -6,6 +6,8 @@ import {
   markListenerConnectionInitialized,
   openListenerConnection,
   subscribeListenerConnection,
+  TO_SUBSCRIBERS,
+  toListenerConnection,
 } from "@/websocket/listener/connection";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { createRuntime as createListenerRuntime } from "@/websocket/listener/lifecycle";
@@ -70,13 +72,19 @@ describe("emitProtocolV2Message backpressure", () => {
     socket.bufferedAmount = OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
 
     for (let i = 0; i <= OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES; i += 1) {
-      emitProtocolV2Message(socket as never, runtime, {
-        type: "stream_delta",
-        delta: {
-          message_type: "assistant_message",
-          content: `delta-${i}`,
-        },
-      } as never);
+      emitProtocolV2Message(
+        socket as never,
+        runtime,
+        {
+          type: "stream_delta",
+          delta: {
+            message_type: "assistant_message",
+            content: `delta-${i}`,
+          },
+        } as never,
+        undefined,
+        TO_SUBSCRIBERS,
+      );
     }
 
     expect(socket.terminated).toBe(true);
@@ -88,10 +96,16 @@ describe("emitProtocolV2Message backpressure", () => {
     socket.bufferedAmount = OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
 
     for (let i = 0; i <= OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES; i += 1) {
-      emitProtocolV2Message(socket as never, runtime, {
-        type: "future_protocol_message",
-        content: `frame-${i}`,
-      } as never);
+      emitProtocolV2Message(
+        socket as never,
+        runtime,
+        {
+          type: "future_protocol_message",
+          content: `frame-${i}`,
+        } as never,
+        undefined,
+        TO_SUBSCRIBERS,
+      );
     }
 
     expect(socket.terminated).toBe(true);
@@ -140,6 +154,7 @@ describe("emitProtocolV2Message connection routing", () => {
         loop_status: { status: "WAITING_ON_INPUT", active_run_ids: [] },
       } as never,
       scope,
+      TO_SUBSCRIBERS,
     );
 
     expect(socketA.sentPayloads).toHaveLength(1);
@@ -162,12 +177,114 @@ describe("emitProtocolV2Message connection routing", () => {
         },
       } as never,
       scope,
-      { connectionId: "client-b", subscribers: false },
+      toListenerConnection("client-b"),
     );
 
     expect(socketA.sentPayloads).toHaveLength(1);
     expect(socketB.sentPayloads).toHaveLength(2);
     expect(socketC.sentPayloads).toHaveLength(0);
+  });
+
+  test("drops scoped events when the scope has no subscribers", () => {
+    const listener = createListenerRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socketA = new MockSocket();
+    const socketB = new MockSocket();
+    for (const [connectionId, socket] of [
+      ["client-a", socketA],
+      ["client-b", socketB],
+    ] as const) {
+      openListenerConnection({
+        runtime: listener,
+        connectionId,
+        writer: socket as never,
+        options: {
+          connectionId,
+          wsUrl: "ws://test",
+          deviceId: "test",
+          connectionName: connectionId,
+          onConnected: () => {},
+          onDisconnected: () => {},
+          onError: () => {},
+        },
+      });
+      markListenerConnectionInitialized(listener, connectionId);
+    }
+
+    emitProtocolV2Message(
+      socketA as never,
+      runtime,
+      {
+        type: "update_queue",
+        queue: [],
+      } as never,
+      { agent_id: "agent-1", conversation_id: "conv-1" },
+      TO_SUBSCRIBERS,
+    );
+
+    expect(socketA.sentPayloads).toEqual([]);
+    expect(socketB.sentPayloads).toEqual([]);
+  });
+
+  test("keeps cron and background snapshots inside their subscribed runtime", () => {
+    const listener = createListenerRuntime();
+    const runtimeA = getOrCreateScopedRuntime(listener, "agent-a", "conv-a");
+    const socketA = new MockSocket();
+    const socketB = new MockSocket();
+    for (const [connectionId, socket] of [
+      ["client-a", socketA],
+      ["client-b", socketB],
+    ] as const) {
+      openListenerConnection({
+        runtime: listener,
+        connectionId,
+        writer: socket as never,
+        options: {
+          connectionId,
+          wsUrl: "ws://test",
+          deviceId: "test",
+          connectionName: connectionId,
+          onConnected: () => {},
+          onDisconnected: () => {},
+          onError: () => {},
+        },
+      });
+      markListenerConnectionInitialized(listener, connectionId);
+    }
+    subscribeListenerConnection(listener, "client-a", {
+      agent_id: "agent-a",
+      conversation_id: "conv-a",
+    });
+    subscribeListenerConnection(listener, "client-b", {
+      agent_id: "agent-b",
+      conversation_id: "conv-b",
+    });
+
+    emitProtocolV2Message(
+      socketA as never,
+      runtimeA,
+      {
+        type: "crons_updated",
+        timestamp: 1,
+        agent_id: "agent-a",
+        conversation_id: "conv-a",
+      } as never,
+      { agent_id: "agent-a", conversation_id: "conv-a" },
+      TO_SUBSCRIBERS,
+    );
+    emitProtocolV2Message(
+      socketA as never,
+      runtimeA,
+      {
+        type: "update_subagent_state",
+        subagents: [],
+      } as never,
+      { agent_id: "agent-a", conversation_id: "conv-a" },
+      TO_SUBSCRIBERS,
+    );
+
+    expect(socketA.sentPayloads).toHaveLength(2);
+    expect(socketB.sentPayloads).toEqual([]);
   });
 });
 

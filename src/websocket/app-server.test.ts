@@ -568,7 +568,10 @@ describe("app-server native websocket", () => {
     let handle: AppServerHandle | null = null;
     try {
       handle = await startAppServer({ listen: "ws://127.0.0.1:0" });
-      await expectWebSocketOpenFailure(handle.streamUrl);
+      expect("streamUrl" in handle).toBe(false);
+      const legacyStreamUrl = new URL(handle.controlUrl);
+      legacyStreamUrl.searchParams.set("channel", "stream");
+      await expectWebSocketOpenFailure(legacyStreamUrl.toString());
       const legacyControlUrl = new URL(handle.controlUrl);
       legacyControlUrl.searchParams.set("channel", "control");
       await expectWebSocketOpenFailure(legacyControlUrl.toString());

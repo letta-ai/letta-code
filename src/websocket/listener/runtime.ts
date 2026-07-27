@@ -440,7 +440,9 @@ export function getPendingControlRequests(
     return requests;
   }
 
-  for (const pending of conversationRuntime.pendingApprovalResolvers.values()) {
+  for (const pending of new Set(
+    conversationRuntime.pendingApprovalResolvers.values(),
+  )) {
     const request = pending.controlRequest;
     if (!request) continue;
     requests.push({

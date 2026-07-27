@@ -56,19 +56,3 @@ export function getOrCreateScopedRuntime(
     getOrCreateConversationRuntime(listener, agentId, conversationId),
   );
 }
-
-/**
- * Fallback for unscoped task notifications (e.g., reflection/init spawned
- * outside turn processing). Picks the first ConversationRuntime that has a
- * QueueRuntime, or null if none exist.
- */
-export function findFallbackRuntime(
-  listener: ListenerRuntime,
-): ConversationRuntime | null {
-  for (const cr of listener.conversationRuntimes.values()) {
-    if (cr.queueRuntime) {
-      return cr;
-    }
-  }
-  return null;
-}

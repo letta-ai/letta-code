@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { settingsManager } from "@/settings-manager";
+import { getOrCreateProcessTransport } from "@/websocket/listener/connection";
+import { createConnectionTurnProcessor } from "@/websocket/listener/connection-lifecycle";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "@/websocket/listener/inbound-dispatch";
 import {
@@ -11,10 +13,7 @@ import {
   getActiveRuntime,
   setActiveRuntime,
 } from "@/websocket/listener/runtime";
-import {
-  type ListenerTransport,
-  LocalListenerTransport,
-} from "@/websocket/listener/transport";
+import type { ListenerTransport } from "@/websocket/listener/transport";
 import { handleIncomingMessage } from "@/websocket/listener/turn";
 import { registerTurnObserver } from "@/websocket/listener/turn-observers";
 import type {
@@ -92,7 +91,6 @@ export function runBridgeTurn(params: RunTurnParams): Promise<TurnOutcome> {
 
 const OPENAI_TURN_TIMEOUT_MS = 15 * 60 * 1000;
 
-const bridgeTransport = new LocalListenerTransport();
 let bridgeRuntimeStart: Promise<void> | null = null;
 let bridgeOwnedRuntime: ListenerRuntime | null = null;
 
@@ -179,10 +177,10 @@ async function runTurnViaListenerRuntime(
     params.agentId,
     params.conversationId,
   ).mode = "unrestricted";
-  // Frames emitted for this turn also flow to any attached WS client; the
-  // transport here is only the fallback destination when none is attached.
-  const socket: ListenerTransport =
-    listener.socket ?? listener.transport ?? bridgeTransport;
+  // The bridge is a process-originated producer, not a websocket client.
+  // Scoped frames reach explicit conversation subscribers and the observer
+  // below; they must never inherit an arbitrary app-server connection.
+  const socket: ListenerTransport = getOrCreateProcessTransport(listener);
 
   const dispatchOptions: StartListenerOptions = {
     connectionId: listener.connectionId ?? "openai-api",
@@ -196,24 +194,8 @@ async function runTurnViaListenerRuntime(
     },
   };
 
-  const processQueuedTurn: ProcessQueuedTurn = async (
-    queuedTurn,
-    dequeuedBatch,
-  ) => {
-    const queuedScope = getOrCreateScopedRuntime(
-      listener,
-      queuedTurn.agentId,
-      queuedTurn.conversationId,
-    );
-    await handleIncomingMessage(
-      queuedTurn,
-      socket,
-      queuedScope,
-      undefined,
-      dispatchOptions.connectionId,
-      dequeuedBatch.batchId,
-    );
-  };
+  const processQueuedTurn: ProcessQueuedTurn =
+    createConnectionTurnProcessor(listener);
 
   return await new Promise<TurnOutcome>((resolve) => {
     let text = "";
@@ -352,7 +334,22 @@ async function runTurnViaListenerRuntime(
         socket,
         options: dispatchOptions,
         processQueuedTurn,
-        processIncomingMessage: handleIncomingMessage,
+        processIncomingMessage: (
+          incoming,
+          incomingSocket,
+          incomingRuntime,
+          onStatusChange,
+          _connectionId,
+          batchId,
+        ) =>
+          handleIncomingMessage(
+            incoming,
+            incomingSocket,
+            incomingRuntime,
+            onStatusChange,
+            undefined,
+            batchId,
+          ),
         trackListenerError: (errorType, error) => {
           params.onLog?.(
             `OpenAI-compat listener error (${errorType}): ${

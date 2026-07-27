@@ -10,7 +10,9 @@ import {
   createConnectionRequestKey,
   markListenerConnectionInitialized,
   openListenerConnection,
+  subscribeListenerConnection,
 } from "./connection";
+import { cleanupListenerConnection } from "./connection-lifecycle";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime, stopRuntime } from "./lifecycle";
 import { buildLoopStatus } from "./protocol-outbound";
@@ -148,6 +150,63 @@ describe("listener approval lifecycle", () => {
     ).toBe(true);
     await expect(pendingA).resolves.toEqual(
       makeSuccessResponse("same-request-id"),
+    );
+  });
+
+  test("fans approval requests to subscribers and survives one disconnect", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socketA = new MockSocket();
+    const socketB = new MockSocket();
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    for (const [connectionId, socket] of [
+      ["client-a", socketA],
+      ["client-b", socketB],
+    ] as const) {
+      openListenerConnection({
+        runtime: listener,
+        connectionId,
+        writer: socket,
+        options: {
+          connectionId,
+          wsUrl: "local://test",
+          deviceId: "test",
+          connectionName: connectionId,
+          onConnected: () => {},
+          onDisconnected: () => {},
+          onError: () => {},
+        },
+      });
+      markListenerConnectionInitialized(listener, connectionId);
+      subscribeListenerConnection(listener, connectionId, scope);
+    }
+
+    runtime.activeConnectionId = "client-a";
+    const pending = requestApprovalOverWS(
+      runtime,
+      socketA,
+      beginApprovalWait(runtime),
+      "shared-approval",
+      makeControlRequest("shared-approval"),
+    );
+
+    expect(socketA.sentPayloads).toHaveLength(1);
+    expect(socketB.sentPayloads).toHaveLength(1);
+    expect(runtime.pendingApprovalResolvers.size).toBe(2);
+
+    cleanupListenerConnection(listener, "client-a");
+
+    expect(runtime.turnLifecycle.currentLease?.signal.aborted).toBe(false);
+    expect(runtime.pendingApprovalResolvers.size).toBe(1);
+    expect(
+      resolvePendingApprovalResolver(
+        runtime,
+        makeSuccessResponse("shared-approval"),
+        "client-b",
+      ),
+    ).toBe(true);
+    await expect(pending).resolves.toEqual(
+      makeSuccessResponse("shared-approval"),
     );
   });
 

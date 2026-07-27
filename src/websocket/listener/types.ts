@@ -144,7 +144,8 @@ export type InvalidInputCommand = {
 export type ParsedServerMessage = ServerMessage | InvalidInputCommand;
 
 export type PendingApprovalResolver = {
-  connectionId?: ListenerConnectionId;
+  requestId: string;
+  connectionIds: Set<ListenerConnectionId>;
   resolve: (response: ApprovalResponseBody) => void;
   reject: (reason: Error) => void;
   controlRequest?: ControlRequest;
@@ -215,10 +216,24 @@ export type ConversationRuntime = {
 
 export type ListenerConnectionId = string;
 
-export interface ListenerMessageRouting {
-  connectionId?: ListenerConnectionId;
-  subscribers?: boolean;
-}
+/**
+ * Explicit destination for one outbound listener message.
+ *
+ * This mirrors Codex's OutgoingEnvelope split. Scoped notifications never
+ * fall back to every connected client: ToSubscribers with an empty subscriber
+ * set is intentionally a no-op.
+ */
+export type ListenerMessageRouting =
+  | {
+      type: "ToConnection";
+      connectionId: ListenerConnectionId;
+    }
+  | {
+      type: "ToSubscribers";
+    }
+  | {
+      type: "Broadcast";
+    };
 
 /**
  * State owned by one transport connection.

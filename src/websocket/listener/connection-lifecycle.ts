@@ -3,7 +3,8 @@ import { killListenerConnectionTerminals } from "@/websocket/terminal-handler";
 import { rejectPendingApprovalResolversForConnection } from "./approval";
 import {
   closeListenerConnection,
-  selectListenerController,
+  getOrCreateProcessTransport,
+  getSubscribedListenerConnections,
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { rejectPendingExternalToolCallsForConnection } from "./external-tools";
@@ -20,20 +21,26 @@ export function createConnectionTurnProcessor(
   runtime: ListenerRuntime,
 ): ProcessQueuedTurn {
   return async (queuedTurn, dequeuedBatch) => {
-    const connection = queuedTurn.connectionId
-      ? runtime.connections.get(queuedTurn.connectionId)
-      : selectListenerController(runtime, {
-          agent_id: queuedTurn.agentId,
-          conversation_id: queuedTurn.conversationId,
-        });
-    if (!connection || connection.cancellation.signal.aborted) {
-      return;
-    }
     const scopedRuntime = getOrCreateScopedRuntime(
       runtime,
       queuedTurn.agentId,
       queuedTurn.conversationId,
     );
+    if (!queuedTurn.connectionId) {
+      await handleIncomingMessage(
+        queuedTurn,
+        getOrCreateProcessTransport(runtime),
+        scopedRuntime,
+        undefined,
+        undefined,
+        dequeuedBatch.batchId,
+      );
+      return;
+    }
+    const connection = runtime.connections.get(queuedTurn.connectionId);
+    if (!connection || connection.cancellation.signal.aborted) {
+      return;
+    }
     await handleIncomingMessage(
       queuedTurn,
       connection.writer,
@@ -51,7 +58,15 @@ export function cleanupListenerConnection(
 ): void {
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     if (conversationRuntime.activeConnectionId === connectionId) {
-      conversationRuntime.turnLifecycle.requestCancellation();
+      const hasEligibleFailover = getSubscribedListenerConnections(runtime, {
+        agent_id: conversationRuntime.agentId,
+        conversation_id: conversationRuntime.conversationId,
+      }).some((connection) => connection.id !== connectionId);
+      if (hasEligibleFailover) {
+        conversationRuntime.activeConnectionId = null;
+      } else {
+        conversationRuntime.turnLifecycle.requestCancellation();
+      }
     }
     for (const [
       itemId,

@@ -11,12 +11,7 @@ import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import { settingsManager } from "@/settings-manager";
-import {
-  backgroundProcesses,
-  backgroundTasks,
-} from "@/tools/impl/process_manager";
 import type {
-  BackgroundProcessSummary,
   DeviceStatus,
   DeviceStatusUpdateMessage,
   LoopState,
@@ -35,6 +30,7 @@ import type {
   WsProtocolMessage,
 } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
+import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
 import {
   type ChannelTurnRuntimeCarrier,
   getActiveChannelTurnProgressContext,
@@ -42,6 +38,7 @@ import {
 import {
   nextListenerConnectionEventSeq,
   resolveListenerConnectionTargets,
+  TO_SUBSCRIBERS,
 } from "./connection";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory, getExportedCwdMap } from "./cwd";
@@ -165,48 +162,14 @@ function getScopeForRuntime(
   return scope ?? {};
 }
 
-export function buildBackgroundProcessSnapshot(): BackgroundProcessSummary[] {
-  const bashProcesses: BackgroundProcessSummary[] = Array.from(
-    backgroundProcesses.entries(),
-  )
-    .filter(([, proc]) => proc.status === "running")
-    .map(([processId, proc]) => ({
-      process_id: processId,
-      kind: "bash",
-      command: proc.command,
-      started_at_ms: proc.startTime?.getTime() ?? null,
-      status: proc.status,
-      exit_code: proc.exitCode,
-    }));
-
-  const taskProcesses: BackgroundProcessSummary[] = Array.from(
-    backgroundTasks.entries(),
-  )
-    .filter(([, task]) => task.status === "running")
-    .map(([processId, task]) => ({
-      process_id: processId,
-      kind: "agent_task",
-      task_type: task.subagentType,
-      description: task.description,
-      started_at_ms: task.startTime.getTime(),
-      status: task.status,
-      subagent_id: task.subagentId,
-      ...(task.error ? { error: task.error } : {}),
-    }));
-
-  return [...bashProcesses, ...taskProcesses].sort((a, b) => {
-    const aStart = a.started_at_ms ?? 0;
-    const bStart = b.started_at_ms ?? 0;
-    return bStart - aStart;
-  });
-}
-
 export function emitRuntimeStateUpdates(
   runtime: RuntimeCarrier,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
+  scope:
+    | {
+        agent_id?: string | null;
+        conversation_id?: string | null;
+      }
+    | undefined,
 ): void {
   emitLoopStatusIfOpen(runtime, scope);
   emitDeviceStatusIfOpen(runtime, scope);
@@ -454,11 +417,13 @@ export function emitProtocolV2Message(
     WsProtocolMessage,
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
   >,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
-  routing?: ListenerMessageRouting,
+  scope:
+    | {
+        agent_id?: string | null;
+        conversation_id?: string | null;
+      }
+    | undefined,
+  routing: ListenerMessageRouting,
 ): void {
   const listener = getListenerRuntime(runtime);
   const runtimeScope = resolveRuntimeScope(
@@ -472,8 +437,7 @@ export function emitProtocolV2Message(
     runtime: listener,
     origin: socket,
     scope: runtimeScope,
-    connectionId: routing?.connectionId,
-    subscribers: routing?.subscribers !== false,
+    routing,
     streamMessage: isStreamChannelMessage(message.type),
   });
   for (const { connection, transport: targetSocket } of targets) {
@@ -541,6 +505,7 @@ export function emitDeviceStatusUpdate(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope?: PartialRuntimeScope,
+  routing: ListenerMessageRouting = TO_SUBSCRIBERS,
 ): void {
   const deviceStatus = buildDeviceStatus(runtime, scope);
   recordDeviceStatus(socket, getScopeForRuntime(runtime, scope), deviceStatus);
@@ -551,7 +516,7 @@ export function emitDeviceStatusUpdate(
     type: "update_device_status",
     device_status: deviceStatus,
   };
-  emitProtocolV2Message(socket, runtime, message, scope);
+  emitProtocolV2Message(socket, runtime, message, scope, routing);
 }
 
 export function emitLoopStatusUpdate(
@@ -561,6 +526,7 @@ export function emitLoopStatusUpdate(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
+  routing: ListenerMessageRouting = TO_SUBSCRIBERS,
 ): void {
   const message: Omit<
     LoopStatusUpdateMessage,
@@ -569,7 +535,7 @@ export function emitLoopStatusUpdate(
     type: "update_loop_status",
     loop_status: buildLoopStatus(runtime, scope),
   };
-  emitProtocolV2Message(socket, runtime, message, scope);
+  emitProtocolV2Message(socket, runtime, message, scope, routing);
 }
 
 export function emitLoopStatusIfOpen(
@@ -607,6 +573,7 @@ export function emitQueueUpdate(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
+  routing: ListenerMessageRouting = TO_SUBSCRIBERS,
 ): void {
   const listener = getListenerRuntime(runtime);
   if (!listener) {
@@ -620,7 +587,7 @@ export function emitQueueUpdate(
     type: "update_queue",
     queue: buildQueueSnapshot(runtime, resolvedScope),
   };
-  emitProtocolV2Message(socket, runtime, message, resolvedScope);
+  emitProtocolV2Message(socket, runtime, message, resolvedScope, routing);
 }
 
 function isTextContentPart(
@@ -792,6 +759,7 @@ export function emitDeviceStatusUpdateIfChanged(
   runtime: RuntimeCarrier,
   scope?: PartialRuntimeScope,
   options?: { force?: boolean },
+  routing: ListenerMessageRouting = TO_SUBSCRIBERS,
 ): boolean {
   const resolvedScope = getScopeForRuntime(runtime, scope);
   const deviceStatus = buildDeviceStatus(runtime, resolvedScope);
@@ -807,7 +775,7 @@ export function emitDeviceStatusUpdateIfChanged(
     type: "update_device_status",
     device_status: deviceStatus,
   };
-  emitProtocolV2Message(socket, runtime, message, resolvedScope);
+  emitProtocolV2Message(socket, runtime, message, resolvedScope, routing);
   return true;
 }
 
@@ -815,18 +783,23 @@ export function emitStateSync(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
   scope: RuntimeScope,
-  options?: { forceDeviceStatus?: boolean },
+  options?: {
+    forceDeviceStatus?: boolean;
+    routing?: ListenerMessageRouting;
+  },
 ): void {
+  const routing = options?.routing ?? TO_SUBSCRIBERS;
   emitDeviceStatusUpdateIfChanged(
     socket,
     runtime,
     scope,
     options?.forceDeviceStatus ? { force: true } : undefined,
+    routing,
   );
 
-  emitLoopStatusUpdate(socket, runtime, scope);
-  emitQueueUpdate(socket, runtime, scope);
-  emitSubagentStateUpdate(socket, runtime, scope);
+  emitLoopStatusUpdate(socket, runtime, scope, routing);
+  emitQueueUpdate(socket, runtime, scope, routing);
+  emitSubagentStateUpdate(socket, runtime, scope, routing);
 }
 
 // ─────────────────────────────────────────────
@@ -904,6 +877,7 @@ export function emitSubagentStateUpdate(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
+  routing: ListenerMessageRouting = TO_SUBSCRIBERS,
 ): void {
   const message: Omit<
     SubagentStateUpdateMessage,
@@ -912,7 +886,7 @@ export function emitSubagentStateUpdate(
     type: "update_subagent_state",
     subagents: buildSubagentSnapshot(runtime, scope),
   };
-  emitProtocolV2Message(socket, runtime, message, scope);
+  emitProtocolV2Message(socket, runtime, message, scope, routing);
 }
 
 export function emitSubagentStateIfOpen(
@@ -1124,5 +1098,5 @@ export function emitStreamDelta(
     delta,
     ...(subagentId ? { subagent_id: subagentId } : {}),
   };
-  emitProtocolV2Message(socket, runtime, message, scope);
+  emitProtocolV2Message(socket, runtime, message, scope, TO_SUBSCRIBERS);
 }

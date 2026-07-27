@@ -61,7 +61,6 @@ export interface StartAppServerOptions {
 export interface AppServerListeningInfo {
   url: string;
   controlUrl: string;
-  streamUrl: string;
 }
 
 export interface AppServerHandle extends AppServerListeningInfo {
@@ -85,12 +84,6 @@ function getRequiredAddressInfo(server: Server): AddressInfo {
 function getWebSocketUrl(baseUrl: string, path: string): string {
   const url = new URL(baseUrl);
   url.pathname = path;
-  return url.toString();
-}
-
-function getLegacyStreamUrl(baseUrl: string, path: string): string {
-  const url = new URL(getWebSocketUrl(baseUrl, path));
-  url.searchParams.set("channel", "stream");
   return url.toString();
 }
 
@@ -371,7 +364,6 @@ export async function startAppServer(
   resolvedInfo = {
     url: baseUrl,
     controlUrl: getWebSocketUrl(baseUrl, listen.path),
-    streamUrl: getLegacyStreamUrl(baseUrl, listen.path),
   };
   options.onListening?.(resolvedInfo);
 

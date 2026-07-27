@@ -6,8 +6,10 @@ import {
   getSubscribedListenerConnections,
   markListenerConnectionInitialized,
   openListenerConnection,
-  selectListenerController,
+  resolveListenerConnectionTargets,
   subscribeListenerConnection,
+  TO_SUBSCRIBERS,
+  toListenerConnection,
 } from "./connection";
 import { createRuntime } from "./lifecycle";
 import type { LocalTransport } from "./transport";
@@ -79,20 +81,41 @@ describe("listener connection identity", () => {
     expect(runtime.connections.get("client-c")?.subscriptions.size).toBe(0);
   });
 
-  test("selects the origin or oldest subscriber deterministically", () => {
+  test("resolves only the explicitly requested destination class", () => {
     const { runtime, writer: writerA } = addConnection("client-a");
     const { writer: writerB } = addConnection("client-b", runtime);
+    const { writer: writerC } = addConnection("client-c", runtime);
     const scope = { agent_id: "agent-1", conversation_id: "conversation-1" };
     subscribeListenerConnection(runtime, "client-a", scope);
     subscribeListenerConnection(runtime, "client-b", scope);
 
-    expect(selectListenerController(runtime, scope, writerB)?.id).toBe(
-      "client-b",
-    );
-    expect(selectListenerController(runtime, scope)?.id).toBe("client-a");
-    expect(selectListenerController(runtime, scope, writerA)?.id).toBe(
-      "client-a",
-    );
+    expect(
+      resolveListenerConnectionTargets({
+        runtime,
+        origin: writerC,
+        scope,
+        routing: TO_SUBSCRIBERS,
+        streamMessage: false,
+      }).map((target) => target.connection?.id),
+    ).toEqual(["client-a", "client-b"]);
+    expect(
+      resolveListenerConnectionTargets({
+        runtime,
+        origin: writerA,
+        scope,
+        routing: toListenerConnection("client-b"),
+        streamMessage: false,
+      }).map((target) => target.connection?.id),
+    ).toEqual(["client-b"]);
+    expect(
+      resolveListenerConnectionTargets({
+        runtime,
+        origin: writerB,
+        scope,
+        routing: { type: "Broadcast" },
+        streamMessage: false,
+      }).map((target) => target.connection?.id),
+    ).toEqual(["client-a", "client-b", "client-c"]);
   });
 
   test("closing one connection removes only its subscriptions", () => {
@@ -113,7 +136,7 @@ describe("listener connection identity", () => {
     ).toEqual(["client-a"]);
   });
 
-  test("the process transport broadcasts only to initialized live clients", () => {
+  test("the process transport rejects implicit broadcast sends", () => {
     const { runtime, writer: writerA } = addConnection("client-a");
     const writerB = new MockTransport();
     openListenerConnection({
@@ -125,10 +148,24 @@ describe("listener connection identity", () => {
     const { writer: writerC } = addConnection("client-c", runtime);
     writerC.open = false;
 
-    getOrCreateProcessTransport(runtime).send("process-event");
+    expect(() =>
+      getOrCreateProcessTransport(runtime).send("process-event"),
+    ).toThrow("cannot send an implicit message");
 
-    expect(writerA.sent).toEqual(["process-event"]);
+    expect(writerA.sent).toEqual([]);
     expect(writerB.sent).toEqual([]);
     expect(writerC.sent).toEqual([]);
+  });
+
+  test("a scoped route with no subscribers resolves to zero clients", () => {
+    const { runtime, writer } = addConnection("client-a");
+    const targets = resolveListenerConnectionTargets({
+      runtime,
+      origin: writer,
+      scope: { agent_id: "agent-2", conversation_id: "conversation-2" },
+      routing: TO_SUBSCRIBERS,
+      streamMessage: false,
+    });
+    expect(targets).toEqual([]);
   });
 });

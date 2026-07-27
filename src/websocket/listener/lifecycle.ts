@@ -35,7 +35,10 @@ import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
-import { rejectPendingApprovalResolvers } from "./approval";
+import {
+  getPendingApprovalRequestIds,
+  rejectPendingApprovalResolvers,
+} from "./approval";
 import { resolveListenerReconnectAuth } from "./auth";
 import {
   recoverActiveChannelTurn,
@@ -61,6 +64,10 @@ import {
   createConnectionTurnProcessor,
 } from "./connection-lifecycle";
 import {
+  emitInitialConnectionState,
+  replaySubscribedConnectionState,
+} from "./connection-state-sync";
+import {
   INITIAL_RETRY_DELAY_MS,
   isListenerPongStale,
   LISTENER_HEARTBEAT_INTERVAL_MS,
@@ -75,7 +82,6 @@ import {
 } from "./control-inputs";
 import {
   ensureConversationQueueRuntime,
-  findFallbackRuntime,
   getOrCreateScopedRuntime,
 } from "./conversation-runtime";
 import { loadPersistedCwdMap, seedConversationWorkingDirectory } from "./cwd";
@@ -96,8 +102,6 @@ import {
 } from "./permission-mode";
 import {
   emitDeviceStatusUpdate,
-  emitLoopStatusUpdate,
-  emitStateSync,
   emitStreamDelta,
   emitSubagentStateIfOpen,
 } from "./protocol-outbound";
@@ -234,7 +238,6 @@ export async function replaySyncStateForRuntime(
   );
   const recoverFn =
     opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
-
   if (opts?.recoverApprovals ?? true) {
     try {
       await recoverFn(syncScopedRuntime, scope);
@@ -250,9 +253,13 @@ export async function replaySyncStateForRuntime(
     }
   }
 
-  emitStateSync(socket, listenerRuntime, scope, {
-    forceDeviceStatus: opts?.forceDeviceStatus,
-  });
+  replaySubscribedConnectionState(
+    listenerRuntime,
+    socket,
+    syncScopedRuntime,
+    scope,
+    opts?.forceDeviceStatus,
+  );
   (opts?.scheduleWarmupsAfterSync ?? scheduleListenerWarmupsAfterSync)(
     listenerRuntime,
     scope,
@@ -311,9 +318,7 @@ export async function recoverPendingChannelControlRequests(
       scope.agent_id,
       scope.conversation_id,
     );
-    const livePendingRequestIds = new Set(
-      runtime.pendingApprovalResolvers.keys(),
-    );
+    const livePendingRequestIds = getPendingApprovalRequestIds(runtime);
     const shouldRecoverFromBackend = entries.some(
       (entry) => !livePendingRequestIds.has(entry.event.requestId),
     );
@@ -992,6 +997,7 @@ export async function startConnectedListenerRuntime(
     startHeartbeat?: boolean;
     startCronScheduler?: boolean;
     streamTransport?: ListenerTransport | null;
+    emitInitialState?: boolean;
   } = {},
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
@@ -1019,25 +1025,7 @@ export async function startConnectedListenerRuntime(
   runtime.everConnected = true;
   opts.onConnected(opts.connectionId);
 
-  if (runtime.conversationRuntimes.size === 0) {
-    // Don't emit device_status before the lookup store exists.
-    // Without a conversation runtime, the scope resolves to
-    // agent:__unknown__ which misses persisted CWD and permission
-    // mode entries. The web's sync command will create a scoped
-    // runtime and emit a properly-scoped device_status at that point.
-    emitLoopStatusUpdate(transport, runtime);
-  } else {
-    // Preserve existing per-conversation reminder and context state across
-    // pure transport reconnects; only refresh the live status snapshots here.
-    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      const scope = {
-        agent_id: conversationRuntime.agentId,
-        conversation_id: conversationRuntime.conversationId,
-      };
-      emitDeviceStatusUpdate(transport, conversationRuntime, scope);
-      emitLoopStatusUpdate(transport, conversationRuntime, scope);
-    }
-  }
+  emitInitialConnectionState(runtime, transport, opts.connectionId, options);
 
   if (runtime.processServicesStarted) {
     return;
@@ -1096,14 +1084,17 @@ export async function startConnectedListenerRuntime(
   // correct per-conversation QueueRuntime. This enables background Task
   // completions to reach the agent in listen mode.
   setMessageQueueAdder((queuedMessage) => {
-    const targetRuntime =
-      queuedMessage.agentId && queuedMessage.conversationId
-        ? getOrCreateScopedRuntime(
-            runtime,
-            queuedMessage.agentId,
-            queuedMessage.conversationId,
-          )
-        : findFallbackRuntime(runtime);
+    if (!queuedMessage.agentId || !queuedMessage.conversationId) {
+      // A process-originated notification without a complete runtime scope
+      // cannot be routed safely in a multi-client app-server. Dropping it is
+      // preferable to selecting an arbitrary conversation.
+      return;
+    }
+    const targetRuntime = getOrCreateScopedRuntime(
+      runtime,
+      queuedMessage.agentId,
+      queuedMessage.conversationId,
+    );
 
     if (!targetRuntime?.queueRuntime) {
       return; // No target - notification dropped
@@ -1327,6 +1318,7 @@ export async function attachOpenListenerSocket(
       startHeartbeat: options.startHeartbeat ?? false,
       startCronScheduler: options.startCronScheduler ?? true,
       streamTransport,
+      emitInitialState: false,
     },
   );
 }

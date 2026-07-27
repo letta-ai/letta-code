@@ -8,23 +8,39 @@ import {
 import type {
   ListenerConnectionId,
   ListenerConnectionState,
+  ListenerMessageRouting,
   ListenerRuntime,
   StartListenerOptions,
 } from "./types";
+
+export const TO_SUBSCRIBERS = {
+  type: "ToSubscribers",
+} as const satisfies ListenerMessageRouting;
+
+export const BROADCAST = {
+  type: "Broadcast",
+} as const satisfies ListenerMessageRouting;
+
+export function toListenerConnection(
+  connectionId: ListenerConnectionId,
+): ListenerMessageRouting {
+  return { type: "ToConnection", connectionId };
+}
 
 function socketForTransport(transport: ListenerTransport): WebSocket | null {
   return "kind" in transport ? null : transport;
 }
 
-function refreshPrimaryConnection(runtime: ListenerRuntime): void {
-  const next = [...(runtime.connections?.values() ?? [])]
-    .filter((connection) => isListenerTransportOpen(connection.writer))
-    .sort((a, b) => a.ordinal - b.ordinal)[0];
-  runtime.transport = next?.writer ?? runtime.processTransport;
-  runtime.streamTransport = next?.streamWriter ?? null;
-  runtime.socket = next ? socketForTransport(next.writer) : null;
-  runtime.streamSocket = next?.streamWriter
-    ? socketForTransport(next.streamWriter)
+function refreshLegacySingleConnection(runtime: ListenerRuntime): void {
+  const live = [...(runtime.connections?.values() ?? [])].filter((connection) =>
+    isListenerTransportOpen(connection.writer),
+  );
+  const only = live.length === 1 ? live[0] : null;
+  runtime.transport = only?.writer ?? runtime.processTransport;
+  runtime.streamTransport = only?.streamWriter ?? null;
+  runtime.socket = only ? socketForTransport(only.writer) : null;
+  runtime.streamSocket = only?.streamWriter
+    ? socketForTransport(only.streamWriter)
     : null;
 }
 
@@ -64,7 +80,7 @@ export function openListenerConnection(params: {
   params.runtime.connections ??= new Map();
   params.runtime.connectionIdsByRuntimeKey ??= new Map();
   params.runtime.connections.set(connection.id, connection);
-  refreshPrimaryConnection(params.runtime);
+  refreshLegacySingleConnection(params.runtime);
   return connection;
 }
 
@@ -179,27 +195,63 @@ export function resolveListenerConnectionTargets(params: {
   runtime: ListenerRuntime | null;
   origin: ListenerTransport;
   scope: { agent_id?: string | null; conversation_id?: string | null };
-  connectionId?: ListenerConnectionId;
-  subscribers: boolean;
+  routing: ListenerMessageRouting;
   streamMessage: boolean;
 }): ListenerConnectionTarget[] {
-  const explicitConnection = params.connectionId
-    ? params.runtime?.connections.get(params.connectionId)
-    : undefined;
-  const subscribedConnections =
-    params.runtime && params.subscribers
-      ? getSubscribedListenerConnections(params.runtime, params.scope)
-      : [];
-  const originConnection = params.runtime
-    ? findListenerConnectionByTransport(params.runtime, params.origin)
-    : null;
-  const connections: Array<ListenerConnectionState | null> = explicitConnection
-    ? [explicitConnection]
-    : subscribedConnections.length > 0
-      ? subscribedConnections
-      : originConnection
-        ? [originConnection]
-        : [null];
+  const runtime = params.runtime;
+  let connections: Array<ListenerConnectionState | null>;
+  switch (params.routing.type) {
+    case "ToConnection": {
+      const explicitConnection = runtime?.connections.get(
+        params.routing.connectionId,
+      );
+      if (explicitConnection) {
+        connections = [explicitConnection];
+        break;
+      }
+      // The outbound Cloud listener predates the connection map. Preserve its
+      // single transport while the local app-server always has tracked
+      // connections and therefore cannot enter this compatibility branch.
+      if (
+        (runtime?.connections?.size ?? 0) === 0 &&
+        params.routing.connectionId === (runtime?.connectionId ?? "legacy")
+      ) {
+        connections = [null];
+        break;
+      }
+      return [];
+    }
+    case "ToSubscribers": {
+      connections = runtime
+        ? getSubscribedListenerConnections(runtime, params.scope)
+        : [];
+      if (connections.length > 0) {
+        break;
+      }
+      // Letta's outbound Desktop listener is a single pre-subscription
+      // transport. This does not apply to app-server connections: once a
+      // connection map exists, a scoped message with no subscribers is
+      // dropped, matching Codex.
+      if ((runtime?.connections?.size ?? 0) === 0) {
+        connections = [null];
+        break;
+      }
+      return [];
+    }
+    case "Broadcast": {
+      connections = runtime
+        ? [...runtime.connections.values()].filter(
+            (connection) =>
+              connection.initialized &&
+              isListenerTransportOpen(connection.writer),
+          )
+        : [];
+      if (connections.length === 0 && (runtime?.connections?.size ?? 0) === 0) {
+        connections = [null];
+      }
+      break;
+    }
+  }
 
   return connections.map((connection) => {
     const streamTransport = connection?.streamWriter;
@@ -223,53 +275,6 @@ export function resolveListenerConnectionTargets(params: {
   });
 }
 
-/**
- * Prefer the connection that initiated the operation. Background/channel
- * operations use the oldest live subscriber, matching Codex's deterministic
- * lowest-ConnectionId controller selection.
- */
-export function selectListenerController(
-  runtime: ListenerRuntime,
-  scope: { agent_id?: string | null; conversation_id?: string | null },
-  preferredTransport?: ListenerTransport,
-): ListenerConnectionState | null {
-  if (preferredTransport) {
-    const preferred = findListenerConnectionByTransport(
-      runtime,
-      preferredTransport,
-    );
-    if (
-      preferred &&
-      preferred.initialized &&
-      isListenerTransportOpen(preferred.writer)
-    ) {
-      return preferred;
-    }
-    if (isListenerTransportOpen(preferredTransport)) {
-      return {
-        id: runtime.connectionId ?? "legacy",
-        ordinal: -1,
-        writer: preferredTransport,
-        streamWriter: null,
-        cancellation: new AbortController(),
-        initialized: true,
-        subscriptions: new Set(),
-        eventSeqCounter: runtime.eventSeqCounter,
-        options: {
-          connectionId: runtime.connectionId ?? "legacy",
-          wsUrl: "legacy://listener",
-          deviceId: "legacy",
-          connectionName: runtime.connectionName ?? "legacy",
-          onConnected: () => {},
-          onDisconnected: () => {},
-          onError: () => {},
-        },
-      };
-    }
-  }
-  return getSubscribedListenerConnections(runtime, scope)[0] ?? null;
-}
-
 export function closeListenerConnection(
   runtime: ListenerRuntime,
   connectionId: ListenerConnectionId,
@@ -283,7 +288,7 @@ export function closeListenerConnection(
   }
   runtime.connections?.delete(connectionId);
   connection.cancellation.abort();
-  refreshPrimaryConnection(runtime);
+  refreshLegacySingleConnection(runtime);
   return connection;
 }
 
@@ -313,14 +318,9 @@ class ProcessRuntimeTransport implements RuntimeTransport {
   }
 
   send(data: string): void {
-    for (const connection of this.runtime.connections?.values() ?? []) {
-      if (
-        connection.initialized &&
-        isListenerTransportOpen(connection.writer)
-      ) {
-        connection.writer.send(data);
-      }
-    }
+    throw new Error(
+      `Process runtime transport cannot send an implicit message (${data.length} bytes); resolve ToConnection, ToSubscribers, or Broadcast first`,
+    );
   }
 }
 
@@ -328,5 +328,8 @@ export function getOrCreateProcessTransport(
   runtime: ListenerRuntime,
 ): ListenerTransport {
   runtime.processTransport ??= new ProcessRuntimeTransport(runtime);
+  if (runtime.connections.size !== 1) {
+    refreshLegacySingleConnection(runtime);
+  }
   return runtime.processTransport;
 }

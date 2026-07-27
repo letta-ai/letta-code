@@ -131,7 +131,7 @@ describe("app-server client", () => {
         conversation_management: true,
         memory_management: true,
         runtime_start: true,
-        split_channels: true,
+        split_channels: false,
       },
     });
 
@@ -154,7 +154,7 @@ describe("app-server client", () => {
         conversation_management: true,
         memory_management: true,
         runtime_start: true,
-        split_channels: true,
+        split_channels: false,
       },
     };
 
