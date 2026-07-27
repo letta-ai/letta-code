@@ -288,8 +288,12 @@ export type ListenerRuntime = {
   processTransport: ListenerTransport | null;
   /** Process-wide services are installed once, regardless of client count. */
   processServicesStarted: boolean;
+  /** Invalidates process-service attempts that outlive an outbound connection. */
+  processServicesGeneration: number;
   /** Coalesces concurrent connection attempts while process services initialize. */
   processServicesReady: Promise<void> | null;
+  /** Generation owned by processServicesReady, or null when no attempt is active. */
+  processServicesReadyGeneration: number | null;
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {

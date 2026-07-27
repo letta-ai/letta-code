@@ -136,7 +136,9 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
   processTransport: ListenerRuntime["processTransport"];
   processServicesStarted: boolean;
+  processServicesGeneration: number;
   processServicesReady: Promise<void> | null;
+  processServicesReadyGeneration: number | null;
   pendingExternalToolCalls: ListenerRuntime["pendingExternalToolCalls"];
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
@@ -183,7 +185,9 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
     processTransport: ListenerRuntime["processTransport"];
     processServicesStarted: boolean;
+    processServicesGeneration: number;
     processServicesReady: Promise<void> | null;
+    processServicesReadyGeneration: number | null;
     pendingExternalToolCalls: ListenerRuntime["pendingExternalToolCalls"];
     eventSeqCounter: number;
     queueEmitScheduled: boolean;
@@ -313,10 +317,22 @@ function createLegacyTestRuntime(): ConversationRuntime & {
         listener.processServicesStarted = value;
       },
     },
+    processServicesGeneration: {
+      get: () => listener.processServicesGeneration,
+      set: (value: number) => {
+        listener.processServicesGeneration = value;
+      },
+    },
     processServicesReady: {
       get: () => listener.processServicesReady,
       set: (value: Promise<void> | null) => {
         listener.processServicesReady = value;
+      },
+    },
+    processServicesReadyGeneration: {
+      get: () => listener.processServicesReadyGeneration,
+      set: (value: number | null) => {
+        listener.processServicesReadyGeneration = value;
       },
     },
     pendingExternalToolCalls: {

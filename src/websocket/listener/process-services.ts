@@ -3,10 +3,12 @@ import {
   subscribe as subscribeToSubagentState,
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "@/agent/subagent-state";
+import { stopScheduler as stopCronScheduler } from "@/cron/scheduler";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { emitStreamDelta, emitSubagentStateIfOpen } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
+import { clearRuntimeTimers, getActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import { isListenerTransportOpen } from "./transport";
 import type {
@@ -80,4 +82,50 @@ export function installProcessEventRouting(params: {
     >);
     scheduleQueuePump(targetRuntime, processTransport, opts, processQueuedTurn);
   });
+}
+
+export function clearProcessServices(runtime: ListenerRuntime): void {
+  runtime._unsubscribeSubagentState?.();
+  runtime._unsubscribeSubagentState = undefined;
+  runtime._unsubscribeSubagentStreamEvents?.();
+  runtime._unsubscribeSubagentStreamEvents = undefined;
+  setMessageQueueAdder(null);
+  stopCronScheduler();
+  clearRuntimeTimers(runtime);
+  runtime.processServicesStarted = false;
+}
+
+export function invalidateProcessServices(runtime: ListenerRuntime): void {
+  runtime.processServicesGeneration += 1;
+  clearProcessServices(runtime);
+}
+
+export async function waitForProcessServicesSlot(
+  runtime: ListenerRuntime,
+  connectionId: string,
+): Promise<boolean> {
+  const initiatingConnection = runtime.connections.get(connectionId);
+  const canInitiate = () =>
+    !initiatingConnection ||
+    (runtime.connections.get(connectionId) === initiatingConnection &&
+      !initiatingConnection.cancellation.signal.aborted);
+
+  while (runtime.processServicesReady) {
+    const pending = runtime.processServicesReady;
+    const pendingGeneration = runtime.processServicesReadyGeneration;
+    try {
+      await pending;
+    } catch (error) {
+      if (pendingGeneration === runtime.processServicesGeneration) throw error;
+    }
+    if (runtime.processServicesStarted) return false;
+    if (
+      runtime !== getActiveRuntime() ||
+      runtime.intentionallyClosed ||
+      !canInitiate()
+    ) {
+      return false;
+    }
+  }
+  return canInitiate();
 }

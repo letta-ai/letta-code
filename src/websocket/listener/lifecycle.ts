@@ -13,10 +13,7 @@ import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
-import {
-  startScheduler as startCronScheduler,
-  stopScheduler as stopCronScheduler,
-} from "@/cron/scheduler";
+import { startScheduler as startCronScheduler } from "@/cron/scheduler";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -28,7 +25,6 @@ import {
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
-import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import {
   getPendingApprovalRequestIds,
@@ -95,7 +91,12 @@ import {
   loadPersistedPermissionModeMap,
   persistPermissionModeMapForRuntime,
 } from "./permission-mode";
-import { installProcessEventRouting } from "./process-event-routing";
+import {
+  clearProcessServices,
+  installProcessEventRouting,
+  invalidateProcessServices,
+  waitForProcessServicesSlot,
+} from "./process-services";
 import { emitDeviceStatusUpdate, emitStreamDelta } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
 import { recoverApprovalStateForSync } from "./recovery";
@@ -915,7 +916,9 @@ export function createRuntime(): ListenerRuntime {
     connectionIdsByRuntimeKey: new Map(),
     processTransport: null,
     processServicesStarted: false,
+    processServicesGeneration: 0,
     processServicesReady: null,
+    processServicesReadyGeneration: null,
     eventSeqCounter: 0,
     queueEmitScheduled: false,
     pendingQueueEmitScope: undefined,
@@ -950,9 +953,8 @@ export function stopRuntime(
   notifyStreamObserversRuntimeStopped(runtime);
   disposeListenerModAdapter(runtime);
   rejectPendingExternalToolCalls(runtime, "Listener runtime stopped");
-  setMessageQueueAdder(null); // Clear bridge for ALL stop paths
   runtime.intentionallyClosed = true;
-  clearRuntimeTimers(runtime);
+  invalidateProcessServices(runtime);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     rejectPendingApprovalResolvers(
       conversationRuntime,
@@ -966,8 +968,8 @@ export function stopRuntime(
   }
   runtime.conversationRuntimes.clear();
   closeListenerRuntimeConnections(runtime, suppressCallbacks);
-  runtime.processServicesStarted = false;
   runtime.processServicesReady = null;
+  runtime.processServicesReadyGeneration = null;
   clearListenerWarmState(runtime);
   runtime.reminderStateByConversation.clear();
   runtime.skillSourcesByConversation.clear();
@@ -1023,10 +1025,10 @@ export async function startConnectedListenerRuntime(
   if (runtime.processServicesStarted) {
     return;
   }
-  if (runtime.processServicesReady) {
-    await runtime.processServicesReady;
-    return;
-  }
+  if (!(await waitForProcessServicesSlot(runtime, opts.connectionId))) return;
+
+  const processServicesGeneration = runtime.processServicesGeneration + 1;
+  runtime.processServicesGeneration = processServicesGeneration;
   const processServicesReady = (async () => {
     const processTransport = getOrCreateProcessTransport(runtime);
 
@@ -1093,23 +1095,22 @@ export async function startConnectedListenerRuntime(
       opts as StartListenerOptions,
       processQueuedTurn,
     );
-    runtime.processServicesStarted = true;
+    if (runtime.processServicesGeneration === processServicesGeneration) {
+      runtime.processServicesStarted = true;
+    }
   })();
   runtime.processServicesReady = processServicesReady;
+  runtime.processServicesReadyGeneration = processServicesGeneration;
   try {
     await processServicesReady;
   } catch (error) {
-    runtime._unsubscribeSubagentState?.();
-    runtime._unsubscribeSubagentState = undefined;
-    runtime._unsubscribeSubagentStreamEvents?.();
-    runtime._unsubscribeSubagentStreamEvents = undefined;
-    setMessageQueueAdder(null);
-    stopCronScheduler();
-    clearRuntimeTimers(runtime);
+    if (runtime.processServicesGeneration !== processServicesGeneration) return;
+    clearProcessServices(runtime);
     throw error;
   } finally {
     if (runtime.processServicesReady === processServicesReady) {
       runtime.processServicesReady = null;
+      runtime.processServicesReadyGeneration = null;
     }
   }
 }
@@ -1518,8 +1519,7 @@ async function connectWithRetry(
 
     fileCommandSession.dispose();
 
-    // Stop cron scheduler on disconnect
-    stopCronScheduler();
+    invalidateProcessServices(runtime);
 
     // Pause channel delivery on disconnect (adapters keep polling, messages buffer).
     // On reconnect, wireChannelIngress() re-registers the handler and calls setReady().
@@ -1527,10 +1527,6 @@ async function connectWithRetry(
     if (channelRegistry) {
       channelRegistry.pause();
     }
-
-    // Clear the bridge before queue clearing to prevent a race where a task
-    // completion enqueues into a shutting-down runtime.
-    setMessageQueueAdder(null);
 
     // Single authoritative queue clear for all close paths
     // (intentional and unintentional). Must fire before early returns.
@@ -1547,13 +1543,8 @@ async function connectWithRetry(
       );
     }
 
-    clearRuntimeTimers(runtime);
     suspendListenerConnection(runtime, opts.connectionId);
     killAllTerminals();
-    runtime._unsubscribeSubagentState?.();
-    runtime._unsubscribeSubagentState = undefined;
-    runtime._unsubscribeSubagentStreamEvents?.();
-    runtime._unsubscribeSubagentStreamEvents = undefined;
     clearListenerWarmState(runtime);
     if (streamSocket) {
       streamSocket.removeAllListeners();
@@ -1567,7 +1558,6 @@ async function connectWithRetry(
     runtime.socket = null;
     runtime.streamSocket = null;
     runtime.streamTransport = null;
-    runtime.processServicesStarted = false;
     for (const conversationRuntime of runtime.conversationRuntimes.values()) {
       rejectPendingApprovalResolvers(
         conversationRuntime,
