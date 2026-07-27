@@ -1,11 +1,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
 import {
-  getSubagents,
-  subscribe as subscribeToSubagentState,
-  subscribeToStreamEvents as subscribeToSubagentStreamEvents,
-} from "@/agent/subagent-state";
-import {
   buildChannelCurrentModelMessage,
   buildChannelCurrentModelUnavailableMessage,
   buildChannelModelListMessage,
@@ -45,7 +40,7 @@ import {
   uniqueChannelTurnSources,
 } from "./channel-turn-session";
 import { handleReloadCommand } from "./commands";
-import { handleChannelRegistryEvent } from "./commands/channels";
+import { handleChannelRegistryEvent } from "./commands/channel-registry-events";
 import {
   applyModelUpdateForRuntime,
   buildListModelsResponse,
@@ -53,10 +48,10 @@ import {
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import {
-  closeListenerConnection,
   getOrCreateProcessTransport,
   markListenerConnectionInitialized,
   openListenerConnection,
+  suspendListenerConnection,
 } from "./connection";
 import {
   cleanupListenerConnection,
@@ -100,11 +95,8 @@ import {
   loadPersistedPermissionModeMap,
   persistPermissionModeMapForRuntime,
 } from "./permission-mode";
-import {
-  emitDeviceStatusUpdate,
-  emitStreamDelta,
-  emitSubagentStateIfOpen,
-} from "./protocol-outbound";
+import { installProcessEventRouting } from "./process-event-routing";
+import { emitDeviceStatusUpdate, emitStreamDelta } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
 import { recoverApprovalStateForSync } from "./recovery";
 import {
@@ -552,7 +544,7 @@ export async function wireChannelIngress(
   });
 
   registry.setEventHandler((event) => {
-    handleChannelRegistryEvent(event, socket, listener, safeSocketSend);
+    handleChannelRegistryEvent(event, socket, listener);
   });
 
   await recoverPendingChannelControlRequests(listener);
@@ -923,6 +915,7 @@ export function createRuntime(): ListenerRuntime {
     connectionIdsByRuntimeKey: new Map(),
     processTransport: null,
     processServicesStarted: false,
+    processServicesReady: null,
     eventSeqCounter: 0,
     queueEmitScheduled: false,
     pendingQueueEmitScope: undefined,
@@ -974,6 +967,7 @@ export function stopRuntime(
   runtime.conversationRuntimes.clear();
   closeListenerRuntimeConnections(runtime, suppressCallbacks);
   runtime.processServicesStarted = false;
+  runtime.processServicesReady = null;
   clearListenerWarmState(runtime);
   runtime.reminderStateByConversation.clear();
   runtime.skillSourcesByConversation.clear();
@@ -996,6 +990,7 @@ export async function startConnectedListenerRuntime(
     startCronScheduler?: boolean;
     streamTransport?: ListenerTransport | null;
     emitInitialState?: boolean;
+    wireChannelIngress?: typeof wireChannelIngress;
   } = {},
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
@@ -1028,155 +1023,95 @@ export async function startConnectedListenerRuntime(
   if (runtime.processServicesStarted) {
     return;
   }
-  runtime.processServicesStarted = true;
-  const processTransport = getOrCreateProcessTransport(runtime);
+  if (runtime.processServicesReady) {
+    await runtime.processServicesReady;
+    return;
+  }
+  const processServicesReady = (async () => {
+    const processTransport = getOrCreateProcessTransport(runtime);
 
-  // Subscribe to subagent state changes and emit snapshots over the listener
-  // transport. Local channel mode intentionally discards these frames.
-  runtime._unsubscribeSubagentState?.();
-  runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
-    if (runtime.conversationRuntimes.size === 0) {
-      emitSubagentStateIfOpen(runtime);
-      return;
-    }
-
-    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      emitSubagentStateIfOpen(runtime, {
-        agent_id: conversationRuntime.agentId,
-        conversation_id: conversationRuntime.conversationId,
-      });
-    }
-  });
-
-  // Subscribe to subagent stream events and forward as tagged stream_delta.
-  runtime._unsubscribeSubagentStreamEvents?.();
-  runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
-    (subagentId, event) => {
-      if (!isListenerTransportOpen(processTransport)) return;
-
-      const subagent = getSubagents().find((entry) => entry.id === subagentId);
-      if (subagent?.silent === true) {
-        // Reflection/background "silent" subagents should not stream their
-        // internal transcript into the parent conversation.
-        return;
-      }
-
-      // The event has { type: "message", message_type, ...LettaStreamingResponse }
-      // plus extra headless fields (session_id, uuid) that pass through harmlessly.
-      emitStreamDelta(
-        processTransport,
-        runtime,
-        event as unknown as import("@/types/protocol_v2").StreamDelta,
-        subagent?.parentAgentId
-          ? {
-              agent_id: subagent.parentAgentId,
-              conversation_id: subagent.parentConversationId ?? "default",
-            }
-          : undefined,
-        subagentId,
-      );
-    },
-  );
-
-  // Register the message queue bridge to route task notifications into the
-  // correct per-conversation QueueRuntime. This enables background Task
-  // completions to reach the agent in listen mode.
-  setMessageQueueAdder((queuedMessage) => {
-    if (!queuedMessage.agentId || !queuedMessage.conversationId) {
-      // A process-originated notification without a complete runtime scope
-      // cannot be routed safely in a multi-client app-server. Dropping it is
-      // preferable to selecting an arbitrary conversation.
-      return;
-    }
-    const targetRuntime = getOrCreateScopedRuntime(
+    installProcessEventRouting({
       runtime,
-      queuedMessage.agentId,
-      queuedMessage.conversationId,
-    );
-
-    if (!targetRuntime?.queueRuntime) {
-      return; // No target - notification dropped
-    }
-
-    targetRuntime.queueRuntime.enqueue({
-      kind: "task_notification",
-      source: "task_notification",
-      text: queuedMessage.text,
-      agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
-      conversationId:
-        queuedMessage.conversationId ?? targetRuntime.conversationId,
-    } as Omit<
-      import("@/queue/queue-runtime").TaskNotificationQueueItem,
-      "id" | "enqueuedAt"
-    >);
-
-    // Kick the queue pump so the notification can trigger a standalone turn
-    // (see consumeQueuedTurn notification-aware path in queue.ts).
-    scheduleQueuePump(
-      targetRuntime,
       processTransport,
-      opts as StartListenerOptions,
+      opts: opts as StartListenerOptions,
       processQueuedTurn,
-    );
-  });
+    });
 
-  if (shouldStartHeartbeat) {
-    // Seed the pong clock so the watchdog tolerates the first ping/pong
-    // round-trip before considering the peer dead.
-    runtime.lastPongAt = Date.now();
-    runtime.heartbeatInterval = setInterval(() => {
-      // Dead-peer detection. The relay replies to every `ping` with a `pong`
-      // (recorded as runtime.lastPongAt in the message router). If pongs stop
-      // arriving, the underlying TCP is likely half-open (laptop sleep,
-      // network switch, NAT/idle timeout) and will never emit a `close`
-      // event — leaving a zombie listener that the relay marks offline after
-      // ~120s while client-side tool execution silently breaks. Force a
-      // terminate so the socket's `close` handler fires and reconnects.
-      // Gated on websocket transports: the local app-server path does not run
-      // a heartbeat, and only websockets carry the relay pong round-trip.
-      if (
-        getListenerTransportKind(transport) === "websocket" &&
-        isListenerPongStale(
-          runtime.lastPongAt,
-          Date.now(),
-          LISTENER_PONG_TIMEOUT_MS,
-        )
-      ) {
-        trackListenerError(
-          "listener_pong_timeout",
-          new Error(
-            `No relay pong within ${LISTENER_PONG_TIMEOUT_MS}ms; terminating half-open socket to force reconnect`,
-          ),
+    if (shouldStartHeartbeat) {
+      // Seed the pong clock so the watchdog tolerates the first ping/pong
+      // round-trip before considering the peer dead.
+      runtime.lastPongAt = Date.now();
+      runtime.heartbeatInterval = setInterval(() => {
+        // Dead-peer detection. The relay replies to every `ping` with a `pong`
+        // (recorded as runtime.lastPongAt in the message router). If pongs stop
+        // arriving, the underlying TCP is likely half-open (laptop sleep,
+        // network switch, NAT/idle timeout) and will never emit a `close`
+        // event — leaving a zombie listener that the relay marks offline after
+        // ~120s while client-side tool execution silently breaks. Force a
+        // terminate so the socket's `close` handler fires and reconnects.
+        // Gated on websocket transports: the local app-server path does not run
+        // a heartbeat, and only websockets carry the relay pong round-trip.
+        if (
+          getListenerTransportKind(transport) === "websocket" &&
+          isListenerPongStale(
+            runtime.lastPongAt,
+            Date.now(),
+            LISTENER_PONG_TIMEOUT_MS,
+          )
+        ) {
+          trackListenerError(
+            "listener_pong_timeout",
+            new Error(
+              `No relay pong within ${LISTENER_PONG_TIMEOUT_MS}ms; terminating half-open socket to force reconnect`,
+            ),
+            "listener_heartbeat",
+          );
+          runtime.socket?.terminate();
+          return;
+        }
+
+        safeTransportSend(
+          transport,
+          { type: "ping" },
+          "listener_ping_send_failed",
           "listener_heartbeat",
         );
-        runtime.socket?.terminate();
-        return;
-      }
+      }, LISTENER_HEARTBEAT_INTERVAL_MS);
+    }
 
-      safeTransportSend(
-        transport,
-        { type: "ping" },
-        "listener_ping_send_failed",
-        "listener_heartbeat",
+    if (shouldStartCronScheduler) {
+      startCronScheduler(
+        processTransport,
+        opts as StartListenerOptions,
+        processQueuedTurn,
       );
-    }, LISTENER_HEARTBEAT_INTERVAL_MS);
-  }
+    }
 
-  if (shouldStartCronScheduler) {
-    startCronScheduler(
+    await (options.wireChannelIngress ?? wireChannelIngress)(
+      runtime,
       processTransport,
       opts as StartListenerOptions,
       processQueuedTurn,
     );
+    runtime.processServicesStarted = true;
+  })();
+  runtime.processServicesReady = processServicesReady;
+  try {
+    await processServicesReady;
+  } catch (error) {
+    runtime._unsubscribeSubagentState?.();
+    runtime._unsubscribeSubagentState = undefined;
+    runtime._unsubscribeSubagentStreamEvents?.();
+    runtime._unsubscribeSubagentStreamEvents = undefined;
+    setMessageQueueAdder(null);
+    stopCronScheduler();
+    clearRuntimeTimers(runtime);
+    throw error;
+  } finally {
+    if (runtime.processServicesReady === processServicesReady) {
+      runtime.processServicesReady = null;
+    }
   }
-
-  // Wire channel ingress (if channels are active).
-  await wireChannelIngress(
-    runtime,
-    processTransport,
-    opts as StartListenerOptions,
-    processQueuedTurn,
-  );
 }
 
 /**
@@ -1203,7 +1138,7 @@ export async function attachOpenListenerSocket(
   }
 
   const streamSocket = options.streamSocket ?? null;
-  openListenerConnection({
+  const connection = openListenerConnection({
     runtime,
     connectionId: opts.connectionId,
     writer: socket,
@@ -1242,6 +1177,12 @@ export async function attachOpenListenerSocket(
   socket.on("message", (data: WebSocket.RawData) => {
     void (async () => {
       await options.startupReady;
+      if (
+        connection.cancellation.signal.aborted ||
+        runtime.connections.get(opts.connectionId) !== connection
+      ) {
+        return;
+      }
       await handleMessage(data);
     })().catch((error) => {
       trackListenerError(
@@ -1304,6 +1245,12 @@ export async function attachOpenListenerSocket(
   }
 
   await options.startupReady;
+  if (
+    connection.cancellation.signal.aborted ||
+    runtime.connections.get(opts.connectionId) !== connection
+  ) {
+    return;
+  }
 
   const streamTransport =
     streamSocket?.readyState === WebSocket.OPEN ? streamSocket : null;
@@ -1601,7 +1548,7 @@ async function connectWithRetry(
     }
 
     clearRuntimeTimers(runtime);
-    closeListenerConnection(runtime, opts.connectionId);
+    suspendListenerConnection(runtime, opts.connectionId);
     killAllTerminals();
     runtime._unsubscribeSubagentState?.();
     runtime._unsubscribeSubagentState = undefined;

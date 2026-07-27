@@ -29,6 +29,7 @@ import {
   getActiveRuntime,
   setActiveRuntime,
 } from "@/websocket/listener/runtime";
+import type { ListenerRuntime } from "@/websocket/listener/types";
 
 const DEFAULT_LISTEN_URL = "ws://127.0.0.1:0";
 const DEFAULT_WS_PATH = "/ws";
@@ -56,6 +57,8 @@ export interface StartAppServerOptions {
   pongTimeoutMs?: number;
   /** @internal Test hook for simulating one half-open client. */
   shouldRecordPong?: (connectionId: string) => boolean;
+  /** @internal Test override for listener runtime initialization. */
+  initializeRuntime?: (runtime: ListenerRuntime) => Promise<void>;
 }
 
 export interface AppServerListeningInfo {
@@ -163,24 +166,29 @@ export async function startAppServer(
   const wss = new WebSocketServer({ noServer: true });
   let resolvedInfo: AppServerListeningInfo | null = null;
   let nextConnectionOrdinal = 0;
-  const existingRuntime = getActiveRuntime();
-  if (existingRuntime) {
-    stopRuntime(existingRuntime, true);
-    setActiveRuntime(null);
-  }
   const runtime = createRuntime();
   runtime.onWsEvent = undefined;
   runtime.connectionId = "app-server";
   runtime.connectionName = options.connectionName ?? hostname();
-  setActiveRuntime(runtime);
-  telemetry.setSurface(getListenerTelemetrySurface());
-  telemetry.init();
   let startupReady: Promise<void> | null = null;
   const getStartupReady = (): Promise<void> => {
-    startupReady ??= (async () => {
+    if (startupReady) {
+      return startupReady;
+    }
+    const attempt = (async () => {
+      if (options.initializeRuntime) {
+        await options.initializeRuntime(runtime);
+        return;
+      }
       await reloadListenerModAdapter(runtime);
       await loadTools();
     })();
+    startupReady = attempt;
+    void attempt.catch(() => {
+      if (startupReady === attempt) {
+        startupReady = null;
+      }
+    });
     return startupReady;
   };
   // Tracks the last time each connected client responded to a ping. Seeded on
@@ -345,19 +353,34 @@ export async function startAppServer(
     clearInterval(heartbeatInterval);
   });
 
-  await new Promise<void>((resolve, reject) => {
-    const onError = (error: Error) => {
-      server.off("listening", onListening);
-      reject(error);
-    };
-    const onListening = () => {
-      server.off("error", onError);
-      resolve();
-    };
-    server.once("error", onError);
-    server.once("listening", onListening);
-    server.listen(listen.port, listen.host);
-  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        server.off("listening", onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.off("error", onError);
+        resolve();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(listen.port, listen.host);
+    });
+  } catch (error) {
+    clearInterval(heartbeatInterval);
+    runtime.intentionallyClosed = true;
+    throw error;
+  }
+
+  const existingRuntime = getActiveRuntime();
+  if (existingRuntime) {
+    stopRuntime(existingRuntime, true);
+    setActiveRuntime(null);
+  }
+  setActiveRuntime(runtime);
+  telemetry.setSurface(getListenerTelemetrySurface());
+  telemetry.init();
 
   const address = getRequiredAddressInfo(server);
   const baseUrl = `ws://${listen.host}:${address.port}`;
@@ -377,8 +400,8 @@ export async function startAppServer(
       for (const client of wss.clients) {
         terminateSocket(client);
       }
-      stopRuntime(runtime, true);
       if (getActiveRuntime() === runtime) {
+        stopRuntime(runtime, true);
         setActiveRuntime(null);
       }
       await new Promise<void>((resolve, reject) => {

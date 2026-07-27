@@ -42,7 +42,7 @@ type ReplaySyncStateForRuntime = (
 
 type RuntimeStartCommandContext = {
   socket: WebSocket;
-  connectionId?: ListenerConnectionId;
+  connectionId: ListenerConnectionId;
   runtime: ListenerRuntime;
   safeSocketSend: SafeSocketSend;
   runDetachedListenerTask: RunDetachedListenerTask;
@@ -297,11 +297,10 @@ export async function handleRuntimeStartCommand(
       created,
     );
     runtimeScope = buildRuntimeScope(agent, conversation);
-    const connectionId =
-      context.connectionId ?? context.runtime.connectionId ?? "legacy";
+    const { connectionId } = context;
     const assertConnectionOpen = () => {
       if (
-        context.connectionId &&
+        context.runtime.connections.size > 0 &&
         (!context.runtime.connections.has(connectionId) ||
           context.runtime.connections.get(connectionId)?.cancellation.signal
             .aborted)

@@ -55,6 +55,8 @@ function createRuntime(): {
     transport: socket as never,
     streamTransport: null,
     eventSeqCounter: 0,
+    connections: new Map(),
+    connectionIdsByRuntimeKey: new Map(),
     conversationRuntimes: new Map(),
   } as unknown as ListenerRuntime;
   const runtime = {

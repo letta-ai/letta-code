@@ -14,8 +14,8 @@ import {
   handleAgentConversationManagementCommand,
   handleAgentConversationManagementProtocolCommand,
 } from "./commands/agents-conversations";
+import { handleChannelRegistryEvent } from "./commands/channel-registry-events";
 import {
-  handleChannelRegistryEvent,
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
   setChannelsServiceLoaderOverride,
@@ -136,6 +136,8 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
   processTransport: ListenerRuntime["processTransport"];
   processServicesStarted: boolean;
+  processServicesReady: Promise<void> | null;
+  pendingExternalToolCalls: ListenerRuntime["pendingExternalToolCalls"];
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
@@ -181,6 +183,8 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
     processTransport: ListenerRuntime["processTransport"];
     processServicesStarted: boolean;
+    processServicesReady: Promise<void> | null;
+    pendingExternalToolCalls: ListenerRuntime["pendingExternalToolCalls"];
     eventSeqCounter: number;
     queueEmitScheduled: boolean;
     pendingQueueEmitScope?: {
@@ -307,6 +311,18 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.processServicesStarted,
       set: (value: boolean) => {
         listener.processServicesStarted = value;
+      },
+    },
+    processServicesReady: {
+      get: () => listener.processServicesReady,
+      set: (value: Promise<void> | null) => {
+        listener.processServicesReady = value;
+      },
+    },
+    pendingExternalToolCalls: {
+      get: () => listener.pendingExternalToolCalls,
+      set: (value: ListenerRuntime["pendingExternalToolCalls"]) => {
+        listener.pendingExternalToolCalls = value;
       },
     },
     eventSeqCounter: {
@@ -555,7 +571,7 @@ export const __listenClientTestUtils = {
     event: Parameters<typeof handleChannelRegistryEvent>[0],
     socket: Parameters<typeof handleChannelRegistryEvent>[1],
     runtime: ListenerRuntime,
-  ) => handleChannelRegistryEvent(event, socket, runtime, safeSocketSend),
+  ) => handleChannelRegistryEvent(event, socket, runtime),
   handleAgentConversationManagementCommand: (
     parsed: Parameters<typeof handleAgentConversationManagementCommand>[0],
     socket: WebSocket,
@@ -578,6 +594,7 @@ export const __listenClientTestUtils = {
   ) =>
     handleRuntimeStartCommand(parsed, {
       socket,
+      connectionId: runtime.connectionId ?? "test-connection",
       runtime,
       safeSocketSend,
       runDetachedListenerTask,
@@ -600,6 +617,7 @@ export const __listenClientTestUtils = {
   ) =>
     handleRuntimeStartProtocolCommand(parsed, {
       socket,
+      connectionId: runtime.connectionId ?? "test-connection",
       runtime,
       safeSocketSend,
       runDetachedListenerTask,

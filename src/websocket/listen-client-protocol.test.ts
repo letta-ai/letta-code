@@ -757,13 +757,13 @@ describe("listen-client parseServerMessage", () => {
           conversation: { id: conversation.id },
           created: { agent: false, conversation: false },
         });
-
         const prepared = await prepareToolExecutionContextForModel(
           "anthropic/claude-sonnet-4",
           {
             clientToolAllowlist: ["RemoteLookup"],
             externalToolScopeIds: ["scope-1"],
             runtimeContext: {
+              connectionId: "test-connection",
               agentId: agent.id,
               conversationId: conversation.id,
             },

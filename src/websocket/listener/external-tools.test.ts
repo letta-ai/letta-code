@@ -23,14 +23,15 @@ function createMockRuntime(): {
   const runtime = {
     intentionallyClosed: false,
     pendingExternalToolCalls: new Map(),
+    connections: new Map(),
   } as unknown as ListenerRuntime;
-  runtime.socket = {
+  const writer = {
     readyState: 1,
     send(data: string) {
       const request = JSON.parse(data) as ExternalToolCallRequestMessage;
       sent.push(request);
       queueMicrotask(() => {
-        handleExternalToolCallResponseCommand(runtime, {
+        handleExternalToolCallResponseCommand(runtime, "client-1", {
           type: "external_tool_call_response",
           request_id: request.request_id,
           result: {
@@ -40,6 +41,10 @@ function createMockRuntime(): {
       });
     },
   } as unknown as WebSocket;
+  runtime.connections.set("client-1", {
+    id: "client-1",
+    writer,
+  } as never);
   return { runtime, sent };
 }
 
@@ -53,6 +58,7 @@ describe("app-server runtime_start external tool bridge", () => {
     installExternalToolBridge(runtime);
     registerRuntimeExternalTools(
       runtime,
+      "client-1",
       { agent_id: "agent-1", conversation_id: "conv-1" },
       [
         {
@@ -77,7 +83,11 @@ describe("app-server runtime_start external tool bridge", () => {
       {
         clientToolAllowlist: ["RemoteLookup"],
         externalToolScopeIds: ["scope-1"],
-        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
       },
     );
 
@@ -104,6 +114,7 @@ describe("app-server runtime_start external tool bridge", () => {
     const { runtime } = createMockRuntime();
     registerRuntimeExternalTools(
       runtime,
+      "client-1",
       { agent_id: "agent-1", conversation_id: "conv-a" },
       [
         {
@@ -120,6 +131,7 @@ describe("app-server runtime_start external tool bridge", () => {
     );
     registerRuntimeExternalTools(
       runtime,
+      "client-1",
       { agent_id: "agent-1", conversation_id: "conv-b" },
       [
         {
@@ -140,7 +152,11 @@ describe("app-server runtime_start external tool bridge", () => {
       {
         clientToolAllowlist: ["lookup_ticket"],
         externalToolScopeIds: ["search"],
-        runtimeContext: { agentId: "agent-1", conversationId: "conv-a" },
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: "agent-1",
+          conversationId: "conv-a",
+        },
       },
     );
     const preparedB = await prepareToolExecutionContextForModel(
@@ -148,7 +164,11 @@ describe("app-server runtime_start external tool bridge", () => {
       {
         clientToolAllowlist: ["lookup_ticket"],
         externalToolScopeIds: ["search"],
-        runtimeContext: { agentId: "agent-1", conversationId: "conv-b" },
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: "agent-1",
+          conversationId: "conv-b",
+        },
       },
     );
 
@@ -245,7 +265,7 @@ describe("app-server runtime_start external tool bridge", () => {
   test("repeated runtime_start registration replaces tools for that runtime", async () => {
     const { runtime } = createMockRuntime();
     const runtimeScope = { agent_id: "agent-1", conversation_id: "conv-1" };
-    registerRuntimeExternalTools(runtime, runtimeScope, [
+    registerRuntimeExternalTools(runtime, "client-1", runtimeScope, [
       {
         tools: [
           {
@@ -256,7 +276,7 @@ describe("app-server runtime_start external tool bridge", () => {
         ],
       },
     ]);
-    registerRuntimeExternalTools(runtime, runtimeScope, [
+    registerRuntimeExternalTools(runtime, "client-1", runtimeScope, [
       {
         tools: [
           {
@@ -272,7 +292,11 @@ describe("app-server runtime_start external tool bridge", () => {
       "anthropic/claude-sonnet-4",
       {
         clientToolAllowlist: ["old_tool", "new_tool"],
-        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
       },
     );
 
@@ -283,6 +307,7 @@ describe("app-server runtime_start external tool bridge", () => {
     const { runtime } = createMockRuntime();
     registerRuntimeExternalTools(
       runtime,
+      "client-1",
       { agent_id: "agent-1", conversation_id: "conv-1" },
       [
         {
@@ -303,7 +328,11 @@ describe("app-server runtime_start external tool bridge", () => {
       "anthropic/claude-sonnet-4",
       {
         clientToolAllowlist: ["runtime_only"],
-        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
       },
     );
 

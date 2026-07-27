@@ -288,6 +288,8 @@ export type ListenerRuntime = {
   processTransport: ListenerTransport | null;
   /** Process-wide services are installed once, regardless of client count. */
   processServicesStarted: boolean;
+  /** Coalesces concurrent connection attempts while process services initialize. */
+  processServicesReady: Promise<void> | null;
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
@@ -330,7 +332,7 @@ export type ListenerRuntime = {
   secretsHydrationFreshnessByAgent: Map<string, number>;
   /** Agent IDs whose cached secrets are stale and must re-fetch on the next hydration call. */
   secretsDirtyAgents: Set<string>;
-  pendingExternalToolCalls?: Map<string, PendingExternalToolCall>;
+  pendingExternalToolCalls: Map<string, PendingExternalToolCall>;
   /**
    * Agent metadata warmups for listen-mode reminders. The cached promise is
    * reused while the listener stays connected so first-turn reminders can join
