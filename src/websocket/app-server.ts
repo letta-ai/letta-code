@@ -29,25 +29,18 @@ import {
   getActiveRuntime,
   setActiveRuntime,
 } from "@/websocket/listener/runtime";
-import type { ListenerRuntime } from "@/websocket/listener/types";
 
 const DEFAULT_LISTEN_URL = "ws://127.0.0.1:0";
 const DEFAULT_WS_PATH = "/ws";
-const PENDING_STREAM_TIMEOUT_MS = 5000;
 // App-server liveness watchdog. Here letta-code is the WS *server* (the client
 // is the Desktop/relay), so we use protocol-level ws.ping()/pong rather than
 // the app-level ping/pong the outbound listener uses. Ping every 30s and reap
 // any client that has not ponged within 90s (3 missed pings). A half-open
 // client connection (Desktop sleep, network switch, NAT idle timeout) never
-// emits a `close` event, which would otherwise wedge the single-occupancy
-// control channel: new control connections are rejected with 1008 while the
-// zombie session still holds `activeSession`. Terminating the dead socket
-// fires its `close` handler, clears `activeSession`, and frees the channel for
-// a reconnecting client.
+// emits a `close` event. Terminating the dead socket fires its connection-
+// scoped cleanup without disturbing healthy peers.
 const APP_SERVER_HEARTBEAT_INTERVAL_MS = 30000;
 const APP_SERVER_PONG_TIMEOUT_MS = 90000;
-
-type AppServerChannel = "control" | "stream";
 
 export interface StartAppServerOptions {
   listen?: string;
@@ -61,6 +54,8 @@ export interface StartAppServerOptions {
   heartbeatIntervalMs?: number;
   /** @internal Test override for the pong timeout before a socket is reaped (ms). */
   pongTimeoutMs?: number;
+  /** @internal Test hook for simulating one half-open client. */
+  shouldRecordPong?: (connectionId: string) => boolean;
 }
 
 export interface AppServerListeningInfo {
@@ -79,12 +74,6 @@ export interface ParsedAppServerListenUrl {
   path: string;
 }
 
-type ActiveAppServerSession = {
-  runtime: ListenerRuntime;
-  controlSocket: WebSocket;
-  streamSocket: WebSocket | null;
-};
-
 function getRequiredAddressInfo(server: Server): AddressInfo {
   const address = server.address();
   if (!address || typeof address === "string") {
@@ -93,14 +82,15 @@ function getRequiredAddressInfo(server: Server): AddressInfo {
   return address;
 }
 
-function getChannelUrl(
-  baseUrl: string,
-  path: string,
-  channel: AppServerChannel,
-): string {
+function getWebSocketUrl(baseUrl: string, path: string): string {
   const url = new URL(baseUrl);
   url.pathname = path;
-  url.searchParams.set("channel", channel);
+  return url.toString();
+}
+
+function getLegacyStreamUrl(baseUrl: string, path: string): string {
+  const url = new URL(getWebSocketUrl(baseUrl, path));
+  url.searchParams.set("channel", "stream");
   return url.toString();
 }
 
@@ -137,42 +127,6 @@ function getRequestUrl(request: IncomingMessage, host: string): URL {
   return new URL(request.url ?? "/", `http://${request.headers.host ?? host}`);
 }
 
-function getRequestChannel(url: URL): AppServerChannel | null {
-  const channel = url.searchParams.get("channel");
-  if (channel === null || channel === "" || channel === "control") {
-    return "control";
-  }
-  if (channel === "stream") {
-    return "stream";
-  }
-  return null;
-}
-
-function attachStreamSocket(
-  activeSession: ActiveAppServerSession,
-  socket: WebSocket,
-): void {
-  if (activeSession.streamSocket) {
-    closeSocket(socket, 1008, "stream channel already connected");
-    return;
-  }
-  activeSession.streamSocket = socket;
-  activeSession.runtime.streamSocket = socket;
-  activeSession.runtime.streamTransport = socket;
-  socket.on("close", () => {
-    if (activeSession.streamSocket === socket) {
-      activeSession.streamSocket = null;
-    }
-    if (activeSession.runtime.streamSocket === socket) {
-      activeSession.runtime.streamSocket = null;
-      activeSession.runtime.streamTransport = null;
-      // The stream channel cannot replay or reconnect independently. Tear down
-      // control so the client re-establishes one coherent paired session.
-      terminateSocket(activeSession.controlSocket);
-    }
-  });
-}
-
 export function parseAppServerListenUrl(
   listen: string = DEFAULT_LISTEN_URL,
 ): ParsedAppServerListenUrl {
@@ -201,64 +155,6 @@ export function parseAppServerListenUrl(
   return { host: normalizeListenHost(url.hostname), port, path };
 }
 
-async function startControlSession(params: {
-  socket: WebSocket;
-  streamSocket: WebSocket | null;
-  connectionName: string;
-  serverUrl: string;
-  onSessionCreated: (session: ActiveAppServerSession) => void;
-  onSessionClosed: () => void;
-}): Promise<ActiveAppServerSession> {
-  const existingRuntime = getActiveRuntime();
-  if (existingRuntime) {
-    stopRuntime(existingRuntime, true);
-    setActiveRuntime(null);
-  }
-
-  const runtime = createRuntime();
-  runtime.onWsEvent = undefined;
-  runtime.connectionId = `app-server-${crypto.randomUUID()}`;
-  runtime.connectionName = params.connectionName;
-  setActiveRuntime(runtime);
-  telemetry.setSurface(getListenerTelemetrySurface());
-  telemetry.init();
-
-  const startupReady = (async () => {
-    await reloadListenerModAdapter(runtime);
-    await loadTools();
-  })();
-
-  const activeSession: ActiveAppServerSession = {
-    runtime,
-    controlSocket: params.socket,
-    streamSocket: params.streamSocket,
-  };
-  params.onSessionCreated(activeSession);
-
-  await attachOpenListenerSocket(
-    runtime,
-    params.socket,
-    {
-      connectionId: runtime.connectionId ?? "app-server",
-      wsUrl: params.serverUrl,
-      supportsSplitStatusChannels: true,
-      deviceId: settingsManager.getOrCreateDeviceId(),
-      connectionName: params.connectionName,
-      onConnected: () => {},
-      onDisconnected: params.onSessionClosed,
-      onError: () => {},
-    },
-    {
-      streamSocket: params.streamSocket,
-      startHeartbeat: false,
-      startCronScheduler: true,
-      startupReady,
-    },
-  );
-
-  return activeSession;
-}
-
 export async function startAppServer(
   options: StartAppServerOptions = {},
 ): Promise<AppServerHandle> {
@@ -272,88 +168,71 @@ export async function startAppServer(
     );
   }
   const wss = new WebSocketServer({ noServer: true });
-  let activeSession: ActiveAppServerSession | null = null;
-  let pendingStreamSocket: WebSocket | null = null;
-  let pendingStreamTimeout: ReturnType<typeof setTimeout> | null = null;
   let resolvedInfo: AppServerListeningInfo | null = null;
+  let nextConnectionOrdinal = 0;
+  const existingRuntime = getActiveRuntime();
+  if (existingRuntime) {
+    stopRuntime(existingRuntime, true);
+    setActiveRuntime(null);
+  }
+  const runtime = createRuntime();
+  runtime.onWsEvent = undefined;
+  runtime.connectionId = "app-server";
+  runtime.connectionName = options.connectionName ?? hostname();
+  setActiveRuntime(runtime);
+  telemetry.setSurface(getListenerTelemetrySurface());
+  telemetry.init();
+  let startupReady: Promise<void> | null = null;
+  const getStartupReady = (): Promise<void> => {
+    startupReady ??= (async () => {
+      await reloadListenerModAdapter(runtime);
+      await loadTools();
+    })();
+    return startupReady;
+  };
   // Tracks the last time each connected client responded to a ping. Seeded on
   // connection so a freshly-accepted socket gets a full grace window before the
   // watchdog can reap it. WeakMap so entries are GC'd with their sockets.
   const lastPongAtBySocket = new WeakMap<WebSocket, number>();
 
-  const clearPendingStream = (): WebSocket | null => {
-    if (pendingStreamTimeout) {
-      clearTimeout(pendingStreamTimeout);
-      pendingStreamTimeout = null;
-    }
-    const socket = pendingStreamSocket;
-    pendingStreamSocket = null;
-    return socket;
-  };
-
-  const handleWebSocketConnection = (
-    socket: WebSocket,
-    channel: AppServerChannel,
-  ): void => {
-    // Liveness tracking for the heartbeat watchdog. Applies to both control
-    // and stream sockets. The `ws` library auto-replies to ping frames with a
-    // pong, so any client whose TCP is still alive refreshes this timestamp.
+  const handleWebSocketConnection = (socket: WebSocket): void => {
+    const connectionId = `app-server-${nextConnectionOrdinal}`;
+    nextConnectionOrdinal += 1;
+    // The `ws` library auto-replies to ping frames with a pong, so any client
+    // whose TCP is still alive refreshes this connection-scoped timestamp.
     lastPongAtBySocket.set(socket, Date.now());
     socket.on("pong", () => {
-      lastPongAtBySocket.set(socket, Date.now());
+      if (options.shouldRecordPong?.(connectionId) !== false) {
+        lastPongAtBySocket.set(socket, Date.now());
+      }
     });
 
-    if (channel === "stream") {
-      if (activeSession) {
-        attachStreamSocket(activeSession, socket);
-        return;
-      }
-      if (pendingStreamSocket) {
-        closeSocket(socket, 1008, "stream channel already pending");
-        return;
-      }
-      pendingStreamSocket = socket;
-      pendingStreamTimeout = setTimeout(() => {
-        const staleSocket = clearPendingStream();
-        closeSocket(staleSocket, 1008, "control channel did not connect");
-      }, PENDING_STREAM_TIMEOUT_MS);
-      socket.on("close", () => {
-        if (pendingStreamSocket === socket) {
-          clearPendingStream();
-        }
-      });
-      socket.on("error", (error) => {
-        options.onLog?.(`App-server stream socket error: ${error.message}`);
-      });
-      return;
-    }
-
-    if (activeSession) {
-      closeSocket(socket, 1008, "control channel already connected");
-      return;
-    }
-
-    const streamSocket = clearPendingStream();
-    void startControlSession({
+    void attachOpenListenerSocket(
+      runtime,
       socket,
-      streamSocket,
-      connectionName: options.connectionName ?? hostname(),
-      serverUrl: resolvedInfo?.url ?? options.listen ?? DEFAULT_LISTEN_URL,
-      onSessionCreated: (session) => {
-        activeSession = session;
+      {
+        connectionId,
+        wsUrl: resolvedInfo?.url ?? options.listen ?? DEFAULT_LISTEN_URL,
+        deviceId: settingsManager.getOrCreateDeviceId(),
+        connectionName: options.connectionName ?? hostname(),
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: (error) => {
+          options.onLog?.(
+            `App-server connection ${connectionId} failed: ${error.message}`,
+          );
+        },
       },
-      onSessionClosed: () => {
-        activeSession = null;
+      {
+        startHeartbeat: false,
+        startCronScheduler: true,
+        startupReady: getStartupReady(),
       },
-    }).catch((error) => {
-      if (activeSession?.controlSocket === socket) {
-        activeSession = null;
-      }
+    ).catch((error) => {
       options.onLog?.(
-        `Failed to start app-server session: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to start app-server connection: ${error instanceof Error ? error.message : String(error)}`,
       );
-      closeSocket(socket, 1011, "failed to start session");
-      closeSocket(streamSocket, 1011, "failed to start session");
+      closeSocket(socket, 1011, "failed to start connection");
     });
   };
 
@@ -411,9 +290,11 @@ export async function startAppServer(
       return;
     }
 
-    const channel = getRequestChannel(requestUrl);
-    if (!channel) {
-      rejectUpgrade(socket, 400, "Bad Request");
+    if (requestUrl.searchParams.has("channel")) {
+      options.onLog?.(
+        "Rejecting legacy split-channel app-server client; upgrade to a one-socket client",
+      );
+      rejectUpgrade(socket, 426, "Upgrade Required");
       return;
     }
 
@@ -439,7 +320,7 @@ export async function startAppServer(
     }
 
     wss.handleUpgrade(request, socket, head, (websocket) => {
-      handleWebSocketConnection(websocket, channel);
+      handleWebSocketConnection(websocket);
     });
   });
 
@@ -489,8 +370,8 @@ export async function startAppServer(
   const baseUrl = `ws://${listen.host}:${address.port}`;
   resolvedInfo = {
     url: baseUrl,
-    controlUrl: getChannelUrl(baseUrl, listen.path, "control"),
-    streamUrl: getChannelUrl(baseUrl, listen.path, "stream"),
+    controlUrl: getWebSocketUrl(baseUrl, listen.path),
+    streamUrl: getLegacyStreamUrl(baseUrl, listen.path),
   };
   options.onListening?.(resolvedInfo);
 
@@ -501,20 +382,12 @@ export async function startAppServer(
       if (options.openaiApi) {
         closeOpenAiBridgeRuntime();
       }
-      const streamSocket = clearPendingStream();
-      terminateSocket(streamSocket);
-      if (activeSession) {
-        const session = activeSession;
-        activeSession = null;
-        terminateSocket(session.streamSocket);
-        terminateSocket(session.controlSocket);
-        stopRuntime(session.runtime, true);
-        if (getActiveRuntime() === session.runtime) {
-          setActiveRuntime(null);
-        }
-      }
       for (const client of wss.clients) {
         terminateSocket(client);
+      }
+      stopRuntime(runtime, true);
+      if (getActiveRuntime() === runtime) {
+        setActiveRuntime(null);
       }
       await new Promise<void>((resolve, reject) => {
         wss.close();

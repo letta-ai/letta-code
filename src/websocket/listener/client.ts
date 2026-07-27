@@ -131,6 +131,11 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   connectionId: string | null;
   connectionName: string | null;
   sessionId: string;
+  nextConnectionOrdinal: number;
+  connections: ListenerRuntime["connections"];
+  connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
+  processTransport: ListenerRuntime["processTransport"];
+  processServicesStarted: boolean;
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
@@ -172,6 +177,11 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     connectionId: string | null;
     connectionName: string | null;
     sessionId: string;
+    nextConnectionOrdinal: number;
+    connections: ListenerRuntime["connections"];
+    connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
+    processTransport: ListenerRuntime["processTransport"];
+    processServicesStarted: boolean;
     eventSeqCounter: number;
     queueEmitScheduled: boolean;
     pendingQueueEmitScope?: {
@@ -269,6 +279,36 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.sessionId,
       set: (value: string) => {
         listener.sessionId = value;
+      },
+    },
+    nextConnectionOrdinal: {
+      get: () => listener.nextConnectionOrdinal,
+      set: (value: number) => {
+        listener.nextConnectionOrdinal = value;
+      },
+    },
+    connections: {
+      get: () => listener.connections,
+      set: (value: ListenerRuntime["connections"]) => {
+        listener.connections = value;
+      },
+    },
+    connectionIdsByRuntimeKey: {
+      get: () => listener.connectionIdsByRuntimeKey,
+      set: (value: ListenerRuntime["connectionIdsByRuntimeKey"]) => {
+        listener.connectionIdsByRuntimeKey = value;
+      },
+    },
+    processTransport: {
+      get: () => listener.processTransport,
+      set: (value: ListenerRuntime["processTransport"]) => {
+        listener.processTransport = value;
+      },
+    },
+    processServicesStarted: {
+      get: () => listener.processServicesStarted,
+      set: (value: boolean) => {
+        listener.processServicesStarted = value;
       },
     },
     eventSeqCounter: {

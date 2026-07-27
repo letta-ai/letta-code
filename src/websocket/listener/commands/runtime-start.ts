@@ -13,6 +13,7 @@ import { getBackend } from "@/backend";
 import { migratePermissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
+import { subscribeListenerConnection } from "@/websocket/listener/connection";
 import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
 import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-change";
 import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
@@ -23,6 +24,7 @@ import {
 import { isRuntimeStartCommand } from "@/websocket/listener/protocol-inbound";
 import type {
   ConversationRuntime,
+  ListenerConnectionId,
   ListenerRuntime,
 } from "@/websocket/listener/types";
 import type {
@@ -40,6 +42,7 @@ type ReplaySyncStateForRuntime = (
 
 type RuntimeStartCommandContext = {
   socket: WebSocket;
+  connectionId?: ListenerConnectionId;
   runtime: ListenerRuntime;
   safeSocketSend: SafeSocketSend;
   runDetachedListenerTask: RunDetachedListenerTask;
@@ -294,14 +297,30 @@ export async function handleRuntimeStartCommand(
       created,
     );
     runtimeScope = buildRuntimeScope(agent, conversation);
+    const connectionId =
+      context.connectionId ?? context.runtime.connectionId ?? "legacy";
+    const assertConnectionOpen = () => {
+      if (
+        context.connectionId &&
+        (!context.runtime.connections.has(connectionId) ||
+          context.runtime.connections.get(connectionId)?.cancellation.signal
+            .aborted)
+      ) {
+        throw new Error("App-server connection closed during runtime start");
+      }
+    };
+    assertConnectionOpen();
     const scopedRuntime = context.getOrCreateScopedRuntime(
       context.runtime,
       runtimeScope.agent_id,
       runtimeScope.conversation_id,
     );
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    assertConnectionOpen();
+    subscribeListenerConnection(context.runtime, connectionId, runtimeScope);
     registerRuntimeExternalTools(
       context.runtime,
+      connectionId,
       runtimeScope,
       parsed.external_tools ?? [],
     );

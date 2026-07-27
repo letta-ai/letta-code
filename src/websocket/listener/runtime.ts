@@ -260,6 +260,7 @@ export function createConversationRuntime(
     conversationId: normalizedConversationId,
     skillSources: listener.skillSourcesByConversation.get(runtimeKey)?.slice(),
     activeChannelTurn: null,
+    activeConnectionId: null,
     turnLifecycle,
     messageQueue: Promise.resolve(),
     pendingApprovalResolvers: new Map(),

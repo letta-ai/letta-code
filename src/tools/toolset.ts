@@ -457,6 +457,7 @@ function parseInheritedChannelContextEnv(): InheritedChannelContextPayload | nul
 }
 
 export async function prepareToolExecutionContextForScope(params: {
+  connectionId?: string;
   agentId: string;
   conversationId?: string | null;
   overrideModel?: string | null;
@@ -475,6 +476,7 @@ export async function prepareToolExecutionContextForScope(params: {
   modAdapters?: ModAdapter[];
 }): Promise<PreparedScopeToolContext> {
   const {
+    connectionId,
     agentId,
     conversationId,
     overrideModel,
@@ -567,6 +569,7 @@ export async function prepareToolExecutionContextForScope(params: {
     modAdapters,
     agent: agent as AgentState,
     runtimeContext: {
+      connectionId,
       agentId,
       agentName: (agent as AgentState).name ?? null,
       conversationId: scopedConversationId,

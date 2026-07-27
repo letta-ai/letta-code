@@ -22,7 +22,6 @@ import {
   startScheduler as startCronScheduler,
   stopScheduler as stopCronScheduler,
 } from "@/cron/scheduler";
-import type { DequeuedBatch } from "@/queue/queue-runtime";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -50,6 +49,17 @@ import {
   getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
 } from "./commands/model-toolset";
+import {
+  closeListenerConnection,
+  getOrCreateProcessTransport,
+  markListenerConnectionInitialized,
+  openListenerConnection,
+} from "./connection";
+import {
+  cleanupListenerConnection,
+  closeListenerRuntimeConnections,
+  createConnectionTurnProcessor,
+} from "./connection-lifecycle";
 import {
   INITIAL_RETRY_DELAY_MS,
   isListenerPongStale,
@@ -110,7 +120,6 @@ import {
   type ListenerTransport,
   LocalListenerTransport,
 } from "./transport";
-import { handleIncomingMessage } from "./turn";
 import { escapeTaskNotificationSummary } from "./turn-events";
 import type {
   ConversationRuntime,
@@ -904,6 +913,11 @@ export function createRuntime(): ListenerRuntime {
     hasSuccessfulConnection: false,
     everConnected: false,
     sessionId: `listen-${crypto.randomUUID()}`,
+    nextConnectionOrdinal: 0,
+    connections: new Map(),
+    connectionIdsByRuntimeKey: new Map(),
+    processTransport: null,
+    processServicesStarted: false,
     eventSeqCounter: 0,
     queueEmitScheduled: false,
     pendingQueueEmitScope: undefined,
@@ -955,6 +969,8 @@ export function stopRuntime(
   }
   runtime.conversationRuntimes.clear();
   runtime.approvalRuntimeKeyByRequestId.clear();
+  closeListenerRuntimeConnections(runtime, suppressCallbacks);
+  runtime.processServicesStarted = false;
   clearListenerWarmState(runtime);
   runtime.reminderStateByConversation.clear();
   runtime.skillSourcesByConversation.clear();
@@ -962,46 +978,6 @@ export function stopRuntime(
   runtime.systemPromptRecompileByConversation.clear();
   runtime.queuedSystemPromptRecompileByConversation.clear();
   stopAllWorktreeWatchers(runtime);
-  if (!runtime.socket) {
-    if (
-      runtime.streamSocket &&
-      (runtime.streamSocket.readyState === WebSocket.OPEN ||
-        runtime.streamSocket.readyState === WebSocket.CONNECTING)
-    ) {
-      runtime.streamSocket.close();
-    }
-    runtime.streamSocket = null;
-    runtime.streamTransport = null;
-    runtime.transport = null;
-    return;
-  }
-
-  const socket = runtime.socket;
-  runtime.socket = null;
-  runtime.transport = null;
-  const streamSocket = runtime.streamSocket;
-  runtime.streamSocket = null;
-  runtime.streamTransport = null;
-
-  // Stale runtimes being replaced should not emit callbacks/retries.
-  if (suppressCallbacks) {
-    socket.removeAllListeners();
-  }
-
-  if (
-    socket.readyState === WebSocket.OPEN ||
-    socket.readyState === WebSocket.CONNECTING
-  ) {
-    socket.close();
-  }
-
-  if (
-    streamSocket &&
-    (streamSocket.readyState === WebSocket.OPEN ||
-      streamSocket.readyState === WebSocket.CONNECTING)
-  ) {
-    streamSocket.close();
-  }
 }
 
 export async function startConnectedListenerRuntime(
@@ -1032,8 +1008,7 @@ export async function startConnectedListenerRuntime(
   const shouldStartCronScheduler =
     options.startCronScheduler !== false && !cronSchedulerDisabledByEnv;
 
-  runtime.transport = transport;
-  runtime.streamTransport = options.streamTransport ?? null;
+  markListenerConnectionInitialized(runtime, opts.connectionId);
   safeEmitWsEvent("recv", "lifecycle", {
     type:
       getListenerTransportKind(transport) === "websocket"
@@ -1064,6 +1039,12 @@ export async function startConnectedListenerRuntime(
     }
   }
 
+  if (runtime.processServicesStarted) {
+    return;
+  }
+  runtime.processServicesStarted = true;
+  const processTransport = getOrCreateProcessTransport(runtime);
+
   // Subscribe to subagent state changes and emit snapshots over the listener
   // transport. Local channel mode intentionally discards these frames.
   runtime._unsubscribeSubagentState?.();
@@ -1085,7 +1066,7 @@ export async function startConnectedListenerRuntime(
   runtime._unsubscribeSubagentStreamEvents?.();
   runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
     (subagentId, event) => {
-      if (!isListenerTransportOpen(transport)) return;
+      if (!isListenerTransportOpen(processTransport)) return;
 
       const subagent = getSubagents().find((entry) => entry.id === subagentId);
       if (subagent?.silent === true) {
@@ -1097,7 +1078,7 @@ export async function startConnectedListenerRuntime(
       // The event has { type: "message", message_type, ...LettaStreamingResponse }
       // plus extra headless fields (session_id, uuid) that pass through harmlessly.
       emitStreamDelta(
-        transport,
+        processTransport,
         runtime,
         event as unknown as import("@/types/protocol_v2").StreamDelta,
         subagent?.parentAgentId
@@ -1144,7 +1125,7 @@ export async function startConnectedListenerRuntime(
     // (see consumeQueuedTurn notification-aware path in queue.ts).
     scheduleQueuePump(
       targetRuntime,
-      transport,
+      processTransport,
       opts as StartListenerOptions,
       processQueuedTurn,
     );
@@ -1194,7 +1175,7 @@ export async function startConnectedListenerRuntime(
 
   if (shouldStartCronScheduler) {
     startCronScheduler(
-      transport,
+      processTransport,
       opts as StartListenerOptions,
       processQueuedTurn,
     );
@@ -1203,7 +1184,7 @@ export async function startConnectedListenerRuntime(
   // Wire channel ingress (if channels are active).
   await wireChannelIngress(
     runtime,
-    transport,
+    processTransport,
     opts as StartListenerOptions,
     processQueuedTurn,
   );
@@ -1233,38 +1214,27 @@ export async function attachOpenListenerSocket(
   }
 
   const streamSocket = options.streamSocket ?? null;
+  openListenerConnection({
+    runtime,
+    connectionId: opts.connectionId,
+    writer: socket,
+    streamWriter: streamSocket,
+    options: opts,
+  });
   const fileCommandSession = createFileCommandSession({
     socket,
     safeSocketSend,
     runDetachedListenerTask,
   });
 
-  runtime.socket = socket;
-  runtime.streamSocket = streamSocket;
   installExternalToolBridge(runtime);
-  const transport = socket;
-  const processQueuedTurn: ProcessQueuedTurn = async (
-    queuedTurn: IncomingMessage,
-    dequeuedBatch: DequeuedBatch,
-  ): Promise<void> => {
-    const scopedRuntime = getOrCreateScopedRuntime(
-      runtime,
-      queuedTurn.agentId,
-      queuedTurn.conversationId,
-    );
-    await handleIncomingMessage(
-      queuedTurn,
-      transport,
-      scopedRuntime,
-      opts.onStatusChange,
-      opts.connectionId,
-      dequeuedBatch.batchId,
-    );
-  };
+  const transport: ListenerTransport = socket;
+  const processQueuedTurn = createConnectionTurnProcessor(runtime);
 
   const handleMessage = createListenerMessageHandler({
     runtime,
     socket,
+    connectionId: opts.connectionId,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -1306,12 +1276,7 @@ export async function attachOpenListenerSocket(
       reason: reasonText,
     });
     fileCommandSession.dispose();
-    stopCronScheduler();
-    getChannelRegistry()?.pause();
-    stopRuntime(runtime, true);
-    if (getActiveRuntime() === runtime) {
-      setActiveRuntime(null);
-    }
+    cleanupListenerConnection(runtime, opts.connectionId);
     opts.onDisconnected();
   });
 
@@ -1424,24 +1389,18 @@ export async function startLocalChannelListener(
     await reloadListenerModAdapter(runtime);
     await loadTools();
     const transport = new LocalListenerTransport();
-    const processQueuedTurn: ProcessQueuedTurn = async (
-      queuedTurn: IncomingMessage,
-      dequeuedBatch: DequeuedBatch,
-    ): Promise<void> => {
-      const scopedRuntime = getOrCreateScopedRuntime(
-        runtime,
-        queuedTurn.agentId,
-        queuedTurn.conversationId,
-      );
-      await handleIncomingMessage(
-        queuedTurn,
-        transport,
-        scopedRuntime,
-        opts.onStatusChange,
-        opts.connectionId,
-        dequeuedBatch.batchId,
-      );
+    const connectionOptions: StartListenerOptions = {
+      ...opts,
+      wsUrl: "local://listener",
+      onDisconnected: () => {},
     };
+    openListenerConnection({
+      runtime,
+      connectionId: opts.connectionId,
+      writer: transport,
+      options: connectionOptions,
+    });
+    const processQueuedTurn = createConnectionTurnProcessor(runtime);
 
     await startConnectedListenerRuntime(
       runtime,
@@ -1559,30 +1518,20 @@ async function connectWithRetry(
   runtime.socket = socket;
   runtime.streamSocket = streamSocket;
   const transport = socket;
-  const processQueuedTurn: ProcessQueuedTurn = async (
-    queuedTurn: IncomingMessage,
-    dequeuedBatch: DequeuedBatch,
-  ): Promise<void> => {
-    const scopedRuntime = getOrCreateScopedRuntime(
-      runtime,
-      queuedTurn.agentId,
-      queuedTurn.conversationId,
-    );
-    await handleIncomingMessage(
-      queuedTurn,
-      transport,
-      scopedRuntime,
-      opts.onStatusChange,
-      opts.connectionId,
-      dequeuedBatch.batchId,
-    );
-  };
+  const processQueuedTurn = createConnectionTurnProcessor(runtime);
 
   socket.on("open", async () => {
     let streamTransport: ListenerTransport | null = null;
     if (streamSocket) {
       streamTransport = await waitForStreamSocketOpen(streamSocket, runtime);
     }
+    openListenerConnection({
+      runtime,
+      connectionId: opts.connectionId,
+      writer: socket,
+      streamWriter: streamTransport,
+      options: opts,
+    });
     await startConnectedListenerRuntime(
       runtime,
       transport,
@@ -1601,6 +1550,7 @@ async function connectWithRetry(
     createListenerMessageHandler({
       runtime,
       socket,
+      connectionId: opts.connectionId,
       opts,
       processQueuedTurn,
       fileCommandSession,
@@ -1661,6 +1611,7 @@ async function connectWithRetry(
     }
 
     clearRuntimeTimers(runtime);
+    closeListenerConnection(runtime, opts.connectionId);
     killAllTerminals();
     runtime._unsubscribeSubagentState?.();
     runtime._unsubscribeSubagentState = undefined;
@@ -1679,6 +1630,7 @@ async function connectWithRetry(
     runtime.socket = null;
     runtime.streamSocket = null;
     runtime.streamTransport = null;
+    runtime.processServicesStarted = false;
     for (const conversationRuntime of runtime.conversationRuntimes.values()) {
       rejectPendingApprovalResolvers(
         conversationRuntime,

@@ -24,6 +24,7 @@ interface TerminalSession {
   kill: () => void;
   pid: number;
   terminalId: string;
+  connectionId: string;
   spawnedAt: number;
 }
 
@@ -53,6 +54,10 @@ type NodePtyModule = {
 };
 
 const terminals = new Map<string, TerminalSession>();
+
+function getTerminalKey(connectionId: string, terminalId: string): string {
+  return JSON.stringify([connectionId, terminalId]);
+}
 
 function getDefaultShell(): string {
   if (os.platform() === "win32") {
@@ -106,8 +111,10 @@ function spawnBun(
   cols: number,
   rows: number,
   terminal_id: string,
+  connectionId: string,
   socket: WebSocket,
 ): TerminalSession {
+  const terminalKey = getTerminalKey(connectionId, terminal_id);
   const handleData = makeOutputBatcher((data) =>
     sendTerminalMessage(socket, { type: "terminal_output", terminal_id, data }),
   );
@@ -138,9 +145,9 @@ function spawnBun(
   }
 
   proc.exited.then((exitCode) => {
-    const current = terminals.get(terminal_id);
+    const current = terminals.get(terminalKey);
     if (current && current.pid === proc.pid) {
-      terminals.delete(terminal_id);
+      terminals.delete(terminalKey);
       sendTerminalMessage(socket, {
         type: "terminal_exited",
         terminal_id,
@@ -170,6 +177,7 @@ function spawnBun(
     },
     pid: proc.pid,
     terminalId: terminal_id,
+    connectionId,
     spawnedAt: Date.now(),
   };
 }
@@ -182,8 +190,10 @@ function spawnNodePty(
   cols: number,
   rows: number,
   terminal_id: string,
+  connectionId: string,
   socket: WebSocket,
 ): TerminalSession {
+  const terminalKey = getTerminalKey(connectionId, terminal_id);
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const pty = require("node-pty") as NodePtyModule;
 
@@ -206,9 +216,9 @@ function spawnNodePty(
   ptyProcess.onData(handleData);
 
   ptyProcess.onExit(({ exitCode }: NodePtyExitEvent) => {
-    const current = terminals.get(terminal_id);
+    const current = terminals.get(terminalKey);
     if (current && current.pid === ptyProcess.pid) {
-      terminals.delete(terminal_id);
+      terminals.delete(terminalKey);
       sendTerminalMessage(socket, {
         type: "terminal_exited",
         terminal_id,
@@ -235,6 +245,7 @@ function spawnNodePty(
     },
     pid: ptyProcess.pid,
     terminalId: terminal_id,
+    connectionId,
     spawnedAt: Date.now(),
   };
 }
@@ -245,14 +256,16 @@ export function handleTerminalSpawn(
   msg: { terminal_id: string; cols: number; rows: number },
   socket: WebSocket,
   cwd: string,
+  connectionId = "legacy",
 ): void {
   const { terminal_id, cols, rows } = msg;
+  const terminalKey = getTerminalKey(connectionId, terminal_id);
 
   // React Strict Mode fires mount→unmount→mount which produces spawn→kill→spawn
   // in rapid succession. The kill is already ignored (< 2s guard below), but the
   // second spawn would normally kill and restart. If the session is < 2s old and
   // still alive, reuse it and resend terminal_spawned instead.
-  const existing = terminals.get(terminal_id);
+  const existing = terminals.get(terminalKey);
   if (existing && Date.now() - existing.spawnedAt < 2000) {
     let alive = true;
     try {
@@ -274,10 +287,10 @@ export function handleTerminalSpawn(
     }
 
     // Session dead — fall through to spawn a fresh one
-    terminals.delete(terminal_id);
+    terminals.delete(terminalKey);
   }
 
-  killTerminal(terminal_id);
+  killTerminal(terminal_id, connectionId);
 
   const shell = getDefaultShell();
   console.log(
@@ -286,10 +299,10 @@ export function handleTerminalSpawn(
 
   try {
     const session = IS_BUN
-      ? spawnBun(shell, cwd, cols, rows, terminal_id, socket)
-      : spawnNodePty(shell, cwd, cols, rows, terminal_id, socket);
+      ? spawnBun(shell, cwd, cols, rows, terminal_id, connectionId, socket)
+      : spawnNodePty(shell, cwd, cols, rows, terminal_id, connectionId, socket);
 
-    terminals.set(terminal_id, session);
+    terminals.set(terminalKey, session);
     console.log(
       `[Terminal] Session stored for terminal_id=${terminal_id}, pid=${session.pid}`,
     );
@@ -310,45 +323,65 @@ export function handleTerminalSpawn(
   }
 }
 
-export function handleTerminalInput(msg: {
-  terminal_id: string;
-  data: string;
-}): void {
-  terminals.get(msg.terminal_id)?.write(msg.data);
+export function handleTerminalInput(
+  msg: {
+    terminal_id: string;
+    data: string;
+  },
+  connectionId = "legacy",
+): void {
+  terminals.get(getTerminalKey(connectionId, msg.terminal_id))?.write(msg.data);
 }
 
-export function handleTerminalResize(msg: {
-  terminal_id: string;
-  cols: number;
-  rows: number;
-}): void {
-  terminals.get(msg.terminal_id)?.resize(msg.cols, msg.rows);
+export function handleTerminalResize(
+  msg: {
+    terminal_id: string;
+    cols: number;
+    rows: number;
+  },
+  connectionId = "legacy",
+): void {
+  terminals
+    .get(getTerminalKey(connectionId, msg.terminal_id))
+    ?.resize(msg.cols, msg.rows);
 }
 
-export function handleTerminalKill(msg: { terminal_id: string }): void {
-  const session = terminals.get(msg.terminal_id);
+export function handleTerminalKill(
+  msg: { terminal_id: string },
+  connectionId = "legacy",
+): void {
+  const session = terminals.get(getTerminalKey(connectionId, msg.terminal_id));
   if (session && Date.now() - session.spawnedAt < 2000) {
     console.log(
       `[Terminal] Ignoring kill for recently spawned session (age=${Date.now() - session.spawnedAt}ms)`,
     );
     return;
   }
-  killTerminal(msg.terminal_id);
+  killTerminal(msg.terminal_id, connectionId);
 }
 
-function killTerminal(terminalId: string): void {
-  const session = terminals.get(terminalId);
+function killTerminal(terminalId: string, connectionId: string): void {
+  const terminalKey = getTerminalKey(connectionId, terminalId);
+  const session = terminals.get(terminalKey);
   if (session) {
     console.log(
       `[Terminal] killTerminal: terminalId=${terminalId}, pid=${session.pid}`,
     );
     session.kill();
-    terminals.delete(terminalId);
+    terminals.delete(terminalKey);
+  }
+}
+
+export function killListenerConnectionTerminals(connectionId: string): void {
+  for (const session of [...terminals.values()]) {
+    if (session.connectionId === connectionId) {
+      killTerminal(session.terminalId, connectionId);
+    }
   }
 }
 
 export function killAllTerminals(): void {
-  for (const [id] of terminals) {
-    killTerminal(id);
+  for (const session of [...terminals.values()]) {
+    killTerminal(session.terminalId, session.connectionId);
   }
 }

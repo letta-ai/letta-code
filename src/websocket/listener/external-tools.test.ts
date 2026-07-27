@@ -11,6 +11,7 @@ import {
   installExternalToolBridge,
   registerRuntimeExternalTools,
   rejectPendingExternalToolCalls,
+  rejectPendingExternalToolCallsForConnection,
 } from "@/websocket/listener/external-tools";
 import type { ListenerRuntime } from "@/websocket/listener/types";
 
@@ -162,6 +163,82 @@ describe("app-server runtime_start external tool bridge", () => {
         name: "lookup_ticket",
         description: "Lookup ticket for conversation B",
       }),
+    ]);
+  });
+
+  test("keeps same runtime tool registrations isolated by connection", async () => {
+    const { runtime } = createMockRuntime();
+    const runtimeScope = {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    };
+    const registerForConnection = (connectionId: string, description: string) =>
+      registerRuntimeExternalTools(runtime, connectionId, runtimeScope, [
+        {
+          scope_id: "search",
+          tools: [
+            {
+              name: "lookup_ticket",
+              description,
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+      ]);
+    registerForConnection("client-a", "Lookup from client A");
+    registerForConnection("client-b", "Lookup from client B");
+
+    const preparedA = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["lookup_ticket"],
+        externalToolScopeIds: ["search"],
+        runtimeContext: {
+          connectionId: "client-a",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    const preparedB = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["lookup_ticket"],
+        externalToolScopeIds: ["search"],
+        runtimeContext: {
+          connectionId: "client-b",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+
+    expect(preparedA.clientTools).toEqual([
+      expect.objectContaining({ description: "Lookup from client A" }),
+    ]);
+    expect(preparedB.clientTools).toEqual([
+      expect.objectContaining({ description: "Lookup from client B" }),
+    ]);
+
+    rejectPendingExternalToolCallsForConnection(
+      runtime,
+      "client-b",
+      "disconnected",
+    );
+    const preparedAfterDisconnect = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["lookup_ticket"],
+        externalToolScopeIds: ["search"],
+        runtimeContext: {
+          connectionId: "client-a",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    expect(preparedAfterDisconnect.clientTools).toEqual([
+      expect.objectContaining({ description: "Lookup from client A" }),
     ]);
   });
 

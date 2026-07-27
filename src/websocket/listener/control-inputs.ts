@@ -15,6 +15,7 @@ import {
   rejectPendingApprovalResolvers,
   resolvePendingApprovalResolver,
 } from "./approval";
+import { createConnectionRequestKey } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   bumpWorkingDirectoryRevision,
@@ -47,6 +48,7 @@ import { setCommandLoopStatus } from "./turn-status";
 import type {
   ChangeCwdMessage,
   ConversationRuntime,
+  ListenerConnectionId,
   ListenerRuntime,
   ModeChangePayload,
   ProcessQueuedTurn,
@@ -141,11 +143,29 @@ export function handleModeChange(
 function resolveRuntimeForApprovalRequest(
   listener: ListenerRuntime,
   requestId?: string | null,
+  connectionId?: ListenerConnectionId,
 ): ConversationRuntime | null {
   if (!requestId) {
     return null;
   }
-  const runtimeKey = listener.approvalRuntimeKeyByRequestId.get(requestId);
+  const requestKey = connectionId
+    ? createConnectionRequestKey(connectionId, requestId)
+    : [...listener.approvalRuntimeKeyByRequestId.keys()].find((candidate) => {
+        try {
+          const parsed = JSON.parse(candidate) as unknown;
+          return (
+            Array.isArray(parsed) &&
+            parsed.length === 2 &&
+            parsed[1] === requestId
+          );
+        } catch {
+          return candidate === requestId;
+        }
+      });
+  if (!requestKey) {
+    return null;
+  }
+  const runtimeKey = listener.approvalRuntimeKeyByRequestId.get(requestKey);
   if (!runtimeKey) {
     return null;
   }
@@ -160,6 +180,7 @@ export async function handleApprovalResponseInput(
       conversation_id?: string | null;
     };
     response: ApprovalResponseBody;
+    connectionId?: ListenerConnectionId;
     socket: ListenerTransport;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -171,10 +192,12 @@ export async function handleApprovalResponseInput(
     resolveRuntimeForApprovalRequest: (
       listener: ListenerRuntime,
       requestId?: string | null,
+      connectionId?: ListenerConnectionId,
     ) => ConversationRuntime | null;
     resolvePendingApprovalResolver: (
       runtime: ConversationRuntime,
       response: ApprovalResponseBody,
+      connectionId?: ListenerConnectionId,
     ) => boolean;
     getOrCreateScopedRuntime: (
       listener: ListenerRuntime,
@@ -208,10 +231,15 @@ export async function handleApprovalResponseInput(
   const approvalRuntime = deps.resolveRuntimeForApprovalRequest(
     listener,
     params.response.request_id,
+    params.connectionId,
   );
   if (
     approvalRuntime &&
-    deps.resolvePendingApprovalResolver(approvalRuntime, params.response)
+    deps.resolvePendingApprovalResolver(
+      approvalRuntime,
+      params.response,
+      params.connectionId,
+    )
   ) {
     deps.scheduleQueuePump(
       approvalRuntime,
@@ -260,6 +288,7 @@ export async function handleChangeDeviceStateInput(
   listener: ListenerRuntime,
   params: {
     command: ChangeDeviceStateCommand;
+    connectionId?: ListenerConnectionId;
     socket: WebSocket;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -370,6 +399,7 @@ export async function handleAbortMessageInput(
   listener: ListenerRuntime,
   params: {
     command: AbortMessageCommand;
+    connectionId?: ListenerConnectionId;
     socket: ListenerTransport;
     opts: {
       onStatusChange?: StartListenerOptions["onStatusChange"];

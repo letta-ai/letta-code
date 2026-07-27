@@ -39,6 +39,10 @@ import {
   type ChannelTurnRuntimeCarrier,
   getActiveChannelTurnProgressContext,
 } from "./channel-turn-session";
+import {
+  nextListenerConnectionEventSeq,
+  resolveListenerConnectionTargets,
+} from "./connection";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory, getExportedCwdMap } from "./cwd";
 import {
@@ -54,7 +58,6 @@ import {
   getPendingControlRequests,
   getRecoveredApprovalStateForScope,
   hasInterruptedCacheForScope,
-  nextEventSeq,
   safeEmitWsEvent,
 } from "./runtime";
 import {
@@ -67,6 +70,7 @@ import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   IncomingMessage,
+  ListenerMessageRouting,
   ListenerRuntime,
 } from "./types";
 
@@ -443,7 +447,6 @@ function classifyOutboundFrame(
     ? "status"
     : "critical";
 }
-
 export function emitProtocolV2Message(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -455,86 +458,83 @@ export function emitProtocolV2Message(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
+  routing?: ListenerMessageRouting,
 ): void {
   const listener = getListenerRuntime(runtime);
-
-  // Route stream-type messages to the stream transport when available.
-  // Falls back to the control socket if the stream transport is not open.
-  let targetSocket: ListenerTransport = socket;
-  if (listener?.streamTransport && isStreamChannelMessage(message.type)) {
-    if (isListenerTransportOpen(listener.streamTransport)) {
-      targetSocket = listener.streamTransport;
-    }
-  }
-
   const runtimeScope = resolveRuntimeScope(
     listener,
     getScopeForRuntime(runtime, scope),
   );
   if (!runtimeScope) return;
   notifyStreamObservers(listener, message, runtimeScope);
-  if (!isListenerTransportOpen(targetSocket)) return;
-
-  // The wire layer owns queueing, backpressure, and the actual send. The
-  // envelope is built at drain time so coalesced/dropped frames never consume
-  // an event_seq and the delivered stream stays gap-free.
   const frameClass = classifyOutboundFrame(message);
-  enqueueOutboundFrame(targetSocket, {
-    typeLabel: message.type,
-    frameClass,
-    ...(frameClass === "status"
-      ? {
-          coalesceKey: `${message.type}:${runtimeScope.agent_id ?? ""}:${runtimeScope.conversation_id ?? ""}`,
+  const targets = resolveListenerConnectionTargets({
+    runtime: listener,
+    origin: socket,
+    scope: runtimeScope,
+    connectionId: routing?.connectionId,
+    subscribers: routing?.subscribers !== false,
+    streamMessage: isStreamChannelMessage(message.type),
+  });
+  for (const { connection, transport: targetSocket } of targets) {
+    if (!isListenerTransportOpen(targetSocket)) continue;
+    enqueueOutboundFrame(targetSocket, {
+      typeLabel: message.type,
+      frameClass,
+      ...(frameClass === "status"
+        ? {
+            coalesceKey: `${message.type}:${runtimeScope.agent_id ?? ""}:${runtimeScope.conversation_id ?? ""}`,
+          }
+        : {}),
+      build: () => {
+        const eventSeq = nextListenerConnectionEventSeq(connection, listener);
+        if (eventSeq === null) return null;
+        const outbound: WsProtocolMessage = {
+          ...message,
+          runtime: runtimeScope,
+          event_seq: eventSeq,
+          emitted_at: new Date().toISOString(),
+          idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
+        } as WsProtocolMessage;
+        let payload: string;
+        try {
+          payload = JSON.stringify(outbound);
+        } catch (error) {
+          console.error(
+            `[Listen V2] Failed to emit ${message.type} (seq=${eventSeq})`,
+            error,
+          );
+          safeEmitWsEvent("send", "lifecycle", {
+            type: "_ws_send_error",
+            message_type: message.type,
+            event_seq: eventSeq,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
         }
-      : {}),
-    build: () => {
-      const eventSeq = nextEventSeq(listener);
-      if (eventSeq === null) return null;
-      const outbound: WsProtocolMessage = {
-        ...message,
-        runtime: runtimeScope,
-        event_seq: eventSeq,
-        emitted_at: new Date().toISOString(),
-        idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
-      } as WsProtocolMessage;
-      let payload: string;
-      try {
-        payload = JSON.stringify(outbound);
-      } catch (error) {
-        console.error(
-          `[Listen V2] Failed to emit ${message.type} (seq=${eventSeq})`,
-          error,
-        );
+        return {
+          payload,
+          perfKey: getProtocolPerfKey(message),
+          onSent: () => {
+            if (isDebugEnabled()) {
+              console.log(
+                `[Listen V2] Emitting ${message.type} (seq=${eventSeq})`,
+              );
+            }
+            safeEmitWsEvent("send", "protocol", outbound);
+          },
+        };
+      },
+      onSendError: (error) => {
+        console.error(`[Listen V2] Failed to emit ${message.type}`, error);
         safeEmitWsEvent("send", "lifecycle", {
           type: "_ws_send_error",
           message_type: message.type,
-          event_seq: eventSeq,
           error: error instanceof Error ? error.message : String(error),
         });
-        return null;
-      }
-      return {
-        payload,
-        perfKey: getProtocolPerfKey(message),
-        onSent: () => {
-          if (isDebugEnabled()) {
-            console.log(
-              `[Listen V2] Emitting ${message.type} (seq=${eventSeq})`,
-            );
-          }
-          safeEmitWsEvent("send", "protocol", outbound);
-        },
-      };
-    },
-    onSendError: (error) => {
-      console.error(`[Listen V2] Failed to emit ${message.type}`, error);
-      safeEmitWsEvent("send", "lifecycle", {
-        type: "_ws_send_error",
-        message_type: message.type,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    },
-  });
+      },
+    });
+  }
 }
 
 export function emitDeviceStatusUpdate(

@@ -2,6 +2,11 @@ import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import type { StreamDeltaMessage } from "@/types/protocol_v2";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  subscribeListenerConnection,
+} from "@/websocket/listener/connection";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { createRuntime as createListenerRuntime } from "@/websocket/listener/lifecycle";
 import { OUTBOUND_QUEUE_LIMITS } from "@/websocket/listener/outbound-wire";
@@ -91,6 +96,78 @@ describe("emitProtocolV2Message backpressure", () => {
 
     expect(socket.terminated).toBe(true);
     expect(socket.sentPayloads).toEqual([]);
+  });
+});
+
+describe("emitProtocolV2Message connection routing", () => {
+  test("fans notifications out to subscribers and honors an explicit target", () => {
+    const listener = createListenerRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socketA = new MockSocket();
+    const socketB = new MockSocket();
+    const socketC = new MockSocket();
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+
+    for (const [connectionId, socket] of [
+      ["client-a", socketA],
+      ["client-b", socketB],
+      ["client-c", socketC],
+    ] as const) {
+      openListenerConnection({
+        runtime: listener,
+        connectionId,
+        writer: socket as never,
+        options: {
+          connectionId,
+          wsUrl: "ws://test",
+          deviceId: "test",
+          connectionName: connectionId,
+          onConnected: () => {},
+          onDisconnected: () => {},
+          onError: () => {},
+        },
+      });
+      markListenerConnectionInitialized(listener, connectionId);
+    }
+    subscribeListenerConnection(listener, "client-a", scope);
+    subscribeListenerConnection(listener, "client-b", scope);
+
+    emitProtocolV2Message(
+      socketC as never,
+      runtime,
+      {
+        type: "update_loop_status",
+        loop_status: { status: "WAITING_ON_INPUT", active_run_ids: [] },
+      } as never,
+      scope,
+    );
+
+    expect(socketA.sentPayloads).toHaveLength(1);
+    expect(socketB.sentPayloads).toHaveLength(1);
+    expect(socketC.sentPayloads).toHaveLength(0);
+
+    emitProtocolV2Message(
+      socketA as never,
+      runtime,
+      {
+        type: "control_request",
+        request_id: "approval-1",
+        request: {
+          subtype: "can_use_tool",
+          tool_name: "Bash",
+          input: {},
+          tool_call_id: "tool-1",
+          permission_suggestions: [],
+          blocked_path: null,
+        },
+      } as never,
+      scope,
+      { connectionId: "client-b", subscribers: false },
+    );
+
+    expect(socketA.sentPayloads).toHaveLength(1);
+    expect(socketB.sentPayloads).toHaveLength(2);
+    expect(socketC.sentPayloads).toHaveLength(0);
   });
 });
 

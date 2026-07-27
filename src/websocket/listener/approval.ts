@@ -1,6 +1,10 @@
 import type { ApprovalResult } from "@/agent/approval-execution";
 import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
 import {
+  createConnectionRequestKey,
+  selectListenerController,
+} from "./connection";
+import {
   emitDeviceStatusIfOpen,
   emitLoopStatusIfOpen,
   emitProtocolV2Message,
@@ -9,7 +13,7 @@ import { evictConversationRuntimeIfIdle } from "./runtime";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type { TurnLease } from "./turn-lifecycle";
 import { setCommandLoopStatus, setTurnLoopStatus } from "./turn-status";
-import type { ConversationRuntime } from "./types";
+import type { ConversationRuntime, ListenerConnectionId } from "./types";
 
 export function rememberPendingApprovalBatchIds(
   runtime: ConversationRuntime,
@@ -182,19 +186,28 @@ export function validateApprovalResultIds(
 export function resolvePendingApprovalResolver(
   runtime: ConversationRuntime,
   response: ApprovalResponseBody,
+  connectionId?: ListenerConnectionId,
 ): boolean {
   const requestId = response.request_id;
   if (typeof requestId !== "string" || requestId.length === 0) {
     return false;
   }
 
-  const pending = runtime.pendingApprovalResolvers.get(requestId);
+  const requestKey = connectionId
+    ? createConnectionRequestKey(connectionId, requestId)
+    : [...runtime.pendingApprovalResolvers.entries()].find(
+        ([, candidate]) => candidate.controlRequest?.request_id === requestId,
+      )?.[0];
+  if (!requestKey) {
+    return false;
+  }
+  const pending = runtime.pendingApprovalResolvers.get(requestKey);
   if (!pending) {
     return false;
   }
 
-  runtime.pendingApprovalResolvers.delete(requestId);
-  runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
+  runtime.pendingApprovalResolvers.delete(requestKey);
+  runtime.listener.approvalRuntimeKeyByRequestId.delete(requestKey);
   if (runtime.pendingApprovalResolvers.size === 0 && !runtime.isProcessing) {
     setCommandLoopStatus(runtime, "WAITING_ON_INPUT");
   }
@@ -239,6 +252,29 @@ export function rejectPendingApprovalResolvers(
   evictConversationRuntimeIfIdle(runtime);
 }
 
+export function rejectPendingApprovalResolversForConnection(
+  runtime: ConversationRuntime,
+  connectionId: ListenerConnectionId,
+  reason: string,
+): void {
+  for (const [requestKey, pending] of runtime.pendingApprovalResolvers) {
+    if (pending.connectionId !== connectionId) {
+      continue;
+    }
+    runtime.pendingApprovalResolvers.delete(requestKey);
+    runtime.listener.approvalRuntimeKeyByRequestId.delete(requestKey);
+    pending.reject(new Error(reason));
+  }
+  if (
+    runtime.pendingApprovalResolvers.size === 0 &&
+    !runtime.isProcessing &&
+    !runtime.cancelRequested
+  ) {
+    setCommandLoopStatus(runtime, "WAITING_ON_INPUT");
+  }
+  evictConversationRuntimeIfIdle(runtime);
+}
+
 export function requestApprovalOverWS(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
@@ -246,9 +282,18 @@ export function requestApprovalOverWS(
   requestId: string,
   controlRequest: ControlRequest,
 ): Promise<ApprovalResponseBody> {
-  if (!isListenerTransportOpen(socket)) {
+  const controller = selectListenerController(
+    runtime.listener,
+    {
+      agent_id: runtime.agentId,
+      conversation_id: runtime.conversationId,
+    },
+    socket,
+  );
+  if (!controller || !isListenerTransportOpen(controller.writer)) {
     return Promise.reject(new Error("WebSocket not open"));
   }
+  const requestKey = createConnectionRequestKey(controller.id, requestId);
 
   const abortSignal = turnLease.signal;
   const isInterrupted = () =>
@@ -280,8 +325,8 @@ export function requestApprovalOverWS(
       reject(error);
     };
     const handleAbort = () => {
-      runtime.pendingApprovalResolvers.delete(requestId);
-      runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
+      runtime.pendingApprovalResolvers.delete(requestKey);
+      runtime.listener.approvalRuntimeKeyByRequestId.delete(requestKey);
       wrappedReject(new Error("Cancelled by user"));
     };
 
@@ -291,22 +336,29 @@ export function requestApprovalOverWS(
       return;
     }
 
-    runtime.pendingApprovalResolvers.set(requestId, {
+    runtime.pendingApprovalResolvers.set(requestKey, {
+      connectionId: controller.id,
       resolve: wrappedResolve,
       reject: wrappedReject,
       controlRequest,
     });
-    runtime.listener.approvalRuntimeKeyByRequestId.set(requestId, runtime.key);
+    runtime.listener.approvalRuntimeKeyByRequestId.set(requestKey, runtime.key);
     if (isInterrupted()) {
       handleAbort();
       return;
     }
     runtime.turnLifecycle.recordStopReason(turnLease, "requires_approval");
     setTurnLoopStatus(runtime, turnLease, "WAITING_ON_APPROVAL");
-    emitProtocolV2Message(socket, runtime, controlRequest, {
-      agent_id: runtime.agentId,
-      conversation_id: runtime.conversationId,
-    });
+    emitProtocolV2Message(
+      controller.writer,
+      runtime,
+      controlRequest,
+      {
+        agent_id: runtime.agentId,
+        conversation_id: runtime.conversationId,
+      },
+      { connectionId: controller.id, subscribers: false },
+    );
     emitLoopStatusIfOpen(runtime.listener, {
       agent_id: runtime.agentId,
       conversation_id: runtime.conversationId,
