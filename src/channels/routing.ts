@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { LEGACY_CHANNEL_ACCOUNT_ID } from "./accounts";
 import { getChannelDir, getChannelRoutingPath } from "./config";
-import type { ChannelRoute } from "./types";
+import type { ChannelRoute, InboundChannelMessage } from "./types";
 
 // ── In-memory store ───────────────────────────────────────────────
 
@@ -179,6 +179,56 @@ export function getRouteRaw(
   threadId?: string | null,
 ): ChannelRoute | undefined {
   return routesByKey.get(routeKey(channel, chatId, accountId, threadId));
+}
+
+type InboundRouteMessage = Pick<
+  InboundChannelMessage,
+  "channel" | "chatId" | "chatType" | "threadId"
+>;
+
+function selectRoute(
+  route: ChannelRoute | undefined,
+  includeDisabled: boolean,
+): ChannelRoute | null {
+  if (!route || (!includeDisabled && route.enabled === false)) return null;
+  return route;
+}
+
+export function getRouteForInboundMessage(
+  msg: InboundRouteMessage,
+  accountId?: string,
+  options: { includeDisabled?: boolean } = {},
+): ChannelRoute | null {
+  const includeDisabled = options.includeDisabled === true;
+  const exactRoute = getRouteRaw(
+    msg.channel,
+    msg.chatId,
+    accountId,
+    msg.threadId,
+  );
+  if (exactRoute) return selectRoute(exactRoute, includeDisabled);
+  if (
+    msg.channel !== "telegram" ||
+    msg.chatType !== "direct" ||
+    !msg.threadId?.trim()
+  ) {
+    return null;
+  }
+  return selectRoute(
+    getRouteRaw(msg.channel, msg.chatId, accountId, null),
+    includeDisabled,
+  );
+}
+
+export function loadRouteForInboundMessage(
+  msg: InboundRouteMessage,
+  accountId?: string,
+  options?: { includeDisabled?: boolean },
+): ChannelRoute | null {
+  const route = getRouteForInboundMessage(msg, accountId, options);
+  if (route) return route;
+  loadRoutes(msg.channel);
+  return getRouteForInboundMessage(msg, accountId, options);
 }
 
 /**

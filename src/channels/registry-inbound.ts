@@ -15,15 +15,15 @@ import type { ChannelRegistryEvent } from "./registry-events";
 import type { ChannelInboundDelivery } from "./registry-handlers";
 import {
   buildChannelTurnSource,
+  buildDirectReplyOptions,
   buildPairingInstructions,
   buildUnboundRouteInstructions,
   getConfiguredAgentId,
 } from "./registry-presentation";
 import type { ChannelRouteProvisioner } from "./registry-routes";
-import { getRoute as getRouteFromStore, loadRoutes } from "./routing";
+import { loadRouteForInboundMessage } from "./routing";
 import type {
   ChannelAdapter,
-  ChannelRoute,
   ChannelTurnLifecycleEvent,
   InboundChannelMessage,
 } from "./types";
@@ -78,6 +78,7 @@ export function createChannelInboundRouter(deps: {
         await adapter.sendDirectReply(
           msg.chatId,
           buildChannelAccessDeniedMessage(msg.channel),
+          buildDirectReplyOptions(msg),
         );
       } else {
         console.log(
@@ -97,24 +98,7 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
-    const getStatusRoute = (): ChannelRoute | null => {
-      let statusRoute = getRouteFromStore(
-        msg.channel,
-        msg.chatId,
-        accountId,
-        msg.threadId,
-      );
-      if (!statusRoute) {
-        loadRoutes(msg.channel);
-        statusRoute = getRouteFromStore(
-          msg.channel,
-          msg.chatId,
-          accountId,
-          msg.threadId,
-        );
-      }
-      return statusRoute;
-    };
+    const getStatusRoute = () => loadRouteForInboundMessage(msg, accountId);
 
     if (
       await tryHandleChannelSlashCommand(adapter, msg, {
@@ -366,30 +350,20 @@ export function createChannelInboundRouter(deps: {
         buildPairingInstructions(msg.channel, code, {
           agentId: getConfiguredAgentId(config),
         }),
+        buildDirectReplyOptions(msg),
       );
       return;
     }
 
-    // 2. Route lookup (reload from disk on miss — allows standalone CLI pairing)
-    let route = getRouteFromStore(
-      msg.channel,
-      msg.chatId,
-      accountId,
-      msg.threadId,
-    );
-    if (!route) {
-      loadRoutes(msg.channel);
-      route = getRouteFromStore(
-        msg.channel,
-        msg.chatId,
-        accountId,
-        msg.threadId,
-      );
-    }
+    // 2. Route lookup (reload from disk on miss — allows standalone CLI pairing).
+    // Telegram private bot topics share the existing root DM route unless an
+    // exact topic route exists; a disabled exact route remains authoritative.
+    const route = loadRouteForInboundMessage(msg, accountId);
     if (!route) {
       await adapter.sendDirectReply(
         msg.chatId,
         buildUnboundRouteInstructions(msg.channel, msg.chatId),
+        buildDirectReplyOptions(msg),
       );
       return;
     }
