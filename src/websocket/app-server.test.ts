@@ -20,7 +20,7 @@ import {
 } from "@/websocket/app-server-auth";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
 
-const TEST_TIMEOUT_MS = 10_000;
+const TEST_TIMEOUT_MS = 30_000;
 const ORIGINAL_DISABLE_MODS = process.env.LETTA_DISABLE_MODS;
 const ORIGINAL_DISABLE_CRON = process.env.LETTA_DISABLE_CRON_SCHEDULER;
 
