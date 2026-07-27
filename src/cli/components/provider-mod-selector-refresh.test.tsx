@@ -1,10 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Readable, Writable } from "node:stream";
-import { render } from "ink";
+import { type Instance, render } from "ink";
 import stripAnsi from "strip-ansi";
 import { clearAvailableModelsCache } from "@/agent/available-models";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
+import {
+  type BackendMode,
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import {
   clearRegisteredPiProviders,
@@ -52,9 +57,16 @@ async function waitForOutput(
   stdout: CaptureStream,
   text: string,
 ): Promise<void> {
-  const deadline = Date.now() + 1000;
-  while (!stdout.read().includes(text) && Date.now() < deadline) {
+  const deadline = Date.now() + 5000;
+  let output = stdout.read();
+  while (!output.includes(text) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 10));
+    output = stdout.read();
+  }
+  if (!output.includes(text)) {
+    throw new Error(
+      `Timed out waiting for ${JSON.stringify(text)}. Last output: ${JSON.stringify(output.slice(-2000))}`,
+    );
   }
 }
 
@@ -99,19 +111,30 @@ function createModelBackend(): Backend {
   return backend;
 }
 
+const renderedInstances = new Set<Instance>();
+let previousBackendMode: BackendMode;
+
 afterEach(() => {
+  for (const instance of renderedInstances) {
+    instance.unmount();
+    instance.cleanup();
+  }
+  renderedInstances.clear();
   clearAvailableModelsCache();
   clearRegisteredPiProviders();
   __testSetBackend(null);
+  setConfiguredBackendMode(previousBackendMode);
 });
 
 beforeEach(async () => {
+  previousBackendMode = resolveBackendMode();
+  setConfiguredBackendMode("local");
+  __testSetBackend(createModelBackend());
   await settingsManager.initialize();
 });
 
 describe("provider mod selector refresh", () => {
   test("refreshes an open model selector when a provider registers", async () => {
-    __testSetBackend(createModelBackend());
     const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
     const instance = render(
       <ModelSelector
@@ -127,6 +150,7 @@ describe("provider mod selector refresh", () => {
         exitOnCtrlC: false,
       },
     );
+    renderedInstances.add(instance);
 
     await waitForOutput(stdout, "baseline/model");
     expect(stdout.read()).toContain("baseline/model");
@@ -136,8 +160,6 @@ describe("provider mod selector refresh", () => {
     await waitForOutput(stdout, "late-provider/late-model");
 
     expect(stdout.read()).toContain("late-provider/late-model");
-    instance.unmount();
-    instance.cleanup();
   });
 
   test("refreshes an open provider selector when a provider registers", async () => {
@@ -149,8 +171,9 @@ describe("provider mod selector refresh", () => {
       patchConsole: false,
       exitOnCtrlC: false,
     });
+    renderedInstances.add(instance);
 
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await waitForOutput(stdout, "Connect your LLM API keys");
     expect(stdout.read()).not.toContain("Aardvark Late Provider");
     stdout.reset();
 
@@ -158,7 +181,5 @@ describe("provider mod selector refresh", () => {
     await waitForOutput(stdout, "Aardvark Late Provider");
 
     expect(stdout.read()).toContain("Aardvark Late Provider");
-    instance.unmount();
-    instance.cleanup();
   });
 });
