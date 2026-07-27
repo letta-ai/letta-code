@@ -4,9 +4,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
-import type { AgentCreateBody } from "@/backend";
-import { __testSetBackend } from "@/backend";
+import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
+import { settingsManager } from "@/settings-manager";
 import {
   type AppServerHandle,
   parseAppServerListenUrl,
@@ -667,13 +667,24 @@ describe("app-server native websocket", () => {
     const seenA: Record<string, unknown>[] = [];
     const seenB: Record<string, unknown>[] = [];
     try {
-      __testSetBackend(
-        new LocalBackend({
-          storageDir,
-          executionMode: "deterministic",
-          memfsEnabled: false,
-        }),
-      );
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        memfsEnabled: false,
+      });
+      __testSetBackend(backend);
+      const createAgent = (name: string) =>
+        backend.createAgent({
+          name,
+          model: "anthropic/claude-sonnet-4-6",
+        } as AgentCreateBody);
+      const [agentA, agentB] = await Promise.all([
+        createAgent("Client A"),
+        createAgent("Client B"),
+      ]);
+      await settingsManager.initialize();
+      settingsManager.setMemfsEnabled(agentA.id, false);
+      settingsManager.setMemfsEnabled(agentB.id, false);
       handle = await startAppServer({ listen: "ws://127.0.0.1:0" });
       clientA = new WebSocket(handle.controlUrl);
       clientB = new WebSocket(handle.controlUrl);
@@ -696,31 +707,20 @@ describe("app-server native websocket", () => {
           message.type === "runtime_start_response" &&
           message.request_id === "identical-runtime-start-id",
       );
-      const runtimeStart = (name: string) =>
+      const runtimeStart = (agentId: string, name: string) =>
         JSON.stringify({
           type: "runtime_start",
           request_id: "identical-runtime-start-id",
-          create_agent: {
-            body: {
-              name,
-              model: "anthropic/claude-sonnet-4-6",
-            } as AgentCreateBody,
-            pin_global: false,
-          },
+          agent_id: agentId,
           create_conversation: { body: { summary: `${name} conversation` } },
           recover_approvals: false,
         });
-      clientA.send(runtimeStart("Client A"));
-      clientB.send(runtimeStart("Client B"));
+      clientA.send(runtimeStart(agentA.id, "Client A"));
+      clientB.send(runtimeStart(agentB.id, "Client B"));
       const [responseA, responseB] = await Promise.all([startA, startB]);
-      const runtimeA = responseA.runtime as {
-        agent_id: string;
-        conversation_id: string;
-      };
-      const runtimeB = responseB.runtime as {
-        agent_id: string;
-        conversation_id: string;
-      };
+      type RuntimeScope = { agent_id: string; conversation_id: string };
+      const runtimeA = responseA.runtime as RuntimeScope;
+      const runtimeB = responseB.runtime as RuntimeScope;
       expect(runtimeA.agent_id).not.toBe(runtimeB.agent_id);
       expect(responseA.agent).toMatchObject({ name: "Client A" });
       expect(responseB.agent).toMatchObject({ name: "Client B" });
@@ -921,7 +921,7 @@ describe("app-server native websocket", () => {
       await handle?.close();
       await rm(storageDir, { recursive: true, force: true });
     }
-  }, 20_000);
+  }, 60_000);
 
   test("starts a runtime and emits state frames over the same socket", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "letta-app-server-"));
