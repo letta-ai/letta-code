@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createMemoryConfinementLauncherWithAvailability } from "@/permissions/memory-confinement-launcher";
+import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 
 describe("memory confinement launcher", () => {
@@ -24,9 +25,11 @@ describe("memory confinement launcher", () => {
     expect(result.backend).toBe("seatbelt");
     expect(result.launcher[0]).toBe("/usr/bin/sandbox-exec");
     expect(result.launcher).toContain(process.execPath);
-    expect(result.launcher).toContain(`-DWRITABLE_0=${memoryDir}`);
     expect(result.launcher).toContain(
-      `-DWRITABLE_1=${join(dirname(memoryDir), "memory-worktrees")}`,
+      `-DWRITABLE_0=${canonicalizeRoot(memoryDir)}`,
+    );
+    expect(result.launcher).toContain(
+      `-DWRITABLE_1=${canonicalizeRoot(join(dirname(memoryDir), "memory-worktrees"))}`,
     );
     expect(result.env.PATH).toBe("/usr/bin");
     expect(result.env[SANDBOX_ENV_VAR]).toBe("seatbelt");
@@ -45,8 +48,12 @@ describe("memory confinement launcher", () => {
       { backend: "seatbelt", reason: "test" },
     );
 
-    expect(result.launcher).toContain("-DBASEWRITABLE_1=/state/local-backend");
-    expect(result.launcher).toContain("-DBASEWRITABLE_2=/state/transcripts");
+    expect(result.launcher).toContain(
+      `-DBASEWRITABLE_1=${canonicalizeRoot("/state/local-backend")}`,
+    );
+    expect(result.launcher).toContain(
+      `-DBASEWRITABLE_2=${canonicalizeRoot("/state/transcripts")}`,
+    );
   });
 
   test("fails closed without a memory root", () => {
