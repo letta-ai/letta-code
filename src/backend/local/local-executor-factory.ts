@@ -1,10 +1,10 @@
-import type { Usage } from "@earendil-works/pi-ai";
 import {
   DeterministicPongExecutor,
   type HeadlessTurnExecutor,
 } from "@/backend/dev/headless-turn-executor";
 import type { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import {
+  type LocalContextPressure,
   PiStreamAdapter,
   type PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
@@ -42,9 +42,9 @@ export function createLocalExecutor(
     input: ProviderTurnInput,
     error: unknown,
   ) => ReturnType<LocalCompactionCallback>,
-  onContextUsage?: (
+  onContextPressure?: (
     input: ProviderTurnInput,
-    usage: Usage,
+    pressure: LocalContextPressure,
   ) => ReturnType<LocalCompactionCallback>,
   onLlmStart?: (info: LlmStartInfo) => void | Promise<void>,
   onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>,
@@ -59,7 +59,7 @@ export function createLocalExecutor(
       localProviderAuthStorageDir: options.storageDir,
       modelsRuntime,
       onContextWindowOverflow,
-      onContextUsage,
+      onContextPressure,
       onLlmStart,
       onLlmEnd,
     }),

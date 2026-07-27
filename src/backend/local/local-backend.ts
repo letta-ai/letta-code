@@ -1,4 +1,3 @@
-import type { Usage } from "@earendil-works/pi-ai";
 import { GIT_MEMORY_ENABLED_TAG } from "@/agent/agent-tags";
 import {
   type InitializeLocalMemoryRepoFile,
@@ -18,15 +17,14 @@ import type {
 import { HeadlessBackend } from "@/backend/dev/headless-backend";
 import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
-import type { PiStreamFunction } from "@/backend/dev/pi-stream-adapter";
+import type {
+  LocalContextPressure,
+  PiStreamFunction,
+} from "@/backend/dev/pi-stream-adapter";
 import type {
   LlmEndInfo,
   LlmStartInfo,
   ProviderTurnInput,
-} from "@/backend/dev/provider-turn-executor";
-import {
-  contextTokensFromUsage,
-  estimateProviderContextTokens,
 } from "@/backend/dev/provider-turn-executor";
 import { isRecord } from "@/utils/type-guards";
 import {
@@ -292,8 +290,8 @@ export class LocalBackend extends HeadlessBackend {
         (input, error) =>
           localBackendRef.current?.compactAfterContextOverflow(input, error) ??
           Promise.resolve(null),
-        (input, usage) =>
-          localBackendRef.current?.compactAfterContextUsage(input, usage) ??
+        (input, pressure) =>
+          localBackendRef.current?.compactForContextPressure(input, pressure) ??
           Promise.resolve(null),
         (info) =>
           localBackendRef.current?.emitLlmStart(info) ?? Promise.resolve(),
@@ -594,28 +592,14 @@ export class LocalBackend extends HeadlessBackend {
     };
   }
 
-  private async compactAfterContextUsage(
+  private async compactForContextPressure(
     input: ProviderTurnInput,
-    usage: Usage,
+    _pressure: LocalContextPressure,
   ): Promise<{
     uiMessages: LocalMessage[];
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
-    const contextTokens =
-      contextTokensFromUsage(usage) ?? estimateProviderContextTokens(input);
-    const contextWindow = this.effectiveContextWindow(
-      input.conversationId,
-      input.agentId,
-    );
-    if (
-      contextTokens === undefined ||
-      contextWindow === undefined ||
-      contextTokens <= contextWindow
-    ) {
-      return null;
-    }
-
     const result = await this.compactLocalConversation(
       input.conversationId,
       input.agentId,
