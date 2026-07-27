@@ -125,7 +125,7 @@ import {
 } from "./warmup";
 import { stopAllWorktreeWatchers } from "./worktree-watcher";
 
-function trackListenerError(
+export function trackListenerError(
   errorType: string,
   error: unknown,
   context: string,
@@ -374,7 +374,7 @@ export async function recoverPendingChannelControlRequests(
   }
 }
 
-function getParsedRuntimeScope(
+export function getParsedRuntimeScope(
   parsed: unknown,
 ): { agent_id: string; conversation_id: string } | null {
   if (!parsed || typeof parsed !== "object" || !("runtime" in parsed)) {
@@ -815,7 +815,7 @@ export async function wireChannelIngress(
   registry.setReady();
 }
 
-function stampInboundUserMessageOtids(
+export function stampInboundUserMessageOtids(
   incoming: IncomingMessage,
 ): IncomingMessage {
   let didChange = false;

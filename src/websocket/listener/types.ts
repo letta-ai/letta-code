@@ -64,6 +64,12 @@ export interface IncomingMessage {
   type: "message";
   agentId?: string;
   conversationId?: string;
+  /**
+   * In-process delivery owner for app-server turns. The shared listener
+   * runtime serializes conversation work across connections, while this
+   * context keeps queued output on the connection that submitted the turn.
+   */
+  delivery?: ListenerTurnDeliveryContext;
   /** Queue this message as its own turn; never merge with other messages. */
   noCoalesce?: boolean;
   channelTurnSources?: ChannelTurnSource[];
@@ -90,6 +96,13 @@ export type ProcessQueuedTurn = (
   dequeuedBatch: DequeuedBatch,
 ) => Promise<void>;
 
+export interface ListenerTurnDeliveryContext {
+  connectionId: string;
+  socket: ListenerTransport;
+  options: StartListenerOptions;
+  processQueuedTurn: ProcessQueuedTurn;
+}
+
 /**
  * An outbound v2 protocol message as delivered to in-process stream
  * observers: the pre-envelope message payload plus its resolved runtime
@@ -110,6 +123,7 @@ export interface PendingExternalToolCall {
   resolve: (result: ExternalToolCallResult) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+  controllerSocket?: WebSocket;
 }
 
 export interface ModeChangePayload {

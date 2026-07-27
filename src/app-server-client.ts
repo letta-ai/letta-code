@@ -38,10 +38,10 @@ export type AppServerRawResponse = Record<string, unknown> & {
 export type AppServerSendCommand = WsProtocolCommand | AppServerRawCommand;
 
 /**
- * Receives every parsed protocol frame from both app-server websocket channels.
- * Treat this as the primary event stream: app-server may emit replay or turn
- * updates on the same channel that sent the triggering command, not only on the
- * stream channel. The channel argument is diagnostic/routing context.
+ * Receives every parsed protocol frame from the negotiated app-server
+ * transport. Full-duplex servers use only the control socket; the stream
+ * channel remains observable when auto mode falls back to a legacy server.
+ * The channel argument is diagnostic context.
  */
 export type AppServerMessageHandler = (
   message: WsProtocolMessage,
@@ -56,7 +56,7 @@ export interface AppServerDisconnectEvent {
   event: unknown;
 }
 
-/** Called once when either websocket closes before client.close(). */
+/** Called once when any negotiated websocket closes before client.close(). */
 export type AppServerDisconnectHandler = (
   disconnect: AppServerDisconnectEvent,
 ) => void;
@@ -94,6 +94,13 @@ export interface AppServerClientOptions {
   WebSocket?: AppServerSocketConstructor;
   /** Default timeout for request_id-correlated control requests. */
   requestTimeoutMs?: number;
+  /**
+   * Transport migration policy. "auto" discovers full-duplex support on the
+   * control socket and opens a legacy stream companion only for older servers.
+   */
+  transportMode?: "auto" | "full-duplex" | "split";
+  /** Timeout for protocol-v1 capability fallback during auto negotiation. */
+  transportNegotiationTimeoutMs?: number;
 }
 
 export interface AppServerRequestOptions<TMessage extends WsProtocolMessage> {
@@ -153,6 +160,7 @@ export interface AppServerRunTurnOptions {
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_TRANSPORT_NEGOTIATION_TIMEOUT_MS = 1_000;
 const WEBSOCKET_OPEN_STATE = 1;
 
 function getGlobalWebSocket(): AppServerSocketConstructor | undefined {
@@ -328,9 +336,13 @@ function streamDeltaErrorMessage(message: StreamDeltaMessage): string {
 
 export class AppServerClient {
   readonly control: AppServerSocketLike;
-  readonly stream: AppServerSocketLike;
 
+  private readonly WebSocket: AppServerSocketConstructor;
+  private readonly baseUrl: string;
+  private readonly socketOptions: AppServerSocketOptions | undefined;
   private readonly requestTimeoutMs: number;
+  private readonly transportMode: "auto" | "full-duplex" | "split";
+  private readonly transportNegotiationTimeoutMs: number;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly messageHandlers = new Set<AppServerMessageHandler>();
   private readonly sendHandlers = new Set<AppServerSendHandler>();
@@ -339,6 +351,13 @@ export class AppServerClient {
   private explicitlyClosed = false;
   private disconnectNotified = false;
   private nextRequestNumber = 0;
+  private streamSocket: AppServerSocketLike | null = null;
+  private connectPromise: Promise<this> | null = null;
+  private negotiatedInfo: AppServerInfoResponseMessage | null = null;
+
+  get stream(): AppServerSocketLike {
+    return this.streamSocket ?? this.control;
+  }
 
   constructor(options: AppServerClientOptions) {
     const WebSocket = options.WebSocket ?? getGlobalWebSocket();
@@ -346,38 +365,80 @@ export class AppServerClient {
       throw new Error("No WebSocket implementation available");
     }
 
+    this.WebSocket = WebSocket;
+    this.baseUrl = options.url;
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-    const socketOptions = appServerSocketOptions(options.authToken);
-    this.control = new WebSocket(
+    this.transportMode = options.transportMode ?? "auto";
+    this.transportNegotiationTimeoutMs =
+      options.transportNegotiationTimeoutMs ??
+      DEFAULT_TRANSPORT_NEGOTIATION_TIMEOUT_MS;
+    this.socketOptions = appServerSocketOptions(options.authToken);
+    this.control = new this.WebSocket(
       resolveAppServerChannelUrl(options.url, "control"),
-      socketOptions,
-    );
-    this.stream = new WebSocket(
-      resolveAppServerChannelUrl(options.url, "stream"),
-      socketOptions,
+      this.socketOptions,
     );
 
     attachSocketListener(this.control, "message", (event) => {
       this.handleMessage(event, "control");
     });
-    attachSocketListener(this.stream, "message", (event) => {
-      this.handleMessage(event, "stream");
-    });
     attachSocketListener(this.control, "close", (event) => {
       this.handleDisconnect("control", event);
     });
-    attachSocketListener(this.stream, "close", (event) => {
-      this.handleDisconnect("stream", event);
-    });
+    if (this.transportMode === "split") {
+      this.ensureLegacyStreamSocket();
+    }
   }
 
   async connect(): Promise<this> {
-    await Promise.all([
-      waitForSocketOpen(this.control),
-      waitForSocketOpen(this.stream),
-    ]);
+    this.connectPromise ??= this.connectTransport();
+    return this.connectPromise;
+  }
+
+  private async connectTransport(): Promise<this> {
+    await waitForSocketOpen(this.control);
+    if (this.transportMode === "split") {
+      await this.connectLegacyStream();
+      return this;
+    }
+    if (this.transportMode === "full-duplex") {
+      return this;
+    }
+
+    try {
+      const info = await this.requestInfo(this.transportNegotiationTimeoutMs);
+      this.negotiatedInfo = info;
+      if (info.capabilities.full_duplex === true) {
+        return this;
+      }
+    } catch {
+      // Protocol-v1 servers predating capability discovery fall back to the
+      // released split-channel transport after a bounded negotiation window.
+    }
+    await this.connectLegacyStream();
     return this;
+  }
+
+  private async connectLegacyStream(): Promise<void> {
+    await waitForSocketOpen(this.ensureLegacyStreamSocket());
+  }
+
+  private ensureLegacyStreamSocket(): AppServerSocketLike {
+    if (this.streamSocket) {
+      return this.streamSocket;
+    }
+    const stream = new this.WebSocket(
+      resolveAppServerChannelUrl(this.baseUrl, "stream"),
+      this.socketOptions,
+    );
+    this.streamSocket = stream;
+    attachSocketListener(stream, "message", (event) => {
+      this.handleMessage(event, "stream");
+    });
+    attachSocketListener(stream, "close", (event) => {
+      this.handleDisconnect("stream", event);
+    });
+    return stream;
   }
 
   close(): void {
@@ -385,7 +446,9 @@ export class AppServerClient {
     this.explicitlyClosed = true;
     this.rejectAllPending("App-server client closed");
     this.control.close();
-    this.stream.close();
+    if (this.streamSocket && this.streamSocket !== this.control) {
+      this.streamSocket.close();
+    }
   }
 
   onMessage(handler: AppServerMessageHandler): () => void {
@@ -520,11 +583,8 @@ export class AppServerClient {
     });
   }
 
-  info(
-    options: Omit<
-      AppServerRequestOptions<AppServerInfoResponseMessage>,
-      "predicate"
-    > = {},
+  private requestInfo(
+    timeoutMs: number,
   ): Promise<AppServerInfoResponseMessage> {
     return this.request(
       {
@@ -532,10 +592,22 @@ export class AppServerClient {
         request_id: this.nextRequestId("app-server-info"),
       },
       {
-        ...options,
+        timeoutMs,
         predicate: isAppServerInfoResponseMessage,
       },
     );
+  }
+
+  info(
+    options: Omit<
+      AppServerRequestOptions<AppServerInfoResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<AppServerInfoResponseMessage> {
+    if (this.negotiatedInfo) {
+      return Promise.resolve(this.negotiatedInfo);
+    }
+    return this.requestInfo(options.timeoutMs ?? this.requestTimeoutMs);
   }
 
   runtimeStart(

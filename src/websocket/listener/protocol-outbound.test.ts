@@ -60,6 +60,23 @@ function parseOnlyStreamDelta(socket: MockSocket): StreamDeltaMessage {
 }
 
 describe("emitProtocolV2Message backpressure", () => {
+  test("numbers each connection's delivered event stream independently", () => {
+    const { runtime, socket: socketA } = createRuntime();
+    const socketB = new MockSocket();
+
+    emitProtocolV2Message(socketA as never, runtime, {
+      type: "stream_delta",
+      delta: { message_type: "assistant_message", content: "A" },
+    } as never);
+    emitProtocolV2Message(socketB as never, runtime, {
+      type: "stream_delta",
+      delta: { message_type: "assistant_message", content: "B" },
+    } as never);
+
+    expect(JSON.parse(socketA.sentPayloads[0] ?? "{}").event_seq).toBe(1);
+    expect(JSON.parse(socketB.sentPayloads[0] ?? "{}").event_seq).toBe(1);
+  });
+
   test("never sheds stream deltas that snapshots cannot replay", () => {
     const { runtime, socket } = createRuntime();
     socket.bufferedAmount = OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;

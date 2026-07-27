@@ -426,7 +426,8 @@ describe("app-server native websocket", () => {
       expect(infoResponse.status).toBe(200);
       expect(await infoResponse.json()).toMatchObject({
         type: "app_server_info_response",
-        protocol_version: 1,
+        protocol_version: 2,
+        capabilities: { full_duplex: true },
       });
 
       await expectWebSocketOpenFailure(controlUrl);
@@ -546,47 +547,68 @@ describe("app-server native websocket", () => {
     }
   });
 
-  test("closes the paired control channel when stream disconnects", async () => {
+  test("does not pair legacy stream sockets with control connections", async () => {
     let handle: AppServerHandle | null = null;
     try {
       handle = await startAppServer({ listen: "ws://127.0.0.1:0" });
 
-      for (const order of ["stream-first", "control-first"] as const) {
-        const firstUrl =
-          order === "stream-first" ? handle.streamUrl : handle.controlUrl;
-        const secondUrl =
-          order === "stream-first" ? handle.controlUrl : handle.streamUrl;
-        const first = new WebSocket(firstUrl);
-        await waitForOpen(first);
-        const second = new WebSocket(secondUrl);
-        await waitForOpen(second);
-        const stream = order === "stream-first" ? first : second;
-        const control = order === "stream-first" ? second : first;
+      const streamA = new WebSocket(handle.streamUrl);
+      const controlA = new WebSocket(handle.controlUrl);
+      const controlB = new WebSocket(handle.controlUrl);
+      const streamB = new WebSocket(handle.streamUrl);
+      await Promise.all(
+        [streamA, controlA, controlB, streamB].map(waitForOpen),
+      );
 
-        terminateClient(stream);
-        await waitForClientClose(control);
-        terminateClient(control);
-      }
+      terminateClient(streamA);
+      terminateClient(streamB);
+      await Promise.all([
+        waitForClientClose(streamA),
+        waitForClientClose(streamB),
+      ]);
+      expect(controlA.readyState).toBe(WebSocket.OPEN);
+      expect(controlB.readyState).toBe(WebSocket.OPEN);
+
+      const responseA = waitForJsonMessage(
+        controlA,
+        (message) =>
+          message.type === "app_server_info_response" &&
+          message.request_id === "same-request-id",
+      );
+      const responseB = waitForJsonMessage(
+        controlB,
+        (message) =>
+          message.type === "app_server_info_response" &&
+          message.request_id === "same-request-id",
+      );
+      const request = JSON.stringify({
+        type: "app_server_info",
+        request_id: "same-request-id",
+      });
+      controlA.send(request);
+      controlB.send(request);
+      await Promise.all([responseA, responseB]);
+
+      terminateClient(controlA);
+      terminateClient(controlB);
     } finally {
       await handle?.close();
     }
   });
 
-  test("starts a runtime over control and emits state frames over stream", async () => {
+  test("starts a runtime and emits state frames over one duplex socket", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "letta-app-server-"));
     let handle: AppServerHandle | null = null;
-    let control: WebSocket | null = null;
-    let stream: WebSocket | null = null;
+    let client: WebSocket | null = null;
     try {
       __testSetBackend(
         new LocalBackend({ storageDir, executionMode: "deterministic" }),
       );
       handle = await startAppServer({ listen: "ws://127.0.0.1:0" });
-      stream = new WebSocket(handle.streamUrl);
-      control = new WebSocket(handle.controlUrl);
-      await Promise.all([waitForOpen(stream), waitForOpen(control)]);
+      client = new WebSocket(handle.duplexUrl);
+      await waitForOpen(client);
 
-      control.send(
+      client.send(
         JSON.stringify({
           type: "runtime_start",
           request_id: "runtime-start-1",
@@ -605,7 +627,7 @@ describe("app-server native websocket", () => {
       );
 
       const startResponse = await waitForJsonMessage(
-        control,
+        client,
         (message) => message.type === "runtime_start_response",
       );
       expect(startResponse).toMatchObject({
@@ -620,13 +642,13 @@ describe("app-server native websocket", () => {
       };
 
       await waitForJsonMessage(
-        stream,
+        client,
         (message) =>
           message.type === "update_device_status" &&
           JSON.stringify(message.runtime) === JSON.stringify(runtime),
       );
 
-      const loopStatus = await waitForJsonMessage(stream, (message) => {
+      const loopStatus = await waitForJsonMessage(client, (message) => {
         const loopStatus = message.loop_status as
           | { status?: unknown }
           | undefined;
@@ -643,8 +665,7 @@ describe("app-server native websocket", () => {
         loop_status: { status: "WAITING_ON_INPUT" },
       });
     } finally {
-      closeClient(control);
-      closeClient(stream);
+      closeClient(client);
       await handle?.close();
       await rm(storageDir, { recursive: true, force: true });
     }

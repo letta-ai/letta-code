@@ -69,6 +69,25 @@ function hasSameQueueScope(a: QueueItem, b: QueueItem): boolean {
   );
 }
 
+function getQueueItemDeliveryId(
+  runtime: ConversationRuntime,
+  item: QueueItem,
+): string | null {
+  return (
+    runtime.queuedMessagesByItemId.get(item.id)?.delivery?.connectionId ?? null
+  );
+}
+
+function hasSameQueueDelivery(
+  runtime: ConversationRuntime,
+  a: QueueItem,
+  b: QueueItem,
+): boolean {
+  return (
+    getQueueItemDeliveryId(runtime, a) === getQueueItemDeliveryId(runtime, b)
+  );
+}
+
 function mergeDequeuedBatchContent(
   items: QueueItem[],
 ): MessageCreate["content"] | null {
@@ -342,7 +361,8 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   for (const item of queuedItems) {
     if (
       !isCoalescable(item.kind) ||
-      !hasSameQueueScope(firstQueuedItem, item)
+      !hasSameQueueScope(firstQueuedItem, item) ||
+      !hasSameQueueDelivery(runtime, firstQueuedItem, item)
     ) {
       break;
     }
@@ -456,20 +476,24 @@ async function drainQueuedMessages(
       }
 
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
+      const delivery = queuedTurn.delivery;
+      const turnSocket = delivery?.socket ?? socket;
+      const turnOptions = delivery?.options ?? opts;
+      const turnProcessor = delivery?.processQueuedTurn ?? processQueuedTurn;
       const channelTurnSources = queuedTurn.channelTurnSources ?? [];
 
-      emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
+      emitDequeuedUserMessage(turnSocket, runtime, queuedTurn, dequeuedBatch);
 
       const preTurnStatus =
         getListenerStatus(runtime.listener) === "processing"
           ? "processing"
           : "receiving";
       if (
-        opts.connectionId &&
+        turnOptions.connectionId &&
         runtime.listener.lastEmittedStatus !== preTurnStatus
       ) {
         runtime.listener.lastEmittedStatus = preTurnStatus;
-        opts.onStatusChange?.(preTurnStatus, opts.connectionId);
+        turnOptions.onStatusChange?.(preTurnStatus, turnOptions.connectionId);
       }
       if (channelTurnSources.length > 0) {
         await dispatchChannelTurnLifecycleEvent({
@@ -491,7 +515,7 @@ async function drainQueuedMessages(
             : null,
       });
       try {
-        await processQueuedTurn(queuedTurn, dequeuedBatch);
+        await turnProcessor(queuedTurn, dequeuedBatch);
       } catch (error) {
         didThrow = true;
         turnError = error instanceof Error ? error.message : String(error);
@@ -506,8 +530,8 @@ async function drainQueuedMessages(
       }
       emitListenerStatus(
         runtime.listener,
-        opts.onStatusChange,
-        opts.connectionId,
+        turnOptions.onStatusChange,
+        turnOptions.connectionId,
       );
       evictConversationRuntimeIfIdle(runtime);
     }

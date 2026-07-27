@@ -123,6 +123,60 @@ describe("listener message router ownership handoff", () => {
         content: [{ type: "text", text: "do not drop me" }],
       },
     ]);
+    expect(processedTurns[0]?.delivery?.connectionId).toBe("conn-test");
+    expect(processedTurns[0]?.delivery?.socket).toBe(
+      socket as unknown as WebSocket,
+    );
     expect(runtime.queuedMessagesByItemId.size).toBe(0);
+  });
+
+  test("rejects scoped commands from a non-owner connection", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socket = new MockSocket();
+    const safeSocketSend = mock((_socket: WebSocket, payload: unknown) => {
+      socket.sentPayloads.push(JSON.stringify(payload));
+      return true;
+    });
+    const handleMessage = createListenerMessageHandler({
+      runtime: listener,
+      socket: socket as unknown as WebSocket,
+      opts: makeListenerOptions(),
+      processQueuedTurn: async () => {},
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => ({
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      }),
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime: () => runtime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend,
+      runDetachedListenerTask: () => {},
+      trackListenerError: () => {},
+      wireChannelIngress: async () => {},
+      ownsRuntimeScope: () => false,
+    });
+
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "sync",
+          request_id: "same-request-id",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        }),
+      ),
+    );
+
+    expect(safeSocketSend).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(socket.sentPayloads[0] ?? "{}")).toMatchObject({
+      type: "sync_response",
+      request_id: "same-request-id",
+      success: false,
+      error: expect.stringContaining("owned by another"),
+    });
   });
 });

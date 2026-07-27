@@ -63,6 +63,7 @@ function createFakeClient() {
     url: "http://127.0.0.1:4500",
     WebSocket: FakeSocket,
     requestTimeoutMs: 25,
+    transportMode: "split",
   });
   const [control, stream] = FakeSocket.instances;
   if (!control || !stream) throw new Error("expected two sockets");
@@ -91,6 +92,7 @@ describe("app-server client", () => {
       url: "http://127.0.0.1:4500",
       authToken: " super-secret-token\n",
       WebSocket: FakeSocket,
+      transportMode: "split",
     });
     const [control, stream] = FakeSocket.instances;
     expect(control?.options).toEqual({
@@ -107,6 +109,80 @@ describe("app-server client", () => {
         WebSocket: FakeSocket,
       }),
     ).toThrow(/auth token must not be empty/);
+  });
+
+  test("negotiates one full-duplex websocket with a capable server", async () => {
+    const client = createAppServerClient({
+      url: "http://127.0.0.1:4500",
+      WebSocket: FakeSocket,
+    });
+    const [control] = FakeSocket.instances;
+    if (!control) throw new Error("expected control socket");
+
+    const opened = client.connect();
+    control.open();
+    await Promise.resolve();
+    const infoRequest = JSON.parse(control.sent[0] ?? "{}") as {
+      request_id?: string;
+    };
+    control.receive({
+      type: "app_server_info_response",
+      request_id: infoRequest.request_id,
+      success: true,
+      backend: "local",
+      letta_code_version: "0.30.0",
+      protocol_version: 2,
+      capabilities: {
+        agent_management: true,
+        conversation_management: true,
+        memory_management: true,
+        runtime_start: true,
+        split_channels: true,
+        full_duplex: true,
+      },
+    });
+
+    await opened;
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(client.stream).toBe(control);
+  });
+
+  test("falls back to a legacy stream socket when capability is absent", async () => {
+    const client = createAppServerClient({
+      url: "http://127.0.0.1:4500",
+      WebSocket: FakeSocket,
+    });
+    const [control] = FakeSocket.instances;
+    if (!control) throw new Error("expected control socket");
+
+    const opened = client.connect();
+    control.open();
+    await Promise.resolve();
+    const infoRequest = JSON.parse(control.sent[0] ?? "{}") as {
+      request_id?: string;
+    };
+    control.receive({
+      type: "app_server_info_response",
+      request_id: infoRequest.request_id,
+      success: true,
+      backend: "local",
+      letta_code_version: "0.29.0",
+      protocol_version: 1,
+      capabilities: {
+        agent_management: true,
+        conversation_management: true,
+        memory_management: true,
+        runtime_start: true,
+        split_channels: true,
+      },
+    });
+    await Promise.resolve();
+    const stream = FakeSocket.instances[1];
+    if (!stream) throw new Error("expected legacy stream socket");
+    stream.open();
+
+    await opened;
+    expect(client.stream).toBe(stream);
   });
 
   test("requests App Server capabilities before starting a runtime", async () => {

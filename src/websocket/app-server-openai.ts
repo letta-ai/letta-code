@@ -37,6 +37,8 @@ const MAX_REQUEST_BODY_BYTES = 20 * 1024 * 1024;
 export interface OpenAiCompatOptions {
   authPolicy: WebsocketAuthPolicy;
   onLog?: (message: string) => void;
+  /** Ensure the process listener runtime is initialized before a turn runs. */
+  startupReady?: () => Promise<void>;
 }
 
 interface OpenAiChatMessagePart {
@@ -603,6 +605,7 @@ async function handleChatCompletions(
       turnPromise = runBridgeTurn({
         agentId: agent.id,
         conversationId: conversationId as string,
+        startupReady: options.startupReady,
         messages: turnMessages,
         correlationOtid: correlationOtid as string,
         onLog: options.onLog,

@@ -488,7 +488,7 @@ export function emitProtocolV2Message(
         }
       : {}),
     build: () => {
-      const eventSeq = nextEventSeq(listener);
+      const eventSeq = nextEventSeq(listener, targetSocket);
       if (eventSeq === null) return null;
       const outbound: WsProtocolMessage = {
         ...message,

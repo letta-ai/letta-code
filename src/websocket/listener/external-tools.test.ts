@@ -165,6 +165,70 @@ describe("app-server runtime_start external tool bridge", () => {
     ]);
   });
 
+  test("accepts an external tool result only from its controller connection", async () => {
+    const runtime = {
+      intentionallyClosed: false,
+      pendingExternalToolCalls: new Map(),
+    } as unknown as ListenerRuntime;
+    const sent: ExternalToolCallRequestMessage[] = [];
+    const controller = {
+      readyState: 1,
+      send(data: string) {
+        sent.push(JSON.parse(data) as ExternalToolCallRequestMessage);
+      },
+    } as unknown as WebSocket;
+    const otherConnection = { readyState: 1 } as unknown as WebSocket;
+    installExternalToolBridge(runtime);
+    registerRuntimeExternalTools(
+      runtime,
+      { agent_id: "agent-1", conversation_id: "conv-1" },
+      [
+        {
+          tools: [
+            {
+              name: "connection_owned_tool",
+              description: "Connection owned tool",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+      ],
+      controller,
+    );
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["connection_owned_tool"],
+        runtimeContext: { agentId: "agent-1", conversationId: "conv-1" },
+      },
+    );
+
+    const resultPromise = executeTool(
+      "connection_owned_tool",
+      {},
+      { toolContextId: prepared.contextId, toolCallId: "call-1" },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = sent[0];
+    if (!request) throw new Error("expected external tool request");
+    const response = {
+      type: "external_tool_call_response" as const,
+      request_id: request.request_id,
+      result: { content: [{ type: "text" as const, text: "owned" }] },
+    };
+
+    expect(
+      handleExternalToolCallResponseCommand(runtime, response, otherConnection),
+    ).toBe(false);
+    expect(runtime.pendingExternalToolCalls?.has(request.request_id)).toBe(
+      true,
+    );
+    expect(
+      handleExternalToolCallResponseCommand(runtime, response, controller),
+    ).toBe(true);
+    expect((await resultPromise).toolReturn).toBe("owned");
+  });
+
   test("repeated runtime_start registration replaces tools for that runtime", async () => {
     const { runtime } = createMockRuntime();
     const runtimeScope = { agent_id: "agent-1", conversation_id: "conv-1" };

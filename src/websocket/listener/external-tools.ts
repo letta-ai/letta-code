@@ -21,6 +21,10 @@ const registeredToolsByRuntime = new WeakMap<
   ListenerRuntime,
   Map<string, ExternalToolDefinition[]>
 >();
+const controllerByRegistrationKey = new Map<
+  string,
+  { runtime: ListenerRuntime; socket: WebSocket }
+>();
 
 function isSocketOpen(socket: WebSocket | null): socket is WebSocket {
   return socket?.readyState === WEBSOCKET_OPEN;
@@ -81,12 +85,20 @@ function sendJson(socket: WebSocket, payload: unknown): void {
   socket.send(JSON.stringify(payload));
 }
 
-export function installExternalToolBridge(runtime: ListenerRuntime): void {
+export function installExternalToolBridge(_runtime: ListenerRuntime): void {
   setExternalToolExecutor(async (toolCallId, toolName, input, context) => {
-    const socket = runtime.socket;
-    if (!isSocketOpen(socket) || runtime.intentionallyClosed) {
+    const registrationKey = context?.tool.registrationKey;
+    const controller = registrationKey
+      ? controllerByRegistrationKey.get(registrationKey)
+      : undefined;
+    if (
+      !controller ||
+      !isSocketOpen(controller.socket) ||
+      controller.runtime.intentionallyClosed
+    ) {
       throw new Error("External tool controller is not connected");
     }
+    const { runtime, socket } = controller;
 
     const requestId = `external-tool-${crypto.randomUUID()}`;
     const toolRuntime = context?.tool.runtime;
@@ -132,6 +144,7 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
         },
         reject,
         timeout,
+        controllerSocket: socket,
       });
 
       try {
@@ -151,11 +164,20 @@ export function registerRuntimeExternalTools(
   runtime: ListenerRuntime,
   runtimeScope: RuntimeScope,
   groups: readonly RuntimeStartExternalToolsGroup[] = [],
+  controllerSocket: WebSocket | null = runtime.socket,
 ): void {
   const registeredTools = getRegisteredTools(runtime);
   const runtimeKey = getRuntimeKey(runtimeScope);
   const previousTools = registeredTools.get(runtimeKey) ?? [];
   unregisterExternalTools(previousTools);
+  for (const tool of previousTools) {
+    if (
+      tool.registrationKey &&
+      controllerByRegistrationKey.get(tool.registrationKey)?.runtime === runtime
+    ) {
+      controllerByRegistrationKey.delete(tool.registrationKey);
+    }
+  }
 
   const tools = groups.flatMap((group) =>
     group.tools.map((tool) =>
@@ -164,6 +186,16 @@ export function registerRuntimeExternalTools(
   );
   if (tools.length > 0) {
     registerExternalTools(tools);
+    if (controllerSocket) {
+      for (const tool of tools) {
+        if (tool.registrationKey) {
+          controllerByRegistrationKey.set(tool.registrationKey, {
+            runtime,
+            socket: controllerSocket,
+          });
+        }
+      }
+    }
     registeredTools.set(runtimeKey, tools);
   } else {
     registeredTools.delete(runtimeKey);
@@ -173,9 +205,17 @@ export function registerRuntimeExternalTools(
 export function handleExternalToolCallResponseCommand(
   runtime: ListenerRuntime,
   command: ExternalToolCallResponseCommand,
+  sourceSocket?: WebSocket,
 ): boolean {
   const pending = getPendingExternalToolCalls(runtime).get(command.request_id);
   if (!pending) {
+    return false;
+  }
+  if (
+    sourceSocket &&
+    pending.controllerSocket &&
+    pending.controllerSocket !== sourceSocket
+  ) {
     return false;
   }
 
@@ -211,7 +251,56 @@ export function rejectPendingExternalToolCalls(
   if (registeredTools) {
     for (const tools of registeredTools.values()) {
       unregisterExternalTools(tools);
+      for (const tool of tools) {
+        if (
+          tool.registrationKey &&
+          controllerByRegistrationKey.get(tool.registrationKey)?.runtime ===
+            runtime
+        ) {
+          controllerByRegistrationKey.delete(tool.registrationKey);
+        }
+      }
     }
     registeredToolsByRuntime.delete(runtime);
+  }
+}
+
+export function releaseExternalToolConnection(
+  runtime: ListenerRuntime,
+  socket: WebSocket,
+): void {
+  const pendingExternalToolCalls = getPendingExternalToolCalls(runtime);
+  for (const [requestId, pending] of pendingExternalToolCalls) {
+    if (pending.controllerSocket !== socket) {
+      continue;
+    }
+    clearTimeout(pending.timeout);
+    pendingExternalToolCalls.delete(requestId);
+    pending.reject(new Error("External tool controller disconnected"));
+  }
+
+  const registeredTools = registeredToolsByRuntime.get(runtime);
+  if (!registeredTools) {
+    return;
+  }
+  for (const [runtimeKey, tools] of registeredTools) {
+    const ownedTools = tools.filter((tool) => {
+      if (!tool.registrationKey) {
+        return false;
+      }
+      return (
+        controllerByRegistrationKey.get(tool.registrationKey)?.socket === socket
+      );
+    });
+    if (ownedTools.length === 0) {
+      continue;
+    }
+    unregisterExternalTools(ownedTools);
+    for (const tool of ownedTools) {
+      if (tool.registrationKey) {
+        controllerByRegistrationKey.delete(tool.registrationKey);
+      }
+    }
+    registeredTools.delete(runtimeKey);
   }
 }

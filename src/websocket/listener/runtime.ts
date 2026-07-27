@@ -8,6 +8,7 @@ import {
   resolveScopedAgentId,
   resolveScopedConversationId,
 } from "./scope";
+import type { ListenerTransport } from "./transport";
 import { releaseListenerTurnContext } from "./turn-context";
 import { TurnLifecycle } from "./turn-lifecycle";
 import type {
@@ -18,6 +19,7 @@ import type {
 } from "./types";
 
 let activeRuntime: ListenerRuntime | null = null;
+const eventSeqByTransport = new WeakMap<object, number>();
 
 export function getActiveRuntime(): ListenerRuntime | null {
   return activeRuntime;
@@ -39,9 +41,17 @@ export function safeEmitWsEvent(
   }
 }
 
-export function nextEventSeq(runtime: ListenerRuntime | null): number | null {
+export function nextEventSeq(
+  runtime: ListenerRuntime | null,
+  transport?: ListenerTransport,
+): number | null {
   if (!runtime) {
     return null;
+  }
+  if (transport) {
+    const next = (eventSeqByTransport.get(transport) ?? 0) + 1;
+    eventSeqByTransport.set(transport, next);
+    return next;
   }
   runtime.eventSeqCounter += 1;
   return runtime.eventSeqCounter;

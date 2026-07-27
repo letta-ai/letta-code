@@ -55,6 +55,7 @@ export interface BridgeTurnMessage {
 interface RunTurnParams {
   agentId: string;
   conversationId: string;
+  startupReady?: () => Promise<void>;
   /** Full input for the turn: the newest message in stateful mode, or the
    * replayed client transcript in stateless mode. */
   messages: BridgeTurnMessage[];
@@ -164,6 +165,7 @@ function extractDeltaText(delta: unknown): string {
 async function runTurnViaListenerRuntime(
   params: RunTurnParams,
 ): Promise<TurnOutcome> {
+  await params.startupReady?.();
   const listener = await ensureListenerRuntime(params.onLog);
   const scopedRuntime = getOrCreateScopedRuntime(
     listener,

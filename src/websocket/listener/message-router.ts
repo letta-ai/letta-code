@@ -164,9 +164,11 @@ type MessageRouterParams = {
   runDetachedListenerTask: RunDetachedListenerTask;
   trackListenerError: TrackListenerError;
   wireChannelIngress: WireChannelIngress;
+  claimRuntimeScope?: (scope: RuntimeScope) => "claimed" | "already_owned";
+  releaseRuntimeScope?: (scope: RuntimeScope) => void;
+  ownsRuntimeScope?: (scope: RuntimeScope) => boolean;
   processIncomingMessage?: typeof handleIncomingMessage;
 };
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -378,6 +380,9 @@ export function createListenerMessageHandler(
     runDetachedListenerTask,
     trackListenerError,
     wireChannelIngress,
+    claimRuntimeScope,
+    releaseRuntimeScope,
+    ownsRuntimeScope,
     processIncomingMessage = handleIncomingMessage,
   } = params;
 
@@ -417,9 +422,38 @@ export function createListenerMessageHandler(
       if (!parsed) {
         return;
       }
-
       console.log(`[Listen V2] Received ${summarizeV2Command(parsed)}`);
-
+      if (
+        parsedScope &&
+        parsed.type !== "runtime_start" &&
+        ownsRuntimeScope &&
+        !ownsRuntimeScope(parsedScope)
+      ) {
+        const error = "Runtime scope is owned by another app-server connection";
+        if ("request_id" in parsed && parsed.request_id) {
+          safeSocketSend(
+            socket,
+            {
+              type: `${parsed.type}_response`,
+              request_id: parsed.request_id,
+              runtime: parsedScope,
+              success: false,
+              error,
+            },
+            "listener_runtime_scope_conflict_send_failed",
+            "listener_runtime_scope_conflict",
+          );
+        } else {
+          emitLoopErrorNotice(socket, runtime, {
+            message: error,
+            stopReason: "error",
+            isTerminal: false,
+            agentId: parsedScope.agent_id,
+            conversationId: parsedScope.conversation_id,
+          });
+        }
+        return;
+      }
       if (parsed.type === "__invalid_input") {
         emitLoopErrorNotice(socket, runtime, {
           message: parsed.reason,
@@ -444,13 +478,15 @@ export function createListenerMessageHandler(
           runDetachedListenerTask,
           getOrCreateScopedRuntime,
           replaySyncStateForRuntime,
+          claimRuntimeScope,
+          releaseRuntimeScope,
         })
       ) {
         return;
       }
 
       if (parsed.type === "external_tool_call_response") {
-        handleExternalToolCallResponseCommand(runtime, parsed);
+        handleExternalToolCallResponseCommand(runtime, parsed, socket);
         return;
       }
 
@@ -552,6 +588,12 @@ export function createListenerMessageHandler(
           type: "message",
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
+          delivery: {
+            connectionId: opts.connectionId,
+            socket,
+            options: opts,
+            processQueuedTurn,
+          },
           clientToolAllowlist: inputPayload.client_tool_allowlist,
           externalToolScopeIds: inputPayload.external_tool_scope_ids,
           excludeInteractiveTools: inputPayload.exclude_interactive_tools,

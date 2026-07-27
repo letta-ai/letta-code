@@ -1,4 +1,4 @@
-export const APP_SERVER_PROTOCOL_VERSION = 1;
+export const APP_SERVER_PROTOCOL_VERSION = 2;
 
 export interface AppServerInfoCommand {
   type: "app_server_info";
@@ -21,6 +21,11 @@ export interface AppServerInfoResponseMessage {
     memory_management: boolean;
     runtime_start: boolean;
     split_channels: boolean;
+    /**
+     * One bidirectional socket carries commands, responses and stream events.
+     * Absent on protocol-v1 servers.
+     */
+    full_duplex?: boolean;
   };
 }
 
@@ -55,6 +60,8 @@ export function isAppServerInfoResponseMessage(
     typeof capabilityRecord.conversation_management === "boolean" &&
     typeof capabilityRecord.memory_management === "boolean" &&
     typeof capabilityRecord.runtime_start === "boolean" &&
-    typeof capabilityRecord.split_channels === "boolean"
+    typeof capabilityRecord.split_channels === "boolean" &&
+    (capabilityRecord.full_duplex === undefined ||
+      typeof capabilityRecord.full_duplex === "boolean")
   );
 }

@@ -45,6 +45,8 @@ type RuntimeStartCommandContext = {
   runDetachedListenerTask: RunDetachedListenerTask;
   getOrCreateScopedRuntime: GetOrCreateScopedRuntime;
   replaySyncStateForRuntime: ReplaySyncStateForRuntime;
+  claimRuntimeScope?: (scope: RuntimeScope) => "claimed" | "already_owned";
+  releaseRuntimeScope?: (scope: RuntimeScope) => void;
 };
 
 type CreatedResources = {
@@ -284,6 +286,7 @@ export async function handleRuntimeStartCommand(
   let conversation: Conversation | null = null;
   let runtimeScope: RuntimeScope | null = null;
   let shouldReplayState = false;
+  let claimedRuntimeScope = false;
 
   try {
     validateRuntimeStartShape(parsed);
@@ -294,6 +297,8 @@ export async function handleRuntimeStartCommand(
       created,
     );
     runtimeScope = buildRuntimeScope(agent, conversation);
+    claimedRuntimeScope =
+      context.claimRuntimeScope?.(runtimeScope) === "claimed";
     const scopedRuntime = context.getOrCreateScopedRuntime(
       context.runtime,
       runtimeScope.agent_id,
@@ -304,6 +309,7 @@ export async function handleRuntimeStartCommand(
       context.runtime,
       runtimeScope,
       parsed.external_tools ?? [],
+      context.socket,
     );
 
     const sent = sendRuntimeStartResponse(context, parsed, {
@@ -315,6 +321,9 @@ export async function handleRuntimeStartCommand(
     });
     shouldReplayState = sent;
   } catch (error) {
+    if (claimedRuntimeScope && runtimeScope) {
+      context.releaseRuntimeScope?.(runtimeScope);
+    }
     sendRuntimeStartResponse(context, parsed, {
       success: false,
       runtime: null,

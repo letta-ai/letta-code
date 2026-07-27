@@ -34,6 +34,7 @@ export function buildAppServerInfoResponse(
       memory_management: true,
       runtime_start: true,
       split_channels: true,
+      full_duplex: true,
     },
   };
 }

@@ -47,6 +47,7 @@ describe("app-server info protocol", () => {
         memory_management: true,
         runtime_start: true,
         split_channels: true,
+        full_duplex: true,
       },
     });
   });
