@@ -97,6 +97,8 @@ describe("app-server protocol export", () => {
         request_id: "req",
         success: true,
         messages: [],
+        next_before: null,
+        has_more: false,
       },
       {
         type: "conversation_compact_response",
