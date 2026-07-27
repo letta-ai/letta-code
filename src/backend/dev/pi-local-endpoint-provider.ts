@@ -22,6 +22,7 @@ export interface LocalEndpointModelMetadata {
   id: string;
   vision?: boolean;
   thinking?: boolean;
+  /** Engine-reported available window; the shared builder applies its default cap. */
   contextLength?: number;
   /** Engine-specific output cap; defaults to the shared constant. */
   maxTokens?: number;
@@ -151,6 +152,17 @@ export function createLocalEndpointPiProvider(
   function buildModel(
     metadata: LocalEndpointModelMetadata,
   ): LocalEndpointModel {
+    // Engine catalogs mix loaded runtime windows with architectural maxima.
+    // Publish a conservative harness default either way; an explicit
+    // /context-limit setting can still clone the Model with a larger window.
+    const contextWindow = Math.min(
+      metadata.contextLength ?? LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
+      LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
+    );
+    const maxTokens = Math.min(
+      metadata.maxTokens ?? LOCAL_ENDPOINT_DEFAULT_MAX_TOKENS,
+      contextWindow,
+    );
     return {
       id: metadata.id,
       name: metadata.id,
@@ -160,9 +172,8 @@ export function createLocalEndpointPiProvider(
       reasoning: metadata.thinking === true,
       input: metadata.vision === true ? ["text", "image"] : ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow:
-        metadata.contextLength ?? LOCAL_ENDPOINT_DEFAULT_CONTEXT_WINDOW,
-      maxTokens: metadata.maxTokens ?? LOCAL_ENDPOINT_DEFAULT_MAX_TOKENS,
+      contextWindow,
+      maxTokens,
       compat: {
         supportsDeveloperRole: false,
         supportsReasoningEffort: false,

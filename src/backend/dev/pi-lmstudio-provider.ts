@@ -32,14 +32,27 @@ function parseLmStudioModels(data: unknown): LocalEndpointModelMetadata[] {
     const record = entry as {
       id?: unknown;
       type?: unknown;
+      state?: unknown;
       capabilities?: unknown;
+      loaded_context_length?: unknown;
       max_context_length?: unknown;
     };
     if (typeof record.id !== "string" || record.id.length === 0) continue;
     // Embedding models are not chat models; keep them out of /model.
     if (record.type === "embeddings") continue;
     const capabilities = stringArray(record.capabilities);
-    const contextLength = record.max_context_length;
+    const loadedContextLength =
+      record.state === "loaded" &&
+      typeof record.loaded_context_length === "number" &&
+      record.loaded_context_length > 0
+        ? record.loaded_context_length
+        : undefined;
+    const maxContextLength =
+      typeof record.max_context_length === "number" &&
+      record.max_context_length > 0
+        ? record.max_context_length
+        : undefined;
+    const contextLength = loadedContextLength ?? maxContextLength;
     models.push({
       id: record.id,
       vision: record.type === "vlm" || capabilities.includes("vision"),
@@ -56,8 +69,10 @@ function parseLmStudioModels(data: unknown): LocalEndpointModelMetadata[] {
  * LM Studio capability discovery: the native REST API
  * (`GET /api/v0/models`) reports each downloaded model's authoritative
  * metadata — `type` (`"vlm"` = vision-language model), an optional
- * `capabilities` array, and `max_context_length`. When the native API is
- * unavailable (older LM Studio), discovery falls back to the
+ * `capabilities` array, the loaded runtime window, and the architectural
+ * maximum. A loaded runtime window takes precedence before the shared
+ * provider applies its conservative harness default. When the native API
+ * is unavailable (older LM Studio), discovery falls back to the
  * OpenAI-compatible `/v1/models` id list and each model keeps its
  * last-known published Model or is published text-only — capabilities are
  * explicitly unknown, never guessed from the model id.

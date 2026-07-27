@@ -137,9 +137,10 @@ function parseLlamaCppNativeModels(
 }
 
 /**
- * Upstream model construction: the fallback context applies first and
- * maxTokens always equals the effective contextWindow; compat flags match
- * the current upstream llama.cpp provider literally.
+ * Upstream model construction: the engine context applies first and
+ * maxTokens tracks it; the shared provider then applies Letta's conservative
+ * harness default to both values. Compat flags match the current upstream
+ * llama.cpp provider literally.
  */
 function llamaCppModelMetadata(
   id: string,
