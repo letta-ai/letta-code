@@ -140,6 +140,26 @@ function waitForClientPing(socket: WebSocket): Promise<void> {
   });
 }
 
+function waitForCloseEvent(
+  socket: WebSocket,
+): Promise<{ code: number; reason: string }> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for websocket close event"));
+    }, TEST_TIMEOUT_MS);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off("close", handleClose);
+    };
+    const handleClose = (code: number, reason: Buffer) => {
+      cleanup();
+      resolve({ code, reason: reason.toString() });
+    };
+    socket.once("close", handleClose);
+  });
+}
+
 function waitForClientClose(socket: WebSocket): Promise<void> {
   if (
     socket.readyState === WebSocket.CLOSED ||
@@ -542,6 +562,131 @@ describe("app-server native websocket", () => {
       expect(stream.readyState).not.toBe(WebSocket.OPEN);
     } finally {
       closeClient(stream);
+      await handle?.close();
+    }
+  });
+
+  test("preempts an existing control connection for a newer client", async () => {
+    let handle: AppServerHandle | null = null;
+    let first: WebSocket | null = null;
+    let second: WebSocket | null = null;
+    const logs: string[] = [];
+    try {
+      handle = await startAppServer({
+        listen: "ws://127.0.0.1:0",
+        onLog: (message) => logs.push(message),
+      });
+      first = new WebSocket(handle.controlUrl);
+      await waitForOpen(first);
+
+      const firstClosed = waitForCloseEvent(first);
+      second = new WebSocket(handle.controlUrl);
+      await waitForOpen(second);
+
+      expect(await firstClosed).toEqual({
+        code: 4000,
+        reason: "superseded by newer connection",
+      });
+      expect(logs).toContainEqual(
+        expect.stringContaining("superseded the active session"),
+      );
+
+      // The newcomer keeps the slot after the holder is gone.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(second.readyState).toBe(WebSocket.OPEN);
+    } finally {
+      terminateClient(first);
+      terminateClient(second);
+      await handle?.close();
+    }
+  });
+
+  test("frees the control slot for reconnects without waiting for the dead-peer watchdog", async () => {
+    let handle: AppServerHandle | null = null;
+    let zombie: WebSocket | null = null;
+    let successor: WebSocket | null = null;
+    try {
+      // The zombie never answers protocol pings, and the watchdog timeout is
+      // far beyond the test window, so only preemption can free the slot.
+      handle = await startAppServer({
+        listen: "ws://127.0.0.1:0",
+        heartbeatIntervalMs: 25,
+        pongTimeoutMs: 60_000,
+      });
+      zombie = new WebSocket(handle.controlUrl, { autoPong: false });
+      await waitForOpen(zombie);
+
+      successor = new WebSocket(handle.controlUrl);
+      await waitForOpen(successor);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(successor.readyState).toBe(WebSocket.OPEN);
+    } finally {
+      terminateClient(zombie);
+      terminateClient(successor);
+      await handle?.close();
+    }
+  });
+
+  test("supersedes the paired session when a newer stream connection arrives", async () => {
+    let handle: AppServerHandle | null = null;
+    let control1: WebSocket | null = null;
+    let stream1: WebSocket | null = null;
+    let control2: WebSocket | null = null;
+    let stream2: WebSocket | null = null;
+    try {
+      handle = await startAppServer({ listen: "ws://127.0.0.1:0" });
+      control1 = new WebSocket(handle.controlUrl);
+      await waitForOpen(control1);
+      stream1 = new WebSocket(handle.streamUrl);
+      await waitForOpen(stream1);
+
+      const control1Closed = waitForCloseEvent(control1);
+      const stream1Closed = waitForCloseEvent(stream1);
+      stream2 = new WebSocket(handle.streamUrl);
+      await waitForOpen(stream2);
+
+      expect(await stream1Closed).toMatchObject({ code: 4000 });
+      expect(await control1Closed).toMatchObject({ code: 4000 });
+
+      // The superseding stream socket is seated as pending and pairs with the
+      // newcomer's control channel.
+      control2 = new WebSocket(handle.controlUrl);
+      await waitForOpen(control2);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(control2.readyState).toBe(WebSocket.OPEN);
+      expect(stream2.readyState).toBe(WebSocket.OPEN);
+    } finally {
+      terminateClient(control1);
+      terminateClient(stream1);
+      terminateClient(control2);
+      terminateClient(stream2);
+      await handle?.close();
+    }
+  });
+
+  test("replaces a pending stream socket with a newer stream connection", async () => {
+    let handle: AppServerHandle | null = null;
+    let stream1: WebSocket | null = null;
+    let stream2: WebSocket | null = null;
+    let control: WebSocket | null = null;
+    try {
+      handle = await startAppServer({ listen: "ws://127.0.0.1:0" });
+      stream1 = new WebSocket(handle.streamUrl);
+      await waitForOpen(stream1);
+
+      const stream1Closed = waitForCloseEvent(stream1);
+      stream2 = new WebSocket(handle.streamUrl);
+      await waitForOpen(stream2);
+      expect(await stream1Closed).toMatchObject({ code: 4000 });
+
+      control = new WebSocket(handle.controlUrl);
+      await waitForOpen(control);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(stream2.readyState).toBe(WebSocket.OPEN);
+    } finally {
+      terminateClient(stream1);
+      terminateClient(stream2);
+      terminateClient(control);
       await handle?.close();
     }
   });

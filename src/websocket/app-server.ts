@@ -39,13 +39,18 @@ const PENDING_STREAM_TIMEOUT_MS = 5000;
 // the app-level ping/pong the outbound listener uses. Ping every 30s and reap
 // any client that has not ponged within 90s (3 missed pings). A half-open
 // client connection (Desktop sleep, network switch, NAT idle timeout) never
-// emits a `close` event, which would otherwise wedge the single-occupancy
-// control channel: new control connections are rejected with 1008 while the
-// zombie session still holds `activeSession`. Terminating the dead socket
-// fires its `close` handler, clears `activeSession`, and frees the channel for
-// a reconnecting client.
+// emits a `close` event, so its runtime would otherwise linger until replaced.
+// New connections do not wait for the watchdog: they preempt the zombie
+// session immediately (see SUPERSEDED_CLOSE_CODE); the watchdog reclaims the
+// runtime when no successor ever shows up.
 const APP_SERVER_HEARTBEAT_INTERVAL_MS = 30000;
 const APP_SERVER_PONG_TIMEOUT_MS = 90000;
+// Close code sent to a client whose channel slot was taken over by a newer
+// connection. The 4000-4999 range is reserved for private application use, so
+// clients can distinguish "another client superseded this session — do not
+// auto-reconnect" from transport failures (1006) and policy rejections (1008).
+const SUPERSEDED_CLOSE_CODE = 4000;
+const SUPERSEDED_CLOSE_REASON = "superseded by newer connection";
 
 type AppServerChannel = "control" | "stream";
 
@@ -291,6 +296,47 @@ export async function startAppServer(
     return socket;
   };
 
+  // Newest-wins takeover of the single-occupancy session. Both channels are
+  // single-client, and users reconnect faster than dead peers are detected
+  // (killed app, dropped mobile socket, close/connect races), so a newcomer
+  // that reaches this point supersedes the current holder instead of being
+  // rejected with 1008. This is safe against hijacking because every accepted
+  // upgrade already cleared the same auth gate as the holder: `authPolicy` is
+  // fixed for the server's lifetime, `authorizeUpgrade` runs in the upgrade
+  // handler, and unauthenticated servers only admit loopback clients without
+  // an Origin header (see #3511). If per-connection identities are ever
+  // introduced, this must start comparing the newcomer's credential strength
+  // against the holder's before preempting.
+  const preemptActiveSession = (newcomer: AppServerChannel): void => {
+    const session = activeSession;
+    if (!session) return;
+    activeSession = null;
+    options.onLog?.(
+      `App-server ${newcomer} channel connection superseded the active session; closing previous client (${SUPERSEDED_CLOSE_CODE} ${SUPERSEDED_CLOSE_REASON})`,
+    );
+    // Detach the stream socket from the runtime first so the stream-close
+    // cascade (stream close → terminate control, see attachStreamSocket and
+    // terminateControlAfterStreamClose) cannot race the graceful close below
+    // and clobber the SUPERSEDED close frame with an abrupt terminate.
+    if (
+      session.streamSocket &&
+      session.runtime.streamSocket === session.streamSocket
+    ) {
+      session.runtime.streamSocket = null;
+      session.runtime.streamTransport = null;
+    }
+    closeSocket(
+      session.controlSocket,
+      SUPERSEDED_CLOSE_CODE,
+      SUPERSEDED_CLOSE_REASON,
+    );
+    closeSocket(
+      session.streamSocket,
+      SUPERSEDED_CLOSE_CODE,
+      SUPERSEDED_CLOSE_REASON,
+    );
+  };
+
   const handleWebSocketConnection = (
     socket: WebSocket,
     channel: AppServerChannel,
@@ -304,13 +350,27 @@ export async function startAppServer(
     });
 
     if (channel === "stream") {
+      if (activeSession?.streamSocket) {
+        // The stream channel cannot be swapped under a live session without
+        // cross-pairing one client's control with another's stream, so a
+        // superseding stream connection tears down the whole paired session
+        // and is seated as pending until its own control channel arrives.
+        preemptActiveSession("stream");
+      }
       if (activeSession) {
         attachStreamSocket(activeSession, socket);
         return;
       }
       if (pendingStreamSocket) {
-        closeSocket(socket, 1008, "stream channel already pending");
-        return;
+        const staleSocket = clearPendingStream();
+        options.onLog?.(
+          `App-server stream channel connection superseded a pending stream socket (${SUPERSEDED_CLOSE_CODE} ${SUPERSEDED_CLOSE_REASON})`,
+        );
+        closeSocket(
+          staleSocket,
+          SUPERSEDED_CLOSE_CODE,
+          SUPERSEDED_CLOSE_REASON,
+        );
       }
       pendingStreamSocket = socket;
       pendingStreamTimeout = setTimeout(() => {
@@ -329,21 +389,26 @@ export async function startAppServer(
     }
 
     if (activeSession) {
-      closeSocket(socket, 1008, "control channel already connected");
-      return;
+      preemptActiveSession("control");
     }
 
     const streamSocket = clearPendingStream();
+    // Track this connection's own session so the superseded session's
+    // deferred close events cannot clear a successor's activeSession slot.
+    let ownedSession: ActiveAppServerSession | null = null;
     void startControlSession({
       socket,
       streamSocket,
       connectionName: options.connectionName ?? hostname(),
       serverUrl: resolvedInfo?.url ?? options.listen ?? DEFAULT_LISTEN_URL,
       onSessionCreated: (session) => {
+        ownedSession = session;
         activeSession = session;
       },
       onSessionClosed: () => {
-        activeSession = null;
+        if (activeSession !== null && activeSession === ownedSession) {
+          activeSession = null;
+        }
       },
     }).catch((error) => {
       if (activeSession?.controlSocket === socket) {
