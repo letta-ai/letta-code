@@ -28,6 +28,10 @@ const registryListeners = new Set<PiProviderRegistryListener>();
 const providerRevisions = new Map<string, number>();
 let revisionCounter = 0;
 
+export function getPiProviderRegistryRevision(): number {
+  return revisionCounter;
+}
+
 function bumpProviderRevision(providerName: string): void {
   revisionCounter += 1;
   providerRevisions.set(providerName, revisionCounter);
