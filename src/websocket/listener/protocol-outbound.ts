@@ -164,12 +164,7 @@ function getScopeForRuntime(
 
 export function emitRuntimeStateUpdates(
   runtime: RuntimeCarrier,
-  scope:
-    | {
-        agent_id?: string | null;
-        conversation_id?: string | null;
-      }
-    | undefined,
+  scope: PartialRuntimeScope | undefined,
 ): void {
   emitLoopStatusIfOpen(runtime, scope);
   emitDeviceStatusIfOpen(runtime, scope);
@@ -268,7 +263,10 @@ export function buildDeviceStatus(
       conversationRuntime?.currentToolsetPreference ?? toolsetPreference,
     current_loaded_tools: conversationRuntime?.currentLoadedTools ?? [],
     current_available_skills: [],
-    background_processes: buildBackgroundProcessSnapshot(),
+    background_processes: buildBackgroundProcessSnapshot(
+      scopedAgentId,
+      scopedConversationId,
+    ),
     pending_control_requests: interruptedCacheActive
       ? []
       : getPendingControlRequests(listener, scope),

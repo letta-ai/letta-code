@@ -1,14 +1,39 @@
 import {
+  type BackgroundProcess,
+  type BackgroundRuntimeScope,
+  type BackgroundTask,
   backgroundProcesses,
   backgroundTasks,
 } from "@/tools/impl/process_manager";
 import type { BackgroundProcessSummary } from "@/types/protocol_v2";
 
-export function buildBackgroundProcessSnapshot(): BackgroundProcessSummary[] {
+function belongsToRuntime(
+  entry: BackgroundProcess | BackgroundTask,
+  runtimeScope: BackgroundRuntimeScope,
+): boolean {
+  return (
+    entry.runtimeScope?.agentId === runtimeScope.agentId &&
+    entry.runtimeScope.conversationId === runtimeScope.conversationId
+  );
+}
+
+export function buildBackgroundProcessSnapshot(
+  agentId?: string | null,
+  conversationId = "default",
+): BackgroundProcessSummary[] {
+  if (agentId === null) {
+    return [];
+  }
+  const runtimeScope: BackgroundRuntimeScope | undefined =
+    agentId === undefined ? undefined : { agentId, conversationId };
   const bashProcesses: BackgroundProcessSummary[] = Array.from(
     backgroundProcesses.entries(),
   )
-    .filter(([, proc]) => proc.status === "running")
+    .filter(
+      ([, proc]) =>
+        proc.status === "running" &&
+        (!runtimeScope || belongsToRuntime(proc, runtimeScope)),
+    )
     .map(([processId, proc]) => ({
       process_id: processId,
       kind: "bash",
@@ -21,7 +46,11 @@ export function buildBackgroundProcessSnapshot(): BackgroundProcessSummary[] {
   const taskProcesses: BackgroundProcessSummary[] = Array.from(
     backgroundTasks.entries(),
   )
-    .filter(([, task]) => task.status === "running")
+    .filter(
+      ([, task]) =>
+        task.status === "running" &&
+        (!runtimeScope || belongsToRuntime(task, runtimeScope)),
+    )
     .map(([processId, task]) => ({
       process_id: processId,
       kind: "agent_task",

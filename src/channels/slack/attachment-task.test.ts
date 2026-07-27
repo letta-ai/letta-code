@@ -15,6 +15,7 @@ const ATTACHMENT: ChannelMessageAttachment = {
   kind: "file",
   localPath: "/tmp/channels/slack/inbound/account-1/archive.zip",
 };
+const RUNTIME_SCOPE = { agentId: "agent-1", conversationId: "conv-slack" };
 
 beforeEach(() => {
   // Other suites exercise MessageChannel downloads and leave settled entries
@@ -31,6 +32,7 @@ test("fast downloads settle synchronously and complete the registry entry", asyn
   const result = await runSlackAttachmentDownloadTask({
     description: "Slack attachment download FLARGE",
     download: async () => ATTACHMENT,
+    runtimeScope: RUNTIME_SCOPE,
   });
 
   expect(result).toEqual({ outcome: "completed", attachment: ATTACHMENT });
@@ -40,6 +42,7 @@ test("fast downloads settle synchronously and complete the registry entry", asyn
   expect(taskId).toMatch(/^download_\d+$/);
   expect(entry?.status).toBe("completed");
   expect(entry?.exitCode).toBe(0);
+  expect(entry?.runtimeScope).toEqual(RUNTIME_SCOPE);
   expect(entry?.stdout.join("\n")).toContain(ATTACHMENT.localPath as string);
 });
 
@@ -49,6 +52,7 @@ test("failed downloads report the error and fail the registry entry", async () =
     download: async () => {
       throw new Error("HTTP 403");
     },
+    runtimeScope: RUNTIME_SCOPE,
   });
 
   expect(result).toEqual({ outcome: "failed", error: "HTTP 403" });
@@ -72,6 +76,7 @@ test("slow downloads yield a background task id and finish afterwards", async ()
   const result = await runSlackAttachmentDownloadTask({
     description: "Slack attachment download FLARGE",
     download,
+    runtimeScope: RUNTIME_SCOPE,
     yieldTimeMs: 20,
   });
 
@@ -111,6 +116,7 @@ test("killing a backgrounded download aborts the transfer and fails the entry", 
   const result = await runSlackAttachmentDownloadTask({
     description: "Slack attachment download FLARGE",
     download,
+    runtimeScope: RUNTIME_SCOPE,
     yieldTimeMs: 20,
   });
 

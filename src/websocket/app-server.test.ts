@@ -668,7 +668,11 @@ describe("app-server native websocket", () => {
     const seenB: Record<string, unknown>[] = [];
     try {
       __testSetBackend(
-        new LocalBackend({ storageDir, executionMode: "deterministic" }),
+        new LocalBackend({
+          storageDir,
+          executionMode: "deterministic",
+          memfsEnabled: false,
+        }),
       );
       handle = await startAppServer({ listen: "ws://127.0.0.1:0" });
       clientA = new WebSocket(handle.controlUrl);
@@ -680,7 +684,6 @@ describe("app-server native websocket", () => {
         seenB.push(JSON.parse(String(raw)) as Record<string, unknown>);
       });
       await Promise.all([waitForOpen(clientA), waitForOpen(clientB)]);
-
       const startA = waitForJsonMessage(
         clientA,
         (message) =>
@@ -735,7 +738,6 @@ describe("app-server native websocket", () => {
             message.request_id === "identical-runtime-start-id",
         ),
       ).toHaveLength(1);
-
       seenA.length = 0;
       seenB.length = 0;
       const waitForTurn = (socket: WebSocket, runtime: typeof runtimeA) =>
@@ -777,7 +779,6 @@ describe("app-server native websocket", () => {
               ?.agent_id === runtimeA.agent_id,
         ),
       ).toBe(false);
-
       const turnFinished = waitForJsonMessage(clientA, (message) => {
         const runtime = message.runtime as
           | { agent_id?: unknown; conversation_id?: unknown }

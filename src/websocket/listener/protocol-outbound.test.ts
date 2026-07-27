@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
-import type { StreamDeltaMessage } from "@/types/protocol_v2";
+import {
+  backgroundProcesses,
+  backgroundTasks,
+} from "@/tools/impl/process_manager";
+import type {
+  DeviceStatusUpdateMessage,
+  StreamDeltaMessage,
+} from "@/types/protocol_v2";
 import {
   markListenerConnectionInitialized,
   openListenerConnection,
@@ -285,6 +292,108 @@ describe("emitProtocolV2Message connection routing", () => {
 
     expect(socketA.sentPayloads).toHaveLength(2);
     expect(socketB.sentPayloads).toEqual([]);
+  });
+
+  test("filters populated background jobs across two runtimes", () => {
+    const listener = createListenerRuntime();
+    const runtimeA = getOrCreateScopedRuntime(listener, "agent-a", "conv-a");
+    const runtimeB = getOrCreateScopedRuntime(listener, "agent-b", "conv-b");
+    const socketA = new MockSocket();
+    const socketB = new MockSocket();
+    for (const [connectionId, socket, agentId, conversationId] of [
+      ["client-a", socketA, "agent-a", "conv-a"],
+      ["client-b", socketB, "agent-b", "conv-b"],
+    ] as const) {
+      openListenerConnection({
+        runtime: listener,
+        connectionId,
+        writer: socket as never,
+        options: {
+          connectionId,
+          wsUrl: "ws://test",
+          deviceId: "test",
+          connectionName: connectionId,
+          onConnected: () => {},
+          onDisconnected: () => {},
+          onError: () => {},
+        },
+      });
+      markListenerConnectionInitialized(listener, connectionId);
+      subscribeListenerConnection(listener, connectionId, {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      });
+    }
+    backgroundProcesses.clear();
+    backgroundTasks.clear();
+
+    try {
+      backgroundProcesses.set("bash-agent-a", {
+        process: { kill: () => true },
+        command: "agent-a-secret-command",
+        stdout: [],
+        stderr: [],
+        status: "running",
+        exitCode: null,
+        lastReadIndex: { stdout: 0, stderr: 0 },
+        startTime: new Date("2026-07-27T12:00:00.000Z"),
+        runtimeScope: { agentId: "agent-a", conversationId: "conv-a" },
+      });
+      backgroundTasks.set("task-agent-b", {
+        description: "Agent B task",
+        subagentType: "review",
+        subagentId: "subagent-b",
+        status: "running",
+        output: [],
+        startTime: new Date("2026-07-27T12:01:00.000Z"),
+        outputFile: "/tmp/task-agent-b.log",
+        runtimeScope: { agentId: "agent-b", conversationId: "conv-b" },
+      });
+      backgroundProcesses.set("unowned-job", {
+        process: { kill: () => true },
+        command: "legacy-unowned-command",
+        stdout: [],
+        stderr: [],
+        status: "running",
+        exitCode: null,
+        lastReadIndex: { stdout: 0, stderr: 0 },
+      });
+
+      emitDeviceStatusUpdateIfChanged(
+        socketA as never,
+        runtimeA,
+        {},
+        { force: true },
+      );
+      emitDeviceStatusUpdateIfChanged(
+        socketB as never,
+        runtimeB,
+        {},
+        { force: true },
+      );
+
+      expect(socketA.sentPayloads).toHaveLength(1);
+      expect(socketB.sentPayloads).toHaveLength(1);
+      const statusA = (
+        JSON.parse(socketA.sentPayloads[0] ?? "{}") as DeviceStatusUpdateMessage
+      ).device_status;
+      const statusB = (
+        JSON.parse(socketB.sentPayloads[0] ?? "{}") as DeviceStatusUpdateMessage
+      ).device_status;
+
+      expect(
+        statusA.background_processes.map((process) => process.process_id),
+      ).toEqual(["bash-agent-a"]);
+      expect(
+        statusB.background_processes.map((process) => process.process_id),
+      ).toEqual(["task-agent-b"]);
+      expect(JSON.stringify(statusB.background_processes)).not.toContain(
+        "agent-a-secret-command",
+      );
+    } finally {
+      backgroundProcesses.clear();
+      backgroundTasks.clear();
+    }
   });
 });
 

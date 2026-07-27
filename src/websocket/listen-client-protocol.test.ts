@@ -4049,7 +4049,6 @@ describe("listen-client v2 status builders", () => {
   });
 
   test("buildDeviceStatus includes only active bash and task background processes", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
     backgroundProcesses.clear();
     backgroundTasks.clear();
 
@@ -4083,7 +4082,7 @@ describe("listen-client v2 status builders", () => {
         outputFile: "/tmp/task_2.log",
       });
 
-      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
+      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(null);
       expect(deviceStatus.background_processes).toEqual([
         {
           process_id: "task_1",

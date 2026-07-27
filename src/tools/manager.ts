@@ -2849,10 +2849,7 @@ async function executeToolInner(
             },
           };
         }
-
-        // Inject secrets as environment variables instead of substituting into
-        // the command string. This prevents shell metacharacters in secrets
-        // (e.g. $$, backticks, quotes) from being interpreted by the shell.
+        // Keep secret values out of shell interpolation.
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
         const secretEnv =
           typeof command === "string" ||
@@ -2862,6 +2859,9 @@ async function executeToolInner(
             : {};
         if (Object.keys(secretEnv).length > 0) {
           enhancedArgs = { ...enhancedArgs, secretEnv };
+        }
+        if (options?.parentScope) {
+          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
         }
       }
 
