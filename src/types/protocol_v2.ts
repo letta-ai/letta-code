@@ -2333,6 +2333,8 @@ export interface ConversationMessagesListResponseMessage {
   request_id: string;
   success: boolean;
   messages: LettaMessage[];
+  next_before: string | null; // Oldest message ID, for loading older history.
+  has_more: boolean; // Whether messages older than `next_before` exist.
   error?: string;
 }
 

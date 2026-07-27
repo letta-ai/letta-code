@@ -296,4 +296,58 @@ describe("APIBackend", () => {
       agentId: "agent-1",
     });
   });
+
+  test("normalizes descending message cursors to chronological before and after", async () => {
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    await backend.listConversationMessages("conv-1", {
+      before: "message-older-page",
+      order: "desc",
+      limit: 10,
+    });
+    expect(listConversationMessagesMock).toHaveBeenLastCalledWith(
+      "conv-1",
+      {
+        after: "message-older-page",
+        before: undefined,
+        order: "desc",
+        limit: 10,
+      },
+      undefined,
+    );
+
+    await backend.listConversationMessages("conv-1", {
+      before: "message-older-page",
+      order: "asc",
+      limit: 10,
+    });
+    expect(listConversationMessagesMock).toHaveBeenLastCalledWith(
+      "conv-1",
+      {
+        before: "message-older-page",
+        order: "asc",
+        limit: 10,
+      },
+      undefined,
+    );
+
+    await backend.listConversationMessages("conv-1", {
+      after: "message-newer-page",
+      order: "desc",
+      limit: 10,
+    });
+    expect(listConversationMessagesMock).toHaveBeenLastCalledWith(
+      "conv-1",
+      {
+        after: undefined,
+        before: "message-newer-page",
+        order: "desc",
+        limit: 10,
+      },
+      undefined,
+    );
+  });
 });

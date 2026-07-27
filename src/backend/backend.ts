@@ -94,6 +94,23 @@ export type ConversationMessageListParams = Parameters<
 export type ConversationMessageListBody = ConversationMessageListParams[1];
 export type ConversationMessageListOptions = ConversationMessageListParams[2];
 
+function toApiConversationMessageListBody(
+  body?: ConversationMessageListBody,
+): ConversationMessageListBody | undefined {
+  if (!body || body.order !== "desc" || (!body.before && !body.after)) {
+    return body;
+  }
+
+  // The Backend contract uses chronological cursors: before always means older
+  // and after always means newer. The API interprets them relative to sort order,
+  // so descending requests need their cursor keys swapped at this boundary.
+  return {
+    ...body,
+    before: body.after,
+    after: body.before,
+  };
+}
+
 export type ConversationMessageCompactParams = Parameters<
   APIClient["conversations"]["messages"]["compact"]
 >;
@@ -388,7 +405,11 @@ export class APIBackend implements Backend {
     options?: ConversationMessageListOptions,
   ) {
     const client = await this.getClient();
-    return client.conversations.messages.list(conversationId, body, options);
+    return client.conversations.messages.list(
+      conversationId,
+      toApiConversationMessageListBody(body),
+      options,
+    );
   }
 
   async compactConversationMessages(
