@@ -3,6 +3,7 @@ import { actingUserRequestOptions } from "@/agent/acting-user";
 import {
   type Backend,
   type ConversationMessageListBody,
+  DEFAULT_CONVERSATION_MESSAGE_ORDER,
   getBackend,
 } from "@/backend";
 import type {
@@ -98,7 +99,7 @@ export async function listConversationMessagePage(
 ): Promise<ConversationMessagePage> {
   const normalizedQuery = query ?? {};
   const limit = normalizedQuery.limit ?? 50;
-  const order = normalizedQuery.order === "asc" ? "asc" : "desc";
+  const order = normalizedQuery.order ?? DEFAULT_CONVERSATION_MESSAGE_ORDER;
   const page = await backend.listConversationMessages(
     conversationId,
     normalizedQuery,

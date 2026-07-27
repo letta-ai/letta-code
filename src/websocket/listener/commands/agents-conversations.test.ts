@@ -131,7 +131,6 @@ describe("listConversationMessagePage", () => {
     for (;;) {
       const result = await listConversationMessagePage(backend, "conv-1", {
         ...(before ? { before } : {}),
-        order: "desc",
         limit: 3,
       });
       collected.push(

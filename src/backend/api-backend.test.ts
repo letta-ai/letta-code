@@ -320,6 +320,20 @@ describe("APIBackend", () => {
     );
 
     await backend.listConversationMessages("conv-1", {
+      before: "message-default-order-page",
+      limit: 10,
+    });
+    expect(listConversationMessagesMock).toHaveBeenLastCalledWith(
+      "conv-1",
+      {
+        after: "message-default-order-page",
+        before: undefined,
+        limit: 10,
+      },
+      undefined,
+    );
+
+    await backend.listConversationMessages("conv-1", {
       before: "message-older-page",
       order: "asc",
       limit: 10,

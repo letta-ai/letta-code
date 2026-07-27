@@ -93,11 +93,13 @@ export type ConversationMessageListParams = Parameters<
 >;
 export type ConversationMessageListBody = ConversationMessageListParams[1];
 export type ConversationMessageListOptions = ConversationMessageListParams[2];
+export const DEFAULT_CONVERSATION_MESSAGE_ORDER = "desc";
 
 function toApiConversationMessageListBody(
   body?: ConversationMessageListBody,
 ): ConversationMessageListBody | undefined {
-  if (!body || body.order !== "desc" || (!body.before && !body.after)) {
+  const order = body?.order ?? DEFAULT_CONVERSATION_MESSAGE_ORDER;
+  if (!body || order !== "desc" || (!body.before && !body.after)) {
     return body;
   }
 
