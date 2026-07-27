@@ -20,6 +20,8 @@
     "dist/app-server-client.js.map",
     "dist/app-server-client.cjs",
     "dist/app-server-client.cjs.map",
+    "dist/memory-confinement.js",
+    "dist/memory-confinement.js.map",
     "dist/agent-presets.js",
     "dist/agent-presets.js.map",
     "dist/channels-public.js",
@@ -40,6 +42,11 @@
       "import": "./dist/app-server-client.js",
       "require": "./dist/app-server-client.cjs",
       "default": "./dist/app-server-client.js"
+    },
+    "./memory-confinement": {
+      "types": "./dist/types/memory-confinement.d.ts",
+      "import": "./dist/memory-confinement.js",
+      "default": "./dist/memory-confinement.js"
     },
     "./protocol": {
       "types": "./dist/types/types/protocol.d.ts"
@@ -159,6 +166,9 @@
       ],
       "app-server-client": [
         "./dist/types/app-server-client.d.ts"
+      ],
+      "memory-confinement": [
+        "./dist/types/memory-confinement.d.ts"
       ],
       "channels": [
         "./dist/types/channels-public.d.ts"
