@@ -510,7 +510,9 @@ export type DmPolicy = "pairing" | "allowlist" | "open";
  */
 export type ChannelGroupSenderPolicy = "open" | "allowlist";
 export type SlackChannelMode = "socket";
-export type SlackAllowBotsMode = false | "mentions";
+export type ChannelAllowBotsMode = false | "mentions";
+export type SlackAllowBotsMode = ChannelAllowBotsMode;
+export type DiscordAllowBotsMode = ChannelAllowBotsMode;
 export type TelegramGroupMode = "open" | "mention-only";
 export type WhatsAppGroupMode = "disabled" | "mention" | "open";
 export type SignalGroupMode = "disabled" | "mention" | "open";
@@ -651,6 +653,12 @@ export interface DiscordChannelConfig {
    * Clamped to `0..10000`.
    */
   inboundDebounceMs?: number;
+  /**
+   * Bot-authored inbound policy. Default false drops bot messages. "mentions"
+   * accepts only explicit foreign bot mentions. There is intentionally no
+   * accept-all mode until Letta has a shared pair-loop guard.
+   */
+  allowBots?: DiscordAllowBotsMode;
 }
 
 export interface WhatsAppChannelConfig {
@@ -832,6 +840,12 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
    * Clamped to `0..10000`.
    */
   inboundDebounceMs?: number;
+  /**
+   * Bot-authored inbound policy. Default false drops bot messages. "mentions"
+   * accepts only explicit foreign bot mentions. There is intentionally no
+   * accept-all mode until Letta has a shared pair-loop guard.
+   */
+  allowBots?: DiscordAllowBotsMode;
 }
 
 export interface WhatsAppChannelAccount extends ChannelAccountBase {
