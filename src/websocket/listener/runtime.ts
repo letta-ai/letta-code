@@ -179,12 +179,6 @@ export function evictConversationRuntimeIfIdle(
 
   runtime.listener.conversationRuntimes.delete(runtime.key);
   scheduleWorktreeWatcherIdleStop(runtime.listener, runtime);
-  for (const [requestId, runtimeKey] of runtime.listener
-    .approvalRuntimeKeyByRequestId) {
-    if (runtimeKey === runtime.key) {
-      runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
-    }
-  }
   if (
     runtime.listener.pendingQueueEmitScope?.agent_id === runtime.agentId &&
     normalizeConversationId(

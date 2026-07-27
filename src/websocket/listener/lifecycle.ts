@@ -940,7 +940,6 @@ export function createRuntime(): ListenerRuntime {
     connectionId: null,
     connectionName: null,
     conversationRuntimes: new Map(),
-    approvalRuntimeKeyByRequestId: new Map(),
     memfsSyncedAgents: new Map(),
     secretsHydrationByAgent: new Map(),
     secretsHydrationFreshnessByAgent: new Map(),
@@ -973,7 +972,6 @@ export function stopRuntime(
     }
   }
   runtime.conversationRuntimes.clear();
-  runtime.approvalRuntimeKeyByRequestId.clear();
   closeListenerRuntimeConnections(runtime, suppressCallbacks);
   runtime.processServicesStarted = false;
   clearListenerWarmState(runtime);

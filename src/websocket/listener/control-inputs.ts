@@ -12,6 +12,7 @@ import type {
 } from "@/types/protocol_v2";
 import { debugLog, isDebugEnabled } from "@/utils/debug";
 import {
+  hasPendingApprovalRequestId,
   rejectPendingApprovalResolvers,
   resolvePendingApprovalResolver,
 } from "./approval";
@@ -37,6 +38,7 @@ import { emitLoopErrorNotice } from "./recoverable-notices";
 import { resolveRecoveredApprovalResponse } from "./recovery";
 import {
   getActiveRuntime,
+  getConversationRuntime,
   getPendingControlRequestCount,
   getPendingControlRequests,
   getRecoveredApprovalStateForScope,
@@ -142,34 +144,29 @@ export function handleModeChange(
 
 function resolveRuntimeForApprovalRequest(
   listener: ListenerRuntime,
+  scope: {
+    agent_id?: string | null;
+    conversation_id?: string | null;
+  },
   requestId?: string | null,
   connectionId?: ListenerConnectionId,
 ): ConversationRuntime | null {
   if (!requestId) {
     return null;
   }
-  const requestKey = connectionId
-    ? createConnectionRequestKey(connectionId, requestId)
-    : [...listener.approvalRuntimeKeyByRequestId.keys()].find((candidate) => {
-        try {
-          const parsed = JSON.parse(candidate) as unknown;
-          return (
-            Array.isArray(parsed) &&
-            parsed.length === 2 &&
-            parsed[1] === requestId
-          );
-        } catch {
-          return candidate === requestId;
-        }
-      });
-  if (!requestKey) {
+  const runtime = getConversationRuntime(
+    listener,
+    scope.agent_id,
+    scope.conversation_id,
+  );
+  if (!runtime) {
     return null;
   }
-  const runtimeKey = listener.approvalRuntimeKeyByRequestId.get(requestKey);
-  if (!runtimeKey) {
-    return null;
+  if (connectionId) {
+    const requestKey = createConnectionRequestKey(connectionId, requestId);
+    return runtime.pendingApprovalResolvers.has(requestKey) ? runtime : null;
   }
-  return listener.conversationRuntimes.get(runtimeKey) ?? null;
+  return hasPendingApprovalRequestId(runtime, requestId) ? runtime : null;
 }
 
 export async function handleApprovalResponseInput(
@@ -191,6 +188,10 @@ export async function handleApprovalResponseInput(
   deps: {
     resolveRuntimeForApprovalRequest: (
       listener: ListenerRuntime,
+      scope: {
+        agent_id?: string | null;
+        conversation_id?: string | null;
+      },
       requestId?: string | null,
       connectionId?: ListenerConnectionId,
     ) => ConversationRuntime | null;
@@ -230,6 +231,7 @@ export async function handleApprovalResponseInput(
 ): Promise<boolean> {
   const approvalRuntime = deps.resolveRuntimeForApprovalRequest(
     listener,
+    params.runtime,
     params.response.request_id,
     params.connectionId,
   );

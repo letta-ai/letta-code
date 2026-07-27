@@ -5397,7 +5397,6 @@ describe("listen-client capability-gated approval flow", () => {
       requestTestApproval(runtime, socket, turnLease, "perm-late-after-abort"),
     ).rejects.toThrow("Cancelled by user");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
 
     __listenClientTestUtils.setActiveRuntime(null);
   });

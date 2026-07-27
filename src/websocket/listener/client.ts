@@ -151,7 +151,6 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   hasSuccessfulConnection: boolean;
   everConnected: boolean;
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
-  approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
   memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
   secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
   secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
@@ -197,7 +196,6 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     hasSuccessfulConnection: boolean;
     everConnected: boolean;
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
-    approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
     memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
     secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
     secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
@@ -388,12 +386,6 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.conversationRuntimes,
       set: (value: ListenerRuntime["conversationRuntimes"]) => {
         listener.conversationRuntimes = value;
-      },
-    },
-    approvalRuntimeKeyByRequestId: {
-      get: () => listener.approvalRuntimeKeyByRequestId,
-      set: (value: ListenerRuntime["approvalRuntimeKeyByRequestId"]) => {
-        listener.approvalRuntimeKeyByRequestId = value;
       },
     },
     memfsSyncedAgents: {

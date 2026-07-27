@@ -271,7 +271,6 @@ describe("channel control request recovery", () => {
         },
       },
     });
-    listener.approvalRuntimeKeyByRequestId.set(requestKey, runtime.key);
     let backendRecoveryCalls = 0;
 
     await recoverPendingChannelControlRequests(listener, {

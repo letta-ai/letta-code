@@ -33,7 +33,6 @@ function removePendingApproval(
   for (const [requestKey, candidate] of runtime.pendingApprovalResolvers) {
     if (candidate !== pending) continue;
     runtime.pendingApprovalResolvers.delete(requestKey);
-    runtime.listener.approvalRuntimeKeyByRequestId.delete(requestKey);
   }
   pending.connectionIds.clear();
 }
@@ -48,14 +47,12 @@ function addPendingApprovalConnection(
     pending.requestId,
   );
   runtime.pendingApprovalResolvers.delete(unownedKey);
-  runtime.listener.approvalRuntimeKeyByRequestId.delete(unownedKey);
   const requestKey = createConnectionRequestKey(
     connectionId,
     pending.requestId,
   );
   pending.connectionIds.add(connectionId);
   runtime.pendingApprovalResolvers.set(requestKey, pending);
-  runtime.listener.approvalRuntimeKeyByRequestId.set(requestKey, runtime.key);
 }
 
 function keepPendingApprovalUnowned(
@@ -67,7 +64,6 @@ function keepPendingApprovalUnowned(
     pending.requestId,
   );
   runtime.pendingApprovalResolvers.set(requestKey, pending);
-  runtime.listener.approvalRuntimeKeyByRequestId.set(requestKey, runtime.key);
 }
 
 export function hasPendingApprovalRequestId(
@@ -303,12 +299,6 @@ export function rejectPendingApprovalResolvers(
     pending.reject(new Error(reason));
   }
   runtime.pendingApprovalResolvers.clear();
-  for (const [requestId, runtimeKey] of runtime.listener
-    .approvalRuntimeKeyByRequestId) {
-    if (runtimeKey === runtime.key) {
-      runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
-    }
-  }
   if (!runtime.isProcessing && !runtime.cancelRequested) {
     setCommandLoopStatus(runtime, "WAITING_ON_INPUT");
   }
@@ -337,7 +327,6 @@ export function rejectPendingApprovalResolversForConnection(
       pending.requestId,
     );
     runtime.pendingApprovalResolvers.delete(requestKey);
-    runtime.listener.approvalRuntimeKeyByRequestId.delete(requestKey);
     if (pending.connectionIds.size === 0) {
       // Codex keeps a thread-scoped server request alive when its last
       // subscriber disconnects and replays it to a later subscriber. The

@@ -7,12 +7,12 @@ import {
   resolvePendingApprovalResolver,
 } from "./approval";
 import {
-  createConnectionRequestKey,
   markListenerConnectionInitialized,
   openListenerConnection,
   subscribeListenerConnection,
 } from "./connection";
 import { cleanupListenerConnection } from "./connection-lifecycle";
+import { handleApprovalResponseInput } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime, stopRuntime } from "./lifecycle";
 import { buildLoopStatus } from "./protocol-outbound";
@@ -153,6 +153,80 @@ describe("listener approval lifecycle", () => {
     );
   });
 
+  test("isolates identical approval ids across two conversations on one connection", async () => {
+    const listener = createRuntime();
+    const runtimeA = getOrCreateScopedRuntime(listener, "agent-1", "conv-a");
+    const runtimeB = getOrCreateScopedRuntime(listener, "agent-1", "conv-b");
+    const socket = new MockSocket();
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "shared-client",
+      writer: socket,
+      options: {
+        connectionId: "shared-client",
+        wsUrl: "local://test",
+        deviceId: "test",
+        connectionName: "shared-client",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+      },
+    });
+    markListenerConnectionInitialized(listener, "shared-client");
+    subscribeListenerConnection(listener, "shared-client", {
+      agent_id: "agent-1",
+      conversation_id: "conv-a",
+    });
+    subscribeListenerConnection(listener, "shared-client", {
+      agent_id: "agent-1",
+      conversation_id: "conv-b",
+    });
+
+    const pendingA = requestApprovalOverWS(
+      runtimeA,
+      socket,
+      beginApprovalWait(runtimeA),
+      "same-request-id",
+      makeControlRequest("same-request-id"),
+    );
+    const pendingB = requestApprovalOverWS(
+      runtimeB,
+      socket,
+      beginApprovalWait(runtimeB),
+      "same-request-id",
+      makeControlRequest("same-request-id"),
+    );
+
+    expect(
+      await handleApprovalResponseInput(listener, {
+        runtime: { agent_id: "agent-1", conversation_id: "conv-b" },
+        response: makeSuccessResponse("same-request-id"),
+        connectionId: "shared-client",
+        socket,
+        opts: { connectionId: "shared-client" },
+        processQueuedTurn: async () => {},
+      }),
+    ).toBe(true);
+    await expect(pendingB).resolves.toEqual(
+      makeSuccessResponse("same-request-id"),
+    );
+    expect(runtimeA.pendingApprovalResolvers.size).toBe(1);
+
+    expect(
+      await handleApprovalResponseInput(listener, {
+        runtime: { agent_id: "agent-1", conversation_id: "conv-a" },
+        response: makeSuccessResponse("same-request-id"),
+        connectionId: "shared-client",
+        socket,
+        opts: { connectionId: "shared-client" },
+        processQueuedTurn: async () => {},
+      }),
+    ).toBe(true);
+    await expect(pendingA).resolves.toEqual(
+      makeSuccessResponse("same-request-id"),
+    );
+  });
+
   test("fans approval requests to subscribers and survives one disconnect", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
@@ -256,16 +330,6 @@ describe("listener approval lifecycle", () => {
       makeControlRequest("perm-b"),
     );
 
-    expect(
-      listener.approvalRuntimeKeyByRequestId.get(
-        createConnectionRequestKey("legacy", "perm-a"),
-      ),
-    ).toBe(runtimeA.key);
-    expect(
-      listener.approvalRuntimeKeyByRequestId.get(
-        createConnectionRequestKey("legacy", "perm-b"),
-      ),
-    ).toBe(runtimeB.key);
     expect(
       resolvePendingApprovalResolver(runtimeA, makeSuccessResponse("perm-a")),
     ).toBe(true);
@@ -416,6 +480,5 @@ describe("listener approval lifecycle", () => {
 
     await expect(pending).rejects.toThrow("Cancelled by user");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
   });
 });
