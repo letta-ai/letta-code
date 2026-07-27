@@ -5,6 +5,7 @@ import { createLlamaCppPiProvider } from "./pi-llama-cpp-provider";
 interface FakeLlamaCppModelEntry {
   id: string;
   status?: string;
+  failed?: boolean;
   inputModalities?: string[];
   nCtx?: number;
   nCtxTrain?: number;
@@ -42,7 +43,14 @@ function fakeLlamaCppFetch(state: FakeLlamaCppState): typeof fetch {
         data: state.models.map((model) => ({
           id: model.id,
           object: "model",
-          ...(model.status ? { status: { value: model.status } } : {}),
+          ...(model.status
+            ? {
+                status: {
+                  value: model.status,
+                  ...(model.failed ? { failed: true } : {}),
+                },
+              }
+            : {}),
           ...(model.inputModalities
             ? { architecture: { input_modalities: model.inputModalities } }
             : {}),
@@ -98,6 +106,12 @@ describe("createLlamaCppPiProvider", () => {
           inputModalities: ["text"],
           nCtxTrain: 8192,
         },
+        {
+          id: "large-context.gguf",
+          status: "loaded",
+          inputModalities: ["text"],
+          nCtx: 262144,
+        },
       ],
       requests: [],
     };
@@ -133,6 +147,11 @@ describe("createLlamaCppPiProvider", () => {
     const textOnly = models.find((m) => m.id === "some-vision-model.gguf");
     expect(textOnly?.input).toEqual(["text"]);
     expect(textOnly?.contextWindow).toBe(8192);
+    expect(textOnly?.maxTokens).toBe(8192);
+
+    const largeContext = models.find((m) => m.id === "large-context.gguf");
+    expect(largeContext?.contextWindow).toBe(128000);
+    expect(largeContext?.maxTokens).toBe(128000);
   });
 
   test("missing engine context falls back to contextWindow-sized maxTokens", async () => {
@@ -154,20 +173,36 @@ describe("createLlamaCppPiProvider", () => {
     expect(model?.maxTokens).toBe(128000);
   });
 
-  test("only loaded models publish from a router catalog", async () => {
+  test("publishes router models that can serve on demand", async () => {
     const provider = createLlamaCppPiProvider({
       baseURL: "http://localhost:8080",
       fetchImpl: fakeLlamaCppFetch({
         models: [
           { id: "loaded.gguf", status: "loaded", inputModalities: ["text"] },
           {
-            id: "downloading.gguf",
-            status: "downloading",
+            id: "unloaded.gguf",
+            status: "unloaded",
             inputModalities: ["text"],
           },
           {
             id: "sleeping.gguf",
             status: "sleeping",
+            inputModalities: ["text"],
+          },
+          {
+            id: "loading.gguf",
+            status: "loading",
+            inputModalities: ["text"],
+          },
+          {
+            id: "downloading.gguf",
+            status: "downloading",
+            inputModalities: ["text"],
+          },
+          {
+            id: "failed.gguf",
+            status: "unloaded",
+            failed: true,
             inputModalities: ["text"],
           },
         ],
@@ -176,7 +211,11 @@ describe("createLlamaCppPiProvider", () => {
     });
     const refreshContext = testRefreshContext();
     await provider.refreshModels?.(refreshContext);
-    expect(provider.getModels().map((m) => m.id)).toEqual(["loaded.gguf"]);
+    expect(provider.getModels().map((m) => m.id)).toEqual([
+      "loaded.gguf",
+      "unloaded.gguf",
+      "sleeping.gguf",
+    ]);
   });
 
   test("single-model server without catalog metadata uses per-model /props", async () => {

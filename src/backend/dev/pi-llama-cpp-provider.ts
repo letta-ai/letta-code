@@ -49,12 +49,11 @@ function parseLlamaCppProps(data: unknown): LlamaCppServerProps {
 }
 
 /**
- * Per-model metadata from the native `/models` catalog, matching the current
- * upstream Pi llama.cpp provider contract: entries carry `status.value`
- * (only "loaded" models are selectable), `architecture.input_modalities`,
- * and `meta.n_ctx` with `meta.n_ctx_train` as the fallback. Returns
- * undefined when no entry carries per-model metadata (plain OpenAI id
- * list), so discovery falls back to `/props?model=<id>`.
+ * Per-model metadata from the native `/models` catalog: entries carry
+ * `status.value`, `architecture.input_modalities`, and `meta.n_ctx` with
+ * `meta.n_ctx_train` as the fallback. Returns undefined when no entry carries
+ * per-model metadata (plain OpenAI id list), so discovery falls back to
+ * `/props?model=<id>`.
  */
 function parseLlamaCppNativeModels(
   data: unknown,
@@ -81,10 +80,11 @@ function parseLlamaCppNativeModels(
     };
     const id = record.id ?? record.name;
     if (typeof id !== "string" || id.length === 0) continue;
-    const status =
+    const statusRecord =
       record.status && typeof record.status === "object"
-        ? (record.status as { value?: unknown }).value
+        ? (record.status as { value?: unknown; failed?: unknown })
         : undefined;
+    const status = statusRecord?.value;
     const architecture =
       record.architecture && typeof record.architecture === "object"
         ? (record.architecture as { input_modalities?: unknown })
@@ -114,9 +114,16 @@ function parseLlamaCppNativeModels(
     ) {
       sawMetadata = true;
     }
-    // Upstream publishes only loaded models as selectable; entries without
-    // a status (single-model servers) are treated as loaded.
-    if (status !== undefined && status !== "loaded") continue;
+    // The upstream provider exposes unloaded models through a separate management
+    // command. Letta Code's model picker is the only selection surface, so also
+    // publish states that llama.cpp can serve transparently: sleeping models wake
+    // on request, and non-failed unloaded models load on demand in router mode.
+    const selectable =
+      status === undefined ||
+      status === "loaded" ||
+      status === "sleeping" ||
+      (status === "unloaded" && statusRecord?.failed !== true);
+    if (!selectable) continue;
     parsed.push(
       llamaCppModelMetadata(id, {
         ...(modalities !== undefined
@@ -130,9 +137,10 @@ function parseLlamaCppNativeModels(
 }
 
 /**
- * Upstream model construction: the fallback context applies first and
- * maxTokens always equals the effective contextWindow; compat flags match
- * the current upstream llama.cpp provider literally.
+ * Upstream model construction: the engine context applies first and
+ * maxTokens tracks it; the shared provider then applies Letta's conservative
+ * harness default to both values. Compat flags match the current upstream
+ * llama.cpp provider literally.
  */
 function llamaCppModelMetadata(
   id: string,
@@ -162,7 +170,7 @@ function llamaCppModelMetadata(
  * 1. The native `/models` catalog (distinct from the OpenAI-compatible
  *    `/v1/models` list): per-model `status`, `architecture.input_modalities`,
  *    `meta.n_ctx`/`n_ctx_train` — authoritative per model, including router
- *    mode where one server hosts many models; only loaded models publish.
+ *    mode where one server hosts many on-demand models.
  * 2. `GET /props?model=<id>` per model from the `/v1/models` id list.
  *    Single-model servers ignore the query parameter and return their
  *    global props, which is correct there.

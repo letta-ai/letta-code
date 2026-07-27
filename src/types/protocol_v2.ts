@@ -30,6 +30,11 @@ import type {
   MessageListParams,
 } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import type {
+  AppServerInfoCommand,
+  AppServerInfoResponseMessage,
+} from "./app-server-info";
+import type { ConversationForkBody } from "./conversation-fork-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 
@@ -734,6 +739,14 @@ export interface InputCreateMessagePayload {
    * external tools for the runtime remain available normally.
    */
   external_tool_scope_ids?: string[];
+  /**
+   * Exclude interactive user-input tools (AskUserQuestion and friends) from
+   * this turn's toolset. Intended for headless clients (SDK sessions,
+   * automation) that cannot surface mid-turn questions to a human. The
+   * excluded set is owned by the harness (interactive-policy), so new
+   * interactive tools are covered without client updates.
+   */
+  exclude_interactive_tools?: boolean;
 }
 
 export type InputApprovalResponsePayload = {
@@ -1591,6 +1604,16 @@ export interface UpdateModelPayload {
   model_id?: string;
   /** Optional direct handle override (e.g. "anthropic/claude-sonnet-4-6") */
   model_handle?: string;
+  /** Explicit effort for an OpenAI-compatible proxy; null restores provider Default. */
+  reasoning_effort?:
+    | "none"
+    | "minimal"
+    | "low"
+    | "medium"
+    | "high"
+    | "xhigh"
+    | "max"
+    | null;
 }
 
 export interface UpdateModelCommand {
@@ -1883,13 +1906,6 @@ export interface ConversationRecompileCommand {
   conversation_id: string;
   /** Body/query forwarded to the Letta conversations recompile API. */
   body?: ConversationRecompileParams;
-}
-
-export interface ConversationForkBody {
-  /** Agent ID for agent-direct mode with the default conversation. */
-  agent_id?: string | null;
-  /** Whether the forked conversation should be hidden. */
-  hidden?: boolean;
 }
 
 export interface ConversationForkCommand {
@@ -2790,6 +2806,7 @@ export type WsProtocolCommand =
   | SkillEnableCommand
   | SkillDisableCommand
   | CreateAgentCommand
+  | AppServerInfoCommand
   | AgentListCommand
   | AgentRetrieveCommand
   | AgentCreateCommand
@@ -2888,6 +2905,7 @@ export type WsProtocolMessage =
   | SkillDisableResponseMessage
   | SkillsUpdatedMessage
   | CreateAgentResponseMessage
+  | AppServerInfoResponseMessage
   | AgentListResponseMessage
   | AgentRetrieveResponseMessage
   | AgentCreateResponseMessage

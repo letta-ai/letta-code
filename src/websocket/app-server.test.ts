@@ -365,13 +365,22 @@ describe("app-server native websocket", () => {
     }
   });
 
-  test("rejects browser-origin websocket upgrades", async () => {
+  test("rejects origin-bearing websocket upgrades without auth", async () => {
     let handle: AppServerHandle | null = null;
+    const logs: string[] = [];
     try {
-      handle = await startAppServer({ listen: "ws://127.0.0.1:0" });
+      handle = await startAppServer({
+        listen: "ws://127.0.0.1:0",
+        onLog: (message) => logs.push(message),
+      });
       await expectWebSocketOpenFailure(handle.controlUrl, {
         Origin: "https://evil.example",
       });
+      await expectWebSocketOpenFailure(handle.controlUrl, { Origin: "" });
+      expect(logs).toEqual([
+        expect.stringContaining("--ws-auth capability-token"),
+        expect.stringContaining("--ws-auth capability-token"),
+      ]);
     } finally {
       await handle?.close();
     }
@@ -398,14 +407,39 @@ describe("app-server native websocket", () => {
         }),
       });
       const controlUrl = loopbackChannelUrl(handle.controlUrl);
+      const infoUrl = new URL(controlUrl);
+      infoUrl.protocol = "http:";
+      infoUrl.pathname = "/app-server-info";
+      infoUrl.search = "";
+
+      expect((await fetch(infoUrl)).status).toBe(401);
+      expect(
+        (
+          await fetch(infoUrl, {
+            headers: { Authorization: "Bearer wrong-token" },
+          })
+        ).status,
+      ).toBe(401);
+      const infoResponse = await fetch(infoUrl, {
+        headers: { Authorization: "Bearer super-secret-token" },
+      });
+      expect(infoResponse.status).toBe(200);
+      expect(await infoResponse.json()).toMatchObject({
+        type: "app_server_info_response",
+        protocol_version: 1,
+      });
 
       await expectWebSocketOpenFailure(controlUrl);
       await expectWebSocketOpenFailure(controlUrl, {
         Authorization: "Bearer wrong-token",
+        Origin: "http://localhost:8081",
       });
 
       control = new WebSocket(controlUrl, {
-        headers: { Authorization: "Bearer super-secret-token" },
+        headers: {
+          Authorization: "Bearer super-secret-token",
+          Origin: "http://localhost:8081",
+        },
       });
       await waitForOpen(control);
     } finally {
@@ -443,6 +477,7 @@ describe("app-server native websocket", () => {
       });
       await expectWebSocketOpenFailure(controlUrl, {
         Authorization: `Bearer ${expiredToken}`,
+        Origin: "http://localhost:8081",
       });
 
       const validToken = signedBearerToken(sharedSecret, {
@@ -451,7 +486,10 @@ describe("app-server native websocket", () => {
         aud: "codex-app-server",
       });
       control = new WebSocket(controlUrl, {
-        headers: { Authorization: `Bearer ${validToken}` },
+        headers: {
+          Authorization: `Bearer ${validToken}`,
+          Origin: "http://localhost:8081",
+        },
       });
       await waitForOpen(control);
     } finally {

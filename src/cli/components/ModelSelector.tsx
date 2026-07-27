@@ -1,12 +1,20 @@
 // Import useInput from vendored Ink for bracketed paste support
 import { Box, useInput } from "ink";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   clearAvailableModelsCache,
   getAvailableModelHandles,
   getAvailableModelsCacheInfo,
   getCachedModelHandles,
   getCachedModelProviderTypes,
+  getCachedOpenAICompatibleProxyHandles,
 } from "@/agent/available-models";
 import {
   CHATGPT_FAST_SERVICE_TIER,
@@ -15,9 +23,14 @@ import {
   normalizeModelHandleForRegistry,
 } from "@/agent/model";
 import { refreshModelCatalog } from "@/agent/remote-model-catalog";
+import {
+  getPiProviderRegistryRevision,
+  subscribePiProviderRegistry,
+} from "@/backend/dev/pi-provider-mod-registry";
 
 import {
   buildByokProviderAliases,
+  buildOpenAICompatibleProxyProviderNames,
   isByokHandleForSelector,
   listProviders,
 } from "@/providers/byok-providers";
@@ -34,6 +47,7 @@ import {
   toByokSelectorModel,
   toSelectorModelForHandle,
   type UiModel,
+  withProviderMetadataForSelector,
 } from "./model-selector-helpers";
 import { OverlayShell } from "./OverlayShell";
 import { TabBar } from "./TabBar";
@@ -65,6 +79,7 @@ export {
   registryHandleForByokAlias,
   toByokSelectorModel,
   toSelectorModelForHandle,
+  withProviderMetadataForSelector,
 } from "./model-selector-helpers";
 
 export function usesBackendModelCatalog(
@@ -199,6 +214,18 @@ export function ModelSelector({
   const [byokProviderAliases, setByokProviderAliases] = useState<
     Record<string, string>
   >(() => buildByokProviderAliases([]));
+  const [openAICompatibleProxyHandles, setOpenAICompatibleProxyHandles] =
+    useState<Set<string>>(
+      () => getCachedOpenAICompatibleProxyHandles() ?? new Set(),
+    );
+  const [openAICompatibleProxyProviders, setOpenAICompatibleProxyProviders] =
+    useState<Set<string>>(new Set());
+  const providerRegistryRevision = useSyncExternalStore(
+    subscribePiProviderRegistry,
+    getPiProviderRegistryRevision,
+    getPiProviderRegistryRevision,
+  );
+  const previousProviderRegistryRevision = useRef(providerRegistryRevision);
 
   const mountedRef = useRef(true);
   useEffect(() => {
@@ -258,6 +285,9 @@ export function ModelSelector({
       setAvailableHandles(result.handles);
       setAllApiHandles(Array.from(result.handles));
       setProviderTypesByHandle(new Map(result.providerTypes));
+      setOpenAICompatibleProxyHandles(
+        new Set(result.openAICompatibleProxyHandles),
+      );
       setIsCached(!forceRefresh && cacheInfoBefore.isFresh);
       setIsLoading(false);
       setRefreshing(false);
@@ -270,16 +300,22 @@ export function ModelSelector({
       setAvailableHandles(null);
       setAllApiHandles([]);
       setProviderTypesByHandle(new Map());
+      setOpenAICompatibleProxyHandles(new Set());
     }
   });
 
   useEffect(() => {
+    if (previousProviderRegistryRevision.current !== providerRegistryRevision) {
+      previousProviderRegistryRevision.current = providerRegistryRevision;
+      clearAvailableModelsCache();
+    }
     loadModels.current(forceRefreshOnMount ?? false);
-  }, [forceRefreshOnMount]);
+  }, [forceRefreshOnMount, providerRegistryRevision]);
 
   useEffect(() => {
     if (localModelCatalog) {
       setByokProviderAliases(buildByokProviderAliases([]));
+      setOpenAICompatibleProxyProviders(new Set());
       return;
     }
     (async () => {
@@ -287,9 +323,13 @@ export function ModelSelector({
         const providers = await listProviders();
         if (!mountedRef.current) return;
         setByokProviderAliases(buildByokProviderAliases(providers));
+        setOpenAICompatibleProxyProviders(
+          buildOpenAICompatibleProxyProviderNames(providers),
+        );
       } catch {
         if (!mountedRef.current) return;
         setByokProviderAliases(buildByokProviderAliases([]));
+        setOpenAICompatibleProxyProviders(new Set());
       }
     })();
   }, [localModelCatalog]);
@@ -355,13 +395,22 @@ export function ModelSelector({
       updateArgs: Record<string, unknown> | undefined,
     ): Record<string, unknown> | undefined => {
       const providerType = providerTypesByHandle.get(handle);
-      if (!providerType) return updateArgs;
-      return {
-        ...(updateArgs ?? {}),
-        provider_type: providerType,
-      };
+      const providerName = handle.split("/")[0];
+      return withProviderMetadataForSelector(
+        updateArgs,
+        providerType,
+        isByokHandleForSelector(handle, byokProviderAliases),
+        openAICompatibleProxyHandles.has(handle) ||
+          (providerName !== undefined &&
+            openAICompatibleProxyProviders.has(providerName)),
+      );
     },
-    [providerTypesByHandle],
+    [
+      byokProviderAliases,
+      openAICompatibleProxyHandles,
+      openAICompatibleProxyProviders,
+      providerTypesByHandle,
+    ],
   );
 
   const modelsForBackendHandle = useCallback(

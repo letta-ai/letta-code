@@ -41,6 +41,8 @@ type CancellingTurnState = {
   runId: string | null;
   executingToolCallIds: readonly string[];
   loopStatus: "WAITING_ON_INPUT";
+  ownerFinished: boolean;
+  externalSettlementPending: boolean;
 };
 
 type TurnState =
@@ -53,13 +55,21 @@ export type TurnLifecycleSnapshot =
   | IdleTurnState
   | CommandTurnState
   | Omit<ActiveTurnState, "abortController">
-  | Omit<CancellingTurnState, "abortController">;
+  | Omit<
+      CancellingTurnState,
+      "abortController" | "ownerFinished" | "externalSettlementPending"
+    >;
 
 export type TurnCancellationTransition = {
   transitioned: boolean;
   lease: TurnLease | null;
   runId: string | null;
   executingToolCallIds: readonly string[];
+};
+
+export type TurnCancellationSettlementTransition = {
+  settled: boolean;
+  released: boolean;
 };
 
 export type TurnFinishTransition = {
@@ -117,9 +127,13 @@ export class TurnLifecycle {
   }
 
   get currentLease(): TurnLease | null {
-    return this.#state.kind === "active" || this.#state.kind === "cancelling"
-      ? this.#state.lease
-      : null;
+    if (this.#state.kind === "active") {
+      return this.#state.lease;
+    }
+    if (this.#state.kind === "cancelling" && !this.#state.ownerFinished) {
+      return this.#state.lease;
+    }
+    return null;
   }
 
   snapshot(): TurnLifecycleSnapshot {
@@ -183,6 +197,7 @@ export class TurnLifecycle {
   isCurrent(lease: TurnLease): boolean {
     return (
       (this.#state.kind === "active" || this.#state.kind === "cancelling") &&
+      (this.#state.kind !== "cancelling" || !this.#state.ownerFinished) &&
       this.#state.lease.id === lease.id
     );
   }
@@ -250,7 +265,9 @@ export class TurnLifecycle {
     return true;
   }
 
-  requestCancellation(): TurnCancellationTransition {
+  requestCancellation(options?: {
+    waitForExternalSettlement?: boolean;
+  }): TurnCancellationTransition {
     const state = this.#state;
     if (state.kind === "cancelling") {
       return {
@@ -281,6 +298,8 @@ export class TurnLifecycle {
       runId: state.runId,
       executingToolCallIds: [...state.executingToolCallIds],
       loopStatus: "WAITING_ON_INPUT",
+      ownerFinished: false,
+      externalSettlementPending: options?.waitForExternalSettlement === true,
     };
     return {
       transitioned: true,
@@ -294,18 +313,48 @@ export class TurnLifecycle {
     const state = this.#state;
     if (
       (state.kind !== "active" && state.kind !== "cancelling") ||
-      state.lease.id !== lease.id
+      state.lease.id !== lease.id ||
+      (state.kind === "cancelling" && state.ownerFinished)
     ) {
       return { finished: false, previousKind: null, runId: null };
     }
 
     this.#lastStopReason = stopReason;
-    this.#state = IDLE_STATE;
+    if (state.kind === "cancelling" && state.externalSettlementPending) {
+      this.#state = {
+        ...state,
+        ownerFinished: true,
+      };
+    } else {
+      this.#state = IDLE_STATE;
+    }
     return {
       finished: true,
       previousKind: state.kind,
       runId: state.runId,
     };
+  }
+
+  settleCancellation(lease: TurnLease): TurnCancellationSettlementTransition {
+    const state = this.#state;
+    if (
+      state.kind !== "cancelling" ||
+      state.lease.id !== lease.id ||
+      !state.externalSettlementPending
+    ) {
+      return { settled: false, released: false };
+    }
+
+    if (state.ownerFinished) {
+      this.#state = IDLE_STATE;
+      return { settled: true, released: true };
+    }
+
+    this.#state = {
+      ...state,
+      externalSettlementPending: false,
+    };
+    return { settled: true, released: false };
   }
 
   reset(stopReason: StopReasonType = "cancelled"): TurnFinishTransition {

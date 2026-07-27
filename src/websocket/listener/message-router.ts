@@ -20,6 +20,7 @@ import {
 } from "@/websocket/terminal-handler";
 import { handleExecuteCommand } from "./commands";
 import { handleAgentConversationManagementProtocolCommand } from "./commands/agents-conversations";
+import { handleAppServerInfoCommand } from "./commands/app-server-info";
 import {
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
@@ -208,6 +209,11 @@ function summarizeInputPayload(payload: unknown): string[] {
       fields,
       "external_tool_scope_ids",
       payload.external_tool_scope_ids,
+    );
+    pushField(
+      fields,
+      "exclude_interactive_tools",
+      payload.exclude_interactive_tools,
     );
   } else if (payload.kind === "approval_response") {
     pushField(fields, "request_id", payload.request_id);
@@ -425,6 +431,11 @@ export function createListenerMessageHandler(
         return;
       }
 
+      if (parsed.type === "app_server_info") {
+        handleAppServerInfoCommand(parsed, { socket, safeSocketSend });
+        return;
+      }
+
       if (
         handleRuntimeStartProtocolCommand(parsed, {
           socket,
@@ -543,6 +554,7 @@ export function createListenerMessageHandler(
           conversationId: parsed.runtime.conversation_id,
           clientToolAllowlist: inputPayload.client_tool_allowlist,
           externalToolScopeIds: inputPayload.external_tool_scope_ids,
+          excludeInteractiveTools: inputPayload.exclude_interactive_tools,
           messages: inputPayload.messages,
         };
         const hasApprovalPayload = incoming.messages.some(

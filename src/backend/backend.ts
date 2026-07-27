@@ -253,6 +253,11 @@ export interface Backend {
     conversationIdOrAgentId: string,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["cancel"]>>>;
 
+  cancelRun(
+    agentId: string,
+    runId: string,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
+
   retrieveRun(
     runId: string,
   ): Promise<Awaited<ReturnType<APIClient["runs"]["retrieve"]>>>;
@@ -464,6 +469,11 @@ export class APIBackend implements Backend {
   async cancelConversation(conversationIdOrAgentId: string) {
     const client = await this.getClient();
     return client.conversations.cancel(conversationIdOrAgentId);
+  }
+
+  async cancelRun(agentId: string, runId: string) {
+    const client = await this.getClient();
+    return client.agents.messages.cancel(agentId, { run_ids: [runId] });
   }
 
   async retrieveRun(runId: string) {

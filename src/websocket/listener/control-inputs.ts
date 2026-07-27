@@ -392,6 +392,7 @@ export async function handleAbortMessageInput(
       agentId: string,
       conversationId: string,
     ) => Promise<void>;
+    cancelRun: (agentId: string, runId: string) => Promise<void>;
   }> = {},
 ): Promise<boolean> {
   const resolvedDeps = {
@@ -411,6 +412,12 @@ export async function handleAbortMessageInput(
           ? agentId
           : conversationId;
       await getBackend().cancelConversation(cancelId);
+    },
+    cancelRun: async (agentId: string, runId: string) => {
+      const result = await getBackend().cancelRun(agentId, runId);
+      if (result[runId] !== "cancelled") {
+        throw new Error(`Backend did not cancel run ${runId}`);
+      }
     },
     ...deps,
   };
@@ -439,7 +446,9 @@ export async function handleAbortMessageInput(
     return false;
   }
 
-  const cancellation = scopedRuntime.turnLifecycle.requestCancellation();
+  const cancellation = scopedRuntime.turnLifecycle.requestCancellation({
+    waitForExternalSettlement: hasActiveTurn && Boolean(scopedRuntime.agentId),
+  });
   const interruptedRunId = cancellation.runId;
   const pendingRequestsSnapshot = hasPendingApprovals
     ? resolvedDeps.getPendingControlRequests(listener, scope)
@@ -539,10 +548,39 @@ export async function handleAbortMessageInput(
   const cancelConversationId = scopedRuntime.conversationId;
   const cancelAgentId = scopedRuntime.agentId;
   if (cancelAgentId) {
-    void resolvedDeps
-      .cancelConversation(cancelAgentId, cancelConversationId)
+    const cancelRunId = interruptedRunId ?? params.command.run_id ?? null;
+    // Target the interrupted run when possible so this abort can never select
+    // a replacement turn. Older backends may reject run-scoped cancellation;
+    // the lifecycle fence also makes the conversation-wide fallback safe.
+    const backendCancellation = cancelRunId
+      ? resolvedDeps
+          .cancelRun(cancelAgentId, cancelRunId)
+          .catch(() =>
+            resolvedDeps.cancelConversation(
+              cancelAgentId,
+              cancelConversationId,
+            ),
+          )
+      : resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId);
+    void backendCancellation
       .catch(() => {
         // Fire-and-forget
+      })
+      .finally(() => {
+        if (!cancellation.lease) {
+          return;
+        }
+        const settlement = scopedRuntime.turnLifecycle.settleCancellation(
+          cancellation.lease,
+        );
+        if (settlement.released) {
+          resolvedDeps.scheduleQueuePump(
+            scopedRuntime,
+            params.socket,
+            params.opts as StartListenerOptions,
+            params.processQueuedTurn,
+          );
+        }
       });
   }
 

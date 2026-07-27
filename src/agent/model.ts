@@ -32,6 +32,9 @@ export type ModelReasoningEffort =
   | "xhigh"
   | "max";
 
+/** Null means use the upstream provider's default and omit reasoning_effort. */
+export type ModelReasoningSelection = ModelReasoningEffort | null;
+
 type ReasoningCapabilities = {
   supported_efforts?: ModelReasoningEffort[] | null;
   mandatory?: boolean;
@@ -197,11 +200,51 @@ export function getReasoningTierOptionsFromCapabilities(
   ).map((effort) => ({ effort, modelId: modelHandle }));
 }
 
+export function withReasoningEffortUpdateArg(
+  updateArgs: Record<string, unknown> | undefined,
+  reasoningEffort: ModelReasoningSelection | undefined,
+): Record<string, unknown> | undefined {
+  if (reasoningEffort === undefined) return updateArgs;
+  return {
+    ...(updateArgs ?? {}),
+    reasoning_effort: reasoningEffort,
+  };
+}
+
+export function getByokOpenAIReasoningTierOptions(
+  modelHandle: string,
+  options?: {
+    registryHandle?: string;
+    contextWindow?: number;
+    reasoningCapabilities?: ReasoningCapabilities | null;
+  },
+): Array<{
+  effort: ModelReasoningSelection;
+  modelId: string;
+}> {
+  const registryHandle = options?.registryHandle ?? modelHandle;
+  const hasReportedCapabilities = options?.reasoningCapabilities != null;
+  const knownOptions = hasReportedCapabilities
+    ? getReasoningTierOptionsFromCapabilities(
+        registryHandle,
+        options.reasoningCapabilities,
+      )
+    : getReasoningTierOptionsForHandle(registryHandle, options?.contextWindow);
+  const efforts =
+    hasReportedCapabilities || knownOptions.length > 0
+      ? knownOptions.map((option) => option.effort)
+      : REASONING_EFFORT_ORDER;
+  return [null, ...efforts].map((effort) => ({
+    effort,
+    modelId: modelHandle,
+  }));
+}
+
 export function getPreferredReasoningOption<
-  T extends { effort: ModelReasoningEffort },
+  T extends { effort: ModelReasoningSelection },
 >(options: T[], selectedEffort: unknown): T | undefined {
   return (
-    (typeof selectedEffort === "string"
+    (selectedEffort === null || typeof selectedEffort === "string"
       ? options.find((option) => option.effort === selectedEffort)
       : undefined) ??
     options.find((option) => option.effort === "medium") ??

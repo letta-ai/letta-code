@@ -21,7 +21,7 @@ Remote environment options:
 App Server options:
   --listen [url]  Accept App Server connections. If URL is omitted, binds to an available loopback port
   --openai-api  Serve OpenAI-compatible /v1/models and /v1/chat/completions routes (each agent is a model)
-  --ws-auth <mode>  Authentication for non-loopback listeners: capability-token or signed-bearer-token
+  --ws-auth <mode>  Authentication for non-loopback listeners and Origin-bearing native clients: capability-token or signed-bearer-token
   --ws-token-file <path>  Absolute path to the capability-token file
   --ws-token-sha256 <hex>  Hex-encoded SHA-256 digest of the capability token
   --ws-shared-secret-file <path>  Absolute path to the shared secret file for signed JWT bearer tokens

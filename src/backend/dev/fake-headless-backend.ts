@@ -390,6 +390,28 @@ export class HeadlessBackend implements Backend {
     return { status: "cancelled" } as never;
   }
 
+  async cancelRun(...args: Parameters<Backend["cancelRun"]>) {
+    const [agentId, runId] = args;
+    const run = this.runs.get(runId);
+    if (!run || run.agent_id !== agentId || isTerminalRun(run)) {
+      return { [runId]: "failed" } as never;
+    }
+
+    if (run.conversation_id) {
+      this.store.settleInterruptedToolCalls(run.conversation_id, { agentId });
+    } else {
+      this.store.settleInterruptedToolCalls(agentId);
+    }
+    const controller = this.runControllerByRunId.get(runId);
+    this.recordRunChunk(runId, {
+      message_type: "stop_reason",
+      stop_reason: "cancelled",
+    } as LettaStreamingResponse);
+    this.completeRun(runId, "cancelled");
+    controller?.abort();
+    return { [runId]: "cancelled" } as never;
+  }
+
   async retrieveRun(runId: string) {
     const run = this.runs.get(runId);
     if (!run) throw new LocalBackendNotFoundError("Run", runId);

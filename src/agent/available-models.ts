@@ -1,5 +1,6 @@
 import { getBackend } from "@/backend";
 import { refreshByokProviders } from "@/backend/api/providers";
+import { isOpenAICompatibleProxyEndpoint } from "@/utils/openai-endpoint";
 import type { ModelReasoningEffort } from "./model";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -10,6 +11,9 @@ export type AvailableModel = {
   maxContextWindow?: number;
   maxOutputTokens?: number;
   providerType?: string;
+  providerCategory?: string;
+  modelEndpoint?: string;
+  openAICompatibleProxy?: boolean;
 };
 
 export type ReasoningCapabilities = {
@@ -22,6 +26,7 @@ type CacheEntry = {
   contextWindows: Map<string, number>; // handle -> max_context_window
   providerTypes: Map<string, string>; // handle -> provider_type
   reasoningCapabilities: Map<string, ReasoningCapabilities>; // handle -> reasoning capabilities
+  openAICompatibleProxyHandles: Set<string>;
   models: AvailableModel[];
   fetchedAt: number;
 };
@@ -40,6 +45,7 @@ function isFresh(now = Date.now()) {
 export type AvailableModelHandlesResult = {
   handles: Set<string>;
   providerTypes: Map<string, string>;
+  openAICompatibleProxyHandles: Set<string>;
   models: AvailableModel[];
   source: "cache" | "network";
   fetchedAt: number;
@@ -101,6 +107,10 @@ export function getCachedModelReasoningCapabilities(): Map<
   return new Map(cache.reasoningCapabilities);
 }
 
+export function getCachedOpenAICompatibleProxyHandles(): Set<string> | null {
+  return cache ? new Set(cache.openAICompatibleProxyHandles) : null;
+}
+
 export function getCachedAvailableModels(): AvailableModel[] | null {
   return cache?.models.map((model) => ({ ...model })) ?? null;
 }
@@ -114,6 +124,7 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
   const contextWindows = new Map<string, number>();
   const providerTypes = new Map<string, string>();
   const reasoningCapabilities = new Map<string, ReasoningCapabilities>();
+  const openAICompatibleProxyHandles = new Set<string>();
   const modelsByHandle = new Map<string, AvailableModel>();
   for (const model of modelsList) {
     const modelRecord = model as unknown as Record<string, unknown>;
@@ -128,6 +139,21 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
           : undefined;
     if (model.handle && providerType) {
       providerTypes.set(model.handle, providerType);
+    }
+    const providerCategory =
+      typeof modelRecord.provider_category === "string"
+        ? modelRecord.provider_category
+        : undefined;
+    const modelEndpoint =
+      typeof modelRecord.model_endpoint === "string"
+        ? modelRecord.model_endpoint
+        : undefined;
+    const isOpenAICompatibleProxy =
+      providerCategory === "byok" &&
+      providerType === "openai" &&
+      isOpenAICompatibleProxyEndpoint(modelEndpoint);
+    if (model.handle && isOpenAICompatibleProxy) {
+      openAICompatibleProxyHandles.add(model.handle);
     }
     const capabilities = parseReasoningCapabilities(
       modelRecord.reasoning_capabilities,
@@ -151,6 +177,9 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
           ? { maxOutputTokens: model.max_tokens }
           : {}),
         ...(providerType ? { providerType } : {}),
+        ...(providerCategory ? { providerCategory } : {}),
+        ...(modelEndpoint ? { modelEndpoint } : {}),
+        ...(isOpenAICompatibleProxy ? { openAICompatibleProxy: true } : {}),
       };
       if (!modelsByHandle.has(model.handle)) {
         modelsByHandle.set(model.handle, availableModel);
@@ -162,6 +191,7 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
     contextWindows,
     providerTypes,
     reasoningCapabilities,
+    openAICompatibleProxyHandles,
     models: [...modelsByHandle.values()],
     fetchedAt: Date.now(),
   };
@@ -209,6 +239,7 @@ export async function getAvailableModelHandles(options?: {
     return {
       handles: cache.handles,
       providerTypes: cache.providerTypes,
+      openAICompatibleProxyHandles: cache.openAICompatibleProxyHandles,
       models: cache.models,
       source: "cache",
       fetchedAt: cache.fetchedAt,
@@ -220,6 +251,7 @@ export async function getAvailableModelHandles(options?: {
     return {
       handles: entry.handles,
       providerTypes: entry.providerTypes,
+      openAICompatibleProxyHandles: entry.openAICompatibleProxyHandles,
       models: entry.models,
       source: "network",
       fetchedAt: entry.fetchedAt,
@@ -256,6 +288,7 @@ export async function getAvailableModelHandles(options?: {
   return {
     handles: entry.handles,
     providerTypes: entry.providerTypes,
+    openAICompatibleProxyHandles: entry.openAICompatibleProxyHandles,
     models: entry.models,
     source: "network",
     fetchedAt: entry.fetchedAt,

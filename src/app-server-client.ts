@@ -1,6 +1,12 @@
+import { isAppServerInfoResponseMessage } from "./types/app-server-info";
+
+export type { AppServerInfoResponseMessage } from "./types/app-server-info";
+export { isAppServerInfoResponseMessage } from "./types/app-server-info";
+
 import type {
   AbortMessageCommand,
   AbortMessageResponseMessage,
+  AppServerInfoResponseMessage,
   ConversationListCommand,
   ConversationListResponseMessage,
   ExternalToolCallRequestMessage,
@@ -19,6 +25,18 @@ import type {
 
 export type AppServerChannel = "control" | "stream";
 
+export type AppServerRawCommand = Record<string, unknown> & {
+  type: string;
+  request_id?: string;
+};
+
+export type AppServerRawResponse = Record<string, unknown> & {
+  type: string;
+  request_id?: string;
+};
+
+export type AppServerSendCommand = WsProtocolCommand | AppServerRawCommand;
+
 /**
  * Receives every parsed protocol frame from both app-server websocket channels.
  * Treat this as the primary event stream: app-server may emit replay or turn
@@ -30,8 +48,8 @@ export type AppServerMessageHandler = (
   channel: AppServerChannel,
 ) => void;
 
-/** Called synchronously before a protocol command is written to the control socket. */
-export type AppServerSendHandler = (command: WsProtocolCommand) => void;
+/** Called synchronously before a typed or raw command is written to the control socket. */
+export type AppServerSendHandler = (command: AppServerSendCommand) => void;
 
 export interface AppServerDisconnectEvent {
   channel: AppServerChannel;
@@ -95,6 +113,13 @@ export type AppServerRequestCommandWithId = AppServerRequestCommand & {
 export type AppServerRequestBody = Record<string, unknown> & {
   request_id?: string;
 };
+
+export interface AppServerRawRequestOptions<
+  TResponse extends AppServerRawResponse,
+> {
+  timeoutMs?: number;
+  predicate: (message: unknown) => message is TResponse;
+}
 
 type PendingRequest = {
   resolve: (message: WsProtocolMessage) => void;
@@ -384,10 +409,54 @@ export class AppServerClient {
   }
 
   send(command: WsProtocolCommand): void {
+    this.writeCommand(command);
+  }
+
+  private writeCommand(command: AppServerSendCommand): void {
     for (const handler of this.sendHandlers) {
       handler(command);
     }
     this.control.send(JSON.stringify(command));
+  }
+
+  /**
+   * Send a forward-compatible protocol command from a compatibility adapter.
+   * Prefer the typed wrappers above this boundary for normal product code.
+   */
+  sendRaw(command: AppServerRawCommand): void {
+    this.writeCommand(command);
+  }
+
+  /**
+   * Request a forward-compatible response without mirroring the full protocol
+   * union in a downstream compatibility adapter.
+   */
+  requestRaw<TResponse extends AppServerRawResponse>(
+    command: AppServerRawCommand & { request_id: string },
+    options: AppServerRawRequestOptions<TResponse>,
+  ): Promise<TResponse> {
+    const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(command.request_id);
+        reject(new Error(`Timed out waiting for ${command.request_id}`));
+      }, timeoutMs);
+
+      this.pending.set(command.request_id, {
+        resolve: (message) => resolve(message as unknown as TResponse),
+        reject,
+        predicate: options.predicate,
+        timeout,
+      });
+
+      try {
+        this.sendRaw(command);
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pending.delete(command.request_id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   }
 
   request<TMessage extends WsProtocolMessage = WsProtocolMessage>(
@@ -449,6 +518,24 @@ export class AppServerClient {
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
+  }
+
+  info(
+    options: Omit<
+      AppServerRequestOptions<AppServerInfoResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<AppServerInfoResponseMessage> {
+    return this.request(
+      {
+        type: "app_server_info",
+        request_id: this.nextRequestId("app-server-info"),
+      },
+      {
+        ...options,
+        predicate: isAppServerInfoResponseMessage,
+      },
+    );
   }
 
   runtimeStart(

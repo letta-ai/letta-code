@@ -7,7 +7,6 @@ import type {
   SimpleStreamOptions,
   Tool,
   TSchema,
-  Usage,
 } from "@earendil-works/pi-ai";
 import { isContextOverflow, Type } from "@earendil-works/pi-ai";
 
@@ -48,9 +47,12 @@ import type {
   ProviderTurnInput,
 } from "./provider-turn-executor";
 import {
+  contextTokensFromUsage,
+  estimateProviderContextTokens,
   providerLettaChunk,
   providerLocalMessage,
   providerStreamPart,
+  shouldCompactForContextPressure,
 } from "./provider-turn-executor";
 
 const LOCAL_PROVIDER_MAX_RETRIES = 3;
@@ -65,6 +67,19 @@ export type PiStreamFunction = (
 ) => AsyncIterable<AssistantMessageEvent> & {
   result(): Promise<AssistantMessage>;
 };
+
+export interface LocalContextPressure {
+  contextTokens: number;
+  contextWindow: number;
+  phase: "preflight" | "post_turn";
+  source: "estimate" | "usage";
+}
+
+interface LocalCompactionResult {
+  uiMessages: LocalMessage[];
+  summary: string;
+  stats?: LocalCompactionStats;
+}
 
 export interface PiStreamAdapterOptions {
   stream?: PiStreamFunction;
@@ -85,14 +100,10 @@ export interface PiStreamAdapterOptions {
     summary: string;
     stats?: LocalCompactionStats;
   } | null>;
-  onContextUsage?: (
+  onContextPressure?: (
     input: ProviderTurnInput,
-    usage: Usage,
-  ) => Promise<{
-    uiMessages: LocalMessage[];
-    summary: string;
-    stats?: LocalCompactionStats;
-  } | null>;
+    pressure: LocalContextPressure,
+  ) => Promise<LocalCompactionResult | null>;
   onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
   onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
 }
@@ -471,7 +482,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
   private readonly localProviderAuthStorageDir?: string;
   private readonly modelsRuntime: LocalPiModelsRuntime;
   private readonly onContextWindowOverflow?: PiStreamAdapterOptions["onContextWindowOverflow"];
-  private readonly onContextUsage?: PiStreamAdapterOptions["onContextUsage"];
+  private readonly onContextPressure?: PiStreamAdapterOptions["onContextPressure"];
   private readonly onLlmStart?: PiStreamAdapterOptions["onLlmStart"];
   private readonly onLlmEnd?: PiStreamAdapterOptions["onLlmEnd"];
 
@@ -492,7 +503,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     this.abortSignal = options.abortSignal;
     this.localProviderAuthStorageDir = options.localProviderAuthStorageDir;
     this.onContextWindowOverflow = options.onContextWindowOverflow;
-    this.onContextUsage = options.onContextUsage;
+    this.onContextPressure = options.onContextPressure;
     this.onLlmStart = options.onLlmStart;
     this.onLlmEnd = options.onLlmEnd;
   }
@@ -512,6 +523,44 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       summary: compaction.summary,
       ...(compaction.stats ? { compaction_stats: compaction.stats } : {}),
     } as never);
+  }
+
+  private async compactBeforeProviderCall(
+    input: ProviderTurnInput,
+  ): Promise<LocalCompactionResult | null> {
+    if (!this.onContextPressure) return null;
+
+    const contextTokens = estimateProviderContextTokens(input);
+    if (contextTokens === undefined) return null;
+
+    // Resolve through the same per-backend Models runtime as streamOnce. The
+    // provider-published Model remains the source of truth for contextWindow;
+    // Letta owns only the harness policy deciding when to compact around it.
+    const localModel = await resolveAvailableLocalModelForTurn({
+      model: input.agent.model,
+      modelSettings: input.agent.model_settings,
+      storageDir: this.localProviderAuthStorageDir,
+      modelsRuntime: this.modelsRuntime,
+    });
+    const resolved = await resolvePiModelForAgent(
+      localModel.model,
+      localModel.modelSettings,
+      {
+        localProviderAuthStorageDir: this.localProviderAuthStorageDir,
+        modelsRuntime: this.modelsRuntime,
+      },
+    );
+    const contextWindow = resolved.model.contextWindow;
+    if (!shouldCompactForContextPressure({ contextTokens, contextWindow })) {
+      return null;
+    }
+
+    return this.onContextPressure(input, {
+      contextTokens,
+      contextWindow,
+      phase: "preflight",
+      source: "estimate",
+    });
   }
 
   private async *streamOnce(
@@ -627,6 +676,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       let streamError: unknown;
       let finalMessage: AssistantMessage | undefined;
+      let finalLocalMessage: LocalAssistantMessage | undefined;
       for await (const part of result) {
         if (part.type === "error") {
           const error = new PiProviderError(part.error);
@@ -640,9 +690,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         }
         if (part.type === "done") {
           finalMessage = part.message;
-          yield providerLocalMessage(
-            toLocalAssistantMessage(part.message, input),
-          );
+          finalLocalMessage = toLocalAssistantMessage(part.message, input);
+          yield providerLocalMessage(finalLocalMessage);
         }
         yield providerStreamPart(part);
       }
@@ -669,8 +718,31 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ) {
         throw new PiProviderError(finalMessage);
       }
-      if (this.onContextUsage) {
-        const compaction = await this.onContextUsage(input, finalMessage.usage);
+      if (this.onContextPressure) {
+        const usageContextTokens = contextTokensFromUsage(finalMessage.usage);
+        const contextTokens =
+          usageContextTokens ??
+          estimateProviderContextTokens({
+            ...input,
+            // Provider usage includes the completed assistant response. Match
+            // that scope when we fall back to estimation; using the original
+            // pre-response input here would postpone compaction by one turn.
+            uiMessages: [
+              ...input.uiMessages,
+              finalLocalMessage ?? toLocalAssistantMessage(finalMessage, input),
+            ],
+          });
+        const contextWindow = resolved.model.contextWindow;
+        const compaction =
+          shouldCompactForContextPressure({ contextTokens, contextWindow }) &&
+          contextTokens !== undefined
+            ? await this.onContextPressure(input, {
+                contextTokens,
+                contextWindow,
+                phase: "post_turn",
+                source: usageContextTokens === undefined ? "estimate" : "usage",
+              })
+            : null;
         if (compaction) {
           yield* this.emitCompactionChunks(compaction, "context_window_limit");
         }
@@ -692,10 +764,25 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
   async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
     let activeInput = input;
+    let preflightCompactionChecked = false;
     let contextOverflowCompactions = 0;
     let transientRetries = 0;
 
     while (true) {
+      if (!preflightCompactionChecked) {
+        // Check once per turn. If compaction still cannot make the request fit,
+        // the provider overflow path remains the bounded recovery mechanism.
+        // Reclassifying the eventual output limit itself as overflow would
+        // recreate the behavior deliberately removed in #3355.
+        preflightCompactionChecked = true;
+        const compaction = await this.compactBeforeProviderCall(activeInput);
+        if (compaction) {
+          activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
+          yield* this.emitCompactionChunks(compaction, "context_window_limit");
+          continue;
+        }
+      }
+
       let emittedModelOutput = false;
       try {
         for await (const event of this.streamOnce(activeInput)) {

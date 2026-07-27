@@ -49,6 +49,10 @@ function qwenState(): FakeOllamaState {
       },
       "smol-text:3b": {
         capabilities: ["completion", "tools"],
+        model_info: {
+          "general.architecture": "smol",
+          "smol.context_length": 32768,
+        },
       },
     },
     requests: [],
@@ -85,13 +89,14 @@ describe("createOllamaPiProvider", () => {
     expect(qwen).toBeDefined();
     expect(qwen?.input).toEqual(["text", "image"]);
     expect(qwen?.reasoning).toBe(true);
-    expect(qwen?.contextWindow).toBe(262144);
+    expect(qwen?.contextWindow).toBe(128000);
     expect(qwen?.api).toBe("openai-completions");
     expect(qwen?.baseUrl).toBe("http://localhost:11434/v1");
 
     const text = provider.getModels().find((m) => m.id === "smol-text:3b");
     expect(text?.input).toEqual(["text"]);
     expect(text?.reasoning).toBe(false);
+    expect(text?.contextWindow).toBe(32768);
   });
 
   test("skips /api/show when the tag digest is unchanged", async () => {
@@ -208,6 +213,7 @@ describe("createOllamaPiProvider as Ollama Cloud", () => {
     const qwen = provider.getModels().find((m) => m.id === "qwen3.6:27b");
     expect(qwen?.provider).toBe("ollama-cloud");
     expect(qwen?.input).toEqual(["text", "image"]);
+    expect(qwen?.contextWindow).toBe(128000);
     expect(authHeaders.every((header) => header === "Bearer cloud-key")).toBe(
       true,
     );

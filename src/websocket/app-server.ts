@@ -18,6 +18,7 @@ import {
   isOpenAiCompatPath,
 } from "@/websocket/app-server-openai";
 import { closeOpenAiBridgeRuntime } from "@/websocket/app-server-openai-turn";
+import { getAppServerInfoResponse } from "@/websocket/listener/commands/app-server-info";
 import {
   attachOpenListenerSocket,
   createRuntime,
@@ -377,6 +378,21 @@ export async function startAppServer(
       response.end("ok\n");
       return;
     }
+    if (requestUrl.pathname === "/app-server-info") {
+      const authError = authorizeUpgrade(request.headers, authPolicy);
+      if (authError) {
+        response.writeHead(authError.statusCode, {
+          "content-type": "application/json",
+        });
+        response.end(JSON.stringify({ error: authError.message }));
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      // Keep capability discovery identical across HTTP and WebSocket; HTTP
+      // transport owns correlation, so this request id is only a shape marker.
+      response.end(JSON.stringify(getAppServerInfoResponse("http-info")));
+      return;
+    }
     if (options.openaiApi && isOpenAiCompatPath(requestUrl.pathname)) {
       void handleOpenAiCompatRequest(request, response, {
         authPolicy,
@@ -390,14 +406,6 @@ export async function startAppServer(
 
   server.on("upgrade", (request, socket, head) => {
     const requestUrl = getRequestUrl(request, listen.host);
-    if (request.headers.origin) {
-      options.onLog?.(
-        `Rejecting app-server websocket request with Origin header: ${request.url ?? "/"}`,
-      );
-      rejectUpgrade(socket, 403, "Forbidden");
-      return;
-    }
-
     if (requestUrl.pathname !== listen.path && requestUrl.pathname !== "/") {
       rejectUpgrade(socket, 404, "Not Found");
       return;
@@ -415,6 +423,18 @@ export async function startAppServer(
         `Rejecting app-server websocket client: ${authError.message}`,
       );
       rejectUpgrade(socket, authError.statusCode, authError.message);
+      return;
+    }
+
+    // Browser WebSocket APIs cannot set Authorization headers, while native
+    // clients such as React Native may send both Authorization and Origin.
+    // authorizeUpgrade() also returns null when auth is disabled, so require
+    // an actual configured policy before treating the request as authenticated.
+    if (request.headers.origin !== undefined && authPolicy.mode === undefined) {
+      options.onLog?.(
+        `Rejecting unauthenticated app-server websocket request with Origin header: ${request.url ?? "/"}; native clients such as React Native must configure --ws-auth capability-token or --ws-auth signed-bearer-token`,
+      );
+      rejectUpgrade(socket, 403, "Forbidden");
       return;
     }
 

@@ -11,7 +11,7 @@ Run the local App Server using native v2 WebSocket frames.
 Options:
   --listen [url]  WebSocket listen URL. Defaults to an available loopback port
   --openai-api  Serve OpenAI-compatible /v1/models and /v1/chat/completions routes (each agent is a model)
-  --ws-auth <mode>  WebSocket auth mode for non-loopback listeners. Supported: capability-token, signed-bearer-token
+  --ws-auth <mode>  WebSocket auth for non-loopback listeners and Origin-bearing native clients. Supported: capability-token, signed-bearer-token
   --ws-token-file <path>  Absolute path to the capability-token file
   --ws-token-sha256 <hex>  Hex-encoded SHA-256 digest of the capability token
   --ws-shared-secret-file <path>  Absolute path to the shared secret file for signed JWT bearer tokens

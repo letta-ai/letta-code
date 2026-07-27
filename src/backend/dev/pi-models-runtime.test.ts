@@ -413,7 +413,7 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     });
     const entry = listed.find((model) => model.handle === "ollama/qwen3.6:27b");
     expect(entry).toBeDefined();
-    expect(entry?.max_context_window).toBe(262144);
+    expect(entry?.max_context_window).toBe(128000);
 
     const resolved = await resolvePiModelForAgent(
       "ollama/qwen3.6:27b",
@@ -425,7 +425,7 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     expect(resolved.model).toBe(runtime.getModel("ollama", "qwen3.6:27b")!);
     expect(resolved.model.input).toEqual(["text", "image"]);
     expect(resolved.model.reasoning).toBe(true);
-    expect(resolved.model.contextWindow).toBe(262144);
+    expect(resolved.model.contextWindow).toBe(128000);
 
     // Identity survives the real selection path: settings persisted from
     // the published model (restating its values) must not force a clone.
@@ -441,6 +441,15 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
     expect(resolvedWithSettings.model).toBe(
       runtime.getModel("ollama", "qwen3.6:27b")!,
     );
+
+    // /context-limit remains an explicit per-conversation escape hatch when
+    // the user's Ollama runtime is configured above the conservative default.
+    const resolvedWithExplicitContext = await resolvePiModelForAgent(
+      "ollama/qwen3.6:27b",
+      { context_window_limit: 262144 },
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    expect(resolvedWithExplicitContext.model.contextWindow).toBe(262144);
   });
 
   test("vision model with no name marker keeps base64 image_url in the request payload", async () => {
@@ -641,6 +650,60 @@ describe("LocalPiModelsRuntime + Ollama provider", () => {
       runtime.getModel("llama-cpp", "/models/qwen3.6-27b.gguf")!,
     );
     expect(resolved.model.input).toEqual(["text", "image"]);
+  });
+
+  test("unloaded llama.cpp router models preserve provider identity from listing through turns", async () => {
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        requests.push(url.pathname);
+        if (url.pathname === "/models") {
+          return Response.json({
+            data: [
+              {
+                id: "Qwen3.6-27B",
+                status: { value: "unloaded" },
+                architecture: { input_modalities: ["text", "image"] },
+                meta: { n_ctx: 32768 },
+              },
+            ],
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    servers.push({ url: "", chatBodies: [], stop: () => server.stop(true) });
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-models-runtime-"));
+    storageDirs.push(storageDir);
+    await createOrUpdateLocalProvider({
+      providerType: "llama_cpp",
+      providerName: "llama-cpp",
+      apiKey: "not-needed",
+      baseURL: `http://localhost:${server.port}`,
+      storageDir,
+    });
+    const runtime = new LocalPiModelsRuntime({ storageDir });
+
+    const listed = await listLocalModels(storageDir, {
+      fetch: failingDiscoveryFetch,
+      modelsRuntime: runtime,
+    });
+    const entry = listed.find(
+      (model) => model.handle === "llama.cpp/Qwen3.6-27B",
+    );
+    expect(entry?.max_context_window).toBe(32768);
+
+    const published = runtime.getModel("llama-cpp", "Qwen3.6-27B")!;
+    const resolved = await resolvePiModelForAgent(
+      "llama.cpp/Qwen3.6-27B",
+      {},
+      { localProviderAuthStorageDir: storageDir, modelsRuntime: runtime },
+    );
+    expect(resolved.model).toBe(published);
+    expect(resolved.model.input).toEqual(["text", "image"]);
+    expect(requests).not.toContain("/v1/models");
   });
 
   test("refreshAll never probes unconfigured remote endpoints or mods", async () => {

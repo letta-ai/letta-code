@@ -3,6 +3,7 @@ import {
   isChannelAccountCreateCommand,
   isChannelAccountUpdateCommand,
   isChannelSetConfigCommand,
+  isUpdateModelCommand,
   parseServerMessage,
 } from "@/websocket/listener/protocol-inbound";
 
@@ -17,6 +18,84 @@ describe("app-server protocol hard cut", () => {
   ])("rejects legacy command %s", (type) => {
     const parsed = parseServerMessage(Buffer.from(JSON.stringify({ type })));
     expect(parsed).toBeNull();
+  });
+});
+
+describe("input protocol-inbound validators", () => {
+  test("accepts create_message with interactive tools excluded", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            exclude_interactive_tools: true,
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("input");
+    if (parsed?.type === "input" && parsed.payload.kind === "create_message") {
+      expect(parsed.payload.exclude_interactive_tools).toBe(true);
+    }
+  });
+
+  test("rejects non-boolean exclude_interactive_tools", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "default" },
+          payload: {
+            kind: "create_message",
+            messages: [],
+            exclude_interactive_tools: "yes",
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("__invalid_input");
+    if (parsed?.type === "__invalid_input") {
+      expect(parsed.reason).toContain(
+        "exclude_interactive_tools must be boolean",
+      );
+    }
+  });
+});
+
+describe("update model protocol-inbound validator", () => {
+  const base = {
+    type: "update_model",
+    request_id: "model-1",
+    runtime: { agent_id: "agent-1", conversation_id: "default" },
+  };
+
+  test("accepts explicit proxy effort and provider Default", () => {
+    expect(
+      isUpdateModelCommand({
+        ...base,
+        payload: { model_handle: "proxy/model", reasoning_effort: "high" },
+      }),
+    ).toBe(true);
+    expect(
+      isUpdateModelCommand({
+        ...base,
+        payload: { model_handle: "proxy/model", reasoning_effort: null },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects unknown effort values", () => {
+    expect(
+      isUpdateModelCommand({
+        ...base,
+        payload: { model_handle: "proxy/model", reasoning_effort: "ultra" },
+      }),
+    ).toBe(false);
   });
 });
 
@@ -96,7 +175,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "conversation_fork",
       request_id: "r11",
       conversation_id: "conv-1",
-      body: { hidden: true },
+      body: { hidden: true, message_id: "msg-1" },
     },
     {
       type: "conversation_messages_list",
@@ -178,6 +257,24 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r9",
       conversation_id: "conv-1",
       body: [],
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { message_id: 123 },
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { message_id: "" },
+    },
+    {
+      type: "conversation_fork",
+      request_id: "r9",
+      conversation_id: "conv-1",
+      body: { hidden: "yes" },
     },
     {
       type: "conversation_messages_list",
