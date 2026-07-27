@@ -967,16 +967,13 @@ function inferAccountIdFromChannelTurnSources(params: {
       source.channel !== params.input.channel ||
       source.chatId !== chatId ||
       source.agentId !== params.scope.agentId ||
-      source.conversationId !== params.scope.conversationId
+      source.conversationId !== params.scope.conversationId ||
+      (params.input.threadId !== null &&
+        source.threadId !== params.input.threadId)
     ) {
       continue;
     }
-    if (
-      params.input.threadId !== undefined &&
-      (source.threadId ?? null) !== (params.input.threadId ?? null)
-    ) {
-      continue;
-    }
+
     if (source.accountId?.trim()) {
       accountIds.add(source.accountId.trim());
     }
@@ -1136,7 +1133,10 @@ export async function message_channel(
       const requestThreadId =
         input.action === "download-file"
           ? input.threadId
-          : (inferredThreadId ?? route.threadId ?? input.threadId);
+          : (inferredThreadId ??
+            (input.channel === "telegram" && route.chatType === "direct"
+              ? input.threadId
+              : (route.threadId ?? input.threadId)));
       executionContext = {
         request: buildMessageChannelRequest(
           input,

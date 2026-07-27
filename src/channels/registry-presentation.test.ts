@@ -4,7 +4,10 @@ import {
   __testOverrideSavePendingControlRequestStore,
   clearPendingControlRequestStore,
 } from "@/channels/pending-control-requests";
-import { buildSlackConversationSummary } from "@/channels/registry-presentation";
+import {
+  buildDirectReplyOptions,
+  buildSlackConversationSummary,
+} from "@/channels/registry-presentation";
 
 beforeEach(() => {
   __testOverrideLoadPendingControlRequestStore(null);
@@ -16,6 +19,27 @@ afterEach(() => {
   __testOverrideLoadPendingControlRequestStore(null);
   __testOverrideSavePendingControlRequestStore(null);
   clearPendingControlRequestStore();
+});
+
+describe("buildDirectReplyOptions", () => {
+  test("anchors replies to the message while preserving the thread route", () => {
+    expect(
+      buildDirectReplyOptions({
+        messageId: "1712800000.000200",
+        threadId: "1712790000.000050",
+      }),
+    ).toEqual({
+      replyToMessageId: "1712800000.000200",
+      threadId: "1712790000.000050",
+    });
+  });
+
+  test("keeps the thread route when only a thread id is present", () => {
+    expect(buildDirectReplyOptions({ threadId: "42" })).toEqual({
+      replyToMessageId: undefined,
+      threadId: "42",
+    });
+  });
 });
 
 describe("buildSlackConversationSummary", () => {

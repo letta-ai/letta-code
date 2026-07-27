@@ -8,6 +8,7 @@ import {
 } from "./access-control";
 import { handleChannelFeedbackCommand } from "./feedback";
 import { getChannelDisplayName } from "./plugin-registry";
+import { buildDirectReplyOptions } from "./registry-presentation";
 import type {
   ChannelAdapter,
   ChannelModelPickerData,
@@ -857,7 +858,7 @@ export async function tryHandleChannelSlashCommand(
     await adapter.sendDirectReply(
       msg.chatId,
       buildUnsupportedChannelCommandMessage(msg.channel, command),
-      msg.threadId ? { replyToMessageId: msg.threadId } : undefined,
+      buildDirectReplyOptions(msg),
     );
     return true;
   }
@@ -874,7 +875,7 @@ export async function tryHandleChannelSlashCommand(
         canonicalName,
         options.commandGate,
       ),
-      msg.threadId ? { replyToMessageId: msg.threadId } : undefined,
+      buildDirectReplyOptions(msg),
     );
     return true;
   }

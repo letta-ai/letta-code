@@ -606,7 +606,7 @@ describe("MessageChannel Telegram", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  test("infers accountId from channel turn source for duplicate Telegram chat routes", async () => {
+  test("infers accountId and private topic from channel turn source for duplicate Telegram chat routes", async () => {
     const registry = new ChannelRegistry();
 
     const oldSendMessage = mock(async () => ({ messageId: "old-msg" }));
@@ -654,7 +654,7 @@ describe("MessageChannel Telegram", () => {
       action: "send",
       channel: "telegram",
       chat_id: "7952253975",
-      message: "hello new bot",
+      message: "hello private topic",
       parentScope: {
         agentId: "agent-1",
         conversationId: "default",
@@ -664,6 +664,7 @@ describe("MessageChannel Telegram", () => {
           channel: "telegram",
           accountId: "new-account",
           chatId: "7952253975",
+          threadId: "175380",
           agentId: "agent-1",
           conversationId: "default",
         },
@@ -676,9 +677,9 @@ describe("MessageChannel Telegram", () => {
       channel: "telegram",
       accountId: "new-account",
       chatId: "7952253975",
-      text: "hello new bot",
+      text: "hello private topic",
       replyToMessageId: undefined,
-      threadId: null,
+      threadId: "175380",
       mediaPath: undefined,
       fileName: undefined,
       title: undefined,

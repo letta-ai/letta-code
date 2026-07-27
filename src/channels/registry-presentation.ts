@@ -243,7 +243,7 @@ export function buildDirectReplyOptions(
 ): { replyToMessageId?: string; threadId?: string | null } | undefined {
   if (!msg.messageId && !msg.threadId) return undefined;
   return {
-    replyToMessageId: msg.threadId ?? msg.messageId ?? undefined,
+    replyToMessageId: msg.messageId ?? undefined,
     threadId: msg.threadId ?? null,
   };
 }
