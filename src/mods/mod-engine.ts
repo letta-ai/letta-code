@@ -219,6 +219,7 @@ export interface LoadLocalModsOptions extends ResolveLocalModSourcesOptions {
   generation?: number;
   onChange?: () => void;
   onDiagnostic?: (diagnostic: ModDiagnostic) => void;
+  onRegistryCreated?: (registry: LocalModRegistry) => void;
   registerCapabilitiesGlobally?: boolean;
   reservedToolNames?: Iterable<string>;
 }
@@ -1407,6 +1408,7 @@ export async function loadLocalMods(
     capabilities,
     options.registerCapabilitiesGlobally !== false,
   );
+  options.onRegistryCreated?.(registry);
 
   for (const source of sources) {
     for (const diagnostic of source.diagnostics ?? []) {
@@ -1758,6 +1760,13 @@ export function createModEngine(options: CreateModEngineOptions): ModEngine {
     const nextRegistry = await loadLocalMods({
       ...modOptions,
       generation: loadGeneration,
+      onRegistryCreated: (registry) => {
+        loadingRegistry = registry;
+        if (!disposed && loadGeneration === generation) {
+          activeRegistry = registry;
+          publish();
+        }
+      },
       onChange: () => {
         if (!disposed && loadingRegistry && loadGeneration === generation) {
           activeRegistry = loadingRegistry;
