@@ -34,7 +34,7 @@ Memory blocks are editable segments of the system prompt. Each block has a name 
 
 ### External memory (skills, markdown, & other files)
 
-External memory is stored outside of the system prompt, including both skills (procedural memory), general-purpose files (markdown files, images, etc.), and shared memory
+External memory is stored outside of the system prompt, including both skills (procedural memory), general-purpose files (markdown files, images, etc.), and shared memory.
 
 - *Skills (procedural memory).* Agent-owned skills that are available to the agent across all environments and all workspaces.
 - *Markdown files.* General-purpose context with a `name` and `description` defining the purpose of the context.

@@ -9,7 +9,7 @@ import {
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 
 const HOSTED_EXTERNAL_MEMORY_INTRO =
-  "External memory is stored outside of the system prompt, including both skills (procedural memory), general-purpose files (markdown files, images, etc.), and shared memory";
+  "External memory is stored outside of the system prompt, including both skills (procedural memory), general-purpose files (markdown files, images, etc.), and shared memory.";
 const LOCAL_EXTERNAL_MEMORY_INTRO =
   "External memory is stored outside of the system prompt, including both skills (procedural memory) and general-purpose files (markdown files, images, etc.).";
 
