@@ -1,8 +1,7 @@
-import WebSocket from "ws";
+import type WebSocket from "ws";
 import { getChannelPluginConfig } from "@/channels/account-config";
 import { removeUserPlugin } from "@/channels/custom/scaffolding";
 import { getChannelPluginMetadata } from "@/channels/plugin-registry";
-import type { ChannelRegistryEvent } from "@/channels/registry-events";
 import { LEGACY_DEFAULT_CHANNEL_ID } from "@/channels/types";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import type {
@@ -30,11 +29,6 @@ import type {
   ChannelAccountSnapshot as ProtocolChannelAccountSnapshot,
   ChannelConfigSnapshot as ProtocolChannelConfigSnapshot,
 } from "@/types/protocol_v2";
-import { seedConversationWorkingDirectory } from "@/websocket/listener/cwd";
-import {
-  getOrCreateConversationPermissionModeStateRef,
-  persistPermissionModeMapForRuntime,
-} from "@/websocket/listener/permission-mode";
 import {
   isChannelAccountBindCommand,
   isChannelAccountCreateCommand,
@@ -57,8 +51,6 @@ import {
   isChannelTargetBindCommand,
   isChannelTargetsListCommand,
 } from "@/websocket/listener/protocol-inbound";
-import { emitDeviceStatusUpdate } from "@/websocket/listener/protocol-outbound";
-import { getOrCreateConversationRuntime } from "@/websocket/listener/runtime";
 import type { ListenerTransport } from "@/websocket/listener/transport";
 import type {
   IncomingMessage,
@@ -1320,71 +1312,4 @@ export async function handleChannelsProtocolCommand(
   }
 
   return true;
-}
-
-export function handleChannelRegistryEvent(
-  event: ChannelRegistryEvent,
-  socket: ListenerTransport,
-  runtime: ListenerRuntime,
-  safeSocketSend: SafeSocketSend,
-): void {
-  if (event.type === "pairings_updated") {
-    if (socket instanceof WebSocket) {
-      emitChannelPairingsUpdated(
-        socket,
-        safeSocketSend,
-        event.channelId as ChannelId,
-      );
-      emitChannelsUpdated(socket, safeSocketSend, event.channelId as ChannelId);
-    }
-    return;
-  }
-
-  if (event.type === "targets_updated") {
-    if (socket instanceof WebSocket) {
-      emitChannelTargetsUpdated(
-        socket,
-        safeSocketSend,
-        event.channelId as ChannelId,
-      );
-      emitChannelsUpdated(socket, safeSocketSend, event.channelId as ChannelId);
-    }
-    return;
-  }
-
-  if (event.type === "channel_account_state_updated") {
-    if (socket instanceof WebSocket) {
-      emitChannelAccountsUpdated(socket, safeSocketSend, {
-        channelId: event.channelId as ChannelId,
-        accountId: event.accountId,
-      });
-      emitChannelsUpdated(socket, safeSocketSend, event.channelId as ChannelId);
-    }
-    return;
-  }
-
-  const permissionModeState = getOrCreateConversationPermissionModeStateRef(
-    runtime,
-    event.agentId,
-    event.conversationId,
-  );
-  permissionModeState.mode = event.defaultPermissionMode;
-  persistPermissionModeMapForRuntime(runtime);
-
-  const seededWorkingDirectory = seedConversationWorkingDirectory(
-    runtime,
-    event.agentId,
-    event.conversationId,
-    runtime.bootWorkingDirectory,
-  );
-  if (seededWorkingDirectory) {
-    emitDeviceStatusUpdate(
-      socket,
-      getOrCreateConversationRuntime(
-        runtime,
-        event.agentId,
-        event.conversationId,
-      ),
-    );
-  }
 }

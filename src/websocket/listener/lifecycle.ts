@@ -1,11 +1,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
 import {
-  getSubagents,
-  subscribe as subscribeToSubagentState,
-  subscribeToStreamEvents as subscribeToSubagentStreamEvents,
-} from "@/agent/subagent-state";
-import {
   buildChannelCurrentModelMessage,
   buildChannelCurrentModelUnavailableMessage,
   buildChannelModelListMessage,
@@ -18,11 +13,7 @@ import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
 import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
-import {
-  startScheduler as startCronScheduler,
-  stopScheduler as stopCronScheduler,
-} from "@/cron/scheduler";
-import type { DequeuedBatch } from "@/queue/queue-runtime";
+import { startScheduler as startCronScheduler } from "@/cron/scheduler";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -34,16 +25,20 @@ import {
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
-import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { killAllTerminals } from "@/websocket/terminal-handler";
-import { rejectPendingApprovalResolvers } from "./approval";
+import {
+  getPendingApprovalRequestIds,
+  rejectPendingApprovalResolvers,
+  rejectPendingApprovalResolversForConnection,
+  replayPendingApprovalRequestsToConnection,
+} from "./approval";
 import { resolveListenerReconnectAuth } from "./auth";
 import {
   recoverActiveChannelTurn,
   uniqueChannelTurnSources,
 } from "./channel-turn-session";
 import { handleReloadCommand } from "./commands";
-import { handleChannelRegistryEvent } from "./commands/channels";
+import { handleChannelRegistryEvent } from "./commands/channel-registry-events";
 import {
   applyModelUpdateForRuntime,
   buildListModelsResponse,
@@ -51,9 +46,22 @@ import {
   resolveModelForUpdate,
 } from "./commands/model-toolset";
 import {
+  getOrCreateProcessTransport,
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  suspendListenerConnection,
+} from "./connection";
+import {
+  cleanupListenerConnection,
+  closeListenerRuntimeConnections,
+  createConnectionTurnProcessor,
+} from "./connection-lifecycle";
+import {
+  emitInitialConnectionState,
+  replaySubscribedConnectionState,
+} from "./connection-state-sync";
+import {
   INITIAL_RETRY_DELAY_MS,
-  isListenerPongStale,
-  LISTENER_HEARTBEAT_INTERVAL_MS,
   LISTENER_PONG_TIMEOUT_MS,
   MAX_RETRY_DELAY_MS,
   MAX_RETRY_DURATION_MS,
@@ -65,7 +73,6 @@ import {
 } from "./control-inputs";
 import {
   ensureConversationQueueRuntime,
-  findFallbackRuntime,
   getOrCreateScopedRuntime,
 } from "./conversation-runtime";
 import { loadPersistedCwdMap, seedConversationWorkingDirectory } from "./cwd";
@@ -74,6 +81,7 @@ import {
   rejectPendingExternalToolCalls,
 } from "./external-tools";
 import { createFileCommandSession } from "./file-commands";
+import { startConnectionHeartbeat } from "./heartbeat";
 import { createListenerMessageHandler } from "./message-router";
 import {
   disposeListenerModAdapter,
@@ -85,12 +93,12 @@ import {
   persistPermissionModeMapForRuntime,
 } from "./permission-mode";
 import {
-  emitDeviceStatusUpdate,
-  emitLoopStatusUpdate,
-  emitStateSync,
-  emitStreamDelta,
-  emitSubagentStateIfOpen,
-} from "./protocol-outbound";
+  clearProcessServices,
+  installProcessEventRouting,
+  invalidateProcessServices,
+  waitForProcessServicesSlot,
+} from "./process-services";
+import { emitDeviceStatusUpdate, emitStreamDelta } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
 import { recoverApprovalStateForSync } from "./recovery";
 import {
@@ -108,9 +116,7 @@ import {
   isListenerTransportOpen,
   type ListenerTransport,
   LocalListenerTransport,
-  RebindingListenerTransport,
 } from "./transport";
-import { handleIncomingMessage } from "./turn";
 import { escapeTaskNotificationSummary } from "./turn-events";
 import type {
   ConversationRuntime,
@@ -225,7 +231,6 @@ export async function replaySyncStateForRuntime(
   );
   const recoverFn =
     opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
-
   if (opts?.recoverApprovals ?? true) {
     try {
       await recoverFn(syncScopedRuntime, scope);
@@ -241,9 +246,13 @@ export async function replaySyncStateForRuntime(
     }
   }
 
-  emitStateSync(socket, listenerRuntime, scope, {
-    forceDeviceStatus: opts?.forceDeviceStatus,
-  });
+  replaySubscribedConnectionState(
+    listenerRuntime,
+    socket,
+    syncScopedRuntime,
+    scope,
+    opts?.forceDeviceStatus,
+  );
   (opts?.scheduleWarmupsAfterSync ?? scheduleListenerWarmupsAfterSync)(
     listenerRuntime,
     scope,
@@ -302,9 +311,7 @@ export async function recoverPendingChannelControlRequests(
       scope.agent_id,
       scope.conversation_id,
     );
-    const livePendingRequestIds = new Set(
-      runtime.pendingApprovalResolvers.keys(),
-    );
+    const livePendingRequestIds = getPendingApprovalRequestIds(runtime);
     const shouldRecoverFromBackend = entries.some(
       (entry) => !livePendingRequestIds.has(entry.event.requestId),
     );
@@ -405,7 +412,9 @@ function terminateControlAfterStreamClose(
   code: number,
   reason: Buffer,
 ): void {
-  if (runtime.streamSocket !== streamSocket) return;
+  if (runtime.streamSocket !== streamSocket) {
+    return;
+  }
   if (code === 1000 && reason.toString() === "Replaced by new connection") {
     runtime.intentionallyClosed = true;
   }
@@ -418,6 +427,9 @@ function terminateControlAfterStreamClose(
     (controlSocket.readyState === WebSocket.OPEN ||
       controlSocket.readyState === WebSocket.CONNECTING)
   ) {
+    // The stream channel has no independent replay or reconnect path. Closing
+    // control tears down the paired session so its normal reconnect/bootstrap
+    // flow restores one coherent connection instead of silently losing frames.
     controlSocket.terminate();
   }
 }
@@ -538,12 +550,7 @@ export async function wireChannelIngress(
   });
 
   registry.setEventHandler((event) => {
-    handleChannelRegistryEvent(
-      event,
-      listener.socket ?? socket,
-      listener,
-      safeSocketSend,
-    );
+    handleChannelRegistryEvent(event, socket, listener);
   });
 
   await recoverPendingChannelControlRequests(listener);
@@ -909,6 +916,14 @@ export function createRuntime(): ListenerRuntime {
     hasSuccessfulConnection: false,
     everConnected: false,
     sessionId: `listen-${crypto.randomUUID()}`,
+    nextConnectionOrdinal: 0,
+    connections: new Map(),
+    connectionIdsByRuntimeKey: new Map(),
+    processTransport: null,
+    processServicesStarted: false,
+    processServicesGeneration: 0,
+    processServicesReady: null,
+    processServicesReadyGeneration: null,
     eventSeqCounter: 0,
     queueEmitScheduled: false,
     pendingQueueEmitScope: undefined,
@@ -926,7 +941,6 @@ export function createRuntime(): ListenerRuntime {
     connectionId: null,
     connectionName: null,
     conversationRuntimes: new Map(),
-    approvalRuntimeKeyByRequestId: new Map(),
     memfsSyncedAgents: new Map(),
     secretsHydrationByAgent: new Map(),
     secretsHydrationFreshnessByAgent: new Map(),
@@ -944,9 +958,8 @@ export function stopRuntime(
   notifyStreamObserversRuntimeStopped(runtime);
   disposeListenerModAdapter(runtime);
   rejectPendingExternalToolCalls(runtime, "Listener runtime stopped");
-  setMessageQueueAdder(null); // Clear bridge for ALL stop paths
   runtime.intentionallyClosed = true;
-  clearRuntimeTimers(runtime);
+  invalidateProcessServices(runtime);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     rejectPendingApprovalResolvers(
       conversationRuntime,
@@ -959,7 +972,9 @@ export function stopRuntime(
     }
   }
   runtime.conversationRuntimes.clear();
-  runtime.approvalRuntimeKeyByRequestId.clear();
+  closeListenerRuntimeConnections(runtime, suppressCallbacks);
+  runtime.processServicesReady = null;
+  runtime.processServicesReadyGeneration = null;
   clearListenerWarmState(runtime);
   runtime.reminderStateByConversation.clear();
   runtime.skillSourcesByConversation.clear();
@@ -967,46 +982,6 @@ export function stopRuntime(
   runtime.systemPromptRecompileByConversation.clear();
   runtime.queuedSystemPromptRecompileByConversation.clear();
   stopAllWorktreeWatchers(runtime);
-  if (!runtime.socket) {
-    if (
-      runtime.streamSocket &&
-      (runtime.streamSocket.readyState === WebSocket.OPEN ||
-        runtime.streamSocket.readyState === WebSocket.CONNECTING)
-    ) {
-      runtime.streamSocket.close();
-    }
-    runtime.streamSocket = null;
-    runtime.streamTransport = null;
-    runtime.transport = null;
-    return;
-  }
-
-  const socket = runtime.socket;
-  runtime.socket = null;
-  runtime.transport = null;
-  const streamSocket = runtime.streamSocket;
-  runtime.streamSocket = null;
-  runtime.streamTransport = null;
-
-  // Stale runtimes being replaced should not emit callbacks/retries.
-  if (suppressCallbacks) {
-    socket.removeAllListeners();
-  }
-
-  if (
-    socket.readyState === WebSocket.OPEN ||
-    socket.readyState === WebSocket.CONNECTING
-  ) {
-    socket.close();
-  }
-
-  if (
-    streamSocket &&
-    (streamSocket.readyState === WebSocket.OPEN ||
-      streamSocket.readyState === WebSocket.CONNECTING)
-  ) {
-    streamSocket.close();
-  }
 }
 
 export async function startConnectedListenerRuntime(
@@ -1021,6 +996,8 @@ export async function startConnectedListenerRuntime(
     startHeartbeat?: boolean;
     startCronScheduler?: boolean;
     streamTransport?: ListenerTransport | null;
+    emitInitialState?: boolean;
+    wireChannelIngress?: typeof wireChannelIngress;
   } = {},
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
@@ -1037,8 +1014,7 @@ export async function startConnectedListenerRuntime(
   const shouldStartCronScheduler =
     options.startCronScheduler !== false && !cronSchedulerDisabledByEnv;
 
-  runtime.transport = transport;
-  runtime.streamTransport = options.streamTransport ?? null;
+  markListenerConnectionInitialized(runtime, opts.connectionId);
   safeEmitWsEvent("recv", "lifecycle", {
     type:
       getListenerTransportKind(transport) === "websocket"
@@ -1049,142 +1025,19 @@ export async function startConnectedListenerRuntime(
   runtime.everConnected = true;
   opts.onConnected(opts.connectionId);
 
-  if (runtime.conversationRuntimes.size === 0) {
-    // Don't emit device_status before the lookup store exists.
-    // Without a conversation runtime, the scope resolves to
-    // agent:__unknown__ which misses persisted CWD and permission
-    // mode entries. The web's sync command will create a scoped
-    // runtime and emit a properly-scoped device_status at that point.
-    emitLoopStatusUpdate(transport, runtime);
-  } else {
-    // Preserve existing per-conversation reminder and context state across
-    // pure transport reconnects; only refresh the live status snapshots here.
-    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      const scope = {
-        agent_id: conversationRuntime.agentId,
-        conversation_id: conversationRuntime.conversationId,
-      };
-      emitDeviceStatusUpdate(transport, conversationRuntime, scope);
-      emitLoopStatusUpdate(transport, conversationRuntime, scope);
-      if (conversationRuntime.queueRuntime?.isEmpty === false) {
-        scheduleQueuePump(
-          conversationRuntime,
-          transport,
-          opts as StartListenerOptions,
-          processQueuedTurn,
-        );
-      }
-    }
+  emitInitialConnectionState(runtime, transport, opts.connectionId, options);
+  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+    replayPendingApprovalRequestsToConnection(
+      conversationRuntime,
+      opts.connectionId,
+    );
   }
 
-  // Subscribe to subagent state changes and emit snapshots over the listener
-  // transport. Local channel mode intentionally discards these frames.
-  runtime._unsubscribeSubagentState?.();
-  runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
-    if (runtime.conversationRuntimes.size === 0) {
-      emitSubagentStateIfOpen(runtime);
-      return;
-    }
-
-    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      emitSubagentStateIfOpen(runtime, {
-        agent_id: conversationRuntime.agentId,
-        conversation_id: conversationRuntime.conversationId,
-      });
-    }
-  });
-
-  // Subscribe to subagent stream events and forward as tagged stream_delta.
-  runtime._unsubscribeSubagentStreamEvents?.();
-  runtime._unsubscribeSubagentStreamEvents = subscribeToSubagentStreamEvents(
-    (subagentId, event) => {
-      if (!isListenerTransportOpen(transport)) return;
-
-      const subagent = getSubagents().find((entry) => entry.id === subagentId);
-      if (subagent?.silent === true) {
-        // Reflection/background "silent" subagents should not stream their
-        // internal transcript into the parent conversation.
-        return;
-      }
-
-      // The event has { type: "message", message_type, ...LettaStreamingResponse }
-      // plus extra headless fields (session_id, uuid) that pass through harmlessly.
-      emitStreamDelta(
-        transport,
-        runtime,
-        event as unknown as import("@/types/protocol_v2").StreamDelta,
-        subagent?.parentAgentId
-          ? {
-              agent_id: subagent.parentAgentId,
-              conversation_id: subagent.parentConversationId ?? "default",
-            }
-          : undefined,
-        subagentId,
-      );
-    },
-  );
-
-  // Register the message queue bridge to route task notifications into the
-  // correct per-conversation QueueRuntime. This enables background Task
-  // completions to reach the agent in listen mode.
-  setMessageQueueAdder((queuedMessage) => {
-    const targetRuntime =
-      queuedMessage.agentId && queuedMessage.conversationId
-        ? getOrCreateScopedRuntime(
-            runtime,
-            queuedMessage.agentId,
-            queuedMessage.conversationId,
-          )
-        : findFallbackRuntime(runtime);
-
-    if (!targetRuntime?.queueRuntime) {
-      return; // No target - notification dropped
-    }
-
-    targetRuntime.queueRuntime.enqueue({
-      kind: "task_notification",
-      source: "task_notification",
-      text: queuedMessage.text,
-      agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
-      conversationId:
-        queuedMessage.conversationId ?? targetRuntime.conversationId,
-    } as Omit<
-      import("@/queue/queue-runtime").TaskNotificationQueueItem,
-      "id" | "enqueuedAt"
-    >);
-
-    // Kick the queue pump so the notification can trigger a standalone turn
-    // (see consumeQueuedTurn notification-aware path in queue.ts).
-    scheduleQueuePump(
-      targetRuntime,
-      transport,
-      opts as StartListenerOptions,
-      processQueuedTurn,
-    );
-  });
-
   if (shouldStartHeartbeat) {
-    // Seed the pong clock so the watchdog tolerates the first ping/pong
-    // round-trip before considering the peer dead.
-    runtime.lastPongAt = Date.now();
-    runtime.heartbeatInterval = setInterval(() => {
-      // Dead-peer detection. The relay replies to every `ping` with a `pong`
-      // (recorded as runtime.lastPongAt in the message router). If pongs stop
-      // arriving, the underlying TCP is likely half-open (laptop sleep,
-      // network switch, NAT/idle timeout) and will never emit a `close`
-      // event — leaving a zombie listener that the relay marks offline after
-      // ~120s while client-side tool execution silently breaks. Force a
-      // terminate so the socket's `close` handler fires and reconnects.
-      // Gated on websocket transports: the local app-server path does not run
-      // a heartbeat, and only websockets carry the relay pong round-trip.
-      if (
-        getListenerTransportKind(transport) === "websocket" &&
-        isListenerPongStale(
-          runtime.lastPongAt,
-          Date.now(),
-          LISTENER_PONG_TIMEOUT_MS,
-        )
-      ) {
+    startConnectionHeartbeat(
+      runtime,
+      transport,
+      () => {
         trackListenerError(
           "listener_pong_timeout",
           new Error(
@@ -1193,33 +1046,79 @@ export async function startConnectedListenerRuntime(
           "listener_heartbeat",
         );
         runtime.socket?.terminate();
-        return;
-      }
-
-      safeTransportSend(
-        transport,
-        { type: "ping" },
-        "listener_ping_send_failed",
-        "listener_heartbeat",
-      );
-    }, LISTENER_HEARTBEAT_INTERVAL_MS);
-  }
-
-  if (shouldStartCronScheduler) {
-    startCronScheduler(
-      transport,
-      opts as StartListenerOptions,
-      processQueuedTurn,
+      },
+      () => {
+        safeTransportSend(
+          transport,
+          { type: "ping" },
+          "listener_ping_send_failed",
+          "listener_heartbeat",
+        );
+      },
     );
   }
 
-  // Wire channel ingress (if channels are active).
-  await wireChannelIngress(
-    runtime,
-    transport,
-    opts as StartListenerOptions,
-    processQueuedTurn,
-  );
+  const processTransport = getOrCreateProcessTransport(runtime);
+  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+    if (conversationRuntime.queueRuntime?.isEmpty === false) {
+      scheduleQueuePump(
+        conversationRuntime,
+        processTransport,
+        opts as StartListenerOptions,
+        processQueuedTurn,
+      );
+    }
+  }
+
+  if (runtime.processServicesStarted) {
+    return;
+  }
+  if (!(await waitForProcessServicesSlot(runtime, opts.connectionId))) return;
+
+  const processServicesGeneration = runtime.processServicesGeneration + 1;
+  runtime.processServicesGeneration = processServicesGeneration;
+  const processServicesReady = (async () => {
+    const processTransport = getOrCreateProcessTransport(runtime);
+
+    installProcessEventRouting({
+      runtime,
+      processTransport,
+      opts: opts as StartListenerOptions,
+      processQueuedTurn,
+    });
+
+    if (shouldStartCronScheduler) {
+      startCronScheduler(
+        processTransport,
+        opts as StartListenerOptions,
+        processQueuedTurn,
+      );
+    }
+
+    await (options.wireChannelIngress ?? wireChannelIngress)(
+      runtime,
+      processTransport,
+      opts as StartListenerOptions,
+      processQueuedTurn,
+    );
+    if (runtime.processServicesGeneration === processServicesGeneration) {
+      runtime.processServicesStarted = true;
+    }
+  })();
+  runtime.processServicesReady = processServicesReady;
+  runtime.processServicesReadyGeneration = processServicesGeneration;
+  try {
+    await processServicesReady;
+  } catch (error) {
+    if (runtime.processServicesGeneration !== processServicesGeneration) return;
+    clearProcessServices(runtime);
+    throw error;
+  } finally {
+    if (runtime.processServicesReady === processServicesReady) {
+      runtime.processServicesReady = null;
+      runtime.processServicesReadyGeneration = null;
+    }
+  }
 }
 
 /**
@@ -1246,38 +1145,27 @@ export async function attachOpenListenerSocket(
   }
 
   const streamSocket = options.streamSocket ?? null;
+  const connection = openListenerConnection({
+    runtime,
+    connectionId: opts.connectionId,
+    writer: socket,
+    streamWriter: streamSocket,
+    options: opts,
+  });
   const fileCommandSession = createFileCommandSession({
     socket,
     safeSocketSend,
     runDetachedListenerTask,
   });
 
-  runtime.socket = socket;
-  runtime.streamSocket = streamSocket;
   installExternalToolBridge(runtime);
-  const transport = new RebindingListenerTransport(() => runtime.socket);
-  const processQueuedTurn: ProcessQueuedTurn = async (
-    queuedTurn: IncomingMessage,
-    dequeuedBatch: DequeuedBatch,
-  ): Promise<void> => {
-    const scopedRuntime = getOrCreateScopedRuntime(
-      runtime,
-      queuedTurn.agentId,
-      queuedTurn.conversationId,
-    );
-    await handleIncomingMessage(
-      queuedTurn,
-      transport,
-      scopedRuntime,
-      opts.onStatusChange,
-      opts.connectionId,
-      dequeuedBatch.batchId,
-    );
-  };
+  const transport: ListenerTransport = socket;
+  const processQueuedTurn = createConnectionTurnProcessor(runtime);
 
   const handleMessage = createListenerMessageHandler({
     runtime,
     socket,
+    connectionId: opts.connectionId,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -1296,6 +1184,12 @@ export async function attachOpenListenerSocket(
   socket.on("message", (data: WebSocket.RawData) => {
     void (async () => {
       await options.startupReady;
+      if (
+        connection.cancellation.signal.aborted ||
+        runtime.connections.get(opts.connectionId) !== connection
+      ) {
+        return;
+      }
       await handleMessage(data);
     })().catch((error) => {
       trackListenerError(
@@ -1319,12 +1213,7 @@ export async function attachOpenListenerSocket(
       reason: reasonText,
     });
     fileCommandSession.dispose();
-    stopCronScheduler();
-    getChannelRegistry()?.pause();
-    stopRuntime(runtime, true);
-    if (getActiveRuntime() === runtime) {
-      setActiveRuntime(null);
-    }
+    cleanupListenerConnection(runtime, opts.connectionId);
     opts.onDisconnected();
   });
 
@@ -1363,6 +1252,12 @@ export async function attachOpenListenerSocket(
   }
 
   await options.startupReady;
+  if (
+    connection.cancellation.signal.aborted ||
+    runtime.connections.get(opts.connectionId) !== connection
+  ) {
+    return;
+  }
 
   const streamTransport =
     streamSocket?.readyState === WebSocket.OPEN ? streamSocket : null;
@@ -1375,6 +1270,7 @@ export async function attachOpenListenerSocket(
       startHeartbeat: options.startHeartbeat ?? false,
       startCronScheduler: options.startCronScheduler ?? true,
       streamTransport,
+      emitInitialState: false,
     },
   );
 }
@@ -1437,24 +1333,18 @@ export async function startLocalChannelListener(
     await reloadListenerModAdapter(runtime);
     await loadTools();
     const transport = new LocalListenerTransport();
-    const processQueuedTurn: ProcessQueuedTurn = async (
-      queuedTurn: IncomingMessage,
-      dequeuedBatch: DequeuedBatch,
-    ): Promise<void> => {
-      const scopedRuntime = getOrCreateScopedRuntime(
-        runtime,
-        queuedTurn.agentId,
-        queuedTurn.conversationId,
-      );
-      await handleIncomingMessage(
-        queuedTurn,
-        transport,
-        scopedRuntime,
-        opts.onStatusChange,
-        opts.connectionId,
-        dequeuedBatch.batchId,
-      );
+    const connectionOptions: StartListenerOptions = {
+      ...opts,
+      wsUrl: "local://listener",
+      onDisconnected: () => {},
     };
+    openListenerConnection({
+      runtime,
+      connectionId: opts.connectionId,
+      writer: transport,
+      options: connectionOptions,
+    });
+    const processQueuedTurn = createConnectionTurnProcessor(runtime);
 
     await startConnectedListenerRuntime(
       runtime,
@@ -1571,31 +1461,21 @@ async function connectWithRetry(
 
   runtime.socket = socket;
   runtime.streamSocket = streamSocket;
-  const transport = new RebindingListenerTransport(() => runtime.socket);
-  const processQueuedTurn: ProcessQueuedTurn = async (
-    queuedTurn: IncomingMessage,
-    dequeuedBatch: DequeuedBatch,
-  ): Promise<void> => {
-    const scopedRuntime = getOrCreateScopedRuntime(
-      runtime,
-      queuedTurn.agentId,
-      queuedTurn.conversationId,
-    );
-    await handleIncomingMessage(
-      queuedTurn,
-      transport,
-      scopedRuntime,
-      opts.onStatusChange,
-      opts.connectionId,
-      dequeuedBatch.batchId,
-    );
-  };
+  const transport = socket;
+  const processQueuedTurn = createConnectionTurnProcessor(runtime);
 
   socket.on("open", async () => {
     let streamTransport: ListenerTransport | null = null;
     if (streamSocket) {
       streamTransport = await waitForStreamSocketOpen(streamSocket, runtime);
     }
+    openListenerConnection({
+      runtime,
+      connectionId: opts.connectionId,
+      writer: socket,
+      streamWriter: streamTransport,
+      options: opts,
+    });
     await startConnectedListenerRuntime(
       runtime,
       transport,
@@ -1614,6 +1494,7 @@ async function connectWithRetry(
     createListenerMessageHandler({
       runtime,
       socket,
+      connectionId: opts.connectionId,
       opts,
       processQueuedTurn,
       fileCommandSession,
@@ -1632,23 +1513,44 @@ async function connectWithRetry(
   );
 
   socket.on("close", (code: number, reason: Buffer) => {
-    if (runtime !== getActiveRuntime() || runtime.socket !== socket) return;
-    const reasonText = reason.toString();
+    if (runtime !== getActiveRuntime()) {
+      return;
+    }
+
     safeEmitWsEvent("recv", "lifecycle", {
       type: "_ws_close",
       code,
-      reason: reasonText,
+      reason: reason.toString(),
     });
+
     fileCommandSession.dispose();
+    const reasonText = reason.toString();
+    const terminalClose =
+      runtime.intentionallyClosed ||
+      code === 1008 ||
+      (code === 1000 && reasonText === "Replaced by new connection");
+
+    clearRuntimeTimers(runtime);
+
     if (isDebugEnabled()) {
       console.log(
-        `[Listen] WebSocket disconnected (code: ${code}, reason: ${reasonText})`,
+        `[Listen] WebSocket disconnected (code: ${code}, reason: ${reason.toString()})`,
       );
     }
 
-    clearRuntimeTimers(runtime);
+    if (!terminalClose) {
+      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+        rejectPendingApprovalResolversForConnection(
+          conversationRuntime,
+          opts.connectionId,
+          "Listener connection closed",
+        );
+      }
+    }
+    suspendListenerConnection(runtime, opts.connectionId);
     killAllTerminals();
-    if (streamSocket && runtime.streamSocket === streamSocket) {
+    clearListenerWarmState(runtime);
+    if (streamSocket) {
       streamSocket.removeAllListeners();
       if (
         streamSocket.readyState === WebSocket.OPEN ||
@@ -1656,27 +1558,11 @@ async function connectWithRetry(
       ) {
         streamSocket.close();
       }
-      runtime.streamSocket = null;
-      runtime.streamTransport = null;
     }
     runtime.socket = null;
-    runtime.transport = null;
-    const terminalClose =
-      runtime.intentionallyClosed ||
-      code === 1008 ||
-      (code === 1000 && reasonText === "Replaced by new connection");
+    runtime.streamSocket = null;
+    runtime.streamTransport = null;
     if (terminalClose) {
-      stopCronScheduler();
-      const channelRegistry = getChannelRegistry();
-      if (channelRegistry) {
-        channelRegistry.pause();
-      }
-      setMessageQueueAdder(null);
-      runtime._unsubscribeSubagentState?.();
-      runtime._unsubscribeSubagentState = undefined;
-      runtime._unsubscribeSubagentStreamEvents?.();
-      runtime._unsubscribeSubagentStreamEvents = undefined;
-      clearListenerWarmState(runtime);
       if (getActiveRuntime() === runtime) {
         setActiveRuntime(null);
       }
@@ -1696,11 +1582,6 @@ async function connectWithRetry(
 
       opts.onDisconnected();
       return;
-    }
-
-    const channelRegistry = getChannelRegistry();
-    if (channelRegistry) {
-      channelRegistry.pause();
     }
 
     // If we had connected before, restart backoff from zero for this outage window.

@@ -157,7 +157,11 @@ export interface RuntimeEnvelope {
   idempotency_key: string;
 }
 
-export type DevicePermissionMode = "standard" | "acceptEdits" | "unrestricted";
+export type DevicePermissionMode =
+  | "standard"
+  | "acceptEdits"
+  | "unrestricted"
+  | "strict";
 
 export type ToolsetName =
   | "codex"
@@ -2333,6 +2337,8 @@ export interface ConversationMessagesListResponseMessage {
   request_id: string;
   success: boolean;
   messages: LettaMessage[];
+  next_before: string | null; // Oldest message ID, for loading older history.
+  has_more: boolean; // Whether messages older than `next_before` exist.
   error?: string;
 }
 

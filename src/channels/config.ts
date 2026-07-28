@@ -9,6 +9,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { migratePermissionMode } from "@/permissions/mode";
+import {
+  isValidDiscordAllowBotsConfigValue,
+  normalizeDiscordAllowBotsMode,
+} from "./discord/bot-policy";
 import { normalizeSlackAllowBotsMode } from "./slack/bot-policy";
 import type {
   ChannelConfig,
@@ -198,6 +202,10 @@ function parseSignalGroupMode(value: unknown): SignalGroupMode {
 
 const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
   parse(parsed) {
+    if (!isValidDiscordAllowBotsConfigValue(parsed.allow_bots)) {
+      throw new Error("Invalid Discord allow_bots config");
+    }
+
     const rawAllowedChannels = parsed.allowed_channels;
     let allowedChannels: DiscordChannelConfig["allowedChannels"];
     if (Array.isArray(rawAllowedChannels)) {
@@ -222,6 +230,7 @@ const discordConfigCodec: ChannelConfigCodec<DiscordChannelConfig> = {
       dmPolicy: (parsed.dm_policy as DmPolicy) ?? "pairing",
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
       allowedChannels,
+      allowBots: normalizeDiscordAllowBotsMode(parsed.allow_bots),
       transcribeVoice: parsed.transcribe_voice === true,
       autoThreadOnMention:
         typeof parsed.auto_thread_on_mention === "boolean"

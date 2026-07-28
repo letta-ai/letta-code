@@ -179,12 +179,6 @@ export function evictConversationRuntimeIfIdle(
 
   runtime.listener.conversationRuntimes.delete(runtime.key);
   scheduleWorktreeWatcherIdleStop(runtime.listener, runtime);
-  for (const [requestId, runtimeKey] of runtime.listener
-    .approvalRuntimeKeyByRequestId) {
-    if (runtimeKey === runtime.key) {
-      runtime.listener.approvalRuntimeKeyByRequestId.delete(requestId);
-    }
-  }
   if (
     runtime.listener.pendingQueueEmitScope?.agent_id === runtime.agentId &&
     normalizeConversationId(
@@ -260,6 +254,7 @@ export function createConversationRuntime(
     conversationId: normalizedConversationId,
     skillSources: listener.skillSourcesByConversation.get(runtimeKey)?.slice(),
     activeChannelTurn: null,
+    activeConnectionId: null,
     turnLifecycle,
     messageQueue: Promise.resolve(),
     pendingApprovalResolvers: new Map(),
@@ -439,7 +434,9 @@ export function getPendingControlRequests(
     return requests;
   }
 
-  for (const pending of conversationRuntime.pendingApprovalResolvers.values()) {
+  for (const pending of new Set(
+    conversationRuntime.pendingApprovalResolvers.values(),
+  )) {
     const request = pending.controlRequest;
     if (!request) continue;
     requests.push({

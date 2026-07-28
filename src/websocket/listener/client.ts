@@ -14,8 +14,8 @@ import {
   handleAgentConversationManagementCommand,
   handleAgentConversationManagementProtocolCommand,
 } from "./commands/agents-conversations";
+import { handleChannelRegistryEvent } from "./commands/channel-registry-events";
 import {
-  handleChannelRegistryEvent,
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
   setChannelsServiceLoaderOverride,
@@ -131,6 +131,15 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   connectionId: string | null;
   connectionName: string | null;
   sessionId: string;
+  nextConnectionOrdinal: number;
+  connections: ListenerRuntime["connections"];
+  connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
+  processTransport: ListenerRuntime["processTransport"];
+  processServicesStarted: boolean;
+  processServicesGeneration: number;
+  processServicesReady: Promise<void> | null;
+  processServicesReadyGeneration: number | null;
+  pendingExternalToolCalls: ListenerRuntime["pendingExternalToolCalls"];
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
@@ -146,7 +155,6 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   hasSuccessfulConnection: boolean;
   everConnected: boolean;
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
-  approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
   memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
   secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
   secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
@@ -172,6 +180,15 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     connectionId: string | null;
     connectionName: string | null;
     sessionId: string;
+    nextConnectionOrdinal: number;
+    connections: ListenerRuntime["connections"];
+    connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
+    processTransport: ListenerRuntime["processTransport"];
+    processServicesStarted: boolean;
+    processServicesGeneration: number;
+    processServicesReady: Promise<void> | null;
+    processServicesReadyGeneration: number | null;
+    pendingExternalToolCalls: ListenerRuntime["pendingExternalToolCalls"];
     eventSeqCounter: number;
     queueEmitScheduled: boolean;
     pendingQueueEmitScope?: {
@@ -187,7 +204,6 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     hasSuccessfulConnection: boolean;
     everConnected: boolean;
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
-    approvalRuntimeKeyByRequestId: ListenerRuntime["approvalRuntimeKeyByRequestId"];
     memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
     secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
     secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
@@ -271,6 +287,60 @@ function createLegacyTestRuntime(): ConversationRuntime & {
         listener.sessionId = value;
       },
     },
+    nextConnectionOrdinal: {
+      get: () => listener.nextConnectionOrdinal,
+      set: (value: number) => {
+        listener.nextConnectionOrdinal = value;
+      },
+    },
+    connections: {
+      get: () => listener.connections,
+      set: (value: ListenerRuntime["connections"]) => {
+        listener.connections = value;
+      },
+    },
+    connectionIdsByRuntimeKey: {
+      get: () => listener.connectionIdsByRuntimeKey,
+      set: (value: ListenerRuntime["connectionIdsByRuntimeKey"]) => {
+        listener.connectionIdsByRuntimeKey = value;
+      },
+    },
+    processTransport: {
+      get: () => listener.processTransport,
+      set: (value: ListenerRuntime["processTransport"]) => {
+        listener.processTransport = value;
+      },
+    },
+    processServicesStarted: {
+      get: () => listener.processServicesStarted,
+      set: (value: boolean) => {
+        listener.processServicesStarted = value;
+      },
+    },
+    processServicesGeneration: {
+      get: () => listener.processServicesGeneration,
+      set: (value: number) => {
+        listener.processServicesGeneration = value;
+      },
+    },
+    processServicesReady: {
+      get: () => listener.processServicesReady,
+      set: (value: Promise<void> | null) => {
+        listener.processServicesReady = value;
+      },
+    },
+    processServicesReadyGeneration: {
+      get: () => listener.processServicesReadyGeneration,
+      set: (value: number | null) => {
+        listener.processServicesReadyGeneration = value;
+      },
+    },
+    pendingExternalToolCalls: {
+      get: () => listener.pendingExternalToolCalls,
+      set: (value: ListenerRuntime["pendingExternalToolCalls"]) => {
+        listener.pendingExternalToolCalls = value;
+      },
+    },
     eventSeqCounter: {
       get: () => listener.eventSeqCounter,
       set: (value: number) => {
@@ -348,12 +418,6 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.conversationRuntimes,
       set: (value: ListenerRuntime["conversationRuntimes"]) => {
         listener.conversationRuntimes = value;
-      },
-    },
-    approvalRuntimeKeyByRequestId: {
-      get: () => listener.approvalRuntimeKeyByRequestId,
-      set: (value: ListenerRuntime["approvalRuntimeKeyByRequestId"]) => {
-        listener.approvalRuntimeKeyByRequestId = value;
       },
     },
     memfsSyncedAgents: {
@@ -523,7 +587,7 @@ export const __listenClientTestUtils = {
     event: Parameters<typeof handleChannelRegistryEvent>[0],
     socket: Parameters<typeof handleChannelRegistryEvent>[1],
     runtime: ListenerRuntime,
-  ) => handleChannelRegistryEvent(event, socket, runtime, safeSocketSend),
+  ) => handleChannelRegistryEvent(event, socket, runtime),
   handleAgentConversationManagementCommand: (
     parsed: Parameters<typeof handleAgentConversationManagementCommand>[0],
     socket: WebSocket,
@@ -546,6 +610,7 @@ export const __listenClientTestUtils = {
   ) =>
     handleRuntimeStartCommand(parsed, {
       socket,
+      connectionId: runtime.connectionId ?? "test-connection",
       runtime,
       safeSocketSend,
       runDetachedListenerTask,
@@ -568,6 +633,7 @@ export const __listenClientTestUtils = {
   ) =>
     handleRuntimeStartProtocolCommand(parsed, {
       socket,
+      connectionId: runtime.connectionId ?? "test-connection",
       runtime,
       safeSocketSend,
       runDetachedListenerTask,

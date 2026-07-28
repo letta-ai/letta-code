@@ -6,6 +6,13 @@ import {
   requestApprovalOverWS,
   resolvePendingApprovalResolver,
 } from "./approval";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  subscribeListenerConnection,
+} from "./connection";
+import { cleanupListenerConnection } from "./connection-lifecycle";
+import { handleApprovalResponseInput } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime, stopRuntime } from "./lifecycle";
 import { buildLoopStatus } from "./protocol-outbound";
@@ -80,6 +87,203 @@ function makeSuccessResponse(requestId: string): ApprovalResponseBody {
 }
 
 describe("listener approval lifecycle", () => {
+  test("isolates identical approval request ids by connection", async () => {
+    const listener = createRuntime();
+    const runtimeA = getOrCreateScopedRuntime(listener, "agent-1", "conv-a");
+    const runtimeB = getOrCreateScopedRuntime(listener, "agent-1", "conv-b");
+    const socketA = new MockSocket();
+    const socketB = new MockSocket();
+    for (const [connectionId, socket] of [
+      ["client-a", socketA],
+      ["client-b", socketB],
+    ] as const) {
+      openListenerConnection({
+        runtime: listener,
+        connectionId,
+        writer: socket,
+        options: {
+          connectionId,
+          wsUrl: "local://test",
+          deviceId: "test",
+          connectionName: connectionId,
+          onConnected: () => {},
+          onDisconnected: () => {},
+          onError: () => {},
+        },
+      });
+      markListenerConnectionInitialized(listener, connectionId);
+    }
+
+    const pendingA = requestApprovalOverWS(
+      runtimeA,
+      socketA,
+      beginApprovalWait(runtimeA),
+      "same-request-id",
+      makeControlRequest("same-request-id"),
+    );
+    const pendingB = requestApprovalOverWS(
+      runtimeB,
+      socketB,
+      beginApprovalWait(runtimeB),
+      "same-request-id",
+      makeControlRequest("same-request-id"),
+    );
+
+    expect(
+      resolvePendingApprovalResolver(
+        runtimeB,
+        makeSuccessResponse("same-request-id"),
+        "client-b",
+      ),
+    ).toBe(true);
+    await expect(pendingB).resolves.toEqual(
+      makeSuccessResponse("same-request-id"),
+    );
+    expect(runtimeA.pendingApprovalResolvers.size).toBe(1);
+
+    expect(
+      resolvePendingApprovalResolver(
+        runtimeA,
+        makeSuccessResponse("same-request-id"),
+        "client-a",
+      ),
+    ).toBe(true);
+    await expect(pendingA).resolves.toEqual(
+      makeSuccessResponse("same-request-id"),
+    );
+  });
+
+  test("isolates identical approval ids across two conversations on one connection", async () => {
+    const listener = createRuntime();
+    const runtimeA = getOrCreateScopedRuntime(listener, "agent-1", "conv-a");
+    const runtimeB = getOrCreateScopedRuntime(listener, "agent-1", "conv-b");
+    const socket = new MockSocket();
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "shared-client",
+      writer: socket,
+      options: {
+        connectionId: "shared-client",
+        wsUrl: "local://test",
+        deviceId: "test",
+        connectionName: "shared-client",
+        onConnected: () => {},
+        onDisconnected: () => {},
+        onError: () => {},
+      },
+    });
+    markListenerConnectionInitialized(listener, "shared-client");
+    subscribeListenerConnection(listener, "shared-client", {
+      agent_id: "agent-1",
+      conversation_id: "conv-a",
+    });
+    subscribeListenerConnection(listener, "shared-client", {
+      agent_id: "agent-1",
+      conversation_id: "conv-b",
+    });
+
+    const pendingA = requestApprovalOverWS(
+      runtimeA,
+      socket,
+      beginApprovalWait(runtimeA),
+      "same-request-id",
+      makeControlRequest("same-request-id"),
+    );
+    const pendingB = requestApprovalOverWS(
+      runtimeB,
+      socket,
+      beginApprovalWait(runtimeB),
+      "same-request-id",
+      makeControlRequest("same-request-id"),
+    );
+
+    expect(
+      await handleApprovalResponseInput(listener, {
+        runtime: { agent_id: "agent-1", conversation_id: "conv-b" },
+        response: makeSuccessResponse("same-request-id"),
+        connectionId: "shared-client",
+        socket,
+        opts: { connectionId: "shared-client" },
+        processQueuedTurn: async () => {},
+      }),
+    ).toBe(true);
+    await expect(pendingB).resolves.toEqual(
+      makeSuccessResponse("same-request-id"),
+    );
+    expect(runtimeA.pendingApprovalResolvers.size).toBe(1);
+
+    expect(
+      await handleApprovalResponseInput(listener, {
+        runtime: { agent_id: "agent-1", conversation_id: "conv-a" },
+        response: makeSuccessResponse("same-request-id"),
+        connectionId: "shared-client",
+        socket,
+        opts: { connectionId: "shared-client" },
+        processQueuedTurn: async () => {},
+      }),
+    ).toBe(true);
+    await expect(pendingA).resolves.toEqual(
+      makeSuccessResponse("same-request-id"),
+    );
+  });
+
+  test("fans approval requests to subscribers and survives one disconnect", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socketA = new MockSocket();
+    const socketB = new MockSocket();
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    for (const [connectionId, socket] of [
+      ["client-a", socketA],
+      ["client-b", socketB],
+    ] as const) {
+      openListenerConnection({
+        runtime: listener,
+        connectionId,
+        writer: socket,
+        options: {
+          connectionId,
+          wsUrl: "local://test",
+          deviceId: "test",
+          connectionName: connectionId,
+          onConnected: () => {},
+          onDisconnected: () => {},
+          onError: () => {},
+        },
+      });
+      markListenerConnectionInitialized(listener, connectionId);
+      subscribeListenerConnection(listener, connectionId, scope);
+    }
+
+    runtime.activeConnectionId = "client-a";
+    const pending = requestApprovalOverWS(
+      runtime,
+      socketA,
+      beginApprovalWait(runtime),
+      "shared-approval",
+      makeControlRequest("shared-approval"),
+    );
+
+    expect(socketA.sentPayloads).toHaveLength(1);
+    expect(socketB.sentPayloads).toHaveLength(1);
+    expect(runtime.pendingApprovalResolvers.size).toBe(2);
+
+    cleanupListenerConnection(listener, "client-a");
+
+    expect(runtime.turnLifecycle.currentLease?.signal.aborted).toBe(false);
+    expect(runtime.pendingApprovalResolvers.size).toBe(1);
+    expect(
+      resolvePendingApprovalResolver(
+        runtime,
+        makeSuccessResponse("shared-approval"),
+        "client-b",
+      ),
+    ).toBe(true);
+    await expect(pending).resolves.toEqual(
+      makeSuccessResponse("shared-approval"),
+    );
+  });
+
   test("resolving an approval does not falsely finalize its enclosing turn", async () => {
     const runtime = createScopedRuntime();
     const socket = new MockSocket();
@@ -126,12 +330,6 @@ describe("listener approval lifecycle", () => {
       makeControlRequest("perm-b"),
     );
 
-    expect(listener.approvalRuntimeKeyByRequestId.get("perm-a")).toBe(
-      runtimeA.key,
-    );
-    expect(listener.approvalRuntimeKeyByRequestId.get("perm-b")).toBe(
-      runtimeB.key,
-    );
     expect(
       resolvePendingApprovalResolver(runtimeA, makeSuccessResponse("perm-a")),
     ).toBe(true);
@@ -293,6 +491,5 @@ describe("listener approval lifecycle", () => {
 
     await expect(pending).rejects.toThrow("Cancelled by user");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
   });
 });

@@ -13,8 +13,16 @@ import {
 } from "@/websocket/listen-client";
 import { requestApprovalOverWS } from "@/websocket/listener/approval";
 import { __listenerAuthTestUtils } from "@/websocket/listener/auth";
+import {
+  getOrCreateProcessTransport,
+  subscribeListenerConnection,
+  TO_SUBSCRIBERS,
+} from "@/websocket/listener/connection";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
-import { emitLoopStatusUpdate } from "@/websocket/listener/protocol-outbound";
+import {
+  emitLoopStatusUpdate,
+  emitProtocolV2Message,
+} from "@/websocket/listener/protocol-outbound";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
 
 type ListenerSettings = Awaited<
@@ -545,7 +553,6 @@ describe("listener auth lifecycle", () => {
     expect(onNeedsReregister).not.toHaveBeenCalled();
     expect(getActiveRuntime()).toBeNull();
     expect(listener.conversationRuntimes.size).toBe(0);
-    expect(listener.approvalRuntimeKeyByRequestId.size).toBe(0);
     expect(conversationRuntime.turnLifecycle.kind).toBe("idle");
     expect(conversationRuntime.queueRuntime.length).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -609,7 +616,6 @@ describe("listener auth lifecycle", () => {
     expect(onNeedsReregister).not.toHaveBeenCalled();
     expect(getActiveRuntime()).toBeNull();
     expect(listener.conversationRuntimes.size).toBe(0);
-    expect(listener.approvalRuntimeKeyByRequestId.size).toBe(0);
     expect(conversationRuntime.turnLifecycle.kind).toBe("idle");
     expect(conversationRuntime.queueRuntime.length).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -670,7 +676,6 @@ describe("listener auth lifecycle", () => {
     expect((rejection as Error).message).toBe("Listener runtime stopped");
     expect(getActiveRuntime()).toBeNull();
     expect(listener.conversationRuntimes.size).toBe(0);
-    expect(listener.approvalRuntimeKeyByRequestId.size).toBe(0);
     expect(connections).toHaveLength(1);
   });
 
@@ -723,10 +728,90 @@ describe("listener auth lifecycle", () => {
     expect((rejection as Error).message).toBe("Listener runtime stopped");
     expect(getActiveRuntime()).toBeNull();
     expect(listener.conversationRuntimes.size).toBe(0);
-    expect(listener.approvalRuntimeKeyByRequestId.size).toBe(0);
     expect(conversationRuntime.queueRuntime.length).toBe(0);
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(connections).toHaveLength(1);
+  });
+
+  test("preserves outbound subscriptions and event sequence across reconnect", async () => {
+    await startClient();
+    await waitFor(
+      () =>
+        getActiveRuntime()?.connections.get("connection-id")?.initialized ===
+        true,
+      "initial listener connection did not initialize",
+    );
+    const runtime = getActiveRuntime();
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const conversationRuntime = getOrCreateScopedRuntime(
+      runtime,
+      scope.agent_id,
+      scope.conversation_id,
+    );
+    subscribeListenerConnection(runtime, "connection-id", scope);
+    emitProtocolV2Message(
+      getOrCreateProcessTransport(runtime),
+      conversationRuntime,
+      { type: "crons_updated", timestamp: 1 } as never,
+      scope,
+      TO_SUBSCRIBERS,
+    );
+    await waitFor(
+      () =>
+        getConnectionMessages(0).some(
+          (message) =>
+            !!message &&
+            typeof message === "object" &&
+            (message as { type?: string }).type === "crons_updated",
+        ),
+      "initial scoped event was not delivered",
+    );
+    const eventSeqBeforeReconnect =
+      runtime.connections.get("connection-id")?.eventSeqCounter ?? 0;
+
+    connections[0]?.close(1000, "reconnect");
+    await waitFor(
+      () =>
+        connections.length === 2 &&
+        runtime.connections.get("connection-id")?.initialized === true,
+      "listener did not reconnect",
+    );
+
+    const reconnected = runtime.connections.get("connection-id");
+    expect(reconnected?.subscriptions).toEqual(
+      new Set(["agent:agent-1::conversation:conv-1"]),
+    );
+    expect(reconnected?.eventSeqCounter).toBeGreaterThanOrEqual(
+      eventSeqBeforeReconnect,
+    );
+
+    emitProtocolV2Message(
+      getOrCreateProcessTransport(runtime),
+      conversationRuntime,
+      { type: "crons_updated", timestamp: 2 } as never,
+      scope,
+      TO_SUBSCRIBERS,
+    );
+    await waitFor(
+      () =>
+        getConnectionMessages(1).some(
+          (message) =>
+            !!message &&
+            typeof message === "object" &&
+            (message as { type?: string }).type === "crons_updated",
+        ),
+      "post-reconnect scoped event was not delivered",
+    );
+    const resumedEvent = getConnectionMessages(1).find(
+      (message) =>
+        !!message &&
+        typeof message === "object" &&
+        (message as { type?: string }).type === "crons_updated",
+    ) as { event_seq?: number } | undefined;
+    expect(resumedEvent?.event_seq).toBeGreaterThan(eventSeqBeforeReconnect);
   });
 
   test("does not create a socket after stop wins an in-flight refresh", async () => {

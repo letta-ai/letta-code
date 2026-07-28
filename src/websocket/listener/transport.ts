@@ -14,19 +14,14 @@ export interface LocalTransport {
   send(data: string): void;
 }
 
-export interface RebindingWebSocketTransport {
-  readonly kind: "websocket";
+export interface RuntimeTransport {
+  readonly kind: "runtime";
   readonly bufferedAmount: number;
   isOpen(): boolean;
   send(data: string): void;
-  close(): void;
-  terminate(): void;
 }
 
-export type ListenerTransport =
-  | WebSocket
-  | LocalTransport
-  | RebindingWebSocketTransport;
+export type ListenerTransport = WebSocket | LocalTransport | RuntimeTransport;
 
 export class LocalListenerTransport implements LocalTransport {
   readonly kind = "local" as const;
@@ -42,48 +37,7 @@ export class LocalListenerTransport implements LocalTransport {
   }
 }
 
-export class RebindingListenerTransport implements RebindingWebSocketTransport {
-  readonly kind = "websocket" as const;
-
-  constructor(private readonly getSocket: () => WebSocket | null) {}
-
-  get bufferedAmount(): number {
-    return this.getSocket()?.bufferedAmount ?? 0;
-  }
-
-  isOpen(): boolean {
-    const socket = this.getSocket();
-    return !!socket && socket.readyState === WebSocket.OPEN;
-  }
-
-  send(data: string): void {
-    const socket = this.getSocket();
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      throw new Error("WebSocket not open");
-    }
-    socket.send(data);
-  }
-
-  close(): void {
-    const socket = this.getSocket();
-    if (
-      socket &&
-      (socket.readyState === WebSocket.OPEN ||
-        socket.readyState === WebSocket.CONNECTING)
-    ) {
-      socket.close();
-    }
-  }
-
-  terminate(): void {
-    this.getSocket()?.terminate?.();
-  }
-}
-
-export function isListenerTransportOpen(
-  transport: ListenerTransport | null | undefined,
-): boolean {
-  if (!transport) return false;
+export function isListenerTransportOpen(transport: ListenerTransport): boolean {
   if ("isOpen" in transport && typeof transport.isOpen === "function") {
     return transport.isOpen();
   }
@@ -92,6 +46,6 @@ export function isListenerTransportOpen(
 
 export function getListenerTransportKind(
   transport: ListenerTransport,
-): "websocket" | "local" {
+): "websocket" | "local" | "runtime" {
   return "kind" in transport ? transport.kind : "websocket";
 }

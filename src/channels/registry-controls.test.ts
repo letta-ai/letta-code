@@ -665,7 +665,7 @@ describe("pending channel control requests", () => {
       {
         chatId: "C123",
         text: "I’m reconnecting to Letta Code right now, so I couldn’t use that reply yet. Please send it again in a moment.",
-        replyToMessageId: "1712790000.000050",
+        replyToMessageId: "1712800000.000200",
       },
     ]);
   });

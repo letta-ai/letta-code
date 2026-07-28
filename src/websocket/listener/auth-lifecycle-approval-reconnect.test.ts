@@ -14,6 +14,7 @@ import {
   stopListenerClient,
 } from "@/websocket/listen-client";
 import { __listenerAuthTestUtils } from "@/websocket/listener/auth";
+import { subscribeListenerConnection } from "@/websocket/listener/connection";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { getOrCreateConversationPermissionModeStateRef } from "@/websocket/listener/permission-mode";
 import { finalizeHandledRecoveryTurn } from "@/websocket/listener/recovery";
@@ -309,6 +310,10 @@ describe("listener approval reconnect timing", () => {
     const listener = getActiveRuntime();
     expect(listener?.transport).toBeTruthy();
     if (!listener?.transport) throw new Error("listener transport missing");
+    subscribeListenerConnection(listener, "connection-id", {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    });
     const capturedTransport = listener.transport;
     const conversationRuntime = getOrCreateScopedRuntime(
       listener,

@@ -124,8 +124,7 @@ export async function runAppServerSubcommand(argv: string[]): Promise<number> {
       openaiApi,
       onListening: (info) => {
         console.log(`Listening on ${info.url}`);
-        console.log(`Control: ${info.controlUrl}`);
-        console.log(`Stream:  ${info.streamUrl}`);
+        console.log(`WebSocket: ${info.controlUrl}`);
         if (openaiApi) {
           const openaiBase = new URL(info.url);
           openaiBase.protocol = "http:";

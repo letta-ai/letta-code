@@ -49,6 +49,7 @@ interface ExecCommandArgs {
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  parentScope?: { agentId: string; conversationId: string };
 }
 
 interface WriteStdinArgs {
@@ -702,6 +703,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     outputFile,
     totalStdoutLines: 0,
     totalStderrLines: 0,
+    runtimeScope: args.parentScope,
   });
   if (session.status !== "running") {
     scheduleBackgroundProcessCleanup(id);

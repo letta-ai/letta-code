@@ -64,9 +64,9 @@ function createFakeClient() {
     WebSocket: FakeSocket,
     requestTimeoutMs: 25,
   });
-  const [control, stream] = FakeSocket.instances;
-  if (!control || !stream) throw new Error("expected two sockets");
-  return { client, control, stream };
+  const [socket] = FakeSocket.instances;
+  if (!socket) throw new Error("expected one socket");
+  return { client, control: socket, stream: socket };
 }
 
 describe("app-server client", () => {
@@ -74,16 +74,16 @@ describe("app-server client", () => {
     FakeSocket.instances = [];
   });
 
-  test("resolves control and stream websocket URLs", () => {
+  test("resolves historical channel names to the same websocket URL", () => {
     expect(resolveAppServerChannelUrl("http://127.0.0.1:4500", "control")).toBe(
-      "ws://127.0.0.1:4500/ws?channel=control",
+      "ws://127.0.0.1:4500/ws",
     );
     expect(
       resolveAppServerChannelUrl(
         "wss://example.test/ws?channel=control&token=abc",
         "stream",
       ),
-    ).toBe("wss://example.test/ws?channel=stream&token=abc");
+    ).toBe("wss://example.test/ws?token=abc");
   });
 
   test("passes capability token as websocket authorization header", () => {
@@ -92,13 +92,11 @@ describe("app-server client", () => {
       authToken: " super-secret-token\n",
       WebSocket: FakeSocket,
     });
-    const [control, stream] = FakeSocket.instances;
-    expect(control?.options).toEqual({
+    const [socket] = FakeSocket.instances;
+    expect(socket?.options).toEqual({
       headers: { Authorization: "Bearer super-secret-token" },
     });
-    expect(stream?.options).toEqual({
-      headers: { Authorization: "Bearer super-secret-token" },
-    });
+    expect(FakeSocket.instances).toHaveLength(1);
 
     expect(() =>
       createAppServerClient({
@@ -110,10 +108,9 @@ describe("app-server client", () => {
   });
 
   test("requests App Server capabilities before starting a runtime", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     const opened = client.connect();
     control.open();
-    stream.open();
     await opened;
 
     const responsePromise = client.info();
@@ -134,7 +131,7 @@ describe("app-server client", () => {
         conversation_management: true,
         memory_management: true,
         runtime_start: true,
-        split_channels: true,
+        split_channels: false,
       },
     });
 
@@ -157,7 +154,7 @@ describe("app-server client", () => {
         conversation_management: true,
         memory_management: true,
         runtime_start: true,
-        split_channels: true,
+        split_channels: false,
       },
     };
 
@@ -179,11 +176,10 @@ describe("app-server client", () => {
     ).toBe(false);
   });
 
-  test("connects both sockets and resolves request_id responses", async () => {
+  test("connects one socket and resolves request_id responses", async () => {
     const { client, control, stream } = createFakeClient();
     const opened = client.connect();
     control.open();
-    stream.open();
     await opened;
 
     const seen: string[] = [];
@@ -228,29 +224,25 @@ describe("app-server client", () => {
     });
     expect(seen).toEqual([
       "control:runtime_start_response",
-      "stream:update_loop_status",
+      "control:update_loop_status",
     ]);
   });
 
-  test("notifies once when either websocket disconnects unexpectedly", async () => {
-    const { client, control, stream } = createFakeClient();
+  test("notifies once when the websocket disconnects unexpectedly", async () => {
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const disconnects: string[] = [];
     client.onDisconnect(({ channel }) => disconnects.push(channel));
 
     control.close();
-    stream.close();
-
     expect(disconnects).toEqual(["control"]);
   });
 
   test("does not report explicit client shutdown as a disconnect", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const disconnects: string[] = [];
@@ -262,9 +254,8 @@ describe("app-server client", () => {
   });
 
   test("wraps sync, abort, and input commands", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const sent: string[] = [];
@@ -322,9 +313,8 @@ describe("app-server client", () => {
   });
 
   test("wraps conversation list requests", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const responsePromise = client.conversationList({
@@ -352,9 +342,8 @@ describe("app-server client", () => {
   });
 
   test("starts runtimes with external tools and responds to external tool calls", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const runtimeStart = client.runtimeStart({
@@ -418,7 +407,6 @@ describe("app-server client", () => {
   test("runTurn injects client message ids and resolves on stop_reason", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
@@ -478,7 +466,6 @@ describe("app-server client", () => {
   test("runTurn waits through intermediate requires_approval stop_reason", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
@@ -558,7 +545,6 @@ describe("app-server client", () => {
   test("runTurn resolves requires_approval only when listener is waiting on approval", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
@@ -625,7 +611,6 @@ describe("app-server client", () => {
   test("runTurn does not treat idle status alone as terminal", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
@@ -655,7 +640,6 @@ describe("app-server client", () => {
   test("runTurn ignores waiting-on-approval status before turn evidence", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
@@ -717,9 +701,8 @@ describe("app-server client", () => {
   });
 
   test("runTurn rejects concurrent turns for the same runtime", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
@@ -752,7 +735,6 @@ describe("app-server client", () => {
   test("runTurn can use guarded loop-status fallback after run evidence", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
@@ -798,7 +780,6 @@ describe("app-server client", () => {
   test("runTurn rejects on loop_error stream delta", async () => {
     const { client, control, stream } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const runtime = { agent_id: "agent-1", conversation_id: "conv-1" };
@@ -831,9 +812,8 @@ describe("app-server client", () => {
   });
 
   test("supports ergonomic request construction", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     const responsePromise = client.request("agent_list", {
@@ -898,9 +878,8 @@ describe("app-server client", () => {
   });
 
   test("times out unanswered requests", async () => {
-    const { client, control, stream } = createFakeClient();
+    const { client, control } = createFakeClient();
     control.open();
-    stream.open();
     await client.connect();
 
     await expect(

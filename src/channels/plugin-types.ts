@@ -1,6 +1,7 @@
 import type {
   ChannelAccount,
   ChannelAdapter,
+  ChannelAllowBotsMode,
   ChannelChatType,
   ChannelDefaultPermissionMode,
   ChannelRoute,
@@ -8,7 +9,6 @@ import type {
   DmPolicy,
   OutboundChannelMessage,
   SignalGroupMode,
-  SlackAllowBotsMode,
   SlackChannelMode,
   TelegramGroupMode,
   WhatsAppGroupMode,
@@ -169,7 +169,7 @@ export interface ChannelPluginAccountPatch {
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
   listenMode?: boolean;
-  allowBots?: SlackAllowBotsMode;
+  allowBots?: ChannelAllowBotsMode;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   selfChatMode?: boolean;

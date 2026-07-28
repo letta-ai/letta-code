@@ -32,6 +32,7 @@ import {
   buildApprovalSuggestionPayload,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
+import { TO_SUBSCRIBERS } from "./connection";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import {
   createToolExecutionOutputEmitter,
@@ -43,6 +44,7 @@ import {
 } from "./interrupts";
 import {
   emitDequeuedUserMessage,
+  emitProtocolV2Message,
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
 import type { ProviderFallbackState } from "./provider-fallback";
@@ -518,21 +520,24 @@ export async function handleApprovalStop(params: {
   // Broadcast new file content to web clients when a file-mutating tool
   // (Edit, Write, MultiEdit) writes to disk, so all windows update immediately.
   const onFileWrite = (filePath: string, content: string) => {
-    if (
-      runtime.turnLifecycle.isCurrent(turnLease) &&
-      isListenerTransportOpen(socket)
-    ) {
-      socket.send(
-        JSON.stringify({
-          type: "file_ops",
-          path: filePath,
-          cg_entries: [],
-          ops: [],
-          source: "agent",
-          document_content: content,
-        }),
-      );
-    }
+    if (!runtime.turnLifecycle.isCurrent(turnLease)) return;
+    emitProtocolV2Message(
+      socket,
+      runtime,
+      {
+        type: "file_ops",
+        path: filePath,
+        cg_entries: [],
+        ops: [],
+        source: "agent",
+        document_content: content,
+      } as never,
+      {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      },
+      TO_SUBSCRIBERS,
+    );
   };
 
   let executionResults: Awaited<ReturnType<typeof executeApprovalBatch>>;

@@ -153,6 +153,18 @@ await Bun.build({
 });
 
 await Bun.build({
+  entrypoints: ["./src/memory-confinement.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "memory-confinement.js",
+  },
+});
+
+await Bun.build({
   entrypoints: ["./src/app-server-client.ts"],
   outdir: "./dist",
   target: "node",
