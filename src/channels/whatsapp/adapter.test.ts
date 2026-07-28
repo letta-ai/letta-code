@@ -377,6 +377,31 @@ describe("WhatsApp adapter canonical identity integration", () => {
     ]);
   });
 
+  test("PN-form DM senderLid is passed through and later LID DM resolves", async () => {
+    const store = instrumentStore(createLidStore(join(dir, "lid-sender.json")));
+    const received: InboundChannelMessage[] = [];
+    const harness = makeHarness(store, async (message) => {
+      received.push(message);
+    });
+    await harness.adapter.start();
+
+    const pn = phone("15550000018");
+    const senderLid = lid("91919191");
+    await harness.emit([
+      makeMessage(pn, "pn-with-lid", {
+        senderLid,
+      }),
+    ]);
+    expect(store.resolve(senderLid)).toBe(pn);
+
+    await harness.emit([makeMessage(senderLid, "lid-without-hints")]);
+    expect(received.map((message) => message.chatId)).toEqual([pn, pn]);
+    expect(received.map((message) => message.senderId)).toEqual([
+      "15550000018",
+      "15550000018",
+    ]);
+  });
+
   test("outbound send resolves known LID and rejects unknown LID", async () => {
     const store = instrumentStore(createLidStore(join(dir, "lid.json")));
     const known = lid("12121212");

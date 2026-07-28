@@ -21,6 +21,7 @@ export interface InboundTransport {
   remoteJid: string;
   participant?: string | null;
   senderPn?: string | null;
+  senderLid?: string | null;
   participantPn?: string | null;
   participantLid?: string | null;
 }
@@ -61,65 +62,76 @@ function resolveFromStore(
 ): string | null {
   if (!store) return null;
   const mapped = store.resolve(lidJid);
-  if (mapped && isStrictPhoneJid(mapped)) return mapped;
-  return null;
+  return toStrictPhoneJid(mapped);
 }
 
 /**
- * Collect, normalize, and deduplicate supported paired LID→PN observations.
- * Reject if one LID claims multiple different PNs.
- * Compare against store; any conflict returns null.
- * Returns only observations whose LID is not already in the store.
+ * Collect role-consistent identity candidates. Direct-chat fields and
+ * group-sender fields have different semantics, so they must not be mixed.
  */
-function collectObservations(
+function collectCandidates(
   transport: InboundTransport,
+  direct: boolean,
+): { lids: string[]; phones: string[] } {
+  const lids: string[] = [];
+  const phones: string[] = [];
+  const addLid = (candidate: string | null | undefined) => {
+    if (candidate && isStrictLidJid(candidate)) {
+      const normalized = stripDeviceSuffix(candidate);
+      if (!lids.includes(normalized)) lids.push(normalized);
+    }
+  };
+  const addPhone = (candidate: string | null | undefined) => {
+    const normalized = toStrictPhoneJid(candidate);
+    if (normalized && !phones.includes(normalized)) phones.push(normalized);
+  };
+
+  if (direct) {
+    addLid(transport.remoteJid);
+    addLid(transport.senderLid);
+    addPhone(transport.remoteJid);
+    addPhone(transport.senderPn);
+  } else {
+    addLid(transport.participant);
+    addLid(transport.participantLid);
+    addLid(transport.senderLid);
+    addPhone(transport.participant);
+    addPhone(transport.participantPn);
+    addPhone(transport.senderPn);
+  }
+
+  return { lids, phones };
+}
+
+/**
+ * Validate the observed candidates against one canonical phone identity.
+ * Returns only previously-unmapped LIDs; it never mutates the store.
+ */
+function resolveCandidates(
+  lids: string[],
+  phones: string[],
   store: LidStore | null,
-): ObservedMapping[] | null {
-  const { participant, participantPn, participantLid, senderPn } = transport;
-  const validPnP = toStrictPhoneJid(participantPn);
-  const validSenderPn = toStrictPhoneJid(senderPn);
+): { phoneJid: string; observedMappings: ObservedMapping[] } | null {
+  if (phones.length > 1) return null;
 
-  const rawPairs: Array<[string, string]> = [];
-  if (participant && isStrictLidJid(participant)) {
-    if (validPnP) rawPairs.push([participant, validPnP]);
-    if (validSenderPn) rawPairs.push([participant, validSenderPn]);
+  let phoneJid = phones[0] ?? null;
+  const storedMappings = new Map<string, string>();
+  for (const lidJid of lids) {
+    const stored = resolveFromStore(lidJid, store);
+    if (!stored) continue;
+    storedMappings.set(lidJid, stored);
+    if (phoneJid && phoneJid !== stored) return null;
+    phoneJid ??= stored;
   }
-  if (participantLid && isStrictLidJid(participantLid)) {
-    if (validPnP) rawPairs.push([participantLid, validPnP]);
-  }
+  if (!phoneJid) return null;
 
-  if (rawPairs.length === 0) return [];
-
-  const normalized = new Map<string, Set<string>>();
-  for (const [lidJid, phoneJid] of rawPairs) {
-    const key = stripDeviceSuffix(lidJid);
-    let phoneSet = normalized.get(key);
-    if (!phoneSet) {
-      phoneSet = new Set<string>();
-      normalized.set(key, phoneSet);
+  const observedMappings: ObservedMapping[] = [];
+  for (const lidJid of lids) {
+    if (!storedMappings.has(lidJid)) {
+      observedMappings.push({ lidJid, phoneJid });
     }
-    phoneSet.add(phoneJid);
   }
-
-  // Reject if any LID maps to multiple different phones.
-  for (const phones of normalized.values()) {
-    if (phones.size > 1) return null;
-  }
-
-  const result: ObservedMapping[] = [];
-  for (const [key, phones] of normalized) {
-    const phoneValue = phones.values().next().value as string;
-    // Check against store: conflict => reject entirely.
-    if (store) {
-      const existing = store.resolve(key);
-      if (existing && existing !== phoneValue) return null;
-      // Already mapped — no observation needed.
-      if (existing) continue;
-    }
-    result.push({ lidJid: key, phoneJid: phoneValue });
-  }
-
-  return result;
+  return { phoneJid, observedMappings };
 }
 
 // -- resolver --;
@@ -138,7 +150,7 @@ function resolveDirect(
   transport: InboundTransport,
   store: LidStore | null,
 ): ResolvedIdentity | null {
-  const { selfPhoneJid, selfLid, remoteJid, senderPn } = transport;
+  const { selfPhoneJid, selfLid, remoteJid } = transport;
 
   // Self-chat: phone-to-phone.
   if (
@@ -161,59 +173,20 @@ function resolveDirect(
     return make(c, c);
   }
 
-  // Phone remoteJid.
-  if (isStrictPhoneJid(remoteJid)) {
-    const c = stripDeviceSuffix(remoteJid);
-    return make(c, c);
-  }
-
-  // LID remoteJid.
-  if (!isStrictLidJid(remoteJid)) return null;
-
-  const validHint = toStrictPhoneJid(senderPn);
-  const stored = resolveFromStore(remoteJid, store);
-
-  // Existing conflicting mapping → fail closed.
-  if (stored && validHint && validHint !== stored) return null;
-
-  // Existing matching mapping → resolve as stored, no observation.
-  if (stored) return make(stored, stored);
-
-  // First-seen hint → resolve as hint, return observation.
-  if (validHint) {
-    return make(validHint, validHint, [
-      { lidJid: stripDeviceSuffix(remoteJid), phoneJid: validHint },
-    ]);
-  }
-
-  return null;
+  const candidates = collectCandidates(transport, true);
+  const resolved = resolveCandidates(candidates.lids, candidates.phones, store);
+  if (!resolved) return null;
+  return make(resolved.phoneJid, resolved.phoneJid, resolved.observedMappings);
 }
 
 function resolveGroup(
   transport: InboundTransport,
   store: LidStore | null,
 ): ResolvedIdentity | null {
-  const { remoteJid, participant, senderPn, participantPn, participantLid } =
-    transport;
+  const { remoteJid } = transport;
   const groupChatId = stripDeviceSuffix(remoteJid);
-
-  // Collect observations (also validates internal consistency + store conflicts).
-  const observations = collectObservations(transport, store);
-  if (observations === null) return null;
-
-  // Phase 1: direct phone-form candidates.
-  for (const candidate of [participant, participantPn, senderPn]) {
-    const canonical = toStrictPhoneJid(candidate);
-    if (canonical) return make(groupChatId, canonical, observations);
-  }
-
-  // Phase 2: store lookup on LID participants.
-  for (const lidCandidate of [participant, participantLid]) {
-    if (lidCandidate && isStrictLidJid(lidCandidate)) {
-      const phoneJid = resolveFromStore(lidCandidate, store);
-      if (phoneJid) return make(groupChatId, phoneJid, observations);
-    }
-  }
-
-  return null;
+  const candidates = collectCandidates(transport, false);
+  const resolved = resolveCandidates(candidates.lids, candidates.phones, store);
+  if (!resolved) return null;
+  return make(groupChatId, resolved.phoneJid, resolved.observedMappings);
 }

@@ -61,6 +61,7 @@ type WhatsAppMessageKey = {
   fromMe?: boolean | null;
   participant?: string | null;
   senderPn?: string | null;
+  senderLid?: string | null;
   participantPn?: string | null;
   participantLid?: string | null;
 };
@@ -460,6 +461,7 @@ export function createWhatsAppAdapter(
             remoteJid,
             participant: msg.key?.participant,
             senderPn: msg.key?.senderPn,
+            senderLid: msg.key?.senderLid,
             participantPn: msg.key?.participantPn,
             participantLid: msg.key?.participantLid,
           },
