@@ -10,6 +10,7 @@ import { debugLog } from "@/utils/debug";
 const execFile = promisify(execFileCb);
 
 const GIT_TIMEOUT_MS = 30_000;
+const activeReflectionWorktrees = new Set<string>();
 const HARNESS_GIT_ENV = {
   GIT_AUTHOR_NAME: "Letta Code",
   GIT_AUTHOR_EMAIL: "noreply@letta.com",
@@ -109,6 +110,12 @@ export interface ReflectionMemoryWorktree {
   branchName: string;
   baseHead: string;
   gitCommonDir: string;
+}
+
+export function markReflectionMemoryWorktreeActive(
+  worktree: ReflectionMemoryWorktree,
+): void {
+  activeReflectionWorktrees.add(worktree.branchName);
 }
 
 export interface CreateReflectionMemoryWorktreeOptions {
@@ -344,6 +351,15 @@ export async function listPendingReflectionMemoryWorktrees(
       ? entry.branch.slice("refs/heads/".length)
       : undefined;
     if (!branchName?.startsWith("letta/reflection/")) continue;
+    if (activeReflectionWorktrees.has(branchName)) {
+      debugLog(
+        "memfs-git",
+        "reflection pending scan skipped active branch=%s worktree=%s",
+        branchName,
+        worktreeDir,
+      );
+      continue;
+    }
 
     const isMerged = await tryRunGit(resolvedParent, [
       "merge-base",
@@ -544,10 +560,45 @@ function buildPendingManualResult(
   };
 }
 
-export async function finalizeReflectionMemoryWorktree(
+async function finalizeReflectionMemoryWorktreeImpl(
   worktree: ReflectionMemoryWorktree,
-  options: { shouldMerge: boolean },
+  options: { shouldMerge: boolean; knownNoChanges?: boolean },
 ): Promise<ReflectionMemoryWorktreeFinalizeResult> {
+  if (!existsSync(worktree.worktreeDir) && options.knownNoChanges) {
+    const branchHead = (
+      await tryRunGit(worktree.parentMemoryDir, [
+        "rev-parse",
+        "--verify",
+        worktree.branchName,
+      ])
+    )?.stdout.trim();
+    if (branchHead && branchHead !== worktree.baseHead) {
+      throw new Error(
+        `Cannot finalize missing reflection worktree ${worktree.worktreeDir} as no-op: ${worktree.branchName} advanced from ${worktree.baseHead} to ${branchHead}`,
+      );
+    }
+    await cleanupWorktreeAndBranch(
+      worktree.parentMemoryDir,
+      worktree.worktreeDir,
+      worktree.branchName,
+      { force: true },
+    );
+    debugLog(
+      "memfs-git",
+      "reflection finalized id=%s status=no_changes worktreeMissing=true cleanedUp=true",
+      worktree.id,
+    );
+    return {
+      status: "no_changes",
+      parentMemoryDir: worktree.parentMemoryDir,
+      reflectionWorktreeDir: worktree.worktreeDir,
+      reflectionBranch: worktree.branchName,
+      commitCount: 0,
+      head: worktree.baseHead,
+      summary: "Reflection made no memory commits.",
+    };
+  }
+
   const commitCount = await getCommitCount(worktree);
   const status = await getStatusPorcelain(worktree.worktreeDir);
   const head = await getHead(worktree.worktreeDir);
@@ -704,4 +755,15 @@ export async function finalizeReflectionMemoryWorktree(
     head: mergedHead,
     summary: `Merged ${commitCount} reflection memory commit(s) into parent memory main.`,
   };
+}
+
+export async function finalizeReflectionMemoryWorktree(
+  worktree: ReflectionMemoryWorktree,
+  options: { shouldMerge: boolean; knownNoChanges?: boolean },
+): Promise<ReflectionMemoryWorktreeFinalizeResult> {
+  try {
+    return await finalizeReflectionMemoryWorktreeImpl(worktree, options);
+  } finally {
+    activeReflectionWorktrees.delete(worktree.branchName);
+  }
 }

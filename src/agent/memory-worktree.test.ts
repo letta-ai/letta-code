@@ -14,6 +14,7 @@ import {
   finalizeReflectionMemoryWorktree,
   integratePendingReflectionMemoryWorktrees,
   listPendingReflectionMemoryWorktrees,
+  markReflectionMemoryWorktreeActive,
   reflectionIntegrationConsumesTranscript,
   reflectionIntegrationNeedsReminder,
 } from "@/agent/memory-worktree";
@@ -142,6 +143,60 @@ describe("reflection memory worktrees", () => {
     expect(
       git(memoryDir, ["branch", "--list", worktree.branchName]).trim(),
     ).toBe("");
+  });
+
+  test("pending scans preserve active no-op reflection worktrees", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    markReflectionMemoryWorktreeActive(worktree);
+
+    const pending = await listPendingReflectionMemoryWorktrees(memoryDir);
+
+    expect(pending).toEqual([]);
+    expect(existsSync(worktree.worktreeDir)).toBe(true);
+    expect(
+      git(memoryDir, ["branch", "--list", worktree.branchName]).trim(),
+    ).toContain(worktree.branchName);
+
+    await finalizeReflectionMemoryWorktree(worktree, { shouldMerge: true });
+  });
+
+  test("finalizes a confirmed no-op after its worktree disappeared", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    git(memoryDir, ["worktree", "remove", "--force", worktree.worktreeDir]);
+    git(memoryDir, ["branch", "-D", worktree.branchName]);
+
+    const result = await finalizeReflectionMemoryWorktree(worktree, {
+      shouldMerge: true,
+      knownNoChanges: true,
+    });
+
+    expect(result.status).toBe("no_changes");
+    expect(result.commitCount).toBe(0);
+    expect(reflectionIntegrationConsumesTranscript(result)).toBe(true);
+  });
+
+  test("does not treat a missing committed worktree as a no-op", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(join(worktree.worktreeDir, "reflection.md"), "dream\n");
+    git(worktree.worktreeDir, ["add", "reflection.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+    git(memoryDir, ["worktree", "remove", "--force", worktree.worktreeDir]);
+
+    await expect(
+      finalizeReflectionMemoryWorktree(worktree, {
+        shouldMerge: true,
+        knownNoChanges: true,
+      }),
+    ).rejects.toThrow("advanced");
+    expect(
+      git(memoryDir, ["branch", "--list", worktree.branchName]).trim(),
+    ).toContain(worktree.branchName);
   });
 
   test("lists only unmerged pending reflection worktrees", async () => {

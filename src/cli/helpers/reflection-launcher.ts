@@ -4,6 +4,7 @@ import {
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
   integratePendingReflectionMemoryWorktrees,
+  markReflectionMemoryWorktreeActive,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
   reflectionIntegrationConsumesTranscript,
@@ -396,6 +397,7 @@ export async function prepareReflectionMemoryWorktreeLaunch(params: {
   const worktree = await createReflectionMemoryWorktree({
     parentMemoryDir: memoryDir,
   });
+  markReflectionMemoryWorktreeActive(worktree);
   try {
     // An override replaces the whole task prompt; the caller is then responsible
     // for referencing $TRANSCRIPT_PATH / $MEMORY_DIR, so we skip the (otherwise
@@ -423,6 +425,7 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   conversationId: string;
   subagentAgentId?: string;
   subagentType?: "reflection";
+  knownNoChanges?: boolean;
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
   logRecompileFailure?: (message: string) => void;
@@ -433,6 +436,7 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
 }> {
   const integration = await finalizeReflectionMemoryWorktree(params.worktree, {
     shouldMerge: params.subagentSuccess,
+    knownNoChanges: params.knownNoChanges,
   });
   const completionSuccess =
     params.subagentSuccess &&

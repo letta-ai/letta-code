@@ -103,6 +103,8 @@ interface ReflectionArenaCandidateResult {
   conversationId?: string;
   durationMs?: number;
   error?: string;
+  memoryHead?: string;
+  memoryNoChanges?: boolean;
   report?: string;
   stepCount?: number;
   success: boolean;
@@ -184,9 +186,12 @@ export interface ReflectionArenaChoiceQuestion {
 
 const updateLocks = new Map<string, Promise<void>>();
 
-async function getGitHead(cwd: string): Promise<string | null> {
+async function getGitOutput(
+  cwd: string,
+  args: string[],
+): Promise<string | null> {
   try {
-    const { stdout } = await execFile("git", ["rev-parse", "HEAD"], {
+    const { stdout } = await execFile("git", args, {
       cwd,
       encoding: "utf-8",
       timeout: 30_000,
@@ -196,6 +201,35 @@ async function getGitHead(cwd: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function getGitHead(cwd: string): Promise<string | null> {
+  return getGitOutput(cwd, ["rev-parse", "HEAD"]);
+}
+
+async function reflectionMemoryWorktreeHasNoChanges(
+  worktree: ReflectionMemoryWorktree,
+): Promise<boolean | undefined> {
+  const [count, status] = await Promise.all([
+    getGitOutput(worktree.worktreeDir, [
+      "rev-list",
+      "--count",
+      `${worktree.baseHead}..HEAD`,
+    ]),
+    getGitOutput(worktree.worktreeDir, ["status", "--porcelain"]),
+  ]);
+  if (count === null || status === null) return undefined;
+  return count === "0" && status.length === 0;
+}
+
+function candidateIsConfirmedNoOp(
+  candidate: ReflectionArenaCandidate,
+): boolean {
+  return (
+    candidate.result?.success === true &&
+    candidate.result.memoryNoChanges === true &&
+    candidate.result.memoryHead === candidate.worktree.baseHead
+  );
 }
 
 function getReflectionArenaRoot(): string {
@@ -731,6 +765,10 @@ export async function startReflectionArenaRun(
             report,
           }) => {
             try {
+              const [memoryHead, memoryNoChanges] = await Promise.all([
+                getGitHead(candidate.worktree.worktreeDir),
+                reflectionMemoryWorktreeHasNoChanges(candidate.worktree),
+              ]);
               emitReflectionRunEnd({
                 parentAgentId: options.agentId,
                 triggerSource: options.triggerSource,
@@ -776,6 +814,8 @@ export async function startReflectionArenaRun(
                   stepCount,
                   durationMs,
                   report,
+                  ...(memoryHead ? { memoryHead } : {}),
+                  ...(memoryNoChanges !== undefined ? { memoryNoChanges } : {}),
                 },
               });
               if (updated.status === "awaiting_choice") {
@@ -853,11 +893,15 @@ export async function finalizeReflectionArenaChoice(
       throw new Error(`Unknown reflection arena label: ${options.choice}`);
     }
     memoryBaseCommit = chosen.worktree.baseHead;
-    memoryCandidateCommit = await getGitHead(chosen.worktree.worktreeDir);
+    memoryCandidateCommit =
+      (await getGitHead(chosen.worktree.worktreeDir)) ??
+      chosen.result?.memoryHead ??
+      null;
     const finalized = await finalizeReflectionMemoryWorktreeLaunch({
       worktree: chosen.worktree,
       subagentSuccess: chosen.result?.success ?? false,
       subagentError: chosen.result?.error,
+      knownNoChanges: candidateIsConfirmedNoOp(chosen),
       agentId: run.agentId,
       conversationId: run.conversationId,
       subagentAgentId: chosen.result?.agentId,
@@ -875,6 +919,7 @@ export async function finalizeReflectionArenaChoice(
     discarded.push(candidate.label);
     await finalizeReflectionMemoryWorktree(candidate.worktree, {
       shouldMerge: false,
+      knownNoChanges: candidateIsConfirmedNoOp(candidate),
     });
   }
 
