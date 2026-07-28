@@ -85,6 +85,29 @@ function toolReturnPluralDelta(
   } as unknown as StreamDelta;
 }
 
+function clientToolStartDelta(toolCallId: string, name: string): StreamDelta {
+  return {
+    message_type: "client_tool_start",
+    id: `client-start-${toolCallId}`,
+    date: new Date().toISOString(),
+    tool_call_id: toolCallId,
+    tool_name: name,
+  } as StreamDelta;
+}
+
+function clientToolEndDelta(
+  toolCallId: string,
+  status: "success" | "error",
+): StreamDelta {
+  return {
+    message_type: "client_tool_end",
+    id: `client-end-${toolCallId}`,
+    date: new Date().toISOString(),
+    tool_call_id: toolCallId,
+    status,
+  } as StreamDelta;
+}
+
 /** Build a non-tool StreamDelta (e.g. assistant message). */
 function assistantDelta(text: string): StreamDelta {
   return {
@@ -249,6 +272,45 @@ describe("createToolLifecycleTracker", () => {
     const completes = events.filter((e) => e.type === "tool_call_complete");
     expect(completes).toHaveLength(1);
     expect((completes[0] as { output: string }).output).toBe("first");
+  });
+
+  test("waits for the terminal client-tool result instead of completing from progress snapshots", () => {
+    const events = collectToolLifecycleEvents([
+      toolCallDelta("call-stream", "Bash", '{"command":"build"}'),
+      clientToolStartDelta("call-stream", "Bash"),
+      toolReturnDelta("call-stream", "success", "building 10%"),
+      toolReturnDelta("call-stream", "success", "building 90%"),
+      clientToolEndDelta("call-stream", "success"),
+      toolReturnDelta("call-stream", "success", "build complete"),
+    ]);
+
+    const completes = events.filter(
+      (
+        event,
+      ): event is Extract<ToolCallEvent, { type: "tool_call_complete" }> =>
+        event.type === "tool_call_complete",
+    );
+    expect(completes).toHaveLength(1);
+    expect(completes[0]).toMatchObject({
+      output: "build complete",
+      success: true,
+    });
+  });
+
+  test("uses the terminal client-tool failure instead of an earlier successful snapshot", () => {
+    const events = collectToolLifecycleEvents([
+      toolCallDelta("call-fail", "Bash", '{"command":"build"}'),
+      clientToolStartDelta("call-fail", "Bash"),
+      toolReturnDelta("call-fail", "success", "building 10%"),
+      clientToolEndDelta("call-fail", "error"),
+      toolReturnDelta("call-fail", "error", "compiler failed"),
+    ]);
+
+    expect(events.at(-1)).toMatchObject({
+      type: "tool_call_complete",
+      output: "compiler failed",
+      success: false,
+    });
   });
 
   test("ignores tool_call_message fragments that arrive after completion", () => {

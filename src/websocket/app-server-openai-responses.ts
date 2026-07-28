@@ -11,7 +11,6 @@ import {
   extractUserContentParts,
   type OpenAiChatMessage,
   type OpenAiCompatOptions,
-  openWebUiChatIdFromHeaders,
   readJsonBody,
   rememberConversation,
   resolveAgentForModel,
@@ -56,7 +55,7 @@ interface FunctionCallItem {
   call_id: string;
   name: string;
   arguments: string;
-  status: "in_progress" | "completed" | "failed";
+  status: "in_progress" | "completed" | "incomplete";
 }
 
 interface FunctionCallOutputItem {
@@ -64,7 +63,7 @@ interface FunctionCallOutputItem {
   id: string;
   call_id: string;
   output: Array<{ type: "input_text"; text: string }>;
-  status: "completed" | "failed";
+  status: "completed" | "incomplete";
 }
 
 interface MessageItem {
@@ -91,32 +90,6 @@ type ResponseOutputItem =
   | FunctionCallOutputItem
   | ReasoningItem
   | MessageItem;
-
-interface StoredResponseState {
-  agentId: string;
-  conversationId: string;
-}
-
-const MAX_STORED_RESPONSES = 4096;
-const storedResponseState = new Map<string, StoredResponseState>();
-
-/** @internal Reset Responses API state between tests. */
-export function resetResponsesState(): void {
-  storedResponseState.clear();
-}
-
-function rememberResponseState(
-  responseId: string,
-  state: StoredResponseState,
-): void {
-  storedResponseState.delete(responseId);
-  storedResponseState.set(responseId, state);
-  while (storedResponseState.size > MAX_STORED_RESPONSES) {
-    const oldest = storedResponseState.keys().next().value;
-    if (oldest === undefined) break;
-    storedResponseState.delete(oldest);
-  }
-}
 
 function normalizeInput(input: ResponsesRequest["input"]): OpenAiChatMessage[] {
   if (typeof input === "string") {
@@ -174,6 +147,22 @@ function toBridgeMessages(
     messages: bridgeMessages,
     correlationOtid: bridgeMessages.at(-1)?.otid ?? null,
   };
+}
+
+function applyInstructions(
+  messages: BridgeTurnMessage[],
+  instructions: string | null | undefined,
+): void {
+  const text = instructions?.trim();
+  if (!text) return;
+  const userMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === "user");
+  if (!userMessage) return;
+  userMessage.content.unshift({
+    type: "text",
+    text: `<system-reminder>\n${text}\n</system-reminder>\n\n`,
+  });
 }
 
 function responseUsage(usage: TurnOutcome["usage"]): Record<string, unknown> {
@@ -280,7 +269,7 @@ class ResponseOutputBuilder {
     );
     call.item.name = event.tool_name ?? call.item.name;
     call.item.arguments = event.arguments;
-    call.item.status = event.success ? "completed" : "failed";
+    call.item.status = event.success ? "completed" : "incomplete";
     this.emit?.({
       type: "response.function_call_arguments.done",
       output_index: call.index,
@@ -300,7 +289,7 @@ class ResponseOutputBuilder {
       id: `fco_${randomUUID()}`,
       call_id: event.tool_call_id,
       output: [{ type: "input_text", text: event.output }],
-      status: event.success ? "completed" : "failed",
+      status: event.success ? "completed" : "incomplete",
     };
     const outputIndex = this.output.length;
     this.output.push(result);
@@ -510,35 +499,32 @@ export async function handleResponses(
     return;
   }
 
-  const input = normalizeInput(body.input);
-  const previous = body.previous_response_id
-    ? storedResponseState.get(body.previous_response_id)
-    : undefined;
-  if (body.previous_response_id && !previous) {
-    sendOpenAiError(
-      response,
-      404,
-      `Previous response '${body.previous_response_id}' was not found.`,
-      "invalid_request_error",
-      "previous_response_not_found",
-    );
-    return;
-  }
-  if (previous && previous.agentId !== agent.id) {
+  if (body.store === true) {
     sendOpenAiError(
       response,
       400,
-      "previous_response_id belongs to a different model",
+      "stored Responses are not supported; use a stable chat identity header for conversation continuity",
       "invalid_request_error",
+      "unsupported_parameter",
+    );
+    return;
+  }
+  if (body.previous_response_id) {
+    sendOpenAiError(
+      response,
+      400,
+      "previous_response_id is not supported; send the conversation input or a stable chat identity header",
+      "invalid_request_error",
+      "unsupported_parameter",
     );
     return;
   }
 
+  const input = normalizeInput(body.input);
   const streaming = body.stream === true;
-  const openWebUiChatId = openWebUiChatIdFromHeaders(request);
   const headerChatKey = chatKeyFromHeaders(request, streaming);
-  const stateful = Boolean(previous || headerChatKey);
-  const prepared = toBridgeMessages(input, stateful);
+  const prepared = toBridgeMessages(input, Boolean(headerChatKey));
+  applyInstructions(prepared.messages, body.instructions);
   if (!prepared.correlationOtid) {
     sendOpenAiError(
       response,
@@ -551,9 +537,7 @@ export async function handleResponses(
 
   let conversationId: string;
   try {
-    if (previous) {
-      conversationId = previous.conversationId;
-    } else if (headerChatKey) {
+    if (headerChatKey) {
       const key = `chat-key:${agent.id}:${headerChatKey}`;
       conversationId = await resolveConversationId(agent.id, key);
       rememberConversation(key, conversationId);
@@ -640,27 +624,17 @@ export async function handleResponses(
     };
   }
 
-  // Idempotent/replayed test seams can return an outcome without invoking
-  // callbacks. Reconstruct output from the completed outcome in that case.
+  // Test seams may return a completed outcome without invoking callbacks.
   if (builder.output.length === 0) {
     if (outcome.reasoning) builder.addReasoning(outcome.reasoning);
-    for (const event of outcome.toolEvents ?? []) builder.addToolEvent(event);
     if (outcome.text) builder.addText(outcome.text);
   }
   builder.finish();
 
-  // OpenAI Responses are stored by default; `store: false` opts out. Open
-  // WebUI's non-streaming title/tag/follow-up jobs carry the parent chat id,
-  // but are deliberately not part of that chat. Keep those task conversations
-  // ephemeral unless the caller explicitly asks to store them.
-  const openWebUiBackgroundRequest = Boolean(openWebUiChatId) && !streaming;
-  const shouldStore =
-    body.store === true ||
-    (!openWebUiBackgroundRequest && body.store !== false) ||
-    Boolean(headerChatKey || previous);
-  if (shouldStore && !outcome.error) {
-    rememberResponseState(responseId, { agentId: agent.id, conversationId });
-  } else if (!headerChatKey && !previous) {
+  // Header-less requests replay the supplied input into a fresh conversation.
+  // The endpoint does not expose response retrieval, so retaining that
+  // internal conversation would only create unreachable state.
+  if (!headerChatKey) {
     void getBackend()
       .deleteConversation?.(conversationId)
       .catch(() => {

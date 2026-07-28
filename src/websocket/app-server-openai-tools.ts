@@ -12,9 +12,11 @@
  *      a tool call. Arguments may arrive in fragments (partial JSON via
  *      `ToolCallDelta`), so multiple messages can share the same
  *      `tool_call_id`.
- *   2. `tool_return_message` — the tool has finished executing. The result
- *      may be singular (`tool_call_id` + `status` + `tool_return`) or
- *      plural (`tool_returns: ToolReturn[]`).
+ *   2. `tool_return_message` — server-side tools emit a terminal result;
+ *      client-side tools may emit repeated output snapshots before their
+ *      `client_tool_end` and canonical final return. Results may be singular
+ *      (`tool_call_id` + `status` + `tool_return`) or plural
+ *      (`tool_returns: ToolReturn[]`).
  *
  * This module aggregates those fragments and exposes a typed callback
  * surface so an HTTP Responses handler can observe:
@@ -25,12 +27,11 @@
  *   - **arguments_delta** — emitted for each incremental arguments
  *     fragment (including the first message if it already carries
  *     arguments).
- *   - **complete** — emitted once per `tool_call_id` when the matching
- *     `tool_return_message` arrives, carrying the final accumulated
- *     arguments, output, and success/error status.
+ *   - **complete** — emitted once per `tool_call_id` from the authoritative
+ *     terminal return, carrying the final accumulated arguments, output, and
+ *     success/error status. Client-side progress snapshots remain nonterminal.
  *
- * Duplicate events are suppressed: a second `tool_return_message` for an
- * already-completed call does not re-emit `complete`, and a
+ * Events after an authoritative terminal result are suppressed, and a
  * `tool_call_message` that arrives after completion is ignored.
  *
  * The module is transport-agnostic: it accepts already-decoded
@@ -105,6 +106,8 @@ interface ToolCallState {
   arguments: string;
   started: boolean;
   completed: boolean;
+  clientManaged: boolean;
+  terminalStatus: "success" | "error" | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -340,6 +343,8 @@ export function createToolLifecycleTracker(
       arguments: "",
       started: false,
       completed: false,
+      clientManaged: false,
+      terminalStatus: null,
     };
     calls.set(toolCallId, state);
     return state;
@@ -410,16 +415,31 @@ export function createToolLifecycleTracker(
       return;
     }
 
-    // Only MessageDelta (a LettaStreamingResponse chunk wrapped as
-    // { type: "message" }) carries tool_call/tool_return payloads.
-    // Other StreamDelta variants (ClientToolStartMessage, etc.) do not
-    // have a `type` field, so we check via a safe cast.
-    if ((delta as { type?: unknown }).type !== "message") {
+    const record = delta as unknown as UnknownRecord;
+    const messageType = stringValue(record.message_type);
+    const toolCallId = stringValue(record.tool_call_id);
+
+    // Client-executed tools emit repeated tool_return_message snapshots while
+    // running. The client_tool_end followed by the canonical final return is
+    // the terminal edge; treating the first snapshot as terminal truncates
+    // output and can hide a later failure.
+    if (messageType === "client_tool_start" && toolCallId) {
+      const state = getOrCreate(toolCallId);
+      state.clientManaged = true;
+      if (!state.name) state.name = stringValue(record.tool_name) ?? null;
+      return;
+    }
+    if (messageType === "client_tool_end" && toolCallId) {
+      const state = getOrCreate(toolCallId);
+      state.clientManaged = true;
+      state.terminalStatus = asToolReturnStatus(record.status);
       return;
     }
 
-    const record = delta as unknown as UnknownRecord;
-    const messageType = stringValue(record.message_type);
+    // Only MessageDelta payloads carry tool_call/tool_return messages.
+    if ((delta as { type?: unknown }).type !== "message") {
+      return;
+    }
 
     if (
       messageType === "tool_call_message" ||
@@ -437,7 +457,18 @@ export function createToolLifecycleTracker(
 
     if (messageType === "tool_return_message") {
       for (const result of extractToolReturns(record)) {
-        handleToolReturn(result.toolCallId, result.status, result.output);
+        const state = getOrCreate(result.toolCallId);
+        if (!state.clientManaged) {
+          handleToolReturn(result.toolCallId, result.status, result.output);
+          continue;
+        }
+        if (state.terminalStatus) {
+          handleToolReturn(
+            result.toolCallId,
+            state.terminalStatus,
+            result.output,
+          );
+        }
       }
       return;
     }

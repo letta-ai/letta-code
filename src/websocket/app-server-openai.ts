@@ -27,7 +27,6 @@ import {
 import {
   handleResponses,
   RESPONSES_PATH,
-  resetResponsesState,
 } from "@/websocket/app-server-openai-responses";
 import {
   type BridgeTurnMessage,
@@ -41,7 +40,6 @@ export { __testSetRunTurnImpl } from "@/websocket/app-server-openai-turn";
 /** @internal Clears chat-key and idempotency maps between tests. */
 export function __testResetConversationMap(): void {
   resetOpenAiCompatState();
-  resetResponsesState();
 }
 
 // OpenAI-compatible surface for the App Server. Each Letta agent is

@@ -401,44 +401,40 @@ describe("app-server Responses API", () => {
     expect(result.output_text).toBe("I examined the project.");
   });
 
-  test("store plus previous_response_id continues the same conversation", async () => {
-    const created: string[] = [];
-    __testSetBackend(fakeBackend(created));
-    const conversations: string[] = [];
-    const messageCounts: number[] = [];
-    stubToolTurn((conversationId, messages) => {
-      conversations.push(conversationId);
-      messageCounts.push(messages.length);
+  test("applies Responses instructions to the user turn", async () => {
+    __testSetBackend(fakeBackend());
+    let capturedMessages: unknown[] = [];
+    stubToolTurn((_conversationId, messages) => {
+      capturedMessages = messages;
     });
     handle = await startAppServer({
       listen: "ws://127.0.0.1:0",
       openaiApi: true,
     });
 
-    const first = await fetch(httpUrl(handle, "/v1/responses"), {
+    const response = await fetch(httpUrl(handle, "/v1/responses"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         model: "Tutor (Letta Agent)",
-        input: "Learn this project.",
-      }),
-    });
-    const firstBody = (await first.json()) as { id: string };
-
-    const second = await fetch(httpUrl(handle, "/v1/responses"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "Tutor (Letta Agent)",
-        input: "What did you learn?",
-        previous_response_id: firstBody.id,
+        instructions: "Answer in one sentence.",
+        input: "Inspect the project.",
       }),
     });
 
-    expect(second.status).toBe(200);
-    expect(created).toEqual(["conv-responses-1"]);
-    expect(conversations).toEqual(["conv-responses-1", "conv-responses-1"]);
-    expect(messageCounts).toEqual([1, 1]);
+    expect(response.status).toBe(200);
+    expect(capturedMessages).toMatchObject([
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "<system-reminder>\nAnswer in one sentence.\n</system-reminder>\n\n",
+          },
+          { type: "text", text: "Inspect the project." },
+        ],
+      },
+    ]);
   });
 
   test("Open WebUI chat ids isolate sessions and continue messages", async () => {
@@ -513,26 +509,30 @@ describe("app-server Responses API", () => {
     ]);
   });
 
-  test("rejects unknown previous_response_id", async () => {
+  test("rejects stored response state until retrieval and cleanup are supported", async () => {
     __testSetBackend(fakeBackend());
-    stubToolTurn();
     handle = await startAppServer({
       listen: "ws://127.0.0.1:0",
       openaiApi: true,
     });
 
-    const response = await fetch(httpUrl(handle, "/v1/responses"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: "Tutor (Letta Agent)",
-        input: "Hello",
-        previous_response_id: "resp_missing",
-      }),
-    });
-    expect(response.status).toBe(404);
-    const body = (await response.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("previous_response_not_found");
+    for (const unsupported of [
+      { store: true },
+      { previous_response_id: "resp_previous" },
+    ]) {
+      const response = await fetch(httpUrl(handle, "/v1/responses"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "Tutor (Letta Agent)",
+          input: "Hello",
+          ...unsupported,
+        }),
+      });
+      expect(response.status).toBe(400);
+      const body = (await response.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("unsupported_parameter");
+    }
   });
 
   test("requires user input", async () => {

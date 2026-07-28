@@ -3,7 +3,6 @@ import { settingsManager } from "@/settings-manager";
 import type { StreamDelta } from "@/types/protocol_v2";
 import {
   createToolLifecycleTracker,
-  type ToolCallEvent,
   type ToolLifecycleCallback,
 } from "@/websocket/app-server-openai-tools";
 import { getOrCreateProcessTransport } from "@/websocket/listener/connection";
@@ -51,7 +50,6 @@ export interface TurnOutcome {
   reasoning?: string;
   usage: OpenAiUsage;
   error: string | null;
-  toolEvents?: ToolCallEvent[];
 }
 
 export interface BridgeTurnMessage {
@@ -241,13 +239,11 @@ async function runTurnViaListenerRuntime(
     // turns in the same conversation never bleed into this response.
     let turnActive = false;
     let recordedError: string | null = null;
-    const toolEvents: ToolCallEvent[] = [];
     let settled = false;
     let unregisterTurnObserver: () => void = () => {};
-    const toolTracker = createToolLifecycleTracker((event) => {
-      toolEvents.push(event);
-      params.onToolEvent?.(event);
-    });
+    const toolTracker = params.onToolEvent
+      ? createToolLifecycleTracker(params.onToolEvent)
+      : null;
     if (!listener.streamObservers) {
       listener.streamObservers = new Set();
     }
@@ -256,12 +252,12 @@ async function runTurnViaListenerRuntime(
     const finish = (error: string | null): void => {
       if (settled) return;
       settled = true;
-      if (error) toolTracker.failPending(error);
+      if (error) toolTracker?.failPending(error);
       clearTimeout(timer);
       observers.delete(observer);
       unregisterTurnObserver();
-      toolTracker.dispose();
-      resolve({ text, reasoning, usage, error, toolEvents });
+      toolTracker?.dispose();
+      resolve({ text, reasoning, usage, error });
     };
 
     const observer: ListenerStreamObserver = (message) => {
@@ -282,7 +278,7 @@ async function runTurnViaListenerRuntime(
         if (status === "WAITING_ON_APPROVAL") {
           const note =
             "The agent attempted a tool call that requires interactive approval, which this API does not support.";
-          toolTracker.failPending(note);
+          toolTracker?.failPending(note);
           if (!text) {
             text = note;
             params.onAssistantText?.(note);
@@ -294,7 +290,7 @@ async function runTurnViaListenerRuntime(
       if (message.type !== "stream_delta" || message.subagent_id) return;
       const delta = (message as { delta?: { message_type?: string } }).delta;
       if (!delta) return;
-      toolTracker.process(delta as StreamDelta);
+      toolTracker?.process(delta as StreamDelta);
       switch (delta.message_type) {
         case "reasoning_message": {
           const piece = extractReasoningText(delta);
@@ -375,8 +371,7 @@ async function runTurnViaListenerRuntime(
       // merged batch) and answer the first with both prompts.
       noCoalesce: true,
       // HTTP clients cannot surface Letta Code's interactive overlays. Keep
-      // AskUserQuestion and other runtime-input tools out of this turn so the
-      // agent asks for missing information in ordinary assistant text.
+      // those tools out so the agent asks in ordinary assistant text.
       excludeInteractiveTools: true,
       messages: params.messages,
     };
