@@ -167,6 +167,9 @@ async function handleIncomingMessageInner(
       origin: "message",
       workingDirectory: turnWorkingDirectory,
     });
+  if (connectionId) {
+    runtime.activeConnectionId = connectionId;
+  }
   if (!runtime.turnLifecycle.isCurrent(turnLease)) {
     throw new Error("Cannot continue a turn with a stale lifecycle lease");
   }
@@ -971,6 +974,9 @@ async function handleIncomingMessageInner(
     }
 
     richDraftStreamer?.dispose();
+    if (runtime.activeConnectionId === connectionId) {
+      runtime.activeConnectionId = null;
+    }
 
     try {
       if (finalizedByThisInvocation) {

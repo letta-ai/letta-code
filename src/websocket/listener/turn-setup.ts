@@ -256,6 +256,7 @@ export async function prepareListenerTurn(params: {
     agentId,
   );
   const preparedToolContext = await prepareToolExecutionContextForScope({
+    connectionId,
     agentId,
     conversationId,
     clientToolAllowlist: msg.clientToolAllowlist,

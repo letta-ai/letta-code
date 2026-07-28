@@ -62,6 +62,12 @@ export interface StartListenerOptions {
 
 export interface IncomingMessage {
   type: "message";
+  /**
+   * Transport connection that delivered this message. Queueing carries this
+   * identity through to the turn so approvals and other interactive requests
+   * return to the correct client even when multiple clients share a runtime.
+   */
+  connectionId?: ListenerConnectionId;
   agentId?: string;
   conversationId?: string;
   /** Queue this message as its own turn; never merge with other messages. */
@@ -107,6 +113,7 @@ export type ListenerStreamObserver = (
 ) => void;
 
 export interface PendingExternalToolCall {
+  connectionId: ListenerConnectionId;
   resolve: (result: ExternalToolCallResult) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
@@ -137,6 +144,8 @@ export type InvalidInputCommand = {
 export type ParsedServerMessage = ServerMessage | InvalidInputCommand;
 
 export type PendingApprovalResolver = {
+  requestId: string;
+  connectionIds: Set<ListenerConnectionId>;
   resolve: (response: ApprovalResponseBody) => void;
   reject: (reason: Error) => void;
   controlRequest?: ControlRequest;
@@ -166,6 +175,8 @@ export type ConversationRuntime = {
   /** Runtime-scoped SDK override. Undefined uses the process defaults. */
   skillSources: SkillSource[] | undefined;
   activeChannelTurn: ActiveChannelTurn | null;
+  /** Connection currently executing this conversation's turn, if client-owned. */
+  activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;
   messageQueue: Promise<void>;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
@@ -203,6 +214,46 @@ export type ConversationRuntime = {
   contextTracker: ContextTracker;
 };
 
+export type ListenerConnectionId = string;
+
+/**
+ * Explicit destination for one outbound listener message.
+ *
+ * This mirrors Codex's OutgoingEnvelope split. Scoped notifications never
+ * fall back to every connected client: ToSubscribers with an empty subscriber
+ * set is intentionally a no-op.
+ */
+export type ListenerMessageRouting =
+  | {
+      type: "ToConnection";
+      connectionId: ListenerConnectionId;
+    }
+  | {
+      type: "ToSubscribers";
+    }
+  | {
+      type: "Broadcast";
+    };
+
+/**
+ * State owned by one transport connection.
+ *
+ * This mirrors Codex's ConnectionState: the process runtime owns services and
+ * conversations, while each client owns its writer, cancellation handle,
+ * initialization state, subscriptions, request resources, and event sequence.
+ */
+export type ListenerConnectionState = {
+  id: ListenerConnectionId;
+  ordinal: number;
+  writer: ListenerTransport;
+  streamWriter: ListenerTransport | null;
+  cancellation: AbortController;
+  initialized: boolean;
+  subscriptions: Set<string>;
+  eventSeqCounter: number;
+  options: StartListenerOptions;
+};
+
 export type ListenerRuntime = {
   socket: WebSocket | null;
   transport?: ListenerTransport | null;
@@ -227,6 +278,22 @@ export type ListenerRuntime = {
   /** Coalesces concurrent first-loads for one agent's scoped adapter. */
   agentModAdapterLoads?: Map<string, Promise<ModAdapter | null>>;
   sessionId: string;
+  /** Monotonic allocator used for deterministic connection ordering. */
+  nextConnectionOrdinal: number;
+  /** All currently open listener transports, keyed by explicit identity. */
+  connections: Map<ListenerConnectionId, ListenerConnectionState>;
+  /** Reverse index for Codex-style conversation subscriptions. */
+  connectionIdsByRuntimeKey: Map<string, Set<ListenerConnectionId>>;
+  /** Process-scoped transport used by scheduler/channel/background services. */
+  processTransport: ListenerTransport | null;
+  /** Process-wide services are installed once, regardless of client count. */
+  processServicesStarted: boolean;
+  /** Invalidates process-service attempts that outlive an outbound connection. */
+  processServicesGeneration: number;
+  /** Coalesces concurrent connection attempts while process services initialize. */
+  processServicesReady: Promise<void> | null;
+  /** Generation owned by processServicesReady, or null when no attempt is active. */
+  processServicesReadyGeneration: number | null;
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
@@ -256,7 +323,6 @@ export type ListenerRuntime = {
   connectionId: string | null;
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
-  approvalRuntimeKeyByRequestId: Map<string, string>;
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */
   worktreeWatcherByConversation: Map<
     string,
@@ -270,7 +336,7 @@ export type ListenerRuntime = {
   secretsHydrationFreshnessByAgent: Map<string, number>;
   /** Agent IDs whose cached secrets are stale and must re-fetch on the next hydration call. */
   secretsDirtyAgents: Set<string>;
-  pendingExternalToolCalls?: Map<string, PendingExternalToolCall>;
+  pendingExternalToolCalls: Map<string, PendingExternalToolCall>;
   /**
    * Agent metadata warmups for listen-mode reminders. The cached promise is
    * reused while the listener stays connected so first-turn reminders can join

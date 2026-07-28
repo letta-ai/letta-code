@@ -46,7 +46,7 @@ describe("app-server info protocol", () => {
         conversation_management: true,
         memory_management: true,
         runtime_start: true,
-        split_channels: true,
+        split_channels: false,
       },
     });
   });

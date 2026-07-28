@@ -128,14 +128,19 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
   });
 
   test("returns session id for running command and write_stdin polls it", async () => {
+    const runtimeScope = { agentId: "agent-1", conversationId: "conv-1" };
     const first = await exec_command({
       cmd: "printf start; sleep 0.5; printf done",
       yield_time_ms: 250,
+      parentScope: runtimeScope,
     });
 
     const match = first.output.match(/Process running with session ID (\d+)/);
     expect(match?.[1]).toBeDefined();
     expect(first.output).toContain("Output:\nstart");
+    expect(backgroundProcesses.get(match?.[1] ?? "")?.runtimeScope).toEqual(
+      runtimeScope,
+    );
 
     const second = await write_stdin({
       session_id: Number(match?.[1]),

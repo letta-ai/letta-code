@@ -3,8 +3,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  subscribeListenerConnection,
+} from "./connection";
 import { handleCwdChange } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { switchConversationWorkingDirectory } from "./cwd-change";
 import { createRuntime } from "./lifecycle";
 import { resetRemoteSettingsCache } from "./remote-settings";
 
@@ -73,5 +79,55 @@ describe("listener cwd change handling", () => {
     expect(runtime.reminderState.pendingSessionContextReason).toBe(
       "cwd_changed",
     );
+  });
+
+  test("automatic cwd changes reach both runtime subscribers", async () => {
+    const listener = createRuntime();
+    getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socketA = new MockSocket();
+    const socketB = new MockSocket();
+    for (const [connectionId, socket] of [
+      ["client-a", socketA],
+      ["client-b", socketB],
+    ] as const) {
+      openListenerConnection({
+        runtime: listener,
+        connectionId,
+        writer: socket as never,
+        options: {
+          connectionId,
+          wsUrl: "ws://test",
+          deviceId: connectionId,
+          connectionName: connectionId,
+          onConnected: () => {},
+          onDisconnected: () => {},
+          onError: () => {},
+        },
+      });
+      markListenerConnectionInitialized(listener, connectionId);
+      subscribeListenerConnection(listener, connectionId, {
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+      });
+    }
+
+    await switchConversationWorkingDirectory({
+      runtime: listener,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      workingDirectory: tempHome as string,
+      updateCurrentRuntimeContext: false,
+    });
+
+    for (const socket of [socketA, socketB]) {
+      expect(socket.sentPayloads).toHaveLength(1);
+      expect(JSON.parse(socket.sentPayloads[0] ?? "{}")).toMatchObject({
+        type: "update_device_status",
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+      });
+    }
   });
 });

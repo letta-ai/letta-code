@@ -336,6 +336,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasTaskNotification = false;
   let hasCronPrompt = false;
   let hasModContinue = false;
+  let batchConnectionId: string | undefined;
   let batchImageFailureMode: "strict" | "drop" | null = null;
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
@@ -353,6 +354,17 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     }
 
     if (item.kind === "message") {
+      const itemConnectionId = runtime.queuedMessagesByItemId.get(
+        item.id,
+      )?.connectionId;
+      if (
+        batchConnectionId !== undefined &&
+        itemConnectionId !== undefined &&
+        itemConnectionId !== batchConnectionId
+      ) {
+        break;
+      }
+      batchConnectionId ??= itemConnectionId;
       const itemImageFailureMode = getInboundImageFailureMode(
         runtime.queuedMessagesByItemId.get(item.id),
       );
