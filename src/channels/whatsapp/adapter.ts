@@ -45,6 +45,7 @@ type WhatsAppSocket = {
   ev?: EventEmitterLike;
   ws?: { close?: () => void };
   user?: { id?: string; lid?: string };
+  readMessages?: (keys: WhatsAppMessageKey[]) => Promise<unknown>;
   sendMessage?: (
     jid: string,
     payload: Record<string, unknown>,
@@ -54,16 +55,18 @@ type WhatsAppSocket = {
   groupMetadata?: (jid: string) => Promise<{ subject?: string }>;
 };
 
+type WhatsAppMessageKey = {
+  remoteJid?: string | null;
+  id?: string | null;
+  fromMe?: boolean | null;
+  participant?: string | null;
+  senderPn?: string | null;
+  participantPn?: string | null;
+  participantLid?: string | null;
+};
+
 type WhatsAppMessage = {
-  key?: {
-    remoteJid?: string | null;
-    id?: string | null;
-    fromMe?: boolean | null;
-    participant?: string | null;
-    senderPn?: string | null;
-    participantPn?: string | null;
-    participantLid?: string | null;
-  };
+  key?: WhatsAppMessageKey;
   message?: unknown;
   messageTimestamp?: number | { toNumber?: () => number } | null;
   pushName?: string | null;
@@ -372,10 +375,11 @@ export function createWhatsAppAdapter(
       result.release();
       return;
     }
-    sock = result.sock as WhatsAppSocket;
+    const connectedSocket = result.sock as WhatsAppSocket;
+    sock = connectedSocket;
     releaseSocketLease = result.release;
-    sock.ev?.on?.("messages.upsert", (event) => {
-      return handleMessagesUpsert(event).catch((error) => {
+    connectedSocket.ev?.on?.("messages.upsert", (event) => {
+      return handleMessagesUpsert(event, connectedSocket).catch((error) => {
         console.error(
           `[WhatsApp:${account.accountId}] inbound handler failed:`,
           error instanceof Error ? error.message : error,
@@ -392,7 +396,29 @@ export function createWhatsAppAdapter(
     }
   }
 
-  async function handleMessagesUpsert(event: unknown): Promise<void> {
+  function startReadReceipts(
+    batchSocket: WhatsAppSocket | null,
+    keys: WhatsAppMessageKey[],
+  ): void {
+    if (!batchSocket?.readMessages || keys.length === 0) return;
+    try {
+      void batchSocket.readMessages(keys).catch(() => {
+        console.warn(
+          `[WhatsApp:${account.accountId}] failed to mark inbound messages as read.`,
+        );
+      });
+    } catch {
+      console.warn(
+        `[WhatsApp:${account.accountId}] failed to mark inbound messages as read.`,
+      );
+    }
+  }
+
+  async function handleMessagesUpsert(
+    event: unknown,
+    batchSocket: WhatsAppSocket,
+  ): Promise<void> {
+    const receiptKeys: WhatsAppMessageKey[] = [];
     try {
       const record = asRecord(event);
       if (record.type !== "notify" && record.type !== "append") return;
@@ -506,10 +532,12 @@ export function createWhatsAppAdapter(
         console.log(
           `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${preview(body)}"`,
         );
+        if (msg.key) receiptKeys.push(msg.key);
         await adapter.onMessage?.(inbound);
       }
     } finally {
       flushLidStoreIfDirty();
+      startReadReceipts(batchSocket, receiptKeys);
     }
   }
 

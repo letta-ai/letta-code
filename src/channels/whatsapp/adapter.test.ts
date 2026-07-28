@@ -61,30 +61,42 @@ function instrumentStore(store: LidStore): LidStore & { flushes: number } {
 function makeHarness(
   store: LidStore,
   onMessage: (message: InboundChannelMessage) => Promise<void>,
+  options: {
+    readMessages?: (keys: unknown[]) => Promise<unknown>;
+  } = {},
 ) {
-  let upsertHandler: ((payload: unknown) => unknown) | undefined;
+  const upsertHandlers: Array<(payload: unknown) => unknown> = [];
   const sentJids: string[] = [];
-  const socket = {
-    ev: {
-      on(event: string, handler: (payload: unknown) => void) {
-        if (event === "messages.upsert") upsertHandler = handler;
-      },
-    },
-    ws: { close() {} },
-    user: { id: phone("15551234567"), lid: lid("777000111") },
-    async sendMessage(jid: string) {
-      sentJids.push(jid);
-      return { key: { id: "outbound" } };
-    },
-  };
+  const socketReadBatches: unknown[][][] = [];
   const createSocket: NonNullable<
     WhatsAppAdapterDependencies["createSocket"]
-  > = async () => ({
-    sock: socket,
-    saveCreds: async () => undefined,
-    DisconnectReason: {},
-    release: () => undefined,
-  });
+  > = async () => {
+    const readBatches: unknown[][] = [];
+    socketReadBatches.push(readBatches);
+    const socket = {
+      ev: {
+        on(event: string, handler: (payload: unknown) => void) {
+          if (event === "messages.upsert") upsertHandlers.push(handler);
+        },
+      },
+      ws: { close() {} },
+      user: { id: phone("15551234567"), lid: lid("777000111") },
+      async sendMessage(jid: string) {
+        sentJids.push(jid);
+        return { key: { id: "outbound" } };
+      },
+      readMessages(keys: unknown[]) {
+        readBatches.push(keys);
+        return options.readMessages?.(keys) ?? Promise.resolve();
+      },
+    };
+    return {
+      sock: socket,
+      saveCreds: async () => undefined,
+      DisconnectReason: {},
+      release: () => undefined,
+    };
+  };
   const dependencies: WhatsAppAdapterDependencies = {
     createSocket,
     loadRuntimeModule: async () => ({}),
@@ -95,9 +107,14 @@ function makeHarness(
   return {
     adapter,
     async emit(messages: Record<string, unknown>[]) {
-      await upsertHandler?.({ type: "notify", messages });
+      await upsertHandlers.at(-1)?.({ type: "notify", messages });
     },
     sentJids,
+    upsertHandlers,
+    socketReadBatches,
+    get readBatches() {
+      return socketReadBatches.at(-1) ?? [];
+    },
   };
 }
 
@@ -120,14 +137,13 @@ describe("WhatsApp adapter canonical identity integration", () => {
     });
 
     await harness.adapter.start();
-    await harness.emit([
-      makeMessage(lid("12345678"), "one", {
-        senderPn: phone("15550000001"),
-      }),
-      makeMessage(lid("87654321"), "two", {
-        senderPn: phone("15550000002"),
-      }),
-    ]);
+    const first = makeMessage(lid("12345678"), "one", {
+      senderPn: phone("15550000001"),
+    });
+    const second = makeMessage(lid("87654321"), "two", {
+      senderPn: phone("15550000002"),
+    });
+    await harness.emit([first, second]);
 
     expect(received.map((message) => message.chatId)).toEqual([
       phone("15550000001"),
@@ -140,6 +156,87 @@ describe("WhatsApp adapter canonical identity integration", () => {
     expect(store.flushes).toBe(1);
     expect(store.resolve(lid("12345678"))).toBe(phone("15550000001"));
     expect(received[0]?.raw).toBeDefined();
+    expect(harness.readBatches).toEqual([
+      [(first as { key: unknown }).key, (second as { key: unknown }).key],
+    ]);
+  });
+
+  test("never-resolving receipts do not delay delivery or batch completion", async () => {
+    let resolveRead: (() => void) | undefined;
+    const readPromise = new Promise<void>((resolve) => {
+      resolveRead = resolve;
+    });
+    const store = instrumentStore(createLidStore(join(dir, "lid.json")));
+    const received: InboundChannelMessage[] = [];
+    const harness = makeHarness(
+      store,
+      async (message) => {
+        received.push(message);
+      },
+      { readMessages: async () => readPromise },
+    );
+    await harness.adapter.start();
+
+    await harness.emit([
+      makeMessage(lid("23232323"), "nonblocking", {
+        senderPn: phone("15550000014"),
+      }),
+    ]);
+
+    expect(received).toHaveLength(1);
+    expect(harness.readBatches).toHaveLength(1);
+    resolveRead?.();
+  });
+
+  test("receipts use the socket that registered the batch listener", async () => {
+    const store = instrumentStore(createLidStore(join(dir, "socket.json")));
+    const harness = makeHarness(store, async () => undefined);
+    await harness.adapter.start();
+    const oldHandler = harness.upsertHandlers[0];
+
+    await harness.adapter.stop();
+    await harness.adapter.start();
+
+    const message = makeMessage(lid("24242424"), "old-socket", {
+      senderPn: phone("15550000017"),
+    });
+    await oldHandler?.({ type: "notify", messages: [message] });
+
+    expect(harness.socketReadBatches).toHaveLength(2);
+    expect(harness.socketReadBatches[0]).toEqual([
+      [(message as { key: unknown }).key],
+    ]);
+    expect(harness.socketReadBatches[1]).toEqual([]);
+  });
+
+  test("receipt sync throws and async rejections are contained", async () => {
+    const syncStore = instrumentStore(createLidStore(join(dir, "sync.json")));
+    const syncHarness = makeHarness(syncStore, async () => undefined, {
+      readMessages: () => {
+        throw new Error("sync receipt failure");
+      },
+    });
+    await syncHarness.adapter.start();
+    await syncHarness.emit([
+      makeMessage(lid("45454545"), "sync", {
+        senderPn: phone("15550000015"),
+      }),
+    ]);
+
+    const asyncStore = instrumentStore(createLidStore(join(dir, "async.json")));
+    const asyncHarness = makeHarness(asyncStore, async () => undefined, {
+      readMessages: async () =>
+        Promise.reject(new Error("async receipt failure")),
+    });
+    await asyncHarness.adapter.start();
+    await asyncHarness.emit([
+      makeMessage(lid("67676767"), "async", {
+        senderPn: phone("15550000016"),
+      }),
+    ]);
+
+    expect(syncHarness.readBatches).toHaveLength(1);
+    expect(asyncHarness.readBatches).toHaveLength(1);
   });
 
   test("later LID DM resolves from the persisted store after restart", async () => {
@@ -184,6 +281,7 @@ describe("WhatsApp adapter canonical identity integration", () => {
     expect(received).toHaveLength(0);
     expect(store.resolve(existing)).toBe(phone("15550000004"));
     expect(store.flushes).toBe(0);
+    expect(harness.readBatches).toHaveLength(0);
   });
 
   test("group observations canonicalize sender and support later LID-only messages", async () => {
@@ -241,15 +339,17 @@ describe("WhatsApp adapter canonical identity integration", () => {
     });
     await harness.adapter.start();
 
-    await harness.emit([
-      makeMessage(lid("88889999"), "same", {
-        senderPn: phone("15550000009"),
-      }),
-      makeMessage(phone("15550000009"), "same"),
-    ]);
+    const lidMessage = makeMessage(lid("88889999"), "same", {
+      senderPn: phone("15550000009"),
+    });
+    const phoneMessage = makeMessage(phone("15550000009"), "same");
+    await harness.emit([lidMessage, phoneMessage]);
 
     expect(received).toHaveLength(1);
     expect(store.flushes).toBe(1);
+    expect(harness.readBatches).toEqual([
+      [(lidMessage as { key: unknown }).key],
+    ]);
   });
 
   test("PN-first canonical dedupe still learns the later LID mapping", async () => {
@@ -262,15 +362,19 @@ describe("WhatsApp adapter canonical identity integration", () => {
     });
     await harness.adapter.start();
 
-    await harness.emit([
-      makeMessage(mapped, "same-reverse"),
-      makeMessage(legacy, "same-reverse", { senderPn: mapped }),
-    ]);
+    const phoneMessage = makeMessage(mapped, "same-reverse");
+    const lidMessage = makeMessage(legacy, "same-reverse", {
+      senderPn: mapped,
+    });
+    await harness.emit([phoneMessage, lidMessage]);
 
     expect(received).toHaveLength(1);
     expect(received[0]?.chatId).toBe(mapped);
     expect(store.resolve(legacy)).toBe(mapped);
     expect(store.flushes).toBe(1);
+    expect(harness.readBatches).toEqual([
+      [(phoneMessage as { key: unknown }).key],
+    ]);
   });
 
   test("outbound send resolves known LID and rejects unknown LID", async () => {
@@ -318,6 +422,7 @@ describe("WhatsApp adapter canonical identity integration", () => {
 
     expect(store.flushes).toBe(1);
     expect(store.resolve(lid("99990000"))).toBe(phone("15550000010"));
+    expect(harness.readBatches).toHaveLength(1);
   });
 
   test("flush failure stays dirty and retries on the next batch", async () => {
