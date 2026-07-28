@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { settingsManager } from "@/settings-manager";
+import type { StreamDelta } from "@/types/protocol_v2";
+import {
+  createToolLifecycleTracker,
+  type ToolCallEvent,
+  type ToolLifecycleCallback,
+} from "@/websocket/app-server-openai-tools";
 import { getOrCreateProcessTransport } from "@/websocket/listener/connection";
 import { createConnectionTurnProcessor } from "@/websocket/listener/connection-lifecycle";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
@@ -43,6 +49,7 @@ export interface TurnOutcome {
   text: string;
   usage: OpenAiUsage;
   error: string | null;
+  toolEvents?: ToolCallEvent[];
 }
 
 export interface BridgeTurnMessage {
@@ -51,7 +58,7 @@ export interface BridgeTurnMessage {
   otid: string;
 }
 
-interface RunTurnParams {
+export interface RunTurnParams {
   agentId: string;
   conversationId: string;
   /** Full input for the turn: the newest message in stateful mode, or the
@@ -61,6 +68,7 @@ interface RunTurnParams {
    * lifecycle with this request. */
   correlationOtid: string;
   onAssistantText?: (text: string) => void;
+  onToolEvent?: ToolLifecycleCallback;
   onLog?: (message: string) => void;
 }
 
@@ -212,8 +220,13 @@ async function runTurnViaListenerRuntime(
     // turns in the same conversation never bleed into this response.
     let turnActive = false;
     let recordedError: string | null = null;
+    const toolEvents: ToolCallEvent[] = [];
     let settled = false;
     let unregisterTurnObserver: () => void = () => {};
+    const toolTracker = createToolLifecycleTracker((event) => {
+      toolEvents.push(event);
+      params.onToolEvent?.(event);
+    });
     if (!listener.streamObservers) {
       listener.streamObservers = new Set();
     }
@@ -222,10 +235,12 @@ async function runTurnViaListenerRuntime(
     const finish = (error: string | null): void => {
       if (settled) return;
       settled = true;
+      if (error) toolTracker.failPending(error);
       clearTimeout(timer);
       observers.delete(observer);
       unregisterTurnObserver();
-      resolve({ text, usage, error });
+      toolTracker.dispose();
+      resolve({ text, usage, error, toolEvents });
     };
 
     const observer: ListenerStreamObserver = (message) => {
@@ -244,9 +259,10 @@ async function runTurnViaListenerRuntime(
         const status = (message as { loop_status?: { status?: string } })
           .loop_status?.status;
         if (status === "WAITING_ON_APPROVAL") {
+          const note =
+            "The agent attempted a tool call that requires interactive approval, which this API does not support.";
+          toolTracker.failPending(note);
           if (!text) {
-            const note =
-              "The agent attempted a tool call that requires interactive approval, which this API does not support.";
             text = note;
             params.onAssistantText?.(note);
           }
@@ -257,6 +273,7 @@ async function runTurnViaListenerRuntime(
       if (message.type !== "stream_delta" || message.subagent_id) return;
       const delta = (message as { delta?: { message_type?: string } }).delta;
       if (!delta) return;
+      toolTracker.process(delta as StreamDelta);
       switch (delta.message_type) {
         case "assistant_message": {
           const piece = extractDeltaText(delta);
