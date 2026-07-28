@@ -120,7 +120,7 @@ export interface PendingExternalToolCall {
 }
 
 export interface ModeChangePayload {
-  mode: "standard" | "acceptEdits" | "unrestricted";
+  mode: "standard" | "acceptEdits" | "unrestricted" | "strict";
 }
 
 export interface ChangeCwdMessage {
