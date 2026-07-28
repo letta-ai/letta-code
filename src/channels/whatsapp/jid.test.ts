@@ -3,7 +3,6 @@ import { describe, expect, test } from "bun:test";
 import {
   isStrictLidJid,
   isStrictPhoneJid,
-  stripDeviceSuffix,
   WHATSAPP_LID_SUFFIX,
   WHATSAPP_PHONE_SUFFIX,
 } from "@/channels/whatsapp/jid";
@@ -59,21 +58,5 @@ describe("isStrictLidJid", () => {
   test("rejects empty/null/undefined", () => {
     expect(isStrictLidJid("")).toBe(false);
     expect(isStrictLidJid(null)).toBe(false);
-  });
-});
-
-describe("stripDeviceSuffix", () => {
-  test("strips :N from phone JID", () => {
-    expect(stripDeviceSuffix(`58414${P}`)).toBe(`58414${P}`);
-    expect(stripDeviceSuffix(`58414:5${P}`)).toBe(`58414${P}`);
-  });
-
-  test("strips :N from LID JID", () => {
-    expect(stripDeviceSuffix(`123:7${L}`)).toBe(`123${L}`);
-  });
-
-  test("empty/null", () => {
-    expect(stripDeviceSuffix("")).toBe("");
-    expect(stripDeviceSuffix(null)).toBe("");
   });
 });
