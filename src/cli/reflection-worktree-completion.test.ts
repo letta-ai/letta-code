@@ -63,7 +63,7 @@ afterEach(() => {
 });
 
 describe("reflection worktree completion messaging", () => {
-  test("parent dirty defers merge but marks transcript reflected", async () => {
+  test("parent dirty cleans up and leaves the transcript retryable", async () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,
     });
@@ -78,17 +78,17 @@ describe("reflection worktree completion messaging", () => {
 
     const result = await finalizeLaunch(worktree, true);
 
-    expect(result.integration.status).toBe("pending_manual_merge");
+    expect(result.integration.status).toBe("parent_dirty");
     expect(result.integration.summary).toContain(
-      "parent memory repo has uncommitted changes",
+      "parent memory repo had uncommitted changes",
     );
-    expect(result.completionSuccess).toBe(true);
+    expect(result.completionSuccess).toBe(false);
     expect(result.completionMessage).toBe(
-      "Dreamed; memory merge will finish after pending memory changes are resolved.",
+      "Tried to reflect, but parent memory had uncommitted changes; will retry later.",
     );
   });
 
-  test("parent merge conflict defers merge but marks transcript reflected", async () => {
+  test("parent merge conflict cleans up and leaves the transcript retryable", async () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,
     });
@@ -105,11 +105,11 @@ describe("reflection worktree completion messaging", () => {
 
     const result = await finalizeLaunch(worktree, true);
 
-    expect(result.integration.status).toBe("pending_conflict");
-    expect(result.integration.summary).toContain("has conflicts");
-    expect(result.completionSuccess).toBe(true);
+    expect(result.integration.status).toBe("merge_conflict");
+    expect(result.integration.summary).toContain("conflicted");
+    expect(result.completionSuccess).toBe(false);
     expect(result.completionMessage).toBe(
-      "Dreamed; memory merge will finish after conflicts are resolved.",
+      "Tried to reflect, but memory updates conflicted with newer changes; will retry later.",
     );
   });
 

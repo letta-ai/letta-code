@@ -203,6 +203,8 @@ export type ReflectionMemoryWorktreeFinalizeStatus =
   | "no_changes"
   | "pending_conflict"
   | "pending_manual_merge"
+  | "parent_dirty"
+  | "merge_conflict"
   | "dirty_uncommitted"
   | "failed";
 
@@ -539,27 +541,6 @@ async function cleanupWorktreeAndBranch(
   ]);
 }
 
-function buildPendingManualResult(
-  worktree: ReflectionMemoryWorktree,
-  commitCount: number,
-  summary: string,
-  options: {
-    error?: string;
-    head?: string;
-  } = {},
-): ReflectionMemoryWorktreeFinalizeResult {
-  return {
-    status: "pending_manual_merge",
-    parentMemoryDir: worktree.parentMemoryDir,
-    reflectionWorktreeDir: worktree.worktreeDir,
-    reflectionBranch: worktree.branchName,
-    commitCount,
-    head: options.head,
-    summary,
-    error: options.error,
-  };
-}
-
 async function finalizeReflectionMemoryWorktreeImpl(
   worktree: ReflectionMemoryWorktree,
   options: { shouldMerge: boolean; knownNoChanges?: boolean },
@@ -677,19 +658,28 @@ async function finalizeReflectionMemoryWorktreeImpl(
 
   const parentStatus = await getStatusPorcelain(worktree.parentMemoryDir);
   if (parentStatus.length > 0) {
+    await cleanupWorktreeAndBranch(
+      worktree.parentMemoryDir,
+      worktree.worktreeDir,
+      worktree.branchName,
+      { force: true },
+    );
     debugLog(
       "memfs-git",
-      "reflection finalized id=%s status=pending_manual_merge reason=parent_dirty branch=%s preservedWorktree=%s",
+      "reflection finalized id=%s status=parent_dirty commitCount=%d cleanedUp=true retryable=true",
       worktree.id,
-      worktree.branchName,
-      worktree.worktreeDir,
-    );
-    return buildPendingManualResult(
-      worktree,
       commitCount,
-      "Reflection produced memory updates, but the parent memory repo has uncommitted changes. Merge was deferred.",
-      { head },
     );
+    return {
+      status: "parent_dirty",
+      parentMemoryDir: worktree.parentMemoryDir,
+      reflectionWorktreeDir: worktree.worktreeDir,
+      reflectionBranch: worktree.branchName,
+      commitCount,
+      head,
+      summary:
+        "Reflection produced memory updates, but the parent memory repo had uncommitted changes; the worktree was cleaned up so the transcript can be retried.",
+    };
   }
 
   debugLog(
@@ -712,22 +702,27 @@ async function finalizeReflectionMemoryWorktreeImpl(
   ]);
   if (!mergeResult) {
     await tryRunGit(worktree.parentMemoryDir, ["merge", "--abort"]);
+    await cleanupWorktreeAndBranch(
+      worktree.parentMemoryDir,
+      worktree.worktreeDir,
+      worktree.branchName,
+      { force: true },
+    );
     debugLog(
       "memfs-git",
-      "reflection finalized id=%s status=pending_conflict branch=%s mergeAbort=true preservedWorktree=%s",
+      "reflection finalized id=%s status=merge_conflict commitCount=%d mergeAbort=true cleanedUp=true retryable=true",
       worktree.id,
-      worktree.branchName,
-      worktree.worktreeDir,
+      commitCount,
     );
     return {
-      status: "pending_conflict",
+      status: "merge_conflict",
       parentMemoryDir: worktree.parentMemoryDir,
       reflectionWorktreeDir: worktree.worktreeDir,
       reflectionBranch: worktree.branchName,
       commitCount,
       head,
       summary:
-        "Reflection produced memory updates, but merging them into the parent memory repo has conflicts. The parent merge was aborted and the reflection worktree was preserved for manual merge.",
+        "Reflection produced memory updates, but merging them into the parent memory repo conflicted; the worktree was cleaned up so the transcript can be retried.",
     };
   }
 

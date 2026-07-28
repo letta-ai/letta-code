@@ -289,6 +289,10 @@ function getReflectionCompletionMessage(
     case "pending_manual_merge":
       return ({ action }) =>
         `${action}; memory merge will finish after pending memory changes are resolved.`;
+    case "parent_dirty":
+      return "Tried to reflect, but parent memory had uncommitted changes; will retry later.";
+    case "merge_conflict":
+      return "Tried to reflect, but memory updates conflicted with newer changes; will retry later.";
     case "dirty_uncommitted":
       return "Tried to reflect, but memory changes were not committed cleanly; will retry later.";
     case "failed":
