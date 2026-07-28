@@ -341,6 +341,10 @@ async function runTurnViaListenerRuntime(
       // would strand the second observer (only the first OTID survives a
       // merged batch) and answer the first with both prompts.
       noCoalesce: true,
+      // HTTP clients cannot surface Letta Code's interactive overlays. Keep
+      // AskUserQuestion and other runtime-input tools out of this turn so the
+      // agent asks for missing information in ordinary assistant text.
+      excludeInteractiveTools: true,
       messages: params.messages,
     };
     try {
