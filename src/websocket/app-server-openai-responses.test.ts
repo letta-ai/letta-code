@@ -418,7 +418,11 @@ describe("app-server Responses API", () => {
       body: JSON.stringify({
         model: "Tutor (Letta Agent)",
         instructions: "Answer in one sentence.",
-        input: "Inspect the project.",
+        input: [
+          { type: "message", role: "developer", content: "Be concise." },
+          { type: "message", role: "system", content: "Use plain text." },
+          { type: "message", role: "user", content: "Inspect the project." },
+        ],
       }),
     });
 
@@ -429,7 +433,7 @@ describe("app-server Responses API", () => {
         content: [
           {
             type: "text",
-            text: "<system-reminder>\nAnswer in one sentence.\n</system-reminder>\n\n",
+            text: "<system-reminder>\nAnswer in one sentence.\n\nBe concise.\n\nUse plain text.\n</system-reminder>\n\n",
           },
           { type: "text", text: "Inspect the project." },
         ],

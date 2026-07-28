@@ -149,11 +149,26 @@ function toBridgeMessages(
   };
 }
 
+function inputInstructions(input: ResponsesRequest["input"]): string[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter(
+      (item) =>
+        item?.type === "message" &&
+        (item.role === "system" || item.role === "developer"),
+    )
+    .map((item) => extractTextContent(item.content))
+    .filter(Boolean);
+}
+
 function applyInstructions(
   messages: BridgeTurnMessage[],
-  instructions: string | null | undefined,
+  instructions: Array<string | null | undefined>,
 ): void {
-  const text = instructions?.trim();
+  const text = instructions
+    .map((instruction) => instruction?.trim())
+    .filter(Boolean)
+    .join("\n\n");
   if (!text) return;
   const userMessage = [...messages]
     .reverse()
@@ -524,7 +539,10 @@ export async function handleResponses(
   const streaming = body.stream === true;
   const headerChatKey = chatKeyFromHeaders(request, streaming);
   const prepared = toBridgeMessages(input, Boolean(headerChatKey));
-  applyInstructions(prepared.messages, body.instructions);
+  applyInstructions(prepared.messages, [
+    body.instructions,
+    ...inputInstructions(body.input),
+  ]);
   if (!prepared.correlationOtid) {
     sendOpenAiError(
       response,
