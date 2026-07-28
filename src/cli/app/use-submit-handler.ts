@@ -80,6 +80,7 @@ import {
   type ReflectionArenaChoiceQuestion,
   sampleReflectionArenaComparisonModel,
   startReflectionArenaRun,
+  surfaceReflectionArenaReady,
 } from "@/cli/helpers/reflection-arena";
 import {
   AUTO_REFLECTION_DESCRIPTION,
@@ -247,6 +248,10 @@ type SubmitHandlerContext = {
   hasBackfilledRef: MutableRefObject<boolean>;
   isAgentBusy: () => boolean;
   isExecutingTool: boolean;
+  queueReflectionArenaReady?: (payload: {
+    message: string;
+    runId: string;
+  }) => void;
   llmConfigRef: MutableRefObject<LlmConfig | null>;
   maybeCarryOverActiveConversationModel: (
     targetConversationId: string,
@@ -635,6 +640,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     hasBackfilledRef,
     isAgentBusy,
     isExecutingTool,
+    queueReflectionArenaReady,
     llmConfigRef,
     maybeCarryOverActiveConversationModel,
     needsEagerApprovalCheck,
@@ -704,6 +710,25 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     userCancelledRef,
     onReload,
   } = ctx;
+
+  // When the reflection arena finishes while the agent is still busy, defer
+  // the (long) ready report so it renders at the end of the turn instead of
+  // being buried mid-turn under subsequent agent output. The choice prompt is
+  // surfaced alongside the report once the agent is idle.
+  const handleReflectionArenaReady = (
+    message: string,
+    readyRun: { runId: string },
+  ) => {
+    if (isAgentBusy() && queueReflectionArenaReady) {
+      queueReflectionArenaReady({ message, runId: readyRun.runId });
+      return;
+    }
+    surfaceReflectionArenaReady(
+      { message, runId: readyRun.runId },
+      (report) => appendTaskNotificationEvents([report]),
+      setReflectionArenaChoicePending,
+    );
+  };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: moved from AppCoordinator; dependencies are preserved from the original callback.
   const onSubmit = useCallback(
@@ -2291,15 +2316,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       surface: "letta_code_tui",
                       model: currentModelId,
                     },
-                    onReady: (message, readyRun) => {
-                      appendTaskNotificationEvents([message]);
-                      setReflectionArenaChoicePending({
-                        runId: readyRun.runId,
-                        questions: buildReflectionArenaChoiceQuestions(
-                          readyRun.runId,
-                        ),
-                      });
-                    },
+                    onReady: handleReflectionArenaReady,
                   }).catch((reflectionError) => {
                     debugLog(
                       "memory",
@@ -3054,9 +3071,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 runId: arenaArgs.runId,
                 choice: arenaArgs.choice,
                 notes: arenaArgs.notes,
-                onHfUploadComplete: (message) => {
-                  appendTaskNotificationEvents([message]);
-                },
                 recompileByConversation:
                   systemPromptRecompileByConversationRef.current,
                 recompileQueuedByConversation:
@@ -3112,15 +3126,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 surface: "letta_code_tui",
                 model: currentModelId,
               },
-              onReady: (message, readyRun) => {
-                appendTaskNotificationEvents([message]);
-                setReflectionArenaChoicePending({
-                  runId: readyRun.runId,
-                  questions: buildReflectionArenaChoiceQuestions(
-                    readyRun.runId,
-                  ),
-                });
-              },
+              onReady: handleReflectionArenaReady,
             });
             cmd.finish(
               `Started reflection arena run ${run.runId}. View the transcript payload here: ${run.payloadPath}`,
@@ -3175,15 +3181,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     surface: "letta_code_tui",
                     model: currentModelId,
                   },
-                  onReady: (message, readyRun) => {
-                    appendTaskNotificationEvents([message]);
-                    setReflectionArenaChoicePending({
-                      runId: readyRun.runId,
-                      questions: buildReflectionArenaChoiceQuestions(
-                        readyRun.runId,
-                      ),
-                    });
-                  },
+                  onReady: handleReflectionArenaReady,
                 });
                 if (!arenaResult.launched) {
                   cmd.fail("No new transcript content to reflect on.");
@@ -4067,6 +4065,7 @@ ${SYSTEM_REMINDER_CLOSE}
       systemInfoReminderEnabled,
       appendTaskNotificationEvents,
       setReflectionArenaChoicePending,
+      queueReflectionArenaReady,
       maybeCarryOverActiveConversationModel,
       setConversationAutoTitleEligibility,
       setConversationIdAndRef,
