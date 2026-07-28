@@ -1,6 +1,10 @@
-// Permission mode management (unrestricted, standard, acceptEdits)
+// Permission mode management (unrestricted, standard, acceptEdits, strict)
 
-export type PermissionMode = "standard" | "acceptEdits" | "unrestricted";
+export type PermissionMode =
+  | "standard"
+  | "acceptEdits"
+  | "unrestricted"
+  | "strict";
 
 /** The default starting permission mode. */
 export const DEFAULT_PERMISSION_MODE: PermissionMode = "unrestricted";
@@ -10,6 +14,7 @@ export const VALID_PERMISSION_MODES: readonly PermissionMode[] = [
   "unrestricted",
   "standard",
   "acceptEdits",
+  "strict",
 ] as const;
 
 /**
@@ -134,7 +139,20 @@ class PermissionModeManager {
       case "standard":
         // No mode overrides, use normal permission flow
         return null;
+
+      case "strict":
+        // Strict mode: force all tools through approval callback.
+        // Return null so no auto-allow happens; the caller will use
+        // getDefaultDecision() which returns "ask" for strict mode.
+        return null;
     }
+  }
+
+  /**
+   * Check if strict mode is active (all tools require explicit approval).
+   */
+  isStrict(modeOverride?: PermissionMode): boolean {
+    return (modeOverride ?? this.currentMode) === "strict";
   }
 
   /**

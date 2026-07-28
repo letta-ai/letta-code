@@ -419,7 +419,10 @@ function isSyncCommand(value: unknown): value is SyncCommand {
 
 function isDevicePermissionMode(value: unknown): boolean {
   return (
-    value === "standard" || value === "acceptEdits" || value === "unrestricted"
+    value === "standard" ||
+    value === "acceptEdits" ||
+    value === "unrestricted" ||
+    value === "strict"
   );
 }
 
