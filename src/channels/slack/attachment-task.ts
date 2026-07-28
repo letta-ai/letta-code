@@ -39,6 +39,7 @@ export async function runSlackAttachmentDownloadTask(params: {
   description: string;
   download: (signal: AbortSignal) => Promise<ChannelMessageAttachment>;
   yieldTimeMs?: number;
+  runtimeScope: { agentId: string; conversationId: string };
 }): Promise<SlackAttachmentDownloadOutcome> {
   assertBackgroundProcessCapacity();
 
@@ -62,6 +63,7 @@ export async function runSlackAttachmentDownloadTask(params: {
     outputFile,
     totalStdoutLines: 0,
     totalStderrLines: 0,
+    runtimeScope: params.runtimeScope,
   };
   backgroundProcesses.set(taskId, processState);
   appendToOutputFile(outputFile, `${params.description}\n`);

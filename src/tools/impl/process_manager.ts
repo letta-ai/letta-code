@@ -14,6 +14,11 @@ export interface BackgroundProcessHandle {
   kill(signal?: string | number): unknown;
 }
 
+export interface BackgroundRuntimeScope {
+  agentId: string;
+  conversationId: string;
+}
+
 export interface BackgroundProcess {
   process: BackgroundProcessHandle;
   command: string;
@@ -27,6 +32,7 @@ export interface BackgroundProcess {
   totalStdoutLines?: number;
   totalStderrLines?: number;
   cleanupTimer?: TimerHandle;
+  runtimeScope?: BackgroundRuntimeScope;
 }
 
 export interface BackgroundTask {
@@ -40,6 +46,7 @@ export interface BackgroundTask {
   outputFile: string;
   abortController?: AbortController;
   cleanupTimer?: TimerHandle;
+  runtimeScope?: BackgroundRuntimeScope;
 }
 
 export const backgroundProcesses = new Map<string, BackgroundProcess>();

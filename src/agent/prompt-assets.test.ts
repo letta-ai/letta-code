@@ -8,6 +8,27 @@ import {
 } from "@/agent/prompt-assets";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 
+const HOSTED_EXTERNAL_MEMORY_INTRO =
+  "External memory is stored outside of the system prompt, including both skills (procedural memory), general-purpose files (markdown files, images, etc.), and shared memory.";
+const LOCAL_EXTERNAL_MEMORY_INTRO =
+  "External memory is stored outside of the system prompt, including both skills (procedural memory) and general-purpose files (markdown files, images, etc.).";
+
+function withoutSharedMemoryGuidance(prompt: string): string {
+  expect(prompt).toContain(HOSTED_EXTERNAL_MEMORY_INTRO);
+  const withLocalIntro = prompt.replace(
+    HOSTED_EXTERNAL_MEMORY_INTRO,
+    LOCAL_EXTERNAL_MEMORY_INTRO,
+  );
+  const sectionStart = withLocalIntro.indexOf("#### Shared memory\n");
+  const sectionEnd = withLocalIntro.indexOf(
+    "### Syncing memory, state, and context\n",
+    sectionStart,
+  );
+  expect(sectionStart).toBeGreaterThanOrEqual(0);
+  expect(sectionEnd).toBeGreaterThan(sectionStart);
+  return `${withLocalIntro.slice(0, sectionStart)}${withLocalIntro.slice(sectionEnd)}`;
+}
+
 describe("isKnownPreset", () => {
   test("returns true for known preset IDs", () => {
     expect(isKnownPreset("default")).toBe(true);
@@ -48,16 +69,18 @@ describe("buildSystemPrompt", () => {
     expect(result).not.toContain("**In-context memory blocks**");
   });
 
-  test("local backend memory mode reuses the memfs full prompt", () => {
+  test("returns the local backend full prompt for local memfs mode", () => {
     const result = buildSystemPrompt("letta", "local-memfs");
     const preset = SYSTEM_PROMPTS.find((p) => p.id === "letta");
     expect(preset).toBeDefined();
 
-    expect(result).toBe(preset?.memfsContent?.trim() ?? "");
-    expect(result).toBe(buildSystemPrompt("letta", "memfs"));
+    expect(preset?.localMemfsContent).toBeDefined();
+    expect(result).toBe(preset?.localMemfsContent?.trim() ?? "");
+    expect(result).not.toBe(buildSystemPrompt("letta", "memfs"));
     expect(result).toContain("$MEMORY_DIR");
     expect(result).toContain("git commit");
     expect(result).not.toContain("git push");
+    expect(result).not.toContain("Shared memory");
   });
 
   test("memfs prompt documents direct edit commit safeguards", () => {
@@ -67,6 +90,23 @@ describe("buildSystemPrompt", () => {
     expect(result).toContain("MemFS pre-commit hook");
     expect(result).toContain('author_name="${AGENT_NAME:-$AGENT_ID}"');
     expect(result).not.toContain('--author="$AGENT_NAME');
+  });
+
+  test("memfs prompt explains shared-memory projections", () => {
+    const result = buildSystemPrompt("letta", "memfs");
+
+    expect(result).toContain("#### Shared memory");
+    expect(result).toContain("shared memory repository");
+    expect(buildSystemPrompt("letta", "local-memfs")).not.toContain(
+      "#### Shared memory",
+    );
+  });
+
+  test("hosted and local memfs prompts differ only in shared-memory guidance", () => {
+    const hosted = buildSystemPrompt("letta", "memfs");
+    const local = buildSystemPrompt("letta", "local-memfs");
+
+    expect(withoutSharedMemoryGuidance(hosted)).toBe(local);
   });
 
   test("throws on unknown preset", () => {

@@ -178,6 +178,12 @@ function getPermissionModeTransientHintInfo(mode: PermissionMode): {
         color: colors.status.success,
         glyph: "⚡︎",
       };
+    case "strict":
+      return {
+        name: "strict (all tools require approval)",
+        color: colors.status.error,
+        glyph: "🔒",
+      };
   }
 }
 

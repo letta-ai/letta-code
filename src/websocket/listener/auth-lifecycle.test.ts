@@ -11,6 +11,14 @@ import {
   stopListenerClient,
 } from "@/websocket/listen-client";
 import { __listenerAuthTestUtils } from "@/websocket/listener/auth";
+import {
+  getOrCreateProcessTransport,
+  subscribeListenerConnection,
+  TO_SUBSCRIBERS,
+} from "@/websocket/listener/connection";
+import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
+import { emitProtocolV2Message } from "@/websocket/listener/protocol-outbound";
+import { getActiveRuntime } from "@/websocket/listener/runtime";
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -46,6 +54,7 @@ describe("listener auth lifecycle", () => {
   let settings: ListenerSettings;
   let connections: WebSocket[];
   let authorizations: Array<string | undefined>;
+  let received: Record<string, unknown>[][];
 
   const refreshAccessTokenMock = mock(async (): Promise<TokenResponse> => {
     throw new Error("refreshAccessToken not mocked");
@@ -89,13 +98,19 @@ describe("listener auth lifecycle", () => {
 
     connections = [];
     authorizations = [];
+    received = [];
     server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     await new Promise<void>((resolve) => server.once("listening", resolve));
     const address = server.address() as AddressInfo;
     wsUrl = `ws://127.0.0.1:${address.port}`;
     server.on("connection", (socket, request) => {
+      const messages: Record<string, unknown>[] = [];
       connections.push(socket);
       authorizations.push(request.headers.authorization);
+      received.push(messages);
+      socket.on("message", (raw) => {
+        messages.push(JSON.parse(String(raw)) as Record<string, unknown>);
+      });
     });
   });
 
@@ -188,6 +203,81 @@ describe("listener auth lifecycle", () => {
 
     expect(authorizations[1]).toBe("Bearer refreshed-access-token");
     expect(settings.refreshToken).toBe("rotated-refresh-token");
+  });
+
+  test("preserves outbound subscriptions and event sequence across reconnect", async () => {
+    await startClient();
+    await waitFor(
+      () =>
+        getActiveRuntime()?.connections.get("connection-id")?.initialized ===
+        true,
+      "initial listener connection did not initialize",
+    );
+    const runtime = getActiveRuntime();
+    expect(runtime).not.toBeNull();
+    if (!runtime) return;
+
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const conversationRuntime = getOrCreateScopedRuntime(
+      runtime,
+      scope.agent_id,
+      scope.conversation_id,
+    );
+    subscribeListenerConnection(runtime, "connection-id", scope);
+    emitProtocolV2Message(
+      getOrCreateProcessTransport(runtime),
+      conversationRuntime,
+      { type: "crons_updated", timestamp: 1 } as never,
+      scope,
+      TO_SUBSCRIBERS,
+    );
+    await waitFor(
+      () =>
+        received[0]?.some((message) => message.type === "crons_updated") ===
+        true,
+      "initial scoped event was not delivered",
+    );
+    const eventSeqBeforeReconnect =
+      runtime.connections.get("connection-id")?.eventSeqCounter ?? 0;
+
+    connections[0]?.close(1000, "reconnect");
+    await waitFor(
+      () =>
+        connections.length === 2 &&
+        runtime.connections.get("connection-id")?.initialized === true,
+      "listener did not reconnect",
+    );
+
+    const reconnected = runtime.connections.get("connection-id");
+    expect(reconnected?.subscriptions).toEqual(
+      new Set(["agent:agent-1::conversation:conv-1"]),
+    );
+    expect(reconnected?.eventSeqCounter).toBeGreaterThanOrEqual(
+      eventSeqBeforeReconnect,
+    );
+
+    const resumedRuntime = getOrCreateScopedRuntime(
+      runtime,
+      scope.agent_id,
+      scope.conversation_id,
+    );
+    emitProtocolV2Message(
+      getOrCreateProcessTransport(runtime),
+      resumedRuntime,
+      { type: "crons_updated", timestamp: 2 } as never,
+      scope,
+      TO_SUBSCRIBERS,
+    );
+    await waitFor(
+      () =>
+        received[1]?.some((message) => message.type === "crons_updated") ===
+        true,
+      "post-reconnect scoped event was not delivered",
+    );
+    const resumedEvent = received[1]?.find(
+      (message) => message.type === "crons_updated",
+    );
+    expect(resumedEvent?.event_seq).toBeGreaterThan(eventSeqBeforeReconnect);
   });
 
   test("does not create a socket after stop wins an in-flight refresh", async () => {

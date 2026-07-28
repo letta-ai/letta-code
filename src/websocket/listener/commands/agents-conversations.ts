@@ -1,6 +1,11 @@
 import type WebSocket from "ws";
 import { actingUserRequestOptions } from "@/agent/acting-user";
-import { getBackend } from "@/backend";
+import {
+  type Backend,
+  type ConversationMessageListBody,
+  DEFAULT_CONVERSATION_MESSAGE_ORDER,
+  getBackend,
+} from "@/backend";
 import type {
   AgentCreateCommand,
   AgentDeleteCommand,
@@ -73,6 +78,57 @@ function getPageItems<T>(page: unknown): T[] {
     }
   }
   return [];
+}
+
+type ConversationMessagePage = {
+  messages: unknown[];
+  nextBefore: string | null;
+  hasMore: boolean;
+};
+
+function messageId(message: unknown): string | null {
+  if (!message || typeof message !== "object") return null;
+  const id = (message as { id?: unknown }).id;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+export async function listConversationMessagePage(
+  backend: Pick<Backend, "listConversationMessages">,
+  conversationId: string,
+  query: ConversationMessageListBody = {},
+): Promise<ConversationMessagePage> {
+  const normalizedQuery = query ?? {};
+  const limit = normalizedQuery.limit ?? 50;
+  const order = normalizedQuery.order ?? DEFAULT_CONVERSATION_MESSAGE_ORDER;
+  const page = await backend.listConversationMessages(
+    conversationId,
+    normalizedQuery,
+  );
+  const untrimmedMessages = getPageItems(page);
+  const messages = untrimmedMessages.slice(0, limit);
+  const oldestMessage =
+    order === "asc" ? messages[0] : messages[messages.length - 1];
+  const nextBefore = messageId(oldestMessage);
+
+  if (!nextBefore || messages.length < limit) {
+    return { messages, nextBefore, hasMore: false };
+  }
+  if (untrimmedMessages.length > limit) {
+    return { messages, nextBefore, hasMore: true };
+  }
+
+  const probe = await backend.listConversationMessages(conversationId, {
+    ...normalizedQuery,
+    after: undefined,
+    before: nextBefore,
+    order: "desc",
+    limit: 1,
+  });
+  return {
+    messages,
+    nextBefore,
+    hasMore: getPageItems(probe).length > 0,
+  };
 }
 
 export async function handleAgentConversationManagementCommand(
@@ -457,7 +513,8 @@ export async function handleAgentConversationManagementCommand(
 
   if (parsed.type === "conversation_messages_list") {
     try {
-      const page = await backend.listConversationMessages(
+      const page = await listConversationMessagePage(
+        backend,
         parsed.conversation_id,
         parsed.query,
       );
@@ -467,7 +524,9 @@ export async function handleAgentConversationManagementCommand(
           type: "conversation_messages_list_response",
           request_id: parsed.request_id,
           success: true,
-          messages: getPageItems(page),
+          messages: page.messages,
+          next_before: page.nextBefore,
+          has_more: page.hasMore,
         },
         "listener_conversation_management_send_failed",
         "listener_conversation_management",
@@ -480,6 +539,8 @@ export async function handleAgentConversationManagementCommand(
           request_id: parsed.request_id,
           success: false,
           messages: [],
+          next_before: null,
+          has_more: false,
           error: getErrorMessage(error, "Failed to list conversation messages"),
         },
         "listener_conversation_management_send_failed",

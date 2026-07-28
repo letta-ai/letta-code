@@ -3024,9 +3024,11 @@ export function App({
                 return withoutMemfs.replace(/\r\n/g, "\n").trim();
               };
               const sysNorm = normalize(agentSystem);
-              const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
-                "@/agent/prompt-assets"
-              );
+              const {
+                getSystemPromptVariantContents,
+                SYSTEM_PROMPTS,
+                SYSTEM_PROMPT,
+              } = await import("@/agent/prompt-assets");
 
               // Best-effort preset detection.
               // Exact match is ideal, but allow prefix-matches because the stored
@@ -3042,14 +3044,10 @@ export function App({
                 );
               };
 
-              const promptMatches = (prompt: {
-                content: string;
-                memfsContent?: string;
-              }): boolean =>
-                contentMatches(prompt.content) ||
-                (prompt.memfsContent
-                  ? contentMatches(prompt.memfsContent)
-                  : false);
+              const promptMatches = (
+                prompt: (typeof SYSTEM_PROMPTS)[number],
+              ): boolean =>
+                getSystemPromptVariantContents(prompt).some(contentMatches);
 
               const defaultPrompt = SYSTEM_PROMPTS.find(
                 (p) => p.id === "default",

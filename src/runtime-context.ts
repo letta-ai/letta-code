@@ -5,9 +5,15 @@ import type { MessageChannelToolDiscoveryScope } from "./channels/message-tool";
 import type { ChannelTurnSource } from "./channels/types";
 import { isUsableDirectory } from "./helpers/usable-directory";
 
-export type RuntimePermissionMode = "standard" | "acceptEdits" | "unrestricted";
+export type RuntimePermissionMode =
+  | "standard"
+  | "acceptEdits"
+  | "unrestricted"
+  | "strict";
 
 export interface RuntimeContextSnapshot {
+  /** Listener transport connection that owns the current turn, when present. */
+  connectionId?: string | null;
   agentId?: string | null;
   agentName?: string | null;
   conversationId?: string | null;
