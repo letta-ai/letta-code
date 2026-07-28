@@ -33,7 +33,6 @@ export interface ObservedMapping {
 export interface ResolvedIdentity {
   chatId: string;
   senderId: string;
-  senderPhoneJid: string;
   observedMappings: ObservedMapping[];
 }
 
@@ -52,7 +51,6 @@ function make(
   return {
     chatId,
     senderId: normalizePhoneLike(phoneJid),
-    senderPhoneJid: phoneJid,
     observedMappings: observed,
   };
 }

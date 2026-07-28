@@ -117,39 +117,13 @@ export function allowedUsersIncludes(
   );
 }
 
-export function resolveLidToPhoneJid(params: {
-  lidJid: string;
-  message?: unknown;
-  sock?: unknown;
-}): string | null {
-  const { lidJid, message, sock } = params;
-  if (!isLidJid(lidJid)) return normalizeMaybePhoneJid(lidJid);
-
-  const msg = message as { key?: { senderPn?: string | null } } | undefined;
-  const senderPn = normalizeMaybePhoneJid(msg?.key?.senderPn ?? undefined);
-  if (senderPn) return senderPn;
-
-  const repo = (
-    sock as
-      | { signalRepository?: { lidMapping?: Map<string, string> } }
-      | undefined
-  )?.signalRepository;
-  const mapped = normalizeMaybePhoneJid(
-    repo?.lidMapping?.get(stripDeviceSuffix(lidJid)),
-  );
-  if (mapped) return mapped;
-
-  return null;
-}
-
 export function resolveSendJid(params: {
   chatId: string;
   selfPhoneJid?: string | null;
   selfLid?: string | null;
-  lidToJid?: Map<string, string>;
-  sock?: unknown;
+  resolveLid?: (lidJid: string) => string | null;
 }): string {
-  const { chatId, selfPhoneJid, selfLid, lidToJid, sock } = params;
+  const { chatId, selfPhoneJid, selfLid, resolveLid } = params;
   if (!isLidJid(chatId)) return stripDeviceSuffix(chatId);
 
   const normalized = stripDeviceSuffix(chatId);
@@ -157,18 +131,10 @@ export function resolveSendJid(params: {
     return stripDeviceSuffix(selfPhoneJid);
   }
 
-  const mapped = normalizeMaybePhoneJid(lidToJid?.get(normalized));
-  if (mapped) return mapped;
-
-  const repo = (
-    sock as
-      | { signalRepository?: { lidMapping?: Map<string, string> } }
-      | undefined
-  )?.signalRepository;
-  const signalMapped = normalizeMaybePhoneJid(
-    repo?.lidMapping?.get(normalized),
-  );
-  if (signalMapped) return signalMapped;
+  const mapped = resolveLid?.(normalized);
+  if (mapped && isStrictPhoneJid(mapped)) {
+    return stripDeviceSuffix(mapped);
+  }
 
   throw new Error(`Cannot send to unresolved WhatsApp LID: ${chatId}`);
 }
