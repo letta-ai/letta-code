@@ -54,16 +54,19 @@ type WhatsAppSocket = {
   groupMetadata?: (jid: string) => Promise<{ subject?: string }>;
 };
 
+type WhatsAppMessageKey = {
+  remoteJid?: string | null;
+  id?: string | null;
+  fromMe?: boolean | null;
+  participant?: string | null;
+  senderPn?: string | null;
+  senderLid?: string | null;
+  participantPn?: string | null;
+  participantLid?: string | null;
+};
+
 type WhatsAppMessage = {
-  key?: {
-    remoteJid?: string | null;
-    id?: string | null;
-    fromMe?: boolean | null;
-    participant?: string | null;
-    senderPn?: string | null;
-    participantPn?: string | null;
-    participantLid?: string | null;
-  };
+  key?: WhatsAppMessageKey;
   message?: unknown;
   messageTimestamp?: number | { toNumber?: () => number } | null;
   pushName?: string | null;
@@ -434,6 +437,7 @@ export function createWhatsAppAdapter(
             remoteJid,
             participant: msg.key?.participant,
             senderPn: msg.key?.senderPn,
+            senderLid: msg.key?.senderLid,
             participantPn: msg.key?.participantPn,
             participantLid: msg.key?.participantLid,
           },

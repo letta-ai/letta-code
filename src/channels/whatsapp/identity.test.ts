@@ -140,7 +140,12 @@ describe("resolveInboundIdentity — direct", () => {
     const lj = lid("12345678");
     const pn = phone("58412222222");
     const r = resolveInboundIdentity(
-      { selfPhoneJid: SELF_PHONE, remoteJid: lj, senderPn: pn },
+      {
+        selfPhoneJid: SELF_PHONE,
+        remoteJid: lj,
+        senderPn: pn,
+        senderLid: lj,
+      },
       store,
     );
     expect(r?.chatId).toBe(pn);
@@ -148,6 +153,69 @@ describe("resolveInboundIdentity — direct", () => {
     expect(r?.observedMappings).toEqual([{ lidJid: lj, phoneJid: pn }]);
     // Resolver is pure — store NOT mutated.
     expect(store.resolve(lj)).toBeNull();
+  });
+
+  test("PN-form DM with senderLid learns mapping for later hint-less LID DM", () => {
+    const store = createLidStore(join(dir, "s.json"));
+    const lj = lid("12344321");
+    const pn = phone("58412222223");
+
+    const first = resolveInboundIdentity(
+      {
+        selfPhoneJid: SELF_PHONE,
+        remoteJid: pn,
+        senderPn: pn,
+        senderLid: lj,
+      },
+      store,
+    );
+    expect(first?.chatId).toBe(pn);
+    expect(first?.senderId).toBe("58412222223");
+    expect(first?.observedMappings).toEqual([{ lidJid: lj, phoneJid: pn }]);
+    expect(store.resolve(lj)).toBeNull();
+
+    store.record(lj, pn);
+    const later = resolveInboundIdentity(
+      { selfPhoneJid: SELF_PHONE, remoteJid: lj },
+      store,
+    );
+    expect(later?.chatId).toBe(pn);
+    expect(later?.senderId).toBe("58412222223");
+    expect(later?.observedMappings).toEqual([]);
+  });
+
+  test("conflicting direct PN candidates reject without persistence", () => {
+    const store = createLidStore(join(dir, "s.json"));
+    const lj = lid("24681357");
+    const r = resolveInboundIdentity(
+      {
+        selfPhoneJid: SELF_PHONE,
+        remoteJid: phone("58412222225"),
+        senderPn: phone("58412222226"),
+        senderLid: lj,
+      },
+      store,
+    );
+    expect(r).toBeNull();
+    expect(store.resolve(lj)).toBeNull();
+  });
+
+  test("invalid optional hints cannot become canonical identities or mappings", () => {
+    const store = createLidStore(join(dir, "s.json"));
+    const pn = phone("58412222227");
+    const r = resolveInboundIdentity(
+      {
+        selfPhoneJid: SELF_PHONE,
+        remoteJid: pn,
+        senderPn: `not-a-phone${P}`,
+        senderLid: `not-a-lid${L}`,
+      },
+      store,
+    );
+    expect(r?.chatId).toBe(pn);
+    expect(r?.senderId).toBe("58412222227");
+    expect(r?.observedMappings).toEqual([]);
+    expect(store.resolve(`not-a-lid${L}`)).toBeNull();
   });
 
   test("LID DM existing matching mapping: resolves, no observation", () => {
@@ -246,6 +314,33 @@ describe("resolveInboundIdentity — groups", () => {
     );
     expect(r?.senderId).toBe("58412666666");
     expect(r?.observedMappings).toEqual([{ lidJid: lj, phoneJid: pn }]);
+  });
+
+  test("PN-form group participant with participantLid learns later LID-only sender", () => {
+    const store = createLidStore(join(dir, "s.json"));
+    const lj = lid("88990022");
+    const pn = phone("58412666667");
+    const first = resolveInboundIdentity(
+      {
+        selfPhoneJid: SELF_PHONE,
+        remoteJid: GRP,
+        participant: pn,
+        participantLid: lj,
+      },
+      store,
+    );
+    expect(first?.chatId).toBe(GRP);
+    expect(first?.senderId).toBe("58412666667");
+    expect(first?.observedMappings).toEqual([{ lidJid: lj, phoneJid: pn }]);
+    expect(store.resolve(lj)).toBeNull();
+
+    store.record(lj, pn);
+    const later = resolveInboundIdentity(
+      { selfPhoneJid: SELF_PHONE, remoteJid: GRP, participant: lj },
+      store,
+    );
+    expect(later?.senderId).toBe("58412666667");
+    expect(later?.observedMappings).toEqual([]);
   });
 
   test("LID participant in store: resolves, observedMappings []", () => {
