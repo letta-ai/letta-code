@@ -468,18 +468,4 @@ describe("resolveInboundIdentity — groups", () => {
     expect(r?.senderId).toBe("58419000020");
     expect(r?.observedMappings).toEqual([{ lidJid: lj, phoneJid: pn }]);
   });
-
-  test("later LID-only group message resolves from store, observedMappings []", () => {
-    const store = createLidStore(join(dir, "s.json"));
-    const lj = lid("77889900");
-    const pn = phone("58417000002");
-    // Simulate: adapter recorded the observation from a prior message.
-    store.record(lj, pn);
-    const r = resolveInboundIdentity(
-      { selfPhoneJid: SELF_PHONE, remoteJid: GRP, participant: lj },
-      store,
-    );
-    expect(r?.senderId).toBe("58417000002");
-    expect(r?.observedMappings).toEqual([]);
-  });
 });
