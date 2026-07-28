@@ -209,6 +209,67 @@ describe("app-server Responses API", () => {
     expect(completed.output[2]?.type).toBe("message");
   });
 
+  test("preserves assistant text ordering around a server-side tool call", async () => {
+    __testSetBackend(fakeBackend());
+    __testSetRunTurnImpl(async ({ onAssistantText, onToolEvent }) => {
+      onAssistantText?.("Let me check that.");
+      onToolEvent?.({
+        type: "tool_call_start",
+        tool_call_id: "call_ordered",
+        tool_name: "Bash",
+      });
+      onToolEvent?.({
+        type: "tool_call_arguments_delta",
+        tool_call_id: "call_ordered",
+        arguments_delta: '{"command":"pwd"}',
+      });
+      onToolEvent?.({
+        type: "tool_call_complete",
+        tool_call_id: "call_ordered",
+        tool_name: "Bash",
+        arguments: '{"command":"pwd"}',
+        output: "/workspace",
+        success: true,
+      });
+      onAssistantText?.("The directory is /workspace.");
+      return {
+        text: "Let me check that.The directory is /workspace.",
+        usage: { prompt_tokens: 4, completion_tokens: 8, total_tokens: 12 },
+        error: null,
+      };
+    });
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const response = await fetch(httpUrl(handle, "/v1/responses"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "Tutor (Letta Agent)",
+        input: "Where are you running?",
+      }),
+    });
+    const body = (await response.json()) as {
+      output: Array<{
+        type: string;
+        content?: Array<{ text?: string }>;
+      }>;
+    };
+
+    expect(body.output.map((item) => item.type)).toEqual([
+      "message",
+      "function_call",
+      "function_call_output",
+      "message",
+    ]);
+    expect(body.output[0]?.content?.[0]?.text).toBe("Let me check that.");
+    expect(body.output[3]?.content?.[0]?.text).toBe(
+      "The directory is /workspace.",
+    );
+  });
+
   test("works through the official OpenAI Responses SDK", async () => {
     __testSetBackend(fakeBackend());
     stubToolTurn();

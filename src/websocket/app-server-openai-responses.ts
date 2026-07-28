@@ -229,6 +229,7 @@ class ResponseOutputBuilder {
 
   addToolEvent(event: ToolCallEvent): void {
     if (event.type === "tool_call_start") {
+      this.finishText();
       this.ensureToolCall(event.tool_call_id, event.tool_name ?? "tool");
       return;
     }
@@ -264,6 +265,7 @@ class ResponseOutputBuilder {
       item: call.item,
     });
 
+    this.finishText();
     const result: FunctionCallOutputItem = {
       type: "function_call_output",
       id: `fco_${randomUUID()}`,
@@ -288,6 +290,7 @@ class ResponseOutputBuilder {
   finishText(): void {
     if (!this.message) return;
     const { item, index } = this.message;
+    this.message = null;
     item.status = "completed";
     const part = item.content[0];
     if (!part) return;
