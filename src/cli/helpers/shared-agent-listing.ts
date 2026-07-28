@@ -2,15 +2,15 @@ import { apiRequest } from "@/backend/api/request";
 
 export interface SharedAgentCreatorDetails {
   id: string;
-  name: string;
-  email: string;
-  image_url: string;
+  name?: string | null;
+  email?: string | null;
+  image_url?: string | null;
   is_api_created?: boolean;
 }
 
 export interface SharedAgentSummary {
   id: string;
-  name: string;
+  name?: string | null;
   description?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
