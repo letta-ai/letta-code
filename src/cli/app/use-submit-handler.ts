@@ -2315,7 +2315,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     conversationId: compactConversationId,
                     memfsEnabled: isActiveMemfsEnabled(agentId),
                     triggerSource: "compaction-event",
-                    skipPendingWorktreeReminderScan: true,
                     description: AUTO_REFLECTION_DESCRIPTION,
                     completionConversationId: () => conversationIdRef.current,
                     recompileByConversation:

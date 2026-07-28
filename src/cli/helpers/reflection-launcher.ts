@@ -3,12 +3,9 @@ import {
   buildReflectionMemoryScope,
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
-  integratePendingReflectionMemoryWorktrees,
-  markReflectionMemoryWorktreeActive,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
   reflectionIntegrationConsumesTranscript,
-  reflectionIntegrationNeedsReminder,
   reflectionIntegrationShouldRecompile,
 } from "@/agent/memory-worktree";
 import { getSubagents } from "@/agent/subagent-state";
@@ -29,11 +26,9 @@ import {
   finalizeAutoReflectionPayload,
   getReflectionTranscriptState,
 } from "@/cli/helpers/reflection-transcript";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { telemetry } from "@/telemetry";
 import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { debugLog, debugWarn } from "@/utils/debug";
-import { addToMessageQueue } from "@/utils/message-queue-bridge";
 
 export const AUTO_REFLECTION_DESCRIPTION = "Reflect on recent conversations";
 
@@ -156,7 +151,6 @@ export interface ReflectionLaunchOptions {
   reflectionPromptOverride?: string;
   /** Replace the reflection subagent's system prompt/persona (advanced). */
   reflectionSystemPromptOverride?: string;
-  skipPendingWorktreeReminderScan?: boolean;
   completionConversationId?: string | (() => string);
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
@@ -283,12 +277,6 @@ function getReflectionCompletionMessage(
     case "no_changes":
       return ({ action }) =>
         `${action}; no durable memory changes were needed.`;
-    case "pending_conflict":
-      return ({ action }) =>
-        `${action}; memory merge will finish after conflicts are resolved.`;
-    case "pending_manual_merge":
-      return ({ action }) =>
-        `${action}; memory merge will finish after pending memory changes are resolved.`;
     case "parent_dirty":
       return "Tried to reflect, but parent memory had uncommitted changes; will retry later.";
     case "merge_conflict":
@@ -297,95 +285,6 @@ function getReflectionCompletionMessage(
       return "Tried to reflect, but memory changes were not committed cleanly; will retry later.";
     case "failed":
       return "Tried to reflect, but memory updates were not completed cleanly; will retry later.";
-  }
-}
-
-function escapeTaskNotificationSummary(summary: string): string {
-  return summary
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
-function formatReflectionIntegrationNotification(reminder: string): string {
-  return `<task-notification>
-<summary>${escapeTaskNotificationSummary(
-    "Memory reflection merge is pending.",
-  )}</summary>
-<result>
-${reminder}
-</result>
-</task-notification>`;
-}
-
-export function formatReflectionIntegrationReminder(
-  integration: ReflectionMemoryWorktreeFinalizeResult,
-): string {
-  const resolveCommands = `cd ${JSON.stringify(integration.parentMemoryDir)}
-git status
-reflection_branch=${JSON.stringify(integration.reflectionBranch)}
-reflection_subject=$(git log -1 --pretty=%s "$reflection_branch")
-reflection_summary=$(printf '%s' "$reflection_subject" | sed -E 's/^[a-z]+(\\([^)]+\\))?!?:[[:space:]]*//I')
-merge_message="merge(reflection): \${reflection_summary:-reflection memory updates}"
-# If parent MemFS has unrelated changes, inspect changes, then commit or discard them.
-# Then merge the reflection branch and resolve conflicts if prompted:
-git merge "$reflection_branch" -m "$merge_message" || {
-  git status
-  echo "Resolve conflicted memory files, then stage specific resolved files and run: git commit --no-edit"
-  exit 1
-}
-
-git worktree remove ${JSON.stringify(integration.reflectionWorktreeDir)}
-git branch -d "$reflection_branch"`;
-
-  const reminder = `${SYSTEM_REMINDER_OPEN}
-BACKGROUND MEMORY MAINTENANCE: A reflection memory merge is pending.
-
-A background reflection completed and produced committed memory updates, but the harness could not merge them into your main MemFS automatically.
-
-Do not interrupt the user's current request just because of this reminder, and do not invoke a skill solely because this reminder arrived. If you are already responding to the user, finish that response first. Resolve this later when appropriate, or when the user asks you to handle pending memory merges.
-
-Parent memory dir: ${integration.parentMemoryDir}
-Reflection branch: ${integration.reflectionBranch}
-Reflection worktree: ${integration.reflectionWorktreeDir}
-Status: ${integration.summary}
-
-When you decide to resolve it, use standard git commands like:
-\`\`\`bash
-${resolveCommands}
-\`\`\`
-
-This reminder is one-time. The transcript was already reflected, so do not launch another reflection for the same content just to resolve this merge.
-${SYSTEM_REMINDER_CLOSE}`;
-  return formatReflectionIntegrationNotification(reminder);
-}
-
-function queueReflectionIntegrationReminder(params: {
-  agentId: string;
-  conversationId: string;
-  integration: ReflectionMemoryWorktreeFinalizeResult;
-}): void {
-  addToMessageQueue({
-    kind: "task_notification",
-    text: formatReflectionIntegrationReminder(params.integration),
-    agentId: params.agentId,
-    conversationId: params.conversationId,
-  });
-}
-
-export async function queuePendingReflectionWorktreeReminders(params: {
-  agentId: string;
-  conversationId: string;
-}): Promise<void> {
-  const memoryDir = getScopedMemoryFilesystemRoot(params.agentId);
-  const unresolvedIntegrations =
-    await integratePendingReflectionMemoryWorktrees(memoryDir);
-  for (const integration of unresolvedIntegrations) {
-    queueReflectionIntegrationReminder({
-      agentId: params.agentId,
-      conversationId: params.conversationId,
-      integration,
-    });
   }
 }
 
@@ -401,7 +300,6 @@ export async function prepareReflectionMemoryWorktreeLaunch(params: {
   const worktree = await createReflectionMemoryWorktree({
     parentMemoryDir: memoryDir,
   });
-  markReflectionMemoryWorktreeActive(worktree);
   try {
     // An override replaces the whole task prompt; the caller is then responsible
     // for referencing $TRANSCRIPT_PATH / $MEMORY_DIR, so we skip the (otherwise
@@ -446,14 +344,6 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
     params.subagentSuccess &&
     reflectionIntegrationConsumesTranscript(integration);
 
-  if (reflectionIntegrationNeedsReminder(integration)) {
-    queueReflectionIntegrationReminder({
-      agentId: params.agentId,
-      conversationId: params.conversationId,
-      integration,
-    });
-  }
-
   const completionMessage = await handleMemorySubagentCompletion(
     {
       agentId: params.agentId,
@@ -491,24 +381,6 @@ export async function launchReflectionSubagent(
 
   if (!memfsEnabled) {
     return { launched: false, reason: "memfs_disabled" };
-  }
-
-  if (
-    triggerSource === "compaction-event" &&
-    !options.skipPendingWorktreeReminderScan
-  ) {
-    try {
-      await queuePendingReflectionWorktreeReminders({
-        agentId,
-        conversationId,
-      });
-    } catch (error) {
-      debugWarn(
-        "memory",
-        "Failed to queue pending reflection worktree reminders after compaction:",
-        error instanceof Error ? error.message : String(error),
-      );
-    }
   }
 
   if (!tryReserveReflectionLaunch(agentId)) {
