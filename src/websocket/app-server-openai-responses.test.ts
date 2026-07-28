@@ -336,6 +336,65 @@ describe("app-server Responses API", () => {
     expect(messageCounts).toEqual([1, 1]);
   });
 
+  test("Open WebUI chat ids isolate sessions and continue messages", async () => {
+    const created: string[] = [];
+    __testSetBackend(fakeBackend(created));
+    const turns: Array<{
+      conversationId: string;
+      messages: unknown[];
+    }> = [];
+    stubToolTurn((conversationId, messages) => {
+      turns.push({ conversationId, messages });
+    });
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+    const server = handle;
+
+    const sendOpenWebUiMessage = async (
+      chatId: string,
+      input: unknown,
+    ): Promise<number> => {
+      const response = await fetch(httpUrl(server, "/v1/responses"), {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-openwebui-chat-id": chatId,
+        },
+        body: JSON.stringify({
+          model: "Tutor (Letta Agent)",
+          input,
+          stream: true,
+        }),
+      });
+      await response.text();
+      return response.status;
+    };
+
+    expect(await sendOpenWebUiMessage("chat-a", "first message")).toBe(200);
+    expect(
+      await sendOpenWebUiMessage("chat-a", [
+        { type: "message", role: "user", content: "first message" },
+        { type: "message", role: "assistant", content: "first reply" },
+        { type: "message", role: "user", content: "second message" },
+      ]),
+    ).toBe(200);
+    expect(await sendOpenWebUiMessage("chat-b", "separate chat")).toBe(200);
+
+    expect(created).toEqual(["conv-responses-1", "conv-responses-2"]);
+    expect(turns.map((turn) => turn.conversationId)).toEqual([
+      "conv-responses-1",
+      "conv-responses-1",
+      "conv-responses-2",
+    ]);
+    expect(turns.map((turn) => turn.messages)).toMatchObject([
+      [{ role: "user", content: [{ type: "text", text: "first message" }] }],
+      [{ role: "user", content: [{ type: "text", text: "second message" }] }],
+      [{ role: "user", content: [{ type: "text", text: "separate chat" }] }],
+    ]);
+  });
+
   test("rejects unknown previous_response_id", async () => {
     __testSetBackend(fakeBackend());
     stubToolTurn();
