@@ -36,6 +36,12 @@
       "reason": "Mutates the settings singleton, keychain test overrides, HOME, and the secrets service name."
     },
     {
+      "path": "src/cli/reflection-worktree-completion.test.ts",
+      "timeoutMs": 15000,
+      "env": { "LETTA_CODE_TELEM": "1" },
+      "reason": "Exercises reflection worktree cleanup telemetry with real Git processes and the shared telemetry singleton."
+    },
+    {
       "path": "src/telemetry/flush-auth.test.ts",
       "timeoutMs": 15000,
       "env": { "LETTA_CODE_TELEM": "1" },

@@ -35,6 +35,7 @@ export interface TelemetryEvent {
     | "user_input"
     | "reflection_start"
     | "reflection_end"
+    | "reflection_worktree_cleanup"
     | "reflection_arena_vote";
   timestamp: string;
   data: Record<string, unknown>;
@@ -117,6 +118,29 @@ export interface ReflectionEndData {
   error?: string;
   step_count?: number;
   duration_ms?: number;
+  model?: string;
+  version?: string;
+  platform?: string;
+}
+
+export type ReflectionWorktreeCleanupOutcome =
+  | "parent_dirty"
+  | "merge_conflict"
+  | "reflection_worktree_dirty"
+  | "subagent_failed";
+
+export interface ReflectionWorktreeCleanupData {
+  outcome: ReflectionWorktreeCleanupOutcome;
+  integration_status:
+    | "parent_dirty"
+    | "merge_conflict"
+    | "dirty_uncommitted"
+    | "failed";
+  trigger_source?: ReflectionTriggerSource;
+  subagent_id?: string;
+  conversation_id?: string;
+  reflection_worktree_id?: string;
+  commit_count?: number;
   model?: string;
   version?: string;
   platform?: string;
@@ -456,6 +480,7 @@ class TelemetryManager {
       | UserInputData
       | ReflectionStartData
       | ReflectionEndData
+      | ReflectionWorktreeCleanupData
       | ReflectionArenaVoteData,
   ) {
     if (!this.isTelemetryEnabled()) {
@@ -783,6 +808,17 @@ class TelemetryManager {
       platform: process.platform,
     };
     this.track("reflection_end", data);
+  }
+
+  trackReflectionWorktreeCleanup(
+    options: Omit<ReflectionWorktreeCleanupData, "version" | "platform">,
+  ) {
+    const data: ReflectionWorktreeCleanupData = {
+      ...options,
+      version: getVersion(),
+      platform: process.platform,
+    };
+    this.track("reflection_worktree_cleanup", data);
   }
 
   trackReflectionArenaVote(

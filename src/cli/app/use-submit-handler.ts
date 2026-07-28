@@ -3364,6 +3364,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                                 agentId,
                                 conversationId: conversationIdRef.current,
                                 subagentAgentId: reflectionAgentId ?? undefined,
+                                telemetryContext: { triggerSource: "manual" },
                                 recompileByConversation:
                                   systemPromptRecompileByConversationRef.current,
                                 recompileQueuedByConversation:
@@ -3480,6 +3481,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       agentId,
                       conversationId: conversationIdRef.current,
                       subagentAgentId: reflectionAgentId ?? undefined,
+                      telemetryContext: { triggerSource: "manual" },
                       recompileByConversation:
                         systemPromptRecompileByConversationRef.current,
                       recompileQueuedByConversation:

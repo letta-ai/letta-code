@@ -26,7 +26,7 @@ import {
   finalizeAutoReflectionPayload,
   getReflectionTranscriptState,
 } from "@/cli/helpers/reflection-transcript";
-import { telemetry } from "@/telemetry";
+import { type ReflectionWorktreeCleanupOutcome, telemetry } from "@/telemetry";
 import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { debugLog, debugWarn } from "@/utils/debug";
 
@@ -62,6 +62,36 @@ export interface ReflectionFeedbackContext {
   parentAgentDescription?: string | null;
   model?: string | null;
   surface?: string;
+}
+
+function getReflectionWorktreeCleanupOutcome(
+  integration: ReflectionMemoryWorktreeFinalizeResult,
+):
+  | {
+      outcome: ReflectionWorktreeCleanupOutcome;
+      integrationStatus:
+        | "parent_dirty"
+        | "merge_conflict"
+        | "dirty_uncommitted"
+        | "failed";
+    }
+  | undefined {
+  switch (integration.status) {
+    case "parent_dirty":
+      return { outcome: "parent_dirty", integrationStatus: "parent_dirty" };
+    case "merge_conflict":
+      return { outcome: "merge_conflict", integrationStatus: "merge_conflict" };
+    case "dirty_uncommitted":
+      return {
+        outcome: "reflection_worktree_dirty",
+        integrationStatus: "dirty_uncommitted",
+      };
+    case "failed":
+      return { outcome: "subagent_failed", integrationStatus: "failed" };
+    case "merged":
+    case "no_changes":
+      return undefined;
+  }
 }
 
 export function emitReflectionRunStart(params: {
@@ -328,6 +358,10 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   subagentAgentId?: string;
   subagentType?: "reflection";
   knownNoChanges?: boolean;
+  telemetryContext?: {
+    triggerSource: ReflectionLaunchTriggerSource;
+    model?: string | null;
+  };
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
   logRecompileFailure?: (message: string) => void;
@@ -343,6 +377,21 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   const completionSuccess =
     params.subagentSuccess &&
     reflectionIntegrationConsumesTranscript(integration);
+
+  const cleanup = getReflectionWorktreeCleanupOutcome(integration);
+  if (cleanup) {
+    telemetry.trackReflectionWorktreeCleanup({
+      outcome: cleanup.outcome,
+      integration_status: cleanup.integrationStatus,
+      trigger_source: params.telemetryContext?.triggerSource,
+      subagent_id: params.subagentAgentId,
+      conversation_id: params.conversationId,
+      reflection_worktree_id: params.worktree.id,
+      commit_count: integration.commitCount,
+      model: params.telemetryContext?.model ?? undefined,
+    });
+    drainReflectionTelemetry();
+  }
 
   const completionMessage = await handleMemorySubagentCompletion(
     {
@@ -474,6 +523,10 @@ export async function launchReflectionSubagent(
               agentId,
               conversationId: completionConversationId,
               subagentAgentId: reflectionAgentId ?? undefined,
+              telemetryContext: {
+                triggerSource,
+                model: options.feedbackContext?.model,
+              },
               recompileByConversation,
               recompileQueuedByConversation,
               logRecompileFailure: (message) => debugWarn("memory", message),

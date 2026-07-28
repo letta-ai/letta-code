@@ -905,6 +905,7 @@ export async function finalizeReflectionArenaChoice(
       agentId: run.agentId,
       conversationId: run.conversationId,
       subagentAgentId: chosen.result?.agentId,
+      telemetryContext: { triggerSource: "compaction-event" },
       recompileByConversation: options.recompileByConversation,
       recompileQueuedByConversation: options.recompileQueuedByConversation,
       logRecompileFailure: (message) => debugWarn("memory", message),

@@ -8,9 +8,18 @@ import {
   type ReflectionMemoryWorktree,
 } from "@/agent/memory-worktree";
 import { finalizeReflectionMemoryWorktreeLaunch } from "@/cli/helpers/reflection-launcher";
+import { telemetry } from "@/telemetry";
 
 let tempDir: string;
 let memoryDir: string;
+const originalDoNotTrack = process.env.DO_NOT_TRACK;
+const originalLettaCodeTelem = process.env.LETTA_CODE_TELEM;
+const telemetryState = telemetry as unknown as {
+  events: Array<{
+    type: string;
+    data: Record<string, unknown>;
+  }>;
+};
 
 const GIT_ENV = {
   ...process.env,
@@ -42,12 +51,18 @@ async function finalizeLaunch(
     subagentError: subagentSuccess ? undefined : "subagent failed",
     agentId: "agent-test",
     conversationId: "conv-test",
+    subagentAgentId: "agent-reflection-test",
+    telemetryContext: { triggerSource: "manual" },
     recompileByConversation: new Map(),
     recompileQueuedByConversation: new Set(),
   });
 }
 
 beforeEach(() => {
+  telemetry.cleanup();
+  telemetryState.events = [];
+  delete process.env.DO_NOT_TRACK;
+  delete process.env.LETTA_TELEMETRY_DISABLED;
   tempDir = mkdtempSync(join(tmpdir(), "reflection-completion-"));
   memoryDir = join(tempDir, "agent", "memory");
   git(tempDir, ["init", "-b", "main", memoryDir]);
@@ -59,6 +74,16 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalDoNotTrack === undefined) {
+    delete process.env.DO_NOT_TRACK;
+  } else {
+    process.env.DO_NOT_TRACK = originalDoNotTrack;
+  }
+  if (originalLettaCodeTelem === undefined) {
+    delete process.env.LETTA_CODE_TELEM;
+  } else {
+    process.env.LETTA_CODE_TELEM = originalLettaCodeTelem;
+  }
   rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -88,6 +113,44 @@ describe("reflection worktree completion messaging", () => {
     );
   });
 
+  test("tracks parent dirty cleanup telemetry", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(
+      join(worktree.worktreeDir, "reflection.md"),
+      "dream\n",
+      "utf-8",
+    );
+    git(worktree.worktreeDir, ["add", "reflection.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+    writeParentMemoryFile("parent-dirty.md", "dirty\n");
+
+    await finalizeLaunch(worktree, true);
+    telemetry.trackReflectionWorktreeCleanup({
+      outcome: "parent_dirty",
+      integration_status: "parent_dirty",
+      trigger_source: "manual",
+      subagent_id: "agent-reflection-test",
+      conversation_id: "conv-test",
+      reflection_worktree_id: worktree.id,
+      commit_count: 1,
+    });
+
+    const event = telemetryState.events.find(
+      (entry) => entry.type === "reflection_worktree_cleanup",
+    );
+    expect(event?.data).toMatchObject({
+      outcome: "parent_dirty",
+      integration_status: "parent_dirty",
+      trigger_source: "manual",
+      subagent_id: "agent-reflection-test",
+      conversation_id: "conv-test",
+      reflection_worktree_id: worktree.id,
+      commit_count: 1,
+    });
+  });
+
   test("parent merge conflict cleans up and leaves the transcript retryable", async () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,
@@ -111,6 +174,63 @@ describe("reflection worktree completion messaging", () => {
     expect(result.completionMessage).toBe(
       "Tried to reflect, but memory updates conflicted with newer changes; will retry later.",
     );
+  });
+
+  test("tracks merge conflict cleanup telemetry", async () => {
+    telemetry.trackReflectionWorktreeCleanup({
+      outcome: "merge_conflict",
+      integration_status: "merge_conflict",
+      reflection_worktree_id: "worktree-id",
+      commit_count: 1,
+    });
+
+    const event = telemetryState.events.find(
+      (entry) => entry.type === "reflection_worktree_cleanup",
+    );
+    expect(event?.data).toMatchObject({
+      outcome: "merge_conflict",
+      integration_status: "merge_conflict",
+      reflection_worktree_id: "worktree-id",
+      commit_count: 1,
+    });
+  });
+
+  test("tracks reflection worktree dirty cleanup telemetry", async () => {
+    telemetry.trackReflectionWorktreeCleanup({
+      outcome: "reflection_worktree_dirty",
+      integration_status: "dirty_uncommitted",
+      reflection_worktree_id: "worktree-id",
+      commit_count: 0,
+    });
+
+    const event = telemetryState.events.find(
+      (entry) => entry.type === "reflection_worktree_cleanup",
+    );
+    expect(event?.data).toMatchObject({
+      outcome: "reflection_worktree_dirty",
+      integration_status: "dirty_uncommitted",
+      reflection_worktree_id: "worktree-id",
+      commit_count: 0,
+    });
+  });
+
+  test("tracks subagent failure cleanup telemetry", async () => {
+    telemetry.trackReflectionWorktreeCleanup({
+      outcome: "subagent_failed",
+      integration_status: "failed",
+      reflection_worktree_id: "worktree-id",
+      commit_count: 1,
+    });
+
+    const event = telemetryState.events.find(
+      (entry) => entry.type === "reflection_worktree_cleanup",
+    );
+    expect(event?.data).toMatchObject({
+      outcome: "subagent_failed",
+      integration_status: "failed",
+      reflection_worktree_id: "worktree-id",
+      commit_count: 1,
+    });
   });
 
   test("dirty reflection worktree retries transcript with dirty message", async () => {
