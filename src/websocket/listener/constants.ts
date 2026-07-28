@@ -1,6 +1,10 @@
 export const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 export const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 export const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
+// Established listeners must not remain paused indefinitely if the ordinary
+// retry chain stalls after a failed upgrade. Re-registration is a second path
+// with a fresh connection ID, not a replacement for normal fast reconnects.
+export const LISTENER_RECONNECT_STALL_TIMEOUT_MS = 60000; // 1 minute
 
 // Listener heartbeat: app-level ping/pong over the cloud relay. Each `ping`
 // refreshes the environment's lastHeartbeat (the relay marks an env offline

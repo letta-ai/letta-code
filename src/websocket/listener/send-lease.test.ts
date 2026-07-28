@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
-import { createRuntime } from "./lifecycle";
-import { clearConversationRuntimeState } from "./runtime";
+import { clearConversationRuntimeState, createRuntime } from "./runtime";
 import { resolveStaleApprovals } from "./send";
 import type { ListenerTransport } from "./transport";
 

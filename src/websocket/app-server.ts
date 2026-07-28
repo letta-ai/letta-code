@@ -21,11 +21,11 @@ import { closeOpenAiBridgeRuntime } from "@/websocket/app-server-openai-turn";
 import { getAppServerInfoResponse } from "@/websocket/listener/commands/app-server-info";
 import {
   attachOpenListenerSocket,
-  createRuntime,
   stopRuntime,
 } from "@/websocket/listener/lifecycle";
 import { reloadListenerModAdapter } from "@/websocket/listener/mod-adapter";
 import {
+  createRuntime,
   getActiveRuntime,
   setActiveRuntime,
 } from "@/websocket/listener/runtime";

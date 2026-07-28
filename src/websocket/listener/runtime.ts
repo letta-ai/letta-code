@@ -1,7 +1,9 @@
 import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import type { PendingControlRequest } from "@/types/protocol_v2";
-import { getWorkingDirectoryScopeKey } from "./cwd";
+import { getWorkingDirectoryScopeKey, loadPersistedCwdMap } from "./cwd";
+import { loadPersistedPermissionModeMap } from "./permission-mode";
 import {
   normalizeConversationId,
   normalizeCwdAgentId,
@@ -18,6 +20,50 @@ import type {
 } from "./types";
 
 let activeRuntime: ListenerRuntime | null = null;
+
+export function createRuntime(): ListenerRuntime {
+  return {
+    socket: null,
+    transport: null,
+    streamSocket: null,
+    streamTransport: null,
+    heartbeatInterval: null,
+    reconnectTimeout: null,
+    reconnectDelayCancel: null,
+    reconnectWatchdogTimeout: null,
+    reregisterRequested: false,
+    lastPongAt: null,
+    intentionallyClosed: false,
+    hasSuccessfulConnection: false,
+    everConnected: false,
+    sessionId: `listen-${crypto.randomUUID()}`,
+    eventSeqCounter: 0,
+    queueEmitScheduled: false,
+    pendingQueueEmitScope: undefined,
+    onWsEvent: undefined,
+    reminderState: createSharedReminderState(),
+    bootWorkingDirectory: getCurrentWorkingDirectory(),
+    workingDirectoryByConversation: loadPersistedCwdMap(),
+    worktreeWatcherByConversation: new Map(),
+    permissionModeByConversation: loadPersistedPermissionModeMap(),
+    skillSourcesByConversation: new Map(),
+    reminderStateByConversation: new Map(),
+    contextTrackerByConversation: new Map(),
+    systemPromptRecompileByConversation: new Map(),
+    queuedSystemPromptRecompileByConversation: new Set(),
+    connectionId: null,
+    connectionName: null,
+    conversationRuntimes: new Map(),
+    approvalRuntimeKeyByRequestId: new Map(),
+    memfsSyncedAgents: new Map(),
+    secretsHydrationByAgent: new Map(),
+    secretsHydrationFreshnessByAgent: new Map(),
+    secretsDirtyAgents: new Set(),
+    pendingExternalToolCalls: new Map(),
+    agentMetadataByAgent: new Map(),
+    lastEmittedStatus: null,
+  };
+}
 
 export function getActiveRuntime(): ListenerRuntime | null {
   return activeRuntime;
@@ -48,14 +94,32 @@ export function nextEventSeq(runtime: ListenerRuntime | null): number | null {
 }
 
 export function clearRuntimeTimers(runtime: ListenerRuntime): void {
+  clearReconnectDelay(runtime);
+  clearListenerHeartbeat(runtime);
+  clearReconnectWatchdog(runtime);
+}
+
+export function clearReconnectDelay(runtime: ListenerRuntime): void {
+  const cancelReconnectDelay = runtime.reconnectDelayCancel;
+  runtime.reconnectDelayCancel = null;
+  cancelReconnectDelay?.();
   if (runtime.reconnectTimeout) {
     clearTimeout(runtime.reconnectTimeout);
     runtime.reconnectTimeout = null;
   }
+}
+
+export function clearListenerHeartbeat(runtime: ListenerRuntime): void {
   if (runtime.heartbeatInterval) {
     clearInterval(runtime.heartbeatInterval);
     runtime.heartbeatInterval = null;
   }
+}
+
+export function clearReconnectWatchdog(runtime: ListenerRuntime): void {
+  if (!runtime.reconnectWatchdogTimeout) return;
+  clearTimeout(runtime.reconnectWatchdogTimeout);
+  runtime.reconnectWatchdogTimeout = null;
 }
 
 /**

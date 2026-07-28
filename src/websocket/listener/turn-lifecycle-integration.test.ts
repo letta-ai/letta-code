@@ -6,11 +6,10 @@ import {
   setCurrentAgentId,
 } from "@/agent/context";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
-import { createRuntime } from "./lifecycle";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import { shouldProcessInboundMessageDirectly } from "./queue";
 import { finalizeHandledRecoveryTurn } from "./recovery";
-import { clearConversationRuntimeState } from "./runtime";
+import { clearConversationRuntimeState, createRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { releaseListenerTurnContext } from "./turn-context";

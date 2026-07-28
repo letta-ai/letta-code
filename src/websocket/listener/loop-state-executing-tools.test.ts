@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { emitToolExecutionAbortedEvents } from "./interrupts";
-import { createRuntime } from "./lifecycle";
 import { buildLoopStatus } from "./protocol-outbound";
+import { createRuntime } from "./runtime";
 import type { ConversationRuntime } from "./types";
 
 class MockSocket {

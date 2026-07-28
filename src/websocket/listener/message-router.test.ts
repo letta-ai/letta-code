@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
-import { createRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { scheduleQueuePump } from "./queue";
-import { setActiveRuntime } from "./runtime";
+import { createRuntime, setActiveRuntime } from "./runtime";
 import type { IncomingMessage, StartListenerOptions } from "./types";
 
 class MockSocket {

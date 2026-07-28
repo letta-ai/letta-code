@@ -40,7 +40,7 @@ export interface StartListenerOptions {
   connectionName: string;
   onConnected: (connectionId: string) => void;
   onDisconnected: () => void;
-  onNeedsReregister?: () => void;
+  onNeedsReregister?: () => void | Promise<void>;
   onError: (error: Error) => void;
   onStatusChange?: (
     status: "idle" | "receiving" | "processing",
@@ -210,6 +210,9 @@ export type ListenerRuntime = {
   streamTransport?: ListenerTransport | null;
   heartbeatInterval: NodeJS.Timeout | null;
   reconnectTimeout: NodeJS.Timeout | null;
+  reconnectDelayCancel: (() => void) | null;
+  reconnectWatchdogTimeout: NodeJS.Timeout | null;
+  reregisterRequested: boolean;
   /**
    * Epoch ms of the last `pong` observed from the cloud relay. Used by the
    * heartbeat watchdog to detect a half-open socket (no `close` event) and

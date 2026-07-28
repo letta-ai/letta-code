@@ -66,7 +66,6 @@ import {
   stashRecoveredApprovalInterrupts,
 } from "./interrupts";
 import {
-  createRuntime,
   enqueueChannelTurn,
   recoverPendingChannelControlRequests,
   replaySyncStateForRuntime,
@@ -94,6 +93,7 @@ import {
 } from "./recovery";
 import {
   clearRecoveredApprovalStateForScope,
+  createRuntime,
   getListenerStatus,
   getOrCreateConversationRuntime,
   setActiveRuntime,
@@ -140,6 +140,9 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   onWsEvent?: StartListenerOptions["onWsEvent"];
   reminderState: ListenerRuntime["reminderState"];
   reconnectTimeout: NodeJS.Timeout | null;
+  reconnectDelayCancel: (() => void) | null;
+  reconnectWatchdogTimeout: NodeJS.Timeout | null;
+  reregisterRequested: boolean;
   heartbeatInterval: NodeJS.Timeout | null;
   lastPongAt: number | null;
   intentionallyClosed: boolean;
@@ -181,6 +184,9 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     onWsEvent?: StartListenerOptions["onWsEvent"];
     reminderState: ListenerRuntime["reminderState"];
     reconnectTimeout: NodeJS.Timeout | null;
+    reconnectDelayCancel: (() => void) | null;
+    reconnectWatchdogTimeout: NodeJS.Timeout | null;
+    reregisterRequested: boolean;
     heartbeatInterval: NodeJS.Timeout | null;
     lastPongAt: number | null;
     intentionallyClosed: boolean;
@@ -312,6 +318,24 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.reconnectTimeout,
       set: (value: NodeJS.Timeout | null) => {
         listener.reconnectTimeout = value;
+      },
+    },
+    reconnectDelayCancel: {
+      get: () => listener.reconnectDelayCancel,
+      set: (value: (() => void) | null) => {
+        listener.reconnectDelayCancel = value;
+      },
+    },
+    reconnectWatchdogTimeout: {
+      get: () => listener.reconnectWatchdogTimeout,
+      set: (value: NodeJS.Timeout | null) => {
+        listener.reconnectWatchdogTimeout = value;
+      },
+    },
+    reregisterRequested: {
+      get: () => listener.reregisterRequested,
+      set: (value: boolean) => {
+        listener.reregisterRequested = value;
       },
     },
     heartbeatInterval: {

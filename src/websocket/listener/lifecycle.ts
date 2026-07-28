@@ -23,8 +23,6 @@ import {
   stopScheduler as stopCronScheduler,
 } from "@/cron/scheduler";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
-import { createSharedReminderState } from "@/reminders/state";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
   getListenerTelemetrySurface,
@@ -68,7 +66,7 @@ import {
   findFallbackRuntime,
   getOrCreateScopedRuntime,
 } from "./conversation-runtime";
-import { loadPersistedCwdMap, seedConversationWorkingDirectory } from "./cwd";
+import { seedConversationWorkingDirectory } from "./cwd";
 import {
   installExternalToolBridge,
   rejectPendingExternalToolCalls,
@@ -81,7 +79,6 @@ import {
 } from "./mod-adapter";
 import {
   getOrCreateConversationPermissionModeStateRef,
-  loadPersistedPermissionModeMap,
   persistPermissionModeMapForRuntime,
 } from "./permission-mode";
 import {
@@ -92,10 +89,22 @@ import {
   emitSubagentStateIfOpen,
 } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
+import {
+  armListenerReconnectWatchdog,
+  canContinueListenerReconnect,
+  canOpenListenerSocket,
+  isCurrentListenerSocket,
+  requestListenerReregistration,
+  waitForListenerReconnectDelay,
+} from "./reconnect";
 import { recoverApprovalStateForSync } from "./recovery";
 import {
   clearConversationRuntimeState,
+  clearListenerHeartbeat,
+  clearReconnectDelay,
+  clearReconnectWatchdog,
   clearRuntimeTimers,
+  createRuntime,
   evictConversationRuntimeIfIdle,
   getActiveRuntime,
   getOrCreateConversationRuntime,
@@ -890,48 +899,6 @@ export function enqueueChannelTurn(
 
   return enqueuedItem;
 }
-export function createRuntime(): ListenerRuntime {
-  const bootWorkingDirectory = getCurrentWorkingDirectory();
-  return {
-    socket: null,
-    transport: null,
-    streamSocket: null,
-    streamTransport: null,
-    heartbeatInterval: null,
-    reconnectTimeout: null,
-    lastPongAt: null,
-    intentionallyClosed: false,
-    hasSuccessfulConnection: false,
-    everConnected: false,
-    sessionId: `listen-${crypto.randomUUID()}`,
-    eventSeqCounter: 0,
-    queueEmitScheduled: false,
-    pendingQueueEmitScope: undefined,
-    onWsEvent: undefined,
-    reminderState: createSharedReminderState(),
-    bootWorkingDirectory,
-    workingDirectoryByConversation: loadPersistedCwdMap(),
-    worktreeWatcherByConversation: new Map(),
-    permissionModeByConversation: loadPersistedPermissionModeMap(),
-    skillSourcesByConversation: new Map(),
-    reminderStateByConversation: new Map(),
-    contextTrackerByConversation: new Map(),
-    systemPromptRecompileByConversation: new Map(),
-    queuedSystemPromptRecompileByConversation: new Set(),
-    connectionId: null,
-    connectionName: null,
-    conversationRuntimes: new Map(),
-    approvalRuntimeKeyByRequestId: new Map(),
-    memfsSyncedAgents: new Map(),
-    secretsHydrationByAgent: new Map(),
-    secretsHydrationFreshnessByAgent: new Map(),
-    secretsDirtyAgents: new Set(),
-    pendingExternalToolCalls: new Map(),
-    agentMetadataByAgent: new Map(),
-    lastEmittedStatus: null,
-  };
-}
-
 export function stopRuntime(
   runtime: ListenerRuntime,
   suppressCallbacks: boolean,
@@ -1018,9 +985,7 @@ export async function startConnectedListenerRuntime(
     streamTransport?: ListenerTransport | null;
   } = {},
 ): Promise<void> {
-  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-    return;
-  }
+  if (!canContinueListenerReconnect(runtime)) return;
 
   const shouldStartHeartbeat = options.startHeartbeat !== false;
   // LETTA_DISABLE_CRON_SCHEDULER=1 lets users opt out entirely. Useful when
@@ -1033,6 +998,7 @@ export async function startConnectedListenerRuntime(
     options.startCronScheduler !== false && !cronSchedulerDisabledByEnv;
 
   runtime.transport = transport;
+  clearReconnectWatchdog(runtime);
   runtime.streamTransport = options.streamTransport ?? null;
   safeEmitWsEvent("recv", "lifecycle", {
     type:
@@ -1466,9 +1432,7 @@ async function connectWithRetry(
   attempt: number = 0,
   startTime: number = Date.now(),
 ): Promise<void> {
-  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-    return;
-  }
+  if (!canContinueListenerReconnect(runtime)) return;
 
   const elapsedTime = Date.now() - startTime;
 
@@ -1478,7 +1442,11 @@ async function connectWithRetry(
       // of giving up. This keeps established sessions alive through transient
       // outages (e.g. Cloudflare 521, server deploys).
       if (runtime.everConnected && opts.onNeedsReregister) {
-        opts.onNeedsReregister();
+        requestListenerReregistration(
+          runtime,
+          opts,
+          "Listener failed to reconnect within five minutes; re-registering the environment",
+        );
         return;
       }
       opts.onError(new Error("Failed to connect after 5 minutes of retrying"));
@@ -1495,17 +1463,12 @@ async function connectWithRetry(
 
     opts.onRetrying?.(attempt, maxAttempts, delay, opts.connectionId);
 
-    await new Promise<void>((resolve) => {
-      runtime.reconnectTimeout = setTimeout(resolve, delay);
-    });
-
-    runtime.reconnectTimeout = null;
-    if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-      return;
-    }
+    const delayElapsed = await waitForListenerReconnectDelay(runtime, delay);
+    if (!delayElapsed) return;
+    if (!canContinueListenerReconnect(runtime)) return;
   }
 
-  clearRuntimeTimers(runtime);
+  clearListenerHeartbeat(runtime);
 
   if (attempt === 0) {
     await loadTools();
@@ -1514,9 +1477,7 @@ async function connectWithRetry(
   const auth = await resolveListenerReconnectAuth(opts);
   if (auth.kind === "retry")
     return connectWithRetry(runtime, opts, attempt + 1, startTime);
-  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-    return;
-  }
+  if (!canContinueListenerReconnect(runtime)) return;
   const apiKey = auth.apiKey;
 
   const url = new URL(opts.wsUrl);
@@ -1579,9 +1540,21 @@ async function connectWithRetry(
   };
 
   socket.on("open", async () => {
+    if (!canOpenListenerSocket(runtime, socket)) {
+      socket.terminate();
+      return;
+    }
     let streamTransport: ListenerTransport | null = null;
     if (streamSocket) {
       streamTransport = await waitForStreamSocketOpen(streamSocket, runtime);
+      if (!streamTransport) {
+        if (runtime.socket === socket) socket.terminate();
+        return;
+      }
+    }
+    if (!canOpenListenerSocket(runtime, socket)) {
+      socket.terminate();
+      return;
     }
     await startConnectedListenerRuntime(
       runtime,
@@ -1619,7 +1592,7 @@ async function connectWithRetry(
   );
 
   socket.on("close", (code: number, reason: Buffer) => {
-    if (runtime !== getActiveRuntime()) {
+    if (!isCurrentListenerSocket(runtime, socket)) {
       return;
     }
 
@@ -1660,7 +1633,8 @@ async function connectWithRetry(
       );
     }
 
-    clearRuntimeTimers(runtime);
+    clearReconnectDelay(runtime);
+    clearListenerHeartbeat(runtime);
     killAllTerminals();
     runtime._unsubscribeSubagentState?.();
     runtime._unsubscribeSubagentState = undefined;
@@ -1677,6 +1651,7 @@ async function connectWithRetry(
       }
     }
     runtime.socket = null;
+    runtime.transport = null;
     runtime.streamSocket = null;
     runtime.streamTransport = null;
     for (const conversationRuntime of runtime.conversationRuntimes.values()) {
@@ -1692,18 +1667,18 @@ async function connectWithRetry(
       opts.onDisconnected();
       return;
     }
+    if (runtime.reregisterRequested) return;
 
     // 1008: Environment not found - need to re-register
     if (code === 1008) {
       if (isDebugEnabled()) {
         console.log("[Listen] Environment not found, re-registering...");
       }
-      // Stop retry loop and signal that we need to re-register
-      if (opts.onNeedsReregister) {
-        opts.onNeedsReregister();
-      } else {
-        opts.onDisconnected();
-      }
+      requestListenerReregistration(
+        runtime,
+        opts,
+        "Environment not found; re-registering",
+      );
       return;
     }
 
@@ -1713,6 +1688,7 @@ async function connectWithRetry(
       ? Date.now()
       : startTime;
     runtime.hasSuccessfulConnection = false;
+    armListenerReconnectWatchdog(runtime, opts);
 
     connectWithRetry(runtime, opts, nextAttempt, nextStartTime).catch(
       (error) => {

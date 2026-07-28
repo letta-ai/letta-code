@@ -1,9 +1,9 @@
 import { describe, expect, mock, test } from "bun:test";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
-import { createRuntime } from "./lifecycle";
 import { resolveRecoveredApprovalResponse } from "./recovery";
 import {
   clearConversationRuntimeState,
+  createRuntime,
   getPendingControlRequestCount,
 } from "./runtime";
 import type { ListenerTransport } from "./transport";

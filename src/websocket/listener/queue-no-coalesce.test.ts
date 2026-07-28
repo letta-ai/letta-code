@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
-import { createRuntime } from "./lifecycle";
 import { consumeQueuedTurn } from "./queue";
+import { createRuntime } from "./runtime";
 import type { IncomingMessage } from "./types";
 
 function bridgeMessage(text: string, otid: string): IncomingMessage {

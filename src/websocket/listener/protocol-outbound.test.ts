@@ -3,13 +3,13 @@ import WebSocket from "ws";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import type { StreamDeltaMessage } from "@/types/protocol_v2";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
-import { createRuntime as createListenerRuntime } from "@/websocket/listener/lifecycle";
 import { OUTBOUND_QUEUE_LIMITS } from "@/websocket/listener/outbound-wire";
 import {
   emitDequeuedUserMessage,
   emitDeviceStatusUpdateIfChanged,
   emitProtocolV2Message,
 } from "@/websocket/listener/protocol-outbound";
+import { createRuntime as createListenerRuntime } from "@/websocket/listener/runtime";
 import type {
   ConversationRuntime,
   IncomingMessage,

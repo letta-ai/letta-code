@@ -6,8 +6,10 @@ import type WebSocket from "ws";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
-import { createRuntime } from "@/websocket/listener/lifecycle";
-import { evictConversationRuntimeIfIdle } from "@/websocket/listener/runtime";
+import {
+  createRuntime,
+  evictConversationRuntimeIfIdle,
+} from "@/websocket/listener/runtime";
 import { handleRuntimeStartCommand } from "./runtime-start";
 
 describe("runtime_start skill sources", () => {

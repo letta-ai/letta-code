@@ -7,9 +7,9 @@ import {
   resolvePendingApprovalResolver,
 } from "./approval";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
-import { createRuntime, stopRuntime } from "./lifecycle";
+import { stopRuntime } from "./lifecycle";
 import { buildLoopStatus } from "./protocol-outbound";
-import { clearConversationRuntimeState } from "./runtime";
+import { clearConversationRuntimeState, createRuntime } from "./runtime";
 import type { ConversationRuntime } from "./types";
 
 class MockSocket {

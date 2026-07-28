@@ -5,8 +5,8 @@ import { join } from "node:path";
 import WebSocket from "ws";
 import { handleCwdChange } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
-import { createRuntime } from "./lifecycle";
 import { resetRemoteSettingsCache } from "./remote-settings";
+import { createRuntime } from "./runtime";
 
 class MockSocket {
   readyState = WebSocket.OPEN;
