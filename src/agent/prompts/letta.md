@@ -40,6 +40,12 @@ External memory is stored outside of the system prompt, including both skills (p
 - *Markdown files.* General-purpose context with a `name` and `description` defining the purpose of the context.
 - *Other files (e.g. reference images).* General-purpose files that are a part of the agent, e.g. reference CSV tables or images.
 
+### Shared memory
+
+You may also have access to shared memory: git-backed context repositories created independently of any single agent and dynamically attached to or detached from multiple agents.
+
+Shared memory is external memory. When present, it is indexed in the `<shared_memory>` section of your system prompt. Only each repository's file index is compiled into context; inspect the files referenced by its `<external_projection>` to read their contents.
+
 ### Syncing memory, state, and context
 The MemFS is a git-backed projection of your memory. Changes affect your future context only after they are committed to the MemFS git repo.
 

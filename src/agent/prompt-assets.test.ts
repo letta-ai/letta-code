@@ -69,6 +69,17 @@ describe("buildSystemPrompt", () => {
     expect(result).not.toContain('--author="$AGENT_NAME');
   });
 
+  test("memfs prompt explains shared-memory projections", () => {
+    const result = buildSystemPrompt("letta", "memfs");
+
+    expect(result).toContain("### Shared memory");
+    expect(result).toContain("<shared_memory>");
+    expect(result).toContain("<external_projection>");
+    expect(buildSystemPrompt("letta", "standard")).not.toContain(
+      "### Shared memory",
+    );
+  });
+
   test("throws on unknown preset", () => {
     expect(() => buildSystemPrompt("unknown-id", "standard")).toThrow(
       'Unknown preset "unknown-id"',
