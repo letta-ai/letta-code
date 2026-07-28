@@ -250,6 +250,31 @@ describe("ProviderTurnExecutor", () => {
     ).toBe("end_turn");
   });
 
+  test("includes provider reasoning tokens in usage statistics", async () => {
+    const finalMessage = assistantMessage({
+      ...emptyLocalUsage(),
+      input: 100,
+      output: 40,
+      totalTokens: 140,
+      reasoning: 24,
+    });
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        yield providerStreamPart(
+          part({ type: "done", reason: "stop", message: finalMessage }),
+        );
+      },
+    };
+
+    const chunks = await collect(
+      await new ProviderTurnExecutor(adapter).execute(input()),
+    );
+    const usage = chunks.find(
+      (chunk) => chunk.message_type === "usage_statistics",
+    ) as { reasoning_tokens?: number } | undefined;
+    expect(usage?.reasoning_tokens).toBe(24);
+  });
+
   test("maps pi length completions to max_tokens_exceeded", async () => {
     const finalMessage = {
       ...assistantMessage(),

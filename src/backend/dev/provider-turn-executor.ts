@@ -294,12 +294,14 @@ function createUsageStatisticsChunk(
   const contextTokens = usageContextTokens ?? contextTokensEstimate;
   const cachedInputTokens = usage?.cacheRead;
   const cacheWriteTokens = usage?.cacheWrite;
+  const reasoningTokens = usage?.reasoning;
   if (
     promptTokens === undefined &&
     completionTokens === undefined &&
     totalTokens === undefined &&
     cachedInputTokens === undefined &&
     cacheWriteTokens === undefined &&
+    reasoningTokens === undefined &&
     contextTokens === undefined
   ) {
     return undefined;
@@ -316,6 +318,9 @@ function createUsageStatisticsChunk(
       : {}),
     ...(cacheWriteTokens !== undefined
       ? { cache_write_tokens: cacheWriteTokens }
+      : {}),
+    ...(reasoningTokens !== undefined
+      ? { reasoning_tokens: reasoningTokens }
       : {}),
     ...(contextTokens !== undefined ? { context_tokens: contextTokens } : {}),
   } as unknown as LettaStreamingResponse;
