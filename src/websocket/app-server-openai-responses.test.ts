@@ -338,7 +338,8 @@ describe("app-server Responses API", () => {
 
   test("Open WebUI chat ids isolate sessions and continue messages", async () => {
     const created: string[] = [];
-    __testSetBackend(fakeBackend(created));
+    const deleted: string[] = [];
+    __testSetBackend(fakeBackend(created, deleted));
     const turns: Array<{
       conversationId: string;
       messages: unknown[];
@@ -355,6 +356,7 @@ describe("app-server Responses API", () => {
     const sendOpenWebUiMessage = async (
       chatId: string,
       input: unknown,
+      stream = true,
     ): Promise<number> => {
       const response = await fetch(httpUrl(server, "/v1/responses"), {
         method: "POST",
@@ -365,7 +367,7 @@ describe("app-server Responses API", () => {
         body: JSON.stringify({
           model: "Tutor (Letta Agent)",
           input,
-          stream: true,
+          stream,
         }),
       });
       await response.text();
@@ -373,6 +375,9 @@ describe("app-server Responses API", () => {
     };
 
     expect(await sendOpenWebUiMessage("chat-a", "first message")).toBe(200);
+    expect(
+      await sendOpenWebUiMessage("chat-a", "generate a title", false),
+    ).toBe(200);
     expect(
       await sendOpenWebUiMessage("chat-a", [
         { type: "message", role: "user", content: "first message" },
@@ -382,14 +387,22 @@ describe("app-server Responses API", () => {
     ).toBe(200);
     expect(await sendOpenWebUiMessage("chat-b", "separate chat")).toBe(200);
 
-    expect(created).toEqual(["conv-responses-1", "conv-responses-2"]);
-    expect(turns.map((turn) => turn.conversationId)).toEqual([
-      "conv-responses-1",
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(created).toEqual([
       "conv-responses-1",
       "conv-responses-2",
+      "conv-responses-3",
+    ]);
+    expect(deleted).toEqual(["conv-responses-2"]);
+    expect(turns.map((turn) => turn.conversationId)).toEqual([
+      "conv-responses-1",
+      "conv-responses-2",
+      "conv-responses-1",
+      "conv-responses-3",
     ]);
     expect(turns.map((turn) => turn.messages)).toMatchObject([
       [{ role: "user", content: [{ type: "text", text: "first message" }] }],
+      [{ role: "user", content: [{ type: "text", text: "generate a title" }] }],
       [{ role: "user", content: [{ type: "text", text: "second message" }] }],
       [{ role: "user", content: [{ type: "text", text: "separate chat" }] }],
     ]);

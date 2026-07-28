@@ -11,6 +11,7 @@ import {
   extractUserContentParts,
   type OpenAiChatMessage,
   type OpenAiCompatOptions,
+  openWebUiChatIdFromHeaders,
   readJsonBody,
   rememberConversation,
   resolveAgentForModel,
@@ -446,7 +447,9 @@ export async function handleResponses(
     return;
   }
 
-  const headerChatKey = chatKeyFromHeaders(request, body.stream === true);
+  const streaming = body.stream === true;
+  const openWebUiChatId = openWebUiChatIdFromHeaders(request);
+  const headerChatKey = chatKeyFromHeaders(request, streaming);
   const stateful = Boolean(previous || headerChatKey);
   const prepared = toBridgeMessages(input, stateful);
   if (!prepared.correlationOtid) {
@@ -487,7 +490,6 @@ export async function handleResponses(
 
   const responseId = `resp_${randomUUID()}`;
   const createdAt = Math.floor(Date.now() / 1000);
-  const streaming = body.stream === true;
   let sequenceNumber = 0;
   let clientClosed = false;
   response.on("close", () => {
@@ -558,9 +560,15 @@ export async function handleResponses(
   }
   builder.finishText();
 
-  // OpenAI Responses are stored by default; `store: false` opts out.
+  // OpenAI Responses are stored by default; `store: false` opts out. Open
+  // WebUI's non-streaming title/tag/follow-up jobs carry the parent chat id,
+  // but are deliberately not part of that chat. Keep those task conversations
+  // ephemeral unless the caller explicitly asks to store them.
+  const openWebUiBackgroundRequest = Boolean(openWebUiChatId) && !streaming;
   const shouldStore =
-    body.store !== false || Boolean(headerChatKey || previous);
+    body.store === true ||
+    (!openWebUiBackgroundRequest && body.store !== false) ||
+    Boolean(headerChatKey || previous);
   if (shouldStore && !outcome.error) {
     rememberResponseState(responseId, { agentId: agent.id, conversationId });
   } else if (!headerChatKey && !previous) {

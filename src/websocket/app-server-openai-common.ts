@@ -354,6 +354,12 @@ export function chatKeyFromHeaders(
   const explicit = headerValue(request, "x-letta-chat-key");
   if (explicit) return explicit;
   if (!streaming) return null;
+  return openWebUiChatIdFromHeaders(request);
+}
+
+export function openWebUiChatIdFromHeaders(
+  request: HttpIncomingMessage,
+): string | null {
   return headerValue(request, "x-openwebui-chat-id");
 }
 
