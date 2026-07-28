@@ -8,6 +8,7 @@
  *   poll handles integrate correctly with Node.js but NOT with Bun's event loop)
  */
 
+import { existsSync } from "node:fs";
 import * as os from "node:os";
 import WebSocket from "ws";
 
@@ -58,7 +59,21 @@ function getDefaultShell(): string {
   if (os.platform() === "win32") {
     return process.env.COMSPEC || "cmd.exe";
   }
-  return process.env.SHELL || "/bin/zsh";
+  // $SHELL is absent in non-login contexts (e.g. cloud sandbox listeners
+  // launched via session exec), and the shell it names may not exist in
+  // minimal images — execvp would fail the PTY with ENOENT. Probe candidates
+  // in order and fall back to /bin/sh, which every POSIX system provides.
+  const candidates = [
+    process.env.SHELL,
+    os.platform() === "darwin" ? "/bin/zsh" : "/bin/bash",
+    "/bin/bash",
+  ];
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return "/bin/sh";
 }
 
 function sendTerminalMessage(
