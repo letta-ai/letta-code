@@ -305,7 +305,18 @@ async function handleChatCompletions(
     };
   }
   const fullText = outcome.text;
-  const usage = outcome.usage;
+  const usage = {
+    prompt_tokens: outcome.usage.prompt_tokens,
+    completion_tokens: outcome.usage.completion_tokens,
+    total_tokens: outcome.usage.total_tokens,
+    ...(outcome.usage.reasoning_tokens !== undefined
+      ? {
+          completion_tokens_details: {
+            reasoning_tokens: outcome.usage.reasoning_tokens,
+          },
+        }
+      : {}),
+  };
   const streamError = outcome.error;
 
   // Headerless requests are stateless: their conversation exists only to

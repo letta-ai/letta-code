@@ -34,6 +34,7 @@ export interface OpenAiUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  reasoning_tokens?: number;
 }
 
 export type UserContentPart =
@@ -47,6 +48,7 @@ export type UserContentPart =
 
 export interface TurnOutcome {
   text: string;
+  reasoning?: string;
   usage: OpenAiUsage;
   error: string | null;
   toolEvents?: ToolCallEvent[];
@@ -68,6 +70,7 @@ export interface RunTurnParams {
    * lifecycle with this request. */
   correlationOtid: string;
   onAssistantText?: (text: string) => void;
+  onReasoningText?: (text: string) => void;
   onToolEvent?: ToolLifecycleCallback;
   onLog?: (message: string) => void;
 }
@@ -167,6 +170,23 @@ function extractDeltaText(delta: unknown): string {
     .join("");
 }
 
+function extractReasoningText(delta: unknown): string {
+  const reasoning = (
+    delta as { reasoning?: string | Array<{ text?: string }> | null }
+  ).reasoning;
+  if (typeof reasoning === "string") return reasoning;
+  if (Array.isArray(reasoning)) {
+    return reasoning
+      .map((part) =>
+        part && typeof part === "object" && typeof part.text === "string"
+          ? part.text
+          : "",
+      )
+      .join("");
+  }
+  return extractDeltaText(delta);
+}
+
 async function runTurnViaListenerRuntime(
   params: RunTurnParams,
 ): Promise<TurnOutcome> {
@@ -207,6 +227,7 @@ async function runTurnViaListenerRuntime(
 
   return await new Promise<TurnOutcome>((resolve) => {
     let text = "";
+    let reasoning = "";
     let usage: OpenAiUsage = {
       prompt_tokens: 0,
       completion_tokens: 0,
@@ -240,7 +261,7 @@ async function runTurnViaListenerRuntime(
       observers.delete(observer);
       unregisterTurnObserver();
       toolTracker.dispose();
-      resolve({ text, usage, error, toolEvents });
+      resolve({ text, reasoning, usage, error, toolEvents });
     };
 
     const observer: ListenerStreamObserver = (message) => {
@@ -275,6 +296,14 @@ async function runTurnViaListenerRuntime(
       if (!delta) return;
       toolTracker.process(delta as StreamDelta);
       switch (delta.message_type) {
+        case "reasoning_message": {
+          const piece = extractReasoningText(delta);
+          if (piece) {
+            reasoning += piece;
+            params.onReasoningText?.(piece);
+          }
+          return;
+        }
         case "assistant_message": {
           const piece = extractDeltaText(delta);
           if (piece) {
@@ -291,11 +320,15 @@ async function runTurnViaListenerRuntime(
             prompt_tokens?: number;
             completion_tokens?: number;
             total_tokens?: number;
+            reasoning_tokens?: number;
           };
           usage = {
             prompt_tokens: stats.prompt_tokens ?? 0,
             completion_tokens: stats.completion_tokens ?? 0,
             total_tokens: stats.total_tokens ?? 0,
+            ...(stats.reasoning_tokens !== undefined
+              ? { reasoning_tokens: stats.reasoning_tokens }
+              : {}),
           };
           return;
         }

@@ -79,9 +79,17 @@ interface MessageItem {
   }>;
 }
 
+interface ReasoningItem {
+  type: "reasoning";
+  id: string;
+  status: "in_progress" | "completed";
+  summary: Array<{ type: "summary_text"; text: string }>;
+}
+
 type ResponseOutputItem =
   | FunctionCallItem
   | FunctionCallOutputItem
+  | ReasoningItem
   | MessageItem;
 
 interface StoredResponseState {
@@ -168,11 +176,14 @@ function toBridgeMessages(
   };
 }
 
-function responseUsage(usage: TurnOutcome["usage"]): Record<string, number> {
+function responseUsage(usage: TurnOutcome["usage"]): Record<string, unknown> {
   return {
     input_tokens: usage.prompt_tokens,
     output_tokens: usage.completion_tokens,
     total_tokens: usage.total_tokens,
+    output_tokens_details: {
+      reasoning_tokens: usage.reasoning_tokens ?? 0,
+    },
   };
 }
 
@@ -210,12 +221,14 @@ class ResponseOutputBuilder {
     { item: FunctionCallItem; index: number }
   >();
   private message: { item: MessageItem; index: number } | null = null;
+  private reasoning: { item: ReasoningItem; index: number } | null = null;
 
   constructor(
     private readonly emit?: (event: Record<string, unknown>) => void,
   ) {}
 
   addText(delta: string): void {
+    this.finishReasoning();
     const message = this.ensureMessage();
     const part = message.item.content[0];
     if (part) part.text += delta;
@@ -228,7 +241,22 @@ class ResponseOutputBuilder {
     });
   }
 
+  addReasoning(delta: string): void {
+    this.finishText();
+    const reasoning = this.ensureReasoning();
+    const part = reasoning.item.summary[0];
+    if (part) part.text += delta;
+    this.emit?.({
+      type: "response.reasoning_summary_text.delta",
+      output_index: reasoning.index,
+      summary_index: 0,
+      item_id: reasoning.item.id,
+      delta,
+    });
+  }
+
   addToolEvent(event: ToolCallEvent): void {
+    this.finishReasoning();
     if (event.type === "tool_call_start") {
       this.finishText();
       this.ensureToolCall(event.tool_call_id, event.tool_name ?? "tool");
@@ -316,6 +344,39 @@ class ResponseOutputBuilder {
     });
   }
 
+  finishReasoning(): void {
+    if (!this.reasoning) return;
+    const { item, index } = this.reasoning;
+    this.reasoning = null;
+    item.status = "completed";
+    const part = item.summary[0];
+    if (!part) return;
+    this.emit?.({
+      type: "response.reasoning_summary_text.done",
+      output_index: index,
+      summary_index: 0,
+      item_id: item.id,
+      text: part.text,
+    });
+    this.emit?.({
+      type: "response.reasoning_summary_part.done",
+      output_index: index,
+      summary_index: 0,
+      item_id: item.id,
+      part,
+    });
+    this.emit?.({
+      type: "response.output_item.done",
+      output_index: index,
+      item,
+    });
+  }
+
+  finish(): void {
+    this.finishReasoning();
+    this.finishText();
+  }
+
   private ensureMessage(): { item: MessageItem; index: number } {
     if (this.message) return this.message;
     const item: MessageItem = {
@@ -341,6 +402,32 @@ class ResponseOutputBuilder {
       part: item.content[0],
     });
     return this.message;
+  }
+
+  private ensureReasoning(): { item: ReasoningItem; index: number } {
+    if (this.reasoning) return this.reasoning;
+    const item: ReasoningItem = {
+      type: "reasoning",
+      id: `rs_${randomUUID()}`,
+      status: "in_progress",
+      summary: [{ type: "summary_text", text: "" }],
+    };
+    const index = this.output.length;
+    this.output.push(item);
+    this.reasoning = { item, index };
+    this.emit?.({
+      type: "response.output_item.added",
+      output_index: index,
+      item: { ...item, summary: [] },
+    });
+    this.emit?.({
+      type: "response.reasoning_summary_part.added",
+      output_index: index,
+      summary_index: 0,
+      item_id: item.id,
+      part: item.summary[0],
+    });
+    return this.reasoning;
   }
 
   private ensureToolCall(
@@ -540,6 +627,7 @@ export async function handleResponses(
       correlationOtid: prepared.correlationOtid,
       onLog: options.onLog,
       onAssistantText: (delta) => builder.addText(delta),
+      onReasoningText: (delta) => builder.addReasoning(delta),
       onToolEvent: (event) => builder.addToolEvent(event),
     });
   } catch (error) {
@@ -555,10 +643,11 @@ export async function handleResponses(
   // Idempotent/replayed test seams can return an outcome without invoking
   // callbacks. Reconstruct output from the completed outcome in that case.
   if (builder.output.length === 0) {
+    if (outcome.reasoning) builder.addReasoning(outcome.reasoning);
     for (const event of outcome.toolEvents ?? []) builder.addToolEvent(event);
     if (outcome.text) builder.addText(outcome.text);
   }
-  builder.finishText();
+  builder.finish();
 
   // OpenAI Responses are stored by default; `store: false` opts out. Open
   // WebUI's non-streaming title/tag/follow-up jobs carry the parent chat id,

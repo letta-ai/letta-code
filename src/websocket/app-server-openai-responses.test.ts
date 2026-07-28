@@ -70,6 +70,41 @@ function stubToolTurn(
   );
 }
 
+function stubReasoningTurn(): void {
+  __testSetRunTurnImpl(
+    async ({ onAssistantText, onReasoningText, onToolEvent }) => {
+      onReasoningText?.("Inspect the ");
+      onReasoningText?.("workspace.");
+      onToolEvent?.({
+        type: "tool_call_start",
+        tool_call_id: "call_reasoning_1",
+        tool_name: "Bash",
+      });
+      onToolEvent?.({
+        type: "tool_call_complete",
+        tool_call_id: "call_reasoning_1",
+        tool_name: "Bash",
+        arguments: '{"command":"pwd"}',
+        output: "/workspace/letta-code\n",
+        success: true,
+      });
+      onReasoningText?.("Use the result.");
+      onAssistantText?.("Done.");
+      return {
+        text: "Done.",
+        reasoning: "Inspect the workspace.Use the result.",
+        usage: {
+          prompt_tokens: 21,
+          completion_tokens: 16,
+          total_tokens: 37,
+          reasoning_tokens: 7,
+        },
+        error: null,
+      };
+    },
+  );
+}
+
 describe("app-server Responses API", () => {
   let handle: AppServerHandle | null = null;
 
@@ -108,7 +143,7 @@ describe("app-server Responses API", () => {
       object: string;
       status: string;
       output: Array<Record<string, unknown>>;
-      usage: Record<string, number>;
+      usage: Record<string, unknown>;
     };
     expect(body.id).toStartWith("resp_");
     expect(body.object).toBe("response");
@@ -143,6 +178,7 @@ describe("app-server Responses API", () => {
       input_tokens: 21,
       output_tokens: 9,
       total_tokens: 30,
+      output_tokens_details: { reasoning_tokens: 0 },
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(deleted).toEqual(["conv-responses-1"]);
@@ -207,6 +243,75 @@ describe("app-server Responses API", () => {
     expect(completed.status).toBe("completed");
     expect(completed.output[1]?.type).toBe("function_call_output");
     expect(completed.output[2]?.type).toBe("message");
+  });
+
+  test("streams native reasoning items and reports reasoning tokens", async () => {
+    __testSetBackend(fakeBackend());
+    stubReasoningTurn();
+    handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      openaiApi: true,
+    });
+
+    const response = await fetch(httpUrl(handle, "/v1/responses"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "Tutor (Letta Agent)",
+        input: "Inspect the repo.",
+        stream: true,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const events = (await response.text())
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>);
+    expect(
+      events
+        .map((event) => event.type)
+        .filter(
+          (type) => typeof type === "string" && type.includes("reasoning"),
+        ),
+    ).toEqual([
+      "response.reasoning_summary_part.added",
+      "response.reasoning_summary_text.delta",
+      "response.reasoning_summary_text.delta",
+      "response.reasoning_summary_text.done",
+      "response.reasoning_summary_part.done",
+      "response.reasoning_summary_part.added",
+      "response.reasoning_summary_text.delta",
+      "response.reasoning_summary_text.done",
+      "response.reasoning_summary_part.done",
+    ]);
+    const completed = events.at(-1)?.response as {
+      output: Array<Record<string, unknown>>;
+      usage: Record<string, unknown>;
+    };
+    expect(completed.output.map((item) => item.type)).toEqual([
+      "reasoning",
+      "function_call",
+      "function_call_output",
+      "reasoning",
+      "message",
+    ]);
+    expect(completed.output[0]).toMatchObject({
+      type: "reasoning",
+      status: "completed",
+      summary: [{ type: "summary_text", text: "Inspect the workspace." }],
+    });
+    expect(completed.output[3]).toMatchObject({
+      type: "reasoning",
+      status: "completed",
+      summary: [{ type: "summary_text", text: "Use the result." }],
+    });
+    expect(completed.usage).toMatchObject({
+      input_tokens: 21,
+      output_tokens: 16,
+      total_tokens: 37,
+      output_tokens_details: { reasoning_tokens: 7 },
+    });
   });
 
   test("preserves assistant text ordering around a server-side tool call", async () => {
