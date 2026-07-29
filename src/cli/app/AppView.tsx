@@ -33,7 +33,6 @@ import { InlineQuestionApproval } from "@/cli/components/InlineQuestionApproval"
 import { Input } from "@/cli/components/InputRich";
 import { InstallGithubAppFlow } from "@/cli/components/InstallGithubAppFlow";
 import { LettaLoginOverlay } from "@/cli/components/LettaLoginOverlay";
-import { McpConnectFlow } from "@/cli/components/McpConnectFlow";
 import { McpSelector } from "@/cli/components/McpSelector";
 import { MemfsTreeViewer } from "@/cli/components/MemfsTreeViewer";
 import { MemoryTabViewer } from "@/cli/components/MemoryTabViewer";
@@ -456,7 +455,6 @@ export function AppView(props: AppViewProps) {
     sessionStatsRef,
     worktreeDiffSelectorPending,
     setWorktreeDiffSelectorPending,
-    setActiveOverlay,
     setBtwState,
     setCommandRunning,
     setConversationAutoTitleEligibility,
@@ -1646,29 +1644,14 @@ export function AppView(props: AppViewProps) {
               <McpSelector
                 agentId={agentId}
                 onAdd={() => {
-                  // Switch to the MCP connect flow
-                  setActiveOverlay("mcp-connect");
-                }}
-                onCancel={closeOverlay}
-              />
-            )}
-
-            {/* MCP Connect Flow - interactive TUI for OAuth connection */}
-            {activeOverlay === "mcp-connect" && (
-              <McpConnectFlow
-                onComplete={(serverName, serverId, toolCount) => {
-                  const overlayCommand = completeOverlay("mcp-connect");
                   const cmd =
-                    overlayCommand ??
+                    completeOverlay("mcp") ??
                     commandRunner.start(
-                      "/mcp connect",
-                      "Connecting MCP server...",
+                      "/mcp",
+                      "Opening MCP server manager...",
                     );
                   cmd.finish(
-                    `Successfully created MCP server "${serverName}"\n` +
-                      `ID: ${serverId}\n` +
-                      `Discovered ${toolCount} tool${toolCount === 1 ? "" : "s"}\n` +
-                      "Open /mcp to attach or detach tools for this server.",
+                    "Add a client-local server with `/mcp add --transport <stdio|http|sse> <name> <command|url> ...`.",
                     true,
                   );
                 }}

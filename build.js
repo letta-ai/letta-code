@@ -153,6 +153,21 @@ await Bun.build({
 });
 
 await Bun.build({
+  entrypoints: ["./src/mcp-client.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "mcp-client.js",
+  },
+  define: {
+    LETTA_VERSION: JSON.stringify(version),
+  },
+});
+
+await Bun.build({
   entrypoints: ["./src/memory-confinement.ts"],
   outdir: "./dist",
   target: "node",

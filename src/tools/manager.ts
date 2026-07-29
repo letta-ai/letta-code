@@ -894,9 +894,7 @@ export interface ClientTool {
   parameters?: { [key: string]: unknown } | null;
 }
 
-// ═══════════════════════════════════════════════════════════════
 // EXTERNAL TOOLS (SDK-side execution)
-// ═══════════════════════════════════════════════════════════════
 
 export interface ExternalToolDefinition {
   name: string;
@@ -913,6 +911,8 @@ export interface ExternalToolDefinition {
     agentId?: string;
     conversationId?: string;
   };
+  /** Client-local executor owned by this tool (for example an MCP process). */
+  executor?: ExternalToolExecutor;
 }
 
 /**
@@ -2753,7 +2753,7 @@ async function executeToolInner(
       options?.toolCallId ?? `ext-${Date.now()}`,
       name,
       eventArgs as Record<string, unknown>,
-      activeExternalExecutor,
+      externalTool?.executor ?? activeExternalExecutor,
       externalTool,
     );
   }
