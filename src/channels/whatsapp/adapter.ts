@@ -15,7 +15,9 @@ import {
   isGroupJid,
   isSelfChat,
   isStatusOrBroadcastJid,
+  isStrictPhoneJid,
   resolveSendJid,
+  senderIdFromJid,
   stripDeviceSuffix,
 } from "./jid";
 import type { LidStore } from "./lid-store";
@@ -27,6 +29,11 @@ import {
   extractReplyParticipant,
   extractWhatsAppText,
 } from "./media";
+import {
+  isWhatsAppReactionGroupEligible,
+  parseWhatsAppReactionEntry,
+  type WhatsAppReaction,
+} from "./reactions";
 import { loadWhatsAppModule } from "./runtime";
 import { createWhatsAppSocket, getWhatsAppAuthDir } from "./session";
 import { setWhatsAppConnectionState } from "./state";
@@ -385,6 +392,14 @@ export function createWhatsAppAdapter(
         );
       });
     });
+    connectedSocket.ev?.on?.("messages.reaction", (event) => {
+      return handleReactionBatch(event).catch((error) => {
+        console.error(
+          `[WhatsApp:${account.accountId}] reaction handler failed:`,
+          error instanceof Error ? error.message : error,
+        );
+      });
+    });
   }
 
   async function getGroupLabel(groupJid: string): Promise<string | undefined> {
@@ -511,6 +526,120 @@ export function createWhatsAppAdapter(
           `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${preview(body)}"`,
         );
         await adapter.onMessage?.(inbound);
+      }
+    } finally {
+      flushLidStoreIfDirty();
+    }
+  }
+
+  async function handleReactionEntry(
+    parsed: WhatsAppReaction,
+    raw: unknown,
+  ): Promise<void> {
+    if (parsed.targetFromMe !== true) return;
+    if (parsed.reactionKey.fromMe === true) return;
+    if (isStatusOrBroadcastJid(parsed.chatId)) return;
+    if (
+      parsed.timestampMs !== undefined &&
+      parsed.timestampMs < connectedAtMs - 1000
+    ) {
+      return;
+    }
+    if (sentMessageIds.has(parsed.reactionMessageId)) {
+      sentMessageIds.delete(parsed.reactionMessageId);
+      return;
+    }
+    const identity = resolveInboundIdentity(
+      {
+        selfPhoneJid,
+        selfLid,
+        remoteJid: parsed.chatId,
+        participant: parsed.reactorParticipant,
+      },
+      lidStore,
+    );
+    if (!identity || !applyObservedMappings(identity.observedMappings)) return;
+    if (
+      rememberSeen(`reaction:${identity.chatId}:${parsed.reactionMessageId}`)
+    ) {
+      return;
+    }
+
+    const selfChat = isSelfChat(parsed.chatId, selfPhoneJid, selfLid);
+    if (account.selfChatMode && !selfChat) return;
+
+    const group = isGroupJid(identity.chatId);
+    if (
+      group &&
+      !isWhatsAppReactionGroupEligible({
+        groupMode: account.groupMode,
+        allowedGroups: account.allowedGroups,
+        groupJid: identity.chatId,
+        targetFromMe: parsed.targetFromMe,
+      })
+    ) {
+      return;
+    }
+
+    const chatLabel = group
+      ? await getGroupLabel(identity.chatId)
+      : selfChat
+        ? "Self (WhatsApp)"
+        : identity.senderId;
+    const targetSenderId = isStrictPhoneJid(selfPhoneJid)
+      ? senderIdFromJid(selfPhoneJid)
+      : isStrictPhoneJid(parsed.targetKey.participant)
+        ? senderIdFromJid(parsed.targetKey.participant)
+        : undefined;
+    const actor = identity.senderId;
+    const text =
+      parsed.action === "added"
+        ? `${actor} reacted ${parsed.emoji}`
+        : `${actor} removed a reaction`;
+    const inbound: InboundChannelMessage = {
+      channel: CHANNEL_ID,
+      accountId: account.accountId,
+      chatId: identity.chatId,
+      senderId: actor,
+      senderName: actor,
+      chatLabel,
+      text,
+      timestamp: parsed.timestampMs ?? Date.now(),
+      messageId: parsed.reactionMessageId,
+      chatType: group ? "channel" : "direct",
+      isMention: !group || account.groupMode === "mention",
+      raw,
+      reaction: {
+        action: parsed.action,
+        emoji: parsed.emoji,
+        targetMessageId: parsed.targetMessageId,
+        ...(targetSenderId ? { targetSenderId } : {}),
+      },
+    };
+
+    try {
+      await adapter.onMessage?.(inbound);
+    } catch (error) {
+      console.error(
+        `[WhatsApp:${account.accountId}] reaction delivery failed:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  async function handleReactionBatch(event: unknown): Promise<void> {
+    try {
+      if (!Array.isArray(event)) return;
+      for (const raw of event) {
+        try {
+          const parsed = parseWhatsAppReactionEntry(raw);
+          if (parsed) await handleReactionEntry(parsed, raw);
+        } catch (error) {
+          console.error(
+            `[WhatsApp:${account.accountId}] reaction entry failed:`,
+            error instanceof Error ? error.message : error,
+          );
+        }
       }
     } finally {
       flushLidStoreIfDirty();
