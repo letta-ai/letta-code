@@ -34,8 +34,17 @@ function assistantErrorMessage(): AssistantMessage {
 
 function streamFromError(
   error: AssistantMessage,
+  options: { emitModelOutput?: boolean } = {},
 ): ReturnType<PiStreamFunction> {
   async function* iterator() {
+    if (options.emitModelOutput) {
+      yield {
+        type: "text_delta",
+        contentIndex: 0,
+        delta: "partial",
+        partial: error,
+      } as AssistantMessageEvent;
+    }
     yield { type: "error", reason: "error", error } as AssistantMessageEvent;
   }
   return Object.assign(iterator(), { result: async () => error });
@@ -117,4 +126,35 @@ test("exhausted local provider retries suppress outer turn retries", async () =>
       },
     },
   });
+});
+
+test("keeps final failures retryable when the provider emitted model output", async () => {
+  let calls = 0;
+  const stream: PiStreamFunction = () => {
+    calls += 1;
+    return streamFromError(assistantErrorMessage(), {
+      emitModelOutput: calls === 4,
+    });
+  };
+  const llmEnds: LlmEndInfo[] = [];
+  const adapter = new PiStreamAdapter({
+    stream,
+    onLlmEnd: (info) => {
+      llmEnds.push(info);
+    },
+  });
+  let thrown: unknown;
+
+  try {
+    for await (const _event of adapter.stream(input())) {
+      // Drain the stream so the final provider error is observed.
+    }
+  } catch (error) {
+    thrown = error;
+  }
+
+  expect(calls).toBe(4);
+  expect(thrown).not.toBeInstanceOf(LocalProviderRetryExhaustedError);
+  expect(normalizeLocalProviderError(thrown).retryable).toBe(true);
+  expect(llmEnds.at(-1)?.error?.retryable).toBe(true);
 });

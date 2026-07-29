@@ -650,6 +650,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
     const llmStartedAt = Date.now();
     let llmEnded = false;
+    let emittedModelOutput = false;
     const emitLlmEnd = async (
       info: Omit<
         LlmEndInfo,
@@ -683,6 +684,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       let finalMessage: AssistantMessage | undefined;
       let finalLocalMessage: LocalAssistantMessage | undefined;
       for await (const part of result) {
+        const providerEvent = providerStreamPart(part);
+        if (isModelOutputEvent(providerEvent)) emittedModelOutput = true;
         if (part.type === "error") {
           const error = new PiProviderError(part.error);
           if (
@@ -698,7 +701,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           finalLocalMessage = toLocalAssistantMessage(part.message, input);
           yield providerLocalMessage(finalLocalMessage);
         }
-        yield providerStreamPart(part);
+        yield providerEvent;
       }
 
       if (streamError) throw streamError;
@@ -757,6 +760,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         const endError = llmEndErrorFromError(error, {
           forceNonRetryable:
             retryOptions.terminalRetryableProviderFailure &&
+            !emittedModelOutput &&
             isRetryableLocalProviderError(error),
         });
         await emitLlmEnd({
