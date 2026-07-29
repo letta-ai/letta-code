@@ -309,6 +309,10 @@ const whatsappConfigCodec: ChannelConfigCodec<WhatsAppChannelConfig> = {
           ? Math.trunc(Math.min(parsed.inbound_debounce_ms, 10000))
           : undefined,
       waitingBehavior: parseWhatsAppWaitingBehavior(parsed.waiting_behavior),
+      messagePrefix:
+        typeof parsed.message_prefix === "string"
+          ? parsed.message_prefix
+          : undefined,
     };
   },
 };

@@ -1,5 +1,6 @@
 import type {
   ChannelTurnSource,
+  OutboundChannelMessage,
   WhatsAppChannelAccount,
 } from "@/channels/types";
 import { stripDeviceSuffix } from "./jid";
@@ -56,6 +57,26 @@ export function getWhatsAppDisplayName(
   account: WhatsAppChannelAccount,
 ): string {
   return account.displayName ?? "WhatsApp";
+}
+
+export function applyWhatsAppMessagePrefix(
+  text: string,
+  prefix: string | undefined,
+): string {
+  return prefix && text.trim().length > 0 ? `${prefix}${text}` : text;
+}
+
+export function withWhatsAppMessagePrefix(
+  message: OutboundChannelMessage,
+  prefix: string | undefined,
+): OutboundChannelMessage {
+  if (message.reaction || message.removeReaction || !message.text) {
+    return message;
+  }
+  return {
+    ...message,
+    text: applyWhatsAppMessagePrefix(message.text, prefix),
+  };
 }
 
 function matchesSelf(

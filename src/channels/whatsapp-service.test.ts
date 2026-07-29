@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
+  getChannelAccount,
+  loadChannelAccounts,
+  upsertChannelAccount,
 } from "@/channels/accounts";
 import {
   __testOverrideLoadPairingStore,
@@ -25,6 +31,12 @@ import {
   __testOverrideSaveTargetStore,
   clearTargetStores,
 } from "@/channels/targets";
+import { __testOverrideChannelsRoot, readChannelConfig } from "./config";
+import type {
+  ChannelAccount,
+  WhatsAppChannelAccount,
+  WhatsAppChannelConfig,
+} from "./types";
 
 describe("WhatsApp channel service", () => {
   beforeEach(() => {
@@ -55,6 +67,7 @@ describe("WhatsApp channel service", () => {
     __testOverrideSavePairingStore(null);
     __testOverrideLoadTargetStore(null);
     __testOverrideSaveTargetStore(null);
+    __testOverrideChannelsRoot(null);
   });
 
   test("creates conservative defaults", () => {
@@ -172,6 +185,7 @@ describe("WhatsApp channel service", () => {
           attachment_allowed_paths: ["/tmp/uploads"],
           attachment_path_recursive: true,
           inbound_debounce_ms: 250.9,
+          message_prefix: "[bot] ",
         },
       },
       { accountId: "personal" },
@@ -190,6 +204,7 @@ describe("WhatsApp channel service", () => {
     expect(created.attachmentAllowedPaths).toEqual(["/tmp/uploads"]);
     expect(created.attachmentPathRecursive).toBe(true);
     expect(created.inboundDebounceMs).toBe(250);
+    expect(created.messagePrefix).toBe("[bot] ");
     expect(created.config).toEqual(
       expect.objectContaining({
         attachment_filter: true,
@@ -198,6 +213,7 @@ describe("WhatsApp channel service", () => {
         attachment_allowed_paths: ["/tmp/uploads"],
         attachment_path_recursive: true,
         inbound_debounce_ms: 250,
+        message_prefix: "[bot] ",
       }),
     );
 
@@ -212,6 +228,15 @@ describe("WhatsApp channel service", () => {
     expect(updated.groupMode).toBe("open");
     expect(updated.selfChatMode).toBe(true);
     expect(updated.inboundDebounceMs).toBe(10_000);
+    expect(updated.messagePrefix).toBe("[bot] ");
+    expect(updated.config).toEqual(
+      expect.objectContaining({ message_prefix: "[bot] " }),
+    );
+
+    const cleared = updateChannelAccountLive("whatsapp", "personal", {
+      config: { message_prefix: "" },
+    });
+    expect(cleared.messagePrefix).toBe("");
   });
 
   test("loads old WhatsApp accounts without debounce and accepts stored snake_case debounce", () => {
@@ -259,6 +284,74 @@ describe("WhatsApp channel service", () => {
         config: expect.objectContaining({ inbound_debounce_ms: 999 }),
       }),
     );
+  });
+
+  test("migrates snake_case message prefix and saves the canonical key", () => {
+    let persisted: Record<string, unknown> | undefined;
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "whatsapp",
+        accountId: "personal",
+        enabled: true,
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        agentId: null,
+        selfChatMode: true,
+        groupMode: "disabled",
+        message_prefix: "[bot] ",
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      } as unknown as ChannelAccount,
+    ]);
+    __testOverrideSaveChannelAccounts((_channelId, accounts) => {
+      persisted = accounts[0] as unknown as Record<string, unknown>;
+    });
+
+    loadChannelAccounts("whatsapp");
+    const loaded = getChannelAccount("whatsapp", "personal");
+    expect((loaded as WhatsAppChannelAccount | null)?.messagePrefix).toBe(
+      "[bot] ",
+    );
+    if (!loaded) throw new Error("migrated account was not loaded");
+
+    upsertChannelAccount("whatsapp", loaded);
+    expect(persisted?.message_prefix).toBe("[bot] ");
+    expect(persisted).not.toHaveProperty("messagePrefix");
+  });
+
+  test("migrates message prefix from legacy YAML", () => {
+    const root = mkdtempSync(join(tmpdir(), "whatsapp-prefix-"));
+    try {
+      mkdirSync(join(root, "whatsapp"), { recursive: true });
+      writeFileSync(
+        join(root, "whatsapp", "config.yaml"),
+        [
+          "enabled: true",
+          "dm_policy: pairing",
+          "message_prefix: '[bot] '",
+          "",
+        ].join("\n"),
+      );
+      __testOverrideChannelsRoot(root);
+      __testOverrideLoadChannelAccounts(null);
+
+      expect(
+        (readChannelConfig("whatsapp") as WhatsAppChannelConfig | null)
+          ?.messagePrefix,
+      ).toBe("[bot] ");
+      loadChannelAccounts("whatsapp");
+      expect(
+        (
+          getChannelAccount(
+            "whatsapp",
+            "__legacy_migrated__",
+          ) as WhatsAppChannelAccount | null
+        )?.messagePrefix,
+      ).toBe("[bot] ");
+    } finally {
+      __testOverrideChannelsRoot(null);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("bind updates the account-level agent id", () => {

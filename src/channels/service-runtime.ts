@@ -75,6 +75,7 @@ export async function setChannelConfigLive(
       downloadMedia: normalizedPatch.downloadMedia,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
       waitingBehavior: normalizedPatch.waitingBehavior,
+      messagePrefix: normalizedPatch.messagePrefix,
       config: normalizedPatch.config,
       displayName: existing.displayName,
     });
@@ -116,6 +117,7 @@ export async function setChannelConfigLive(
         downloadMedia: normalizedPatch.downloadMedia,
         mediaMaxBytes: normalizedPatch.mediaMaxBytes,
         waitingBehavior: normalizedPatch.waitingBehavior,
+        messagePrefix: normalizedPatch.messagePrefix,
         config: normalizedPatch.config,
       },
       accountId ? { accountId } : undefined,

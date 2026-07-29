@@ -62,6 +62,7 @@ export interface ChannelConfigSnapshot {
   attachmentAllowedPaths?: string[];
   attachmentPathRecursive?: boolean;
   waitingBehavior?: WhatsAppWaitingBehavior;
+  messagePrefix?: string;
 }
 
 export interface PendingPairingSnapshot {
@@ -145,6 +146,7 @@ export interface ChannelAccountSnapshot {
   attachmentAllowedPaths?: string[];
   attachmentPathRecursive?: boolean;
   waitingBehavior?: WhatsAppWaitingBehavior;
+  messagePrefix?: string;
   createdAt: string;
   updatedAt: string;
 }

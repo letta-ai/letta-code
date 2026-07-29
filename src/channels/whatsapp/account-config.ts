@@ -22,6 +22,7 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "attachment_path_recursive",
   "inbound_debounce_ms",
   "waiting_behavior",
+  "message_prefix",
 ]);
 
 function isNullableString(value: unknown): value is string | null {
@@ -52,6 +53,10 @@ function isValidInboundDebounceMs(value: unknown): value is number {
 
 function isWaitingBehavior(value: unknown): value is WhatsAppWaitingBehavior {
   return value === "off" || value === "typing_indicator";
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
 }
 
 export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppChannelAccount> =
@@ -90,7 +95,8 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         (config.inbound_debounce_ms === undefined ||
           isValidInboundDebounceMs(config.inbound_debounce_ms)) &&
         (config.waiting_behavior === undefined ||
-          isWaitingBehavior(config.waiting_behavior))
+          isWaitingBehavior(config.waiting_behavior)) &&
+        (config.message_prefix === undefined || isString(config.message_prefix))
       );
     },
 
@@ -143,6 +149,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         waitingBehavior: isWaitingBehavior(config.waiting_behavior)
           ? config.waiting_behavior
           : undefined,
+        messagePrefix: isString(config.message_prefix)
+          ? config.message_prefix
+          : undefined,
       };
     },
 
@@ -165,6 +174,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         attachment_path_recursive: account.attachmentPathRecursive === true,
         inbound_debounce_ms: account.inboundDebounceMs ?? 0,
         waiting_behavior: account.waitingBehavior ?? "off",
+        message_prefix: account.messagePrefix,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -188,6 +198,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         attachment_path_recursive: account.attachmentPathRecursive === true,
         inbound_debounce_ms: account.inboundDebounceMs ?? 0,
         waiting_behavior: account.waitingBehavior ?? "off",
+        message_prefix: account.messagePrefix,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },

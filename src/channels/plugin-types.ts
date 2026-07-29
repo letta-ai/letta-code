@@ -173,6 +173,7 @@ export interface ChannelPluginAccountPatch {
   allowBots?: ChannelAllowBotsMode;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
+  messagePrefix?: string;
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];

@@ -7,6 +7,7 @@ describe("whatsapp gateway config validators", () => {
       isValidChannelPluginConfigPayload("whatsapp", {
         config: {
           agent_id: "agent-1",
+          message_prefix: "[bot] ",
           self_chat_mode: true,
           group_mode: "disabled",
         },
@@ -38,6 +39,14 @@ describe("whatsapp gateway config validators", () => {
     expect(
       isValidChannelPluginConfigPayload("whatsapp", {
         config: { group_mode: "all" },
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects non-string message prefixes", () => {
+    expect(
+      isValidChannelPluginConfigPayload("whatsapp", {
+        config: { message_prefix: 42 },
       }),
     ).toBe(false);
   });

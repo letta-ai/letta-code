@@ -130,6 +130,7 @@ export function createAccountFromPatch(
       attachmentPathRecursive: normalizedPatch.attachmentPathRecursive === true,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
       waitingBehavior: normalizedPatch.waitingBehavior ?? "off",
+      messagePrefix: normalizedPatch.messagePrefix,
       createdAt: now,
       updatedAt: now,
     };
@@ -312,6 +313,10 @@ export function mergeAccountPatch(
         normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
       waitingBehavior:
         normalizedPatch.waitingBehavior ?? existing.waitingBehavior ?? "off",
+      messagePrefix:
+        normalizedPatch.messagePrefix !== undefined
+          ? normalizedPatch.messagePrefix
+          : existing.messagePrefix,
       updatedAt: nextUpdatedAt,
     };
   }

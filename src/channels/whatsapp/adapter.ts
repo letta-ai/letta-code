@@ -11,6 +11,7 @@ import type {
   WhatsAppChannelAccount,
 } from "@/channels/types";
 import {
+  applyWhatsAppMessagePrefix,
   asRecord,
   buildWhatsAppQuotedOptions,
   getWhatsAppDisplayName,
@@ -20,6 +21,7 @@ import {
   previewWhatsAppText,
   shouldProcessWhatsAppGroup,
   timestampToMs,
+  withWhatsAppMessagePrefix,
 } from "./adapter-helpers";
 import type {
   WhatsAppMessage,
@@ -837,11 +839,12 @@ export function createWhatsAppAdapter(
           // Presence is best-effort.
         }
       }
-      const payload = buildWhatsAppOutboundPayload(msg, resolvedMedia);
+      const outbound = withWhatsAppMessagePrefix(msg, account.messagePrefix);
+      const payload = buildWhatsAppOutboundPayload(outbound, resolvedMedia);
       const result = await sendToWhatsApp(
         targetJid,
         payload,
-        buildWhatsAppQuotedOptions(targetJid, msg.replyToMessageId),
+        buildWhatsAppQuotedOptions(targetJid, outbound.replyToMessageId),
       );
       const id = result.key?.id ?? "";
       outboundMessages.rememberSent(id, result);
@@ -859,7 +862,7 @@ export function createWhatsAppAdapter(
       await typing.clearChat(targetJid);
       const result = await sendToWhatsApp(
         targetJid,
-        { text },
+        { text: applyWhatsAppMessagePrefix(text, account.messagePrefix) },
         buildWhatsAppQuotedOptions(targetJid, options?.replyToMessageId),
       );
       outboundMessages.rememberSent(result.key?.id ?? "", result);

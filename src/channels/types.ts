@@ -7,6 +7,7 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
+import type { WhatsAppMessagePrefixConfig } from "@/channels/whatsapp/message-prefix-config-types";
 import type { PermissionMode } from "@/permissions/mode";
 import type {
   ApprovalResponseBody,
@@ -663,7 +664,9 @@ export interface DiscordChannelConfig {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelConfig extends WhatsAppAttachmentPolicyConfig {
+export interface WhatsAppChannelConfig
+  extends WhatsAppAttachmentPolicyConfig,
+    WhatsAppMessagePrefixConfig {
   channel: "whatsapp";
   enabled: boolean;
   dmPolicy: DmPolicy;
@@ -675,9 +678,7 @@ export interface WhatsAppChannelConfig extends WhatsAppAttachmentPolicyConfig {
   groupMode: WhatsAppGroupMode;
   /** Optional allowlist of WhatsApp group JIDs. Empty/undefined allows any group when groupMode is not disabled. */
   allowedGroups?: string[];
-  /** Optional textual aliases for group mention detection. */
   mentionPatterns?: string[];
-  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
@@ -852,7 +853,8 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
 
 export interface WhatsAppChannelAccount
   extends ChannelAccountBase,
-    WhatsAppAttachmentPolicyConfig {
+    WhatsAppAttachmentPolicyConfig,
+    WhatsAppMessagePrefixConfig {
   channel: "whatsapp";
   /** Agent ID used for account-bound DM and group auto-routing. */
   agentId: string | null;
@@ -862,9 +864,7 @@ export interface WhatsAppChannelAccount
   groupMode: WhatsAppGroupMode;
   /** Optional allowlist of WhatsApp group JIDs. */
   allowedGroups?: string[];
-  /** Optional textual aliases for group mention detection. */
   mentionPatterns?: string[];
-  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
