@@ -76,11 +76,11 @@ import {
   launchReflectionArena,
   loadReflectionArenaRun,
   REFLECTION_ARENA_MODEL_A_DEFAULT,
+  type ReflectionArenaChoice,
   type ReflectionArenaChoiceQuestion,
   sampleReflectionArenaComparisonModel,
   startReflectionArenaRun,
 } from "@/cli/helpers/reflection-arena";
-import { parseReflectArenaCommandArgs } from "@/cli/helpers/reflection-command";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   finalizeReflectionMemoryWorktreeLaunch,
@@ -135,9 +135,7 @@ import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
 } from "@/reminders/engine";
-import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
-  enqueueMemoryGitSyncReminder,
   markSecretsInfoReminderPending,
   type SharedReminderState,
 } from "@/reminders/state";
@@ -154,8 +152,8 @@ import { buildTextParts } from "./content-parts";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
 import { saveLastSessionBeforeExit } from "./session";
 import {
-  handleCloudCommand,
-  processCloudSubmission,
+  type CloudConversationState,
+  createCloudSubmissionHandlers,
 } from "./submit-cloud-command";
 import { handleConnectionCommand } from "./submit-connection-commands";
 import { handleDiagnosticsCommand } from "./submit-diagnostics-commands";
@@ -218,7 +216,9 @@ type SubmitHandlerContext = {
   >;
   commandRunner: AppCommandRunner;
   commandRunning: boolean;
-  cloudConversationKeysRef: MutableRefObject<Set<string>>;
+  cloudConversationKeysRef: MutableRefObject<
+    Map<string, CloudConversationState>
+  >;
   consumeQueuedApprovalInputForCurrentConversation: (
     otid?: string,
   ) => ApprovalCreate | null;
@@ -359,6 +359,21 @@ type ReflectCommandArgs =
   | { conversationIds: string[]; instruction?: string; kind: "conversations" }
   | { instruction?: string; kind: "auto" };
 
+type ReflectArenaCommandArgs =
+  | {
+      instruction?: string;
+      kind: "launch";
+      modelA?: string;
+      modelB?: string;
+    }
+  | {
+      choice: ReflectionArenaChoice;
+      kind: "choose";
+      notes?: string;
+      runId: string;
+    }
+  | { kind: "resume"; runId: string };
+
 function isReflectCommandFlag(value: string): boolean {
   return (
     value === "--" ||
@@ -370,6 +385,113 @@ function isReflectCommandFlag(value: string): boolean {
     value === "-i" ||
     value.startsWith("--instruction=")
   );
+}
+
+function parseReflectArenaCommandArgs(input: string): ReflectArenaCommandArgs {
+  const trimmed = input.trim();
+  const command = trimmed.split(/\s+/, 1)[0] ?? "/reflect-arena";
+  const parts = parseModCommandArgv(trimmed.slice(command.length).trim());
+  if (parts[0] === "choose") {
+    const runId = parts[1];
+    const rawChoice = parts[2];
+    if (!runId || !rawChoice) {
+      throw new Error(
+        "Usage: /reflect-arena choose <run-id> <1|2|tie> [notes]",
+      );
+    }
+    if (rawChoice !== "1" && rawChoice !== "2" && rawChoice !== "tie") {
+      throw new Error(
+        "Usage: /reflect-arena choose <run-id> <1|2|tie> [notes]",
+      );
+    }
+    return {
+      kind: "choose",
+      runId,
+      choice: rawChoice,
+      notes: parts.slice(3).join(" ").trim() || undefined,
+    };
+  }
+  if (parts[0] === "resume") {
+    const runId = parts[1];
+    if (!runId) {
+      throw new Error("Usage: /reflect-arena resume <run-id>");
+    }
+    return { kind: "resume", runId };
+  }
+
+  let modelA: string | undefined;
+  let modelB: string | undefined;
+  const instructions: string[] = [];
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (!part) continue;
+    if (part === "--model-a") {
+      modelA = parts[index + 1];
+      if (!modelA) throw new Error("Usage: /reflect-arena --model-a <model>");
+      index += 1;
+      continue;
+    }
+    if (part.startsWith("--model-a=")) {
+      modelA = part.slice("--model-a=".length).trim();
+      if (!modelA) throw new Error("Usage: /reflect-arena --model-a <model>");
+      continue;
+    }
+    if (part === "--model-b") {
+      modelB = parts[index + 1];
+      if (!modelB) throw new Error("Usage: /reflect-arena --model-b <model>");
+      index += 1;
+      continue;
+    }
+    if (part.startsWith("--model-b=")) {
+      modelB = part.slice("--model-b=".length).trim();
+      if (!modelB) throw new Error("Usage: /reflect-arena --model-b <model>");
+      continue;
+    }
+    if (
+      part === "--instruction" ||
+      part === "--instructions" ||
+      part === "-i"
+    ) {
+      const instruction = parts
+        .slice(index + 1)
+        .join(" ")
+        .trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect-arena --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      break;
+    }
+    if (part.startsWith("--instruction=")) {
+      const instruction = part.slice("--instruction=".length).trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect-arena --instruction <instruction>");
+      }
+      instructions.push(instruction);
+      continue;
+    }
+    if (part === "--") {
+      const instruction = parts
+        .slice(index + 1)
+        .join(" ")
+        .trim();
+      if (!instruction) {
+        throw new Error("Usage: /reflect-arena -- <instruction>");
+      }
+      instructions.push(instruction);
+      break;
+    }
+    throw new Error(
+      "Usage: /reflect-arena [--model-a <model>] [--model-b <model>] [--instruction <instruction>]",
+    );
+  }
+
+  return {
+    kind: "launch",
+    modelA,
+    modelB,
+    instruction: instructions.join("\n").trim() || undefined,
+  };
 }
 
 function parseReflectCommandArgs(input: string): ReflectCommandArgs {
@@ -481,6 +603,7 @@ function aliasBareExitCommand(input: string): string {
 }
 
 export function useSubmitHandler(ctx: SubmitHandlerContext) {
+  const cloudSubmission = createCloudSubmissionHandlers(ctx);
   const {
     abortControllerRef,
     agentDescription,
@@ -496,7 +619,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     checkPendingApprovalsForSlashCommand,
     commandRunner,
     commandRunning,
-    cloudConversationKeysRef,
     consumeQueuedApprovalInputForCurrentConversation,
     contextTrackerRef,
     conversationGenerationRef,
@@ -992,20 +1114,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
           return { submitted: true };
         }
 
-        const cloudResult = await handleCloudCommand({
-          input: trimmed,
-          agentId,
-          conversationId: conversationIdRef.current,
-          projectDirectory,
-          commandRunner,
-          cloudConversationKeysRef,
-          buffersRef,
-          checkPendingApprovals: checkPendingApprovalsForSlashCommand,
-          refreshDerived,
-          setCommandRunning,
-          setStreaming,
-          setThinkingMessage,
-        });
+        const cloudResult = await cloudSubmission.handleCommand(trimmed);
         if (cloudResult) return cloudResult;
 
         // Special handling for /model command - opens selector
@@ -3914,35 +4023,10 @@ ${SYSTEM_REMINDER_CLOSE}
         otid: userOtid,
       });
 
-      const handledInCloud = await processCloudSubmission({
-        agentId,
-        conversationId: conversationIdRef.current,
-        input: initialInput as unknown as Array<Record<string, unknown>>,
-        cloudConversationKeysRef,
-        buffersRef,
-        refreshDerived,
-        setStreaming,
-        setThinkingMessage,
+      await cloudSubmission.process(initialInput, {
+        submissionGeneration,
+        transcriptStartLineIndex,
       });
-      if (!handledInCloud) {
-        await processConversation(initialInput, {
-          submissionGeneration,
-          transcriptStartLineIndex,
-        });
-      }
-
-      if (!handledInCloud) {
-        await runPostTurnMemorySync({
-          agentId,
-          isEnabled: isActiveMemfsEnabled,
-          debugLabel: "Post-turn memory sync",
-          enqueueReminder: (text) => {
-            enqueueMemoryGitSyncReminder(sharedReminderStateRef.current, {
-              text,
-            });
-          },
-        });
-      }
 
       // Clean up placeholders after submission
       clearPlaceholdersInText(msg);
@@ -3952,7 +4036,7 @@ ${SYSTEM_REMINDER_CLOSE}
     [
       streaming,
       commandRunning,
-      cloudConversationKeysRef,
+      cloudSubmission,
       processConversation,
       refreshDerived,
       agentId,

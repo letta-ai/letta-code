@@ -13,11 +13,8 @@ export interface GithubRepositoryRef {
   repo: string;
   branch?: string;
   ref?: string;
+  handoffRef?: string;
 }
-
-export type GithubRepositoryHandoff =
-  | { repository: GithubRepositoryRef; error: null }
-  | { repository: null; error: string | null };
 
 export interface GatherGitContextOptions {
   cwd?: string;
@@ -62,45 +59,6 @@ export function getGithubRepositoryForDirectory(
 ): GithubRepositoryRef | null {
   const remote = runGit(["remote", "get-url", "origin"], cwd);
   return remote ? parseGithubRepositoryRemote(remote) : null;
-}
-
-export function getGithubRepositoryHandoffForDirectory(
-  cwd: string,
-): GithubRepositoryHandoff {
-  const repository = getGithubRepositoryForDirectory(cwd);
-  if (!repository) return { repository: null, error: null };
-
-  const status = runGit(["status", "--porcelain"], cwd);
-  if (status) {
-    return {
-      repository: null,
-      error:
-        "The working tree has uncommitted changes. Commit and push them to include them in Cloud, or stash them to move without them.",
-    };
-  }
-
-  const branch = runGit(["branch", "--show-current"], cwd);
-  const ref = runGit(["rev-parse", "HEAD"], cwd);
-  if (!branch || !ref) {
-    return {
-      repository: null,
-      error:
-        "The repository is in detached HEAD state. Check out a branch before moving to Cloud.",
-    };
-  }
-
-  const remoteRef = runGit(["rev-parse", `refs/remotes/origin/${branch}`], cwd);
-  if (remoteRef !== ref) {
-    return {
-      repository: null,
-      error: `Branch ${branch} is not pushed at the current commit. Push it before moving to Cloud.`,
-    };
-  }
-
-  return {
-    repository: { ...repository, branch, ref },
-    error: null,
-  };
 }
 
 function truncateLines(value: string, maxLines: number): string {

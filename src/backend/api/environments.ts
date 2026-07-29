@@ -70,6 +70,7 @@ export interface GithubRepositoryRef {
   repo: string;
   branch?: string;
   ref?: string;
+  handoffRef?: string;
 }
 
 export interface CreateAgentSandboxOptions {
