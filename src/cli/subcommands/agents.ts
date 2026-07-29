@@ -8,6 +8,7 @@ import {
 } from "@/agent/personality";
 import { resolvePersonalityId } from "@/agent/personality-presets";
 import { getBackend } from "@/backend";
+import { listSharedAgentsForCurrentUser } from "@/cli/helpers/shared-agent-listing";
 import { settingsManager } from "@/settings-manager";
 
 function printUsage(): void {
@@ -31,6 +32,7 @@ List Options:
   --tags <tag1,tag2>    Filter by tags (comma-separated)
   --match-all-tags      Require ALL tags (default: ANY)
   --include-blocks      Include agent.blocks in response
+  --shared              List agents shared with the current user
   --limit <n>           Max results (default: 20)
 
 Create Options:
@@ -72,6 +74,7 @@ const AGENTS_OPTIONS = {
   tags: { type: "string" },
   "match-all-tags": { type: "boolean" },
   "include-blocks": { type: "boolean" },
+  shared: { type: "boolean" },
   limit: { type: "string" },
   // Config options
   agent: { type: "string" },
@@ -369,6 +372,33 @@ async function runListAction(
   values: ReturnType<typeof parseAgentsArgs>["values"],
 ): Promise<number> {
   await settingsManager.initialize();
+
+  if (values.shared) {
+    if (values.name || values.tags || values["match-all-tags"]) {
+      console.error(
+        "--shared supports --query and --limit; name and tag filters are not supported",
+      );
+      return 1;
+    }
+    if (values["include-blocks"]) {
+      console.error("--include-blocks is not supported with --shared");
+      return 1;
+    }
+
+    try {
+      const result = await listSharedAgentsForCurrentUser({
+        limit: parseLimit(values.limit, 20),
+        order: "desc",
+        orderBy: "last_run_completion",
+        queryText: typeof values.query === "string" ? values.query : undefined,
+      });
+      console.log(JSON.stringify(result, null, 2));
+      return 0;
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return 1;
+    }
+  }
 
   const params: AgentListParams = {
     limit: parseLimit(values.limit, 20),

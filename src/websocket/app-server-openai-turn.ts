@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { settingsManager } from "@/settings-manager";
+import type { StreamDelta } from "@/types/protocol_v2";
+import {
+  createToolLifecycleTracker,
+  type ToolLifecycleCallback,
+} from "@/websocket/app-server-openai-tools";
 import { getOrCreateProcessTransport } from "@/websocket/listener/connection";
 import { createConnectionTurnProcessor } from "@/websocket/listener/connection-lifecycle";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
@@ -28,6 +33,7 @@ export interface OpenAiUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  reasoning_tokens?: number;
 }
 
 export type UserContentPart =
@@ -41,6 +47,7 @@ export type UserContentPart =
 
 export interface TurnOutcome {
   text: string;
+  reasoning?: string;
   usage: OpenAiUsage;
   error: string | null;
 }
@@ -51,7 +58,7 @@ export interface BridgeTurnMessage {
   otid: string;
 }
 
-interface RunTurnParams {
+export interface RunTurnParams {
   agentId: string;
   conversationId: string;
   /** Full input for the turn: the newest message in stateful mode, or the
@@ -61,6 +68,8 @@ interface RunTurnParams {
    * lifecycle with this request. */
   correlationOtid: string;
   onAssistantText?: (text: string) => void;
+  onReasoningText?: (text: string) => void;
+  onToolEvent?: ToolLifecycleCallback;
   onLog?: (message: string) => void;
 }
 
@@ -159,6 +168,23 @@ function extractDeltaText(delta: unknown): string {
     .join("");
 }
 
+function extractReasoningText(delta: unknown): string {
+  const reasoning = (
+    delta as { reasoning?: string | Array<{ text?: string }> | null }
+  ).reasoning;
+  if (typeof reasoning === "string") return reasoning;
+  if (Array.isArray(reasoning)) {
+    return reasoning
+      .map((part) =>
+        part && typeof part === "object" && typeof part.text === "string"
+          ? part.text
+          : "",
+      )
+      .join("");
+  }
+  return extractDeltaText(delta);
+}
+
 async function runTurnViaListenerRuntime(
   params: RunTurnParams,
 ): Promise<TurnOutcome> {
@@ -199,6 +225,7 @@ async function runTurnViaListenerRuntime(
 
   return await new Promise<TurnOutcome>((resolve) => {
     let text = "";
+    let reasoning = "";
     let usage: OpenAiUsage = {
       prompt_tokens: 0,
       completion_tokens: 0,
@@ -214,6 +241,9 @@ async function runTurnViaListenerRuntime(
     let recordedError: string | null = null;
     let settled = false;
     let unregisterTurnObserver: () => void = () => {};
+    const toolTracker = params.onToolEvent
+      ? createToolLifecycleTracker(params.onToolEvent)
+      : null;
     if (!listener.streamObservers) {
       listener.streamObservers = new Set();
     }
@@ -222,10 +252,12 @@ async function runTurnViaListenerRuntime(
     const finish = (error: string | null): void => {
       if (settled) return;
       settled = true;
+      if (error) toolTracker?.failPending(error);
       clearTimeout(timer);
       observers.delete(observer);
       unregisterTurnObserver();
-      resolve({ text, usage, error });
+      toolTracker?.dispose();
+      resolve({ text, reasoning, usage, error });
     };
 
     const observer: ListenerStreamObserver = (message) => {
@@ -244,9 +276,10 @@ async function runTurnViaListenerRuntime(
         const status = (message as { loop_status?: { status?: string } })
           .loop_status?.status;
         if (status === "WAITING_ON_APPROVAL") {
+          const note =
+            "The agent attempted a tool call that requires interactive approval, which this API does not support.";
+          toolTracker?.failPending(note);
           if (!text) {
-            const note =
-              "The agent attempted a tool call that requires interactive approval, which this API does not support.";
             text = note;
             params.onAssistantText?.(note);
           }
@@ -257,7 +290,16 @@ async function runTurnViaListenerRuntime(
       if (message.type !== "stream_delta" || message.subagent_id) return;
       const delta = (message as { delta?: { message_type?: string } }).delta;
       if (!delta) return;
+      toolTracker?.process(delta as StreamDelta);
       switch (delta.message_type) {
+        case "reasoning_message": {
+          const piece = extractReasoningText(delta);
+          if (piece) {
+            reasoning += piece;
+            params.onReasoningText?.(piece);
+          }
+          return;
+        }
         case "assistant_message": {
           const piece = extractDeltaText(delta);
           if (piece) {
@@ -274,11 +316,15 @@ async function runTurnViaListenerRuntime(
             prompt_tokens?: number;
             completion_tokens?: number;
             total_tokens?: number;
+            reasoning_tokens?: number;
           };
           usage = {
             prompt_tokens: stats.prompt_tokens ?? 0,
             completion_tokens: stats.completion_tokens ?? 0,
             total_tokens: stats.total_tokens ?? 0,
+            ...(stats.reasoning_tokens !== undefined
+              ? { reasoning_tokens: stats.reasoning_tokens }
+              : {}),
           };
           return;
         }
@@ -324,6 +370,9 @@ async function runTurnViaListenerRuntime(
       // would strand the second observer (only the first OTID survives a
       // merged batch) and answer the first with both prompts.
       noCoalesce: true,
+      // HTTP clients cannot surface Letta Code's interactive overlays. Keep
+      // those tools out so the agent asks in ordinary assistant text.
+      excludeInteractiveTools: true,
       messages: params.messages,
     };
     try {
