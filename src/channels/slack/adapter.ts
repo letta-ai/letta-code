@@ -447,6 +447,8 @@ export function createSlackAdapter(
         ensureApp,
         resolveUserName: ingress.resolveUserName,
         getKnownUserDisplayName: ingress.getKnownUserDisplayName,
+        getBotUserId: () => botUserId,
+        getBotId: () => botId,
       }),
     onMessage: undefined,
     onControlResponse: undefined,
