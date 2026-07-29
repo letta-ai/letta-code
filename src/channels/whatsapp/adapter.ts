@@ -134,6 +134,20 @@ function getDisplayName(account: WhatsAppChannelAccount): string {
   return account.displayName ?? "WhatsApp";
 }
 
+function applyMessagePrefix(text: string, prefix: string | undefined): string {
+  return prefix && text.trim().length > 0 ? `${prefix}${text}` : text;
+}
+
+function withMessagePrefix(
+  message: OutboundChannelMessage,
+  prefix: string | undefined,
+): OutboundChannelMessage {
+  if (message.reaction || message.removeReaction || !message.text) {
+    return message;
+  }
+  return { ...message, text: applyMessagePrefix(message.text, prefix) };
+}
+
 function matchesSelf(
   jid: string,
   selfPhoneJid: string | null,
@@ -676,11 +690,12 @@ export function createWhatsAppAdapter(
           // Presence is best-effort.
         }
       }
-      const payload = buildWhatsAppOutboundPayload(msg, resolvedMedia);
+      const outbound = withMessagePrefix(msg, account.messagePrefix);
+      const payload = buildWhatsAppOutboundPayload(outbound, resolvedMedia);
       const result = await sendToWhatsApp(
         targetJid,
         payload,
-        buildQuotedOptions(targetJid, msg.replyToMessageId),
+        buildQuotedOptions(targetJid, outbound.replyToMessageId),
       );
       const id = result.key?.id ?? "";
       rememberSent(id, result);
@@ -698,7 +713,7 @@ export function createWhatsAppAdapter(
       await typing.clearChat(targetJid);
       const result = await sendToWhatsApp(
         targetJid,
-        { text },
+        { text: applyMessagePrefix(text, account.messagePrefix) },
         buildQuotedOptions(targetJid, options?.replyToMessageId),
       );
       rememberSent(result.key?.id ?? "", result);

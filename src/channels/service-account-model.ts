@@ -133,6 +133,7 @@ export function createAccountFromPatch(
         normalizedPatch.waitingBehavior === "typing_indicator"
           ? "typing_indicator"
           : "off",
+      messagePrefix: normalizedPatch.messagePrefix,
       createdAt: now,
       updatedAt: now,
     };
@@ -319,6 +320,10 @@ export function mergeAccountPatch(
           : normalizedPatch.waitingBehavior === "off"
             ? "off"
             : (existing.waitingBehavior ?? "off"),
+      messagePrefix:
+        normalizedPatch.messagePrefix !== undefined
+          ? normalizedPatch.messagePrefix
+          : existing.messagePrefix,
       updatedAt: nextUpdatedAt,
     };
   }

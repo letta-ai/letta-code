@@ -174,6 +174,7 @@ export interface ChannelPluginAccountPatch {
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   waitingBehavior?: WhatsAppWaitingBehavior;
+  messagePrefix?: string;
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];

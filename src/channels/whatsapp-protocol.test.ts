@@ -15,6 +15,7 @@ describe("whatsapp protocol-inbound validators", () => {
         account: {
           config: {
             agent_id: "agent-1",
+            message_prefix: "🤖 ",
             self_chat_mode: true,
             group_mode: "disabled",
             inbound_debounce_ms: 1250.9,
@@ -89,6 +90,17 @@ describe("whatsapp protocol-inbound validators", () => {
         channel_id: "whatsapp",
         request_id: "r1",
         account: { config: { waiting_behavior: "always" } },
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects non-string message prefixes", () => {
+    expect(
+      isChannelAccountCreateCommand({
+        type: "channel_account_create",
+        channel_id: "whatsapp",
+        request_id: "r1",
+        account: { config: { message_prefix: 42 } },
       }),
     ).toBe(false);
   });

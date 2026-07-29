@@ -48,6 +48,7 @@ export interface ChannelConfigSnapshot {
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   waitingBehavior?: WhatsAppWaitingBehavior;
+  messagePrefix?: string;
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];
@@ -129,6 +130,7 @@ export interface ChannelAccountSnapshot {
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
   waitingBehavior?: WhatsAppWaitingBehavior;
+  messagePrefix?: string;
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];
