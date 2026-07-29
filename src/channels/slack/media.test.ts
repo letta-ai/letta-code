@@ -248,6 +248,79 @@ test("resolveSlackThreadHistory retains bot-authored Slack replies", async () =>
   ]);
 });
 
+test("resolveSlackThreadHistory returns only unrouted foreign bot replies since the last input", async () => {
+  const { resolveSlackThreadHistory } = await loadSlackMediaModule();
+  const client = {
+    conversations: {
+      history: mock(async () => ({ messages: [] })),
+      replies: mock(async () => ({
+        messages: [
+          {
+            ts: "1712790000.000050",
+            user: "U111",
+            text: "Thread root",
+          },
+          {
+            ts: "1712791000.000055",
+            bot_id: "BDEPLOY",
+            text: "Old deployment update",
+          },
+          {
+            ts: "1712795000.000060",
+            user: "U222",
+            text: "Previous human turn",
+          },
+          {
+            ts: "1712796000.000070",
+            bot_id: "BDEPLOY",
+            text: "Update before a routed bot handoff",
+          },
+          {
+            ts: "1712797000.000080",
+            bot_id: "BHANDOFF",
+            text: "<@ULETTA> investigate the failed deployment",
+          },
+          {
+            ts: "1712798000.000090",
+            bot_id: "BLETTA",
+            text: "Letta reply already stored in the conversation",
+          },
+          {
+            ts: "1712799000.000095",
+            bot_id: "BSTATUS",
+            text: "New status after the handoff",
+          },
+          {
+            ts: "1712800000.000100",
+            user: "U333",
+            text: "Current turn",
+          },
+        ],
+      })),
+    },
+  };
+
+  await expect(
+    resolveSlackThreadHistory({
+      channelId: "C123",
+      threadTs: "1712790000.000050",
+      currentMessageTs: "1712800000.000100",
+      client,
+      include: "unrouted-bot",
+      excludeBotId: "BLETTA",
+      routedBotUserId: "ULETTA",
+      acceptMentionedBots: true,
+    }),
+  ).resolves.toEqual([
+    {
+      text: "New status after the handoff",
+      userId: undefined,
+      botId: "BSTATUS",
+      ts: "1712799000.000095",
+    },
+  ]);
+});
+
 test("resolveSlackCurrentMessageAttachments hydrates files from the exact thread message", async () => {
   const fetchMock = mock(async (input: unknown, init?: RequestInit) => {
     expect(requestUrl(input)).toBe(
