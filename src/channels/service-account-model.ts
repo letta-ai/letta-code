@@ -128,6 +128,7 @@ export function createAccountFromPatch(
         normalizedPatch.attachmentAllowedRecipients ?? [],
       attachmentAllowedPaths: normalizedPatch.attachmentAllowedPaths ?? [],
       attachmentPathRecursive: normalizedPatch.attachmentPathRecursive === true,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs ?? 0,
       createdAt: now,
       updatedAt: now,
     };
@@ -306,6 +307,8 @@ export function mergeAccountPatch(
         normalizedPatch.attachmentPathRecursive ??
         existing.attachmentPathRecursive ??
         false,
+      inboundDebounceMs:
+        normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs ?? 0,
       updatedAt: nextUpdatedAt,
     };
   }

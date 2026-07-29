@@ -1,11 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
   getChannelAccount,
+  loadChannelAccounts,
   upsertChannelAccount,
 } from "@/channels/accounts";
+import {
+  __testOverrideChannelsRoot,
+  readChannelConfig,
+} from "@/channels/config";
 import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
@@ -30,6 +38,8 @@ import {
 import {
   type ChannelAccount,
   isWhatsAppChannelAccount,
+  type WhatsAppChannelAccount,
+  type WhatsAppChannelConfig,
 } from "@/channels/types";
 
 describe("WhatsApp channel service", () => {
@@ -109,6 +119,7 @@ describe("WhatsApp channel service", () => {
           attachment_allowed_recipients: ["15551234567"],
           attachment_allowed_paths: ["/tmp/uploads"],
           attachment_path_recursive: true,
+          inbound_debounce_ms: 1250.9,
         },
       },
       { accountId: "personal" },
@@ -126,6 +137,8 @@ describe("WhatsApp channel service", () => {
     expect(created.attachmentAllowedRecipients).toEqual(["15551234567"]);
     expect(created.attachmentAllowedPaths).toEqual(["/tmp/uploads"]);
     expect(created.attachmentPathRecursive).toBe(true);
+    expect(created.inboundDebounceMs).toBe(1250);
+    expect(created.config?.inbound_debounce_ms).toBe(1250);
 
     const updated = updateChannelAccountLive("whatsapp", "personal", {
       config: {
@@ -150,6 +163,11 @@ describe("WhatsApp channel service", () => {
         attachment_path_recursive: false,
       }),
     );
+    expect(updated.inboundDebounceMs).toBe(1250);
+    expect(
+      getChannelConfigSnapshot("whatsapp", "personal")?.config
+        ?.inbound_debounce_ms,
+    ).toBe(1250);
   });
 
   test("bind updates the account-level agent id", () => {
@@ -213,5 +231,74 @@ describe("WhatsApp channel service", () => {
     expect(stored.attachment_allowed_paths).toEqual(["/tmp/uploads"]);
     expect(stored.attachment_path_recursive).toBe(true);
     expect(stored.attachmentFilter).toBeUndefined();
+  });
+
+  test("migrates snake_case accounts and saves canonical debounce keys", () => {
+    let persisted: Record<string, unknown> | undefined;
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "whatsapp",
+        accountId: "personal",
+        enabled: true,
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        agentId: null,
+        selfChatMode: true,
+        groupMode: "disabled",
+        inbound_debounce_ms: 1250.9,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      } as never,
+    ]);
+    __testOverrideSaveChannelAccounts((_channelId, accounts) => {
+      persisted = accounts[0] as unknown as Record<string, unknown>;
+    });
+
+    loadChannelAccounts("whatsapp");
+    const loaded = getChannelAccount("whatsapp", "personal");
+    expect((loaded as WhatsAppChannelAccount | null)?.inboundDebounceMs).toBe(
+      1250,
+    );
+    if (!loaded) throw new Error("migrated account was not loaded");
+
+    upsertChannelAccount("whatsapp", loaded);
+    expect(persisted?.inbound_debounce_ms).toBe(1250);
+    expect(persisted).not.toHaveProperty("inboundDebounceMs");
+  });
+
+  test("migrates fractional debounce from legacy YAML", () => {
+    const root = mkdtempSync(join(tmpdir(), "whatsapp-config-"));
+    try {
+      mkdirSync(join(root, "whatsapp"), { recursive: true });
+      writeFileSync(
+        join(root, "whatsapp", "config.yaml"),
+        [
+          "enabled: true",
+          "dm_policy: pairing",
+          "agent_id: agent-whatsapp",
+          "inbound_debounce_ms: 875.9",
+          "",
+        ].join("\n"),
+      );
+      __testOverrideChannelsRoot(root);
+      __testOverrideLoadChannelAccounts(null);
+      expect(
+        (readChannelConfig("whatsapp") as WhatsAppChannelConfig | null)
+          ?.inboundDebounceMs,
+      ).toBe(875);
+
+      loadChannelAccounts("whatsapp");
+      expect(
+        (
+          getChannelAccount(
+            "whatsapp",
+            "__legacy_migrated__",
+          ) as WhatsAppChannelAccount | null
+        )?.inboundDebounceMs,
+      ).toBe(875);
+    } finally {
+      __testOverrideChannelsRoot(null);
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

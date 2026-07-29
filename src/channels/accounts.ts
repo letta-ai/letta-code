@@ -378,6 +378,13 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     ];
     next.attachmentAllowedPaths = [...(next.attachmentAllowedPaths ?? [])];
     next.attachmentPathRecursive = next.attachmentPathRecursive === true;
+    next.inboundDebounceMs =
+      typeof next.inboundDebounceMs === "number" &&
+      Number.isFinite(next.inboundDebounceMs) &&
+      next.inboundDebounceMs >= 0 &&
+      next.inboundDebounceMs <= 10000
+        ? Math.trunc(next.inboundDebounceMs)
+        : 0;
   }
   if (isSignalChannelAccount(next)) {
     next.baseUrl = next.baseUrl ?? "";
@@ -471,6 +478,7 @@ function makeDefaultLegacyAccount(
       ],
       attachmentAllowedPaths: [...(config.attachmentAllowedPaths ?? [])],
       attachmentPathRecursive: config.attachmentPathRecursive === true,
+      inboundDebounceMs: config.inboundDebounceMs ?? 0,
       createdAt: now,
       updatedAt: now,
     };

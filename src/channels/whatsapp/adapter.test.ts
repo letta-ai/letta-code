@@ -33,6 +33,8 @@ const account = {
 const phone = (value: string) => `${value}${WHATSAPP_PHONE_SUFFIX}`;
 const lid = (value: string) => `${value}${WHATSAPP_LID_SUFFIX}`;
 const group = (value: string) => `${value}${WHATSAPP_GROUP_SUFFIX}`;
+const wait = (milliseconds: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
 function makeMessage(
   remoteJid: string,
@@ -63,8 +65,10 @@ function instrumentStore(store: LidStore): LidStore & { flushes: number } {
 
 function makeHarness(
   store: LidStore,
-  onMessage: (message: InboundChannelMessage) => Promise<void>,
+  onMessage: (message: InboundChannelMessage) => unknown,
   options: {
+    inboundDebounceMs?: number;
+    onSocketClose?: (readCount: number) => void;
     readMessages?: (keys: unknown[]) => Promise<unknown>;
     account?: Partial<WhatsAppChannelAccount>;
   } = {},
@@ -85,7 +89,11 @@ function makeHarness(
           if (event === "messages.upsert") upsertHandlers.push(handler);
         },
       },
-      ws: { close() {} },
+      ws: {
+        close() {
+          options.onSocketClose?.(readBatches.length);
+        },
+      },
       user: { id: phone("15551234567"), lid: lid("777000111") },
       async sendMessage(jid: string, payload: Record<string, unknown>) {
         sentJids.push(jid);
@@ -113,7 +121,12 @@ function makeHarness(
     lidStore: store,
   };
   const adapter = createWhatsAppAdapter(
-    { ...account, ...options.account },
+    {
+      ...account,
+      ...options.account,
+      inboundDebounceMs:
+        options.inboundDebounceMs ?? options.account?.inboundDebounceMs,
+    },
     dependencies,
   );
   adapter.onMessage = onMessage;
@@ -174,6 +187,77 @@ describe("WhatsApp adapter canonical identity integration", () => {
     expect(harness.readBatches).toEqual([
       [(first as { key: unknown }).key, (second as { key: unknown }).key],
     ]);
+  });
+
+  test("does not receipt early and groups keys after the debounce flush", async () => {
+    const store = instrumentStore(createLidStore(join(dir, "debounce.json")));
+    const received: InboundChannelMessage[] = [];
+    const harness = makeHarness(
+      store,
+      async (message) => received.push(message),
+      { inboundDebounceMs: 20 },
+    );
+    await harness.adapter.start();
+    const first = makeMessage(phone("15550000020"), "debounce-one");
+    const second = makeMessage(phone("15550000020"), "debounce-two");
+    const pending = harness.emit([first, second]);
+
+    await wait(5);
+    expect(received).toHaveLength(0);
+    expect(harness.readBatches).toEqual([]);
+    await pending;
+    await wait(30);
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.text).toBe("hello\nhello");
+    expect(harness.readBatches).toEqual([
+      [(first as { key: unknown }).key, (second as { key: unknown }).key],
+    ]);
+  });
+
+  test("flushes pending debounce before socket shutdown", async () => {
+    const store = instrumentStore(createLidStore(join(dir, "stop.json")));
+    const received: InboundChannelMessage[] = [];
+    let stateAtClose: { received: number; reads: number } | undefined;
+    const harness = makeHarness(
+      store,
+      async (message) => received.push(message),
+      {
+        inboundDebounceMs: 10_000,
+        onSocketClose: (reads) => {
+          stateAtClose = { received: received.length, reads };
+        },
+      },
+    );
+    await harness.adapter.start();
+    await harness.emit([makeMessage(phone("15550000022"), "stop-pending")]);
+    expect(received).toHaveLength(0);
+
+    await harness.adapter.stop();
+    expect(stateAtClose).toEqual({ received: 1, reads: 1 });
+  });
+
+  test("dispatches and marks an earlier entry when a later raw message throws", async () => {
+    const store = instrumentStore(
+      createLidStore(join(dir, "later-error.json")),
+    );
+    const received: InboundChannelMessage[] = [];
+    const harness = makeHarness(store, async (message) => {
+      received.push(message);
+    });
+    await harness.adapter.start();
+    const accepted = makeMessage(phone("15550000021"), "accepted");
+    const malformed = {} as Record<string, unknown>;
+    Object.defineProperty(malformed, "key", {
+      get() {
+        throw new Error("malformed raw message");
+      },
+    });
+
+    await harness.emit([accepted, malformed]);
+    expect(received).toHaveLength(1);
+    expect(received[0]?.messageId).toBe("accepted");
+    expect(harness.readBatches).toHaveLength(1);
   });
 
   test("never-resolving receipts do not delay delivery or batch completion", async () => {

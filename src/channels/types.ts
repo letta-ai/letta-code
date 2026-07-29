@@ -7,6 +7,7 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
+import type { WhatsAppInboundDebounceConfig } from "@/channels/whatsapp/inbound-debounce-config-types";
 import type { PermissionMode } from "@/permissions/mode";
 import type {
   ApprovalResponseBody,
@@ -663,7 +664,9 @@ export interface DiscordChannelConfig {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelConfig extends WhatsAppAttachmentPolicyConfig {
+export interface WhatsAppChannelConfig
+  extends WhatsAppAttachmentPolicyConfig,
+    WhatsAppInboundDebounceConfig {
   channel: "whatsapp";
   enabled: boolean;
   dmPolicy: DmPolicy;
@@ -852,7 +855,8 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
 
 export interface WhatsAppChannelAccount
   extends ChannelAccountBase,
-    WhatsAppAttachmentPolicyConfig {
+    WhatsAppAttachmentPolicyConfig,
+    WhatsAppInboundDebounceConfig {
   channel: "whatsapp";
   /** Agent ID used for account-bound DM and group auto-routing. */
   agentId: string | null;

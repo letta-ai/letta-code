@@ -19,6 +19,7 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "attachment_allowed_recipients",
   "attachment_allowed_paths",
   "attachment_path_recursive",
+  "inbound_debounce_ms",
 ]);
 
 function isNullableString(value: unknown): value is string | null {
@@ -41,6 +42,15 @@ function isGroupMode(value: unknown): value is WhatsAppGroupMode {
 
 function isPositiveNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function isInboundDebounceMs(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 10000
+  );
 }
 
 export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppChannelAccount> =
@@ -75,7 +85,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         (config.attachment_allowed_paths === undefined ||
           isStringArray(config.attachment_allowed_paths)) &&
         (config.attachment_path_recursive === undefined ||
-          isBoolean(config.attachment_path_recursive))
+          isBoolean(config.attachment_path_recursive)) &&
+        (config.inbound_debounce_ms === undefined ||
+          isInboundDebounceMs(config.inbound_debounce_ms))
       );
     },
 
@@ -122,6 +134,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         attachmentPathRecursive: isBoolean(config.attachment_path_recursive)
           ? config.attachment_path_recursive
           : undefined,
+        inboundDebounceMs: isInboundDebounceMs(config.inbound_debounce_ms)
+          ? Math.trunc(config.inbound_debounce_ms)
+          : undefined,
       };
     },
 
@@ -142,6 +157,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         ],
         attachment_allowed_paths: [...(account.attachmentAllowedPaths ?? [])],
         attachment_path_recursive: account.attachmentPathRecursive === true,
+        inbound_debounce_ms: account.inboundDebounceMs ?? 0,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -163,6 +179,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         ],
         attachment_allowed_paths: [...(account.attachmentAllowedPaths ?? [])],
         attachment_path_recursive: account.attachmentPathRecursive === true,
+        inbound_debounce_ms: account.inboundDebounceMs ?? 0,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },

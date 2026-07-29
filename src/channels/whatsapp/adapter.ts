@@ -13,6 +13,11 @@ import type {
 import { decideWhatsAppAttachmentPolicy } from "./attachment-policy";
 import { resolveInboundIdentity } from "./identity";
 import {
+  createWhatsAppInboundDebounceController,
+  type WhatsAppInboundDebounceController,
+  type WhatsAppInboundDebounceEntry,
+} from "./inbound-debounce";
+import {
   isGroupJid,
   isSelfChat,
   isStatusOrBroadcastJid,
@@ -215,6 +220,7 @@ export function createWhatsAppAdapter(
   let connectedAtMs = 0;
   let connectionGeneration = 0;
   let releaseSocketLease: (() => void) | null = null;
+  let inboundDebounce!: WhatsAppInboundDebounceController<WhatsAppMessageKey>;
   let downloadContentFromMessage:
     | ((message: unknown, type: string) => Promise<AsyncIterable<Uint8Array>>)
     | null = null;
@@ -399,29 +405,12 @@ export function createWhatsAppAdapter(
     }
   }
 
-  function startReadReceipts(
-    batchSocket: WhatsAppSocket | null,
-    keys: WhatsAppMessageKey[],
-  ): void {
-    if (!batchSocket?.readMessages || keys.length === 0) return;
-    try {
-      void batchSocket.readMessages(keys).catch(() => {
-        console.warn(
-          `[WhatsApp:${account.accountId}] failed to mark inbound messages as read.`,
-        );
-      });
-    } catch {
-      console.warn(
-        `[WhatsApp:${account.accountId}] failed to mark inbound messages as read.`,
-      );
-    }
-  }
-
   async function handleMessagesUpsert(
     event: unknown,
     batchSocket: WhatsAppSocket,
   ): Promise<void> {
-    const receiptKeys: WhatsAppMessageKey[] = [];
+    const acceptedEntries: WhatsAppInboundDebounceEntry<WhatsAppMessageKey>[] =
+      [];
     try {
       const record = asRecord(event);
       if (record.type !== "notify" && record.type !== "append") return;
@@ -536,12 +525,20 @@ export function createWhatsAppAdapter(
         console.log(
           `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${preview(body)}"`,
         );
-        if (msg.key) receiptKeys.push(msg.key);
-        await adapter.onMessage?.(inbound);
+        acceptedEntries.push({
+          inbound,
+          receipt: msg.key
+            ? {
+                owner: batchSocket,
+                key: msg.key,
+                markRead: (keys) => batchSocket.readMessages?.(keys),
+              }
+            : undefined,
+        });
       }
     } finally {
       flushLidStoreIfDirty();
-      startReadReceipts(batchSocket, receiptKeys);
+      await inboundDebounce.dispatch(acceptedEntries);
     }
   }
 
@@ -575,10 +572,7 @@ export function createWhatsAppAdapter(
     },
 
     async stop() {
-      if (!running) {
-        flushLidStoreIfDirty();
-        return;
-      }
+      const wasRunning = running;
       stopping = true;
       running = false;
       if (reconnectTimer) {
@@ -586,6 +580,11 @@ export function createWhatsAppAdapter(
         reconnectTimer = null;
       }
       connectionGeneration += 1;
+      await inboundDebounce.flushAll();
+      if (!wasRunning) {
+        flushLidStoreIfDirty();
+        return;
+      }
       clearActiveSocket(true);
       setWhatsAppConnectionState(account.accountId, { status: "disconnected" });
       flushLidStoreIfDirty();
@@ -718,6 +717,23 @@ export function createWhatsAppAdapter(
       );
     },
   };
+
+  inboundDebounce = createWhatsAppInboundDebounceController({
+    accountId: account.accountId,
+    debounceMs: account.inboundDebounceMs,
+    getDeliver: () => adapter.onMessage,
+    onDeliveryError(error) {
+      console.error(
+        `[WhatsApp:${account.accountId}] inbound handler failed:`,
+        error instanceof Error ? error.message : error,
+      );
+    },
+    onReceiptError() {
+      console.warn(
+        `[WhatsApp:${account.accountId}] failed to mark inbound messages as read.`,
+      );
+    },
+  });
 
   return adapter;
 }

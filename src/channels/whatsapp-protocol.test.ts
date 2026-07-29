@@ -17,6 +17,7 @@ describe("whatsapp protocol-inbound validators", () => {
             agent_id: "agent-1",
             self_chat_mode: true,
             group_mode: "disabled",
+            inbound_debounce_ms: 1250.9,
           },
         },
       }),
@@ -56,6 +57,25 @@ describe("whatsapp protocol-inbound validators", () => {
         channel_id: "whatsapp",
         request_id: "r1",
         account: { config: { group_mode: "all" } },
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects invalid inbound debounce values", () => {
+    expect(
+      isChannelAccountCreateCommand({
+        type: "channel_account_create",
+        channel_id: "whatsapp",
+        request_id: "r1",
+        account: { config: { inbound_debounce_ms: -1 } },
+      }),
+    ).toBe(false);
+    expect(
+      isChannelAccountCreateCommand({
+        type: "channel_account_create",
+        channel_id: "whatsapp",
+        request_id: "r1",
+        account: { config: { inbound_debounce_ms: "100" } },
       }),
     ).toBe(false);
   });
