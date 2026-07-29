@@ -337,6 +337,13 @@ export function createWhatsAppAdapter(
     );
   }
 
+  function isKnownOutboundMessage(messageId: string): boolean {
+    if (sentMessageIds.has(messageId)) return true;
+    const stored = messageStore.get(messageId);
+    if (!stored) return false;
+    return asRecord(asRecord(stored).key).fromMe === true;
+  }
+
   function clearActiveSocket(closeWebSocket: boolean): void {
     clearStableOpenTimer();
     const currentSock = sock;
@@ -563,6 +570,7 @@ export function createWhatsAppAdapter(
           rememberSeen,
           applyObservedMappings,
           getGroupLabel,
+          isTargetOwnedBySelf: isKnownOutboundMessage,
           deliver: (message) => adapter.onMessage?.(message),
           flushLidStoreIfDirty,
         },

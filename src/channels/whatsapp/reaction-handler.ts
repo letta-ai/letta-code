@@ -29,6 +29,7 @@ export interface WhatsAppReactionHandlerContext {
     mappings: Array<{ lidJid: string; phoneJid: string }>,
   ) => boolean;
   getGroupLabel: (groupJid: string) => Promise<string | undefined>;
+  isTargetOwnedBySelf: (messageId: string) => boolean;
   deliver: (message: InboundChannelMessage) => Promise<void> | void;
   flushLidStoreIfDirty: () => void;
 }
@@ -39,7 +40,15 @@ async function handleReactionEntry(
   raw: unknown,
 ): Promise<void> {
   const { account } = context;
-  if (parsed.targetFromMe !== true) return;
+  // Baileys may deliver reactions via a LID chat where it cannot equate
+  // our PN identity, producing targetFromMe:false for our own messages.
+  // isTargetOwnedBySelf also checks sentMessageIds and the store's
+  // key.fromMe — but NOT mere store membership, since inbound messages
+  // are stored there too.
+  const targetIsOurs =
+    parsed.targetFromMe === true ||
+    context.isTargetOwnedBySelf(parsed.targetMessageId);
+  if (!targetIsOurs) return;
   if (parsed.reactionKey.fromMe === true) return;
   if (isStatusOrBroadcastJid(parsed.chatId)) return;
   if (
@@ -87,7 +96,7 @@ async function handleReactionEntry(
       groupMode: account.groupMode,
       allowedGroups: account.allowedGroups,
       groupJid: identity.chatId,
-      targetFromMe: parsed.targetFromMe,
+      targetFromMe: targetIsOurs,
     })
   ) {
     return;
