@@ -129,6 +129,7 @@ export function createAccountFromPatch(
       attachmentAllowedPaths: normalizedPatch.attachmentAllowedPaths ?? [],
       attachmentPathRecursive: normalizedPatch.attachmentPathRecursive === true,
       inboundDebounceMs: normalizedPatch.inboundDebounceMs,
+      waitingBehavior: normalizedPatch.waitingBehavior ?? "off",
       createdAt: now,
       updatedAt: now,
     };
@@ -309,6 +310,8 @@ export function mergeAccountPatch(
         false,
       inboundDebounceMs:
         normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
+      waitingBehavior:
+        normalizedPatch.waitingBehavior ?? existing.waitingBehavior ?? "off",
       updatedAt: nextUpdatedAt,
     };
   }

@@ -13,6 +13,7 @@ import type {
   TelegramGroupMode,
   WhatsAppGroupMode,
 } from "./types";
+import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 
 export interface ChannelPluginMetadata {
   id: string;
@@ -187,6 +188,7 @@ export interface ChannelPluginAccountPatch {
   attachmentAllowedRecipients?: string[];
   attachmentAllowedPaths?: string[];
   attachmentPathRecursive?: boolean;
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export type ChannelAccountPatch = ChannelCommonAccountPatch &

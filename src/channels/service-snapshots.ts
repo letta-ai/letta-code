@@ -204,6 +204,7 @@ export function toAccountSnapshot(
       attachmentAllowedPaths: [...(account.attachmentAllowedPaths ?? [])],
       attachmentPathRecursive: account.attachmentPathRecursive === true,
       inboundDebounceMs: account.inboundDebounceMs,
+      waitingBehavior: account.waitingBehavior ?? "off",
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -403,6 +404,7 @@ export function getChannelConfigSnapshot(
       attachmentAllowedPaths: [...(account.attachmentAllowedPaths ?? [])],
       attachmentPathRecursive: account.attachmentPathRecursive === true,
       inboundDebounceMs: account.inboundDebounceMs,
+      waitingBehavior: account.waitingBehavior ?? "off",
     };
   }
 

@@ -21,6 +21,11 @@ import {
   shouldProcessWhatsAppGroup,
   timestampToMs,
 } from "./adapter-helpers";
+import type {
+  WhatsAppMessage,
+  WhatsAppMessageKey,
+  WhatsAppSocket,
+} from "./adapter-types";
 import { decideWhatsAppAttachmentPolicy } from "./attachment-policy";
 import { resolveInboundIdentity } from "./identity";
 import {
@@ -53,11 +58,22 @@ import {
   parseWhatsAppReactionEntry,
   type WhatsAppReaction,
 } from "./reactions";
+import {
+  createDefaultWhatsAppReconnectScheduler,
+  type WhatsAppReconnectScheduler,
+  type WhatsAppReconnectTimer,
+} from "./reconnect-scheduler";
 import { loadWhatsAppModule } from "./runtime";
 import { createWhatsAppSocket, getWhatsAppAuthDir } from "./session";
 import { setWhatsAppConnectionState } from "./state";
+import {
+  createWhatsAppTypingController,
+  type WhatsAppTypingController,
+  type WhatsAppTypingPresence,
+} from "./typing-controller";
 
 export { isWhatsAppConflictDisconnect };
+export type { WhatsAppReconnectScheduler };
 
 const CHANNEL_ID = "whatsapp";
 const DEDUPE_MAX_SIZE = 5000;
@@ -66,74 +82,11 @@ const MAX_UNSTABLE_DISCONNECTS = 6;
 const RECONNECT_WINDOW_MS = 60_000;
 const STABLE_OPEN_RESET_MS = RECONNECT_WINDOW_MS;
 
-type EventEmitterLike = {
-  on?: (event: string, handler: (payload: unknown) => void) => void;
-};
-
-type WhatsAppSocket = {
-  ev?: EventEmitterLike;
-  ws?: { close?: () => void };
-  user?: { id?: string; lid?: string };
-  sendMessage?: (
-    jid: string,
-    payload: Record<string, unknown>,
-    options?: Record<string, unknown>,
-  ) => Promise<{ key?: { id?: string }; message?: unknown }>;
-  sendPresenceUpdate?: (presence: string, jid?: string) => Promise<void>;
-  groupMetadata?: (jid: string) => Promise<{ subject?: string }>;
-  readMessages?: (keys: WhatsAppMessageKey[]) => Promise<unknown>;
-};
-
-type WhatsAppMessageKey = {
-  remoteJid?: string | null;
-  id?: string | null;
-  fromMe?: boolean | null;
-  participant?: string | null;
-  senderPn?: string | null;
-  senderLid?: string | null;
-  participantPn?: string | null;
-  participantLid?: string | null;
-};
-
-type WhatsAppMessage = {
-  key?: WhatsAppMessageKey;
-  message?: unknown;
-  messageTimestamp?: number | { toNumber?: () => number } | null;
-  pushName?: string | null;
-};
-
-export type WhatsAppReconnectScheduler = {
-  now(): number;
-  schedule(
-    delayMs: number,
-    callback: () => void,
-    options?: { unref?: boolean },
-  ): { cancel(): void };
-};
-
-function createDefaultReconnectScheduler(): WhatsAppReconnectScheduler {
-  return {
-    now: () => Date.now(),
-    schedule(delayMs, callback, options) {
-      const timer = setTimeout(callback, delayMs) as ReturnType<
-        typeof setTimeout
-      > & { unref?: () => void };
-      if (options?.unref) timer.unref?.();
-      return { cancel: () => clearTimeout(timer) };
-    },
-  };
-}
-
 export type WhatsAppAdapterDependencies = {
   createSocket?: typeof createWhatsAppSocket;
   loadRuntimeModule?: typeof loadWhatsAppModule;
   lidStore?: LidStore;
   reconnectScheduler?: WhatsAppReconnectScheduler;
-};
-
-type ReconnectTimer = {
-  generation: number;
-  task: { cancel(): void } | null;
 };
 
 const CLAIM_CONNECTION_STATE = { claimedConnectionState: true } as const;
@@ -145,8 +98,8 @@ export function createWhatsAppAdapter(
   let running = false;
   let stopping = false;
   let reconnectAttempts = 0;
-  let reconnectTimer: ReconnectTimer | null = null;
-  let stableOpenTimer: ReconnectTimer | null = null;
+  let reconnectTimer: WhatsAppReconnectTimer | null = null;
+  let stableOpenTimer: WhatsAppReconnectTimer | null = null;
   let selfPhoneJid: string | null = null;
   let selfLid: string | null = null;
   let connectedAtMs = 0;
@@ -154,8 +107,10 @@ export function createWhatsAppAdapter(
   const recentDisconnects: number[] = [];
   let closedGeneration: number | null = null;
   const reconnectScheduler =
-    dependencies.reconnectScheduler ?? createDefaultReconnectScheduler();
+    dependencies.reconnectScheduler ??
+    createDefaultWhatsAppReconnectScheduler();
   let releaseSocketLease: (() => void) | null = null;
+  let typing!: WhatsAppTypingController<WhatsAppSocket>;
   let downloadContentFromMessage:
     | ((message: unknown, type: string) => Promise<AsyncIterable<Uint8Array>>)
     | null = null;
@@ -223,7 +178,7 @@ export function createWhatsAppAdapter(
     releaseLease?.();
   }
 
-  function clearReconnectTimer(): void {
+  function clearWhatsAppReconnectTimer(): void {
     const timer = reconnectTimer;
     reconnectTimer = null;
     timer?.task?.cancel();
@@ -237,7 +192,7 @@ export function createWhatsAppAdapter(
 
   function scheduleStableOpenReset(generation: number): void {
     clearStableOpenTimer();
-    const timer: ReconnectTimer = {
+    const timer: WhatsAppReconnectTimer = {
       generation,
       task: null,
     };
@@ -268,12 +223,37 @@ export function createWhatsAppAdapter(
     }
   }
 
+  function canonicalizeChatId(chatId: string): string | null {
+    try {
+      return resolveSendJid({
+        chatId,
+        selfPhoneJid,
+        selfLid,
+        resolveLid: (lidJid) => lidStore.resolve(lidJid),
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  function getTypingOwner(): WhatsAppSocket | null {
+    return sock;
+  }
+
+  function sendTypingPresence(
+    owner: WhatsAppSocket,
+    chatId: string,
+    presence: WhatsAppTypingPresence,
+  ): unknown {
+    return owner.sendPresenceUpdate?.(presence, chatId);
+  }
+
   function scheduleReconnect(reason?: string): void {
     if (stopping || !running || reconnectTimer) return;
     reconnectAttempts += 1;
     const delay = Math.min(RECONNECT_MAX_MS, 1000 * 2 ** reconnectAttempts);
     const generation = connectionGeneration;
-    const timer: ReconnectTimer = {
+    const timer: WhatsAppReconnectTimer = {
       generation,
       task: null,
     };
@@ -312,9 +292,10 @@ export function createWhatsAppAdapter(
   }
 
   async function connect(): Promise<void> {
-    clearReconnectTimer();
+    clearWhatsAppReconnectTimer();
     connectionGeneration += 1;
     const generation = connectionGeneration;
+    if (sock) await typing.clearOwner(sock);
     clearActiveSocket(true);
     await ensureRuntimeHelpers();
     connectedAtMs = reconnectScheduler.now();
@@ -339,15 +320,17 @@ export function createWhatsAppAdapter(
           );
         }
         if (update.connection === "close" && !stopping) {
-          const isConflict = isWhatsAppConflictDisconnect(update);
-          if (isConflict) {
-            closedGeneration = generation;
-            clearActiveSocket(false);
-            const lastDisconnect = asRecord(update.lastDisconnect);
-            const error = asRecord(lastDisconnect.error);
+          if (closedGeneration === generation) return CLAIM_CONNECTION_STATE;
+          closedGeneration = generation;
+          const closingSocket = sock;
+          if (closingSocket) void typing.clearOwner(closingSocket);
+          clearActiveSocket(false);
+          const lastDisconnect = asRecord(update.lastDisconnect);
+          const error = asRecord(lastDisconnect.error);
+          if (isWhatsAppConflictDisconnect(update)) {
             running = false;
             stopping = true;
-            clearReconnectTimer();
+            clearWhatsAppReconnectTimer();
             clearStableOpenTimer();
             const message =
               typeof error.message === "string"
@@ -362,11 +345,6 @@ export function createWhatsAppAdapter(
             );
             return CLAIM_CONNECTION_STATE;
           }
-          if (closedGeneration === generation) return CLAIM_CONNECTION_STATE;
-          closedGeneration = generation;
-          clearActiveSocket(false);
-          const lastDisconnect = asRecord(update.lastDisconnect);
-          const error = asRecord(lastDisconnect.error);
           const now = reconnectScheduler.now();
           while (recentDisconnects.length > 0) {
             const oldest = recentDisconnects[0];
@@ -379,7 +357,7 @@ export function createWhatsAppAdapter(
           if (recentDisconnects.length >= MAX_UNSTABLE_DISCONNECTS) {
             running = false;
             stopping = true;
-            clearReconnectTimer();
+            clearWhatsAppReconnectTimer();
             clearStableOpenTimer();
             const loopMessage = `WhatsApp disconnected ${recentDisconnects.length} times in ${RECONNECT_WINDOW_MS / 1000}s; stopping to avoid reconnect loop. Another client may be competing for this session. Restart this WhatsApp channel to retry.`;
             setWhatsAppConnectionState(account.accountId, {
@@ -782,9 +760,10 @@ export function createWhatsAppAdapter(
       stopping = true;
       running = false;
       inboundDebounce?.cancelPending();
-      clearReconnectTimer();
+      clearWhatsAppReconnectTimer();
       clearStableOpenTimer();
       connectionGeneration += 1;
+      await typing.clearAll();
       clearActiveSocket(true);
       if (wasRunning) {
         setWhatsAppConnectionState(account.accountId, {
@@ -815,6 +794,8 @@ export function createWhatsAppAdapter(
         selfLid,
         resolveLid: (lidJid) => lidStore.resolve(lidJid),
       });
+      const hadManagedTyping = typing.isActive(targetJid);
+      await typing.clearChat(targetJid);
       let resolvedMedia: WhatsAppResolvedOutboundMedia | undefined;
       if (msg.mediaPath && account.attachmentFilter === true) {
         const decision = decideWhatsAppAttachmentPolicy({
@@ -849,10 +830,12 @@ export function createWhatsAppAdapter(
         outboundMessages.rememberSent(id, result);
         return { messageId: id };
       }
-      try {
-        await sock?.sendPresenceUpdate?.("composing", targetJid);
-      } catch {
-        // Presence is best-effort.
+      if (!hadManagedTyping) {
+        try {
+          await sock?.sendPresenceUpdate?.("composing", targetJid);
+        } catch {
+          // Presence is best-effort.
+        }
       }
       const payload = buildWhatsAppOutboundPayload(msg, resolvedMedia);
       const result = await sendToWhatsApp(
@@ -873,6 +856,7 @@ export function createWhatsAppAdapter(
         selfLid,
         resolveLid: (lidJid) => lidStore.resolve(lidJid),
       });
+      await typing.clearChat(targetJid);
       const result = await sendToWhatsApp(
         targetJid,
         { text },
@@ -895,7 +879,22 @@ export function createWhatsAppAdapter(
     async handleTurnLifecycleEvent(
       event: ChannelTurnLifecycleEvent,
     ): Promise<void> {
-      if (!running || event.type !== "finished") return;
+      if (!running) return;
+      if (event.type === "queued") return;
+      if (event.type === "processing") {
+        if (account.waitingBehavior === "typing_indicator") {
+          for (const source of event.sources) {
+            typing.start({ batchId: event.batchId, source });
+          }
+        }
+        return;
+      }
+
+      await Promise.all(
+        event.sources.map((source) =>
+          typing.stop({ batchId: event.batchId, source }),
+        ),
+      );
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
       if (!errorText) return;
@@ -943,6 +942,12 @@ export function createWhatsAppAdapter(
         error instanceof Error ? error.message : error,
       );
     },
+  });
+  typing = createWhatsAppTypingController<WhatsAppSocket>({
+    accountId: account.accountId,
+    canonicalizeChatId,
+    getOwner: getTypingOwner,
+    sendPresence: sendTypingPresence,
   });
 
   return adapter;

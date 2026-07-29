@@ -71,6 +71,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
+  waiting_behavior: "waitingBehavior",
 };
 
 let warnedAboutDualKeys = false;
@@ -386,6 +387,8 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.attachmentAllowedPaths = [...(next.attachmentAllowedPaths ?? [])];
     next.attachmentPathRecursive = next.attachmentPathRecursive === true;
     next.inboundDebounceMs = normalizeInboundDebounceMs(next.inboundDebounceMs);
+    next.waitingBehavior =
+      next.waitingBehavior === "typing_indicator" ? "typing_indicator" : "off";
   }
   if (isSignalChannelAccount(next)) {
     next.baseUrl = next.baseUrl ?? "";
@@ -480,6 +483,7 @@ function makeDefaultLegacyAccount(
       attachmentAllowedPaths: [...(config.attachmentAllowedPaths ?? [])],
       attachmentPathRecursive: config.attachmentPathRecursive === true,
       inboundDebounceMs: config.inboundDebounceMs,
+      waitingBehavior: config.waitingBehavior ?? "off",
       createdAt: now,
       updatedAt: now,
     };

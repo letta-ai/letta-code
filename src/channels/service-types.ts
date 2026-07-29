@@ -9,6 +9,7 @@ import type {
   TelegramGroupMode,
   WhatsAppGroupMode,
 } from "./types";
+import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 
 export interface ChannelSummary {
   channelId: string;
@@ -60,6 +61,7 @@ export interface ChannelConfigSnapshot {
   attachmentAllowedRecipients?: string[];
   attachmentAllowedPaths?: string[];
   attachmentPathRecursive?: boolean;
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export interface PendingPairingSnapshot {
@@ -142,6 +144,7 @@ export interface ChannelAccountSnapshot {
   attachmentAllowedRecipients?: string[];
   attachmentAllowedPaths?: string[];
   attachmentPathRecursive?: boolean;
+  waitingBehavior?: WhatsAppWaitingBehavior;
   createdAt: string;
   updatedAt: string;
 }

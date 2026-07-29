@@ -28,11 +28,16 @@ import type {
   WhatsAppChannelConfig,
   WhatsAppGroupMode,
 } from "./types";
+import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 
 // ── Paths ─────────────────────────────────────────────────────────
 
 const CHANNELS_ROOT = join(homedir(), ".letta", "channels");
 let channelsRootOverride: string | null = null;
+
+function parseWhatsAppWaitingBehavior(value: unknown): WhatsAppWaitingBehavior {
+  return value === "typing_indicator" ? "typing_indicator" : "off";
+}
 
 export function getChannelsRoot(): string {
   return channelsRootOverride ?? CHANNELS_ROOT;
@@ -303,6 +308,7 @@ const whatsappConfigCodec: ChannelConfigCodec<WhatsAppChannelConfig> = {
         parsed.inbound_debounce_ms >= 0
           ? Math.trunc(Math.min(parsed.inbound_debounce_ms, 10000))
           : undefined,
+      waitingBehavior: parseWhatsAppWaitingBehavior(parsed.waiting_behavior),
     };
   },
 };

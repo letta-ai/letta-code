@@ -14,6 +14,7 @@ import type {
   StopReasonType,
 } from "@/types/protocol_v2";
 import type { WhatsAppAttachmentPolicyConfig } from "./whatsapp/attachment-policy-types";
+import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 
 /**
  * Vendor-neutral model-picker payload produced by the generic channel
@@ -678,11 +679,10 @@ export interface WhatsAppChannelConfig extends WhatsAppAttachmentPolicyConfig {
   mentionPatterns?: string[];
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When true, supported inbound media is downloaded to local channel storage. */
   downloadMedia?: boolean;
-  /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
   inboundDebounceMs?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export interface SignalChannelConfig {
@@ -866,11 +866,10 @@ export interface WhatsAppChannelAccount
   mentionPatterns?: string[];
   /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When true, supported inbound media is downloaded to local channel storage. */
   downloadMedia?: boolean;
-  /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
   inboundDebounceMs?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {
