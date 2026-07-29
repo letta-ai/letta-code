@@ -8,6 +8,7 @@ import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   getResumeDataFromBackend,
   type ResumeData,
+  shouldTreatConversationAsResumed,
 } from "./agent/check-approval";
 import {
   setAgentContext,
@@ -2464,11 +2465,9 @@ async function main(): Promise<void> {
             );
           });
 
-        // Handle conversation: either resume existing or create new
         // Using definite assignment assertion - all branches below either set this or exit/throw
         let conversationIdToUse!: string;
 
-        // Debug: log resume flag status
         if (isDebugEnabled()) {
           debugLog("startup", "shouldResume=%o", shouldResume);
           debugLog(
@@ -2479,18 +2478,17 @@ async function main(): Promise<void> {
         }
 
         if (specifiedConversationId) {
-          // Use the explicitly specified conversation ID
-          // User explicitly requested this conversation, so error if it doesn't exist
           conversationIdToUse = specifiedConversationId;
-          setResumedExistingConversation(true);
           try {
-            // Load message history and pending approvals from the conversation
             setLoadingState("checking");
             const data = await getResumeDataFromBackend(
               agent,
               specifiedConversationId,
             );
             setResumeData(data);
+            setResumedExistingConversation(
+              shouldTreatConversationAsResumed(data.conversation),
+            );
           } catch (error) {
             // Only treat 404/422 as "not found", rethrow other errors
             if (isBackendNotFoundError(error)) {
