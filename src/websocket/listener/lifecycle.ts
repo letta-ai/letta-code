@@ -1048,7 +1048,7 @@ export async function startConnectedListenerRuntime(
         runtime.socket?.terminate();
       },
       () => {
-        safeTransportSend(
+        return safeTransportSend(
           transport,
           { type: "ping" },
           "listener_ping_send_failed",
