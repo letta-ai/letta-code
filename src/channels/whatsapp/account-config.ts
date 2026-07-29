@@ -4,6 +4,7 @@ import type {
   WhatsAppGroupMode,
 } from "@/channels/types";
 import { toWhatsAppConnectionConfig } from "./state";
+import type { WhatsAppWaitingBehavior } from "./waiting-behavior-config-types";
 
 const WHATSAPP_CONFIG_KEYS = new Set([
   "agent_id",
@@ -14,6 +15,7 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "transcribe_voice",
   "download_media",
   "media_max_bytes",
+  "waiting_behavior",
 ]);
 
 function isNullableString(value: unknown): value is string | null {
@@ -38,6 +40,10 @@ function isPositiveNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function isWaitingBehavior(value: unknown): value is WhatsAppWaitingBehavior {
+  return value === "off" || value === "typing_indicator";
+}
+
 export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppChannelAccount> =
   {
     isValidConfig(config) {
@@ -60,7 +66,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         (config.download_media === undefined ||
           isBoolean(config.download_media)) &&
         (config.media_max_bytes === undefined ||
-          isPositiveNumber(config.media_max_bytes))
+          isPositiveNumber(config.media_max_bytes)) &&
+        (config.waiting_behavior === undefined ||
+          isWaitingBehavior(config.waiting_behavior))
       );
     },
 
@@ -90,6 +98,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         mediaMaxBytes: isPositiveNumber(config.media_max_bytes)
           ? config.media_max_bytes
           : undefined,
+        waitingBehavior: isWaitingBehavior(config.waiting_behavior)
+          ? config.waiting_behavior
+          : undefined,
       };
     },
 
@@ -103,6 +114,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
+        waiting_behavior: account.waitingBehavior ?? "off",
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -117,6 +129,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
+        waiting_behavior: account.waitingBehavior ?? "off",
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },

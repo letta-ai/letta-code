@@ -13,6 +13,7 @@ import type {
   ListModelsResponseModelEntry,
   StopReasonType,
 } from "@/types/protocol_v2";
+import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 
 /**
  * Vendor-neutral model-picker payload produced by the generic channel
@@ -681,6 +682,8 @@ export interface WhatsAppChannelConfig {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** Controls whether WhatsApp shows typing while a turn is processing. */
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export interface SignalChannelConfig {
@@ -866,6 +869,8 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** Controls whether WhatsApp shows typing while a turn is processing. */
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {

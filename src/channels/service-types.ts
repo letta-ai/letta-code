@@ -9,6 +9,7 @@ import type {
   TelegramGroupMode,
   WhatsAppGroupMode,
 } from "./types";
+import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 
 export interface ChannelSummary {
   channelId: string;
@@ -55,6 +56,7 @@ export interface ChannelConfigSnapshot {
   richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export interface PendingPairingSnapshot {
@@ -132,6 +134,7 @@ export interface ChannelAccountSnapshot {
   recipientAliases?: Record<string, string>;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
   createdAt: string;
   updatedAt: string;
 }

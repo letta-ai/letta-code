@@ -13,6 +13,7 @@ import type {
   TelegramGroupMode,
   WhatsAppGroupMode,
 } from "./types";
+import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 
 export interface ChannelPluginMetadata {
   id: string;
@@ -182,6 +183,7 @@ export interface ChannelPluginAccountPatch {
   richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export type ChannelAccountPatch = ChannelCommonAccountPatch &

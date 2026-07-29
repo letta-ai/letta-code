@@ -66,6 +66,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
+  waiting_behavior: "waitingBehavior",
 };
 
 let warnedAboutDualKeys = false;
@@ -357,6 +358,8 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
     next.downloadMedia = next.downloadMedia === true;
     next.transcribeVoice = next.transcribeVoice === true;
+    next.waitingBehavior =
+      next.waitingBehavior === "typing_indicator" ? "typing_indicator" : "off";
   }
   if (isSignalChannelAccount(next)) {
     next.baseUrl = next.baseUrl ?? "";
@@ -443,6 +446,7 @@ function makeDefaultLegacyAccount(
       transcribeVoice: config.transcribeVoice === true,
       downloadMedia: config.downloadMedia === true,
       mediaMaxBytes: config.mediaMaxBytes,
+      waitingBehavior: config.waitingBehavior ?? "off",
       createdAt: now,
       updatedAt: now,
     };

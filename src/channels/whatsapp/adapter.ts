@@ -30,6 +30,11 @@ import {
 import { loadWhatsAppModule } from "./runtime";
 import { createWhatsAppSocket, getWhatsAppAuthDir } from "./session";
 import { setWhatsAppConnectionState } from "./state";
+import {
+  createWhatsAppTypingController,
+  type WhatsAppTypingController,
+  type WhatsAppTypingPresence,
+} from "./typing-controller";
 
 const CHANNEL_ID = "whatsapp";
 const DEDUPE_MAX_SIZE = 5000;
@@ -212,6 +217,7 @@ export function createWhatsAppAdapter(
   let connectedAtMs = 0;
   let connectionGeneration = 0;
   let releaseSocketLease: (() => void) | null = null;
+  let typing!: WhatsAppTypingController<WhatsAppSocket>;
   let downloadContentFromMessage:
     | ((message: unknown, type: string) => Promise<AsyncIterable<Uint8Array>>)
     | null = null;
@@ -297,6 +303,31 @@ export function createWhatsAppAdapter(
     }
   }
 
+  function canonicalizeChatId(chatId: string): string | null {
+    try {
+      return resolveSendJid({
+        chatId,
+        selfPhoneJid,
+        selfLid,
+        resolveLid: (lidJid) => lidStore.resolve(lidJid),
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  function getTypingOwner(): WhatsAppSocket | null {
+    return sock;
+  }
+
+  function sendTypingPresence(
+    owner: WhatsAppSocket,
+    chatId: string,
+    presence: WhatsAppTypingPresence,
+  ): unknown {
+    return owner.sendPresenceUpdate?.(presence, chatId);
+  }
+
   function scheduleReconnect(reason?: string): void {
     if (stopping || !running || reconnectTimer) return;
     reconnectAttempts += 1;
@@ -320,6 +351,7 @@ export function createWhatsAppAdapter(
   async function connect(): Promise<void> {
     connectionGeneration += 1;
     const generation = connectionGeneration;
+    if (sock) await typing.clearOwner(sock);
     clearActiveSocket(true);
     await ensureRuntimeHelpers();
     connectedAtMs = Date.now();
@@ -341,6 +373,8 @@ export function createWhatsAppAdapter(
           );
         }
         if (update.connection === "close" && !stopping) {
+          const closingSocket = sock;
+          if (closingSocket) void typing.clearOwner(closingSocket);
           clearActiveSocket(false);
           const lastDisconnect = asRecord(update.lastDisconnect);
           const error = asRecord(lastDisconnect.error);
@@ -547,10 +581,7 @@ export function createWhatsAppAdapter(
     },
 
     async stop() {
-      if (!running) {
-        flushLidStoreIfDirty();
-        return;
-      }
+      const wasRunning = running;
       stopping = true;
       running = false;
       if (reconnectTimer) {
@@ -558,6 +589,11 @@ export function createWhatsAppAdapter(
         reconnectTimer = null;
       }
       connectionGeneration += 1;
+      await typing.clearAll();
+      if (!wasRunning) {
+        flushLidStoreIfDirty();
+        return;
+      }
       clearActiveSocket(true);
       setWhatsAppConnectionState(account.accountId, { status: "disconnected" });
       flushLidStoreIfDirty();
@@ -578,6 +614,8 @@ export function createWhatsAppAdapter(
         selfLid,
         resolveLid: (lidJid) => lidStore.resolve(lidJid),
       });
+      const hadManagedTyping = typing.isActive(targetJid);
+      await typing.clearChat(targetJid);
       if (msg.reaction || msg.removeReaction) {
         const target = msg.targetMessageId ?? msg.replyToMessageId;
         if (!target) throw new Error("WhatsApp reactions require messageId.");
@@ -591,10 +629,12 @@ export function createWhatsAppAdapter(
         rememberSent(id, result);
         return { messageId: id };
       }
-      try {
-        await sock?.sendPresenceUpdate?.("composing", targetJid);
-      } catch {
-        // Presence is best-effort.
+      if (!hadManagedTyping) {
+        try {
+          await sock?.sendPresenceUpdate?.("composing", targetJid);
+        } catch {
+          // Presence is best-effort.
+        }
       }
       const payload = buildWhatsAppOutboundPayload(msg);
       const result = await sendToWhatsApp(
@@ -615,6 +655,7 @@ export function createWhatsAppAdapter(
         selfLid,
         resolveLid: (lidJid) => lidStore.resolve(lidJid),
       });
+      await typing.clearChat(targetJid);
       const result = await sendToWhatsApp(
         targetJid,
         { text },
@@ -637,7 +678,22 @@ export function createWhatsAppAdapter(
     async handleTurnLifecycleEvent(
       event: ChannelTurnLifecycleEvent,
     ): Promise<void> {
-      if (!running || event.type !== "finished") return;
+      if (!running) return;
+      if (event.type === "queued") return;
+      if (event.type === "processing") {
+        if (account.waitingBehavior === "typing_indicator") {
+          for (const source of event.sources) {
+            typing.start({ batchId: event.batchId, source });
+          }
+        }
+        return;
+      }
+
+      await Promise.all(
+        event.sources.map((source) =>
+          typing.stop({ batchId: event.batchId, source }),
+        ),
+      );
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
       if (!errorText) return;
@@ -669,6 +725,13 @@ export function createWhatsAppAdapter(
       );
     },
   };
+
+  typing = createWhatsAppTypingController<WhatsAppSocket>({
+    accountId: account.accountId,
+    canonicalizeChatId,
+    getOwner: getTypingOwner,
+    sendPresence: sendTypingPresence,
+  });
 
   return adapter;
 }
