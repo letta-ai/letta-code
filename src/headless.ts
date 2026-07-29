@@ -25,7 +25,7 @@ import type { ApprovalResult } from "./agent/approval-execution";
 import {
   buildFreshDenialApprovals,
   extractConflictDetail,
-  fetchRunErrorDetail,
+  fetchRunErrorInfo,
   getPreStreamErrorAction,
   getRetryDelayMs,
   isApprovalPendingError,
@@ -35,6 +35,7 @@ import {
   rebuildInputForApprovalResync,
   refreshInputOtidsForNewRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+  shouldRetryPostStreamRunError,
   shouldRetryRunMetadataError,
 } from "./agent/approval-recovery";
 import { handleBootstrapSessionState } from "./agent/bootstrap-handler";
@@ -3110,11 +3111,21 @@ ${SYSTEM_REMINDER_CLOSE}
         }
       }
 
-      // Fetch run error detail for invalid tool call ID detection
-      const detailFromRun = await fetchRunErrorDetail(lastRunId);
+      // Fetch run error detail for invalid tool call ID detection and retry metadata
+      const initialRunErrorInfo = await fetchRunErrorInfo(lastRunId);
+      const detailFromRun =
+        initialRunErrorInfo?.detail ?? initialRunErrorInfo?.message ?? null;
 
       // Case 3: Transient LLM API error - retry with exponential backoff up to a limit
-      if (stopReason === "llm_api_error") {
+      if (
+        stopReason === "llm_api_error" &&
+        shouldRetryPostStreamRunError({
+          stopReason,
+          errorType: initialRunErrorInfo?.error_type,
+          detail: detailFromRun ?? latestErrorText,
+          retryable: initialRunErrorInfo?.retryable,
+        })
+      ) {
         if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
           const attempt = llmApiErrorRetries + 1;
           llmApiErrorRetries = attempt;
@@ -3248,33 +3259,10 @@ ${SYSTEM_REMINDER_CLOSE}
         // Fall through to error display
       } else if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
         try {
-          let errorType: string | undefined;
-          let detail = detailFromRun ?? latestErrorText ?? "";
-          let explicitRetryable: boolean | undefined;
-
-          if (lastRunId) {
-            const run = await getBackend().retrieveRun(lastRunId);
-            const metaError = run.metadata?.error as
-              | {
-                  error_type?: string;
-                  message?: string;
-                  detail?: string;
-                  retryable?: boolean;
-                  // Handle nested error structure (error.error) that can occur in some edge cases
-                  error?: {
-                    error_type?: string;
-                    detail?: string;
-                    retryable?: boolean;
-                  };
-                }
-              | undefined;
-
-            // Check for llm_error at top level or nested (handles error.error nesting)
-            errorType = metaError?.error_type ?? metaError?.error?.error_type;
-            detail = metaError?.detail ?? metaError?.error?.detail ?? detail;
-            explicitRetryable =
-              metaError?.retryable ?? metaError?.error?.retryable;
-          }
+          const errorType: string | undefined = initialRunErrorInfo?.error_type;
+          const detail = detailFromRun ?? latestErrorText ?? "";
+          const explicitRetryable: boolean | undefined =
+            initialRunErrorInfo?.retryable;
 
           // Special handling for empty response errors (Opus 4.6 SADs)
           // Empty LLM response retry (e.g. Opus 4.6 occasionally returns no content).

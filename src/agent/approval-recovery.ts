@@ -19,6 +19,7 @@ export interface RunErrorInfo {
   error_type?: string;
   message?: string;
   detail?: string;
+  retryable?: boolean;
   run_id?: string;
 }
 
@@ -63,12 +64,14 @@ type RunErrorMetadata =
       error_type?: string;
       message?: string;
       detail?: string;
+      retryable?: boolean;
       run_id?: string;
       error?: {
         type?: string;
         error_type?: string;
         message?: string;
         detail?: string;
+        retryable?: boolean;
         run_id?: string;
       };
     }
@@ -91,12 +94,19 @@ export async function fetchRunErrorInfo(
         nestedError?.type,
       message: metaError?.message ?? nestedError?.message,
       detail: metaError?.detail ?? nestedError?.detail,
+      retryable:
+        typeof metaError?.retryable === "boolean"
+          ? metaError.retryable
+          : typeof nestedError?.retryable === "boolean"
+            ? nestedError.retryable
+            : undefined,
       run_id: metaError?.run_id ?? nestedError?.run_id ?? runId,
     };
 
-    return errorInfo.error_type || errorInfo.message || errorInfo.detail
-      ? errorInfo
-      : null;
+    const hasErrorInfo = Boolean(
+      errorInfo.error_type || errorInfo.message || errorInfo.detail,
+    );
+    return hasErrorInfo || errorInfo.retryable !== undefined ? errorInfo : null;
   } catch {
     return null;
   }

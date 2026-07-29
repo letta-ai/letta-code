@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   isRetryableLocalProviderError,
+  LocalProviderRetryExhaustedError,
+  localProviderRetryMessage,
   normalizeLocalProviderError,
 } from "@/backend/dev/local-provider-errors";
 
@@ -39,5 +41,46 @@ describe("LocalProviderErrors", () => {
       retryable: false,
       stop_reason: "error",
     });
+  });
+
+  test("marks exhausted local provider retry budgets as non-outer-retryable LLM errors", () => {
+    const cause = new Error("WebSocket closed 1006 Connection ended");
+    const error = new LocalProviderRetryExhaustedError(cause, 4);
+
+    expect(isRetryableLocalProviderError(error)).toBe(false);
+    expect(normalizeLocalProviderError(error)).toMatchObject({
+      error_type: "llm_error",
+      retryable: false,
+      stop_reason: "llm_api_error",
+    });
+    expect(normalizeLocalProviderError(error).detail).toContain(
+      "WebSocket closed 1006 Connection ended",
+    );
+  });
+
+  test("labels Codex backend and WebSocket retries without exposing raw payloads", () => {
+    const codexError = (message: string) => ({
+      message,
+      assistant: {
+        api: "openai-codex-responses",
+        provider: "openai-codex",
+      },
+    });
+
+    expect(
+      localProviderRetryMessage(
+        codexError(
+          'Codex error: {"type":"error","error":{"type":"server_error","code":"server_error","message":"You can retry your request."}}',
+        ),
+      ),
+    ).toBe("OpenAI Codex backend server_error");
+    expect(
+      localProviderRetryMessage(
+        codexError("WebSocket closed 1006 Connection ended"),
+      ),
+    ).toBe("OpenAI Codex WebSocket closed (1006)");
+    expect(localProviderRetryMessage(new Error("fetch failed"))).toBe(
+      "fetch failed",
+    );
   });
 });
