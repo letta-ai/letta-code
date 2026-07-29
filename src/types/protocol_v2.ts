@@ -157,7 +157,11 @@ export interface RuntimeEnvelope {
   idempotency_key: string;
 }
 
-export type DevicePermissionMode = "standard" | "acceptEdits" | "unrestricted";
+export type DevicePermissionMode =
+  | "standard"
+  | "acceptEdits"
+  | "unrestricted"
+  | "strict";
 
 export type ToolsetName =
   | "codex"

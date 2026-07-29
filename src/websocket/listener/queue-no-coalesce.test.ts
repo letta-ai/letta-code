@@ -130,4 +130,36 @@ describe("queue noCoalesce batching", () => {
     expect(batch?.dequeuedBatch.items).toHaveLength(2);
     expect(consumeQueuedTurn(runtime)).toBeNull();
   });
+
+  test("messages from different connections never coalesce", () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    for (const connectionId of ["client-a", "client-b"]) {
+      expect(
+        enqueueInboundUserMessage(runtime, {
+          type: "message",
+          connectionId,
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          messages: [
+            {
+              role: "user",
+              content: connectionId,
+              client_message_id: `message-${connectionId}`,
+            },
+          ],
+        }),
+      ).toBe(true);
+    }
+
+    const first = consumeQueuedTurn(runtime);
+    const second = consumeQueuedTurn(runtime);
+    expect(first?.dequeuedBatch.items).toHaveLength(1);
+    expect(first?.queuedTurn.connectionId).toBe("client-a");
+    expect(second?.dequeuedBatch.items).toHaveLength(1);
+    expect(second?.queuedTurn.connectionId).toBe("client-b");
+  });
 });

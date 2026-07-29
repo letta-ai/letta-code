@@ -384,6 +384,7 @@ export function spawnBackgroundSubagentTask(
     startTime: new Date(),
     outputFile,
     abortController,
+    runtimeScope: resolvedParentScope,
   };
   backgroundTasks.set(taskId, bgTask);
   writeTaskTranscriptStart(outputFile, description, subagentType);

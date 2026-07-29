@@ -10,7 +10,7 @@ Run the local App Server using native v2 WebSocket frames.
 
 Options:
   --listen [url]  WebSocket listen URL. Defaults to an available loopback port
-  --openai-api  Serve OpenAI-compatible /v1/models and /v1/chat/completions routes (each agent is a model)
+  --openai-api  Serve OpenAI-compatible /v1/models, /v1/chat/completions, and /v1/responses routes (each agent is a model)
   --ws-auth <mode>  WebSocket auth for non-loopback listeners and Origin-bearing native clients. Supported: capability-token, signed-bearer-token
   --ws-token-file <path>  Absolute path to the capability-token file
   --ws-token-sha256 <hex>  Hex-encoded SHA-256 digest of the capability token
@@ -124,8 +124,7 @@ export async function runAppServerSubcommand(argv: string[]): Promise<number> {
       openaiApi,
       onListening: (info) => {
         console.log(`Listening on ${info.url}`);
-        console.log(`Control: ${info.controlUrl}`);
-        console.log(`Stream:  ${info.streamUrl}`);
+        console.log(`WebSocket: ${info.controlUrl}`);
         if (openaiApi) {
           const openaiBase = new URL(info.url);
           openaiBase.protocol = "http:";

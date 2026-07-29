@@ -355,6 +355,7 @@ export function App({
   startupApprovals = [],
   messageHistory = [],
   resumedExistingConversation = false,
+  startupConversationTitleEligible = false,
   tokenStreaming = false,
   reasoningTabCycleEnabled: initialReasoningTabCycleEnabled = false,
   showCompactions = false,
@@ -403,7 +404,6 @@ export function App({
 
   const projectDirectory = process.cwd();
 
-  // Track current conversation (always created fresh on startup)
   const [conversationId, setConversationId] = useState(initialConversationId);
   const [conversationSummary, setConversationSummary] = useState<string | null>(
     null,
@@ -416,7 +416,6 @@ export function App({
     telemetry.setCurrentAgentId(agentId);
   }, [agentId]);
 
-  // Keep a ref to the current conversationId for use in callbacks
   const conversationIdRef = useRef(conversationId);
   useEffect(() => {
     conversationIdRef.current = conversationId;
@@ -1201,7 +1200,6 @@ export function App({
     [],
   );
 
-  // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
   const sharedReminderStateRef = useRef<SharedReminderState>(
@@ -1218,9 +1216,8 @@ export function App({
     new Set<string>(),
   );
 
-  // Only brand-new conversations without an explicit title should auto-generate one.
   const shouldAutoGenerateConversationTitleRef = useRef(
-    !resumedExistingConversation,
+    !resumedExistingConversation || startupConversationTitleEligible,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
   const shouldAutoGenerateConversationDescriptionRef = useRef(
@@ -3024,9 +3021,11 @@ export function App({
                 return withoutMemfs.replace(/\r\n/g, "\n").trim();
               };
               const sysNorm = normalize(agentSystem);
-              const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
-                "@/agent/prompt-assets"
-              );
+              const {
+                getSystemPromptVariantContents,
+                SYSTEM_PROMPTS,
+                SYSTEM_PROMPT,
+              } = await import("@/agent/prompt-assets");
 
               // Best-effort preset detection.
               // Exact match is ideal, but allow prefix-matches because the stored
@@ -3042,14 +3041,10 @@ export function App({
                 );
               };
 
-              const promptMatches = (prompt: {
-                content: string;
-                memfsContent?: string;
-              }): boolean =>
-                contentMatches(prompt.content) ||
-                (prompt.memfsContent
-                  ? contentMatches(prompt.memfsContent)
-                  : false);
+              const promptMatches = (
+                prompt: (typeof SYSTEM_PROMPTS)[number],
+              ): boolean =>
+                getSystemPromptVariantContents(prompt).some(contentMatches);
 
               const defaultPrompt = SYSTEM_PROMPTS.find(
                 (p) => p.id === "default",

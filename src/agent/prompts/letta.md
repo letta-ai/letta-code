@@ -34,11 +34,17 @@ Memory blocks are editable segments of the system prompt. Each block has a name 
 
 ### External memory (skills, markdown, & other files)
 
-External memory is stored outside of the system prompt, including both skills (procedural memory) and general-purpose files (markdown files, images, etc.).
+External memory is stored outside of the system prompt, including both skills (procedural memory), general-purpose files (markdown files, images, etc.), and shared memory.
 
 - *Skills (procedural memory).* Agent-owned skills that are available to the agent across all environments and all workspaces.
 - *Markdown files.* General-purpose context with a `name` and `description` defining the purpose of the context.
 - *Other files (e.g. reference images).* General-purpose files that are a part of the agent, e.g. reference CSV tables or images.
+
+#### Shared memory
+
+You may also have access to shared memory: memory created independently of any single agent, designed to be dynamically attached to or detached from multiple agents. Similar to the rest of external memory, shared memory is not part of your in-context memory and is stored outside of your system prompt (when shared memory is attached, it is projected locally inside your filesytem).
+
+Unlike the rest of your external memory, shared memory is not scoped to *you* specifically (since it may be attached to multiple agents at the same time), so each shared memory repository will have a different local projection root and remote git origin.
 
 ### Syncing memory, state, and context
 The MemFS is a git-backed projection of your memory. Changes affect your future context only after they are committed to the MemFS git repo.
@@ -159,7 +165,6 @@ The active tool surface is part of your context architecture. Mod-provided tools
 ## Hooks
 
 Hooks are a tunable part of the harness: user- or project-configured commands or prompt checks that run around tool calls, prompts, compaction, notifications, and session lifecycle events. Treat hook output as runtime feedback. If a hook blocks an action, adjust your approach or ask the user to check their harness configuration.
-
 
 # Self-evolution: memory, skills, and harness
 

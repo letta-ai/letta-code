@@ -425,3 +425,244 @@ test("acceptEdits mode - does NOT allow Bash", () => {
   expect(result.decision).toBe("ask");
   expect(result.reason).toBe("Default behavior for tool");
 });
+
+// ============================================================================
+// Permission Mode: strict
+// ============================================================================
+
+test("strict mode - Read within working directory defaults to ask (no auto-allow)", () => {
+  permissionMode.setMode("strict");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Read",
+    { file_path: "/Users/test/project/src/index.ts" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // In standard mode this would auto-allow, but strict mode forces "ask"
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("strict mode - Glob within working directory defaults to ask (no auto-allow)", () => {
+  permissionMode.setMode("strict");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Glob",
+    { path: "/Users/test/project/**/*.ts" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("strict mode - Grep within working directory defaults to ask (no auto-allow)", () => {
+  permissionMode.setMode("strict");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Grep",
+    { path: "/Users/test/project/src", pattern: "TODO" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("strict mode - read-only shell command defaults to ask (no auto-allow)", () => {
+  permissionMode.setMode("strict");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Bash",
+    { command: "ls -la /Users/test/project" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // In standard mode, read-only shell commands auto-allow; strict mode forces "ask"
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("strict mode - Skill tool defaults to ask (no auto-allow)", () => {
+  permissionMode.setMode("strict");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Skill",
+    { skill: "pdf" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // In standard mode, Skill auto-allows; strict mode forces "ask"
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("strict mode - memory tool defaults to ask (no auto-allow)", () => {
+  permissionMode.setMode("strict");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "memory",
+    {
+      command: "create",
+      reason: "seed",
+      path: "system/human/profile.md",
+      description: "Profile",
+      file_text: "hello",
+    },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // In standard mode, memory auto-allows; strict mode forces "ask"
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("strict mode - Write tool defaults to ask", () => {
+  permissionMode.setMode("strict");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Write",
+    { file_path: "/tmp/test.txt", content: "hello" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  expect(result.decision).toBe("ask");
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("strict mode - does NOT override deny rules", () => {
+  permissionMode.setMode("strict");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: ["Read"],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Read",
+    { file_path: "/Users/test/project/src/index.ts" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // Deny rules still take precedence
+  expect(result.decision).toBe("deny");
+  expect(result.reason).toBe("Matched deny rule");
+});
+
+test("strict mode - does NOT override alwaysAsk rules", () => {
+  permissionMode.setMode("strict");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+    alwaysAsk: ["Read"],
+  };
+
+  const result = checkPermission(
+    "Read",
+    { file_path: "/Users/test/project/src/index.ts" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // alwaysAsk rules still take precedence
+  expect(result.decision).toBe("alwaysAsk");
+  expect(result.reason).toBe("Matched alwaysAsk rule");
+});
+
+test("strict mode - explicit allow rules still work", () => {
+  permissionMode.setMode("strict");
+
+  const permissions: PermissionRules = {
+    allow: ["Read"],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Read",
+    { file_path: "/Users/test/project/src/index.ts" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // Explicit allow rules still work
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Matched allow rule");
+});
+
+test("strict mode - CLI --allowedTools still work", () => {
+  permissionMode.setMode("strict");
+  cliPermissions.setAllowedTools("Read");
+
+  const permissions: PermissionRules = {
+    allow: [],
+    deny: [],
+    ask: [],
+  };
+
+  const result = checkPermission(
+    "Read",
+    { file_path: "/Users/test/project/src/index.ts" },
+    permissions,
+    "/Users/test/project",
+  );
+
+  // CLI --allowedTools still allows the tool
+  expect(result.decision).toBe("allow");
+  expect(result.matchedRule).toContain("(CLI)");
+  expect(result.reason).toBe("Matched --allowedTools flag");
+});

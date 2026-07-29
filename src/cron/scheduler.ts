@@ -14,17 +14,15 @@
 
 import { getBackend } from "@/backend";
 import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
+import { TO_SUBSCRIBERS } from "@/websocket/listener/connection";
 import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
+import { emitProtocolV2Message } from "@/websocket/listener/protocol-outbound";
 import { scheduleQueuePump } from "@/websocket/listener/queue";
 import {
   getActiveRuntime,
   getOrCreateConversationRuntime,
-  safeEmitWsEvent,
 } from "@/websocket/listener/runtime";
-import {
-  isListenerTransportOpen,
-  type ListenerTransport,
-} from "@/websocket/listener/transport";
+import type { ListenerTransport } from "@/websocket/listener/transport";
 import type {
   IncomingMessage,
   StartListenerOptions,
@@ -141,26 +139,25 @@ function emitCronsUpdated(
   task: CronTask,
   conversationId?: string | null,
 ): void {
-  if (!isListenerTransportOpen(socket)) {
-    return;
-  }
-
+  const listener = getActiveRuntime();
+  if (!listener) return;
+  const runtimeScope = {
+    agent_id: task.agent_id,
+    conversation_id: conversationId ?? task.conversation_id ?? "default",
+  };
   const payload = {
-    type: "crons_updated",
+    type: "crons_updated" as const,
     timestamp: Date.now(),
     agent_id: task.agent_id,
-    conversation_id: conversationId ?? task.conversation_id,
+    conversation_id: runtimeScope.conversation_id,
   };
-
-  try {
-    socket.send(JSON.stringify(payload));
-    safeEmitWsEvent("send", "protocol", payload);
-  } catch (err) {
-    console.error(
-      `[Cron] Error sending crons_updated for task ${task.id}:`,
-      err instanceof Error ? err.message : err,
-    );
-  }
+  emitProtocolV2Message(
+    socket,
+    listener,
+    payload,
+    runtimeScope,
+    TO_SUBSCRIBERS,
+  );
 }
 
 // ── Core tick logic ─────────────────────────────────────────────────

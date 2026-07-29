@@ -396,12 +396,14 @@ function filterExternalToolsByRuntimeContext(
 ): Map<string, ExternalToolDefinition> {
   return new Map(
     Array.from(externalTools.entries()).filter(([, tool]) => {
-      if (!tool.runtime) {
-        return true;
-      }
+      const matchesConnection =
+        tool.connectionId === undefined ||
+        tool.connectionId === runtimeContext.connectionId;
       return (
-        tool.runtime.agentId === runtimeContext.agentId &&
-        tool.runtime.conversationId === runtimeContext.conversationId
+        matchesConnection &&
+        (!tool.runtime ||
+          (tool.runtime.agentId === runtimeContext.agentId &&
+            tool.runtime.conversationId === runtimeContext.conversationId))
       );
     }),
   );
@@ -896,9 +898,6 @@ export interface ClientTool {
 // EXTERNAL TOOLS (SDK-side execution)
 // ═══════════════════════════════════════════════════════════════
 
-/**
- * External tool definition from SDK
- */
 export interface ExternalToolDefinition {
   name: string;
   label?: string;
@@ -906,6 +905,7 @@ export interface ExternalToolDefinition {
   parameters: Record<string, unknown>; // JSON Schema
   /** Internal registration key; model-facing calls still use name. */
   registrationKey?: string;
+  connectionId?: string;
   /** Optional visibility scope; scoped tools are hidden unless selected for a turn. */
   scopeId?: string;
   /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
@@ -2849,10 +2849,7 @@ async function executeToolInner(
             },
           };
         }
-
-        // Inject secrets as environment variables instead of substituting into
-        // the command string. This prevents shell metacharacters in secrets
-        // (e.g. $$, backticks, quotes) from being interpreted by the shell.
+        // Keep secret values out of shell interpolation.
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
         const secretEnv =
           typeof command === "string" ||
@@ -2862,6 +2859,9 @@ async function executeToolInner(
             : {};
         if (Object.keys(secretEnv).length > 0) {
           enhancedArgs = { ...enhancedArgs, secretEnv };
+        }
+        if (options?.parentScope) {
+          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
         }
       }
 

@@ -466,7 +466,11 @@ function checkPermissionForEngine(
     }
   }
 
-  if (toolName === "Skill") {
+  // Strict mode skips all auto-allow paths; every tool goes through the
+  // approval callback (or defaults to "ask" if no callback is registered).
+  const isStrictMode = effectiveMode === "strict";
+
+  if (toolName === "Skill" && !isStrictMode) {
     traceEvent(trace, "skill-auto-allow", "Skill tool is always allowed");
     return {
       result: {
@@ -477,7 +481,10 @@ function checkPermissionForEngine(
     };
   }
 
-  if (READ_ONLY_SHELL_TOOLS.has(toolName) || isShellToolName(canonicalTool)) {
+  if (
+    !isStrictMode &&
+    (READ_ONLY_SHELL_TOOLS.has(toolName) || isShellToolName(canonicalTool))
+  ) {
     const shellCommand = extractShellCommand(toolArgs);
     if (
       shellCommand &&
@@ -520,7 +527,7 @@ function checkPermissionForEngine(
     }
   }
 
-  if (workingDirectoryTools.includes(queryTool)) {
+  if (!isStrictMode && workingDirectoryTools.includes(queryTool)) {
     const filePath = extractFilePath(toolArgs);
     if (
       filePath &&
@@ -610,7 +617,12 @@ function checkPermissionForEngine(
     }
   }
 
-  const defaultDecision = getDefaultDecision(toolName, toolArgs, modTools);
+  const defaultDecision = getDefaultDecision(
+    toolName,
+    toolArgs,
+    modTools,
+    effectiveMode,
+  );
   traceEvent(trace, "default-decision", `Default: ${defaultDecision}`);
   return {
     result: {
@@ -818,7 +830,14 @@ function getDefaultDecision(
   toolName: string,
   toolArgs?: ToolArgs,
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
+  mode?: string,
 ): PermissionDecision {
+  // Strict mode: every tool defaults to "ask" so the approval callback
+  // (or user) must explicitly allow it.
+  if (mode === "strict") {
+    return "ask";
+  }
+
   const modApprovalPolicy = modToolApprovalPolicy(toolName, modTools);
   if (modApprovalPolicy !== undefined) {
     if (modApprovalPolicy === "auto") return "allow";

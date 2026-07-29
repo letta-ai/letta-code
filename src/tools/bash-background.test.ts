@@ -38,14 +38,20 @@ describe.skipIf(isWindows)("Bash background tools", () => {
   });
 
   test("starts background process and returns ID in text", async () => {
+    const runtimeScope = { agentId: "agent-1", conversationId: "conv-1" };
     const result = await bash({
       command: "echo 'test'",
       description: "Test background",
       run_in_background: true,
+      parentScope: runtimeScope,
     });
 
     expect(result.content[0]?.text).toContain("background with ID:");
     expect(result.content[0]?.text).toMatch(/bash_\d+/);
+    const bashId = result.content[0]?.text.match(/bash_\d+/)?.[0];
+    expect(backgroundProcesses.get(bashId ?? "")?.runtimeScope).toEqual(
+      runtimeScope,
+    );
   });
 
   test("BashOutput retrieves output from background shell", async () => {

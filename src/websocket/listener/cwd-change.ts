@@ -1,6 +1,6 @@
-import type WebSocket from "ws";
 import { updateRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import { getOrCreateProcessTransport } from "./connection";
 import {
   getWorkingDirectoryScopeKey,
   setConversationWorkingDirectory,
@@ -8,6 +8,7 @@ import {
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import { getConversationRuntime } from "./runtime";
 import { normalizeConversationId, normalizeCwdAgentId } from "./scope";
+import type { ListenerTransport } from "./transport";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
 
 async function loadSettingsForWorkingDirectory(
@@ -59,7 +60,7 @@ export async function switchConversationWorkingDirectory(params: {
   workingDirectory: string;
   emitStatus?: boolean;
   statusRuntime?: ConversationRuntime | ListenerRuntime;
-  statusSocket?: WebSocket;
+  statusSocket?: ListenerTransport;
   updateCurrentRuntimeContext?: boolean;
 }): Promise<void> {
   const { runtime, workingDirectory } = params;
@@ -94,10 +95,11 @@ export async function switchConversationWorkingDirectory(params: {
     reminderState.pendingSessionContextReason = "cwd_changed";
   }
 
-  const statusSocket = params.statusSocket ?? runtime.socket;
-  if (params.emitStatus !== false && statusSocket) {
+  if (params.emitStatus !== false) {
+    const statusTransport =
+      params.statusSocket ?? getOrCreateProcessTransport(runtime);
     emitDeviceStatusUpdate(
-      statusSocket,
+      statusTransport,
       params.statusRuntime ?? conversationRuntime ?? runtime,
       {
         agent_id: agentId,
