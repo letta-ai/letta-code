@@ -17,6 +17,7 @@ import {
 } from "./backend/local/paths";
 import type { ExperimentId } from "./experiments/types";
 import type { HooksConfig } from "./hooks/types";
+import type { McpServerConfig } from "./mcp-client";
 import type { PermissionRules } from "./permissions/types";
 import { getRuntimeContext } from "./runtime-context";
 import { trackBoundaryError } from "./telemetry/error-reporting";
@@ -43,10 +44,7 @@ export interface WindowTitleConfig {
   items: string[]; // Ordered list of enabled field keys (e.g. ["agent-name", "model-name"])
 }
 
-/**
- * Per-agent settings stored in a flat array.
- * baseUrl is omitted/undefined for Letta API (api.letta.com).
- */
+/** Per-agent settings; baseUrl is omitted for the Letta API. */
 export interface AgentSettings {
   agentId: string;
   baseUrl?: string; // undefined = Letta API (api.letta.com)
@@ -97,6 +95,7 @@ export interface Settings {
   windowTitle?: WindowTitleConfig; // Configurable terminal window title
   env?: Record<string, string>;
   experiments?: Partial<Record<ExperimentId, boolean>>;
+  mcpServers?: McpServerConfig[]; // MCP servers executed by the local Letta Code process
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL (e.g., "api.letta.com", "localhost:8283")
   // Per-agent settings (global, keyed by agentId+serverKey)

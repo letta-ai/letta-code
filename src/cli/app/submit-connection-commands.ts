@@ -1,5 +1,4 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import { getBackend } from "@/backend";
 import {
   handleMcpAdd,
   type McpCommandContext,
@@ -59,17 +58,6 @@ export async function handleConnectionCommand(
     const afterMcp = trimmed.slice(4).trim();
     const firstWord = afterMcp.split(/\s+/)[0]?.toLowerCase();
 
-    if (
-      firstWord !== "help" &&
-      !getBackend().capabilities.serverSideToolManagement
-    ) {
-      const cmd = commandRunner.start(msg, "Checking MCP support...");
-      cmd.fail(
-        "MCP server management is not supported by the local backend yet.",
-      );
-      return { submitted: true };
-    }
-
     if (!firstWord) {
       openOverlay(
         "mcp",
@@ -93,11 +81,12 @@ export async function handleConnectionCommand(
     }
 
     if (firstWord === "connect") {
-      openOverlay(
-        "mcp-connect",
-        "/mcp connect",
-        "Opening MCP connect flow...",
-        "MCP connect dismissed",
+      const cmd = commandRunner.start(
+        msg,
+        "Checking MCP connection options...",
+      );
+      cmd.fail(
+        "The server-side MCP OAuth flow is deprecated in Letta Code. Use /mcp add to configure a client-local stdio, HTTP, or SSE server.",
       );
       return { submitted: true };
     }
@@ -107,15 +96,15 @@ export async function handleConnectionCommand(
       const output = [
         "/mcp help",
         "",
-        "Manage MCP servers.",
+        "Manage MCP servers that run from this Letta Code client.",
         "",
         "USAGE",
-        "  /mcp              — open MCP server manager",
-        "  /mcp add ...      — add a new server (without OAuth)",
-        "  /mcp connect      — interactive wizard with OAuth support",
+        "  /mcp              — open the client-local MCP manager",
+        "  /mcp add ...      — add a client-local server",
         "  /mcp help         — show this help",
         "",
         "EXAMPLES",
+        "  /mcp add --transport stdio filesystem npx -y @modelcontextprotocol/server-filesystem .",
         "  /mcp add --transport http notion https://mcp.notion.com/mcp",
       ].join("\n");
       cmd.finish(output, true);

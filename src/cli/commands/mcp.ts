@@ -1,14 +1,11 @@
 // src/cli/commands/mcp.ts
 // MCP server command handlers
 
-import type {
-  CreateSseMcpServer,
-  CreateStdioMcpServer,
-  CreateStreamableHTTPMcpServer,
-} from "@letta-ai/letta-client/resources/mcp-servers/mcp-servers";
-import { getClient } from "@/backend/api/client";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
+import type { McpServerConfig } from "@/mcp-client";
+import { replaceClientMcpServers } from "@/mcp-runtime";
+import { settingsManager } from "@/settings-manager";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -252,102 +249,54 @@ export async function handleMcpAdd(
   ctx.setCommandRunning(true);
 
   try {
-    const client = await getClient();
+    const existing = settingsManager.getSettings().mcpServers ?? [];
+    if (existing.some((server) => server.name === args.name)) {
+      throw new Error(`MCP server "${args.name}" already exists`);
+    }
 
-    let config:
-      | CreateStreamableHTTPMcpServer
-      | CreateSseMcpServer
-      | CreateStdioMcpServer;
-
-    if (args.transport === "http") {
-      if (!args.url) {
-        throw new Error("URL is required for HTTP transport");
-      }
+    const headers = {
+      ...args.headers,
+      ...(args.authToken ? { Authorization: `Bearer ${args.authToken}` } : {}),
+    };
+    let config: McpServerConfig;
+    if (args.transport === "stdio") {
+      if (!args.command) throw new Error("Command is required for stdio");
       config = {
-        mcp_server_type: "streamable_http",
-        server_url: args.url,
-        auth_token: args.authToken,
-        custom_headers:
-          Object.keys(args.headers).length > 0 ? args.headers : null,
-      };
-    } else if (args.transport === "sse") {
-      if (!args.url) {
-        throw new Error("URL is required for SSE transport");
-      }
-      config = {
-        mcp_server_type: "sse",
-        server_url: args.url,
-        auth_token: args.authToken,
-        custom_headers:
-          Object.keys(args.headers).length > 0 ? args.headers : null,
-      };
-    } else {
-      // stdio
-      if (!args.command) {
-        throw new Error("Command is required for stdio transport");
-      }
-      config = {
-        mcp_server_type: "stdio",
+        name: args.name,
+        transport: "stdio",
         command: args.command,
         args: args.args,
+        cwd: process.cwd(),
+      };
+    } else {
+      if (!args.url) throw new Error("URL is required for HTTP/SSE");
+      config = {
+        name: args.name,
+        transport: args.transport,
+        url: args.url,
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
       };
     }
 
-    const server = await client.mcpServers.create({
-      server_name: args.name,
-      config,
-    });
-
-    if (!server.id) {
-      updateCommandResult(
-        ctx.buffersRef,
-        ctx.refreshDerived,
-        cmdId,
-        msg,
-        `Created MCP server "${args.name}" but server ID not available`,
-        false,
-      );
-      return;
+    const configs = [...existing, config];
+    settingsManager.updateSettings({ mcpServers: configs });
+    await settingsManager.flush();
+    const states = await replaceClientMcpServers(configs);
+    const state = states.find(
+      (candidate) => candidate.config.name === args.name,
+    );
+    if (!state || state.status === "failed") {
+      throw new Error(state?.error ?? "MCP server failed to connect");
     }
 
-    // Auto-refresh to fetch tools from the MCP server
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
       cmdId,
       msg,
-      `Created MCP server "${args.name}" (${server.mcp_server_type})\nID: ${server.id}\nFetching tools from server...`,
-      false,
-      "running",
+      `Added client-local MCP server "${args.name}" (${args.transport})\nLoaded ${state.tools.length} tool${state.tools.length === 1 ? "" : "s"}`,
+      true,
     );
-
-    try {
-      await client.mcpServers.refresh(server.id);
-
-      // Get tool count
-      const tools = await client.mcpServers.tools.list(server.id);
-
-      updateCommandResult(
-        ctx.buffersRef,
-        ctx.refreshDerived,
-        cmdId,
-        msg,
-        `Created MCP server "${args.name}" (${server.mcp_server_type})\nID: ${server.id}\nLoaded ${tools.length} tool${tools.length === 1 ? "" : "s"} from server`,
-        true,
-      );
-    } catch (refreshErr) {
-      // If refresh fails, still show success but warn about tools
-      const errorMsg =
-        refreshErr instanceof Error ? refreshErr.message : "Unknown error";
-      updateCommandResult(
-        ctx.buffersRef,
-        ctx.refreshDerived,
-        cmdId,
-        msg,
-        `Created MCP server "${args.name}" (${server.mcp_server_type})\nID: ${server.id}\nWarning: Could not fetch tools - ${errorMsg}\nUse /mcp and press R to refresh manually.`,
-        true,
-      );
-    }
   } catch (error) {
     const errorDetails = formatErrorDetails(error, "");
     updateCommandResult(
@@ -370,10 +319,10 @@ export function handleMcpUsage(ctx: McpCommandContext, msg: string): void {
     ctx.refreshDerived,
     msg,
     "Usage: /mcp [subcommand ...]\n" +
-      "  /mcp                  - Open MCP server manager\n" +
-      "  /mcp add ...          - Add a new server (without OAuth)\n" +
-      "  /mcp connect          - Interactive wizard with OAuth support\n\n" +
+      "  /mcp                  - Open client-local MCP manager\n" +
+      "  /mcp add ...          - Add a client-local server\n\n" +
       "Examples:\n" +
+      "  /mcp add --transport stdio filesystem npx -y @modelcontextprotocol/server-filesystem .\n" +
       "  /mcp add --transport http notion https://mcp.notion.com/mcp",
     false,
   );

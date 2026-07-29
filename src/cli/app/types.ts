@@ -72,7 +72,6 @@ export type ActiveOverlay =
   | "memfs-sync"
   | "pin"
   | "mcp"
-  | "mcp-connect"
   | "install-github-app"
   | "help"
   | "hooks"
