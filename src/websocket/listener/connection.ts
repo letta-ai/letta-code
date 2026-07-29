@@ -58,7 +58,9 @@ function refreshLegacySingleConnection(runtime: ListenerRuntime): void {
     isListenerTransportOpen(connection.writer),
   );
   const only = live.length === 1 ? live[0] : null;
-  runtime.transport = only?.writer ?? runtime.processTransport;
+  // Keep the process-scoped transport stable across relay socket replacement.
+  // Turn continuations may capture this handle before a transient disconnect.
+  runtime.transport = runtime.processTransport ?? only?.writer ?? null;
   runtime.streamTransport = only?.streamWriter ?? null;
   runtime.socket = only ? socketForTransport(only.writer) : null;
   runtime.streamSocket = only?.streamWriter
@@ -379,8 +381,6 @@ export function getOrCreateProcessTransport(
   runtime: ListenerRuntime,
 ): ListenerTransport {
   runtime.processTransport ??= new ProcessRuntimeTransport(runtime);
-  if (runtime.connections.size !== 1) {
-    refreshLegacySingleConnection(runtime);
-  }
+  refreshLegacySingleConnection(runtime);
   return runtime.processTransport;
 }
