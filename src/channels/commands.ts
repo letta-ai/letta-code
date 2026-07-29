@@ -149,6 +149,11 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     kind: "agent-scoped",
     summary: "Start a memory reflection pass for this conversation.",
   },
+  {
+    name: "reload",
+    kind: "agent-scoped",
+    summary: "Reload settings, local mods, and agent secrets.",
+  },
 ];
 
 const SLACK_MENTION_COMMAND_NAMES = [
@@ -337,7 +342,7 @@ export function buildChannelHelpMessage(channelId: string): string {
       "@agent /reflection - start a memory reflection pass",
       "@agent /detach - stop replying in this thread until mentioned again",
       "@agent /new - start a fresh conversation for this thread",
-      "@agent /reload - reload channel/listener settings",
+      "@agent /reload - reload settings, local mods, and agent secrets",
       `Legacy bang aliases still work after a mention: ${supportedBangCommandsText()}.`,
       "If this chat is not connected yet, send a normal message and follow the pairing instructions.",
     ].join("\n");
@@ -800,7 +805,7 @@ export function buildChannelReloadUnavailableMessage(
   channelId: string,
 ): string {
   const displayName = channelDisplayName(channelId);
-  return `${displayName} cannot reload listener settings for this chat because the listener is not ready yet. Try again in a moment.`;
+  return `${displayName} cannot reload settings, local mods, and agent secrets for this chat because the listener is not ready yet. Try again in a moment.`;
 }
 
 async function handleScopedCommand(params: {
@@ -959,9 +964,6 @@ export async function tryHandleChannelSlashCommand(
             handler: options.handlers?.reflection,
           });
         case "reload":
-          if (!isSlackMentionControl) {
-            return buildUnsupportedChannelCommandMessage(msg.channel, command);
-          }
           return handleScopedCommand({
             msg,
             command,

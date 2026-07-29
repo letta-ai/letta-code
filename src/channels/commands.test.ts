@@ -18,6 +18,7 @@ import {
   buildChannelNewConversationMessage,
   buildChannelNoRouteMessage,
   buildChannelPausedMessage,
+  buildChannelReloadUnavailableMessage,
   buildChannelResumedMessage,
   buildChannelStatusMessage,
   buildUnsupportedChannelCommandMessage,
@@ -189,6 +190,59 @@ describe("channel slash commands", () => {
     ]);
   });
 
+  test("handles reload as a shared slash command and Slack mention alias", async () => {
+    const replies: CapturedDirectReply[] = [];
+    const handledCommands: string[] = [];
+    const adapter = createReplyCapturingAdapter(replies, "telegram");
+    const msg: InboundChannelMessage = {
+      channel: "telegram",
+      chatId: "chat-1",
+      senderId: "user-1",
+      text: "/reload",
+      timestamp: Date.now(),
+      messageId: "msg-1",
+    };
+
+    await expect(
+      tryHandleChannelSlashCommand(adapter, msg, {
+        handlers: {
+          reload: async (command) => {
+            handledCommands.push(command.raw);
+            return { handled: true, text: `reloaded via ${command.raw}` };
+          },
+        },
+      }),
+    ).resolves.toBe(true);
+
+    await expect(
+      tryHandleChannelSlashCommand(
+        createReplyCapturingAdapter(replies, "slack"),
+        {
+          ...msg,
+          channel: "slack",
+          chatId: "C123",
+          text: "!reload",
+          isMention: true,
+        },
+        {
+          enableBangCommands: true,
+          handlers: {
+            reload: async (command) => {
+              handledCommands.push(command.raw);
+              return { handled: true, text: `reloaded via ${command.raw}` };
+            },
+          },
+        },
+      ),
+    ).resolves.toBe(true);
+
+    expect(handledCommands).toEqual(["/reload", "!reload"]);
+    expect(replies.map((reply) => reply.text)).toEqual([
+      "reloaded via /reload",
+      "reloaded via !reload",
+    ]);
+  });
+
   test("lists supported commands for channel help", () => {
     for (const name of [
       "help",
@@ -200,6 +254,7 @@ describe("channel slash commands", () => {
       "feedback",
       "model",
       "reflection",
+      "reload",
     ]) {
       expect(listChannelSlashCommands()).toContainEqual(
         expect.objectContaining({ name }),
@@ -210,7 +265,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).not.toContain("MessageChannel");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection.",
+      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection, /reload.",
     );
 
     const slackText = buildChannelHelpMessage("slack");
@@ -230,7 +285,9 @@ describe("channel slash commands", () => {
     );
     expect(slackText).toContain("@agent /feedback <message>");
     expect(slackText).toContain("@agent /detach");
-    expect(slackText).toContain("@agent /reload");
+    expect(slackText).toContain(
+      "@agent /reload - reload settings, local mods, and agent secrets",
+    );
     expect(slackText).toContain(
       "Legacy bang aliases still work after a mention: !help, !detach, !model, !new, !reload.",
     );
@@ -771,6 +828,9 @@ describe("channel slash commands", () => {
     expect(buildChannelModelUnavailableMessage("discord")).toContain(
       "listener is not ready yet",
     );
+    expect(buildChannelReloadUnavailableMessage("telegram")).toContain(
+      "settings, local mods, and agent secrets",
+    );
   });
 
   test("builds a useful unsupported-command response", () => {
@@ -784,7 +844,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram received /compact now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection.",
+      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection, /reload.",
     );
     expect(text).toContain("without a leading slash");
 
