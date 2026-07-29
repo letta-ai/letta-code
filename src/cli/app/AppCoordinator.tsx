@@ -355,6 +355,7 @@ export function App({
   startupApprovals = [],
   messageHistory = [],
   resumedExistingConversation = false,
+  startupConversationTitleEligible = false,
   tokenStreaming = false,
   reasoningTabCycleEnabled: initialReasoningTabCycleEnabled = false,
   showCompactions = false,
@@ -403,7 +404,6 @@ export function App({
 
   const projectDirectory = process.cwd();
 
-  // Track current conversation (always created fresh on startup)
   const [conversationId, setConversationId] = useState(initialConversationId);
   const [conversationSummary, setConversationSummary] = useState<string | null>(
     null,
@@ -416,7 +416,6 @@ export function App({
     telemetry.setCurrentAgentId(agentId);
   }, [agentId]);
 
-  // Keep a ref to the current conversationId for use in callbacks
   const conversationIdRef = useRef(conversationId);
   useEffect(() => {
     conversationIdRef.current = conversationId;
@@ -1201,7 +1200,6 @@ export function App({
     [],
   );
 
-  // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
   const sharedReminderStateRef = useRef<SharedReminderState>(
@@ -1218,9 +1216,8 @@ export function App({
     new Set<string>(),
   );
 
-  // Only brand-new conversations without an explicit title should auto-generate one.
   const shouldAutoGenerateConversationTitleRef = useRef(
-    !resumedExistingConversation,
+    !resumedExistingConversation || startupConversationTitleEligible,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
   const shouldAutoGenerateConversationDescriptionRef = useRef(
