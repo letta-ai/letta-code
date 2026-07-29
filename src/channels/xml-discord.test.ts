@@ -20,7 +20,7 @@ describe("discord xml", () => {
     expect(xml).toContain('source="discord"');
   });
 
-  test("reminder text includes discord-specific capability hints", () => {
+  test("keeps discord capability hints out of the compact reminder", () => {
     const message: InboundChannelMessage = {
       channel: "discord",
       chatId: "channel-123",
@@ -31,11 +31,12 @@ describe("discord xml", () => {
       timestamp: Date.now(),
     };
     const reminder = buildChannelReminderText(message);
-    expect(reminder).toContain("discord");
-    expect(reminder.toLowerCase()).toContain("react");
-    expect(reminder).toContain("upload-file");
-    expect(reminder).toContain("native Unicode emoji");
-    expect(reminder).toContain("<:name:id>");
+    expect(reminder).toContain("External discord turn");
+    expect(reminder).toContain("scoped MessageChannel instructions");
+    expect(reminder).not.toContain("react");
+    expect(reminder).not.toContain("upload-file");
+    expect(reminder).not.toContain("native Unicode emoji");
+    expect(reminder).not.toContain("<:name:id>");
   });
 
   test("thread metadata appears in XML as thread_id", () => {
