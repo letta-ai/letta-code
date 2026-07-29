@@ -7,7 +7,10 @@ import type {
   Message,
   MessageType,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { getResumeDataFromBackend } from "@/agent/check-approval";
+import {
+  getResumeDataFromBackend,
+  isResumedConversation,
+} from "@/agent/check-approval";
 import { __testSetBackend, type Backend } from "@/backend";
 
 type ResumeAgentState = AgentState & {
@@ -157,6 +160,39 @@ async function captureDebugOutput<T>(
   }
 }
 
+describe("isResumedConversation", () => {
+  test("keeps the safe resumed fallback when conversation state is unavailable", () => {
+    expect(isResumedConversation(undefined)).toBe(true);
+  });
+
+  test("treats an empty untitled conversation as new", () => {
+    expect(
+      isResumedConversation({
+        summary: null,
+        in_context_message_ids: [],
+      }),
+    ).toBe(false);
+  });
+
+  test("treats a titled conversation as resumed", () => {
+    expect(
+      isResumedConversation({
+        summary: "Existing title",
+        in_context_message_ids: [],
+      }),
+    ).toBe(true);
+  });
+
+  test("treats a conversation with existing messages as resumed", () => {
+    expect(
+      isResumedConversation({
+        summary: null,
+        in_context_message_ids: ["message-1"],
+      }),
+    ).toBe(true);
+  });
+});
+
 describe("getResumeData", () => {
   afterEach(() => {
     __testSetBackend(null);
@@ -189,6 +225,7 @@ describe("getResumeData", () => {
     expect(resume.pendingApprovals).toHaveLength(1);
     expect(resume.pendingApprovals[0]?.toolName).toBe("Bash");
     expect(resume.messageHistory).toEqual([]);
+    expect(resume.conversation?.in_context_message_ids).toEqual(["msg-last"]);
   });
 
   test("includeMessageHistory=false skips default-conversation backfill calls", async () => {
