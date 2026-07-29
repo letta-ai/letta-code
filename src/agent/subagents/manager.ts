@@ -862,6 +862,7 @@ export async function spawnSubagent(
         billingTier,
         subagentType: type,
         backendMode,
+        reflectionModelOverride: process.env.LETTA_REFLECTION_MODEL,
       });
   // Build the prompt with system reminder for deployed agents
   let finalPrompt = prompt;
