@@ -133,6 +133,7 @@ export async function handleCloudCommand(params: {
           conversationId: params.conversationId,
           githubRepositories: repositories,
           forceNew: Boolean(repositories),
+          setAsRuntimeTarget: true,
         });
       } finally {
         deletePrivateHandoffRef(
