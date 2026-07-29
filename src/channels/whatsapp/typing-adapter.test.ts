@@ -101,19 +101,25 @@ function makeHarness(
   options: {
     sendPresence?: (presence: string, jid?: string) => Promise<void> | void;
     waitingBehavior?: "off" | "typing_indicator";
+    inboundDebounceMs?: number;
     lidMapping?: { lidJid: string; phoneJid: string };
   } = {},
 ) {
   const presence: PresenceCall[] = [];
   let connectionUpdate: ((update: Record<string, unknown>) => void) | undefined;
   let socketClosed = false;
+  let upsertHandler: ((payload: unknown) => unknown) | undefined;
+  const events: string[] = [];
   const socket = {
     ev: {
-      on(_event: string, _handler: (payload: unknown) => void) {},
+      on(event: string, handler: (payload: unknown) => unknown) {
+        if (event === "messages.upsert") upsertHandler = handler;
+      },
     },
     ws: {
       close() {
         socketClosed = true;
+        events.push("socket-close");
       },
     },
     async sendMessage(_jid: string, _payload: Record<string, unknown>) {
@@ -121,6 +127,7 @@ function makeHarness(
     },
     sendPresenceUpdate(presenceName: string, jid?: string) {
       presence.push({ jid, presence: presenceName });
+      events.push(`presence:${presenceName}`);
       return options.sendPresence?.(presenceName, jid);
     },
   };
@@ -145,6 +152,7 @@ function makeHarness(
     {
       ...account,
       waitingBehavior: options.waitingBehavior ?? account.waitingBehavior,
+      inboundDebounceMs: options.inboundDebounceMs,
     },
     {
       createSocket,
@@ -152,15 +160,22 @@ function makeHarness(
       lidStore,
     },
   );
+  adapter.onMessage = async () => {
+    events.push("inbound-delivered");
+  };
   trackedAdapters.push(adapter);
   return {
     adapter,
     presence,
+    events,
     get socketClosed() {
       return socketClosed;
     },
     emitConnection(update: Record<string, unknown>) {
       connectionUpdate?.(update);
+    },
+    async emitUpsert(messages: Record<string, unknown>[]) {
+      await upsertHandler?.({ type: "notify", messages });
     },
   };
 }
@@ -288,6 +303,36 @@ describe("WhatsApp adapter typing lifecycle", () => {
     });
     expect(presenceNames(second)).toEqual(["composing"]);
     expect(second.adapter.isRunning?.()).toBe(false);
+  });
+
+  test("flushes debounce and pauses typing before closing the socket", async () => {
+    const harness = makeHarness(temporaryDirectory(), {
+      inboundDebounceMs: 10_000,
+    });
+    await harness.adapter.start();
+    const turn = source();
+    await harness.adapter.handleTurnLifecycleEvent?.(
+      lifecycle("processing", { sources: [turn] }),
+    );
+    await harness.emitUpsert([
+      {
+        key: {
+          remoteJid: turn.chatId,
+          id: "pending-before-stop",
+        },
+        message: { conversation: "pending" },
+        messageTimestamp: Math.floor(Date.now() / 1000),
+      },
+    ]);
+
+    expect(harness.events).toEqual(["presence:composing"]);
+    await harness.adapter.stop?.();
+    expect(harness.events).toEqual([
+      "presence:composing",
+      "inbound-delivered",
+      "presence:paused",
+      "socket-close",
+    ]);
   });
 
   test("stop awaits delayed paused presence before socket close", async () => {

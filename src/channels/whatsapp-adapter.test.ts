@@ -171,6 +171,15 @@ function createReconnectHarness(accountId: string) {
   const updates: ConnectionUpdate[] = [];
   let createSocketCalls = 0;
   let releaseCalls = 0;
+  const presenceCalls: Array<{
+    socket: number;
+    presence: string;
+    jid?: string;
+  }> = [];
+  const sentPayloads: Array<{
+    socket: number;
+    payload: Record<string, unknown>;
+  }> = [];
   const emptyStore = {
     resolve: () => null,
     record: () => ({ status: "idempotent" as const }),
@@ -186,6 +195,13 @@ function createReconnectHarness(accountId: string) {
         ev: { on: () => undefined },
         ws: { close: () => undefined },
         user: { id: "15551234567@s.whatsapp.net", lid: undefined },
+        async sendPresenceUpdate(presence: string, jid?: string) {
+          presenceCalls.push({ socket: createSocketCalls, presence, jid });
+        },
+        async sendMessage(_jid: string, payload: Record<string, unknown>) {
+          sentPayloads.push({ socket: createSocketCalls, payload });
+          return { key: { id: `sent-${createSocketCalls}` } };
+        },
       },
       saveCreds: async () => undefined,
       DisconnectReason: {},
@@ -206,6 +222,7 @@ function createReconnectHarness(accountId: string) {
       agentId: "agent-whatsapp",
       selfChatMode: false,
       groupMode: "disabled",
+      waitingBehavior: "typing_indicator",
     },
     {
       createSocket,
@@ -225,6 +242,8 @@ function createReconnectHarness(accountId: string) {
     get releaseCalls() {
       return releaseCalls;
     },
+    presenceCalls,
+    sentPayloads,
     close(index = updates.length - 1, message = "timed out") {
       updates[index]?.({
         connection: "close",
@@ -282,6 +301,73 @@ describe("WhatsApp reconnect circuit breaker", () => {
       "Another client may be competing",
     );
     expect(harness.releaseCalls).toBe(6);
+  });
+
+  test("clears managed typing on rapid-loop trip before a clean restart", async () => {
+    const harness = createReconnectHarness("reconnect-typing-clear");
+    await harness.adapter.start();
+    await harness.adapter.handleTurnLifecycleEvent?.({
+      type: "processing",
+      batchId: "typing-batch",
+      sources: [
+        {
+          channel: "whatsapp",
+          accountId: "reconnect-typing-clear",
+          chatId: "15551234567@s.whatsapp.net",
+          messageId: "typing-message",
+          agentId: "agent-whatsapp",
+          conversationId: "typing-conversation",
+        },
+      ],
+    });
+    expect(harness.presenceCalls).toEqual([
+      {
+        socket: 1,
+        presence: "composing",
+        jid: "15551234567@s.whatsapp.net",
+      },
+    ]);
+
+    for (let index = 0; index < 6; index += 1) {
+      harness.open();
+      harness.close(index, `unstable ${index}`);
+      if (index < 5) {
+        harness.scheduler.advanceToNext();
+        await flushReconnectMicrotasks();
+      }
+    }
+
+    expect(harness.adapter.isRunning()).toBe(false);
+    expect(harness.presenceCalls).toEqual([
+      {
+        socket: 1,
+        presence: "composing",
+        jid: "15551234567@s.whatsapp.net",
+      },
+    ]);
+
+    await harness.adapter.start();
+    await harness.adapter.sendMessage({
+      channel: "whatsapp",
+      accountId: "reconnect-typing-clear",
+      chatId: "15551234567@s.whatsapp.net",
+      text: "fresh message",
+    });
+    expect(harness.presenceCalls).toEqual([
+      {
+        socket: 1,
+        presence: "composing",
+        jid: "15551234567@s.whatsapp.net",
+      },
+      {
+        socket: 7,
+        presence: "composing",
+        jid: "15551234567@s.whatsapp.net",
+      },
+    ]);
+    expect(harness.sentPayloads).toEqual([
+      { socket: 7, payload: { text: "fresh message" } },
+    ]);
   });
 
   test("resets history and backoff only after sixty seconds of stable uptime", async () => {

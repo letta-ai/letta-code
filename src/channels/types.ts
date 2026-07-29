@@ -7,9 +7,6 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
-import type { WhatsAppInboundDebounceConfig } from "@/channels/whatsapp/inbound-debounce-config-types";
-import type { WhatsAppMessagePrefixConfig } from "@/channels/whatsapp/message-prefix-config-types";
-import type { WhatsAppWaitingBehaviorConfig } from "@/channels/whatsapp/waiting-behavior-config-types";
 import type { PermissionMode } from "@/permissions/mode";
 import type {
   ApprovalResponseBody,
@@ -17,7 +14,7 @@ import type {
   StopReasonType,
 } from "@/types/protocol_v2";
 
-import type { WhatsAppAttachmentPolicyConfig } from "./whatsapp/attachment-policy-types";
+import type { WhatsAppBehaviorConfig } from "./whatsapp/behavior-config-types";
 
 /**
  * Vendor-neutral model-picker payload produced by the generic channel
@@ -666,11 +663,7 @@ export interface DiscordChannelConfig {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelConfig
-  extends WhatsAppAttachmentPolicyConfig,
-    WhatsAppInboundDebounceConfig,
-    WhatsAppWaitingBehaviorConfig,
-    WhatsAppMessagePrefixConfig {
+export interface WhatsAppChannelConfig extends WhatsAppBehaviorConfig {
   channel: "whatsapp";
   enabled: boolean;
   dmPolicy: DmPolicy;
@@ -859,10 +852,7 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
 
 export interface WhatsAppChannelAccount
   extends ChannelAccountBase,
-    WhatsAppAttachmentPolicyConfig,
-    WhatsAppInboundDebounceConfig,
-    WhatsAppWaitingBehaviorConfig,
-    WhatsAppMessagePrefixConfig {
+    WhatsAppBehaviorConfig {
   channel: "whatsapp";
   /** Agent ID used for account-bound DM and group auto-routing. */
   agentId: string | null;

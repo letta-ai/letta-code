@@ -21,9 +21,7 @@ import {
   isGroupJid,
   isSelfChat,
   isStatusOrBroadcastJid,
-  isStrictPhoneJid,
   resolveSendJid,
-  senderIdFromJid,
   stripDeviceSuffix,
 } from "./jid";
 import type { LidStore } from "./lid-store";
@@ -36,11 +34,7 @@ import {
   extractWhatsAppText,
   type WhatsAppResolvedOutboundMedia,
 } from "./media";
-import {
-  isWhatsAppReactionGroupEligible,
-  parseWhatsAppReactionEntry,
-  type WhatsAppReaction,
-} from "./reactions";
+import { handleWhatsAppReactionBatch } from "./reaction-handler";
 import { loadWhatsAppModule } from "./runtime";
 import { createWhatsAppSocket, getWhatsAppAuthDir } from "./session";
 import { setWhatsAppConnectionState } from "./state";
@@ -558,7 +552,22 @@ export function createWhatsAppAdapter(
       });
     });
     connectedSocket.ev?.on?.("messages.reaction", (event) => {
-      return handleReactionBatch(event).catch((error) => {
+      return handleWhatsAppReactionBatch(
+        {
+          account,
+          connectedAtMs,
+          selfPhoneJid,
+          selfLid,
+          lidStore,
+          sentMessageIds,
+          rememberSeen,
+          applyObservedMappings,
+          getGroupLabel,
+          deliver: (message) => adapter.onMessage?.(message),
+          flushLidStoreIfDirty,
+        },
+        event,
+      ).catch((error) => {
         console.error(
           `[WhatsApp:${account.accountId}] reaction handler failed:`,
           error instanceof Error ? error.message : error,
@@ -712,120 +721,6 @@ export function createWhatsAppAdapter(
     }
   }
 
-  async function handleReactionEntry(
-    parsed: WhatsAppReaction,
-    raw: unknown,
-  ): Promise<void> {
-    if (parsed.targetFromMe !== true) return;
-    if (parsed.reactionKey.fromMe === true) return;
-    if (isStatusOrBroadcastJid(parsed.chatId)) return;
-    if (
-      parsed.timestampMs !== undefined &&
-      parsed.timestampMs < connectedAtMs - 1000
-    ) {
-      return;
-    }
-    if (sentMessageIds.has(parsed.reactionMessageId)) {
-      sentMessageIds.delete(parsed.reactionMessageId);
-      return;
-    }
-    const identity = resolveInboundIdentity(
-      {
-        selfPhoneJid,
-        selfLid,
-        remoteJid: parsed.chatId,
-        participant: parsed.reactorParticipant,
-      },
-      lidStore,
-    );
-    if (!identity || !applyObservedMappings(identity.observedMappings)) return;
-    if (
-      rememberSeen(`reaction:${identity.chatId}:${parsed.reactionMessageId}`)
-    ) {
-      return;
-    }
-
-    const selfChat = isSelfChat(parsed.chatId, selfPhoneJid, selfLid);
-    if (account.selfChatMode && !selfChat) return;
-
-    const group = isGroupJid(identity.chatId);
-    if (
-      group &&
-      !isWhatsAppReactionGroupEligible({
-        groupMode: account.groupMode,
-        allowedGroups: account.allowedGroups,
-        groupJid: identity.chatId,
-        targetFromMe: parsed.targetFromMe,
-      })
-    ) {
-      return;
-    }
-
-    const chatLabel = group
-      ? await getGroupLabel(identity.chatId)
-      : selfChat
-        ? "Self (WhatsApp)"
-        : identity.senderId;
-    const targetSenderId = isStrictPhoneJid(selfPhoneJid)
-      ? senderIdFromJid(selfPhoneJid)
-      : isStrictPhoneJid(parsed.targetKey.participant)
-        ? senderIdFromJid(parsed.targetKey.participant)
-        : undefined;
-    const actor = identity.senderId;
-    const text =
-      parsed.action === "added"
-        ? `${actor} reacted ${parsed.emoji}`
-        : `${actor} removed a reaction`;
-    const inbound: InboundChannelMessage = {
-      channel: CHANNEL_ID,
-      accountId: account.accountId,
-      chatId: identity.chatId,
-      senderId: actor,
-      senderName: actor,
-      chatLabel,
-      text,
-      timestamp: parsed.timestampMs ?? Date.now(),
-      messageId: parsed.reactionMessageId,
-      chatType: group ? "channel" : "direct",
-      isMention: !group || account.groupMode === "mention",
-      raw,
-      reaction: {
-        action: parsed.action,
-        emoji: parsed.emoji,
-        targetMessageId: parsed.targetMessageId,
-        ...(targetSenderId ? { targetSenderId } : {}),
-      },
-    };
-
-    try {
-      await adapter.onMessage?.(inbound);
-    } catch (error) {
-      console.error(
-        `[WhatsApp:${account.accountId}] reaction delivery failed:`,
-        error instanceof Error ? error.message : error,
-      );
-    }
-  }
-
-  async function handleReactionBatch(event: unknown): Promise<void> {
-    try {
-      if (!Array.isArray(event)) return;
-      for (const raw of event) {
-        try {
-          const parsed = parseWhatsAppReactionEntry(raw);
-          if (parsed) await handleReactionEntry(parsed, raw);
-        } catch (error) {
-          console.error(
-            `[WhatsApp:${account.accountId}] reaction entry failed:`,
-            error instanceof Error ? error.message : error,
-          );
-        }
-      }
-    } finally {
-      flushLidStoreIfDirty();
-    }
-  }
-
   async function sendToWhatsApp(
     chatId: string,
     payload: Record<string, unknown>,
@@ -895,9 +790,8 @@ export function createWhatsAppAdapter(
         selfLid,
         resolveLid: (lidJid) => lidStore.resolve(lidJid),
       });
-      const hadManagedTyping = typing.isActive(targetJid);
-      await typing.clearChat(targetJid);
       if (msg.reaction || msg.removeReaction) {
+        await typing.clearChat(targetJid);
         const target = msg.targetMessageId ?? msg.replyToMessageId;
         if (!target) throw new Error("WhatsApp reactions require messageId.");
         const result = await sendToWhatsApp(targetJid, {
@@ -910,8 +804,9 @@ export function createWhatsAppAdapter(
         rememberSent(id, result);
         return { messageId: id };
       }
+      const outbound = withMessagePrefix(msg, account.messagePrefix);
       let resolvedMedia: WhatsAppResolvedOutboundMedia | undefined;
-      if (msg.mediaPath) {
+      if (outbound.mediaPath) {
         if (account.attachmentFilter === true) {
           const decision = decideWhatsAppAttachmentPolicy({
             policy: {
@@ -921,7 +816,7 @@ export function createWhatsAppAdapter(
               allowedDirectories: account.attachmentAllowedPaths ?? [],
               recursiveDirectories: account.attachmentPathRecursive === true,
             },
-            mediaPath: msg.mediaPath,
+            mediaPath: outbound.mediaPath,
             targetJid,
           });
           if (!decision.allowed) throw new Error(decision.reason);
@@ -931,6 +826,8 @@ export function createWhatsAppAdapter(
           };
         }
       }
+      const hadManagedTyping = typing.isActive(targetJid);
+      await typing.clearChat(targetJid);
       if (!hadManagedTyping) {
         try {
           await sendTypingPresence(targetJid, "composing");
@@ -938,7 +835,6 @@ export function createWhatsAppAdapter(
           // Presence is best-effort.
         }
       }
-      const outbound = withMessagePrefix(msg, account.messagePrefix);
       const payload = buildWhatsAppOutboundPayload(outbound, resolvedMedia);
       const result = await sendToWhatsApp(
         targetJid,

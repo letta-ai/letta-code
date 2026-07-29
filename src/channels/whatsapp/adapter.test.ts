@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
+  ChannelTurnLifecycleEvent,
   InboundChannelMessage,
   WhatsAppChannelAccount,
 } from "@/channels/types";
@@ -562,12 +563,30 @@ describe("WhatsApp adapter canonical identity integration", () => {
     const harness = makeHarness(store, async () => undefined, {
       account: {
         attachmentFilter: true,
+        waitingBehavior: "typing_indicator",
         attachmentMimeTypes: [],
         attachmentAllowedRecipients: ["15550000020"],
         attachmentAllowedPaths: [dir],
       },
     });
     await harness.adapter.start();
+    await harness.adapter.handleTurnLifecycleEvent?.({
+      type: "processing",
+      batchId: "denied-attachment-batch",
+      sources: [
+        {
+          channel: "whatsapp",
+          accountId: account.accountId,
+          chatId: phone("15550000020"),
+          messageId: "managed-typing",
+          agentId: account.agentId,
+          conversationId: "denied-attachment-conversation",
+        },
+      ],
+    } satisfies ChannelTurnLifecycleEvent);
+    expect(harness.presenceUpdates).toEqual([
+      { presence: "composing", jid: phone("15550000020") },
+    ]);
 
     await expect(
       harness.adapter.sendMessage({
@@ -580,7 +599,9 @@ describe("WhatsApp adapter canonical identity integration", () => {
     ).rejects.toThrow(/no MIME types/);
     expect(harness.sentJids).toHaveLength(0);
     expect(harness.sentPayloads).toHaveLength(0);
-    expect(harness.presenceUpdates).toHaveLength(0);
+    expect(harness.presenceUpdates).toEqual([
+      { presence: "composing", jid: phone("15550000020") },
+    ]);
   });
 
   test("allowed direct phone media passes the canonical policy target", async () => {
@@ -608,6 +629,35 @@ describe("WhatsApp adapter canonical identity integration", () => {
     expect(harness.sentJids).toEqual([phone("15550000020")]);
     expect(harness.sentPayloads[0]).toEqual({
       image: { url: filePath },
+    });
+  });
+
+  test("prefixes an attachment caption after policy canonicalization", async () => {
+    const filePath = join(dir, "caption.png");
+    writeFileSync(filePath, "image");
+    const store = instrumentStore(createLidStore(join(dir, "prefix.json")));
+    const harness = makeHarness(store, async () => undefined, {
+      account: {
+        messagePrefix: "🤖 ",
+        attachmentFilter: true,
+        attachmentMimeTypes: ["image/png"],
+        attachmentAllowedRecipients: ["15550000020"],
+        attachmentAllowedPaths: [dir],
+      },
+    });
+    await harness.adapter.start();
+
+    await harness.adapter.sendMessage({
+      channel: "whatsapp",
+      accountId: account.accountId,
+      chatId: phone("15550000020"),
+      text: "caption",
+      mediaPath: filePath,
+    });
+
+    expect(harness.sentPayloads[0]).toEqual({
+      image: { url: filePath },
+      caption: "🤖 caption",
     });
   });
 
