@@ -88,7 +88,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.81.1",
+    "@earendil-works/pi-ai": "^0.82.1",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
     "@pierre/diffs": "1.2.2",
