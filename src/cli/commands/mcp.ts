@@ -282,7 +282,19 @@ export async function handleMcpAdd(
     const configs = [...existing, config];
     settingsManager.setMcpServers(ctx.agentId, configs);
     await settingsManager.flush();
-    const states = await replaceClientMcpServers(ctx.agentId, configs);
+    const states = await replaceClientMcpServers(ctx.agentId, configs, {
+      interactiveOAuth: true,
+      onStatus: (status) =>
+        updateCommandResult(
+          ctx.buffersRef,
+          ctx.refreshDerived,
+          cmdId,
+          msg,
+          status,
+          false,
+          "running",
+        ),
+    });
     const state = states.find(
       (candidate) => candidate.config.name === args.name,
     );
@@ -321,7 +333,7 @@ export function handleMcpUsage(ctx: McpCommandContext, msg: string): void {
     msg,
     "Usage: /mcp [subcommand ...]\n" +
       "  /mcp                  - Open client-local MCP manager\n" +
-      "  /mcp add ...          - Add a client-local server\n\n" +
+      "  /mcp add ...          - Add a client-local server (OAuth opens automatically)\n\n" +
       "Examples:\n" +
       "  /mcp add --transport stdio filesystem npx -y @modelcontextprotocol/server-filesystem .\n" +
       "  /mcp add --transport http notion https://mcp.notion.com/mcp",

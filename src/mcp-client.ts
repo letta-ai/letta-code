@@ -1,3 +1,7 @@
+import {
+  type OAuthClientProvider,
+  UnauthorizedError,
+} from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import {
@@ -60,9 +64,16 @@ export interface ConnectedMcpServer {
   close(): Promise<void>;
 }
 
+export interface McpOAuthConnection {
+  authProvider: OAuthClientProvider;
+  waitForAuthorizationCode?: () => Promise<string>;
+  close(): Promise<void>;
+}
+
 export interface ConnectMcpServerOptions {
   clientInfo?: { name: string; version: string };
   stderr?: "inherit" | "pipe";
+  oauth?: McpOAuthConnection;
 }
 
 const DEFAULT_CLIENT_INFO = {
@@ -78,11 +89,30 @@ export async function connectMcpServer(
   config: McpServerConfig,
   options: ConnectMcpServerOptions = {},
 ): Promise<ConnectedMcpServer> {
-  const client = new Client(options.clientInfo ?? DEFAULT_CLIENT_INFO);
+  let client = new Client(options.clientInfo ?? DEFAULT_CLIENT_INFO);
   let connected = false;
   try {
-    await client.connect(createTransport(config, options));
+    const transport = createTransport(config, options);
+    try {
+      await client.connect(transport);
+    } catch (error) {
+      if (
+        !(error instanceof UnauthorizedError) ||
+        !options.oauth?.waitForAuthorizationCode ||
+        !supportsOAuthCompletion(transport)
+      ) {
+        throw error;
+      }
+      const authorizationCode = await options.oauth.waitForAuthorizationCode();
+      await transport.finishAuth(authorizationCode);
+      await client
+        .close()
+        .catch(() => transport.close().catch(() => undefined));
+      client = new Client(options.clientInfo ?? DEFAULT_CLIENT_INFO);
+      await client.connect(createTransport(config, options));
+    }
     connected = true;
+    await options.oauth?.close();
     const response = await client.listTools();
     const tools = response.tools.map((tool) => ({
       name: tool.name,
@@ -116,9 +146,8 @@ export async function connectMcpServer(
       },
     };
   } catch (error) {
-    if (connected) {
-      await client.close().catch(() => undefined);
-    }
+    await options.oauth?.close();
+    if (connected) await client.close().catch(() => undefined);
     throw error;
   }
 }
@@ -138,6 +167,7 @@ function createTransport(
   if (config.transport === "http") {
     return new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: headersRequestInit(config.headers),
+      authProvider: options.oauth?.authProvider,
     });
   }
   if (config.transport === "sse") {
@@ -145,8 +175,9 @@ function createTransport(
     const requestInit = headersRequestInit(headers);
     return new SSEClientTransport(new URL(config.url), {
       requestInit,
-      eventSourceInit: headers
-        ? { fetch: (url, init) => fetch(url, mergeHeaders(init, headers)) }
+      authProvider: options.oauth?.authProvider,
+      fetch: headers
+        ? (url, init) => fetch(url, mergeHeaders(init, headers))
         : undefined,
     });
   }
@@ -157,6 +188,14 @@ function createTransport(
     ...(config.cwd ? { cwd: config.cwd } : {}),
     stderr: options.stderr ?? "inherit",
   });
+}
+
+function supportsOAuthCompletion(
+  transport: Transport,
+): transport is Transport & { finishAuth(code: string): Promise<void> } {
+  return (
+    "finishAuth" in transport && typeof transport.finishAuth === "function"
+  );
 }
 
 function headersRequestInit(headers?: Record<string, string>): RequestInit {

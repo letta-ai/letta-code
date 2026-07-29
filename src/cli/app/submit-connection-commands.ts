@@ -97,7 +97,7 @@ export async function handleConnectionCommand(
       const output = [
         "/mcp help",
         "",
-        "Manage client-local MCP servers for the current agent.",
+        "Manage client-local MCP servers for the current agent. OAuth-protected remote servers open a browser automatically.",
         "",
         "USAGE",
         "  /mcp              — open the client-local MCP manager",

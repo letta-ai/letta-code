@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useState } from "react";
 import { truncateText } from "@/cli/helpers/truncate-text";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import type { McpServerConfig } from "@/mcp-client";
+import { clearMcpOAuthCredentials } from "@/mcp-oauth";
 import {
   type ClientMcpServerState,
   getClientMcpServerStates,
@@ -34,6 +35,7 @@ export const McpSelector = memo(function McpSelector({
     getClientMcpServerStates(agentId),
   );
   const [loading, setLoading] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [page, setPage] = useState(0);
@@ -45,10 +47,16 @@ export const McpSelector = memo(function McpSelector({
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setStatusMessage(null);
     setError(null);
     try {
       const configs = settingsManager.getMcpServers(agentId);
-      setStates(await replaceClientMcpServers(agentId, configs));
+      setStates(
+        await replaceClientMcpServers(agentId, configs, {
+          interactiveOAuth: true,
+          onStatus: setStatusMessage,
+        }),
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -66,6 +74,9 @@ export const McpSelector = memo(function McpSelector({
           .filter((server) => server.name !== config.name);
         settingsManager.setMcpServers(agentId, configs);
         await settingsManager.flush();
+        if (config.transport === "http" || config.transport === "sse") {
+          await clearMcpOAuthCredentials(agentId, config.name, config.url);
+        }
         setStates(await replaceClientMcpServers(agentId, configs));
         setSelectedIndex(0);
         setPage(0);
@@ -221,7 +232,7 @@ export const McpSelector = memo(function McpSelector({
       </Text>
       <Box height={1} />
       {loading ? (
-        <Text dimColor>Connecting MCP servers...</Text>
+        <Text dimColor>{statusMessage ?? "Connecting MCP servers..."}</Text>
       ) : error ? (
         <Text color="red">Error: {error}</Text>
       ) : states.length === 0 ? (

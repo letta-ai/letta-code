@@ -4,6 +4,7 @@ import {
   type McpServerConfig,
   type McpToolResult,
 } from "@/mcp-client";
+import { createMcpOAuthSession } from "@/mcp-oauth";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -20,6 +21,11 @@ export interface ClientMcpServerState {
 interface ActiveMcpServer {
   connection: ConnectedMcpServer;
   tools: ExternalToolDefinition[];
+}
+
+export interface ReplaceClientMcpServersOptions {
+  interactiveOAuth?: boolean;
+  onStatus?: (message: string) => void;
 }
 
 const CLIENT_MCP_RUNTIME_KEY = Symbol.for("@letta/clientMcpRuntime");
@@ -52,6 +58,7 @@ function getRuntime(): ClientMcpRuntime {
 export async function replaceClientMcpServers(
   agentId: string,
   configs: readonly McpServerConfig[],
+  options: ReplaceClientMcpServersOptions = {},
 ): Promise<ClientMcpServerState[]> {
   const runtime = getRuntime();
   const generation = ++runtime.generation;
@@ -61,7 +68,10 @@ export async function replaceClientMcpServers(
   const states = await Promise.all(
     configs.map(async (config): Promise<ClientMcpServerState> => {
       try {
-        const connection = await connectMcpServer(config);
+        const oauth = await oauthSessionForConfig(agentId, config, options);
+        const connection = await connectMcpServer(config, {
+          ...(oauth ? { oauth } : {}),
+        });
         if (generation !== runtime.generation) {
           await connection.close();
           return { config, status: "failed", tools: [], error: "Superseded" };
@@ -98,6 +108,31 @@ export async function replaceClientMcpServers(
   );
   if (generation === runtime.generation) runtime.states = states;
   return states;
+}
+
+async function oauthSessionForConfig(
+  agentId: string,
+  config: McpServerConfig,
+  options: ReplaceClientMcpServersOptions,
+) {
+  if (config.transport !== "http" && config.transport !== "sse")
+    return undefined;
+  if (hasAuthorizationHeader(config.headers)) return undefined;
+  return createMcpOAuthSession(agentId, config.name, config.url, {
+    interactive: options.interactiveOAuth === true,
+    ...(options.onStatus
+      ? {
+          onStatus: (message) =>
+            options.onStatus?.(`${config.name}: ${message}`),
+        }
+      : {}),
+  });
+}
+
+function hasAuthorizationHeader(headers?: Record<string, string>): boolean {
+  return Object.keys(headers ?? {}).some(
+    (name) => name.toLowerCase() === "authorization",
+  );
 }
 
 /** Current local MCP connection state for the selected agent. */
