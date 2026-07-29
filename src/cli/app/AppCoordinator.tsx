@@ -241,6 +241,7 @@ import type {
 } from "./types";
 import { useApprovalFlow } from "./use-approval-flow";
 import { useBashHandlers } from "./use-bash-handlers";
+import { useCloudTarget } from "./use-cloud-conversation-target";
 import { useConfigurationHandlers } from "./use-configuration-handlers";
 import { useConversationLoop } from "./use-conversation-loop";
 import { useConversationSwitching } from "./use-conversation-switching";
@@ -416,8 +417,8 @@ export function App({
     telemetry.setCurrentAgentId(agentId);
   }, [agentId]);
 
-  // Keep a ref to the current conversationId for use in callbacks
   const conversationIdRef = useRef(conversationId);
+  const cloudKeysRef = useCloudTarget(agentId, conversationId, loadingState);
   useEffect(() => {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
@@ -2957,7 +2958,6 @@ export function App({
       const startupSystemPromptWarning =
         buildStartupSystemPromptWarning(agentState);
 
-      // Add release notes first (above everything) - same styling as rest of status block
       if (releaseNotes) {
         statusLines.push(releaseNotes);
         statusLines.push(""); // blank line separator
@@ -4241,6 +4241,7 @@ export function App({
     checkPendingApprovalsForSlashCommand,
     commandRunner,
     commandRunning,
+    cloudConversationKeysRef: cloudKeysRef,
     consumeQueuedApprovalInputForCurrentConversation,
     contextTrackerRef,
     conversationGenerationRef,
@@ -4948,7 +4949,6 @@ export function App({
       const startupSystemPromptWarning =
         buildStartupSystemPromptWarning(agentState);
 
-      // Add release notes first (above everything) - same styling as rest of status block
       if (releaseNotes) {
         statusLines.push(releaseNotes);
         statusLines.push(""); // blank line separator

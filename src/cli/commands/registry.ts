@@ -113,6 +113,15 @@ export const commands: Record<string, Command> = {
       return "Starting skill creation...";
     },
   },
+  "/cloud": {
+    desc: "Move this conversation to its Letta Cloud computer",
+    args: "[instruction]",
+    order: 28.6,
+    handler: () => {
+      // Handled specially in use-submit-handler.ts.
+      return "Moving conversation to Cloud...";
+    },
+  },
   "/memory": {
     desc: "View your agent's memory",
     order: 15,

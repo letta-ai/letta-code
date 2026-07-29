@@ -29,6 +29,18 @@ export interface EnvironmentConnection {
   metadata?: EnvironmentMetadata;
 }
 
+export interface RuntimeLastEnvironment {
+  environmentId: string | null;
+  deviceId: string;
+  connectionName: string;
+  metadata: EnvironmentMetadata | null;
+  status: "online" | "offline" | "unreachable";
+  isOnline: boolean;
+  lastSeenAt: number | null;
+  lastUsedAt: number;
+  source: "environment" | "sandbox" | "unknown";
+}
+
 export interface ListEnvironmentsResponse {
   connections: EnvironmentConnection[];
   hasNextPage: boolean;
@@ -49,6 +61,21 @@ export interface CreateAgentSandboxResponse {
   sandboxId: string;
   deviceId: string;
   connectionName: string;
+  conversationId?: string;
+  resumed?: boolean;
+}
+
+export interface GithubRepositoryRef {
+  owner: string;
+  repo: string;
+  branch?: string;
+  ref?: string;
+}
+
+export interface CreateAgentSandboxOptions {
+  conversationId?: string;
+  githubRepositories?: GithubRepositoryRef[];
+  forceNew?: boolean;
 }
 
 export async function listEnvironments(
@@ -88,13 +115,24 @@ export async function getEnvironmentConnection(
   );
 }
 
+export async function getRuntimeLastEnvironment(
+  agentId: string,
+  conversationId: string,
+): Promise<RuntimeLastEnvironment> {
+  return apiRequest<RuntimeLastEnvironment>(
+    "GET",
+    `/v1/environments/runtimes/${encodeURIComponent(agentId)}/${encodeURIComponent(conversationId)}/last`,
+  );
+}
+
 export async function createAgentSandbox(
   agentId: string,
+  options: CreateAgentSandboxOptions = {},
 ): Promise<CreateAgentSandboxResponse> {
   return apiRequest<CreateAgentSandboxResponse>(
     "POST",
     `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
-    {},
+    { ...options },
   );
 }
 
@@ -166,11 +204,18 @@ export async function resolveEnvironmentConnectionId(
 
 export async function resolveAgentSandboxConnectionId(
   agentId: string,
-  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+  options: CreateAgentSandboxOptions & {
+    timeoutMs?: number;
+    pollIntervalMs?: number;
+  } = {},
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
   const timeoutMs = options.timeoutMs ?? 3 * 60_000;
   const pollIntervalMs = options.pollIntervalMs ?? 2_000;
-  const sandbox = await createAgentSandbox(agentId);
+  const sandbox = await createAgentSandbox(agentId, {
+    conversationId: options.conversationId,
+    githubRepositories: options.githubRepositories,
+    forceNew: options.forceNew,
+  });
   const deviceId = sandbox.deviceId || `sandbox-${agentId}`;
   const deadline = Date.now() + timeoutMs;
   let lastEnvironment: EnvironmentConnection | null = null;
