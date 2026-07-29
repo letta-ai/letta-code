@@ -50,6 +50,18 @@ describe("getModelInfo", () => {
     });
   });
 
+  test.each([
+    "opus-5-low",
+    "opus-5-medium",
+    "opus-5",
+    "opus-5-xhigh",
+    "opus-5-max",
+  ])("sets an explicit 200k context window for %s", (modelId) => {
+    expect(getModelInfo(modelId)?.updateArgs).toMatchObject({
+      context_window: 200000,
+    });
+  });
+
   test("preserves Bedrock Opus 4.7", () => {
     const info = getModelInfo("bedrock-opus-4.7");
     expect(info?.handle).toBe("bedrock/us.anthropic.claude-opus-4-7");

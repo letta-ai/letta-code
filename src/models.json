@@ -902,6 +902,7 @@
       "label": "Opus 5",
       "description": "Opus 5 (high reasoning)",
       "updateArgs": {
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "high",
@@ -914,6 +915,7 @@
       "label": "Opus 5",
       "description": "Opus 5 (low reasoning)",
       "updateArgs": {
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "low",
@@ -927,6 +929,7 @@
       "label": "Opus 5",
       "description": "Opus 5 (med reasoning)",
       "updateArgs": {
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "medium",
@@ -940,6 +943,7 @@
       "label": "Opus 5",
       "description": "Opus 5 (extra-high reasoning)",
       "updateArgs": {
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "xhigh",
@@ -952,6 +956,7 @@
       "label": "Opus 5",
       "description": "Opus 5 (max reasoning)",
       "updateArgs": {
+        "context_window": 200000,
         "max_output_tokens": 128000,
         "enable_reasoner": true,
         "reasoning_effort": "max",
