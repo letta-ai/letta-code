@@ -256,13 +256,13 @@ describe("pi model factory", () => {
     }
   });
 
-  test("resolves Anthropic Opus 4.8 from the Pi model catalog", async () => {
-    const resolved = await resolvePiModelForAgent("anthropic/claude-opus-4-8", {
+  test("resolves Anthropic Opus 5 from the Pi model catalog", async () => {
+    const resolved = await resolvePiModelForAgent("anthropic/claude-opus-5", {
       provider_type: "anthropic",
     });
 
     expect(resolved.provider).toBe("anthropic");
-    expect(resolved.model.id).toBe("claude-opus-4-8");
+    expect(resolved.model.id).toBe("claude-opus-5");
     expect(resolved.model.api).toBe("anthropic-messages");
     expect(resolved.model.reasoning).toBe(true);
     expect(resolved.model.contextWindow).toBe(1000000);
