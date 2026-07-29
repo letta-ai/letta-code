@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +14,7 @@ let tempDir: string;
 let memoryDir: string;
 const originalDoNotTrack = process.env.DO_NOT_TRACK;
 const originalLettaCodeTelem = process.env.LETTA_CODE_TELEM;
+const originalTelemetryDrain = telemetry.drain;
 const telemetryState = telemetry as unknown as {
   events: Array<{
     type: string;
@@ -52,7 +53,10 @@ async function finalizeLaunch(
     agentId: "agent-test",
     conversationId: "conv-test",
     subagentAgentId: "agent-reflection-test",
-    telemetryContext: { triggerSource: "manual" },
+    telemetryContext: {
+      triggerSource: "manual",
+      model: "reflection-model",
+    },
     recompileByConversation: new Map(),
     recompileQueuedByConversation: new Set(),
   });
@@ -61,8 +65,8 @@ async function finalizeLaunch(
 beforeEach(() => {
   telemetry.cleanup();
   telemetryState.events = [];
+  telemetry.drain = mock(async () => {});
   delete process.env.DO_NOT_TRACK;
-  delete process.env.LETTA_TELEMETRY_DISABLED;
   tempDir = mkdtempSync(join(tmpdir(), "reflection-completion-"));
   memoryDir = join(tempDir, "agent", "memory");
   git(tempDir, ["init", "-b", "main", memoryDir]);
@@ -74,6 +78,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  telemetry.drain = originalTelemetryDrain;
   if (originalDoNotTrack === undefined) {
     delete process.env.DO_NOT_TRACK;
   } else {
@@ -111,35 +116,11 @@ describe("reflection worktree completion messaging", () => {
     expect(result.completionMessage).toBe(
       "Tried to reflect, but parent memory had uncommitted changes; will retry later.",
     );
-  });
-
-  test("tracks parent dirty cleanup telemetry", async () => {
-    const worktree = await createReflectionMemoryWorktree({
-      parentMemoryDir: memoryDir,
-    });
-    writeFileSync(
-      join(worktree.worktreeDir, "reflection.md"),
-      "dream\n",
-      "utf-8",
-    );
-    git(worktree.worktreeDir, ["add", "reflection.md"]);
-    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
-    writeParentMemoryFile("parent-dirty.md", "dirty\n");
-
-    await finalizeLaunch(worktree, true);
-    telemetry.trackReflectionWorktreeCleanup({
-      outcome: "parent_dirty",
-      integration_status: "parent_dirty",
-      trigger_source: "manual",
-      subagent_id: "agent-reflection-test",
-      conversation_id: "conv-test",
-      reflection_worktree_id: worktree.id,
-      commit_count: 1,
-    });
 
     const event = telemetryState.events.find(
       (entry) => entry.type === "reflection_worktree_cleanup",
     );
+    expect(telemetryState.events).toHaveLength(1);
     expect(event?.data).toMatchObject({
       outcome: "parent_dirty",
       integration_status: "parent_dirty",
@@ -148,6 +129,7 @@ describe("reflection worktree completion messaging", () => {
       conversation_id: "conv-test",
       reflection_worktree_id: worktree.id,
       commit_count: 1,
+      model: "reflection-model",
     });
   });
 
@@ -174,62 +156,20 @@ describe("reflection worktree completion messaging", () => {
     expect(result.completionMessage).toBe(
       "Tried to reflect, but memory updates conflicted with newer changes; will retry later.",
     );
-  });
-
-  test("tracks merge conflict cleanup telemetry", async () => {
-    telemetry.trackReflectionWorktreeCleanup({
-      outcome: "merge_conflict",
-      integration_status: "merge_conflict",
-      reflection_worktree_id: "worktree-id",
-      commit_count: 1,
-    });
 
     const event = telemetryState.events.find(
       (entry) => entry.type === "reflection_worktree_cleanup",
     );
+    expect(telemetryState.events).toHaveLength(1);
     expect(event?.data).toMatchObject({
       outcome: "merge_conflict",
       integration_status: "merge_conflict",
-      reflection_worktree_id: "worktree-id",
+      trigger_source: "manual",
+      subagent_id: "agent-reflection-test",
+      conversation_id: "conv-test",
+      reflection_worktree_id: worktree.id,
       commit_count: 1,
-    });
-  });
-
-  test("tracks reflection worktree dirty cleanup telemetry", async () => {
-    telemetry.trackReflectionWorktreeCleanup({
-      outcome: "reflection_worktree_dirty",
-      integration_status: "dirty_uncommitted",
-      reflection_worktree_id: "worktree-id",
-      commit_count: 0,
-    });
-
-    const event = telemetryState.events.find(
-      (entry) => entry.type === "reflection_worktree_cleanup",
-    );
-    expect(event?.data).toMatchObject({
-      outcome: "reflection_worktree_dirty",
-      integration_status: "dirty_uncommitted",
-      reflection_worktree_id: "worktree-id",
-      commit_count: 0,
-    });
-  });
-
-  test("tracks subagent failure cleanup telemetry", async () => {
-    telemetry.trackReflectionWorktreeCleanup({
-      outcome: "subagent_failed",
-      integration_status: "failed",
-      reflection_worktree_id: "worktree-id",
-      commit_count: 1,
-    });
-
-    const event = telemetryState.events.find(
-      (entry) => entry.type === "reflection_worktree_cleanup",
-    );
-    expect(event?.data).toMatchObject({
-      outcome: "subagent_failed",
-      integration_status: "failed",
-      reflection_worktree_id: "worktree-id",
-      commit_count: 1,
+      model: "reflection-model",
     });
   });
 
@@ -247,6 +187,13 @@ describe("reflection worktree completion messaging", () => {
     expect(result.completionMessage).toBe(
       "Tried to reflect, but memory changes were not committed cleanly; will retry later.",
     );
+    expect(telemetryState.events).toHaveLength(1);
+    expect(telemetryState.events[0]?.data).toMatchObject({
+      outcome: "reflection_worktree_dirty",
+      integration_status: "dirty_uncommitted",
+      reflection_worktree_id: worktree.id,
+      commit_count: 0,
+    });
   });
 
   test("failed reflection retries transcript with failed update message", async () => {
@@ -271,5 +218,12 @@ describe("reflection worktree completion messaging", () => {
     expect(result.completionMessage).toBe(
       "Tried to reflect, but memory updates were not completed cleanly; will retry later.",
     );
+    expect(telemetryState.events).toHaveLength(1);
+    expect(telemetryState.events[0]?.data).toMatchObject({
+      outcome: "subagent_failed",
+      integration_status: "failed",
+      reflection_worktree_id: worktree.id,
+      commit_count: 1,
+    });
   });
 });

@@ -137,6 +137,7 @@ export interface ReflectionArenaRun {
   runId: string;
   startMessageId?: string;
   status: ReflectionArenaRunStatus;
+  triggerSource?: ReflectionLaunchTriggerSource;
 }
 
 export interface StartReflectionArenaRunOptions {
@@ -197,17 +198,17 @@ async function getGitOutput(
       timeout: 30_000,
       maxBuffer: 1024 * 1024,
     });
-    return stdout.trim() || null;
+    return stdout.trim();
   } catch {
     return null;
   }
 }
 
 async function getGitHead(cwd: string): Promise<string | null> {
-  return getGitOutput(cwd, ["rev-parse", "HEAD"]);
+  return (await getGitOutput(cwd, ["rev-parse", "HEAD"])) || null;
 }
 
-async function reflectionMemoryWorktreeHasNoChanges(
+export async function reflectionMemoryWorktreeHasNoChanges(
   worktree: ReflectionMemoryWorktree,
 ): Promise<boolean | undefined> {
   const [count, status] = await Promise.all([
@@ -733,6 +734,7 @@ export async function startReflectionArenaRun(
       runId,
       startMessageId: options.payload.startMessageId,
       status: "running",
+      triggerSource: options.triggerSource,
     };
     await saveReflectionArenaRun(run);
 
@@ -905,7 +907,10 @@ export async function finalizeReflectionArenaChoice(
       agentId: run.agentId,
       conversationId: run.conversationId,
       subagentAgentId: chosen.result?.agentId,
-      telemetryContext: { triggerSource: "compaction-event" },
+      telemetryContext: {
+        triggerSource: run.triggerSource ?? "compaction-event",
+        model: chosen.model,
+      },
       recompileByConversation: options.recompileByConversation,
       recompileQueuedByConversation: options.recompileQueuedByConversation,
       logRecompileFailure: (message) => debugWarn("memory", message),
