@@ -77,6 +77,7 @@ export interface CreateAgentSandboxOptions {
   conversationId?: string;
   githubRepositories?: GithubRepositoryRef[];
   forceNew?: boolean;
+  setAsRuntimeTarget?: boolean;
 }
 
 export async function listEnvironments(
@@ -130,11 +131,10 @@ export async function createAgentSandbox(
   agentId: string,
   options: CreateAgentSandboxOptions = {},
 ): Promise<CreateAgentSandboxResponse> {
-  return apiRequest<CreateAgentSandboxResponse>(
-    "POST",
-    `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
-    { ...options },
-  );
+  return apiRequest<CreateAgentSandboxResponse>("POST", "/v1/sandboxes", {
+    agentId,
+    ...options,
+  });
 }
 
 export function isEnvironmentOnline(
@@ -216,6 +216,7 @@ export async function resolveAgentSandboxConnectionId(
     conversationId: options.conversationId,
     githubRepositories: options.githubRepositories,
     forceNew: options.forceNew,
+    setAsRuntimeTarget: options.setAsRuntimeTarget,
   });
   const deviceId = sandbox.deviceId || `sandbox-${agentId}`;
   const deadline = Date.now() + timeoutMs;

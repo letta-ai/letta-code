@@ -132,6 +132,7 @@ export async function prepareCloudConversation(params: {
   conversationId: string;
   githubRepositories?: GithubRepositoryRef[];
   forceNew?: boolean;
+  setAsRuntimeTarget?: boolean;
 }): Promise<{ connectionId: string; deviceId: string; name: string }> {
   const { connectionId, environment } = await resolveAgentSandboxConnectionId(
     params.agentId,
@@ -139,6 +140,7 @@ export async function prepareCloudConversation(params: {
       conversationId: params.conversationId,
       githubRepositories: params.githubRepositories,
       forceNew: params.forceNew,
+      setAsRuntimeTarget: params.setAsRuntimeTarget,
     },
   );
   if (environment.metadata?.environmentMessageProtocol !== "v2-input") {
