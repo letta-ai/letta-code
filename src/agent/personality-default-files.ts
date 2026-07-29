@@ -47,9 +47,25 @@ function getBundledPersonalityAssetsPath(): string {
 }
 
 export function getPersonalityAssetPath(assetId: PersonalityAssetId): string {
+  const assetsPath = getBundledPersonalityAssetsPath();
   switch (assetId) {
     case "tutor-profile":
-      return join(getBundledPersonalityAssetsPath(), "tutor-profile.png");
+      return join(assetsPath, "tutor-profile.png");
+    case "designing-an-agent-skill":
+      return join(assetsPath, "designing-an-agent/SKILL.md");
+    case "designing-an-agent-constitution":
+      return join(
+        assetsPath,
+        "designing-an-agent/references/context-constitution.md",
+      );
+    case "designing-an-agent-affordances":
+      return join(assetsPath, "designing-an-agent/references/affordances.md");
+    case "designing-an-agent-memory-design":
+      return join(assetsPath, "designing-an-agent/references/memory-design.md");
+    case "designing-an-agent-create-script":
+      // Stored with a .txt suffix so repo tooling treats it as an asset, not
+      // source; it is seeded into MemFS as scripts/create-agent.ts.
+      return join(assetsPath, "designing-an-agent/scripts/create-agent.ts.txt");
   }
   throw new Error(`Unknown personality asset: ${assetId}`);
 }

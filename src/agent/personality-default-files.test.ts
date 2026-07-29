@@ -34,6 +34,16 @@ function createTempMemoryRepo(): { agentId: string; memoryDir: string } {
   return { agentId, memoryDir };
 }
 
+// Tutor default files beyond profile.png, in seeding (definition) order.
+const TUTOR_SKILL_PATHS = [
+  "skills/designing-an-agent/SKILL.md",
+  "skills/designing-an-agent/references/context-constitution.md",
+  "skills/designing-an-agent/references/affordances.md",
+  "skills/designing-an-agent/references/memory-design.md",
+  "skills/designing-an-agent/scripts/create-agent.ts",
+];
+const ALL_TUTOR_DEFAULT_PATHS = ["profile.png", ...TUTOR_SKILL_PATHS];
+
 function getCommitCount(memoryDir: string): number {
   return Number.parseInt(
     execFileSync("git", ["rev-list", "--count", "HEAD"], {
@@ -91,7 +101,7 @@ describe("Tutor default profile picture", () => {
     });
 
     expect(first).toEqual({
-      seededPaths: ["profile.png"],
+      seededPaths: ALL_TUTOR_DEFAULT_PATHS,
       skippedPaths: [],
       errors: [],
     });
@@ -99,18 +109,26 @@ describe("Tutor default profile picture", () => {
       readFileSync(getPersonalityAssetPath("tutor-profile")),
     );
     expect(
-      execFileSync("git", ["log", "-1", "--format=%s"], {
-        cwd: memoryDir,
-        encoding: "utf8",
-      }).trim(),
-    ).toBe("chore: set default Tutor profile picture");
+      readFileSync(
+        join(memoryDir, "skills/designing-an-agent/SKILL.md"),
+        "utf8",
+      ),
+    ).toContain("name: designing-an-agent");
+    const commitSubjects = execFileSync("git", ["log", "--format=%s"], {
+      cwd: memoryDir,
+      encoding: "utf8",
+    });
+    expect(commitSubjects).toContain(
+      "chore: set default Tutor profile picture",
+    );
+    expect(commitSubjects).toContain("chore: seed designing-an-agent skill");
     expect(
       execFileSync("git", ["status", "--porcelain"], {
         cwd: memoryDir,
         encoding: "utf8",
       }),
     ).toBe("");
-    expect(getCommitCount(memoryDir)).toBe(2);
+    expect(getCommitCount(memoryDir)).toBe(1 + ALL_TUTOR_DEFAULT_PATHS.length);
 
     const second = await seedPersonalityDefaultMemoryFiles({
       agentId,
@@ -120,10 +138,10 @@ describe("Tutor default profile picture", () => {
     });
     expect(second).toEqual({
       seededPaths: [],
-      skippedPaths: ["profile.png"],
+      skippedPaths: ALL_TUTOR_DEFAULT_PATHS,
       errors: [],
     });
-    expect(getCommitCount(memoryDir)).toBe(2);
+    expect(getCommitCount(memoryDir)).toBe(1 + ALL_TUTOR_DEFAULT_PATHS.length);
   }, 15_000);
 
   test("preserves an existing profile picture byte-for-byte", async () => {
@@ -140,12 +158,12 @@ describe("Tutor default profile picture", () => {
     });
 
     expect(result).toEqual({
-      seededPaths: [],
+      seededPaths: TUTOR_SKILL_PATHS,
       skippedPaths: ["profile.png"],
       errors: [],
     });
     expect(readFileSync(join(memoryDir, "profile.png"))).toEqual(customProfile);
-    expect(getCommitCount(memoryDir)).toBe(1);
+    expect(getCommitCount(memoryDir)).toBe(1 + TUTOR_SKILL_PATHS.length);
   }, 15_000);
 
   test("does not restore a profile picture that the user deleted", async () => {
@@ -183,11 +201,11 @@ describe("Tutor default profile picture", () => {
 
     expect(result).toEqual({
       seededPaths: [],
-      skippedPaths: ["profile.png"],
+      skippedPaths: ALL_TUTOR_DEFAULT_PATHS,
       errors: [],
     });
     expect(() => readFileSync(join(memoryDir, "profile.png"))).toThrow();
-    expect(getCommitCount(memoryDir)).toBe(3);
+    expect(getCommitCount(memoryDir)).toBe(2 + ALL_TUTOR_DEFAULT_PATHS.length);
   }, 15_000);
 
   test("cleans up a copied default when the memory commit fails", async () => {
