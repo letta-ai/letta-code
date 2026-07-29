@@ -8,6 +8,7 @@
  */
 
 import type { WhatsAppInboundDebounceConfig } from "@/channels/whatsapp/inbound-debounce-config-types";
+import type { WhatsAppWaitingBehaviorConfig } from "@/channels/whatsapp/waiting-behavior-config-types";
 import type { PermissionMode } from "@/permissions/mode";
 import type {
   ApprovalResponseBody,
@@ -666,7 +667,8 @@ export interface DiscordChannelConfig {
 
 export interface WhatsAppChannelConfig
   extends WhatsAppAttachmentPolicyConfig,
-    WhatsAppInboundDebounceConfig {
+    WhatsAppInboundDebounceConfig,
+    WhatsAppWaitingBehaviorConfig {
   channel: "whatsapp";
   enabled: boolean;
   dmPolicy: DmPolicy;
@@ -856,7 +858,8 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
 export interface WhatsAppChannelAccount
   extends ChannelAccountBase,
     WhatsAppAttachmentPolicyConfig,
-    WhatsAppInboundDebounceConfig {
+    WhatsAppInboundDebounceConfig,
+    WhatsAppWaitingBehaviorConfig {
   channel: "whatsapp";
   /** Agent ID used for account-bound DM and group auto-routing. */
   agentId: string | null;

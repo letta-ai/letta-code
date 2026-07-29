@@ -18,6 +18,7 @@ describe("whatsapp protocol-inbound validators", () => {
             self_chat_mode: true,
             group_mode: "disabled",
             inbound_debounce_ms: 1250.9,
+            waiting_behavior: "typing_indicator",
           },
         },
       }),
@@ -44,6 +45,7 @@ describe("whatsapp protocol-inbound validators", () => {
             attachment_allowed_recipients: ["15551234567"],
             attachment_allowed_paths: ["/tmp/uploads"],
             attachment_path_recursive: true,
+            waiting_behavior: "off",
           },
         },
       }),
@@ -76,6 +78,17 @@ describe("whatsapp protocol-inbound validators", () => {
         channel_id: "whatsapp",
         request_id: "r1",
         account: { config: { inbound_debounce_ms: "100" } },
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects invalid waiting behavior", () => {
+    expect(
+      isChannelAccountCreateCommand({
+        type: "channel_account_create",
+        channel_id: "whatsapp",
+        request_id: "r1",
+        account: { config: { waiting_behavior: "always" } },
       }),
     ).toBe(false);
   });

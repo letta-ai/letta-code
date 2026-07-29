@@ -4,6 +4,7 @@ import type {
   WhatsAppGroupMode,
 } from "@/channels/types";
 import { toWhatsAppConnectionConfig } from "./state";
+import type { WhatsAppWaitingBehavior } from "./waiting-behavior-config-types";
 
 const WHATSAPP_CONFIG_KEYS = new Set([
   "agent_id",
@@ -20,6 +21,7 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "attachment_allowed_paths",
   "attachment_path_recursive",
   "inbound_debounce_ms",
+  "waiting_behavior",
 ]);
 
 function isNullableString(value: unknown): value is string | null {
@@ -51,6 +53,10 @@ function isInboundDebounceMs(value: unknown): value is number {
     value >= 0 &&
     value <= 10000
   );
+}
+
+function isWaitingBehavior(value: unknown): value is WhatsAppWaitingBehavior {
+  return value === "off" || value === "typing_indicator";
 }
 
 export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppChannelAccount> =
@@ -87,7 +93,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         (config.attachment_path_recursive === undefined ||
           isBoolean(config.attachment_path_recursive)) &&
         (config.inbound_debounce_ms === undefined ||
-          isInboundDebounceMs(config.inbound_debounce_ms))
+          isInboundDebounceMs(config.inbound_debounce_ms)) &&
+        (config.waiting_behavior === undefined ||
+          isWaitingBehavior(config.waiting_behavior))
       );
     },
 
@@ -137,6 +145,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         inboundDebounceMs: isInboundDebounceMs(config.inbound_debounce_ms)
           ? Math.trunc(config.inbound_debounce_ms)
           : undefined,
+        waitingBehavior: isWaitingBehavior(config.waiting_behavior)
+          ? config.waiting_behavior
+          : undefined,
       };
     },
 
@@ -158,6 +169,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         attachment_allowed_paths: [...(account.attachmentAllowedPaths ?? [])],
         attachment_path_recursive: account.attachmentPathRecursive === true,
         inbound_debounce_ms: account.inboundDebounceMs ?? 0,
+        waiting_behavior: account.waitingBehavior ?? "off",
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -180,6 +192,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         attachment_allowed_paths: [...(account.attachmentAllowedPaths ?? [])],
         attachment_path_recursive: account.attachmentPathRecursive === true,
         inbound_debounce_ms: account.inboundDebounceMs ?? 0,
+        waiting_behavior: account.waitingBehavior ?? "off",
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },

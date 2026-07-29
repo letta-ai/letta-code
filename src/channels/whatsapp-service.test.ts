@@ -57,7 +57,6 @@ describe("WhatsApp channel service", () => {
     __testOverrideLoadTargetStore(() => {});
     __testOverrideSaveTargetStore(() => {});
   });
-
   afterEach(() => {
     clearChannelAccountStores();
     clearAllRoutes();
@@ -71,6 +70,7 @@ describe("WhatsApp channel service", () => {
     __testOverrideSavePairingStore(null);
     __testOverrideLoadTargetStore(null);
     __testOverrideSaveTargetStore(null);
+    __testOverrideChannelsRoot(null);
   });
 
   test("creates conservative defaults", () => {
@@ -79,7 +79,6 @@ describe("WhatsApp channel service", () => {
       { enabled: false },
       { accountId: "personal" },
     );
-
     expect(created).toEqual(
       expect.objectContaining({
         channelId: "whatsapp",
@@ -96,11 +95,12 @@ describe("WhatsApp channel service", () => {
         self_chat_mode: true,
         group_mode: "disabled",
         agent_id: null,
+        waiting_behavior: "off",
       }),
     );
   });
 
-  test("normalizes plugin config from snake_case", () => {
+  test("normalizes all WhatsApp plugin fields and supports updates", () => {
     const created = createChannelAccountLive(
       "whatsapp",
       {
@@ -120,11 +120,11 @@ describe("WhatsApp channel service", () => {
           attachment_allowed_paths: ["/tmp/uploads"],
           attachment_path_recursive: true,
           inbound_debounce_ms: 1250.9,
+          waiting_behavior: "typing_indicator",
         },
       },
       { accountId: "personal" },
     );
-
     expect(created.agentId).toBe("agent-whatsapp");
     expect(created.selfChatMode).toBe(false);
     expect(created.groupMode).toBe("mention");
@@ -138,7 +138,7 @@ describe("WhatsApp channel service", () => {
     expect(created.attachmentAllowedPaths).toEqual(["/tmp/uploads"]);
     expect(created.attachmentPathRecursive).toBe(true);
     expect(created.inboundDebounceMs).toBe(1250);
-    expect(created.config?.inbound_debounce_ms).toBe(1250);
+    expect(created.waitingBehavior).toBe("typing_indicator");
 
     const updated = updateChannelAccountLive("whatsapp", "personal", {
       config: {
@@ -154,6 +154,8 @@ describe("WhatsApp channel service", () => {
     expect(updated.groupMode).toBe("open");
     expect(updated.selfChatMode).toBe(true);
     expect(updated.attachmentFilter).toBe(false);
+    expect(updated.inboundDebounceMs).toBe(1250);
+    expect(updated.waitingBehavior).toBe("typing_indicator");
     expect(updated.config).toEqual(
       expect.objectContaining({
         attachment_filter: false,
@@ -161,13 +163,14 @@ describe("WhatsApp channel service", () => {
         attachment_allowed_recipients: ["120363@g.us"],
         attachment_allowed_paths: ["/tmp/docs"],
         attachment_path_recursive: false,
+        inbound_debounce_ms: 1250,
+        waiting_behavior: "typing_indicator",
       }),
     );
-    expect(updated.inboundDebounceMs).toBe(1250);
-    expect(
-      getChannelConfigSnapshot("whatsapp", "personal")?.config
-        ?.inbound_debounce_ms,
-    ).toBe(1250);
+    const disabled = updateChannelAccountLive("whatsapp", "personal", {
+      config: { waiting_behavior: "off" },
+    });
+    expect(disabled.waitingBehavior).toBe("off");
   });
 
   test("bind updates the account-level agent id", () => {
@@ -179,7 +182,6 @@ describe("WhatsApp channel service", () => {
       "conv-ignored",
     );
     expect(bound.agentId).toBe("agent-bound");
-
     expect(getChannelConfigSnapshot("whatsapp", "personal")).toEqual(
       expect.objectContaining({
         agentId: "agent-bound",
@@ -209,20 +211,17 @@ describe("WhatsApp channel service", () => {
         updatedAt: new Date(0).toISOString(),
       } as unknown as ChannelAccount,
     ]);
-    __testOverrideSaveChannelAccounts((_channelId, accounts) => {
-      saved.push(...accounts);
-    });
-
+    __testOverrideSaveChannelAccounts((_channelId, accounts) =>
+      saved.push(...accounts),
+    );
     const loaded = getChannelAccount("whatsapp", "disk-account");
-    if (!loaded || !isWhatsAppChannelAccount(loaded)) {
+    if (!loaded || !isWhatsAppChannelAccount(loaded))
       throw new Error("Expected a loaded WhatsApp account");
-    }
     expect(loaded.attachmentFilter).toBe(true);
     expect(loaded.attachmentMimeTypes).toEqual(["image/png"]);
     expect(loaded.attachmentAllowedRecipients).toEqual(["15551234567"]);
     expect(loaded.attachmentAllowedPaths).toEqual(["/tmp/uploads"]);
     expect(loaded.attachmentPathRecursive).toBe(true);
-
     upsertChannelAccount("whatsapp", loaded);
     const stored = saved[0] as unknown as Record<string, unknown>;
     expect(stored.attachment_filter).toBe(true);
@@ -233,7 +232,7 @@ describe("WhatsApp channel service", () => {
     expect(stored.attachmentFilter).toBeUndefined();
   });
 
-  test("migrates snake_case accounts and saves canonical debounce keys", () => {
+  test("migrates snake_case accounts and saves debounce/waiting keys", () => {
     let persisted: Record<string, unknown> | undefined;
     __testOverrideLoadChannelAccounts(() => [
       {
@@ -246,6 +245,7 @@ describe("WhatsApp channel service", () => {
         selfChatMode: true,
         groupMode: "disabled",
         inbound_debounce_ms: 1250.9,
+        waiting_behavior: "typing_indicator",
         createdAt: new Date(0).toISOString(),
         updatedAt: new Date(0).toISOString(),
       } as never,
@@ -253,17 +253,20 @@ describe("WhatsApp channel service", () => {
     __testOverrideSaveChannelAccounts((_channelId, accounts) => {
       persisted = accounts[0] as unknown as Record<string, unknown>;
     });
-
     loadChannelAccounts("whatsapp");
     const loaded = getChannelAccount("whatsapp", "personal");
     expect((loaded as WhatsAppChannelAccount | null)?.inboundDebounceMs).toBe(
       1250,
     );
+    expect((loaded as WhatsAppChannelAccount | null)?.waitingBehavior).toBe(
+      "typing_indicator",
+    );
     if (!loaded) throw new Error("migrated account was not loaded");
-
     upsertChannelAccount("whatsapp", loaded);
     expect(persisted?.inbound_debounce_ms).toBe(1250);
+    expect(persisted?.waiting_behavior).toBe("typing_indicator");
     expect(persisted).not.toHaveProperty("inboundDebounceMs");
+    expect(persisted).not.toHaveProperty("waitingBehavior");
   });
 
   test("migrates fractional debounce from legacy YAML", () => {
@@ -286,7 +289,6 @@ describe("WhatsApp channel service", () => {
         (readChannelConfig("whatsapp") as WhatsAppChannelConfig | null)
           ?.inboundDebounceMs,
       ).toBe(875);
-
       loadChannelAccounts("whatsapp");
       expect(
         (
@@ -296,6 +298,40 @@ describe("WhatsApp channel service", () => {
           ) as WhatsAppChannelAccount | null
         )?.inboundDebounceMs,
       ).toBe(875);
+    } finally {
+      __testOverrideChannelsRoot(null);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("migrates waiting behavior from legacy YAML with safe cleanup", () => {
+    const root = mkdtempSync(join(tmpdir(), "whatsapp-waiting-"));
+    try {
+      mkdirSync(join(root, "whatsapp"), { recursive: true });
+      writeFileSync(
+        join(root, "whatsapp", "config.yaml"),
+        [
+          "enabled: true",
+          "dm_policy: pairing",
+          "waiting_behavior: typing_indicator",
+          "",
+        ].join("\n"),
+      );
+      __testOverrideChannelsRoot(root);
+      __testOverrideLoadChannelAccounts(null);
+      expect(
+        (readChannelConfig("whatsapp") as WhatsAppChannelConfig | null)
+          ?.waitingBehavior,
+      ).toBe("typing_indicator");
+      loadChannelAccounts("whatsapp");
+      expect(
+        (
+          getChannelAccount(
+            "whatsapp",
+            "__legacy_migrated__",
+          ) as WhatsAppChannelAccount | null
+        )?.waitingBehavior,
+      ).toBe("typing_indicator");
     } finally {
       __testOverrideChannelsRoot(null);
       rmSync(root, { recursive: true, force: true });

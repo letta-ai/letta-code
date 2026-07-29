@@ -1,3 +1,4 @@
+import type { WhatsAppWaitingBehavior } from "@/channels/whatsapp/waiting-behavior-config-types";
 import type {
   ChannelAccount,
   ChannelAdapter,
@@ -172,6 +173,7 @@ export interface ChannelPluginAccountPatch {
   allowBots?: ChannelAllowBotsMode;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];

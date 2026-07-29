@@ -129,7 +129,9 @@ function makeHarness(
     },
     dependencies,
   );
-  adapter.onMessage = onMessage;
+  adapter.onMessage = async (message) => {
+    await onMessage(message);
+  };
   return {
     adapter,
     async emit(messages: Record<string, unknown>[]) {

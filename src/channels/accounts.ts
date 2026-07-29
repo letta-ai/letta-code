@@ -56,6 +56,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   acknowledge_message_reaction: "acknowledgeMessageReaction",
   group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
+  waiting_behavior: "waitingBehavior",
   listen_mode: "listenMode",
   media_max_bytes: "mediaMaxBytes",
   mention_patterns: "mentionPatterns",
@@ -385,6 +386,8 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
       next.inboundDebounceMs <= 10000
         ? Math.trunc(next.inboundDebounceMs)
         : 0;
+    next.waitingBehavior =
+      next.waitingBehavior === "typing_indicator" ? "typing_indicator" : "off";
   }
   if (isSignalChannelAccount(next)) {
     next.baseUrl = next.baseUrl ?? "";
@@ -479,6 +482,7 @@ function makeDefaultLegacyAccount(
       attachmentAllowedPaths: [...(config.attachmentAllowedPaths ?? [])],
       attachmentPathRecursive: config.attachmentPathRecursive === true,
       inboundDebounceMs: config.inboundDebounceMs ?? 0,
+      waitingBehavior: config.waitingBehavior ?? "off",
       createdAt: now,
       updatedAt: now,
     };

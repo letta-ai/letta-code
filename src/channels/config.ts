@@ -304,6 +304,11 @@ const whatsappConfigCodec: ChannelConfigCodec<WhatsAppChannelConfig> = {
         parsed.inbound_debounce_ms <= 10000
           ? Math.trunc(parsed.inbound_debounce_ms)
           : 0,
+      waitingBehavior:
+        parsed.waiting_behavior === "typing_indicator" ||
+        parsed.waiting_behavior === "off"
+          ? parsed.waiting_behavior
+          : "off",
     };
   },
 };
