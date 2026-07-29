@@ -3,6 +3,8 @@ import {
   __testOverrideLoadChannelAccounts,
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
+  getChannelAccount,
+  upsertChannelAccount,
 } from "@/channels/accounts";
 import {
   __testOverrideLoadPairingStore,
@@ -25,6 +27,10 @@ import {
   __testOverrideSaveTargetStore,
   clearTargetStores,
 } from "@/channels/targets";
+import {
+  type ChannelAccount,
+  isWhatsAppChannelAccount,
+} from "@/channels/types";
 
 describe("WhatsApp channel service", () => {
   beforeEach(() => {
@@ -98,6 +104,11 @@ describe("WhatsApp channel service", () => {
           mention_patterns: ["\\bloop\\b"],
           download_media: true,
           media_max_bytes: 1048576,
+          attachment_filter: true,
+          attachment_mime_types: ["image/png", "audio/mpeg"],
+          attachment_allowed_recipients: ["15551234567"],
+          attachment_allowed_paths: ["/tmp/uploads"],
+          attachment_path_recursive: true,
         },
       },
       { accountId: "personal" },
@@ -110,12 +121,35 @@ describe("WhatsApp channel service", () => {
     expect(created.mentionPatterns).toEqual(["\\bloop\\b"]);
     expect(created.downloadMedia).toBe(true);
     expect(created.mediaMaxBytes).toBe(1048576);
+    expect(created.attachmentFilter).toBe(true);
+    expect(created.attachmentMimeTypes).toEqual(["image/png", "audio/mpeg"]);
+    expect(created.attachmentAllowedRecipients).toEqual(["15551234567"]);
+    expect(created.attachmentAllowedPaths).toEqual(["/tmp/uploads"]);
+    expect(created.attachmentPathRecursive).toBe(true);
 
     const updated = updateChannelAccountLive("whatsapp", "personal", {
-      config: { group_mode: "open", self_chat_mode: true },
+      config: {
+        group_mode: "open",
+        self_chat_mode: true,
+        attachment_filter: false,
+        attachment_mime_types: ["application/pdf"],
+        attachment_allowed_recipients: ["120363@g.us"],
+        attachment_allowed_paths: ["/tmp/docs"],
+        attachment_path_recursive: false,
+      },
     });
     expect(updated.groupMode).toBe("open");
     expect(updated.selfChatMode).toBe(true);
+    expect(updated.attachmentFilter).toBe(false);
+    expect(updated.config).toEqual(
+      expect.objectContaining({
+        attachment_filter: false,
+        attachment_mime_types: ["application/pdf"],
+        attachment_allowed_recipients: ["120363@g.us"],
+        attachment_allowed_paths: ["/tmp/docs"],
+        attachment_path_recursive: false,
+      }),
+    );
   });
 
   test("bind updates the account-level agent id", () => {
@@ -134,5 +168,50 @@ describe("WhatsApp channel service", () => {
         config: expect.objectContaining({ agent_id: "agent-bound" }),
       }),
     );
+  });
+
+  test("loads and saves attachment policy fields from accounts.json snake_case", () => {
+    const saved: ChannelAccount[] = [];
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "whatsapp",
+        accountId: "disk-account",
+        enabled: true,
+        dmPolicy: "open",
+        allowedUsers: [],
+        agentId: null,
+        selfChatMode: true,
+        groupMode: "disabled",
+        attachment_filter: true,
+        attachment_mime_types: ["image/png"],
+        attachment_allowed_recipients: ["15551234567"],
+        attachment_allowed_paths: ["/tmp/uploads"],
+        attachment_path_recursive: true,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      } as unknown as ChannelAccount,
+    ]);
+    __testOverrideSaveChannelAccounts((_channelId, accounts) => {
+      saved.push(...accounts);
+    });
+
+    const loaded = getChannelAccount("whatsapp", "disk-account");
+    if (!loaded || !isWhatsAppChannelAccount(loaded)) {
+      throw new Error("Expected a loaded WhatsApp account");
+    }
+    expect(loaded.attachmentFilter).toBe(true);
+    expect(loaded.attachmentMimeTypes).toEqual(["image/png"]);
+    expect(loaded.attachmentAllowedRecipients).toEqual(["15551234567"]);
+    expect(loaded.attachmentAllowedPaths).toEqual(["/tmp/uploads"]);
+    expect(loaded.attachmentPathRecursive).toBe(true);
+
+    upsertChannelAccount("whatsapp", loaded);
+    const stored = saved[0] as unknown as Record<string, unknown>;
+    expect(stored.attachment_filter).toBe(true);
+    expect(stored.attachment_mime_types).toEqual(["image/png"]);
+    expect(stored.attachment_allowed_recipients).toEqual(["15551234567"]);
+    expect(stored.attachment_allowed_paths).toEqual(["/tmp/uploads"]);
+    expect(stored.attachment_path_recursive).toBe(true);
+    expect(stored.attachmentFilter).toBeUndefined();
   });
 });

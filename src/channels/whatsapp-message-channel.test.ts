@@ -53,14 +53,28 @@ describe("WhatsApp MessageChannel actions", () => {
     ]);
   });
 
-  test("documents the Ogg/Opus requirement for media uploads", () => {
-    expect(whatsappMessageActions.describeMessageTool({}).schema).toEqual({
-      properties: {
-        media: expect.objectContaining({
-          description: expect.stringContaining("Ogg/Opus"),
-        }),
-      },
-    });
+  test("documents voice memos and regular non-Opus audio attachments", () => {
+    const schema = whatsappMessageActions.describeMessageTool({}).schema;
+    expect(schema).toEqual(
+      expect.objectContaining({
+        properties: {
+          media: expect.objectContaining({
+            description: expect.stringContaining("Ogg/Opus"),
+          }),
+        },
+      }),
+    );
+    expect(schema).toEqual(
+      expect.objectContaining({
+        properties: {
+          media: expect.objectContaining({
+            description: expect.stringContaining(
+              "regular document attachments",
+            ),
+          }),
+        },
+      }),
+    );
   });
 
   test("sends text messages", async () => {
@@ -85,15 +99,15 @@ describe("WhatsApp MessageChannel actions", () => {
     );
   });
 
-  test("rejects MP3 voice memo uploads before calling the adapter", async () => {
+  test("allows MP3 uploads through to the adapter", async () => {
     const { ctx, sent } = makeContext("upload-file", {
       mediaPath: "/tmp/voice.mp3",
     });
 
-    await expect(whatsappMessageActions.handleAction(ctx)).resolves.toMatch(
-      /Ogg\/Opus/,
+    await expect(whatsappMessageActions.handleAction(ctx)).resolves.toContain(
+      "Attachment sent",
     );
-    expect(sent).toHaveLength(0);
+    expect(sent).toHaveLength(1);
   });
 
   test("sends reactions", async () => {

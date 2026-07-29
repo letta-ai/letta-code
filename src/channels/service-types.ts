@@ -132,6 +132,11 @@ export interface ChannelAccountSnapshot {
   recipientAliases?: Record<string, string>;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+  attachmentFilter?: boolean;
+  attachmentMimeTypes?: string[];
+  attachmentAllowedRecipients?: string[];
+  attachmentAllowedPaths?: string[];
+  attachmentPathRecursive?: boolean;
   createdAt: string;
   updatedAt: string;
 }

@@ -66,6 +66,11 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
+  attachment_filter: "attachmentFilter",
+  attachment_mime_types: "attachmentMimeTypes",
+  attachment_allowed_recipients: "attachmentAllowedRecipients",
+  attachment_allowed_paths: "attachmentAllowedPaths",
+  attachment_path_recursive: "attachmentPathRecursive",
 };
 
 let warnedAboutDualKeys = false;
@@ -239,6 +244,15 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
     (cloned as WhatsAppChannelAccount).mentionPatterns = [
       ...(account.mentionPatterns ?? []),
     ];
+    (cloned as WhatsAppChannelAccount).attachmentMimeTypes = [
+      ...(account.attachmentMimeTypes ?? []),
+    ];
+    (cloned as WhatsAppChannelAccount).attachmentAllowedRecipients = [
+      ...(account.attachmentAllowedRecipients ?? []),
+    ];
+    (cloned as WhatsAppChannelAccount).attachmentAllowedPaths = [
+      ...(account.attachmentAllowedPaths ?? []),
+    ];
   }
 
   if (isSignalChannelAccount(account)) {
@@ -357,6 +371,13 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
     next.downloadMedia = next.downloadMedia === true;
     next.transcribeVoice = next.transcribeVoice === true;
+    next.attachmentFilter = next.attachmentFilter === true;
+    next.attachmentMimeTypes = [...(next.attachmentMimeTypes ?? [])];
+    next.attachmentAllowedRecipients = [
+      ...(next.attachmentAllowedRecipients ?? []),
+    ];
+    next.attachmentAllowedPaths = [...(next.attachmentAllowedPaths ?? [])];
+    next.attachmentPathRecursive = next.attachmentPathRecursive === true;
   }
   if (isSignalChannelAccount(next)) {
     next.baseUrl = next.baseUrl ?? "";
@@ -443,6 +464,13 @@ function makeDefaultLegacyAccount(
       transcribeVoice: config.transcribeVoice === true,
       downloadMedia: config.downloadMedia === true,
       mediaMaxBytes: config.mediaMaxBytes,
+      attachmentFilter: config.attachmentFilter === true,
+      attachmentMimeTypes: [...(config.attachmentMimeTypes ?? [])],
+      attachmentAllowedRecipients: [
+        ...(config.attachmentAllowedRecipients ?? []),
+      ],
+      attachmentAllowedPaths: [...(config.attachmentAllowedPaths ?? [])],
+      attachmentPathRecursive: config.attachmentPathRecursive === true,
       createdAt: now,
       updatedAt: now,
     };

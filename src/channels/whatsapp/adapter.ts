@@ -10,6 +10,7 @@ import type {
   OutboundChannelMessage,
   WhatsAppChannelAccount,
 } from "@/channels/types";
+import { decideWhatsAppAttachmentPolicy } from "./attachment-policy";
 import { resolveInboundIdentity } from "./identity";
 import {
   isGroupJid,
@@ -26,6 +27,7 @@ import {
   extractMentionedJids,
   extractReplyParticipant,
   extractWhatsAppText,
+  type WhatsAppResolvedOutboundMedia,
 } from "./media";
 import { loadWhatsAppModule } from "./runtime";
 import { createWhatsAppSocket, getWhatsAppAuthDir } from "./session";
@@ -617,12 +619,33 @@ export function createWhatsAppAdapter(
         rememberSent(id, result);
         return { messageId: id };
       }
+      let resolvedMedia: WhatsAppResolvedOutboundMedia | undefined;
+      if (msg.mediaPath) {
+        if (account.attachmentFilter === true) {
+          const decision = decideWhatsAppAttachmentPolicy({
+            policy: {
+              enabled: true,
+              allowedMimeTypes: account.attachmentMimeTypes ?? [],
+              allowedRecipients: account.attachmentAllowedRecipients ?? [],
+              allowedDirectories: account.attachmentAllowedPaths ?? [],
+              recursiveDirectories: account.attachmentPathRecursive === true,
+            },
+            mediaPath: msg.mediaPath,
+            targetJid,
+          });
+          if (!decision.allowed) throw new Error(decision.reason);
+          resolvedMedia = {
+            mediaPath: decision.mediaPath,
+            mimeType: decision.mimeType,
+          };
+        }
+      }
       try {
         await sock?.sendPresenceUpdate?.("composing", targetJid);
       } catch {
         // Presence is best-effort.
       }
-      const payload = buildWhatsAppOutboundPayload(msg);
+      const payload = buildWhatsAppOutboundPayload(msg, resolvedMedia);
       const result = await sendToWhatsApp(
         targetJid,
         payload,
