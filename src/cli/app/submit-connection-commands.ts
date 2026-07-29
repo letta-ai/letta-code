@@ -50,6 +50,7 @@ export async function handleConnectionCommand(
 
   if (trimmed.startsWith("/mcp")) {
     const mcpCtx: McpCommandContext = {
+      agentId,
       buffersRef,
       refreshDerived,
       setCommandRunning,
@@ -96,7 +97,7 @@ export async function handleConnectionCommand(
       const output = [
         "/mcp help",
         "",
-        "Manage MCP servers that run from this Letta Code client.",
+        "Manage client-local MCP servers for the current agent.",
         "",
         "USAGE",
         "  /mcp              — open the client-local MCP manager",

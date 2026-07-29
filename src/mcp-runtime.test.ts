@@ -20,7 +20,7 @@ afterEach(async () => {
 
 describe("client-local MCP runtime", () => {
   test("registers namespaced tools that execute through the local process", async () => {
-    const states = await replaceClientMcpServers([
+    const states = await replaceClientMcpServers("agent-a", [
       {
         name: "everything",
         transport: "stdio",
@@ -44,8 +44,25 @@ describe("client-local MCP runtime", () => {
     });
   });
 
+  test("replaces MCP tools when the selected agent changes", async () => {
+    await replaceClientMcpServers("agent-a", [
+      {
+        name: "everything",
+        transport: "stdio",
+        command: process.execPath,
+        args: [EVERYTHING_SERVER],
+      },
+    ]);
+    expect(getExternalToolDefinition("mcp__everything__echo")).toBeDefined();
+
+    await replaceClientMcpServers("agent-b", []);
+    expect(getExternalToolDefinition("mcp__everything__echo")).toBeUndefined();
+    expect(getClientMcpServerStates("agent-a")).toHaveLength(0);
+    expect(getClientMcpServerStates("agent-b")).toHaveLength(0);
+  });
+
   test("keeps failed local servers visible without dropping healthy ones", async () => {
-    const states = await replaceClientMcpServers([
+    const states = await replaceClientMcpServers("agent-a", [
       {
         name: "missing",
         transport: "stdio",
@@ -63,7 +80,8 @@ describe("client-local MCP runtime", () => {
       "failed",
       "connected",
     ]);
-    expect(getClientMcpServerStates()).toHaveLength(2);
+    expect(getClientMcpServerStates("agent-a")).toHaveLength(2);
+    expect(getClientMcpServerStates("agent-b")).toHaveLength(0);
     expect(getExternalToolDefinition("mcp__everything__echo")).toBeDefined();
   });
 });

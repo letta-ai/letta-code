@@ -121,6 +121,7 @@ import {
   emitLocalToolReturns,
 } from "./headless-tool-events";
 import { computeDiffPreviews } from "./helpers/diff-preview";
+import { replaceClientMcpServers } from "./mcp-runtime";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import type { ModAdapter } from "./mods/mod-adapter";
 import { getTurnStartCancel } from "./mods/turn-start-cancel";
@@ -1562,21 +1563,20 @@ export async function handleHeadlessCommand(
       agent = defaultAgent;
     }
   }
-
-  // All paths should have resolved to an agent by now
   if (!agent) {
     console.error("No agent found. Use --new-agent to create a new agent.");
     process.exit(1);
   }
   markMilestone("HEADLESS_AGENT_RESOLVED");
   telemetry.setCurrentAgentId(agent.id);
+  await replaceClientMcpServers(
+    agent.id,
+    settingsManager.getMcpServers(agent.id),
+  );
 
-  // Check if we're resuming an existing agent (not creating a new one)
   const isResumingAgent = !!(specifiedAgentId || (!forceNew && !fromAfFile));
+  // Refresh presets before applying optional model/system-prompt overrides.
 
-  // If resuming, always refresh model settings from presets to keep
-  // preset-derived fields in sync, then apply optional command-line
-  // overrides (model/system prompt).
   if (isResumingAgent) {
     if (model) {
       const modelHandle = resolveModel(model);

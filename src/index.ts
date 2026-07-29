@@ -74,7 +74,6 @@ import {
   runSubcommand,
   subcommandNeedsEarlyBackendMode,
 } from "./cli/subcommands/router";
-import { replaceClientMcpServers } from "./mcp-runtime";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import { applyStartupPermissionMode } from "./permissions/startup";
 import {
@@ -652,8 +651,6 @@ async function main(): Promise<void> {
   await settingsManager.initialize();
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
-
-  await replaceClientMcpServers(settings.mcpServers ?? []);
 
   // Initialize LSP infrastructure for type checking
   if (process.env.LETTA_ENABLE_LSP) {

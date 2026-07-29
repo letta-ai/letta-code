@@ -61,6 +61,7 @@ export interface AgentSettings {
   systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
   systemPromptHash?: string; // hash of the managed prompt content last written by Letta Code
   systemPromptVersion?: string; // Letta Code version that wrote systemPromptHash
+  mcpServers?: McpServerConfig[]; // MCP servers available only to this agent
 }
 
 export interface Settings {
@@ -95,7 +96,6 @@ export interface Settings {
   windowTitle?: WindowTitleConfig; // Configurable terminal window title
   env?: Record<string, string>;
   experiments?: Partial<Record<ExperimentId, boolean>>;
-  mcpServers?: McpServerConfig[]; // MCP servers executed by the local Letta Code process
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL (e.g., "api.letta.com", "localhost:8283")
   // Per-agent settings (global, keyed by agentId+serverKey)
@@ -1610,9 +1610,7 @@ class SettingsManager {
     }
   }
 
-  // =====================================================================
   // Agent Settings (unified agents array) Helpers
-  // =====================================================================
 
   /**
    * Get settings for a specific agent on the current server.
@@ -1661,31 +1659,25 @@ class SettingsManager {
     );
 
     if (idx >= 0) {
-      // Update existing (idx >= 0 guarantees this exists)
       const existing = agents[idx] as AgentSettings;
       const updated: AgentSettings = {
+        ...existing,
+        ...updates,
         agentId: existing.agentId,
         baseUrl: existing.baseUrl,
-        // Use nullish coalescing for pinned (undefined = keep existing)
-        pinned: updates.pinned !== undefined ? updates.pinned : existing.pinned,
-        // Use nullish coalescing for memfs (undefined = keep existing)
-        memfs: updates.memfs !== undefined ? updates.memfs : existing.memfs,
-        // Use nullish coalescing for toolset (undefined = keep existing)
-        toolset:
-          updates.toolset !== undefined ? updates.toolset : existing.toolset,
-        // Use nullish coalescing for systemPromptPreset (undefined = keep existing)
+        pinned: updates.pinned ?? existing.pinned,
+        memfs: updates.memfs ?? existing.memfs,
+        toolset: updates.toolset ?? existing.toolset,
         systemPromptPreset:
-          updates.systemPromptPreset !== undefined
-            ? updates.systemPromptPreset
-            : existing.systemPromptPreset,
+          updates.systemPromptPreset ?? existing.systemPromptPreset,
         systemPromptHash:
-          updates.systemPromptHash !== undefined
-            ? (updates.systemPromptHash ?? undefined)
-            : existing.systemPromptHash,
+          updates.systemPromptHash === null
+            ? undefined
+            : (updates.systemPromptHash ?? existing.systemPromptHash),
         systemPromptVersion:
-          updates.systemPromptVersion !== undefined
-            ? (updates.systemPromptVersion ?? undefined)
-            : existing.systemPromptVersion,
+          updates.systemPromptVersion === null
+            ? undefined
+            : (updates.systemPromptVersion ?? existing.systemPromptVersion),
       };
       // Clean up undefined/false values (explicit memfs:false is kept — it
       // marks deliberately memfs-less worker agents; see isMemfsExplicitlyDisabled)
@@ -1696,10 +1688,11 @@ class SettingsManager {
       if (!updated.systemPromptPreset) delete updated.systemPromptPreset;
       if (!updated.systemPromptHash) delete updated.systemPromptHash;
       if (!updated.systemPromptVersion) delete updated.systemPromptVersion;
+      if (!updated.mcpServers || updated.mcpServers.length === 0)
+        delete updated.mcpServers;
       if (!updated.baseUrl) delete updated.baseUrl;
       agents[idx] = updated;
     } else {
-      // Create new
       const newAgent: AgentSettings = {
         agentId,
         baseUrl: normalizedBaseUrl,
@@ -1715,6 +1708,8 @@ class SettingsManager {
       if (!newAgent.systemPromptPreset) delete newAgent.systemPromptPreset;
       if (!newAgent.systemPromptHash) delete newAgent.systemPromptHash;
       if (!newAgent.systemPromptVersion) delete newAgent.systemPromptVersion;
+      if (!newAgent.mcpServers || newAgent.mcpServers.length === 0)
+        delete newAgent.mcpServers;
       if (!newAgent.baseUrl) delete newAgent.baseUrl;
       agents.push(newAgent);
     }
@@ -1750,7 +1745,12 @@ class SettingsManager {
     const memfsServerKey = getCurrentMemfsServerKey(settings);
     this.upsertAgentSettings(agentId, { memfs: enabled }, memfsServerKey);
   }
-
+  getMcpServers(agentId: string): McpServerConfig[] {
+    return this.getAgentSettings(agentId)?.mcpServers ?? [];
+  }
+  setMcpServers(agentId: string, servers: McpServerConfig[]): void {
+    this.upsertAgentSettings(agentId, { mcpServers: servers });
+  }
   /**
    * Get toolset preference for an agent on the current server.
    * Defaults to "auto" when no manual override is stored.

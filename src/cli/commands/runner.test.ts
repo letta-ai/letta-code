@@ -114,6 +114,7 @@ describe("command input preservation in handlers", () => {
     setActiveMcpCommandId("cmd-1");
     handleMcpUsage(
       {
+        agentId: "agent-test",
         buffersRef,
         refreshDerived: () => {},
         setCommandRunning: () => {},

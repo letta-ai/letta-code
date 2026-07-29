@@ -24,13 +24,14 @@ interface McpSelectorProps {
 }
 
 export const McpSelector = memo(function McpSelector({
+  agentId,
   onAdd,
   onCancel,
 }: McpSelectorProps) {
   const terminalWidth = useTerminalWidth();
   const solidLine = SOLID_LINE.repeat(Math.max(terminalWidth, 10));
   const [states, setStates] = useState<ClientMcpServerState[]>(() =>
-    getClientMcpServerStates(),
+    getClientMcpServerStates(agentId),
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,38 +47,42 @@ export const McpSelector = memo(function McpSelector({
     setLoading(true);
     setError(null);
     try {
-      const configs = settingsManager.getSettings().mcpServers ?? [];
-      setStates(await replaceClientMcpServers(configs));
+      const configs = settingsManager.getMcpServers(agentId);
+      setStates(await replaceClientMcpServers(agentId, configs));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [agentId]);
 
-  const removeServer = useCallback(async (config: McpServerConfig) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const configs = (settingsManager.getSettings().mcpServers ?? []).filter(
-        (server) => server.name !== config.name,
-      );
-      settingsManager.updateSettings({ mcpServers: configs });
-      await settingsManager.flush();
-      setStates(await replaceClientMcpServers(configs));
-      setSelectedIndex(0);
-      setPage(0);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setLoading(false);
-      setMode("browsing");
-    }
-  }, []);
+  const removeServer = useCallback(
+    async (config: McpServerConfig) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const configs = settingsManager
+          .getMcpServers(agentId)
+          .filter((server) => server.name !== config.name);
+        settingsManager.setMcpServers(agentId, configs);
+        await settingsManager.flush();
+        setStates(await replaceClientMcpServers(agentId, configs));
+        setSelectedIndex(0);
+        setPage(0);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        setLoading(false);
+        setMode("browsing");
+      }
+    },
+    [agentId],
+  );
 
   useEffect(() => {
-    if (states.length === 0) void refresh();
-  }, [refresh, states.length]);
+    setStates(getClientMcpServerStates(agentId));
+    void refresh();
+  }, [agentId, refresh]);
 
   const totalPages = Math.max(1, Math.ceil(states.length / DISPLAY_PAGE_SIZE));
   const pageStates = states.slice(
@@ -208,10 +213,11 @@ export const McpSelector = memo(function McpSelector({
   return (
     <Frame solidLine={solidLine}>
       <Text bold color={colors.selector.title}>
-        Client-local MCP servers
+        MCP servers for this agent
       </Text>
       <Text dimColor>
-        Servers run on this machine and their tools are available automatically.
+        Servers run on this machine and their tools are available only to this
+        agent.
       </Text>
       <Box height={1} />
       {loading ? (

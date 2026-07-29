@@ -26,7 +26,9 @@ const CLIENT_MCP_RUNTIME_KEY = Symbol.for("@letta/clientMcpRuntime");
 
 type ClientMcpRuntime = {
   active: Map<string, ActiveMcpServer>;
+  agentId: string | null;
   states: ClientMcpServerState[];
+  generation: number;
 };
 
 type GlobalWithClientMcpRuntime = typeof globalThis & {
@@ -36,22 +38,34 @@ type GlobalWithClientMcpRuntime = typeof globalThis & {
 function getRuntime(): ClientMcpRuntime {
   const global = globalThis as GlobalWithClientMcpRuntime;
   if (!global[CLIENT_MCP_RUNTIME_KEY]) {
-    global[CLIENT_MCP_RUNTIME_KEY] = { active: new Map(), states: [] };
+    global[CLIENT_MCP_RUNTIME_KEY] = {
+      active: new Map(),
+      agentId: null,
+      states: [],
+      generation: 0,
+    };
   }
   return global[CLIENT_MCP_RUNTIME_KEY];
 }
 
 /** Replace all client-local MCP connections and their model-facing tools. */
 export async function replaceClientMcpServers(
+  agentId: string,
   configs: readonly McpServerConfig[],
 ): Promise<ClientMcpServerState[]> {
-  await closeClientMcpServers();
   const runtime = getRuntime();
+  const generation = ++runtime.generation;
+  await closeActiveServers(runtime);
+  runtime.agentId = agentId;
   const usedToolNames = new Set<string>();
   const states = await Promise.all(
     configs.map(async (config): Promise<ClientMcpServerState> => {
       try {
         const connection = await connectMcpServer(config);
+        if (generation !== runtime.generation) {
+          await connection.close();
+          return { config, status: "failed", tools: [], error: "Superseded" };
+        }
         const tools = connection.tools.map((tool) => {
           const name = uniqueToolName(
             `mcp__${normalizeName(config.name)}__${normalizeName(tool.name)}`,
@@ -82,24 +96,31 @@ export async function replaceClientMcpServers(
       }
     }),
   );
-  runtime.states = states;
+  if (generation === runtime.generation) runtime.states = states;
   return states;
 }
 
-/** Current local MCP connection state for the /mcp manager. */
-export function getClientMcpServerStates(): ClientMcpServerState[] {
-  return [...getRuntime().states];
+/** Current local MCP connection state for the selected agent. */
+export function getClientMcpServerStates(
+  agentId: string,
+): ClientMcpServerState[] {
+  const runtime = getRuntime();
+  return runtime.agentId === agentId ? [...runtime.states] : [];
 }
 
 /** Close every local MCP connection and unregister its tools. */
 export async function closeClientMcpServers(): Promise<void> {
   const runtime = getRuntime();
+  runtime.generation++;
+  runtime.agentId = null;
+  await closeActiveServers(runtime);
+}
+
+async function closeActiveServers(runtime: ClientMcpRuntime): Promise<void> {
   const active = [...runtime.active.values()];
   runtime.active.clear();
   runtime.states = [];
-  for (const server of active) {
-    unregisterExternalTools(server.tools);
-  }
+  for (const server of active) unregisterExternalTools(server.tools);
   await Promise.allSettled(active.map((server) => server.connection.close()));
 }
 

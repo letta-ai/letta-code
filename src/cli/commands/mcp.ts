@@ -23,6 +23,7 @@ export function setActiveCommandId(id: string | null): void {
 
 // Context passed to MCP handlers
 export interface McpCommandContext {
+  agentId: string;
   buffersRef: { current: Buffers };
   refreshDerived: () => void;
   setCommandRunning: (running: boolean) => void;
@@ -249,7 +250,7 @@ export async function handleMcpAdd(
   ctx.setCommandRunning(true);
 
   try {
-    const existing = settingsManager.getSettings().mcpServers ?? [];
+    const existing = settingsManager.getMcpServers(ctx.agentId);
     if (existing.some((server) => server.name === args.name)) {
       throw new Error(`MCP server "${args.name}" already exists`);
     }
@@ -279,9 +280,9 @@ export async function handleMcpAdd(
     }
 
     const configs = [...existing, config];
-    settingsManager.updateSettings({ mcpServers: configs });
+    settingsManager.setMcpServers(ctx.agentId, configs);
     await settingsManager.flush();
-    const states = await replaceClientMcpServers(configs);
+    const states = await replaceClientMcpServers(ctx.agentId, configs);
     const state = states.find(
       (candidate) => candidate.config.name === args.name,
     );
@@ -294,7 +295,7 @@ export async function handleMcpAdd(
       ctx.refreshDerived,
       cmdId,
       msg,
-      `Added client-local MCP server "${args.name}" (${args.transport})\nLoaded ${state.tools.length} tool${state.tools.length === 1 ? "" : "s"}`,
+      `Added MCP server "${args.name}" to this agent (${args.transport})\nLoaded ${state.tools.length} tool${state.tools.length === 1 ? "" : "s"}`,
       true,
     );
   } catch (error) {
