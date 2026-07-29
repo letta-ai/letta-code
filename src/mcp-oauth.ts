@@ -147,6 +147,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
     this.stateData.tokens = tokens;
+    delete this.stateData.codeVerifier;
     await this.persist();
   }
 
@@ -224,12 +225,20 @@ async function startOAuthCallbackServerOnPort(
 ): Promise<OAuthCallbackServer> {
   const expectedState: { value?: string } = {};
   let server: Server;
+  let completed = false;
   let settle: ((code: string) => void) | undefined;
   let reject: ((error: Error) => void) | undefined;
   const codePromise = new Promise<string>((resolve, rejectPromise) => {
-    settle = resolve;
-    reject = rejectPromise;
+    settle = (code) => {
+      completed = true;
+      resolve(code);
+    };
+    reject = (error) => {
+      completed = true;
+      rejectPromise(error);
+    };
   });
+  void codePromise.catch(() => undefined);
 
   server = createServer((request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -271,6 +280,7 @@ async function startOAuthCallbackServerOnPort(
     server.once("error", rejectListen);
     server.listen(port, "127.0.0.1", resolve);
   });
+  server.unref();
   const address = server.address();
   if (!address || typeof address === "string") {
     server.close();
@@ -288,6 +298,7 @@ async function startOAuthCallbackServerOnPort(
     waitForCode: () => codePromise.finally(() => clearTimeout(timeout)),
     close: () => {
       clearTimeout(timeout);
+      if (!completed) reject?.(new Error("MCP OAuth flow was cancelled"));
       server.close();
     },
   };

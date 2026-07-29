@@ -91,8 +91,13 @@ export const McpSelector = memo(function McpSelector({
   );
 
   useEffect(() => {
-    setStates(getClientMcpServerStates(agentId));
-    void refresh();
+    const currentStates = getClientMcpServerStates(agentId);
+    setStates(currentStates);
+    if (
+      currentStates.length !== settingsManager.getMcpServers(agentId).length
+    ) {
+      void refresh();
+    }
   }, [agentId, refresh]);
 
   const totalPages = Math.max(1, Math.ceil(states.length / DISPLAY_PAGE_SIZE));
@@ -179,7 +184,7 @@ export const McpSelector = memo(function McpSelector({
         ) : (
           viewingState.tools.map((tool) => (
             <Box key={tool.registrationKey ?? tool.name} flexDirection="column">
-              <Text>{tool.name}</Text>
+              <Text>{tool.label ?? tool.name}</Text>
               <Text dimColor>
                 {"  "}
                 {truncateText(tool.description, terminalWidth - 2)}

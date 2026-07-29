@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { fileURLToPath } from "node:url";
-import { connectStdioMcpServer } from "@/mcp-client";
+import { connectMcpServer, connectStdioMcpServer } from "@/mcp-client";
 
 const EVERYTHING_SERVER = fileURLToPath(
   new URL(
@@ -52,6 +52,21 @@ describe("client-side MCP", () => {
     } finally {
       await server.close();
     }
+  });
+
+  test("rejects remote headers with unresolved environment variables", async () => {
+    expect(
+      connectMcpServer({
+        name: "secure",
+        transport: "http",
+        url: "https://mcp.example.invalid/mcp",
+        headers: {
+          Authorization: "Bearer $" + "{LETTA_MCP_TEST_MISSING_TOKEN_7F4C}",
+        },
+      }),
+    ).rejects.toThrow(
+      "MCP header Authorization references missing environment variable LETTA_MCP_TEST_MISSING_TOKEN_7F4C",
+    );
   });
 
   test("rejects when the stdio command cannot start", async () => {

@@ -28,6 +28,23 @@ afterEach(async () => {
 });
 
 describe("MCP OAuth", () => {
+  test("cancels a pending browser callback cleanly", async () => {
+    setServiceName("letta-code-mcp-oauth-test");
+    serverUrl = "https://oauth-cancellation.example/mcp";
+    const oauth = await createMcpOAuthSession(
+      AGENT_ID,
+      SERVER_NAME,
+      serverUrl,
+      { interactive: true },
+    );
+    if (!oauth?.waitForAuthorizationCode)
+      throw new Error("Interactive OAuth callback was not created");
+
+    const authorizationCode = oauth.waitForAuthorizationCode();
+    await oauth.close();
+    await expect(authorizationCode).rejects.toThrow("cancelled");
+  });
+
   test("completes discovery, DCR, PKCE, callback, and authenticated connection", async () => {
     setServiceName("letta-code-mcp-oauth-test");
     const mcpPort = await availablePort();

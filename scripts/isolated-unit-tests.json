@@ -31,9 +31,24 @@
       "reason": "Uses a top-level Bun module mock for backend generation."
     },
     {
+      "path": "src/mcp-client.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Spawns real stdio MCP server processes."
+    },
+    {
       "path": "src/mcp-oauth.test.ts",
       "timeoutMs": 30000,
       "reason": "Runs real OAuth and MCP servers while changing the secrets service name."
+    },
+    {
+      "path": "src/mcp-runtime.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Spawns real MCP servers and mutates the global external-tools registry."
+    },
+    {
+      "path": "src/mcp-settings.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mutates the settings singleton, HOME, and the secrets service name."
     },
     {
       "path": "src/settings-manager-auth-cache.test.ts",

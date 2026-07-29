@@ -239,7 +239,7 @@ import type {
   QueuedOverlayAction,
   StaticItem,
 } from "./types";
-import { useAgentMcpServers } from "./use-agent-mcp-servers";
+import { closeMcp, useAgentMcpServers } from "./use-agent-mcp-servers";
 import { useApprovalFlow } from "./use-approval-flow";
 import { useBashHandlers } from "./use-bash-handlers";
 import { useConfigurationHandlers } from "./use-configuration-handlers";
@@ -3957,7 +3957,7 @@ export function App({
       // Non-critical, don't fail the exit
     }
 
-    // Flush telemetry before exit
+    await closeMcp();
     await telemetry.flush();
 
     setShowExitStats(true);

@@ -1,5 +1,8 @@
 import { useEffect } from "react";
 import { closeClientMcpServers, replaceClientMcpServers } from "@/mcp-runtime";
+
+export { closeClientMcpServers as closeMcp } from "@/mcp-runtime";
+
 import { settingsManager } from "@/settings-manager";
 import { debugWarn } from "@/utils/debug";
 

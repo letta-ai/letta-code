@@ -121,7 +121,7 @@ import {
   emitLocalToolReturns,
 } from "./headless-tool-events";
 import { computeDiffPreviews } from "./helpers/diff-preview";
-import { replaceClientMcpServers } from "./mcp-runtime";
+import { closeClientMcpServers, replaceClientMcpServers } from "./mcp-runtime";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import type { ModAdapter } from "./mods/mod-adapter";
 import { getTurnStartCancel } from "./mods/turn-start-cancel";
@@ -666,13 +666,11 @@ async function sendScopedApprovalMessages(params: {
 async function flushAndExit(code: number): Promise<never> {
   const flushWritable = (stream: NodeJS.WriteStream): Promise<void> =>
     new Promise((resolve) => {
-      if (stream.destroyed || stream.writableEnded) {
-        resolve();
-        return;
-      }
+      if (stream.destroyed || stream.writableEnded) return resolve();
       stream.write("", () => resolve());
     });
 
+  await closeClientMcpServers();
   await Promise.allSettled([
     flushWritable(process.stdout),
     flushWritable(process.stderr),
@@ -1572,6 +1570,7 @@ export async function handleHeadlessCommand(
   await replaceClientMcpServers(
     agent.id,
     settingsManager.getMcpServers(agent.id),
+    { stderr: "pipe" },
   );
 
   const isResumingAgent = !!(specifiedAgentId || (!forceNew && !fromAfFile));

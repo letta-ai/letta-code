@@ -2,6 +2,7 @@ import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import {
   handleMcpAdd,
   type McpCommandContext,
+  mcpHelpText,
   setActiveCommandId as setActiveMcpCommandId,
 } from "@/cli/commands/mcp";
 import type { Buffers } from "@/cli/helpers/accumulator";
@@ -94,21 +95,7 @@ export async function handleConnectionCommand(
 
     if (firstWord === "help") {
       const cmd = commandRunner.start(msg, "Showing MCP help...");
-      const output = [
-        "/mcp help",
-        "",
-        "Manage client-local MCP servers for the current agent. OAuth-protected remote servers open a browser automatically.",
-        "",
-        "USAGE",
-        "  /mcp              — open the client-local MCP manager",
-        "  /mcp add ...      — add a client-local server",
-        "  /mcp help         — show this help",
-        "",
-        "EXAMPLES",
-        "  /mcp add --transport stdio filesystem npx -y @modelcontextprotocol/server-filesystem .",
-        "  /mcp add --transport http notion https://mcp.notion.com/mcp",
-      ].join("\n");
-      cmd.finish(output, true);
+      cmd.finish(mcpHelpText(), true);
       return { submitted: true };
     }
 

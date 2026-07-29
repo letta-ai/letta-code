@@ -129,8 +129,10 @@ interface McpAddArgs {
   url: string | null;
   command: string | null;
   args: string[];
+  cwd: string | null;
+  env: Record<string, string>;
   headers: Record<string, string>;
-  authToken: string | null;
+  authTokenEnv: string | null;
 }
 
 function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
@@ -140,8 +142,10 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
   let url: string | null = null;
   let command: string | null = null;
   const args: string[] = [];
+  let cwd: string | null = null;
+  const env: Record<string, string> = {};
   const headers: Record<string, string> = {};
-  let authToken: string | null = null;
+  let authTokenEnv: string | null = null;
 
   let i = 0;
   while (i < parts.length) {
@@ -158,6 +162,18 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
         transport = "stdio";
       }
       i++;
+    } else if (part === "--cwd") {
+      i++;
+      cwd = parts[i] || null;
+      i++;
+    } else if (part === "--env" || part === "-e") {
+      i++;
+      const envValue = parts[i];
+      const separator = envValue?.indexOf("=") ?? -1;
+      if (envValue && separator > 0) {
+        env[envValue.slice(0, separator)] = envValue.slice(separator + 1);
+      }
+      i++;
     } else if (part === "--header" || part === "-h") {
       i++;
       const headerValue = parts[i];
@@ -172,9 +188,9 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
         }
       }
       i++;
-    } else if (part === "--auth" || part === "-a") {
+    } else if (part === "--auth-env") {
       i++;
-      authToken = parts[i] || null;
+      authTokenEnv = parts[i] || null;
       i++;
     } else if (!name) {
       name = part || null;
@@ -212,8 +228,10 @@ function parseMcpAddArgs(parts: string[]): McpAddArgs | null {
     url: url || null,
     command: command || null,
     args,
+    cwd,
+    env,
     headers,
-    authToken: authToken || null,
+    authTokenEnv: authTokenEnv || null,
   };
 }
 
@@ -232,7 +250,7 @@ export async function handleMcpAdd(
       ctx.buffersRef,
       ctx.refreshDerived,
       msg,
-      'Usage: /mcp add --transport <http|sse|stdio> <name> <url|command> [--header "key: value"] [--auth token]\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport http secure-api https://api.example.com/mcp --header "Authorization: Bearer token"',
+      'Usage: /mcp add --transport <http|sse|stdio> <name> <url|command> [--header "key: value"] [--auth-env TOKEN_ENV_VAR]\n\nExamples:\n  /mcp add --transport http notion https://mcp.notion.com/mcp\n  /mcp add --transport http secure-api https://api.example.com/mcp --auth-env MCP_API_TOKEN',
       false,
     );
     return;
@@ -255,9 +273,16 @@ export async function handleMcpAdd(
       throw new Error(`MCP server "${args.name}" already exists`);
     }
 
+    if (args.authTokenEnv && !/^[A-Z_][A-Z0-9_]*$/.test(args.authTokenEnv)) {
+      throw new Error(
+        `Invalid token environment variable name: ${args.authTokenEnv}`,
+      );
+    }
     const headers = {
       ...args.headers,
-      ...(args.authToken ? { Authorization: `Bearer ${args.authToken}` } : {}),
+      ...(args.authTokenEnv
+        ? { Authorization: `Bearer \${${args.authTokenEnv}}` }
+        : {}),
     };
     let config: McpServerConfig;
     if (args.transport === "stdio") {
@@ -267,7 +292,8 @@ export async function handleMcpAdd(
         transport: "stdio",
         command: args.command,
         args: args.args,
-        cwd: process.cwd(),
+        cwd: args.cwd ?? process.cwd(),
+        ...(Object.keys(args.env).length > 0 ? { env: args.env } : {}),
       };
     } else {
       if (!args.url) throw new Error("URL is required for HTTP/SSE");
@@ -325,18 +351,37 @@ export async function handleMcpAdd(
   }
 }
 
-// Show usage help
+export function mcpHelpText(): string {
+  return [
+    "/mcp help",
+    "",
+    "Manage client-local MCP servers for the current agent. OAuth-protected remote servers open a browser automatically.",
+    "",
+    "USAGE",
+    "  /mcp              — open the client-local MCP manager",
+    "  /mcp add ...      — add a client-local server",
+    "  /mcp help         — show this help",
+    "",
+    "OPTIONS FOR /mcp add",
+    "  --transport <stdio|http|sse>",
+    '  --header "Name: value"       repeatable HTTP/SSE header',
+    "  --auth-env TOKEN_ENV_VAR     bearer token from the environment",
+    "  --cwd PATH                   stdio working directory",
+    "  --env KEY=VALUE              repeatable stdio environment variable",
+    "",
+    "EXAMPLES",
+    "  /mcp add --transport stdio filesystem npx -y @modelcontextprotocol/server-filesystem .",
+    "  /mcp add --transport http notion https://mcp.notion.com/mcp",
+    "  /mcp add --transport http private https://mcp.example.com/mcp --auth-env MCP_API_TOKEN",
+  ].join("\n");
+}
+
 export function handleMcpUsage(ctx: McpCommandContext, msg: string): void {
   addCommandResult(
     ctx.buffersRef,
     ctx.refreshDerived,
     msg,
-    "Usage: /mcp [subcommand ...]\n" +
-      "  /mcp                  - Open client-local MCP manager\n" +
-      "  /mcp add ...          - Add a client-local server (OAuth opens automatically)\n\n" +
-      "Examples:\n" +
-      "  /mcp add --transport stdio filesystem npx -y @modelcontextprotocol/server-filesystem .\n" +
-      "  /mcp add --transport http notion https://mcp.notion.com/mcp",
+    mcpHelpText(),
     false,
   );
 }

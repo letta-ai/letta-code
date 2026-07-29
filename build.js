@@ -162,6 +162,9 @@ await Bun.build({
   naming: {
     entry: "mcp-client.js",
   },
+  define: {
+    LETTA_VERSION: JSON.stringify(version),
+  },
 });
 
 await Bun.build({

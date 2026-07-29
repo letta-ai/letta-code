@@ -76,9 +76,11 @@ export interface ConnectMcpServerOptions {
   oauth?: McpOAuthConnection;
 }
 
+declare const LETTA_VERSION: string | undefined;
+
 const DEFAULT_CLIENT_INFO = {
   name: "letta-code",
-  version: "1",
+  version: typeof LETTA_VERSION === "undefined" ? "0" : LETTA_VERSION,
 };
 
 /**
@@ -90,7 +92,6 @@ export async function connectMcpServer(
   options: ConnectMcpServerOptions = {},
 ): Promise<ConnectedMcpServer> {
   let client = new Client(options.clientInfo ?? DEFAULT_CLIENT_INFO);
-  let connected = false;
   try {
     const transport = createTransport(config, options);
     try {
@@ -111,7 +112,6 @@ export async function connectMcpServer(
       client = new Client(options.clientInfo ?? DEFAULT_CLIENT_INFO);
       await client.connect(createTransport(config, options));
     }
-    connected = true;
     await options.oauth?.close();
     const response = await client.listTools();
     const tools = response.tools.map((tool) => ({
@@ -147,7 +147,7 @@ export async function connectMcpServer(
     };
   } catch (error) {
     await options.oauth?.close();
-    if (connected) await client.close().catch(() => undefined);
+    await client.close().catch(() => undefined);
     throw error;
   }
 }
@@ -165,13 +165,14 @@ function createTransport(
   options: ConnectMcpServerOptions,
 ): Transport {
   if (config.transport === "http") {
+    const headers = resolveHeaderEnvironment(config.headers);
     return new StreamableHTTPClientTransport(new URL(config.url), {
-      requestInit: headersRequestInit(config.headers),
+      requestInit: headersRequestInit(headers),
       authProvider: options.oauth?.authProvider,
     });
   }
   if (config.transport === "sse") {
-    const headers = config.headers;
+    const headers = resolveHeaderEnvironment(config.headers);
     const requestInit = headersRequestInit(headers);
     return new SSEClientTransport(new URL(config.url), {
       requestInit,
@@ -195,6 +196,26 @@ function supportsOAuthCompletion(
 ): transport is Transport & { finishAuth(code: string): Promise<void> } {
   return (
     "finishAuth" in transport && typeof transport.finishAuth === "function"
+  );
+}
+
+function resolveHeaderEnvironment(
+  headers?: Record<string, string>,
+): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  return Object.fromEntries(
+    Object.entries(headers).map(([name, value]) => [
+      name,
+      value.replace(/\$\{([A-Z_][A-Z0-9_]*)\}/g, (_match, envName: string) => {
+        const resolved = process.env[envName];
+        if (resolved === undefined) {
+          throw new Error(
+            `MCP header ${name} references missing environment variable ${envName}`,
+          );
+        }
+        return resolved;
+      }),
+    ]),
   );
 }
 

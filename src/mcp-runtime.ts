@@ -1,6 +1,7 @@
 import {
   type ConnectedMcpServer,
   connectMcpServer,
+  type McpOAuthConnection,
   type McpServerConfig,
   type McpToolResult,
 } from "@/mcp-client";
@@ -26,12 +27,14 @@ interface ActiveMcpServer {
 export interface ReplaceClientMcpServersOptions {
   interactiveOAuth?: boolean;
   onStatus?: (message: string) => void;
+  stderr?: "inherit" | "pipe";
 }
 
 const CLIENT_MCP_RUNTIME_KEY = Symbol.for("@letta/clientMcpRuntime");
 
 type ClientMcpRuntime = {
   active: Map<string, ActiveMcpServer>;
+  pendingOAuth: Set<McpOAuthConnection>;
   agentId: string | null;
   states: ClientMcpServerState[];
   generation: number;
@@ -46,12 +49,15 @@ function getRuntime(): ClientMcpRuntime {
   if (!global[CLIENT_MCP_RUNTIME_KEY]) {
     global[CLIENT_MCP_RUNTIME_KEY] = {
       active: new Map(),
+      pendingOAuth: new Set(),
       agentId: null,
       states: [],
       generation: 0,
     };
   }
-  return global[CLIENT_MCP_RUNTIME_KEY];
+  const runtime = global[CLIENT_MCP_RUNTIME_KEY];
+  if (!runtime.pendingOAuth) runtime.pendingOAuth = new Set();
+  return runtime;
 }
 
 /** Replace all client-local MCP connections and their model-facing tools. */
@@ -67,10 +73,17 @@ export async function replaceClientMcpServers(
   const usedToolNames = new Set<string>();
   const states = await Promise.all(
     configs.map(async (config): Promise<ClientMcpServerState> => {
+      let oauth: McpOAuthConnection | undefined;
       try {
-        const oauth = await oauthSessionForConfig(agentId, config, options);
+        oauth = await oauthSessionForConfig(agentId, config, options);
+        if (oauth) runtime.pendingOAuth.add(oauth);
+        if (generation !== runtime.generation) {
+          await oauth?.close();
+          return { config, status: "failed", tools: [], error: "Superseded" };
+        }
         const connection = await connectMcpServer(config, {
           ...(oauth ? { oauth } : {}),
+          ...(options.stderr ? { stderr: options.stderr } : {}),
         });
         if (generation !== runtime.generation) {
           await connection.close();
@@ -103,6 +116,8 @@ export async function replaceClientMcpServers(
           tools: [],
           error: error instanceof Error ? error.message : String(error),
         };
+      } finally {
+        if (oauth) runtime.pendingOAuth.delete(oauth);
       }
     }),
   );
@@ -152,11 +167,16 @@ export async function closeClientMcpServers(): Promise<void> {
 }
 
 async function closeActiveServers(runtime: ClientMcpRuntime): Promise<void> {
+  const pendingOAuth = [...runtime.pendingOAuth];
   const active = [...runtime.active.values()];
+  runtime.pendingOAuth.clear();
   runtime.active.clear();
   runtime.states = [];
   for (const server of active) unregisterExternalTools(server.tools);
-  await Promise.allSettled(active.map((server) => server.connection.close()));
+  await Promise.allSettled([
+    ...pendingOAuth.map((oauth) => oauth.close()),
+    ...active.map((server) => server.connection.close()),
+  ]);
 }
 
 function uniqueToolName(base: string, used: Set<string>): string {
