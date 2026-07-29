@@ -50,7 +50,7 @@ export interface ResumeData {
   conversation?: Conversation;
 }
 
-export function shouldTreatConversationAsResumed(
+export function isResumedConversation(
   conversation:
     | Pick<Conversation, "summary" | "in_context_message_ids">
     | undefined,

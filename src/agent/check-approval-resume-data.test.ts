@@ -9,7 +9,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   getResumeDataFromBackend,
-  shouldTreatConversationAsResumed,
+  isResumedConversation,
 } from "@/agent/check-approval";
 import { __testSetBackend, type Backend } from "@/backend";
 
@@ -160,14 +160,14 @@ async function captureDebugOutput<T>(
   }
 }
 
-describe("shouldTreatConversationAsResumed", () => {
+describe("isResumedConversation", () => {
   test("keeps the safe resumed fallback when conversation state is unavailable", () => {
-    expect(shouldTreatConversationAsResumed(undefined)).toBe(true);
+    expect(isResumedConversation(undefined)).toBe(true);
   });
 
   test("treats an empty untitled conversation as new", () => {
     expect(
-      shouldTreatConversationAsResumed({
+      isResumedConversation({
         summary: null,
         in_context_message_ids: [],
       }),
@@ -176,7 +176,7 @@ describe("shouldTreatConversationAsResumed", () => {
 
   test("treats a titled conversation as resumed", () => {
     expect(
-      shouldTreatConversationAsResumed({
+      isResumedConversation({
         summary: "Existing title",
         in_context_message_ids: [],
       }),
@@ -185,7 +185,7 @@ describe("shouldTreatConversationAsResumed", () => {
 
   test("treats a conversation with existing messages as resumed", () => {
     expect(
-      shouldTreatConversationAsResumed({
+      isResumedConversation({
         summary: null,
         in_context_message_ids: ["message-1"],
       }),

@@ -7,8 +7,8 @@ import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   getResumeDataFromBackend,
+  isResumedConversation,
   type ResumeData,
-  shouldTreatConversationAsResumed,
 } from "./agent/check-approval";
 import {
   setAgentContext,
@@ -2486,9 +2486,7 @@ async function main(): Promise<void> {
               specifiedConversationId,
             );
             setResumeData(data);
-            setResumedExistingConversation(
-              shouldTreatConversationAsResumed(data.conversation),
-            );
+            setResumedExistingConversation(true);
           } catch (error) {
             // Only treat 404/422 as "not found", rethrow other errors
             if (isBackendNotFoundError(error)) {
@@ -2717,12 +2715,13 @@ async function main(): Promise<void> {
       });
     }
 
-    // At this point, loadingState is not "selecting", "selecting_global", or "selecting_conversation"
-    // (those are handled above), so it's safe to pass to App
     const appLoadingState = loadingState as Exclude<
       typeof loadingState,
       "selecting" | "selecting_global" | "selecting_conversation"
     >;
+    const startupConversationTitleEligible = !isResumedConversation(
+      resumeData?.conversation,
+    );
 
     if (!agentId || !conversationId) {
       return React.createElement(App, {
@@ -2734,6 +2733,7 @@ async function main(): Promise<void> {
         startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
         messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
         resumedExistingConversation,
+        startupConversationTitleEligible,
         tokenStreaming: settings.tokenStreaming,
         reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,
         showCompactions: settings.showCompactions,
@@ -2758,6 +2758,7 @@ async function main(): Promise<void> {
       startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
       messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
       resumedExistingConversation,
+      startupConversationTitleEligible,
       tokenStreaming: settings.tokenStreaming,
       reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,
       showCompactions: settings.showCompactions,
