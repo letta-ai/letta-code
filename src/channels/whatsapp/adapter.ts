@@ -278,6 +278,13 @@ export function createWhatsAppAdapter(
     );
   }
 
+  function isKnownOutboundMessage(messageId: string): boolean {
+    if (sentMessageIds.has(messageId)) return true;
+    const stored = messageStore.get(messageId);
+    if (!stored) return false;
+    return asRecord(asRecord(stored).key).fromMe === true;
+  }
+
   function clearActiveSocket(closeWebSocket: boolean): void {
     const currentSock = sock;
     const releaseLease = releaseSocketLease;
@@ -392,7 +399,7 @@ export function createWhatsAppAdapter(
         );
       });
     });
-    connectedSocket.ev?.on?.("messages.reaction", (event) => {
+    sock.ev?.on?.("messages.reaction", (event) => {
       return handleReactionBatch(event).catch((error) => {
         console.error(
           `[WhatsApp:${account.accountId}] reaction handler failed:`,
@@ -536,7 +543,14 @@ export function createWhatsAppAdapter(
     parsed: WhatsAppReaction,
     raw: unknown,
   ): Promise<void> {
-    if (parsed.targetFromMe !== true) return;
+    // Baileys may deliver reactions via a LID chat where it cannot equate
+    // our PN identity, producing targetFromMe:false for our own messages.
+    // isKnownOutboundMessage also checks sentMessageIds and the store's
+    // key.fromMe, but not mere store membership because inbound messages
+    // are stored there too.
+    const targetIsOurs =
+      parsed.targetFromMe === true || isKnownOutboundMessage(parsed.targetMessageId);
+    if (!targetIsOurs) return;
     if (parsed.reactionKey.fromMe === true) return;
     if (isStatusOrBroadcastJid(parsed.chatId)) return;
     if (
@@ -575,7 +589,7 @@ export function createWhatsAppAdapter(
         groupMode: account.groupMode,
         allowedGroups: account.allowedGroups,
         groupJid: identity.chatId,
-        targetFromMe: parsed.targetFromMe,
+        targetFromMe: targetIsOurs,
       })
     ) {
       return;
