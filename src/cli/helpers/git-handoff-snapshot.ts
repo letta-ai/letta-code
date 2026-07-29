@@ -11,6 +11,8 @@ import {
 const MAX_HANDOFF_FILE_BYTES = 10 * 1024 * 1024;
 const SENSITIVE_BASENAME =
   /^(?:\.env(?:\..*)?|credentials?(?:\..*)?|secrets?(?:\..*)?)$/i;
+const SAFE_TEMPLATE_BASENAME =
+  /(?:^|[._-])(?:example|sample|template)(?:\.[^.]+)?$/i;
 
 function runGit(
   cwd: string,
@@ -32,15 +34,17 @@ function nulPaths(output: string): string[] {
 }
 
 function changedPaths(cwd: string): string[] {
-  const tracked = nulPaths(
+  return nulPaths(
     runGit(cwd, ["diff", "--name-only", "-z", "HEAD"], { trim: false }),
   );
-  const untracked = nulPaths(
-    runGit(cwd, ["ls-files", "--others", "--exclude-standard", "-z"], {
+}
+
+function stagedNewPaths(cwd: string): string[] {
+  return nulPaths(
+    runGit(cwd, ["diff", "--cached", "--name-only", "--diff-filter=A", "-z"], {
       trim: false,
     }),
   );
-  return [...new Set([...tracked, ...untracked])];
 }
 
 function assertSafeSnapshotPaths(cwd: string, paths: string[]): void {
@@ -50,7 +54,12 @@ function assertSafeSnapshotPaths(cwd: string, paths: string[]): void {
     const basename = path.split("/").at(-1) ?? path;
     try {
       const stat = statSync(join(cwd, path));
-      if (SENSITIVE_BASENAME.test(basename)) unsafe.push(path);
+      if (
+        SENSITIVE_BASENAME.test(basename) &&
+        !SAFE_TEMPLATE_BASENAME.test(basename)
+      ) {
+        unsafe.push(path);
+      }
       if (stat.isFile() && stat.size > MAX_HANDOFF_FILE_BYTES) {
         oversized.push(path);
       }
@@ -104,7 +113,11 @@ export function createPrivateSnapshotCommit(
   };
   try {
     runGit(cwd, ["read-tree", "HEAD"], { env });
-    runGit(cwd, ["add", "-A", "--", "."], { env });
+    runGit(cwd, ["add", "-u", "--", "."], { env });
+    const selectedNewPaths = stagedNewPaths(cwd);
+    if (selectedNewPaths.length > 0) {
+      runGit(cwd, ["add", "--", ...selectedNewPaths], { env });
+    }
     const tree = runGit(cwd, ["write-tree"], { env });
     const parent = runGit(cwd, ["rev-parse", "HEAD"]);
     const commit = runGit(

@@ -8,6 +8,7 @@ import {
   prepareCloudConversation,
   sendCloudConversationTurn,
 } from "@/backend/api/environment-turn";
+import type { GithubRepositoryRef } from "@/backend/api/environments";
 import type { AppCommandRunner } from "@/cli/app/types";
 import type { Buffers } from "@/cli/helpers/accumulator";
 import {
@@ -16,6 +17,7 @@ import {
   parseCloudCommand,
 } from "@/cli/helpers/cloud-command";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
+import { getGithubRepositoryForDirectory } from "@/cli/helpers/git-context";
 import {
   deletePrivateHandoffRef,
   prepareGithubHandoff,
@@ -123,31 +125,42 @@ export async function handleCloudCommand(params: {
   const key = cloudKey(params.agentId, params.conversationId);
   let cloudPrepared = false;
   try {
-    const handoff = prepareGithubHandoff(
-      params.projectDirectory,
-      params.conversationId,
+    const repositoryHandoffRequested = Boolean(
+      getGithubRepositoryForDirectory(params.projectDirectory),
     );
-    const repositories = handoff ? [handoff.repository] : undefined;
-    const cloud = await (async () => {
-      try {
-        return await prepareCloudConversation({
-          agentId: params.agentId,
-          conversationId: params.conversationId,
-          githubRepositories: repositories,
-          forceNew: Boolean(repositories),
-          setAsRuntimeTarget: true,
-        });
-      } finally {
-        deletePrivateHandoffRef(
-          params.projectDirectory,
-          handoff?.privateRef ?? null,
-        );
-      }
-    })();
-    cloudPrepared = true;
+    let cloud = await prepareCloudConversation({
+      agentId: params.agentId,
+      conversationId: params.conversationId,
+    });
     const repositoryHandoffSupported = cloud.repositoryHandoffVersion === 1;
+    let handoff: ReturnType<typeof prepareGithubHandoff> = null;
+    let repositories: GithubRepositoryRef[] | undefined;
+    if (repositoryHandoffSupported) {
+      handoff = prepareGithubHandoff(
+        params.projectDirectory,
+        params.conversationId,
+      );
+      repositories = handoff ? [handoff.repository] : undefined;
+      cloud = await (async () => {
+        try {
+          return await prepareCloudConversation({
+            agentId: params.agentId,
+            conversationId: params.conversationId,
+            githubRepositories: repositories,
+            forceNew: Boolean(repositories),
+            setAsRuntimeTarget: true,
+          });
+        } finally {
+          deletePrivateHandoffRef(
+            params.projectDirectory,
+            handoff?.privateRef ?? null,
+          );
+        }
+      })();
+    }
+    cloudPrepared = true;
     const handoffResult = formatRepositoryHandoffResult({
-      handoffRequested: Boolean(handoff),
+      handoffRequested: repositoryHandoffRequested,
       changedFileCount: handoff?.changedFiles.length ?? 0,
       repositoryHandoffSupported,
     });
