@@ -7,6 +7,7 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
+import type { WhatsAppMessagePrefixConfig } from "@/channels/whatsapp/message-prefix-config-types";
 import type { PermissionMode } from "@/permissions/mode";
 import type {
   ApprovalResponseBody,
@@ -661,7 +662,7 @@ export interface DiscordChannelConfig {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelConfig {
+export interface WhatsAppChannelConfig extends WhatsAppMessagePrefixConfig {
   channel: "whatsapp";
   enabled: boolean;
   dmPolicy: DmPolicy;
@@ -848,7 +849,9 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelAccount extends ChannelAccountBase {
+export interface WhatsAppChannelAccount
+  extends ChannelAccountBase,
+    WhatsAppMessagePrefixConfig {
   channel: "whatsapp";
   /** Agent ID used for account-bound DM and group auto-routing. */
   agentId: string | null;

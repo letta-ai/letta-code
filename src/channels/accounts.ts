@@ -57,6 +57,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
   listen_mode: "listenMode",
+  message_prefix: "messagePrefix",
   media_max_bytes: "mediaMaxBytes",
   mention_patterns: "mentionPatterns",
   recipient_aliases: "recipientAliases",
@@ -357,6 +358,8 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
     next.downloadMedia = next.downloadMedia === true;
     next.transcribeVoice = next.transcribeVoice === true;
+    next.messagePrefix =
+      typeof next.messagePrefix === "string" ? next.messagePrefix : undefined;
   }
   if (isSignalChannelAccount(next)) {
     next.baseUrl = next.baseUrl ?? "";
@@ -443,6 +446,7 @@ function makeDefaultLegacyAccount(
       transcribeVoice: config.transcribeVoice === true,
       downloadMedia: config.downloadMedia === true,
       mediaMaxBytes: config.mediaMaxBytes,
+      messagePrefix: config.messagePrefix,
       createdAt: now,
       updatedAt: now,
     };

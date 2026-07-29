@@ -55,6 +55,7 @@ export interface ChannelConfigSnapshot {
   richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+  messagePrefix?: string;
 }
 
 export interface PendingPairingSnapshot {
@@ -132,6 +133,7 @@ export interface ChannelAccountSnapshot {
   recipientAliases?: Record<string, string>;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+  messagePrefix?: string;
   createdAt: string;
   updatedAt: string;
 }

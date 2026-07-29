@@ -283,6 +283,10 @@ const whatsappConfigCodec: ChannelConfigCodec<WhatsAppChannelConfig> = {
         typeof parsed.media_max_bytes === "number"
           ? parsed.media_max_bytes
           : undefined,
+      messagePrefix:
+        typeof parsed.message_prefix === "string"
+          ? parsed.message_prefix
+          : undefined,
     };
   },
 };

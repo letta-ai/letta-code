@@ -196,6 +196,7 @@ export function toAccountSnapshot(
       transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,
+      messagePrefix: account.messagePrefix,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -387,6 +388,7 @@ export function getChannelConfigSnapshot(
       transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,
+      messagePrefix: account.messagePrefix,
     };
   }
 
