@@ -481,6 +481,7 @@ describe("getReasoningTierOptionsForHandle", () => {
       "medium",
       "high",
       "xhigh",
+      "max",
     ]);
     expect(options.map((option) => option.modelId)).toEqual([
       "sonnet-5-no-reasoning",
@@ -488,6 +489,25 @@ describe("getReasoningTierOptionsForHandle", () => {
       "sonnet-5-medium",
       "sonnet",
       "sonnet-5-xhigh",
+      "sonnet-5-max",
+    ]);
+  });
+
+  test("returns distinct xhigh and max options for anthropic opus 5", () => {
+    const options = getReasoningTierOptionsForHandle("anthropic/claude-opus-5");
+    expect(options.map((option) => option.effort)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(options.map((option) => option.modelId)).toEqual([
+      "opus-5-low",
+      "opus-5-medium",
+      "opus-5",
+      "opus-5-xhigh",
+      "opus-5-max",
     ]);
   });
 
