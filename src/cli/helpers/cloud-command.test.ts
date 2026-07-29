@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  formatRepositoryHandoffResult,
   getCloudCommandEligibilityError,
   parseCloudCommand,
 } from "./cloud-command";
@@ -19,6 +20,28 @@ describe("parseCloudCommand", () => {
   test("does not match adjacent command names", () => {
     expect(parseCloudCommand("/cloudy")).toBeNull();
     expect(parseCloudCommand("hello /cloud")).toBeNull();
+  });
+});
+
+describe("formatRepositoryHandoffResult", () => {
+  test("warns but allows Cloud fallback on older deployments", () => {
+    expect(
+      formatRepositoryHandoffResult({
+        handoffRequested: true,
+        changedFileCount: 2,
+        repositoryHandoffSupported: false,
+      }),
+    ).toContain("was not transferred");
+  });
+
+  test("reports included local changes when handoff is supported", () => {
+    expect(
+      formatRepositoryHandoffResult({
+        handoffRequested: true,
+        changedFileCount: 2,
+        repositoryHandoffSupported: true,
+      }),
+    ).toContain("Included 2 local file change(s)");
   });
 });
 

@@ -133,16 +133,19 @@ export async function prepareCloudConversation(params: {
   githubRepositories?: GithubRepositoryRef[];
   forceNew?: boolean;
   setAsRuntimeTarget?: boolean;
-}): Promise<{ connectionId: string; deviceId: string; name: string }> {
-  const { connectionId, environment } = await resolveAgentSandboxConnectionId(
-    params.agentId,
-    {
+}): Promise<{
+  connectionId: string;
+  deviceId: string;
+  name: string;
+  repositoryHandoffVersion?: 1;
+}> {
+  const { connectionId, environment, repositoryHandoffVersion } =
+    await resolveAgentSandboxConnectionId(params.agentId, {
       conversationId: params.conversationId,
       githubRepositories: params.githubRepositories,
       forceNew: params.forceNew,
       setAsRuntimeTarget: params.setAsRuntimeTarget,
-    },
-  );
+    });
   if (environment.metadata?.environmentMessageProtocol !== "v2-input") {
     throw new Error(
       `Cloud is running Letta Code ${environment.metadata?.lettaCodeVersion ?? "unknown"}, which does not support conversation handoff.`,
@@ -152,6 +155,7 @@ export async function prepareCloudConversation(params: {
     connectionId,
     deviceId: environment.deviceId,
     name: environment.connectionName,
+    repositoryHandoffVersion,
   };
 }
 

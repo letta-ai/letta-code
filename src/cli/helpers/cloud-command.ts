@@ -27,3 +27,17 @@ export function getCloudCommandEligibilityError(params: {
   }
   return null;
 }
+
+export function formatRepositoryHandoffResult(params: {
+  handoffRequested: boolean;
+  changedFileCount: number;
+  repositoryHandoffSupported: boolean;
+}): string {
+  if (!params.handoffRequested) return "";
+  if (!params.repositoryHandoffSupported) {
+    return " Exact local repository state was not transferred because this Cloud deployment does not support repository handoffs.";
+  }
+  return params.changedFileCount > 0
+    ? ` Included ${params.changedFileCount} local file change(s).`
+    : "";
+}

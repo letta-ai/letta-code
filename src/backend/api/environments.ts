@@ -63,6 +63,7 @@ export interface CreateAgentSandboxResponse {
   connectionName: string;
   conversationId?: string;
   resumed?: boolean;
+  repositoryHandoffVersion?: 1;
 }
 
 export interface GithubRepositoryRef {
@@ -209,7 +210,11 @@ export async function resolveAgentSandboxConnectionId(
     timeoutMs?: number;
     pollIntervalMs?: number;
   } = {},
-): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
+): Promise<{
+  connectionId: string;
+  environment: EnvironmentConnection;
+  repositoryHandoffVersion?: 1;
+}> {
   const timeoutMs = options.timeoutMs ?? 3 * 60_000;
   const pollIntervalMs = options.pollIntervalMs ?? 2_000;
   const sandbox = await createAgentSandbox(agentId, {
@@ -229,7 +234,11 @@ export async function resolveAgentSandboxConnectionId(
       const environment = await getEnvironmentConnection(deviceId);
       lastEnvironment = environment;
       if (isEnvironmentOnline(environment) && environment.connectionId) {
-        return { connectionId: environment.connectionId, environment };
+        return {
+          connectionId: environment.connectionId,
+          environment,
+          repositoryHandoffVersion: sandbox.repositoryHandoffVersion,
+        };
       }
     } catch (error) {
       lastError = error;

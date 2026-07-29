@@ -11,6 +11,7 @@ import {
 import type { AppCommandRunner } from "@/cli/app/types";
 import type { Buffers } from "@/cli/helpers/accumulator";
 import {
+  formatRepositoryHandoffResult,
   getCloudCommandEligibilityError,
   parseCloudCommand,
 } from "@/cli/helpers/cloud-command";
@@ -76,8 +77,9 @@ function prependHandoffReminder(
 
 function buildHandoffReminder(
   handoff: ReturnType<typeof prepareGithubHandoff>,
+  repositoryHandoffSupported: boolean,
 ): string | undefined {
-  if (!handoff?.privateRef) return undefined;
+  if (!handoff?.privateRef || !repositoryHandoffSupported) return undefined;
   return `<system-reminder>This conversation was moved to a Cloud computer. The workspace was restored from private handoff snapshot ${handoff.repository.ref}, based on ${handoff.baseCommit}, including ${handoff.changedFiles.length} local changed file(s). Continue from this exact workspace; do not assume those changes exist on the remote branch.</system-reminder>`;
 }
 
@@ -143,18 +145,30 @@ export async function handleCloudCommand(params: {
       }
     })();
     cloudPrepared = true;
+    const repositoryHandoffSupported = cloud.repositoryHandoffVersion === 1;
+    const handoffResult = formatRepositoryHandoffResult({
+      handoffRequested: Boolean(handoff),
+      changedFileCount: handoff?.changedFiles.length ?? 0,
+      repositoryHandoffSupported,
+    });
     params.cloudConversationKeysRef.current.set(key, {
-      handoffReminder: buildHandoffReminder(handoff),
+      handoffReminder: buildHandoffReminder(
+        handoff,
+        repositoryHandoffSupported,
+      ),
     });
     if (!parsed.instruction) {
       cmd.finish(
-        `Moved to Cloud (${cloud.name})${handoff?.changedFiles.length ? ` with ${handoff.changedFiles.length} local file change(s)` : ""}. Subsequent messages in this session will run there.`,
+        `Moved to Cloud (${cloud.name}).${handoffResult} Subsequent messages in this session will run there.`,
         true,
       );
       return { submitted: true };
     }
 
-    cmd.finish(`Moved to Cloud (${cloud.name}). Continuing there...`, true);
+    cmd.finish(
+      `Moved to Cloud (${cloud.name}).${handoffResult} Continuing there...`,
+      true,
+    );
     params.setThinkingMessage("Working in Cloud...");
     params.setStreaming(true);
     const result = await sendCloudConversationTurn({
