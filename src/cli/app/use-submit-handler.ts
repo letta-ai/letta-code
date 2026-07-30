@@ -84,6 +84,7 @@ import {
 import {
   AUTO_REFLECTION_DESCRIPTION,
   finalizeReflectionMemoryWorktreeLaunch,
+  getReflectionLaunchSkippedMessage,
   launchReflectionSubagent,
   prepareReflectionMemoryWorktreeLaunch,
   releaseReflectionLaunch,
@@ -3185,7 +3186,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   },
                 });
                 if (!arenaResult.launched) {
-                  cmd.fail("No new transcript content to reflect on.");
+                  cmd.fail(
+                    getReflectionLaunchSkippedMessage(arenaResult.reason) ??
+                      "Failed to start reflection arena.",
+                  );
                   return { submitted: true };
                 }
                 cmd.finish(
@@ -3219,16 +3223,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               });
 
               if (!result.launched) {
-                if (result.reason === "already_active") {
-                  cmd.fail(
-                    "A reflection agent is already running in the background.",
-                  );
-                } else if (result.reason === "no_payload") {
-                  cmd.fail("No new transcript content to reflect on.");
-                } else if (result.reason === "memfs_disabled") {
-                  cmd.fail(
-                    "Memory filesystem is not enabled. Use /remember instead.",
-                  );
+                const skippedMessage = getReflectionLaunchSkippedMessage(
+                  result.reason,
+                );
+                if (skippedMessage) {
+                  cmd.fail(skippedMessage);
                 } else {
                   const errorDetails = formatErrorDetails(
                     result.error ?? "Unknown error",

@@ -12,7 +12,10 @@ import {
 import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
 import { getChannelRegistry } from "@/channels/registry";
 import type { ChannelTurnSource } from "@/channels/types";
-import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
+import {
+  getReflectionLaunchSkippedMessage,
+  launchReflectionSubagent,
+} from "@/cli/helpers/reflection-launcher";
 import { startScheduler as startCronScheduler } from "@/cron/scheduler";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -789,23 +792,12 @@ export async function wireChannelIngress(
     });
 
     if (!result.launched) {
-      if (result.reason === "memfs_disabled") {
-        return {
-          handled: true,
-          text: "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead.",
-        };
-      }
-      if (result.reason === "already_active") {
-        return {
-          handled: true,
-          text: "A reflection agent is already running for this conversation.",
-        };
-      }
-      if (result.reason === "no_payload") {
-        return {
-          handled: true,
-          text: "No new transcript content to reflect on for this conversation.",
-        };
+      const skippedMessage = getReflectionLaunchSkippedMessage(
+        result.reason,
+        "listener",
+      );
+      if (skippedMessage) {
+        return { handled: true, text: skippedMessage };
       }
 
       const message =

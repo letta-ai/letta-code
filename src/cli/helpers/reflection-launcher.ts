@@ -7,6 +7,7 @@ import {
   type ReflectionMemoryWorktreeFinalizeResult,
   reflectionIntegrationConsumesTranscript,
   reflectionIntegrationShouldRecompile,
+  reflectionMemoryParentHasChanges,
 } from "@/agent/memory-worktree";
 import { getSubagents } from "@/agent/subagent-state";
 import {
@@ -45,8 +46,33 @@ export type ReflectionLaunchTriggerSource =
 export type ReflectionLaunchSkippedReason =
   | "memfs_disabled"
   | "already_active"
+  | "parent_dirty"
   | "no_payload"
   | "error";
+
+export function getReflectionLaunchSkippedMessage(
+  reason: ReflectionLaunchSkippedReason,
+  surface: "cli" | "listener" = "cli",
+): string | undefined {
+  switch (reason) {
+    case "already_active":
+      return surface === "listener"
+        ? "A reflection agent is already running for this conversation."
+        : "A reflection agent is already running in the background.";
+    case "memfs_disabled":
+      return surface === "listener"
+        ? "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead."
+        : "Memory filesystem is not enabled. Use /remember instead.";
+    case "no_payload":
+      return surface === "listener"
+        ? "No new transcript content to reflect on for this conversation."
+        : "No new transcript content to reflect on.";
+    case "parent_dirty":
+      return "Parent memory has uncommitted changes; commit or discard them before reflecting.";
+    case "error":
+      return undefined;
+  }
+}
 
 export function drainReflectionTelemetry(): void {
   telemetry.drain().catch((error) => {
@@ -446,6 +472,16 @@ export async function launchReflectionSubagent(
   let releaseOnComplete = false;
   let preparedWorktree: ReflectionMemoryWorktree | undefined;
   try {
+    const memoryDir = getScopedMemoryFilesystemRoot(agentId);
+    if (await reflectionMemoryParentHasChanges(memoryDir)) {
+      debugLog(
+        "memory",
+        `Skipping reflection launch (${triggerSource}) because parent memory has uncommitted changes`,
+      );
+      releaseReflectionLaunch(agentId);
+      return { launched: false, reason: "parent_dirty" };
+    }
+
     const autoPayload = await buildAutoReflectionPayload(
       agentId,
       conversationId,

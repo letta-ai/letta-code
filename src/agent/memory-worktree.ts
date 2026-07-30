@@ -227,6 +227,12 @@ async function getStatusPorcelain(cwd: string): Promise<string> {
   return stdout.trim();
 }
 
+export async function reflectionMemoryParentHasChanges(
+  parentMemoryDir: string,
+): Promise<boolean> {
+  return (await getStatusPorcelain(resolve(parentMemoryDir))).length > 0;
+}
+
 async function getCommitCount(
   worktree: ReflectionMemoryWorktree,
 ): Promise<number> {
@@ -334,28 +340,6 @@ async function finalizeReflectionMemoryWorktreeImpl(
     };
   }
 
-  if (commitCount === 0) {
-    await cleanupWorktreeAndBranch(
-      worktree.parentMemoryDir,
-      worktree.worktreeDir,
-      worktree.branchName,
-    );
-    debugLog(
-      "memfs-git",
-      "reflection finalized id=%s status=no_changes cleanedUp=true",
-      worktree.id,
-    );
-    return {
-      status: "no_changes",
-      parentMemoryDir: worktree.parentMemoryDir,
-      reflectionWorktreeDir: worktree.worktreeDir,
-      reflectionBranch: worktree.branchName,
-      commitCount,
-      head,
-      summary: "Reflection made no memory commits.",
-    };
-  }
-
   if (!options.shouldMerge) {
     await cleanupWorktreeAndBranch(
       worktree.parentMemoryDir,
@@ -377,7 +361,29 @@ async function finalizeReflectionMemoryWorktreeImpl(
       commitCount,
       head,
       summary:
-        "Reflection produced committed memory updates, but the subagent did not complete successfully; the worktree was cleaned up so the transcript can be retried.",
+        "Reflection subagent did not complete successfully; the worktree was cleaned up so the transcript can be retried.",
+    };
+  }
+
+  if (commitCount === 0) {
+    await cleanupWorktreeAndBranch(
+      worktree.parentMemoryDir,
+      worktree.worktreeDir,
+      worktree.branchName,
+    );
+    debugLog(
+      "memfs-git",
+      "reflection finalized id=%s status=no_changes cleanedUp=true",
+      worktree.id,
+    );
+    return {
+      status: "no_changes",
+      parentMemoryDir: worktree.parentMemoryDir,
+      reflectionWorktreeDir: worktree.worktreeDir,
+      reflectionBranch: worktree.branchName,
+      commitCount,
+      head,
+      summary: "Reflection made no memory commits.",
     };
   }
 

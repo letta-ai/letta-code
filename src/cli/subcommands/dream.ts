@@ -290,6 +290,11 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
       case "memfs_disabled":
         console.error(`Memory filesystem is not enabled for ${agentId}.`);
         return 1;
+      case "parent_dirty":
+        console.error(
+          "Parent memory has uncommitted changes; commit or discard them before reflecting.",
+        );
+        return 1;
       default: {
         const message =
           result.error instanceof Error

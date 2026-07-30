@@ -62,6 +62,11 @@
       "reason": "Exercises reflection worktree cleanup telemetry with real Git processes and the shared telemetry singleton."
     },
     {
+      "path": "src/cli/helpers/reflection-launcher.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Exercises reflection launch preflight with real Git processes and temporary local-backend environment overrides."
+    },
+    {
       "path": "src/telemetry/flush-auth.test.ts",
       "timeoutMs": 15000,
       "env": { "LETTA_CODE_TELEM": "1" },

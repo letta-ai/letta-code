@@ -10,7 +10,7 @@
   "src/cli/app/use-approval-flow.ts": 1163,
   "src/cli/app/use-configuration-handlers.ts": 1433,
   "src/cli/app/use-conversation-loop.ts": 2936,
-  "src/cli/app/use-submit-handler.ts": 4078,
+  "src/cli/app/use-submit-handler.ts": 4077,
   "src/cli/components/AgentSelector.tsx": 1104,
   "src/cli/components/InputRich.tsx": 2225,
   "src/cli/components/ModelSelector.tsx": 1262,
@@ -47,7 +47,7 @@
   "src/websocket/listener/commands/channels.ts": 1315,
   "src/websocket/listener/commands/memory.ts": 1114,
   "src/websocket/listener/file-commands.ts": 1030,
-  "src/websocket/listener/lifecycle.ts": 1656,
+  "src/websocket/listener/lifecycle.ts": 1648,
   "src/websocket/listener/protocol-inbound.ts": 2293,
   "src/websocket/listener/protocol-outbound.ts": 1100
 }

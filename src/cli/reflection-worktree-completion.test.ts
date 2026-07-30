@@ -200,13 +200,6 @@ describe("reflection worktree completion messaging", () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,
     });
-    writeFileSync(
-      join(worktree.worktreeDir, "reflection.md"),
-      "dream\n",
-      "utf-8",
-    );
-    git(worktree.worktreeDir, ["add", "reflection.md"]);
-    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
 
     const result = await finalizeLaunch(worktree, false);
 
@@ -223,7 +216,7 @@ describe("reflection worktree completion messaging", () => {
       outcome: "subagent_failed",
       integration_status: "failed",
       reflection_worktree_id: worktree.id,
-      commit_count: 1,
+      commit_count: 0,
     });
   });
 });

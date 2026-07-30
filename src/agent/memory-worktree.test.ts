@@ -13,6 +13,7 @@ import {
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
   reflectionIntegrationConsumesTranscript,
+  reflectionMemoryParentHasChanges,
 } from "@/agent/memory-worktree";
 
 let tempDir: string;
@@ -56,6 +57,14 @@ afterEach(() => {
 });
 
 describe("reflection memory worktrees", () => {
+  test("detects uncommitted parent memory changes before launch", async () => {
+    expect(await reflectionMemoryParentHasChanges(memoryDir)).toBe(false);
+
+    writeMemoryFile("parent-dirty.md", "dirty\n");
+
+    expect(await reflectionMemoryParentHasChanges(memoryDir)).toBe(true);
+  });
+
   test("merges committed reflection changes after parent advances", async () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,
@@ -242,6 +251,24 @@ describe("reflection memory worktrees", () => {
     });
 
     expect(result.status).toBe("failed");
+    expect(reflectionIntegrationConsumesTranscript(result)).toBe(false);
+    expect(existsSync(worktree.worktreeDir)).toBe(false);
+    expect(
+      git(memoryDir, ["branch", "--list", worktree.branchName]).trim(),
+    ).toBe("");
+  });
+
+  test("classifies failed clean no-op worktrees as failed", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+
+    const result = await finalizeReflectionMemoryWorktree(worktree, {
+      shouldMerge: false,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.commitCount).toBe(0);
     expect(reflectionIntegrationConsumesTranscript(result)).toBe(false);
     expect(existsSync(worktree.worktreeDir)).toBe(false);
     expect(

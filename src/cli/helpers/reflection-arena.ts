@@ -4,12 +4,14 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   buildReflectionMemoryScope,
   finalizeReflectionMemoryWorktree,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
   reflectionIntegrationConsumesTranscript,
+  reflectionMemoryParentHasChanges,
 } from "@/agent/memory-worktree";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import {
@@ -33,7 +35,7 @@ import {
   finalizeAutoReflectionPayload,
 } from "@/cli/helpers/reflection-transcript";
 import { telemetry } from "@/telemetry";
-import { debugWarn } from "@/utils/debug";
+import { debugLog, debugWarn } from "@/utils/debug";
 
 const execFile = promisify(execFileCb);
 const REFLECTION_ARENA_TELEMETRY_TRANSCRIPT_MAX_CHARS = 1_000_000;
@@ -163,7 +165,7 @@ export interface LaunchReflectionArenaOptions {
 
 export type LaunchReflectionArenaResult =
   | { launched: true; payloadPath: string; run: ReflectionArenaRun }
-  | { launched: false; reason: "no_payload" };
+  | { launched: false; reason: "no_payload" | "parent_dirty" };
 
 export interface FinalizeReflectionArenaChoiceOptions {
   choice: ReflectionArenaChoice;
@@ -678,6 +680,15 @@ async function markCandidateComplete(params: {
 export async function launchReflectionArena(
   options: LaunchReflectionArenaOptions,
 ): Promise<LaunchReflectionArenaResult> {
+  const memoryDir = getScopedMemoryFilesystemRoot(options.agentId);
+  if (await reflectionMemoryParentHasChanges(memoryDir)) {
+    debugLog(
+      "memory",
+      `Skipping reflection arena launch (${options.triggerSource}) because parent memory has uncommitted changes`,
+    );
+    return { launched: false, reason: "parent_dirty" };
+  }
+
   const payload = await buildAutoReflectionPayload(
     options.agentId,
     options.conversationId,
