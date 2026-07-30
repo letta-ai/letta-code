@@ -23,6 +23,7 @@ const SLACK_MARKDOWN_BLOCK_TEXT_MAX = 12_000;
 const SLACK_SECTION_BLOCK_TEXT_MAX = 3_000;
 const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
 const SLACK_SCHEDULED_PROMPT_PREVIEW_MAX = 360;
+const SLACK_SCHEDULED_PROMPT_LABEL = "*Full scheduled prompt:*\n";
 const CRON_PROMPT_AUTONOMOUS_NOTICE =
   "You are running autonomously: no user is watching this turn and questions will not be answered. Deliver results through your available channels or record them in memory, and work until the task is done or genuinely blocked.";
 
@@ -47,6 +48,26 @@ function escapeSlackMrkdwnText(text: string): string {
 
 function formatSlackInlineCode(text: string): string {
   return `\`${escapeSlackMrkdwnText(text).replace(/`/g, "'")}\``;
+}
+
+function splitEscapedSlackMrkdwnText(
+  text: string,
+  maxLength: number,
+): string[] {
+  const chunks: string[] = [];
+  let chunk = "";
+  for (const char of text) {
+    const escaped = escapeSlackMrkdwnText(char);
+    if (chunk && chunk.length + escaped.length > maxLength) {
+      chunks.push(chunk);
+      chunk = "";
+    }
+    chunk += escaped;
+  }
+  if (chunk) {
+    chunks.push(chunk);
+  }
+  return chunks;
 }
 
 function getCronPromptField(
@@ -132,11 +153,6 @@ function buildSlackCronPromptBlocks(
   const parsed = parseSlackCronPrompt(text);
   if (!parsed) return null;
 
-  const promptPreview = truncateChannelProgressText(
-    compactSlackPreviewText(parsed.prompt),
-    SLACK_SCHEDULED_PROMPT_PREVIEW_MAX,
-    "...",
-  );
   const descriptionPreview = parsed.description
     ? truncateChannelProgressText(
         compactSlackPreviewText(parsed.description),
@@ -150,12 +166,16 @@ function buildSlackCronPromptBlocks(
     descriptionPreview ? escapeSlackMrkdwnText(descriptionPreview) : null,
     parsed.recurrence,
     `:clock1: Scheduled for ${formatSlackInlineCode(parsed.scheduledFor)}`,
-    `Prompt: ${escapeSlackMrkdwnText(promptPreview)}`,
   ].filter((line): line is string => Boolean(line));
 
+  const promptChunks = splitEscapedSlackMrkdwnText(
+    parsed.prompt,
+    SLACK_SECTION_BLOCK_TEXT_MAX - SLACK_SCHEDULED_PROMPT_LABEL.length,
+  );
   const blocks: SlackBlock[] = [
     {
       type: "section",
+      expand: false,
       text: {
         type: "mrkdwn",
         text: truncateChannelProgressText(
@@ -165,6 +185,16 @@ function buildSlackCronPromptBlocks(
         ),
       },
     },
+    ...promptChunks.map(
+      (chunk, index): SlackBlock => ({
+        type: "section",
+        expand: false,
+        text: {
+          type: "mrkdwn",
+          text: index === 0 ? `${SLACK_SCHEDULED_PROMPT_LABEL}${chunk}` : chunk,
+        },
+      }),
+    ),
   ];
 
   const footnoteUrl = extractSlackFootnoteUrl(footnote);
@@ -221,6 +251,9 @@ export function buildSlackReplyBlocksWithFootnote(
   const cronPromptBlocks = buildSlackCronPromptBlocks(text, footnote);
   if (cronPromptBlocks) {
     return cronPromptBlocks;
+  }
+  if (!footnote.trim()) {
+    return undefined;
   }
 
   const chunks: string[] = [];

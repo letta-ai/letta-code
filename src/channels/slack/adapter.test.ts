@@ -549,6 +549,7 @@ test("slack adapter sendMessage renders a View on web context footnote when iden
       text: string;
       blocks?: Array<{
         type: string;
+        expand?: boolean;
         text?: { type: string; text: string };
         elements?: Array<{ type: string; text: string }>;
       }>;
@@ -585,6 +586,8 @@ test("slack adapter sendMessage compacts cron prompts at the Slack API boundary"
   });
   await adapter.start();
 
+  const scheduledPrompt =
+    "Check the incident queue, summarize the top risks, and post the update.";
   const cronPrompt = [
     'Scheduled task "Daily status" is firing.',
     "Description: Post the morning status to Slack.",
@@ -595,7 +598,7 @@ test("slack adapter sendMessage compacts cron prompts at the Slack API boundary"
     "",
     "You are running autonomously: no user is watching this turn and questions will not be answered. Deliver results through your available channels or record them in memory, and work until the task is done or genuinely blocked.",
     "",
-    "Prompt: Check the incident queue, summarize the top risks, and post the update.",
+    `Prompt: ${scheduledPrompt}`,
   ].join("\n");
 
   await adapter.sendMessage({
@@ -616,6 +619,7 @@ test("slack adapter sendMessage compacts cron prompts at the Slack API boundary"
       text: string;
       blocks?: Array<{
         type: string;
+        expand?: boolean;
         text?: { type: string; text: string };
         elements?: Array<{ type: string; text: string }>;
       }>;
@@ -632,6 +636,7 @@ test("slack adapter sendMessage compacts cron prompts at the Slack API boundary"
   );
   expect(payload?.blocks?.[0]).toEqual({
     type: "section",
+    expand: false,
     text: {
       type: "mrkdwn",
       text: [
@@ -640,11 +645,18 @@ test("slack adapter sendMessage compacts cron prompts at the Slack API boundary"
         "Post the morning status to Slack.",
         "Fire #3 · cron `* * * * *`",
         ":clock1: Scheduled for `2026-04-11T09:00:00.000+00:00[UTC]`",
-        "Prompt: Check the incident queue, summarize the top risks, and post the update.",
       ].join("\n"),
     },
   });
-  expect(payload?.blocks?.[1]?.elements?.[0]?.text).toBe(
+  expect(payload?.blocks?.[1]).toEqual({
+    type: "section",
+    expand: false,
+    text: {
+      type: "mrkdwn",
+      text: `*Full scheduled prompt:*\n${scheduledPrompt}`,
+    },
+  });
+  expect(payload?.blocks?.[2]?.elements?.[0]?.text).toBe(
     "<https://chat.letta.com/chat/agent-1?conversation=conv-1|View full scheduled prompt>",
   );
   expect(payload?.text).not.toContain("You are running autonomously");

@@ -280,9 +280,7 @@ export function createSlackAdapter(
             conversationId: msg.conversationId,
           })
         : "";
-    const blocks = footnote
-      ? buildSlackReplyBlocksWithFootnote(msg.text, footnote)
-      : undefined;
+    const blocks = buildSlackReplyBlocksWithFootnote(msg.text, footnote);
     const text = blocks ? formatSlackReplyTextFallback(msg.text) : msg.text;
     const response = await client.chat.postMessage({
       channel: msg.chatId,

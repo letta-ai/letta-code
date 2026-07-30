@@ -95,17 +95,13 @@ async function sendSlackReaction(
 function buildSlackOutboundBlocks(
   message: OutboundChannelMessage,
 ): unknown[] | undefined {
-  if (!message.agentId || !message.conversationId) {
-    return undefined;
-  }
-
-  const footnote = buildSlackChatFootnote({
-    agentId: message.agentId,
-    conversationId: message.conversationId,
-  });
-  if (!footnote) {
-    return undefined;
-  }
+  const footnote =
+    message.agentId && message.conversationId
+      ? buildSlackChatFootnote({
+          agentId: message.agentId,
+          conversationId: message.conversationId,
+        })
+      : "";
 
   return buildSlackReplyBlocksWithFootnote(message.text, footnote);
 }
