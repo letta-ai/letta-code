@@ -43,6 +43,12 @@ class NativeCatalogBackend extends FakeHeadlessBackend {
         provider_category: "byok",
         model_endpoint: "https://api.openai.com/v1",
       },
+      {
+        handle: "chatgpt-jin/gpt-5.6-sol-fast",
+        display_name: "GPT-5.6 Sol Fast",
+        provider_type: "chatgpt_oauth",
+        provider_category: "byok",
+      },
     ] as never;
   }
 }
@@ -119,6 +125,22 @@ describe("listener native model selection", () => {
         reasoning_effort: null,
       })?.updateArgs,
     ).toBeUndefined();
+  });
+
+  test("preserves ChatGPT OAuth provider identity for native Fast aliases", async () => {
+    __testSetBackend(new NativeCatalogBackend());
+    await getAvailableModelHandles();
+
+    expect(
+      resolveModelForUpdate({
+        model_id: "chatgpt-jin/gpt-5.6-sol-fast",
+      }),
+    ).toEqual({
+      id: "chatgpt-jin/gpt-5.6-sol-fast",
+      handle: "chatgpt-jin/gpt-5.6-sol-fast",
+      label: "GPT-5.6 Sol Fast",
+      updateArgs: { provider_type: "chatgpt_oauth" },
+    });
   });
 
   test("preserves a native handle id if the availability cache was cleared", () => {
