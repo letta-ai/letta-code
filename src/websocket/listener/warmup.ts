@@ -1,9 +1,14 @@
 import { getBackend } from "@/backend";
 import { debugWarn } from "@/utils/debug";
+import { listSecretNames } from "@/utils/secrets-store";
 import { ensureMemfsSyncedForAgent } from "./memfs-sync";
 import { ensureListenerAgentModAdapter } from "./mod-adapter";
 import { emitDeviceStatusUpdateIfChanged } from "./protocol-outbound";
-import { ensureSecretsHydratedForAgent } from "./secrets-sync";
+import {
+  ensureSecretsHydratedForAgent,
+  invalidateSecretsCacheForAgent,
+  markSecretsReminderRefreshPending,
+} from "./secrets-sync";
 import { isListenerTransportOpen } from "./transport";
 import type { ListenerRuntime } from "./types";
 
@@ -43,12 +48,14 @@ type ListenerWarmupDeps = {
   ensureMemfsSyncedForAgent: typeof ensureMemfsSyncedForAgent;
   ensureSecretsHydratedForAgent: typeof ensureSecretsHydratedForAgent;
   fetchListenerAgentMetadata: typeof fetchListenerAgentMetadata;
+  invalidateSecretsCacheForAgent: typeof invalidateSecretsCacheForAgent;
 };
 
 const defaultWarmupDeps: ListenerWarmupDeps = {
   ensureMemfsSyncedForAgent,
   ensureSecretsHydratedForAgent,
   fetchListenerAgentMetadata,
+  invalidateSecretsCacheForAgent,
 };
 
 let warmupDeps: ListenerWarmupDeps = defaultWarmupDeps;
@@ -67,6 +74,12 @@ export async function ensureListenerWarmStateForTurn(
   if (!agentId) {
     return null;
   }
+
+  // Secret changes made through another client bypass the listener's mutation
+  // hooks. Mark the cache stale at each turn boundary so the next hydration
+  // fetches the server state; later calls within the turn can still reuse it.
+  const secretNamesBeforeRefresh = listSecretNames(agentId);
+  warmupDeps.invalidateSecretsCacheForAgent(listener, agentId);
 
   const agentMetadataPromise =
     getAgentMetadataPromise(listener, agentId) ??
@@ -95,6 +108,15 @@ export async function ensureListenerWarmStateForTurn(
       warmupDeps.ensureSecretsHydratedForAgent(listener, agentId),
       agentMetadataPromise,
     ]);
+    const secretNamesAfterRefresh = listSecretNames(agentId);
+    if (
+      secretNamesBeforeRefresh.length !== secretNamesAfterRefresh.length ||
+      secretNamesBeforeRefresh.some(
+        (name, index) => name !== secretNamesAfterRefresh[index],
+      )
+    ) {
+      markSecretsReminderRefreshPending(listener, agentId);
+    }
     const agentModAdapter = await ensureListenerAgentModAdapter(
       listener,
       agentId,

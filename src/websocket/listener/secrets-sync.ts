@@ -15,6 +15,7 @@
  *   in-flight request.
  */
 
+import { markSecretsInfoReminderPending } from "@/reminders/state";
 import { debugLog, debugWarn } from "@/utils/debug";
 import type { ListenerRuntime } from "./types";
 
@@ -69,6 +70,25 @@ export function invalidateSecretsCacheForAgent(
 ): void {
   listener.secretsDirtyAgents.add(agentId);
   debugLog("secrets-sync", `Marked secrets cache dirty for agent ${agentId}`);
+}
+
+export function markSecretsReminderRefreshPending(
+  listener: ListenerRuntime,
+  agentId: string,
+): void {
+  const prefix = `agent:${agentId}::conversation:`;
+
+  for (const [key, state] of listener.reminderStateByConversation) {
+    if (key.startsWith(prefix)) {
+      markSecretsInfoReminderPending(state);
+    }
+  }
+
+  for (const conversationRuntime of listener.conversationRuntimes.values()) {
+    if (conversationRuntime.agentId === agentId) {
+      markSecretsInfoReminderPending(conversationRuntime.reminderState);
+    }
+  }
 }
 
 /**

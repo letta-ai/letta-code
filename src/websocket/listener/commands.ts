@@ -39,7 +39,6 @@ import type {
   StreamDelta,
 } from "@/types/protocol_v2";
 import { debugLog } from "@/utils/debug";
-import { markSecretsReminderRefreshPending } from "./commands/secrets";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
   ensureListenerAgentModAdapter,
@@ -56,6 +55,7 @@ import { clearConversationRuntimeState, emitListenerStatus } from "./runtime";
 import {
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
+  markSecretsReminderRefreshPending,
 } from "./secrets-sync";
 import { handleIncomingMessage } from "./turn";
 import { buildMaybeLaunchReflectionSubagent } from "./turn-events";
