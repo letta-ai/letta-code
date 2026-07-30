@@ -1,6 +1,5 @@
 import { isLocalAgentId } from "@/agent/agent-id";
-import { normalizeChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
-import { truncateChannelProgressText } from "@/channels/progress-formatting";
+import { formatChannelLifecycleErrorMessage } from "@/channels/lifecycle-error";
 import type { ChannelControlRequestEvent } from "@/channels/types";
 import type { SlackApprovalActionPayload, SlackBlock } from "./internal-types";
 
@@ -161,10 +160,13 @@ export function shouldPostSlackTerminalError(stopReason: string): boolean {
   );
 }
 
-export function formatSlackLifecycleErrorMessage(errorText: string): string {
-  return truncateChannelProgressText(
-    normalizeChannelLifecycleErrorMessage(errorText),
-    SLACK_LIFECYCLE_ERROR_TEXT_MAX,
-    "...",
-  );
+export function formatSlackLifecycleErrorMessage(
+  errorText: string,
+  runId?: string | null,
+): string {
+  return formatChannelLifecycleErrorMessage(errorText, {
+    codeBlock: true,
+    maxLength: SLACK_LIFECYCLE_ERROR_TEXT_MAX,
+    runId,
+  });
 }

@@ -346,7 +346,7 @@ test("slack terminal table: end_turn and cancelled clear without posting", async
   expect(client.chat.postMessage).not.toHaveBeenCalled();
 });
 
-test("slack terminal table: fatal stops post one quiet error with a web footnote", async () => {
+test("slack terminal table: fatal stops post one code-block error with a web footnote", async () => {
   const adapter = await createStartedSlackAdapter();
   const source = createSlackTurnSource();
   await adapter.handleTurnProgressEvent?.({
@@ -392,12 +392,12 @@ test("slack terminal table: fatal stops post one quiet error with a web footnote
       elements?: Array<{ text: string }>;
     }>;
   };
-  expect(call.text).toBe("Provider request failed.");
-  expect(call.text).not.toContain("Turn failed");
-  expect(call.text).not.toContain("```");
+  const expectedError =
+    "Turn failed:\n```\nProvider request failed.\n```\n\nRun ID: run-1";
+  expect(call.text).toBe(expectedError);
   expect(call.blocks?.[0]).toEqual({
     type: "markdown",
-    text: "Provider request failed.",
+    text: expectedError,
   });
   expect(call.blocks?.at(-1)?.elements?.[0]?.text).toBe(
     "<https://chat.letta.com/chat/agent-1?conversation=conv-1|View on web>",
@@ -431,7 +431,7 @@ test("slack terminal table: tool_rule is quiet, no_tool_call is fatal, and appro
     Array<{ text: string }>
   >;
   expect(postCalls[0]?.[0]?.text).toBe(
-    "Something went wrong while processing that message. Please try again.",
+    "Turn failed:\n```\nSomething went wrong while processing that message. Please try again.\n```",
   );
 
   client.assistant.threads.setStatus.mockClear();
