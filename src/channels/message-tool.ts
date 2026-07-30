@@ -148,8 +148,31 @@ function buildDynamicMessageChannelDescriptionFromDiscovery(
   const slackAttachmentDownload = discovery.activeChannels.includes("slack")
     ? '\n\nSlack attachments that exceed the automatic download limit include an exact recovery instruction. Use action="download-file" with channel, chat_id, attachmentId, and messageId from that instruction. The action saves the file in the normal Slack inbound attachment directory and returns its local_path. Downloads that outlast the synchronous window return a task_id instead; wait for the local_path with TaskOutput (block: true, timeout: 600000) or cancel with TaskStop.'
     : "";
+  const slackThreadGuidance =
+    scopedChannels.length > 0 && discovery.activeChannels.includes("slack")
+      ? "\n\nReplies to routed Slack threads stay in the current thread automatically."
+      : "";
+  const telegramTopicGuidance =
+    scopedChannels.length > 0 && discovery.activeChannels.includes("telegram")
+      ? "\n\nReplies to routed Telegram topics stay in the current topic automatically."
+      : "";
+  const slackCapabilities = discovery.activeChannels.includes("slack")
+    ? '\n\nOn Slack, this tool also supports action="react" with emoji + messageId, action="upload-file" with media, and action="download-file" with attachmentId + messageId.'
+    : "";
+  const telegramCapabilities = discovery.activeChannels.includes("telegram")
+    ? '\n\nOn Telegram, this tool also supports action="react" with emoji + messageId and action="upload-file" with media.'
+    : "";
+  const discordCapabilities = discovery.activeChannels.includes("discord")
+    ? '\n\nOn Discord, this tool also supports action="react" with emoji + messageId and action="upload-file" with media. Discord reactions accept native Unicode emoji and custom emoji syntax like <:name:id>.'
+    : "";
+  const whatsappCapabilities = discovery.activeChannels.includes("whatsapp")
+    ? '\n\nOn WhatsApp, this tool also supports action="react" with emoji + messageId and action="upload-file" with media. Voice memo/audio uploads must be Ogg/Opus (.ogg, .oga, or .opus), not MP3/M4A/WAV. Replies are sent as the linked WhatsApp number.'
+    : "";
+  const signalCapabilities = discovery.activeChannels.includes("signal")
+    ? '\n\nOn Signal, this tool also supports action="react" with emoji + messageId and action="upload-file" with media. Replies are sent as the linked Signal account through signal-cli-rest-api.'
+    : "";
 
-  return `${description}${scopedReplyContract}${slackWorkAcknowledgement}${slackAttachmentDownload}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
+  return `${description}${scopedReplyContract}${slackThreadGuidance}${telegramTopicGuidance}${slackCapabilities}${slackWorkAcknowledgement}${slackAttachmentDownload}${telegramCapabilities}${discordCapabilities}${whatsappCapabilities}${signalCapabilities}\n\nCurrently active channels: ${channelList}. Available actions across the active channels: ${actionList}. The JSON schema reflects the currently active channel plugins.`;
 }
 
 function pruneInactiveChannelGuidance(

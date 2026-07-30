@@ -641,9 +641,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
-  // Subcommands handle their own setup and don't need TUI init, theme
-  // detection, or base tool bootstrapping.
+  // Subcommands exit before TUI initialization and tool bootstrapping.
   const subcommandResult = await runSubcommand(subcommandArgs);
   if (subcommandResult !== null) {
     process.exit(subcommandResult);
@@ -651,7 +649,6 @@ async function main(): Promise<void> {
 
   // Everything below only runs for interactive/headless agent mode
   await settingsManager.initialize();
-
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
 

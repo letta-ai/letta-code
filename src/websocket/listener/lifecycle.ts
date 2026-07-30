@@ -29,6 +29,8 @@ import { killAllTerminals } from "@/websocket/terminal-handler";
 import {
   getPendingApprovalRequestIds,
   rejectPendingApprovalResolvers,
+  rejectPendingApprovalResolversForConnection,
+  replayPendingApprovalRequestsToConnection,
 } from "./approval";
 import { resolveListenerReconnectAuth } from "./auth";
 import {
@@ -60,8 +62,6 @@ import {
 } from "./connection-state-sync";
 import {
   INITIAL_RETRY_DELAY_MS,
-  isListenerPongStale,
-  LISTENER_HEARTBEAT_INTERVAL_MS,
   LISTENER_PONG_TIMEOUT_MS,
   MAX_RETRY_DELAY_MS,
   MAX_RETRY_DURATION_MS,
@@ -81,6 +81,7 @@ import {
   rejectPendingExternalToolCalls,
 } from "./external-tools";
 import { createFileCommandSession } from "./file-commands";
+import { startConnectionHeartbeat } from "./heartbeat";
 import { createListenerMessageHandler } from "./message-router";
 import {
   disposeListenerModAdapter,
@@ -103,7 +104,6 @@ import { recoverApprovalStateForSync } from "./recovery";
 import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
-  evictConversationRuntimeIfIdle,
   getActiveRuntime,
   getOrCreateConversationRuntime,
   getRecoveredApprovalStateForScope,
@@ -409,9 +409,14 @@ function getParsedRuntimeScope(
 function terminateControlAfterStreamClose(
   runtime: ListenerRuntime,
   streamSocket: WebSocket,
+  code: number,
+  reason: Buffer,
 ): void {
   if (runtime.streamSocket !== streamSocket) {
     return;
+  }
+  if (code === 1000 && reason.toString() === "Replaced by new connection") {
+    runtime.intentionallyClosed = true;
   }
   runtime.streamSocket = null;
   runtime.streamTransport = null;
@@ -1021,6 +1026,49 @@ export async function startConnectedListenerRuntime(
   opts.onConnected(opts.connectionId);
 
   emitInitialConnectionState(runtime, transport, opts.connectionId, options);
+  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+    replayPendingApprovalRequestsToConnection(
+      conversationRuntime,
+      opts.connectionId,
+    );
+  }
+
+  if (shouldStartHeartbeat) {
+    startConnectionHeartbeat(
+      runtime,
+      transport,
+      () => {
+        trackListenerError(
+          "listener_pong_timeout",
+          new Error(
+            `No relay pong within ${LISTENER_PONG_TIMEOUT_MS}ms; terminating half-open socket to force reconnect`,
+          ),
+          "listener_heartbeat",
+        );
+        runtime.socket?.terminate();
+      },
+      () => {
+        return safeTransportSend(
+          transport,
+          { type: "ping" },
+          "listener_ping_send_failed",
+          "listener_heartbeat",
+        );
+      },
+    );
+  }
+
+  const processTransport = getOrCreateProcessTransport(runtime);
+  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+    if (conversationRuntime.queueRuntime?.isEmpty === false) {
+      scheduleQueuePump(
+        conversationRuntime,
+        processTransport,
+        opts as StartListenerOptions,
+        processQueuedTurn,
+      );
+    }
+  }
 
   if (runtime.processServicesStarted) {
     return;
@@ -1038,48 +1086,6 @@ export async function startConnectedListenerRuntime(
       opts: opts as StartListenerOptions,
       processQueuedTurn,
     });
-
-    if (shouldStartHeartbeat) {
-      // Seed the pong clock so the watchdog tolerates the first ping/pong
-      // round-trip before considering the peer dead.
-      runtime.lastPongAt = Date.now();
-      runtime.heartbeatInterval = setInterval(() => {
-        // Dead-peer detection. The relay replies to every `ping` with a `pong`
-        // (recorded as runtime.lastPongAt in the message router). If pongs stop
-        // arriving, the underlying TCP is likely half-open (laptop sleep,
-        // network switch, NAT/idle timeout) and will never emit a `close`
-        // event — leaving a zombie listener that the relay marks offline after
-        // ~120s while client-side tool execution silently breaks. Force a
-        // terminate so the socket's `close` handler fires and reconnects.
-        // Gated on websocket transports: the local app-server path does not run
-        // a heartbeat, and only websockets carry the relay pong round-trip.
-        if (
-          getListenerTransportKind(transport) === "websocket" &&
-          isListenerPongStale(
-            runtime.lastPongAt,
-            Date.now(),
-            LISTENER_PONG_TIMEOUT_MS,
-          )
-        ) {
-          trackListenerError(
-            "listener_pong_timeout",
-            new Error(
-              `No relay pong within ${LISTENER_PONG_TIMEOUT_MS}ms; terminating half-open socket to force reconnect`,
-            ),
-            "listener_heartbeat",
-          );
-          runtime.socket?.terminate();
-          return;
-        }
-
-        safeTransportSend(
-          transport,
-          { type: "ping" },
-          "listener_ping_send_failed",
-          "listener_heartbeat",
-        );
-      }, LISTENER_HEARTBEAT_INTERVAL_MS);
-    }
 
     if (shouldStartCronScheduler) {
       startCronScheduler(
@@ -1241,7 +1247,7 @@ export async function attachOpenListenerSocket(
         );
       }
 
-      terminateControlAfterStreamClose(runtime, streamSocket);
+      terminateControlAfterStreamClose(runtime, streamSocket, code, reason);
     });
   }
 
@@ -1518,24 +1524,13 @@ async function connectWithRetry(
     });
 
     fileCommandSession.dispose();
+    const reasonText = reason.toString();
+    const terminalClose =
+      runtime.intentionallyClosed ||
+      code === 1008 ||
+      (code === 1000 && reasonText === "Replaced by new connection");
 
-    invalidateProcessServices(runtime);
-
-    // Pause channel delivery on disconnect (adapters keep polling, messages buffer).
-    // On reconnect, wireChannelIngress() re-registers the handler and calls setReady().
-    const channelRegistry = getChannelRegistry();
-    if (channelRegistry) {
-      channelRegistry.pause();
-    }
-
-    // Single authoritative queue clear for all close paths
-    // (intentional and unintentional). Must fire before early returns.
-    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      conversationRuntime.queuedMessagesByItemId.clear();
-      if (conversationRuntime.queueRuntime) {
-        conversationRuntime.queueRuntime.clear("shutdown");
-      }
-    }
+    clearRuntimeTimers(runtime);
 
     if (isDebugEnabled()) {
       console.log(
@@ -1543,6 +1538,15 @@ async function connectWithRetry(
       );
     }
 
+    if (!terminalClose) {
+      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+        rejectPendingApprovalResolversForConnection(
+          conversationRuntime,
+          opts.connectionId,
+          "Listener connection closed",
+        );
+      }
+    }
     suspendListenerConnection(runtime, opts.connectionId);
     killAllTerminals();
     clearListenerWarmState(runtime);
@@ -1558,31 +1562,25 @@ async function connectWithRetry(
     runtime.socket = null;
     runtime.streamSocket = null;
     runtime.streamTransport = null;
-    for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      rejectPendingApprovalResolvers(
-        conversationRuntime,
-        "WebSocket disconnected",
-      );
-      clearConversationRuntimeState(conversationRuntime);
-      evictConversationRuntimeIfIdle(conversationRuntime);
-    }
+    if (terminalClose) {
+      if (getActiveRuntime() === runtime) {
+        setActiveRuntime(null);
+      }
+      stopRuntime(runtime, true);
 
-    if (runtime.intentionallyClosed) {
+      if (code === 1008) {
+        if (isDebugEnabled()) {
+          console.log("[Listen] Environment not found, re-registering...");
+        }
+        if (opts.onNeedsReregister) {
+          opts.onNeedsReregister();
+        } else {
+          opts.onDisconnected();
+        }
+        return;
+      }
+
       opts.onDisconnected();
-      return;
-    }
-
-    // 1008: Environment not found - need to re-register
-    if (code === 1008) {
-      if (isDebugEnabled()) {
-        console.log("[Listen] Environment not found, re-registering...");
-      }
-      // Stop retry loop and signal that we need to re-register
-      if (opts.onNeedsReregister) {
-        opts.onNeedsReregister();
-      } else {
-        opts.onDisconnected();
-      }
       return;
     }
 
@@ -1631,7 +1629,7 @@ async function connectWithRetry(
         );
       }
 
-      terminateControlAfterStreamClose(runtime, streamSocket);
+      terminateControlAfterStreamClose(runtime, streamSocket, code, reason);
     });
   }
 }
