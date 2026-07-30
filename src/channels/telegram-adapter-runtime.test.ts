@@ -109,7 +109,7 @@ test("telegram channel starts through service and routes inbound topic messages 
   });
   const content = (deliveries[0] as { content: Array<{ text: string }> })
     .content;
-  expect(content[0]?.text).toContain("external telegram turn");
+  expect(content[0]?.text).toContain("External telegram turn");
   expect(content[1]?.text).toContain('source="telegram"');
   expect(content[1]?.text).toContain('chat_id="-100123"');
   expect(content[1]?.text).toContain('account_id="telegram-e2e"');

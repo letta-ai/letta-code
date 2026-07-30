@@ -858,6 +858,7 @@ export async function spawnSubagent(
     : await resolveSubagentModel({
         userModel,
         recommendedModel: config.recommendedModel,
+        recommendedModelSource: config.recommendedModelSource,
         parentModelHandle,
         billingTier,
         subagentType: type,

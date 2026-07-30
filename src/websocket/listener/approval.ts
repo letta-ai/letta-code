@@ -368,6 +368,10 @@ export function requestApprovalOverWS(
   requestId: string,
   controlRequest: ControlRequest,
 ): Promise<ApprovalResponseBody> {
+  if (runtime.listener.intentionallyClosed) {
+    return Promise.reject(new Error("Listener runtime stopped"));
+  }
+
   const scope = {
     agent_id: runtime.agentId,
     conversation_id: runtime.conversationId,
@@ -392,14 +396,6 @@ export function requestApprovalOverWS(
   ) {
     connectionIds.add(runtime.listener.connectionId ?? "legacy");
   }
-  if (
-    connectionIds.size === 0 &&
-    !isListenerTransportOpen(socket) &&
-    runtime.listener.connections.size === 0
-  ) {
-    return Promise.reject(new Error("WebSocket not open"));
-  }
-
   const abortSignal = turnLease.signal;
   const isInterrupted = () =>
     !runtime.turnLifecycle.isCurrent(turnLease) || abortSignal.aborted;

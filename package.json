@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.29.9",
+  "version": "0.29.12",
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
   "packageManager": "bun@1.3.0",
@@ -22,6 +22,8 @@
     "dist/app-server-client.cjs.map",
     "dist/memory-confinement.js",
     "dist/memory-confinement.js.map",
+    "dist/mcp-client.js",
+    "dist/mcp-client.js.map",
     "dist/agent-presets.js",
     "dist/agent-presets.js.map",
     "dist/channels-public.js",
@@ -47,6 +49,11 @@
       "types": "./dist/types/memory-confinement.d.ts",
       "import": "./dist/memory-confinement.js",
       "default": "./dist/memory-confinement.js"
+    },
+    "./mcp-client": {
+      "types": "./dist/types/mcp-client.d.ts",
+      "import": "./dist/mcp-client.js",
+      "default": "./dist/mcp-client.js"
     },
     "./protocol": {
       "types": "./dist/types/types/protocol.d.ts"
@@ -88,9 +95,10 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.81.1",
+    "@earendil-works/pi-ai": "^0.82.1",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@pierre/diffs": "1.2.2",
     "@scarf/scarf": "^1.4.0",
     "cron-parser": "^5.6.1",
@@ -108,6 +116,7 @@
     "@vscode/ripgrep": "^1.17.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/server-everything": "^2026.7.4",
     "@slack/bolt": "^4.7.0",
     "@types/bun": "^1.3.7",
     "@types/diff": "^8.0.0",
@@ -169,6 +178,9 @@
       ],
       "memory-confinement": [
         "./dist/types/memory-confinement.d.ts"
+      ],
+      "mcp-client": [
+        "./dist/types/mcp-client.d.ts"
       ],
       "channels": [
         "./dist/types/channels-public.d.ts"

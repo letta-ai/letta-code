@@ -82,6 +82,8 @@ export async function prepareSlackInboundMessage(params: {
     userId: string | undefined,
   ) => Promise<string | undefined>;
   getKnownUserDisplayName: (userId: string) => string | undefined;
+  getBotUserId: () => string | null;
+  getBotId: () => string | null;
 }): Promise<InboundChannelMessage> {
   const { msg, config } = params;
   if (
@@ -139,7 +141,14 @@ export async function prepareSlackInboundMessage(params: {
         client: app.client,
         currentMessageTs: msg.messageId,
         limit: INITIAL_SLACK_THREAD_HISTORY_LIMIT,
-        include: !isFirstRouteTurn ? "bot" : "all",
+        include: !isFirstRouteTurn ? "unrouted-bot" : "all",
+        ...(!isFirstRouteTurn
+          ? {
+              excludeBotId: params.getBotId(),
+              routedBotUserId: params.getBotUserId(),
+              acceptMentionedBots: config.allowBots === "mentions",
+            }
+          : {}),
         ...attachmentParams,
       })
     : await resolveSlackChannelHistory({

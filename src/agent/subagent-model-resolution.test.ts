@@ -806,6 +806,33 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("openai/gpt-5");
   });
 
+  test("user-configured models override local parent inheritance", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      recommendedModel: "auto",
+      recommendedModelSource: "user",
+      parentModelHandle: "lmstudio/local-model",
+      backendMode: "local",
+      availableHandles: new Set(["letta/auto"]),
+    });
+
+    expect(result).toBe("letta/auto");
+  });
+
+  test("explicit Task models override user-configured models", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      userModel: "openai/gpt-5",
+      recommendedModel: "auto",
+      recommendedModelSource: "user",
+      parentModelHandle: "lmstudio/local-model",
+      backendMode: "local",
+      availableHandles: new Set(["letta/auto", "openai/gpt-5"]),
+    });
+
+    expect(result).toBe("openai/gpt-5");
+  });
+
   test("uses letta/auto-memory for reflection subagents with no recommended model", async () => {
     const result = await resolveSubagentModel({
       subagentType: "reflection",

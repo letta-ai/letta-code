@@ -53,6 +53,7 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
  * Subagent configuration
  */
 export type SubagentLaunchProfile = "default" | "memory-subagent";
+export type SubagentRecommendedModelSource = "builtin" | "user";
 
 /** Exact memory scope handed to a harness-created memory worktree. */
 export interface SubagentMemoryScope {
@@ -86,6 +87,8 @@ export interface SubagentConfig {
   allowedTools: string[] | "all";
   /** Recommended model - any model ID from models.json or full handle */
   recommendedModel: string;
+  /** Whether the recommended model came from bundled defaults or user config. */
+  recommendedModelSource?: SubagentRecommendedModelSource;
   /** Skills to auto-load */
   skills: string[];
   /** Whether this subagent should fork the parent conversation before launch. */
@@ -116,10 +119,14 @@ export const AGENTS_DIR = ".letta/agents";
 /**
  * Global directory for subagent files (in user's home directory)
  */
-export const GLOBAL_AGENTS_DIR = join(
-  process.env.HOME || process.env.USERPROFILE || "~",
-  ".letta/agents",
-);
+function getGlobalAgentsDir(): string {
+  return join(
+    process.env.HOME || process.env.USERPROFILE || "~",
+    ".letta/agents",
+  );
+}
+
+export const GLOBAL_AGENTS_DIR = getGlobalAgentsDir();
 
 // ============================================================================
 // Cache
@@ -188,7 +195,10 @@ function parseBackgroundDefault(background: string | undefined): boolean {
  * Validate subagent frontmatter
  * Only validates required fields - optional fields are validated at runtime where needed
  */
-function validateFrontmatter(frontmatter: Record<string, string | string[]>): {
+function validateFrontmatter(
+  frontmatter: Record<string, string | string[]>,
+  options: { requireDescription?: boolean } = {},
+): {
   valid: boolean;
   errors: string[];
 } {
@@ -205,8 +215,10 @@ function validateFrontmatter(frontmatter: Record<string, string | string[]>): {
   }
 
   const description = frontmatter.description;
-  if (!description || typeof description !== "string") {
-    errors.push("Missing required field: description");
+  if (options.requireDescription !== false) {
+    if (!description || typeof description !== "string") {
+      errors.push("Missing required field: description");
+    }
   }
 
   // Don't validate model or launchProfile here - they're handled at runtime:
@@ -216,20 +228,98 @@ function validateFrontmatter(frontmatter: Record<string, string | string[]>): {
   return { valid: errors.length === 0, errors };
 }
 
+interface ParseSubagentContentOptions {
+  inheritedConfigs?: Record<string, SubagentConfig>;
+  modelSource?: SubagentRecommendedModelSource;
+}
+
+function hasFrontmatterField(
+  frontmatter: Record<string, string | string[]>,
+  field: string,
+): boolean {
+  return Object.hasOwn(frontmatter, field);
+}
+
+function cloneAllowedTools(allowedTools: string[] | "all"): string[] | "all" {
+  return allowedTools === "all" ? "all" : [...allowedTools];
+}
+
+function applySubagentOverlay(
+  inherited: SubagentConfig,
+  frontmatter: Record<string, string | string[]>,
+  modelSource: SubagentRecommendedModelSource | undefined,
+): SubagentConfig {
+  const hasModel = hasFrontmatterField(frontmatter, "model");
+
+  return {
+    ...inherited,
+    name: frontmatter.name as string,
+    description: hasFrontmatterField(frontmatter, "description")
+      ? getStringField(frontmatter, "description") || inherited.description
+      : inherited.description,
+    systemPrompt: inherited.systemPrompt,
+    allowedTools: hasFrontmatterField(frontmatter, "tools")
+      ? parseTools(getStringField(frontmatter, "tools"))
+      : cloneAllowedTools(inherited.allowedTools),
+    recommendedModel: hasModel
+      ? getStringField(frontmatter, "model") || "inherit"
+      : inherited.recommendedModel,
+    recommendedModelSource: hasModel
+      ? modelSource
+      : inherited.recommendedModelSource,
+    skills: hasFrontmatterField(frontmatter, "skills")
+      ? parseSkills(getStringField(frontmatter, "skills"))
+      : [...inherited.skills],
+    fork: hasFrontmatterField(frontmatter, "fork")
+      ? getStringField(frontmatter, "fork")?.toLowerCase() === "true"
+      : inherited.fork,
+    background: hasFrontmatterField(frontmatter, "background")
+      ? parseBackgroundDefault(getStringField(frontmatter, "background"))
+      : inherited.background,
+    launchProfile: hasFrontmatterField(frontmatter, "launchProfile")
+      ? parseLaunchProfile(getStringField(frontmatter, "launchProfile"))
+      : inherited.launchProfile,
+  };
+}
+
 /**
  * Parse a subagent from markdown content
  */
-function parseSubagentContent(content: string): SubagentConfig {
+function parseSubagentContent(
+  content: string,
+  options: ParseSubagentContentOptions = {},
+): SubagentConfig {
   const { frontmatter, body } = parseFrontmatter(content);
 
-  // Validate frontmatter
+  const nameValidation = validateFrontmatter(frontmatter, {
+    requireDescription: false,
+  });
+  if (!nameValidation.valid) {
+    throw new Error(nameValidation.errors.join("; "));
+  }
+
+  const name = frontmatter.name as string;
+  const isBodyless = body.trim().length === 0;
+
+  if (isBodyless) {
+    const inherited = options.inheritedConfigs?.[name];
+    if (!inherited) {
+      throw new Error(
+        `Bodyless subagent overlay "${name}" requires an existing lower-precedence config`,
+      );
+    }
+
+    return applySubagentOverlay(inherited, frontmatter, options.modelSource);
+  }
+
+  // Validate frontmatter for full-replacement custom subagents.
   const validation = validateFrontmatter(frontmatter);
   if (!validation.valid) {
     throw new Error(validation.errors.join("; "));
   }
 
-  const name = frontmatter.name as string;
   const description = frontmatter.description as string;
+  const hasModel = hasFrontmatterField(frontmatter, "model");
 
   return {
     name,
@@ -237,6 +327,7 @@ function parseSubagentContent(content: string): SubagentConfig {
     systemPrompt: body,
     allowedTools: parseTools(getStringField(frontmatter, "tools")),
     recommendedModel: getStringField(frontmatter, "model") || "inherit",
+    recommendedModelSource: hasModel ? options.modelSource : undefined,
     skills: parseSkills(getStringField(frontmatter, "skills")),
     fork: getStringField(frontmatter, "fork")?.toLowerCase() === "true",
     background: parseBackgroundDefault(
@@ -253,9 +344,13 @@ function parseSubagentContent(content: string): SubagentConfig {
  */
 async function parseSubagentFile(
   filePath: string,
+  inheritedConfigs: Record<string, SubagentConfig>,
 ): Promise<SubagentConfig | null> {
   const content = await readFile(filePath, "utf-8");
-  return parseSubagentContent(content);
+  return parseSubagentContent(content, {
+    inheritedConfigs,
+    modelSource: "user",
+  });
 }
 
 /**
@@ -281,7 +376,9 @@ function getBuiltinSubagents(
 
   for (const source of sources) {
     try {
-      const config = parseSubagentContent(source);
+      const config = parseSubagentContent(source, {
+        modelSource: "builtin",
+      });
       builtins[config.name] = config;
     } catch (error) {
       // Built-in subagents should always be valid; log error but don't crash
@@ -307,7 +404,7 @@ export function getBuiltinSubagentNames(): Set<string> {
  */
 async function discoverSubagentsFromDir(
   agentsDir: string,
-  seenNames: Set<string>,
+  configsByName: Record<string, SubagentConfig>,
   subagents: SubagentConfig[],
   errors: Array<{ path: string; message: string }>,
 ): Promise<void> {
@@ -326,20 +423,17 @@ async function discoverSubagentsFromDir(
       const filePath = join(agentsDir, entry.name);
 
       try {
-        const config = await parseSubagentFile(filePath);
+        const config = await parseSubagentFile(filePath, configsByName);
         if (config) {
           // Check for duplicate names (later directories override earlier ones)
-          if (seenNames.has(config.name)) {
-            // Remove the existing one and replace with this one
-            const existingIndex = subagents.findIndex(
-              (s) => s.name === config.name,
-            );
-            if (existingIndex !== -1) {
-              subagents.splice(existingIndex, 1);
-            }
+          const existingIndex = subagents.findIndex(
+            (s) => s.name === config.name,
+          );
+          if (existingIndex !== -1) {
+            subagents.splice(existingIndex, 1);
           }
 
-          seenNames.add(config.name);
+          configsByName[config.name] = config;
           subagents.push(config);
         }
       } catch (error) {
@@ -363,15 +457,17 @@ async function discoverSubagentsFromDir(
  */
 export async function discoverSubagents(
   workingDirectory: string = process.cwd(),
+  inheritedConfigs: Record<string, SubagentConfig> = {
+    ...getBuiltinSubagents(),
+  },
 ): Promise<SubagentDiscoveryResult> {
   const errors: Array<{ path: string; message: string }> = [];
   const subagents: SubagentConfig[] = [];
-  const seenNames = new Set<string>();
 
   // First, discover from global directory (~/.letta/agents)
   await discoverSubagentsFromDir(
-    GLOBAL_AGENTS_DIR,
-    seenNames,
+    getGlobalAgentsDir(),
+    inheritedConfigs,
     subagents,
     errors,
   );
@@ -381,7 +477,7 @@ export async function discoverSubagents(
   const projectAgentsDir = join(workingDirectory, AGENTS_DIR);
   await discoverSubagentsFromDir(
     projectAgentsDir,
-    seenNames,
+    inheritedConfigs,
     subagents,
     errors,
   );
@@ -414,7 +510,10 @@ export async function getAllSubagentConfigs(
   };
 
   // Discover user-defined subagents from .letta/agents/
-  const { subagents, errors } = await discoverSubagents(workingDirectory);
+  const { subagents, errors } = await discoverSubagents(
+    workingDirectory,
+    configs,
+  );
 
   // Log any discovery errors
   for (const error of errors) {

@@ -7,9 +7,6 @@ import {
   formatChannelNotification,
 } from "@/channels/xml";
 
-const SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX =
-  "For Slack requests that require nontrivial work or several tool calls";
-
 function expectTextParts(
   content: MessageCreate["content"],
 ): [{ type: "text"; text: string }, { type: "text"; text: string }] {
@@ -51,7 +48,7 @@ describe("formatChannelNotification", () => {
     expect(notificationPart.text).toContain("</channel-notification>");
   });
 
-  test("builds a reminder part describing reply semantics", () => {
+  test("builds a compact reminder and leaves reply semantics to the scoped tool", () => {
     const msg: InboundChannelMessage = {
       channel: "telegram",
       chatId: "12345",
@@ -63,30 +60,16 @@ describe("formatChannelNotification", () => {
     const reminder = buildChannelReminderText(msg);
 
     expect(reminder).toContain("<system-reminder>");
-    expect(reminder).toContain(
-      "Plain assistant text is not delivered to the user.",
-    );
-    expect(reminder).toContain(
-      'If you should reply to the external user, use MessageChannel with action="send", channel="telegram", and chat_id="12345"',
-    );
-    expect(reminder).toContain(
-      "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
-    );
-    expect(reminder).toContain(
-      'For lightweight acknowledgement, prefer MessageChannel action="react" when supported.',
-    );
-    expect(reminder).toContain(
-      "If the useful response belongs later, schedule the follow-up instead of sending a placeholder.",
-    );
-    expect(reminder).not.toContain(SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX);
-    expect(reminder).toContain(
-      "Do not produce a plain text assistant response as the user-visible reply.",
-    );
-    expect(reminder).toContain('action="react"');
+    expect(reminder).toContain("External telegram turn.");
+    expect(reminder).toContain("Plain assistant text is not delivered");
+    expect(reminder).toContain("scoped MessageChannel instructions");
     expect(reminder).toContain("Current local time on this device:");
+    expect(reminder).not.toContain('chat_id="12345"');
+    expect(reminder).not.toContain('action="react"');
+    expect(reminder.length).toBeLessThan(400);
   });
 
-  test("includes account id in notification xml without requiring it in reminder", () => {
+  test("keeps account and chat routing in notification xml rather than the reminder", () => {
     const msg: InboundChannelMessage = {
       channel: "telegram",
       accountId: "account-1",
@@ -99,10 +82,9 @@ describe("formatChannelNotification", () => {
     const reminder = buildChannelReminderText(msg);
     const xml = buildChannelNotificationXml(msg);
 
-    expect(reminder).toContain(
-      'If you should reply to the external user, use MessageChannel with action="send", channel="telegram", and chat_id="12345"',
-    );
+    expect(reminder).not.toContain('chat_id="12345"');
     expect(reminder).not.toContain('accountId="account-1"');
+    expect(xml).toContain('chat_id="12345"');
     expect(xml).toContain('account_id="account-1"');
   });
 
@@ -160,7 +142,7 @@ describe("formatChannelNotification", () => {
     const reminder = buildChannelReminderText(msg);
     const xml = buildChannelNotificationXml(msg);
 
-    expect(reminder).toContain('action="download-file"');
+    expect(reminder).not.toContain('action="download-file"');
     expect(reminder).not.toContain("attachment local_path values");
     expect(xml).toContain('download_status="not_downloaded"');
     expect(xml).toContain('download_reason="exceeds_auto_download_limit"');
@@ -205,7 +187,7 @@ describe("formatChannelNotification", () => {
     expect(xml).not.toContain("The tool downloads the file");
   });
 
-  test("adds Slack thread guidance for channel notifications", () => {
+  test("keeps Slack thread and acknowledgement guidance out of persisted reminders", () => {
     const msg: InboundChannelMessage = {
       channel: "slack",
       chatId: "C123",
@@ -219,15 +201,16 @@ describe("formatChannelNotification", () => {
 
     const reminder = buildChannelReminderText(msg);
 
-    expect(reminder).toContain("stay in the same Slack thread automatically");
-    expect(reminder).toContain(SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX);
-    expect(reminder).toContain(
-      'send a short MessageChannel action="send" acknowledgement before starting other tools',
+    expect(reminder).not.toContain(
+      "stay in the same Slack thread automatically",
+    );
+    expect(reminder).not.toContain(
+      "For Slack requests that require nontrivial work",
     );
     expect(reminder).not.toContain("reply_to_message_id");
   });
 
-  test("adds WhatsApp media guidance for voice memo uploads", () => {
+  test("keeps WhatsApp media guidance out of persisted reminders", () => {
     const msg: InboundChannelMessage = {
       channel: "whatsapp",
       chatId: "15551234567@s.whatsapp.net",

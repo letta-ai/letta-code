@@ -63,30 +63,14 @@ function hasNotificationAttachmentPaths(msg: InboundChannelMessage): boolean {
 export function buildChannelReminderText(msg: InboundChannelMessage): string {
   const localTime = escapeXmlText(getLocalTime());
   const escapedChannel = escapeXmlText(msg.channel);
-  const escapedChatId = escapeXmlText(msg.chatId);
-  const threadLine =
-    (msg.channel === "slack" || msg.channel === "telegram") &&
-    msg.chatType === "channel" &&
-    (msg.threadId ?? msg.messageId)?.trim()
-      ? `Replies sent with MessageChannel will stay in the same ${msg.channel === "telegram" ? "Telegram topic" : "Slack thread"} automatically.`
-      : null;
 
   const lines = [
     SYSTEM_REMINDER_OPEN,
-    `This is an external ${escapedChannel} turn. Plain assistant text is not delivered to the user.`,
-    `If you should reply to the external user, use MessageChannel with action="send", channel="${escapedChannel}", and chat_id="${escapedChatId}". Put the user-visible reply in message.`,
-    "If no user-visible response is appropriate, do not call MessageChannel. Do not send an empty acknowledgement.",
-    'For lightweight acknowledgement, prefer MessageChannel action="react" when supported. If the useful response belongs later, schedule the follow-up instead of sending a placeholder.',
-    "Do not produce a plain text assistant response as the user-visible reply.",
-    "On supported channels, MessageChannel can also send proactively using channel + target (and accountId when needed).",
-    "Only pass replyTo if you intentionally want the platform's quote/reply UI.",
+    `External ${escapedChannel} turn. Plain assistant text is not delivered; follow the scoped MessageChannel instructions to respond.`,
     `Current local time on this device: ${localTime}`,
     SYSTEM_REMINDER_CLOSE,
   ];
 
-  if (threadLine) {
-    lines.splice(lines.length - 2, 0, threadLine);
-  }
   if (msg.channel === "slack") {
     lines.splice(
       lines.length - 2,
@@ -123,6 +107,7 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
       'On Signal, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Replies are sent as the linked Signal account through signal-cli-rest-api.',
     );
   }
+
   if (hasNotificationAttachmentPaths(msg)) {
     lines.splice(
       lines.length - 2,

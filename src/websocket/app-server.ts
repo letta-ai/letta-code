@@ -47,7 +47,7 @@ export interface StartAppServerOptions {
   listen?: string;
   websocketAuth?: AppServerWebsocketAuthSettings;
   connectionName?: string;
-  /** Serve OpenAI-compatible /v1/models and /v1/chat/completions routes. */
+  /** Serve OpenAI-compatible models, Chat Completions, and Responses routes. */
   openaiApi?: boolean;
   onListening?: (info: AppServerListeningInfo) => void;
   onLog?: (message: string) => void;

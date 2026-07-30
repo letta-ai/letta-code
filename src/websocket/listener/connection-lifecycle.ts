@@ -43,7 +43,7 @@ export function createConnectionTurnProcessor(
     }
     await handleIncomingMessage(
       queuedTurn,
-      connection.writer,
+      getOrCreateProcessTransport(runtime),
       scopedRuntime,
       connection.options.onStatusChange,
       connection.id,

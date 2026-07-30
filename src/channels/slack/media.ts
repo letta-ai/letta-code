@@ -10,6 +10,7 @@ import type {
   SlackAttachmentReadClient,
   SlackFileLike,
 } from "./attachment-types";
+import { hasSlackMention } from "./utils";
 
 const MAX_SLACK_ATTACHMENTS = 8;
 const MAX_SLACK_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -64,7 +65,7 @@ export type SlackThreadMessage = {
   attachments?: ChannelMessageAttachment[];
 };
 
-type SlackThreadHistoryEntryKind = "all" | "bot";
+type SlackThreadHistoryEntryKind = "all" | "bot" | "unrouted-bot";
 
 async function mapSlackThreadMessage(
   message: SlackRepliesPageMessage,
@@ -812,6 +813,9 @@ export async function resolveSlackThreadHistory(
     currentMessageTs?: string;
     limit?: number;
     include?: SlackThreadHistoryEntryKind;
+    excludeBotId?: string | null;
+    routedBotUserId?: string | null;
+    acceptMentionedBots?: boolean;
   } & SlackThreadAttachmentParams,
 ): Promise<SlackThreadMessage[]> {
   const maxMessages = params.limit ?? 20;
@@ -835,16 +839,37 @@ export async function resolveSlackThreadHistory(
       })) as SlackRepliesPage;
 
       for (const message of response.messages ?? []) {
-        if (params.include === "bot" && !isNonEmptyString(message.bot_id)) {
-          continue;
-        }
-        if (!hasSlackThreadMessageContent(message, attachmentOptions)) {
-          continue;
-        }
         if (params.currentMessageTs && message.ts === params.currentMessageTs) {
           continue;
         }
         if (message.ts === params.threadTs) {
+          continue;
+        }
+
+        const isBotMessage = isNonEmptyString(message.bot_id);
+        if (params.include === "unrouted-bot") {
+          if (!isBotMessage) {
+            retained.length = 0;
+            continue;
+          }
+          if (
+            isNonEmptyString(params.excludeBotId) &&
+            message.bot_id === params.excludeBotId
+          ) {
+            continue;
+          }
+          if (
+            params.acceptMentionedBots === true &&
+            hasSlackMention(message.text ?? "", params.routedBotUserId ?? null)
+          ) {
+            retained.length = 0;
+            continue;
+          }
+        }
+        if (params.include === "bot" && !isNonEmptyString(message.bot_id)) {
+          continue;
+        }
+        if (!hasSlackThreadMessageContent(message, attachmentOptions)) {
           continue;
         }
 

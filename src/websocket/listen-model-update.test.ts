@@ -6,10 +6,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import {
+  clearAvailableModelsCache,
+  getAvailableModelHandles,
+} from "@/agent/available-models";
+import {
   __testSetBackend,
   type AgentCreateBody,
+  type Backend,
   type ConversationCreateBody,
 } from "@/backend";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { LocalBackend } from "@/backend/local";
 import { settingsManager } from "@/settings-manager";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
@@ -46,7 +52,21 @@ class MockSocket {
   }
 }
 
+class NativeChatGptCatalogBackend extends FakeHeadlessBackend {
+  override async listModels(): ReturnType<Backend["listModels"]> {
+    return [
+      {
+        handle: "chatgpt-jin/gpt-5.6-sol-fast",
+        display_name: "GPT-5.6 Sol Fast",
+        provider_type: "chatgpt_oauth",
+        provider_category: "byok",
+      },
+    ] as never;
+  }
+}
+
 afterEach(async () => {
+  clearAvailableModelsCache();
   __testSetBackend(null);
   await settingsManager.reset();
 });
@@ -377,6 +397,75 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
       expect(response.model_settings).toMatchObject({
         provider_type: "chatgpt_oauth",
         reasoning: { reasoning_effort: "high" },
+      });
+      expect(scopedRuntime.currentToolset).toBe("codex");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("switches native ChatGPT Fast aliases to Codex toolset", async () => {
+    const storageDir = await mkdtemp(
+      join(os.tmpdir(), "ws-chatgpt-fast-alias-"),
+    );
+    const previousHome = process.env.HOME;
+    try {
+      process.env.HOME = storageDir;
+      await settingsManager.reset();
+      await settingsManager.initialize();
+
+      __testSetBackend(new NativeChatGptCatalogBackend());
+      await getAvailableModelHandles();
+
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "ChatGPT Fast Alias Agent",
+        model: "anthropic/claude-sonnet-4-6",
+        model_settings: {
+          provider_type: "anthropic",
+          effort: "high",
+          parallel_tool_calls: true,
+        },
+      } as AgentCreateBody);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as ConversationCreateBody);
+
+      const listener = __listenClientTestUtils.createListenerRuntime();
+      const scopedRuntime =
+        __listenClientTestUtils.getOrCreateConversationRuntime(
+          listener,
+          agent.id,
+          conversation.id,
+        );
+      const model = __listenClientTestUtils.resolveModelForUpdate({
+        model_id: "chatgpt-jin/gpt-5.6-sol-fast",
+      });
+      if (!model) throw new Error("Expected native ChatGPT Fast model fixture");
+
+      const response = await __listenClientTestUtils.applyModelUpdateForRuntime(
+        {
+          socket: new MockSocket() as unknown as WebSocket,
+          listener,
+          scopedRuntime,
+          requestId: "chatgpt-fast-alias",
+          model,
+        },
+      );
+
+      expect(response.success).toBe(true);
+      expect(response.model_handle).toBe("chatgpt-jin/gpt-5.6-sol-fast");
+      expect(response.model_settings).toMatchObject({
+        provider_type: "chatgpt_oauth",
       });
       expect(scopedRuntime.currentToolset).toBe("codex");
     } finally {

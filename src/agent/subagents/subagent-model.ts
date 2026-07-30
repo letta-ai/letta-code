@@ -111,6 +111,7 @@ function isInheritModel(model: string | null | undefined): boolean {
 export async function resolveSubagentModel(options: {
   userModel?: string;
   recommendedModel?: string;
+  recommendedModelSource?: "builtin" | "user";
   parentModelHandle?: string | null;
   billingTier?: string | null;
   availableHandles?: Set<string>;
@@ -126,6 +127,17 @@ export async function resolveSubagentModel(options: {
     : recommendedModel;
 
   if (userModel && !userRequestedInheritance) return userModel;
+
+  if (
+    options.recommendedModelSource === "user" &&
+    effectiveRecommendedModel &&
+    !isInheritModel(effectiveRecommendedModel)
+  ) {
+    const recommendedHandle = resolveModel(effectiveRecommendedModel);
+    if (recommendedHandle) {
+      return recommendedHandle;
+    }
+  }
 
   // Local backend has no server-side auto router. If the parent agent is
   // already running successfully on a local model, spawned subagents should use

@@ -410,18 +410,29 @@ describe("listener approval lifecycle", () => {
     expect(socket.closeCalls).toBe(1);
   });
 
-  test("approval registration rejects closed and cancelling turns", async () => {
+  test("approval registration survives closed transports and rejects cancelling turns", async () => {
     const closedRuntime = createScopedRuntime();
+    const closedSocket = new MockSocket(WebSocket.CLOSED);
     const closedTurnLease = beginApprovalWait(closedRuntime);
-    await expect(
-      requestApprovalOverWS(
+    const pendingClosed = requestApprovalOverWS(
+      closedRuntime,
+      closedSocket,
+      closedTurnLease,
+      "perm-closed",
+      makeControlRequest("perm-closed"),
+    );
+
+    expect(closedRuntime.pendingApprovalResolvers.size).toBe(1);
+    expect(closedSocket.sentPayloads).toEqual([]);
+    expect(
+      resolvePendingApprovalResolver(
         closedRuntime,
-        new MockSocket(WebSocket.CLOSED),
-        closedTurnLease,
-        "perm-closed",
-        makeControlRequest("perm-closed"),
+        makeSuccessResponse("perm-closed"),
       ),
-    ).rejects.toThrow("WebSocket not open");
+    ).toBe(true);
+    await expect(pendingClosed).resolves.toEqual(
+      makeSuccessResponse("perm-closed"),
+    );
 
     const cancellingRuntime = createScopedRuntime();
     const turnLease = beginApprovalWait(cancellingRuntime);

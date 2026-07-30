@@ -239,6 +239,7 @@ import type {
   QueuedOverlayAction,
   StaticItem,
 } from "./types";
+import { closeMcp, useAgentMcpServers } from "./use-agent-mcp-servers";
 import { useApprovalFlow } from "./use-approval-flow";
 import { useBashHandlers } from "./use-bash-handlers";
 import { useConfigurationHandlers } from "./use-configuration-handlers";
@@ -355,6 +356,7 @@ export function App({
   startupApprovals = [],
   messageHistory = [],
   resumedExistingConversation = false,
+  startupConversationTitleEligible = false,
   tokenStreaming = false,
   reasoningTabCycleEnabled: initialReasoningTabCycleEnabled = false,
   showCompactions = false,
@@ -403,7 +405,6 @@ export function App({
 
   const projectDirectory = process.cwd();
 
-  // Track current conversation (always created fresh on startup)
   const [conversationId, setConversationId] = useState(initialConversationId);
   const [conversationSummary, setConversationSummary] = useState<string | null>(
     null,
@@ -416,7 +417,6 @@ export function App({
     telemetry.setCurrentAgentId(agentId);
   }, [agentId]);
 
-  // Keep a ref to the current conversationId for use in callbacks
   const conversationIdRef = useRef(conversationId);
   useEffect(() => {
     conversationIdRef.current = conversationId;
@@ -1201,7 +1201,6 @@ export function App({
     [],
   );
 
-  // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
   const sharedReminderStateRef = useRef<SharedReminderState>(
@@ -1218,9 +1217,8 @@ export function App({
     new Set<string>(),
   );
 
-  // Only brand-new conversations without an explicit title should auto-generate one.
   const shouldAutoGenerateConversationTitleRef = useRef(
-    !resumedExistingConversation,
+    !resumedExistingConversation || startupConversationTitleEligible,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
   const shouldAutoGenerateConversationDescriptionRef = useRef(
@@ -2384,11 +2382,10 @@ export function App({
     );
   }, [agentId, agentName, modAdapter]);
 
-  // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
     buffersRef.current.agentId = agentState?.id;
   }, [agentState?.id]);
-
+  useAgentMcpServers(agentState?.id);
   // Cache precomputed diffs from approval dialogs for tool return rendering
   // Key: toolCallId or "toolCallId:filePath" for Patch operations
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
@@ -3960,7 +3957,7 @@ export function App({
       // Non-critical, don't fail the exit
     }
 
-    // Flush telemetry before exit
+    await closeMcp();
     await telemetry.flush();
 
     setShowExitStats(true);
