@@ -8,6 +8,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { platform } from "node:os";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
@@ -200,6 +201,8 @@ export function buildSubagentPrompt(
 interface BuildSubagentArgsOptions {
   backendMode?: BackendMode;
   promptTransport?: "argv" | "stdin";
+  /** Runtime platform override for launcher tests. */
+  platform?: NodeJS.Platform;
   extraTools?: string[];
   parentAgentId?: string | null;
   /**
@@ -223,6 +226,7 @@ export function buildSubagentArgs(
   options: BuildSubagentArgsOptions = {},
 ): string[] {
   const args: string[] = [];
+  const runtimePlatform = options.platform ?? platform();
   const isDeployingExisting = Boolean(
     existingAgentId || existingConversationId,
   );
@@ -265,10 +269,13 @@ export function buildSubagentArgs(
     }
 
     // Reflection-specific startup flags: match the memory_reflection training
-    // env so the trained policy sees identical prompt suffixes and skill
-    // availability at inference time as it did during training.
+    // environment everywhere except Windows. On Windows, the startup reminder
+    // identifies the native shell so the Bash-named tool's PowerShell/cmd
+    // behavior does not conflict with the reflection procedure.
     if (type === "reflection") {
-      args.push("--no-system-info-reminder");
+      if (runtimePlatform !== "win32") {
+        args.push("--no-system-info-reminder");
+      }
       args.push("--no-skills");
     }
 
