@@ -2289,7 +2289,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       parentAgentName: agentName,
                       parentAgentDescription: agentDescription,
                       surface: "letta_code_tui",
-                      model: currentModelId,
                     },
                     onReady: (message, readyRun) => {
                       appendTaskNotificationEvents([message]);
@@ -2329,7 +2328,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       parentAgentName: agentName,
                       parentAgentDescription: agentDescription,
                       surface: "letta_code_tui",
-                      model: currentModelId,
                     },
                   });
                 }
@@ -3110,7 +3108,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 parentAgentName: agentName,
                 parentAgentDescription: agentDescription,
                 surface: "letta_code_tui",
-                model: currentModelId,
               },
               onReady: (message, readyRun) => {
                 appendTaskNotificationEvents([message]);
@@ -3173,7 +3170,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     parentAgentName: agentName,
                     parentAgentDescription: agentDescription,
                     surface: "letta_code_tui",
-                    model: currentModelId,
                   },
                   onReady: (message, readyRun) => {
                     appendTaskNotificationEvents([message]);
@@ -3215,7 +3211,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   parentAgentName: agentName,
                   parentAgentDescription: agentDescription,
                   surface: "letta_code_tui",
-                  model: currentModelId,
                 },
               });
 

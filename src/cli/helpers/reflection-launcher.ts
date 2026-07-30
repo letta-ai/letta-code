@@ -64,7 +64,6 @@ export function drainReflectionTelemetry(): void {
 export interface ReflectionFeedbackContext {
   parentAgentName?: string | null;
   parentAgentDescription?: string | null;
-  model?: string | null;
   surface?: string;
 }
 
@@ -95,6 +94,7 @@ export function emitReflectionRunEnd(params: {
   error?: string;
   stepCount?: number;
   durationMs?: number;
+  model?: string | null;
   feedbackContext?: ReflectionFeedbackContext;
 }): void {
   telemetry.trackReflectionEnd(params.triggerSource, params.success, {
@@ -103,7 +103,7 @@ export function emitReflectionRunEnd(params: {
     error: params.error,
     stepCount: params.stepCount,
     durationMs: params.durationMs,
-    model: params.feedbackContext?.model,
+    model: params.model,
   });
   drainReflectionTelemetry();
   maybeSendReflectionThresholdFeedback({
@@ -118,7 +118,7 @@ export function emitReflectionRunEnd(params: {
     stepCount: params.stepCount,
     durationMs: params.durationMs,
     surface: params.feedbackContext?.surface,
-    model: params.feedbackContext?.model,
+    model: params.model,
   });
 }
 
@@ -549,7 +549,7 @@ export async function launchReflectionSubagent(
         conversationId,
         startMessageId: autoPayload.startMessageId,
         endMessageId: autoPayload.endMessageId,
-        model: options.feedbackContext?.model,
+        model: options.model,
       });
     };
 
@@ -567,6 +567,7 @@ export async function launchReflectionSubagent(
         success,
         error,
         agentId: reflectionAgentId,
+        model: reflectionModel,
         stepCount,
         durationMs,
       }) => {
@@ -580,6 +581,7 @@ export async function launchReflectionSubagent(
             error,
             stepCount,
             durationMs,
+            model: reflectionModel,
             feedbackContext: options.feedbackContext,
           });
           const completionConversationId = resolveCompletionConversationId(

@@ -3715,7 +3715,6 @@ export function App({
                 parentAgentName: agentName,
                 parentAgentDescription: agentDescription,
                 surface: "letta_code_tui",
-                model: currentModelId,
               },
               onReady: (message, readyRun) => {
                 appendTaskNotificationEvents([message]);
@@ -3751,7 +3750,6 @@ export function App({
               parentAgentName: agentName,
               parentAgentDescription: agentDescription,
               surface: "letta_code_tui",
-              model: currentModelId,
             },
           });
           return result.launched;
@@ -3765,12 +3763,7 @@ export function App({
         }`,
       );
     }
-  }, [
-    agentName,
-    agentDescription,
-    currentModelId,
-    appendTaskNotificationEvents,
-  ]);
+  }, [agentName, agentDescription, appendTaskNotificationEvents]);
 
   const processConversation = useConversationLoop({
     abortControllerRef,

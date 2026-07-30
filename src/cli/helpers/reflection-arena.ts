@@ -726,6 +726,7 @@ export async function startReflectionArenaRun(
             error,
             agentId,
             conversationId,
+            model: resolvedModel,
             stepCount,
             durationMs,
             report,
@@ -740,9 +741,9 @@ export async function startReflectionArenaRun(
                 error,
                 stepCount,
                 durationMs,
+                model: resolvedModel ?? model,
                 feedbackContext: {
                   ...options.feedbackContext,
-                  model,
                 },
               });
 
