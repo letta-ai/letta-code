@@ -35,7 +35,19 @@ See the full list of slash commands in our [documentation](https://docs.letta.co
 
 ## Get started
 
-Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-node-js-and-npm):
+Install Letta Code on macOS or Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/letta-ai/letta-code/main/install.sh | bash
+```
+
+On Windows, run:
+
+```powershell
+irm https://raw.githubusercontent.com/letta-ai/letta-code/main/install.ps1 | iex
+```
+
+You can also install the package with npm (requires Node.js 22.19+):
 
 ```bash
 npm install -g @letta-ai/letta-code
