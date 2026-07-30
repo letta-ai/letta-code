@@ -316,6 +316,40 @@ describe("spawnBackgroundSubagentTask", () => {
     ]);
   });
 
+  test("passes the resolved subagent model to onComplete", async () => {
+    const spawnSubagentImpl = mock(async () => ({
+      agentId: "agent-model",
+      conversationId: "default",
+      model: "letta/auto-memory",
+      report: "reflection done",
+      success: true,
+    }));
+    const onComplete = mock(() => {});
+
+    spawnBackgroundSubagentTask({
+      subagentType: "reflection",
+      prompt: "Reflect",
+      description: "Reflect on memory",
+      onComplete,
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "letta/auto-memory" }),
+    );
+  });
+
   test("continues queue notification and hooks when onComplete throws", async () => {
     const spawnSubagentImpl = mock(async () => ({
       agentId: "agent-oncomplete-error",

@@ -61,6 +61,7 @@ const BACKGROUND_STARTUP_POLL_MS = 50;
 type TaskRunResult = {
   agentId: string;
   conversationId?: string;
+  model?: string;
   report: string;
   success: boolean;
   error?: string;
@@ -127,6 +128,7 @@ export interface SpawnBackgroundSubagentTaskArgs {
     error?: string;
     agentId?: string;
     conversationId?: string;
+    model?: string;
     stepCount?: number;
     durationMs?: number;
     report?: string;
@@ -445,6 +447,7 @@ export function spawnBackgroundSubagentTask(
           error: result.error,
           agentId: result.agentId,
           conversationId: result.conversationId,
+          model: result.model,
           stepCount: result.stepCount,
           durationMs: result.durationMs,
           report: result.report,

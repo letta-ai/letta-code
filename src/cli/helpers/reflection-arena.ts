@@ -105,6 +105,7 @@ interface ReflectionArenaCandidateResult {
   conversationId?: string;
   durationMs?: number;
   error?: string;
+  model?: string;
   memoryHead?: string;
   memoryNoChanges?: boolean;
   report?: string;
@@ -773,6 +774,7 @@ export async function startReflectionArenaRun(
             error,
             agentId,
             conversationId,
+            model: resolvedModel,
             stepCount,
             durationMs,
             report,
@@ -791,9 +793,9 @@ export async function startReflectionArenaRun(
                 error,
                 stepCount,
                 durationMs,
+                model: resolvedModel ?? model,
                 feedbackContext: {
                   ...options.feedbackContext,
-                  model,
                 },
               });
 
@@ -824,6 +826,7 @@ export async function startReflectionArenaRun(
                   error,
                   agentId,
                   conversationId,
+                  model: resolvedModel ?? model,
                   stepCount,
                   durationMs,
                   report,
@@ -918,9 +921,9 @@ export async function finalizeReflectionArenaChoice(
       agentId: run.agentId,
       conversationId: run.conversationId,
       subagentAgentId: chosen.result?.agentId,
+      model: chosen.result?.model ?? chosen.model,
       telemetryContext: {
         triggerSource: run.triggerSource ?? "compaction-event",
-        model: chosen.model,
       },
       recompileByConversation: options.recompileByConversation,
       recompileQueuedByConversation: options.recompileQueuedByConversation,

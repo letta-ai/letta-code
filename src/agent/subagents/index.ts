@@ -67,6 +67,7 @@ export interface SubagentMemoryScope {
 export interface SubagentResult {
   agentId: string;
   conversationId?: string;
+  model?: string;
   report: string;
   success: boolean;
   error?: string;

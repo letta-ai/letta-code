@@ -2290,7 +2290,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       parentAgentName: agentName,
                       parentAgentDescription: agentDescription,
                       surface: "letta_code_tui",
-                      model: currentModelId,
                     },
                     onReady: (message, readyRun) => {
                       appendTaskNotificationEvents([message]);
@@ -2329,7 +2328,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       parentAgentName: agentName,
                       parentAgentDescription: agentDescription,
                       surface: "letta_code_tui",
-                      model: currentModelId,
                     },
                   });
                 }
@@ -3110,7 +3108,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 parentAgentName: agentName,
                 parentAgentDescription: agentDescription,
                 surface: "letta_code_tui",
-                model: currentModelId,
               },
               onReady: (message, readyRun) => {
                 appendTaskNotificationEvents([message]);
@@ -3173,7 +3170,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     parentAgentName: agentName,
                     parentAgentDescription: agentDescription,
                     surface: "letta_code_tui",
-                    model: currentModelId,
                   },
                   onReady: (message, readyRun) => {
                     appendTaskNotificationEvents([message]);
@@ -3218,7 +3214,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   parentAgentName: agentName,
                   parentAgentDescription: agentDescription,
                   surface: "letta_code_tui",
-                  model: currentModelId,
                 },
               });
 
@@ -3344,6 +3339,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                           success: reflectionSuccess,
                           error: reflectionError,
                           agentId: reflectionAgentId,
+                          model: reflectionModel,
                         }) => {
                           try {
                             telemetry.trackReflectionEnd(
@@ -3353,6 +3349,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                                 subagentId: reflectionAgentId ?? undefined,
                                 conversationId: reflectionConversationId,
                                 error: reflectionError,
+                                model: reflectionModel,
                               },
                             );
                             const { completionSuccess, completionMessage } =
@@ -3363,6 +3360,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                                 agentId,
                                 conversationId: conversationIdRef.current,
                                 subagentAgentId: reflectionAgentId ?? undefined,
+                                model: reflectionModel,
                                 telemetryContext: { triggerSource: "manual" },
                                 recompileByConversation:
                                   systemPromptRecompileByConversationRef.current,
@@ -3445,7 +3443,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 agentId,
                 instruction: reflectArgs.instruction,
               });
-
             const {
               spawnBackgroundSubagentTask,
               waitForBackgroundSubagentAgentId,
@@ -3465,12 +3462,14 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 success,
                 error,
                 agentId: reflectionAgentId,
+                model: reflectionModel,
               }) => {
                 try {
                   telemetry.trackReflectionEnd("manual", success, {
                     subagentId: reflectionAgentId ?? undefined,
                     conversationId: reflectionConversationId,
                     error,
+                    model: reflectionModel,
                   });
                   const { completionSuccess, completionMessage } =
                     await finalizeReflectionMemoryWorktreeLaunch({
@@ -3480,6 +3479,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       agentId,
                       conversationId: conversationIdRef.current,
                       subagentAgentId: reflectionAgentId ?? undefined,
+                      model: reflectionModel,
                       telemetryContext: { triggerSource: "manual" },
                       recompileByConversation:
                         systemPromptRecompileByConversationRef.current,

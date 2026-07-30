@@ -350,14 +350,17 @@ async function executeSubagent(
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
 ): Promise<SubagentResult> {
+  const withModel = (result: SubagentResult): SubagentResult =>
+    model ? { ...result, model } : result;
+
   // Check if already aborted before starting
   if (signal?.aborted) {
-    return {
+    return withModel({
       agentId: "",
       report: "",
       success: false,
       error: INTERRUPTED_BY_USER,
-    };
+    });
   }
 
   // Update the state with the model being used (may differ on retry/fallback)
@@ -548,13 +551,13 @@ async function executeSubagent(
 
     // Check if process was aborted by user
     if (wasAborted) {
-      return {
+      return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: "",
         success: false,
         error: INTERRUPTED_BY_USER,
-      };
+      });
     }
 
     const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
@@ -614,18 +617,18 @@ async function executeSubagent(
       const propagatedError = state.finalError?.trim();
       const fallbackError = stderr || `Subagent exited with code ${exitCode}`;
 
-      return {
+      return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: "",
         success: false,
         error: propagatedError || fallbackError,
-      };
+      });
     }
 
     // Return captured result if available
     if (state.finalResult !== null) {
-      return {
+      return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: state.finalResult,
@@ -634,7 +637,7 @@ async function executeSubagent(
         totalTokens: state.resultStats?.totalTokens,
         stepCount: state.resultStats?.stepCount,
         durationMs: state.resultStats?.durationMs,
-      };
+      });
     }
 
     // Return error if captured
@@ -644,7 +647,7 @@ async function executeSubagent(
         `Subagent ${subagentId} (agentId=${state.agentId}) exited with captured error: ${state.finalError}. ` +
           `exitCode=${exitCode}, stderr=${stderr.length} bytes`,
       );
-      return {
+      return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: "",
@@ -653,7 +656,7 @@ async function executeSubagent(
         totalTokens: state.resultStats?.totalTokens,
         stepCount: state.resultStats?.stepCount,
         durationMs: state.resultStats?.durationMs,
-      };
+      });
     }
 
     // No result or error captured during streaming — this is unusual
@@ -707,14 +710,14 @@ async function executeSubagent(
         );
       }
     }
-    return result;
+    return withModel(result);
   } catch (error) {
-    return {
+    return withModel({
       agentId: "",
       report: "",
       success: false,
       error: getErrorMessage(error),
-    };
+    });
   }
 }
 

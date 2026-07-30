@@ -266,7 +266,6 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     },
     feedbackContext: {
       surface: "letta_code_cli",
-      model: parsed.values.model,
     },
   });
 
