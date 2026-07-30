@@ -20,7 +20,173 @@ import { isNonEmptyString } from "./utils";
 export const SLACK_APPROVAL_ACTION_ID = "letta_channel_approval";
 
 const SLACK_MARKDOWN_BLOCK_TEXT_MAX = 12_000;
+const SLACK_SECTION_BLOCK_TEXT_MAX = 3_000;
 const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
+const SLACK_SCHEDULED_PROMPT_PREVIEW_MAX = 360;
+const CRON_PROMPT_AUTONOMOUS_NOTICE =
+  "You are running autonomously: no user is watching this turn and questions will not be answered. Deliver results through your available channels or record them in memory, and work until the task is done or genuinely blocked.";
+
+type ParsedSlackCronPrompt = {
+  taskName: string;
+  description?: string;
+  scheduledFor: string;
+  recurrence: string;
+  prompt: string;
+};
+
+function compactSlackPreviewText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function escapeSlackMrkdwnText(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function formatSlackInlineCode(text: string): string {
+  return `\`${escapeSlackMrkdwnText(text).replace(/`/g, "'")}\``;
+}
+
+function getCronPromptField(
+  lines: string[],
+  prefix: string,
+): string | undefined {
+  const line = lines.find((candidate) => candidate.startsWith(prefix));
+  const value = line?.slice(prefix.length).trim();
+  return value ? value : undefined;
+}
+
+function formatCronPromptRecurrence(line: string): string | null {
+  const recurring = /^This is fire #(\d+) \(cron: (.+)\)\.$/.exec(line);
+  if (recurring) {
+    return `Fire #${recurring[1]} · cron ${formatSlackInlineCode(recurring[2] ?? "")}`;
+  }
+  if (line === "This is a one-off scheduled task.") {
+    return "One-off scheduled task";
+  }
+  return null;
+}
+
+function parseSlackCronPrompt(text: string): ParsedSlackCronPrompt | null {
+  const normalized = text.trim();
+  const promptMarker = "\nPrompt: ";
+  const promptIndex = normalized.indexOf(promptMarker);
+  if (promptIndex < 0) return null;
+
+  const header = normalized.slice(0, promptIndex);
+  const prompt = normalized.slice(promptIndex + promptMarker.length).trim();
+  if (!prompt || !header.includes(CRON_PROMPT_AUTONOMOUS_NOTICE)) {
+    return null;
+  }
+
+  const lines = header.split(/\r?\n/).map((line) => line.trim());
+  const titleMatch = /^Scheduled task "(.+)" is firing\.$/.exec(lines[0] ?? "");
+  if (!titleMatch) return null;
+
+  const scheduledFor = getCronPromptField(lines, "Scheduled for:");
+  const currentTime = getCronPromptField(lines, "Current time:");
+  const recurrenceLine = lines.find((line) =>
+    /^(This is fire #\d+ \(cron: .+\)\.|This is a one-off scheduled task\.)$/.test(
+      line,
+    ),
+  );
+  const recurrence = recurrenceLine
+    ? formatCronPromptRecurrence(recurrenceLine)
+    : null;
+  if (!scheduledFor || !currentTime || !recurrence) return null;
+
+  return {
+    taskName: titleMatch[1] ?? "scheduled task",
+    description: getCronPromptField(lines, "Description:"),
+    scheduledFor,
+    recurrence,
+    prompt,
+  };
+}
+
+function extractSlackFootnoteUrl(footnote: string): string | null {
+  const match = /^<([^|>]+)\|[^>]+>$/.exec(footnote.trim());
+  return match?.[1] ?? null;
+}
+
+function formatSlackCronPromptFallback(parsed: ParsedSlackCronPrompt): string {
+  const promptPreview = truncateChannelProgressText(
+    compactSlackPreviewText(parsed.prompt),
+    SLACK_SCHEDULED_PROMPT_PREVIEW_MAX,
+    "...",
+  );
+  return [
+    `Scheduled task fired: ${parsed.taskName}`,
+    parsed.recurrence.replace(/`/g, ""),
+    `Scheduled for: ${parsed.scheduledFor}`,
+    `Prompt: ${promptPreview}`,
+  ].join("\n");
+}
+
+function buildSlackCronPromptBlocks(
+  text: string,
+  footnote: string,
+): SlackBlock[] | null {
+  const parsed = parseSlackCronPrompt(text);
+  if (!parsed) return null;
+
+  const promptPreview = truncateChannelProgressText(
+    compactSlackPreviewText(parsed.prompt),
+    SLACK_SCHEDULED_PROMPT_PREVIEW_MAX,
+    "...",
+  );
+  const descriptionPreview = parsed.description
+    ? truncateChannelProgressText(
+        compactSlackPreviewText(parsed.description),
+        180,
+        "...",
+      )
+    : "";
+  const summaryLines = [
+    `:calendar: *Scheduled task fired*`,
+    `*${escapeSlackMrkdwnText(parsed.taskName)}*`,
+    descriptionPreview ? escapeSlackMrkdwnText(descriptionPreview) : null,
+    parsed.recurrence,
+    `:clock1: Scheduled for ${formatSlackInlineCode(parsed.scheduledFor)}`,
+    `Prompt: ${escapeSlackMrkdwnText(promptPreview)}`,
+  ].filter((line): line is string => Boolean(line));
+
+  const blocks: SlackBlock[] = [
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: truncateChannelProgressText(
+          summaryLines.join("\n"),
+          SLACK_SECTION_BLOCK_TEXT_MAX,
+          "...",
+        ),
+      },
+    },
+  ];
+
+  const footnoteUrl = extractSlackFootnoteUrl(footnote);
+  if (footnoteUrl) {
+    blocks.push({
+      type: "context",
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `<${footnoteUrl}|View full scheduled prompt>`,
+        },
+      ],
+    });
+  } else if (footnote.trim()) {
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: footnote }],
+    });
+  }
+
+  return blocks;
+}
 
 function buildSlackChatUrl(
   agentId: string,
@@ -43,10 +209,20 @@ export function buildSlackChatFootnote(identity: {
   return chatUrl ? `<${chatUrl}|View on web>` : "";
 }
 
+export function formatSlackReplyTextFallback(text: string): string {
+  const parsed = parseSlackCronPrompt(text);
+  return parsed ? formatSlackCronPromptFallback(parsed) : text;
+}
+
 export function buildSlackReplyBlocksWithFootnote(
   text: string,
   footnote: string,
 ): SlackBlock[] | undefined {
+  const cronPromptBlocks = buildSlackCronPromptBlocks(text, footnote);
+  if (cronPromptBlocks) {
+    return cronPromptBlocks;
+  }
+
   const chunks: string[] = [];
   let remaining = text;
   while (remaining.length > 0) {

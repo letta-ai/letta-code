@@ -32,6 +32,7 @@ import {
   buildSlackReplyBlocksWithFootnote,
   formatSlackControlRequestBlocks,
   formatSlackLifecycleErrorMessage,
+  formatSlackReplyTextFallback,
   resolveSlackConcreteActivity,
   SLACK_ASSISTANT_STARTUP_STATUS,
   SLACK_ASSISTANT_WORKING_STATUS,
@@ -282,9 +283,10 @@ export function createSlackAdapter(
     const blocks = footnote
       ? buildSlackReplyBlocksWithFootnote(msg.text, footnote)
       : undefined;
+    const text = blocks ? formatSlackReplyTextFallback(msg.text) : msg.text;
     const response = await client.chat.postMessage({
       channel: msg.chatId,
-      text: msg.text,
+      text,
       ...(blocks ? { blocks } : {}),
       ...(threadTs ? { thread_ts: threadTs } : {}),
     });

@@ -2,6 +2,7 @@ import type { OutboundChannelMessage } from "@/channels/types";
 import {
   buildSlackChatFootnote,
   buildSlackReplyBlocksWithFootnote,
+  formatSlackReplyTextFallback,
 } from "./presentation";
 import {
   normalizeSlackReactionName,
@@ -126,9 +127,12 @@ export function createSlackChannelSender(
         replyToMessageId: message.replyToMessageId,
       });
       const blocks = buildSlackOutboundBlocks(message);
+      const text = blocks
+        ? formatSlackReplyTextFallback(message.text)
+        : message.text;
       return await client.postMessage({
         channel: message.chatId,
-        text: message.text,
+        text,
         ...(blocks ? { blocks } : {}),
         ...(threadTs ? { threadTs } : {}),
       });
