@@ -752,14 +752,19 @@ export async function removeChannelAccountWithSecrets(
 ): Promise<boolean> {
   await getActiveChannelCredentialsStoreMode();
   const account = getChannelAccount(channelId, accountId);
-  if (account && getCachedChannelCredentialsStoreMode() === "keyring") {
+  const secretFieldPaths =
+    account && getCachedChannelCredentialsStoreMode() === "keyring"
+      ? getSecretFieldPaths(account)
+      : [];
+  const removed = removeChannelAccount(channelId, accountId);
+  if (removed && secretFieldPaths.length > 0) {
     await Promise.all(
-      getSecretFieldPaths(account).map((fieldPath) =>
+      secretFieldPaths.map((fieldPath) =>
         deleteChannelSecret(channelId, accountId, fieldPath),
       ),
     );
   }
-  return removeChannelAccount(channelId, accountId);
+  return removed;
 }
 
 export function clearChannelAccountStores(): void {
