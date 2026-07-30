@@ -132,9 +132,8 @@ export function isPlanTool(rawName: string, displayName?: string): boolean {
 }
 
 /**
- * Checks if a tool requires a specialized UI dialog instead of standard approval
- * File edit/write/patch tools and shell tools render inline (not overlay), but
- * still need this flag to bypass the standard ApprovalDialog rendering.
+ * Checks if a tool requires specialized inline UI instead of generic approval
+ * rendering. File edit/write/patch tools and shell tools use their own views.
  */
 export function isFancyUITool(name: string): boolean {
   return (
