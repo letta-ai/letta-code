@@ -135,8 +135,8 @@ test("slack adapter rehydrates bot-authored Slack thread context on existing rou
 
   await adapter.start();
 
-  // Bot-only filtering now happens inside resolveSlackThreadHistory via the
-  // include: "bot" parameter, so the mock models the already-filtered result.
+  // Incremental bot filtering happens inside resolveSlackThreadHistory, so the
+  // mock models the already-filtered result.
   resolveSlackThreadHistoryMock.mockResolvedValueOnce([
     {
       text: "Automated deployment note since the last human turn",
@@ -176,7 +176,12 @@ test("slack adapter rehydrates bot-authored Slack thread context on existing rou
   expect(resolveSlackThreadStarterMock).not.toHaveBeenCalled();
   expect(resolveSlackThreadHistoryMock).toHaveBeenCalledTimes(1);
   expect(resolveSlackThreadHistoryMock).toHaveBeenCalledWith(
-    expect.objectContaining({ include: "bot" }),
+    expect.objectContaining({
+      include: "unrouted-bot",
+      excludeBotId: "B0AS42PTEAX",
+      routedBotUserId: "U0AS42PTEAX",
+      acceptMentionedBots: false,
+    }),
   );
   expect(resolveSlackChannelHistoryMock).not.toHaveBeenCalled();
 });
@@ -322,6 +327,6 @@ test("slack adapter hydrates exact thread_broadcast attachments before prompt fo
     }),
   );
   expect(resolveSlackThreadHistoryMock).toHaveBeenCalledWith(
-    expect.objectContaining({ include: "bot" }),
+    expect.objectContaining({ include: "unrouted-bot" }),
   );
 });

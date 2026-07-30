@@ -3,7 +3,6 @@ import { Box, useInput } from "ink";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type AgentBackendMode, isLocalAgentId } from "@/agent/agent-id";
 import { unpinAgentForCurrentUser } from "@/agent/favorites";
-import { getModelDisplayName } from "@/agent/model";
 import { getBackendForMode } from "@/backend/backend";
 import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
 import {
@@ -11,10 +10,25 @@ import {
   listPinnedAgentsForCurrentUser,
   type PinnedAgentData,
 } from "@/cli/helpers/pinned-agent-listing";
+import { listSharedAgentsForCurrentUser } from "@/cli/helpers/shared-agent-listing";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import { DEFAULT_AGENT_NAME } from "@/constants";
+import { AgentSelectorFooter } from "./AgentSelectorFooter";
+import {
+  AgentDeleteConfirmOverlay,
+  CloudLoginPrompt,
+} from "./AgentSelectorViews";
+import {
+  AGENT_SELECTOR_TAB_DESCRIPTIONS,
+  AGENT_SELECTOR_TAB_EMPTY_STATES,
+  type AgentSelectorListAgent,
+  type AgentSelectorTabId,
+  formatAgentModel,
+  formatRelativeTime,
+  getVisibleAgentSelectorTabs,
+  truncateAgentId,
+} from "./agent-selector-utils";
 import { colors } from "./colors";
-import { MarkdownDisplay } from "./MarkdownDisplay";
 import { OverlayShell } from "./OverlayShell";
 import { PasteAwareTextInput } from "./PasteAwareTextInput";
 import { validateAgentName } from "./PinDialog";
@@ -40,8 +54,6 @@ interface AgentSelectorProps {
   allowPinActions?: boolean;
 }
 
-type TabId = "pinned" | "local" | "constellation" | "new";
-
 type ViewState =
   | { type: "list" }
   | {
@@ -51,87 +63,9 @@ type ViewState =
       isLocal: boolean;
     };
 
-const ALL_TABS: { id: TabId; label: string }[] = [
-  { id: "pinned", label: "Pinned" },
-  { id: "constellation", label: "Constellation" },
-  { id: "local", label: "Local" },
-  { id: "new", label: "New" },
-];
-
-const TAB_DESCRIPTIONS: Record<TabId, string> = {
-  pinned: "Save agents for easy access with /pin or Desktop favorites",
-  local: "Local agents from this device",
-  constellation: "Hosted agents from Letta Constellation",
-  new: "Create a brand new agent",
-};
-
-const TAB_EMPTY_STATES: Record<TabId, string> = {
-  pinned: "No pinned or favorite agents, use /pin to save",
-  local: "No local agents found",
-  constellation: "No agents found",
-  new: "",
-};
-
 const DISPLAY_PAGE_SIZE = 5;
 const FETCH_PAGE_SIZE = 20;
 const NEW_AGENT_DEFAULT_BACKEND: AgentBackendMode = "api";
-
-/**
- * Format a relative time string from a date
- */
-function formatRelativeTime(dateStr: string | null | undefined): string {
-  if (!dateStr) return "Never";
-
-  const date = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-  const diffWeeks = Math.floor(diffDays / 7);
-
-  if (diffMins < 1) return "Just now";
-  if (diffMins < 60)
-    return `${diffMins} minute${diffMins === 1 ? "" : "s"} ago`;
-  if (diffHours < 24)
-    return `${diffHours} hour${diffHours === 1 ? "" : "s"} ago`;
-  if (diffDays < 7) return `${diffDays} day${diffDays === 1 ? "" : "s"} ago`;
-  return `${diffWeeks} week${diffWeeks === 1 ? "" : "s"} ago`;
-}
-
-/**
- * Truncate agent ID with middle ellipsis if it exceeds available width
- */
-function truncateAgentId(id: string, availableWidth: number): string {
-  if (id.length <= availableWidth) return id;
-  if (availableWidth < 15) return id.slice(0, availableWidth);
-  const prefixLen = Math.floor((availableWidth - 3) / 2);
-  const suffixLen = availableWidth - 3 - prefixLen;
-  return `${id.slice(0, prefixLen)}...${id.slice(-suffixLen)}`;
-}
-
-/**
- * Format model string to show friendly display name (e.g., "Sonnet 4.5")
- */
-function formatModel(agent: AgentState): string {
-  // Build handle from agent config
-  let handle: string | null = null;
-  if (agent.model) {
-    handle = agent.model;
-  } else if (agent.llm_config?.model) {
-    const provider = agent.llm_config.model_endpoint_type || "unknown";
-    handle = `${provider}/${agent.llm_config.model}`;
-  }
-
-  if (handle) {
-    // Try to get friendly display name
-    const displayName = getModelDisplayName(handle);
-    if (displayName) return displayName;
-    // Fallback to handle
-    return handle;
-  }
-  return "unknown";
-}
 
 export function AgentSelector({
   currentAgentId,
@@ -156,28 +90,27 @@ export function AgentSelector({
       return false;
     }
   });
+  const [hasCloudAuth, setHasCloudAuth] = useState<boolean | null>(null);
 
   // Compute visible tabs — Local tab only shown when there are local agents
   const visibleTabs = useMemo(
     () =>
-      ALL_TABS.filter(
-        (t) =>
-          (showNewTab || t.id !== "new") &&
-          (t.id !== "local" || hasLocalAgents),
-      ),
-    [hasLocalAgents, showNewTab],
+      getVisibleAgentSelectorTabs({ showNewTab, hasLocalAgents, hasCloudAuth }),
+    [hasCloudAuth, hasLocalAgents, showNewTab],
   );
 
-  const [activeTab, setActiveTab] = useState<TabId>("pinned");
+  const [activeTab, setActiveTab] = useState<AgentSelectorTabId>("pinned");
 
   // If active tab is no longer visible (e.g. local tab hidden after deleting all local agents), fall back
   useEffect(() => {
     if (activeTab === "local" && !hasLocalAgents) {
-      setActiveTab("constellation");
+      setActiveTab("cloud");
+    } else if (activeTab === "shared" && hasCloudAuth !== true) {
+      setActiveTab("cloud");
     } else if (activeTab === "new" && !showNewTab) {
       setActiveTab("pinned");
     }
-  }, [activeTab, hasLocalAgents, showNewTab]);
+  }, [activeTab, hasCloudAuth, hasLocalAgents, showNewTab]);
 
   // Pinned tab state
   const [pinnedAgents, setPinnedAgents] = useState<PinnedAgentData[]>([]);
@@ -192,26 +125,31 @@ export function AgentSelector({
   const [localPage, setLocalPage] = useState(0);
   const [localLoaded, setLocalLoaded] = useState(false);
 
-  // Constellation tab state (fetches from API)
-  const [constellationAgents, setConstellationAgents] = useState<AgentState[]>(
+  // Cloud tab state (fetches from API)
+  const [cloudAgents, setCloudAgents] = useState<AgentState[]>([]);
+  const [cloudCursor, setCloudCursor] = useState<string | null>(null);
+  const [cloudLoading, setCloudLoading] = useState(false);
+  const [cloudLoadingMore, setCloudLoadingMore] = useState(false);
+  const [cloudHasMore, setCloudHasMore] = useState(true);
+  const [cloudSelectedIndex, setCloudSelectedIndex] = useState(0);
+  const [cloudPage, setCloudPage] = useState(0);
+  const [cloudError, setCloudError] = useState<string | null>(null);
+  const [cloudLoaded, setCloudLoaded] = useState(false);
+  const [cloudQuery, setCloudQuery] = useState<string>("");
+
+  // Shared tab state (fetches from Cloud's shared-with-me endpoint)
+  const [sharedAgents, setSharedAgents] = useState<AgentSelectorListAgent[]>(
     [],
   );
-  const [constellationCursor, setConstellationCursor] = useState<string | null>(
-    null,
-  );
-  const [constellationLoading, setConstellationLoading] = useState(false);
-  const [constellationLoadingMore, setConstellationLoadingMore] =
-    useState(false);
-  const [constellationHasMore, setConstellationHasMore] = useState(true);
-  const [constellationSelectedIndex, setConstellationSelectedIndex] =
-    useState(0);
-  const [constellationPage, setConstellationPage] = useState(0);
-  const [constellationError, setConstellationError] = useState<string | null>(
-    null,
-  );
-  const [constellationLoaded, setConstellationLoaded] = useState(false);
-  const [constellationQuery, setConstellationQuery] = useState<string>("");
-  const [hasCloudAuth, setHasCloudAuth] = useState<boolean | null>(null);
+  const [sharedCursor, setSharedCursor] = useState<string | null>(null);
+  const [sharedLoading, setSharedLoading] = useState(false);
+  const [sharedLoadingMore, setSharedLoadingMore] = useState(false);
+  const [sharedHasMore, setSharedHasMore] = useState(true);
+  const [sharedSelectedIndex, setSharedSelectedIndex] = useState(0);
+  const [sharedPage, setSharedPage] = useState(0);
+  const [sharedError, setSharedError] = useState<string | null>(null);
+  const [sharedLoaded, setSharedLoaded] = useState(false);
+  const [sharedQuery, setSharedQuery] = useState<string>("");
 
   // Search state (shared across list tabs)
   const [searchInput, setSearchInput] = useState("");
@@ -267,8 +205,8 @@ export function AgentSelector({
     }
   }, []);
 
-  // Fetch Constellation agents from cloud API directly (not via getBackend, which may be local)
-  const fetchConstellationAgents = useCallback(
+  // Fetch Cloud agents from cloud API directly (not via getBackend, which may be local)
+  const fetchCloudAgents = useCallback(
     async (afterCursor?: string | null, query?: string) => {
       const { getClient } = await import("@/backend/api/client");
       const client = await getClient();
@@ -292,59 +230,100 @@ export function AgentSelector({
     [],
   );
 
-  // Load Constellation agents
-  const loadConstellationAgents = useCallback(
+  // Load Cloud agents
+  const loadCloudAgents = useCallback(
     async (query?: string) => {
-      setConstellationLoading(true);
-      setConstellationError(null);
+      setCloudLoading(true);
+      setCloudError(null);
       try {
-        const result = await fetchConstellationAgents(null, query);
-        setConstellationAgents(result.agents);
-        setConstellationCursor(result.nextCursor);
-        setConstellationHasMore(result.nextCursor !== null);
-        setConstellationPage(0);
-        setConstellationSelectedIndex(0);
-        setConstellationLoaded(true);
-        setConstellationQuery(query || "");
+        const result = await fetchCloudAgents(null, query);
+        setCloudAgents(result.agents);
+        setCloudCursor(result.nextCursor);
+        setCloudHasMore(result.nextCursor !== null);
+        setCloudPage(0);
+        setCloudSelectedIndex(0);
+        setCloudLoaded(true);
+        setCloudQuery(query || "");
       } catch (err) {
-        setConstellationError(err instanceof Error ? err.message : String(err));
+        setCloudError(err instanceof Error ? err.message : String(err));
       } finally {
-        setConstellationLoading(false);
+        setCloudLoading(false);
       }
     },
-    [fetchConstellationAgents],
+    [fetchCloudAgents],
   );
 
-  // Fetch more Constellation agents (pagination)
-  const fetchMoreConstellationAgents = useCallback(async () => {
-    if (
-      constellationLoadingMore ||
-      !constellationHasMore ||
-      !constellationCursor
-    )
-      return;
+  // Fetch more Cloud agents (pagination)
+  const fetchMoreCloudAgents = useCallback(async () => {
+    if (cloudLoadingMore || !cloudHasMore || !cloudCursor) return;
 
-    setConstellationLoadingMore(true);
+    setCloudLoadingMore(true);
     try {
-      const result = await fetchConstellationAgents(
-        constellationCursor,
+      const result = await fetchCloudAgents(
+        cloudCursor,
         activeQuery || undefined,
       );
-      setConstellationAgents((prev) => [...prev, ...result.agents]);
-      setConstellationCursor(result.nextCursor);
-      setConstellationHasMore(result.nextCursor !== null);
+      setCloudAgents((prev) => [...prev, ...result.agents]);
+      setCloudCursor(result.nextCursor);
+      setCloudHasMore(result.nextCursor !== null);
     } catch {
       // Silently fail on pagination errors
     } finally {
-      setConstellationLoadingMore(false);
+      setCloudLoadingMore(false);
     }
   }, [
-    constellationLoadingMore,
-    constellationHasMore,
-    constellationCursor,
-    fetchConstellationAgents,
+    cloudLoadingMore,
+    cloudHasMore,
+    cloudCursor,
+    fetchCloudAgents,
     activeQuery,
   ]);
+
+  const loadSharedAgents = useCallback(async (query?: string) => {
+    setSharedLoading(true);
+    setSharedError(null);
+    try {
+      const result = await listSharedAgentsForCurrentUser({
+        limit: FETCH_PAGE_SIZE,
+        order: "desc",
+        orderBy: "last_run_completion",
+        queryText: query,
+      });
+      setSharedAgents(result.agents);
+      setSharedCursor(result.nextCursor ?? null);
+      setSharedHasMore(Boolean(result.nextCursor));
+      setSharedPage(0);
+      setSharedSelectedIndex(0);
+      setSharedLoaded(true);
+      setSharedQuery(query || "");
+    } catch (err) {
+      setSharedError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSharedLoading(false);
+    }
+  }, []);
+
+  const fetchMoreSharedAgents = useCallback(async () => {
+    if (sharedLoadingMore || !sharedHasMore || !sharedCursor) return;
+
+    setSharedLoadingMore(true);
+    try {
+      const result = await listSharedAgentsForCurrentUser({
+        limit: FETCH_PAGE_SIZE,
+        after: sharedCursor,
+        order: "desc",
+        orderBy: "last_run_completion",
+        queryText: activeQuery || undefined,
+      });
+      setSharedAgents((prev) => [...prev, ...result.agents]);
+      setSharedCursor(result.nextCursor ?? null);
+      setSharedHasMore(Boolean(result.nextCursor));
+    } catch {
+      // Silently fail on pagination errors
+    } finally {
+      setSharedLoadingMore(false);
+    }
+  }, [sharedLoadingMore, sharedHasMore, sharedCursor, activeQuery]);
 
   // Check cloud credentials on mount (sync — reads from the in-memory keychain cache)
   useEffect(() => {
@@ -361,21 +340,31 @@ export function AgentSelector({
     if (activeTab === "local" && !localLoaded && !localLoading) {
       loadLocalAgents();
     } else if (
-      activeTab === "constellation" &&
-      !constellationLoaded &&
-      !constellationLoading &&
+      activeTab === "cloud" &&
+      !cloudLoaded &&
+      !cloudLoading &&
       hasCloudAuth
     ) {
-      loadConstellationAgents();
+      loadCloudAgents();
+    } else if (
+      activeTab === "shared" &&
+      !sharedLoaded &&
+      !sharedLoading &&
+      hasCloudAuth
+    ) {
+      loadSharedAgents();
     }
   }, [
     activeTab,
     localLoaded,
     localLoading,
     loadLocalAgents,
-    constellationLoaded,
-    constellationLoading,
-    loadConstellationAgents,
+    cloudLoaded,
+    cloudLoading,
+    loadCloudAgents,
+    sharedLoaded,
+    sharedLoading,
+    loadSharedAgents,
     hasCloudAuth,
   ]);
 
@@ -387,18 +376,19 @@ export function AgentSelector({
 
   // Reload current tab when search query changes (only if query differs from cached)
   useEffect(() => {
-    if (
-      activeTab === "constellation" &&
-      hasCloudAuth &&
-      activeQuery !== constellationQuery
-    ) {
-      loadConstellationAgents(activeQuery || undefined);
+    if (activeTab === "cloud" && hasCloudAuth && activeQuery !== cloudQuery) {
+      loadCloudAgents(activeQuery || undefined);
+    }
+    if (activeTab === "shared" && hasCloudAuth && activeQuery !== sharedQuery) {
+      loadSharedAgents(activeQuery || undefined);
     }
   }, [
     activeQuery,
     activeTab,
-    constellationQuery,
-    loadConstellationAgents,
+    cloudQuery,
+    loadCloudAgents,
+    sharedQuery,
+    loadSharedAgents,
     hasCloudAuth,
   ]);
 
@@ -432,39 +422,49 @@ export function AgentSelector({
     localStartIndex + DISPLAY_PAGE_SIZE,
   );
 
-  // Pagination calculations - Constellation
-  const constellationTotalPages = Math.ceil(
-    constellationAgents.length / DISPLAY_PAGE_SIZE,
+  // Pagination calculations - Cloud
+  const cloudTotalPages = Math.ceil(cloudAgents.length / DISPLAY_PAGE_SIZE);
+  const cloudStartIndex = cloudPage * DISPLAY_PAGE_SIZE;
+  const cloudPageAgents = cloudAgents.slice(
+    cloudStartIndex,
+    cloudStartIndex + DISPLAY_PAGE_SIZE,
   );
-  const constellationStartIndex = constellationPage * DISPLAY_PAGE_SIZE;
-  const constellationPageAgents = constellationAgents.slice(
-    constellationStartIndex,
-    constellationStartIndex + DISPLAY_PAGE_SIZE,
+  const cloudCanGoNext = cloudPage < cloudTotalPages - 1 || cloudHasMore;
+
+  // Pagination calculations - Shared
+  const sharedTotalPages = Math.ceil(sharedAgents.length / DISPLAY_PAGE_SIZE);
+  const sharedStartIndex = sharedPage * DISPLAY_PAGE_SIZE;
+  const sharedPageAgents = sharedAgents.slice(
+    sharedStartIndex,
+    sharedStartIndex + DISPLAY_PAGE_SIZE,
   );
-  const constellationCanGoNext =
-    constellationPage < constellationTotalPages - 1 || constellationHasMore;
+  const sharedCanGoNext = sharedPage < sharedTotalPages - 1 || sharedHasMore;
 
   // Current tab's state (computed)
-  const currentLoading =
-    activeTab === "pinned"
-      ? pinnedLoading
-      : activeTab === "local"
-        ? localLoading
-        : constellationLoading;
-  const currentError =
-    activeTab === "constellation" ? constellationError : null;
-  const currentAgents =
-    activeTab === "pinned"
-      ? pinnedPageAgents.map((p) => p.agent).filter(Boolean)
-      : activeTab === "local"
-        ? localPageAgents
-        : constellationPageAgents;
-  const setCurrentSelectedIndex =
-    activeTab === "pinned"
-      ? setPinnedSelectedIndex
-      : activeTab === "local"
-        ? setLocalSelectedIndex
-        : setConstellationSelectedIndex;
+  let currentLoading = false;
+  let currentError: string | null = null;
+  let currentAgents: AgentSelectorListAgent[] = [];
+  let setCurrentSelectedIndex = setCloudSelectedIndex;
+  if (activeTab === "pinned") {
+    currentLoading = pinnedLoading;
+    currentAgents = pinnedPageAgents
+      .map((p) => p.agent)
+      .filter((agent): agent is AgentState => agent !== null);
+    setCurrentSelectedIndex = setPinnedSelectedIndex;
+  } else if (activeTab === "local") {
+    currentLoading = localLoading;
+    currentAgents = localPageAgents;
+    setCurrentSelectedIndex = setLocalSelectedIndex;
+  } else if (activeTab === "shared") {
+    currentLoading = sharedLoading;
+    currentError = sharedError;
+    currentAgents = sharedPageAgents;
+    setCurrentSelectedIndex = setSharedSelectedIndex;
+  } else if (activeTab === "cloud") {
+    currentLoading = cloudLoading;
+    currentError = cloudError;
+    currentAgents = cloudPageAgents;
+  }
 
   // Submit search
   const submitSearch = useCallback(() => {
@@ -503,7 +503,8 @@ export function AgentSelector({
       // Reload pinned and invalidate cached tabs
       loadPinnedAgents();
       setLocalLoaded(false);
-      setConstellationLoaded(false);
+      setCloudLoaded(false);
+      setSharedLoaded(false);
     } catch {
       // Stay on confirmation screen on error
     } finally {
@@ -571,10 +572,7 @@ export function AgentSelector({
       return;
     }
 
-    const maxIndex =
-      activeTab === "pinned"
-        ? pinnedPageAgents.length - 1
-        : (currentAgents as AgentState[]).length - 1;
+    const maxIndex = currentAgents.length - 1;
 
     if (key.upArrow) {
       setCurrentSelectedIndex((prev: number) => Math.max(0, prev - 1));
@@ -602,8 +600,15 @@ export function AgentSelector({
         if (selected?.id) {
           onSelect(selected.id, "local");
         }
-      } else if (activeTab === "constellation") {
-        const selected = constellationPageAgents[constellationSelectedIndex];
+      } else if (activeTab === "cloud") {
+        const selected = cloudPageAgents[cloudSelectedIndex];
+        if (selected?.id) {
+          onSelect(selected.id, "api");
+        } else if (hasCloudAuth === false) {
+          onLogin?.();
+        }
+      } else if (activeTab === "shared") {
+        const selected = sharedPageAgents[sharedSelectedIndex];
         if (selected?.id) {
           onSelect(selected.id, "api");
         } else if (hasCloudAuth === false) {
@@ -633,10 +638,15 @@ export function AgentSelector({
           setLocalPage((prev) => prev - 1);
           setLocalSelectedIndex(0);
         }
-      } else {
-        if (constellationPage > 0) {
-          setConstellationPage((prev) => prev - 1);
-          setConstellationSelectedIndex(0);
+      } else if (activeTab === "shared") {
+        if (sharedPage > 0) {
+          setSharedPage((prev) => prev - 1);
+          setSharedSelectedIndex(0);
+        }
+      } else if (activeTab === "cloud") {
+        if (cloudPage > 0) {
+          setCloudPage((prev) => prev - 1);
+          setCloudSelectedIndex(0);
         }
       }
     } else if (key.rightArrow) {
@@ -651,20 +661,29 @@ export function AgentSelector({
           setLocalPage((prev) => prev + 1);
           setLocalSelectedIndex(0);
         }
-      } else if (activeTab === "constellation" && constellationCanGoNext) {
-        const nextPageIndex = constellationPage + 1;
+      } else if (activeTab === "cloud" && cloudCanGoNext) {
+        const nextPageIndex = cloudPage + 1;
         const nextStartIndex = nextPageIndex * DISPLAY_PAGE_SIZE;
 
-        if (
-          nextStartIndex >= constellationAgents.length &&
-          constellationHasMore
-        ) {
-          fetchMoreConstellationAgents();
+        if (nextStartIndex >= cloudAgents.length && cloudHasMore) {
+          fetchMoreCloudAgents();
         }
 
-        if (nextStartIndex < constellationAgents.length) {
-          setConstellationPage(nextPageIndex);
-          setConstellationSelectedIndex(0);
+        if (nextStartIndex < cloudAgents.length) {
+          setCloudPage(nextPageIndex);
+          setCloudSelectedIndex(0);
+        }
+      } else if (activeTab === "shared" && sharedCanGoNext) {
+        const nextPageIndex = sharedPage + 1;
+        const nextStartIndex = nextPageIndex * DISPLAY_PAGE_SIZE;
+
+        if (nextStartIndex >= sharedAgents.length && sharedHasMore) {
+          fetchMoreSharedAgents();
+        }
+
+        if (nextStartIndex < sharedAgents.length) {
+          setSharedPage(nextPageIndex);
+          setSharedSelectedIndex(0);
         }
       }
     } else if (
@@ -680,7 +699,7 @@ export function AgentSelector({
           loadPinnedAgents();
         });
       }
-    } else if (allowDelete && input === "D") {
+    } else if (allowDelete && input === "D" && activeTab !== "shared") {
       // Delete agent - open confirmation
       let selectedAgent: AgentState | null = null;
       let selectedAgentId: string | null = null;
@@ -698,8 +717,7 @@ export function AgentSelector({
         selectedAgentId = selectedAgent?.id ?? null;
         selectedIsLocal = true;
       } else {
-        selectedAgent =
-          constellationPageAgents[constellationSelectedIndex] ?? null;
+        selectedAgent = cloudPageAgents[cloudSelectedIndex] ?? null;
         selectedAgentId = selectedAgent?.id ?? null;
         selectedIsLocal = false;
       }
@@ -724,32 +742,40 @@ export function AgentSelector({
 
   // Render agent item (shared between tabs)
   const renderAgentItem = (
-    agent: AgentState,
+    agent: AgentSelectorListAgent,
     _index: number,
     isSelected: boolean,
-    extra?: { backend?: "local" | "constellation" },
+    extra?: { backend?: "local" | "cloud" | "shared" },
   ) => {
     const isCurrent = agent.id === currentAgentId;
     const isLocalAgent = isLocalAgentId(agent.id);
     const relativeTime = formatRelativeTime(agent.last_run_completion);
     const blockCount = agent.blocks?.length ?? 0;
-    const modelStr = formatModel(agent);
-    const metadataParts = [
-      relativeTime,
-      ...(isLocalAgent
-        ? []
-        : [`${blockCount} memory block${blockCount === 1 ? "" : "s"}`]),
-      modelStr,
-    ];
+    const modelStr = formatAgentModel(agent);
+    const metadataParts = [relativeTime];
+    if (!isLocalAgent && extra?.backend !== "shared") {
+      metadataParts.push(
+        `${blockCount} memory block${blockCount === 1 ? "" : "s"}`,
+      );
+      metadataParts.push(modelStr);
+    }
+    if (extra?.backend === "shared" && agent.creator?.name) {
+      metadataParts.push(`Shared by ${agent.creator.name}`);
+    }
 
     const nameLen = (agent.name || "Unnamed").length;
     const fixedChars = 2 + 3 + (isCurrent ? 10 : 0);
     const availableForId = Math.max(15, terminalWidth - nameLen - fixedChars);
     const displayId = truncateAgentId(agent.id, availableForId);
 
-    const backendLabel = extra?.backend
-      ? `${extra.backend === "local" ? "Local" : "Constellation"} · `
-      : "";
+    let backendLabel = "";
+    if (extra?.backend === "local") {
+      backendLabel = "Local · ";
+    } else if (extra?.backend === "cloud") {
+      backendLabel = "Cloud · ";
+    } else if (extra?.backend === "shared") {
+      backendLabel = "Shared · ";
+    }
 
     return (
       <Box key={agent.id} flexDirection="column" marginBottom={1}>
@@ -768,7 +794,7 @@ export function AgentSelector({
           </Text>
           <Text dimColor>
             {" · "}
-            {extra?.backend ?? backendLabel}
+            {backendLabel}
             {displayId}
           </Text>
           {isCurrent && (
@@ -823,66 +849,16 @@ export function AgentSelector({
     );
   };
 
-  // Render Constellation upsell (shown when not logged in)
-  const renderConstellationUpsell = () => (
-    <Box flexDirection="column" paddingLeft={2}>
-      <Text dimColor>
-        Connect to Letta Constellation to see hosted agents here.
-      </Text>
-      <Box height={1} />
-      <Box flexDirection="column">
-        <Text color={colors.selector.itemHighlighted}>{"> /login"}</Text>
-        <Box paddingLeft={2}>
-          <Text dimColor>Sign in to Letta Constellation</Text>
-        </Box>
-      </Box>
-    </Box>
-  );
-
-  // Render delete confirmation view
-  const renderDeleteConfirm = () => {
-    if (viewState.type !== "deleteConfirm") return null;
-    const { agent, agentId } = viewState;
-    const displayName = agent.name || agentId.slice(0, 12);
-    const inputMatches = deleteConfirmInput === displayName;
-
-    return (
-      <>
-        <Box flexDirection="column" marginBottom={1}>
-          <Text>
-            {"  "}Are you sure you want to delete{" "}
-            <Text bold>{displayName}</Text>?
-          </Text>
-          <Text color="red">{"  "}This action can not be undone.</Text>
-        </Box>
-
-        <Box flexDirection="row">
-          <Text color={colors.selector.itemHighlighted}>{"> "}</Text>
-          <Text dimColor={!deleteConfirmInput}>
-            {deleteConfirmInput || "(type the agent's name)"}
-          </Text>
-        </Box>
-
-        <Box marginTop={1}>
-          <Text dimColor>
-            {"  "}
-            {deleteLoading
-              ? "Deleting... · Esc cancel"
-              : inputMatches
-                ? "Enter to delete · Esc cancel"
-                : "Esc cancel"}
-          </Text>
-        </Box>
-      </>
-    );
-  };
-
   // If in delete confirmation view, render that instead of the list
   if (viewState.type === "deleteConfirm") {
+    const displayName = viewState.agent.name || viewState.agentId.slice(0, 12);
     return (
-      <OverlayShell command={command} title="Delete agent">
-        {renderDeleteConfirm()}
-      </OverlayShell>
+      <AgentDeleteConfirmOverlay
+        command={command}
+        displayName={displayName}
+        input={deleteConfirmInput}
+        loading={deleteLoading}
+      />
     );
   }
 
@@ -894,63 +870,30 @@ export function AgentSelector({
         activeTab !== "new" &&
         !currentLoading &&
         (activeTab === "pinned" ||
-          (activeTab === "local" && localAgents.length > 0) ||
-          (activeTab === "constellation" &&
-            !constellationError &&
-            constellationAgents.length > 0))
-          ? (() => {
-              const footerWidth = Math.max(0, terminalWidth - 2);
-              if (activeTab === "pinned" && validPinnedAgents.length === 0) {
-                return (
-                  <Box flexDirection="row">
-                    <Box width={2} flexShrink={0} />
-                    <Box flexGrow={1} width={footerWidth}>
-                      <MarkdownDisplay
-                        text="Tab switch · Esc cancel"
-                        dimColor
-                      />
-                    </Box>
-                  </Box>
-                );
-              }
-
-              const pageText =
-                activeTab === "pinned"
-                  ? `Page ${pinnedPage + 1}/${pinnedTotalPages || 1}`
-                  : activeTab === "local"
-                    ? `Page ${localPage + 1}/${localTotalPages || 1}`
-                    : `Page ${constellationPage + 1}${constellationHasMore ? "+" : `/${constellationTotalPages || 1}`}${constellationLoadingMore ? " (loading...)" : ""}`;
-              const deleteHint = allowDelete ? " · Shift+D delete" : "";
-              const selectedPinnedAgent =
-                activeTab === "pinned"
-                  ? pinnedPageAgents[pinnedSelectedIndex]
-                  : undefined;
-              const pinnedHint =
-                allowPinActions &&
-                activeTab === "pinned" &&
-                selectedPinnedAgent !== undefined
-                  ? " · Shift+P unpin"
-                  : "";
-              const hintsText = `Enter select · ↑↓ ←→ navigate · Tab switch${deleteHint}${pinnedHint} · Esc cancel`;
-
-              return (
-                <Box flexDirection="column">
-                  <Box flexDirection="row">
-                    <Box width={2} flexShrink={0} />
-                    <Box flexGrow={1} width={footerWidth}>
-                      <MarkdownDisplay text={pageText} dimColor />
-                    </Box>
-                  </Box>
-                  <Box flexDirection="row">
-                    <Box width={2} flexShrink={0} />
-                    <Box flexGrow={1} width={footerWidth}>
-                      <MarkdownDisplay text={hintsText} dimColor />
-                    </Box>
-                  </Box>
-                </Box>
-              );
-            })()
-          : undefined
+          (!currentError && currentAgents.length > 0)) ? (
+          <AgentSelectorFooter
+            terminalWidth={terminalWidth}
+            activeTab={activeTab}
+            pinnedPage={pinnedPage}
+            pinnedTotalPages={pinnedTotalPages}
+            pinnedAgentsCount={validPinnedAgents.length}
+            localPage={localPage}
+            localTotalPages={localTotalPages}
+            cloudPage={cloudPage}
+            cloudTotalPages={cloudTotalPages}
+            cloudHasMore={cloudHasMore}
+            cloudLoadingMore={cloudLoadingMore}
+            sharedPage={sharedPage}
+            sharedTotalPages={sharedTotalPages}
+            sharedHasMore={sharedHasMore}
+            sharedLoadingMore={sharedLoadingMore}
+            allowDelete={allowDelete}
+            allowPinActions={allowPinActions}
+            hasSelectedPinnedAgent={
+              pinnedPageAgents[pinnedSelectedIndex] !== undefined
+            }
+          />
+        ) : undefined
       }
     >
       <Box flexDirection="column" paddingLeft={1}>
@@ -961,23 +904,25 @@ export function AgentSelector({
             visibleTabs.find((t) => t.id === tabId)?.label ?? tabId
           }
         />
-        <Text dimColor> {TAB_DESCRIPTIONS[activeTab]}</Text>
+        <Text dimColor> {AGENT_SELECTOR_TAB_DESCRIPTIONS[activeTab]}</Text>
         <Box height={1} />
       </Box>
 
       {/* Search input - list tabs only */}
-      {activeTab !== "pinned" && (searchInput || activeQuery) && (
-        <Box marginBottom={1}>
-          <Text dimColor>Search: </Text>
-          <Text>{searchInput}</Text>
-          {searchInput && searchInput !== activeQuery && (
-            <Text dimColor> (press Enter to search)</Text>
-          )}
-          {activeQuery && searchInput === activeQuery && (
-            <Text dimColor> (Esc to clear)</Text>
-          )}
-        </Box>
-      )}
+      {activeTab !== "pinned" &&
+        activeTab !== "new" &&
+        (searchInput || activeQuery) && (
+          <Box marginBottom={1}>
+            <Text dimColor>Search: </Text>
+            <Text>{searchInput}</Text>
+            {searchInput && searchInput !== activeQuery && (
+              <Text dimColor> (press Enter to search)</Text>
+            )}
+            {activeQuery && searchInput === activeQuery && (
+              <Text dimColor> (Esc to clear)</Text>
+            )}
+          </Box>
+        )}
 
       {/* Error state - list tabs */}
       {activeTab !== "pinned" && currentError && (
@@ -994,27 +939,40 @@ export function AgentSelector({
         </Box>
       )}
 
-      {/* Constellation upsell when not logged in */}
-      {activeTab === "constellation" &&
-        !currentLoading &&
-        hasCloudAuth === false &&
-        renderConstellationUpsell()}
+      {/* Cloud upsell when not logged in */}
+      {activeTab === "cloud" && !currentLoading && hasCloudAuth === false && (
+        <CloudLoginPrompt loginCommand="/login" />
+      )}
 
       {/* Empty state */}
       {!currentLoading &&
         ((activeTab === "pinned" && validPinnedAgents.length === 0) ||
-          (activeTab === "local" && localAgents.length === 0) ||
-          (activeTab === "constellation" &&
-            !constellationError &&
-            hasCloudAuth &&
-            constellationAgents.length === 0)) && (
+          (activeTab !== "new" &&
+            activeTab !== "pinned" &&
+            !currentError &&
+            hasCloudAuth !== false &&
+            currentAgents.length === 0)) && (
           <Box
             flexDirection="column"
             paddingLeft={activeTab === "pinned" ? 2 : 0}
           >
-            <Text dimColor>{TAB_EMPTY_STATES[activeTab]}</Text>
+            <Text dimColor>{AGENT_SELECTOR_TAB_EMPTY_STATES[activeTab]}</Text>
             {activeTab !== "pinned" && (
               <Text dimColor>Press ESC to cancel</Text>
+            )}
+          </Box>
+        )}
+
+      {/* Shared tab content */}
+      {activeTab === "shared" &&
+        !sharedLoading &&
+        !sharedError &&
+        sharedAgents.length > 0 && (
+          <Box flexDirection="column">
+            {sharedPageAgents.map((agent, index) =>
+              renderAgentItem(agent, index, index === sharedSelectedIndex, {
+                backend: "shared",
+              }),
             )}
           </Box>
         )}
@@ -1041,21 +999,16 @@ export function AgentSelector({
         </Box>
       )}
 
-      {/* Constellation tab content */}
-      {activeTab === "constellation" &&
-        !constellationLoading &&
-        !constellationError &&
-        constellationAgents.length > 0 && (
+      {/* Cloud tab content */}
+      {activeTab === "cloud" &&
+        !cloudLoading &&
+        !cloudError &&
+        cloudAgents.length > 0 && (
           <Box flexDirection="column">
-            {constellationPageAgents.map((agent, index) =>
-              renderAgentItem(
-                agent,
-                index,
-                index === constellationSelectedIndex,
-                {
-                  backend: "constellation",
-                },
-              ),
+            {cloudPageAgents.map((agent, index) =>
+              renderAgentItem(agent, index, index === cloudSelectedIndex, {
+                backend: "cloud",
+              }),
             )}
           </Box>
         )}
@@ -1116,7 +1069,7 @@ export function AgentSelector({
                     : colors.selector.title
                 }
               >
-                Constellation
+                Cloud
               </Text>
               <Text color={colors.selector.title}> · </Text>
               <Text
@@ -1140,7 +1093,7 @@ export function AgentSelector({
           <Box paddingLeft={2}>
             <Text dimColor>
               {hasCloudAuth
-                ? `Enter create · Ctrl+B switch to ${newAgentBackendMode === "api" ? "Local" : "Constellation"} · Esc cancel`
+                ? `Enter create · Ctrl+B switch to ${newAgentBackendMode === "api" ? "Local" : "Cloud"} · Esc cancel`
                 : "Enter create · Esc cancel"}
             </Text>
           </Box>

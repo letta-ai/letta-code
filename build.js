@@ -74,7 +74,7 @@ if (useMagick) {
 }
 
 await Bun.build({
-  entrypoints: ["./src/index.ts"],
+  entrypoints: ["./src/standalone-entry.ts"],
   outdir: ".",
   target: "node",
   format: "esm",
@@ -104,6 +104,18 @@ await Bun.build({
   features: features,
 });
 
+await Bun.build({
+  entrypoints: ["./src/utils/image-resize-worker.ts"],
+  outdir: ".",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "image-resize-worker.js",
+  },
+});
+
 // Add shebang to output file
 const outputPath = join(__dirname, "letta.js");
 let content = readFileSync(outputPath, "utf-8");
@@ -131,6 +143,45 @@ await Bun.build({
   sourcemap: "external",
   naming: {
     entry: "app-server-client.js",
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/mcp-client.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "mcp-client.js",
+  },
+  define: {
+    LETTA_VERSION: JSON.stringify(version),
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/memory-confinement.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "memory-confinement.js",
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/app-server-client.ts"],
+  outdir: "./dist",
+  target: "node",
+  format: "cjs",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "app-server-client.cjs",
   },
 });
 
@@ -198,5 +249,5 @@ console.log("   Output: dist/types/protocol.d.ts");
 
 console.log("✅ Build complete!");
 console.log(`   Output: letta.js`);
-console.log("   Output: dist/app-server-client.js");
+console.log("   Output: dist/app-server-client.js and .cjs");
 console.log(`   Size: ${(Bun.file(outputPath).size / 1024).toFixed(0)}KB`);

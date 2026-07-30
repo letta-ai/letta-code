@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { APIError } from "@letta-ai/letta-client/error";
 import WebSocket from "ws";
 import type { ResumeData } from "@/agent/check-approval";
+import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter } from "@/channels/types";
 import {
@@ -1564,7 +1565,7 @@ describe("listen-client multi-worker concurrency", () => {
             type: "approval",
             tool_call_id: "tool-call-1",
             approve: false,
-            reason: "Auto-denied: stale approval from interrupted session",
+            reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
           },
         ],
         otid: expect.any(String),
@@ -1810,19 +1811,19 @@ describe("listen-client multi-worker concurrency", () => {
         type: "approval",
         tool_call_id: autoAllowedApproval.toolCallId,
         approve: false,
-        reason: "Auto-denied: stale approval from interrupted session",
+        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
       },
       {
         type: "approval",
         tool_call_id: manualApproval.toolCallId,
         approve: false,
-        reason: "Auto-denied: stale approval from interrupted session",
+        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
       },
       {
         type: "approval",
         tool_call_id: autoDeniedApproval.toolCallId,
         approve: false,
-        reason: "Auto-denied: stale approval from interrupted session",
+        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
       },
     ]);
     expect(runtime.pendingInterruptedContext).toEqual({

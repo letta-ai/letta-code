@@ -7,6 +7,7 @@ import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   getResumeDataFromBackend,
+  isResumedConversation,
   type ResumeData,
 } from "./agent/check-approval";
 import {
@@ -18,9 +19,10 @@ import {
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
   getResumeRefreshArgs,
-  type ModelReasoningEffort,
+  type ModelReasoningSelection,
   preservableContextWindow,
   resolveModel,
+  withReasoningEffortUpdateArg,
 } from "./agent/model";
 import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
@@ -639,9 +641,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // Early exit for CLI subcommands (e.g., `letta server`, `letta memory`).
-  // Subcommands handle their own setup and don't need TUI init, theme
-  // detection, or base tool bootstrapping.
+  // Subcommands exit before TUI initialization and tool bootstrapping.
   const subcommandResult = await runSubcommand(subcommandArgs);
   if (subcommandResult !== null) {
     process.exit(subcommandResult);
@@ -649,7 +649,6 @@ async function main(): Promise<void> {
 
   // Everything below only runs for interactive/headless agent mode
   await settingsManager.initialize();
-
   const settings = await settingsManager.getSettingsWithSecureTokens();
   markMilestone("SETTINGS_LOADED");
 
@@ -794,7 +793,7 @@ async function main(): Promise<void> {
     !explicitBackendMode &&
     specifiedAgentId &&
     inferredBackendModeFromAgentId === "api"
-      ? `Agent ${specifiedAgentId} is a Constellation agent. Sign in to access it, or rerun without --agent to start locally.`
+      ? `Agent ${specifiedAgentId} requires Letta sign-in. Sign in with Letta to access it, or rerun without --agent to start locally.`
       : undefined;
   const specifiedModel = values.model ?? undefined;
   const systemPromptPreset = values.system ?? undefined;
@@ -1374,7 +1373,7 @@ async function main(): Promise<void> {
     specifiedAgentId = resolved.id;
     nameResolvedAgent = resolved.agent;
   }
-
+  await (await import("@/agent/remote-model-catalog")).refreshModelCatalog();
   // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
     const { toolFilter } = await import("@/tools/filter");
@@ -1543,7 +1542,7 @@ async function main(): Promise<void> {
     const [
       selectedServerModelReasoningEffort,
       setSelectedServerModelReasoningEffort,
-    ] = useState<ModelReasoningEffort | null>(null);
+    ] = useState<ModelReasoningSelection | undefined>(undefined);
     const [customApiDefaultModel, setCustomApiDefaultModel] = useState<
       string | null
     >(null);
@@ -2217,12 +2216,10 @@ async function main(): Promise<void> {
           const modelForUpdateArgs =
             personalityOptions?.model ?? effectiveModel;
           const baseUpdateArgs = getModelUpdateArgs(modelForUpdateArgs);
-          const updateArgs = selectedServerModelReasoningEffort
-            ? {
-                ...(baseUpdateArgs ?? {}),
-                reasoning_effort: selectedServerModelReasoningEffort,
-              }
-            : baseUpdateArgs;
+          const updateArgs = withReasoningEffortUpdateArg(
+            baseUpdateArgs,
+            selectedServerModelReasoningEffort,
+          );
           const result = await createAgent({
             ...(personalityOptions ?? {}),
             model: modelForUpdateArgs,
@@ -2465,11 +2462,9 @@ async function main(): Promise<void> {
             );
           });
 
-        // Handle conversation: either resume existing or create new
         // Using definite assignment assertion - all branches below either set this or exit/throw
         let conversationIdToUse!: string;
 
-        // Debug: log resume flag status
         if (isDebugEnabled()) {
           debugLog("startup", "shouldResume=%o", shouldResume);
           debugLog(
@@ -2480,18 +2475,15 @@ async function main(): Promise<void> {
         }
 
         if (specifiedConversationId) {
-          // Use the explicitly specified conversation ID
-          // User explicitly requested this conversation, so error if it doesn't exist
           conversationIdToUse = specifiedConversationId;
-          setResumedExistingConversation(true);
           try {
-            // Load message history and pending approvals from the conversation
             setLoadingState("checking");
             const data = await getResumeDataFromBackend(
               agent,
               specifiedConversationId,
             );
             setResumeData(data);
+            setResumedExistingConversation(true);
           } catch (error) {
             // Only treat 404/422 as "not found", rethrow other errors
             if (isBackendNotFoundError(error)) {
@@ -2707,11 +2699,11 @@ async function main(): Promise<void> {
         },
         onCreateNewWithModel: (
           modelHandle: string,
-          reasoningEffort?: ModelReasoningEffort,
+          reasoningEffort?: ModelReasoningSelection,
         ) => {
           setUserRequestedNewAgent(true);
           setSelectedServerModel(modelHandle);
-          setSelectedServerModelReasoningEffort(reasoningEffort ?? null);
+          setSelectedServerModelReasoningEffort(reasoningEffort);
           setLoadingState("assembling");
         },
         onExit: () => {
@@ -2720,12 +2712,13 @@ async function main(): Promise<void> {
       });
     }
 
-    // At this point, loadingState is not "selecting", "selecting_global", or "selecting_conversation"
-    // (those are handled above), so it's safe to pass to App
     const appLoadingState = loadingState as Exclude<
       typeof loadingState,
       "selecting" | "selecting_global" | "selecting_conversation"
     >;
+    const startupConversationTitleEligible = !isResumedConversation(
+      resumeData?.conversation,
+    );
 
     if (!agentId || !conversationId) {
       return React.createElement(App, {
@@ -2737,6 +2730,7 @@ async function main(): Promise<void> {
         startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
         messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
         resumedExistingConversation,
+        startupConversationTitleEligible,
         tokenStreaming: settings.tokenStreaming,
         reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,
         showCompactions: settings.showCompactions,
@@ -2761,6 +2755,7 @@ async function main(): Promise<void> {
       startupApprovals: resumeData?.pendingApprovals ?? EMPTY_APPROVAL_ARRAY,
       messageHistory: resumeData?.messageHistory ?? EMPTY_MESSAGE_ARRAY,
       resumedExistingConversation,
+      startupConversationTitleEligible,
       tokenStreaming: settings.tokenStreaming,
       reasoningTabCycleEnabled: settings.reasoningTabCycleEnabled === true,
       showCompactions: settings.showCompactions,

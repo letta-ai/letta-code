@@ -26,7 +26,7 @@ import {
   getPendingControlRequestCount,
 } from "./runtime";
 import { resolveRuntimeScope } from "./scope";
-import type { ListenerTransport } from "./transport";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -336,7 +336,10 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasTaskNotification = false;
   let hasCronPrompt = false;
   let hasModContinue = false;
+  let batchConnectionId: string | undefined;
   let batchImageFailureMode: "strict" | "drop" | null = null;
+  const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
+    candidate.kind === "message" && candidate.noCoalesce === true;
   for (const item of queuedItems) {
     if (
       !isCoalescable(item.kind) ||
@@ -344,8 +347,24 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     ) {
       break;
     }
+    // noCoalesce items run as single-item batches: one never joins an
+    // existing batch, and nothing joins a batch it started.
+    if (queueLen > 0 && (isNoCoalesce(item) || isNoCoalesce(firstQueuedItem))) {
+      break;
+    }
 
     if (item.kind === "message") {
+      const itemConnectionId = runtime.queuedMessagesByItemId.get(
+        item.id,
+      )?.connectionId;
+      if (
+        batchConnectionId !== undefined &&
+        itemConnectionId !== undefined &&
+        itemConnectionId !== batchConnectionId
+      ) {
+        break;
+      }
+      batchConnectionId ??= itemConnectionId;
       const itemImageFailureMode = getInboundImageFailureMode(
         runtime.queuedMessagesByItemId.get(item.id),
       );
@@ -528,7 +547,8 @@ export function scheduleQueuePump(
       runtime.queuePumpScheduled = false;
       if (
         runtime.listener !== getActiveRuntime() ||
-        runtime.listener.intentionallyClosed
+        runtime.listener.intentionallyClosed ||
+        !isListenerTransportOpen(socket)
       ) {
         return;
       }

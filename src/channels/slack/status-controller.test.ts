@@ -127,6 +127,40 @@ test("slack status event table: concrete descriptions replace in place and gener
   );
 });
 
+test("slack loading messages respect the API's 50-character limit", async () => {
+  const adapter = await createStartedSlackAdapter();
+  const source = createSlackTurnSource();
+
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    kind: "tool",
+    state: "started",
+    message: "Running tool",
+    toolName: "Bash",
+    toolDetails: "a".repeat(50),
+    sources: [source],
+  });
+  await adapter.handleTurnProgressEvent?.({
+    type: "progress",
+    kind: "tool",
+    state: "started",
+    message: "Running tool",
+    toolName: "Bash",
+    toolDetails: "b".repeat(51),
+    sources: [source],
+  });
+
+  const client = getSlackWriteClient();
+  expect(client.assistant.threads.setStatus).toHaveBeenNthCalledWith(
+    1,
+    expect.objectContaining({ loading_messages: ["a".repeat(50)] }),
+  );
+  expect(client.assistant.threads.setStatus).toHaveBeenNthCalledWith(
+    2,
+    expect.objectContaining({ loading_messages: [`${"b".repeat(47)}...`] }),
+  );
+});
+
 test("slack status event table: concurrent title swaps are sent in event order", async () => {
   const adapter = await createStartedSlackAdapter();
   const source = createSlackTurnSource();

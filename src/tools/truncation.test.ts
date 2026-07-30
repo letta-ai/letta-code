@@ -162,9 +162,15 @@ describe("truncation utilities", () => {
       expect(LIMITS.BASH_OUTPUT_CHARS).toBe(30_000);
       expect(LIMITS.READ_MAX_LINES).toBe(2_000);
       expect(LIMITS.READ_MAX_CHARS_PER_LINE).toBe(2_000);
+      expect(LIMITS.READ_OUTPUT_CHARS).toBe(30_000);
       expect(LIMITS.GREP_OUTPUT_CHARS).toBe(10_000);
       expect(LIMITS.GLOB_MAX_FILES).toBe(2_000);
       expect(LIMITS.LS_MAX_ENTRIES).toBe(1_000);
+      // Backstop must sit above per-tool clamps so already-clamped output
+      // (30K + truncation notice) passes through unchanged.
+      expect(LIMITS.TOOL_RETURN_MAX_CHARS).toBeGreaterThan(
+        LIMITS.BASH_OUTPUT_CHARS + 500,
+      );
     });
   });
 });

@@ -16,6 +16,7 @@ import {
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
@@ -255,9 +256,15 @@ export async function prepareListenerTurn(params: {
     agentId,
   );
   const preparedToolContext = await prepareToolExecutionContextForScope({
+    connectionId,
     agentId,
     conversationId,
     clientToolAllowlist: msg.clientToolAllowlist,
+    // Headless clients (SDK sessions, automation) opt out of tools that
+    // prompt the human mid-turn; the interactive set is owned by the harness.
+    ...(msg.excludeInteractiveTools
+      ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
+      : {}),
     externalToolScopeIds: msg.externalToolScopeIds,
     workingDirectory,
     permissionModeState,

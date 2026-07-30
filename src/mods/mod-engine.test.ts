@@ -1,12 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readlinkSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type Letta from "@letta-ai/letta-client";
@@ -170,45 +163,6 @@ describe("mod engine", () => {
       expect(engine.getSnapshot()).toBe(snapshot);
 
       unsubscribe();
-      engine.dispose();
-    } finally {
-      rmSync(root, { force: true, recursive: true });
-    }
-  });
-
-  test("reload replaces stale runtime dependency cache symlinks", async () => {
-    const root = createTempDir();
-    try {
-      const modDir = path.join(root, "global-mods");
-      const modPath = path.join(modDir, "command.ts");
-      const cacheNodeModules = path.join(root, "mod-cache", "node_modules");
-      const reactLink = path.join(cacheNodeModules, "react");
-      mkdirSync(modDir, { recursive: true });
-      mkdirSync(cacheNodeModules, { recursive: true });
-      symlinkSync(
-        path.join(root, "missing-react"),
-        reactLink,
-        process.platform === "win32" ? "junction" : "dir",
-      );
-      writeFileSync(
-        modPath,
-        `export default function(letta) {
-          letta.commands.register({
-            id: "hello",
-            description: "Say hello",
-            run() { return { type: "output", output: "hello" }; },
-          });
-        }`,
-      );
-
-      const engine = createEngine(root);
-      await engine.reload();
-      const snapshot = engine.getSnapshot();
-
-      expect(getModErrorDiagnostics(snapshot.diagnostics)).toEqual([]);
-      expect(snapshot.loadedPaths).toEqual([modPath]);
-      expect(readlinkSync(reactLink)).not.toContain("missing-react");
-
       engine.dispose();
     } finally {
       rmSync(root, { force: true, recursive: true });
@@ -1835,6 +1789,12 @@ describe("mod engine", () => {
       writeFileSync(
         modPath,
         `export default async function(letta) {
+          letta.tools.register({
+            name: "reload_tool",
+            description: "Stale tool",
+            parameters: { type: "object", properties: {} },
+            run() { return "stale"; },
+          });
           globalThis.__lettaModStarted?.();
           await globalThis.__lettaModGate;
           letta.commands.register({
@@ -1854,6 +1814,12 @@ describe("mod engine", () => {
       writeFileSync(
         modPath,
         `export default function(letta) {
+          letta.tools.register({
+            name: "reload_tool",
+            description: "Fresh tool",
+            parameters: { type: "object", properties: {} },
+            run() { return "fresh"; },
+          });
           letta.commands.register({
             id: "fresh-command",
             description: "Fresh command",
@@ -1866,6 +1832,12 @@ describe("mod engine", () => {
       expect(Object.keys(engine.getSnapshot().commands)).toEqual([
         "fresh-command",
       ]);
+      expect(getModToolDefinition("reload_tool")?.description).toBe(
+        "Fresh tool",
+      );
+      expect(getModErrorDiagnostics(engine.getSnapshot().diagnostics)).toEqual(
+        [],
+      );
 
       releaseFirstReload();
       await firstReload;
@@ -1873,6 +1845,9 @@ describe("mod engine", () => {
       const snapshot = engine.getSnapshot();
       expect(snapshot.generation).toBe(2);
       expect(Object.keys(snapshot.commands)).toEqual(["fresh-command"]);
+      expect(getModToolDefinition("reload_tool")?.description).toBe(
+        "Fresh tool",
+      );
 
       engine.dispose();
     } finally {

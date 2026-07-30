@@ -167,6 +167,64 @@ Custom prompt body`,
     expect(configs.reflection?.recommendedModel).toBe("zaisigno/glm-5");
   });
 
+  test("bodyless reflection config overlays model without replacing the built-in", async () => {
+    tempDir = createTempProjectDir();
+    const builtIn = (await getAllSubagentConfigs(tempDir)).reflection;
+    clearSubagentConfigCache();
+    writeCustomSubagent(
+      tempDir,
+      "reflection.md",
+      ["---", "name: reflection", "model: auto", "---"].join("\r\n"),
+    );
+
+    const config = (await getAllSubagentConfigs(tempDir)).reflection;
+    expect(config?.systemPrompt).toBe(builtIn?.systemPrompt);
+    expect(config?.description).toBe(builtIn?.description);
+    expect(config?.allowedTools).toEqual(builtIn?.allowedTools);
+    expect(config?.skills).toEqual(builtIn?.skills);
+    expect(config?.fork).toBe(builtIn?.fork);
+    expect(config?.background).toBe(builtIn?.background);
+    expect(config?.launchProfile).toBe(builtIn?.launchProfile);
+    expect(config?.recommendedModel).toBe("auto");
+    expect(config?.recommendedModelSource).toBe("user");
+  });
+
+  test("bodyless config can override explicit metadata fields", async () => {
+    tempDir = createTempProjectDir();
+    writeCustomSubagent(
+      tempDir,
+      "reflection.md",
+      `---
+name: reflection
+description: Focused reflection
+tools: Read
+model: auto
+background: false
+---`,
+    );
+
+    const config = (await getAllSubagentConfigs(tempDir)).reflection;
+    expect(config?.description).toBe("Focused reflection");
+    expect(config?.allowedTools).toEqual(["Read"]);
+    expect(config?.background).toBe(false);
+    expect(config?.launchProfile).toBe("memory-subagent");
+  });
+
+  test("ignores bodyless config without a lower-precedence definition", async () => {
+    tempDir = createTempProjectDir();
+    writeCustomSubagent(
+      tempDir,
+      "new-agent.md",
+      `---
+name: new-agent
+model: auto
+---`,
+    );
+
+    const configs = await getAllSubagentConfigs(tempDir);
+    expect(configs["new-agent"]).toBeUndefined();
+  });
+
   test("blank model field falls back to inherit", async () => {
     tempDir = createTempProjectDir();
     writeCustomSubagent(

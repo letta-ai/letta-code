@@ -15,6 +15,15 @@ export const LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS = 40_000;
 
 type AssistantContent = LocalAssistantMessage["content"][number];
 
+export function sourceLocalMessageIdFromStoredMessageId(
+  messageId: string,
+): string {
+  const variantSeparator = messageId.search(/:(assistant|reasoning|tool):/);
+  return variantSeparator >= 0
+    ? messageId.slice(0, variantSeparator)
+    : messageId;
+}
+
 export function isLocalToolCallContent(
   content: AssistantContent,
 ): content is ToolCall {

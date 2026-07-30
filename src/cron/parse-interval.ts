@@ -10,6 +10,8 @@
  *   --cron "∗/10 ∗ ∗ ∗ ∗"  → passthrough
  */
 
+import { CronExpressionParser } from "cron-parser";
+
 // ── Interval parsing (--every) ──────────────────────────────────────
 
 export interface ParsedInterval {
@@ -77,7 +79,8 @@ export function parseEvery(input: string): ParsedInterval | null {
       return { cron: "0 0 * * *" };
     }
     // Multi-day: use day-of-month step
-    return { cron: `0 0 */${value} * *` };
+    const cron = `0 0 */${value} * *`;
+    return isValidCron(cron) ? { cron } : null;
   }
 
   return null;
@@ -182,198 +185,217 @@ function dateToCron(d: Date): string {
 
 // ── Cron validation ─────────────────────────────────────────────────
 
-/** Matches a single cron sub-field (no commas): *, N, star/N, N-M, N-M/S */
-const CRON_SUBFIELD_RE = /^(\*|\d+)(-\d+)?(\/\d+)?$/;
+/**
+ * Product dialect gate: we only accept the classic 5-field numeric cron
+ * syntax (digits, `*`, `,`, `-`, `/`, whitespace). Names like `MON`/`JAN`,
+ * `?`, `L`, `#` are rejected so we can hand the expression to cron-parser
+ * without expanding the supported surface, and so users get a consistent
+ * dialect across `--every`, `--at`, and `--cron`.
+ */
+const SUPPORTED_CRON_RE = /^[\d\s*,*/-]+$/;
 
 /**
- * Validate a 5-field cron expression. Checks field count and each field
- * supports wildcards, exact values, steps, ranges, range-steps, and
- * comma-separated combinations of the above.
+ * The legacy matcher accepted bare value steps (`N/S`) but treated them as
+ * the single value `N`. cron-parser gives them standard step semantics, which
+ * would silently make persisted schedules run more often after an upgrade.
+ * Keep them outside the product dialect; wildcard steps and ranged steps
+ * remain supported.
+ */
+function hasBareValueStep(fields: string[]): boolean {
+  return fields.some((field) =>
+    field.split(",").some((part) => /^\d+\/\d+$/.test(part)),
+  );
+}
+
+type OneBasedCronField = "dayOfMonth" | "month";
+
+function normalizeOneBasedWildcardSteps(
+  field: string,
+  min: number,
+  max: number,
+  fieldName: OneBasedCronField,
+): string | null {
+  const parts = field.split(",");
+  if (!parts.some((part) => /^\*\/\d+$/.test(part))) return field;
+
+  const normalizedValues = new Set<number>();
+  for (const part of parts) {
+    const wildcardStep = part.match(/^\*\/(\d+)$/);
+    if (wildcardStep) {
+      const step = Number.parseInt(wildcardStep[1] ?? "", 10);
+      for (let value = min; value <= max; value++) {
+        if (value % step === 0) normalizedValues.add(value);
+      }
+      continue;
+    }
+
+    const expression =
+      fieldName === "dayOfMonth" ? `0 0 ${part} * *` : `0 0 * ${part} *`;
+    const parsed = CronExpressionParser.parse(expression, { strict: false });
+    for (const value of parsed.fields[fieldName].values) {
+      if (typeof value === "number") normalizedValues.add(value);
+    }
+  }
+  return normalizedValues.size > 0
+    ? [...normalizedValues].sort((a, b) => a - b).join(",")
+    : null;
+}
+
+/**
+ * Convert the product cron dialect into the expression handed to cron-parser.
+ *
+ * cron-parser treats wildcard steps in 1-based fields as starting at the first
+ * legal value (star-slash-3 day-of-month => 1,4,7...). The old matcher treated
+ * them as modulo checks against the actual value (star-slash-3 => 3,6,9...).
+ * Normalize only those 1-based wildcard steps so persisted schedules keep
+ * their phase while minute/hour/DOW wildcard steps and explicit ranged steps
+ * keep standard cron-parser behavior.
+ */
+function normalizeCronExpressionForParser(expr: string): string | null {
+  const trimmed = expr.trim();
+  const fields = trimmed.split(/\s+/);
+  if (fields.length !== 5) return null;
+  if (!SUPPORTED_CRON_RE.test(trimmed)) return null;
+  if (hasBareValueStep(fields)) return null;
+  const hasOneBasedWildcardStep = fields
+    .slice(2, 4)
+    .some((field) => field.split(",").some((part) => /^\*\/\d+$/.test(part)));
+  if (hasOneBasedWildcardStep) {
+    try {
+      CronExpressionParser.parse(trimmed, { strict: false });
+    } catch {
+      return null;
+    }
+  }
+
+  const normalizedFields: string[] = [];
+  for (let index = 0; index < fields.length; index++) {
+    const field = fields[index] ?? "";
+    if (index === 2) {
+      const normalized = normalizeOneBasedWildcardSteps(
+        field,
+        1,
+        31,
+        "dayOfMonth",
+      );
+      if (normalized === null) return null;
+      normalizedFields.push(normalized);
+      continue;
+    }
+    if (index === 3) {
+      const normalized = normalizeOneBasedWildcardSteps(field, 1, 12, "month");
+      if (normalized === null) return null;
+      normalizedFields.push(normalized);
+      continue;
+    }
+    normalizedFields.push(field);
+  }
+
+  const normalized = normalizedFields.join(" ");
+  try {
+    CronExpressionParser.parse(normalized, { strict: false });
+    return normalized;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Validate a 5-field cron expression using cron-parser as the source of truth
+ * for cron semantics, so that validation and execution (cronMatchesTime) can
+ * never disagree. Rejects out-of-range values (`99 99 * * *`, `0 0 32 * *`),
+ * reversed ranges (`59-0 * * * *`), zero steps (`0-59/0 * * * *`), and any
+ * non-numeric syntax — all of which previously parsed as "valid" and then
+ * either never fired or fired with surprising semantics.
  */
 export function isValidCron(expr: string): boolean {
-  const fields = expr.trim().split(/\s+/);
-  if (fields.length !== 5) return false;
-  return fields.every((f) => {
-    // Split on commas and validate each sub-field individually
-    const subFields = f.split(",");
-    // Reject empty sub-fields (trailing/leading/double commas)
-    if (subFields.some((s) => s === "")) return false;
-    return subFields.every((s) => CRON_SUBFIELD_RE.test(s));
-  });
+  return normalizeCronExpressionForParser(expr) !== null;
 }
 
 // ── Cron evaluation ─────────────────────────────────────────────────
 
-/**
- * Derive minute/hour/day/month/dow for a Date in a given IANA timezone.
- * Falls back to local time if the timezone is invalid or unavailable.
- *
- * Note on DST: Standard cron semantics apply — if a wall-clock minute is
- * skipped during spring-forward, tasks scheduled for that minute won't fire.
- * If a wall-clock hour repeats during fall-back, tasks may fire twice (once
- * per occurrence of the matching minute).
- */
-function getTimeComponents(
-  date: Date,
-  timezone?: string | null,
-): [
-  minute: number,
-  hour: number,
-  dayOfMonth: number,
-  month: number,
-  dayOfWeek: number,
-] {
-  if (!timezone) {
-    return [
-      date.getMinutes(),
-      date.getHours(),
-      date.getDate(),
-      date.getMonth() + 1,
-      date.getDay(),
-    ];
-  }
-  try {
-    // Intl.DateTimeFormat gives us wall-clock components in the target tz.
-    const fmt = new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone,
-      hour: "numeric",
-      minute: "numeric",
-      day: "numeric",
-      month: "numeric",
-      weekday: "short",
-      hour12: false,
-    });
-    const parts = new Map(
-      fmt.formatToParts(date).map((p) => [p.type, p.value]),
-    );
-
-    const dayOfWeekStr = parts.get("weekday") ?? "";
-    const dowMap: Record<string, number> = {
-      Sun: 0,
-      Mon: 1,
-      Tue: 2,
-      Wed: 3,
-      Thu: 4,
-      Fri: 5,
-      Sat: 6,
-    };
-
-    return [
-      Number.parseInt(parts.get("minute") ?? "0", 10),
-      Number.parseInt(parts.get("hour") ?? "0", 10),
-      Number.parseInt(parts.get("day") ?? "1", 10),
-      Number.parseInt(parts.get("month") ?? "1", 10),
-      dowMap[dayOfWeekStr] ?? date.getDay(),
-    ];
-  } catch {
-    // Invalid timezone — fall back to local time.
-    return [
-      date.getMinutes(),
-      date.getHours(),
-      date.getDate(),
-      date.getMonth() + 1,
-      date.getDay(),
-    ];
-  }
-}
+const MS_PER_MINUTE = 60 * 1000;
 
 /**
  * Check if a cron expression matches a given date/time (minute-level).
- * Supports: *, N, step (N), range (N-N) per field.
- * Fields: minute, hour, day-of-month, month, day-of-week.
  *
- * Standard cron day semantics: when both day-of-month (field 2) and
- * day-of-week (field 4) are constrained (not `*`), the result is OR —
- * the expression fires if either day condition matches. When only one is
- * constrained, it behaves as a normal AND with the other fields.
+ * Delegates to cron-parser so that matching and validation share one source
+ * of truth: an expression is "valid" iff cron-parser accepts it, and it
+ * "matches" a minute iff cron-parser accepts that minute's wall-clock fields.
+ * This removes the long-standing mismatch where e.g. day-of-week `7`
+ * validated as Sunday but never matched `Date.getDay()` (0-6).
  *
- * When `timezone` is provided, the date is evaluated in that IANA timezone
- * rather than the process's local timezone.
+ * When `timezone` is provided, the date is first projected into that IANA
+ * timezone. Matching the projected wall time preserves classic cron behavior:
+ * skipped spring-forward minutes do not fire, while repeated fall-back
+ * minutes may fire twice. Invalid timezones fall back to process local time.
  */
 export function cronMatchesTime(
   expr: string,
   date: Date,
   timezone?: string | null,
 ): boolean {
-  const fields = expr.trim().split(/\s+/);
-  if (fields.length !== 5) return false;
+  const parserExpression = normalizeCronExpressionForParser(expr);
+  if (!parserExpression) return false;
 
-  const [minute, hour, dayOfMonth, month, dayOfWeek] = getTimeComponents(
-    date,
-    timezone,
-  );
+  const minuteStart = toWallClockMinute(date, timezone);
+  const windowEnd = new Date(minuteStart.getTime() + MS_PER_MINUTE);
 
-  // Destructure after length check so Biome doesn't complain about non-null.
-  const [fMinute, fHour, fDom, fMonth, fDow] = fields as [
-    string,
-    string,
-    string,
-    string,
-    string,
-  ];
-
-  // Minute, hour, month must always match.
-  if (!fieldMatches(fMinute, minute)) return false;
-  if (!fieldMatches(fHour, hour)) return false;
-  if (!fieldMatches(fMonth, month)) return false;
-
-  const domField = fDom;
-  const dowField = fDow;
-  const domConstrained = domField !== "*";
-  const dowConstrained = dowField !== "*";
-
-  if (domConstrained && dowConstrained) {
-    // Standard cron OR: fire if either day-of-month or day-of-week matches.
-    return (
-      fieldMatches(domField, dayOfMonth) || fieldMatches(dowField, dayOfWeek)
-    );
+  // Evaluate the target wall time on a UTC timeline so cron-parser supplies
+  // field/range/OR semantics without shifting nonexistent or repeated times.
+  const previousMinute = new Date(minuteStart.getTime() - 1);
+  try {
+    const iterator = CronExpressionParser.parse(parserExpression, {
+      currentDate: previousMinute,
+      tz: "UTC",
+    });
+    const next = iterator.next().toDate();
+    return next >= minuteStart && next < windowEnd;
+  } catch {
+    return false;
   }
-
-  // One or neither constrained — AND logic (unconstrained fields always match).
-  return (
-    fieldMatches(domField, dayOfMonth) && fieldMatches(dowField, dayOfWeek)
-  );
 }
 
-function fieldMatches(field: string, value: number): boolean {
-  // Comma-separated: any sub-field matching is enough
-  if (field.includes(",")) {
-    return field.split(",").some((sub) => fieldMatches(sub, value));
+function toWallClockMinute(date: Date, timezone?: string | null): Date {
+  if (timezone) {
+    try {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: timezone,
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+        hour: "numeric",
+        minute: "numeric",
+        hourCycle: "h23",
+      }).formatToParts(date);
+      const part = (type: "year" | "month" | "day" | "hour" | "minute") =>
+        Number.parseInt(
+          parts.find((item) => item.type === type)?.value ?? "",
+          10,
+        );
+      return new Date(
+        Date.UTC(
+          part("year"),
+          part("month") - 1,
+          part("day"),
+          part("hour") % 24,
+          part("minute"),
+        ),
+      );
+    } catch {
+      // Preserve the previous invalid-timezone fallback.
+    }
   }
 
-  if (field === "*") return true;
-
-  // Step: */N
-  if (field.startsWith("*/")) {
-    const step = Number.parseInt(field.slice(2), 10);
-    if (step <= 0 || !Number.isFinite(step)) return false;
-    return value % step === 0;
-  }
-
-  // Range with step: N-M/S
-  if (field.includes("-") && field.includes("/")) {
-    const [range, stepStr] = field.split("/");
-    const step = Number.parseInt(stepStr ?? "", 10);
-    if (step <= 0 || !Number.isFinite(step)) return false;
-    const [startStr, endStr] = (range ?? "").split("-");
-    const start = Number.parseInt(startStr ?? "", 10);
-    const end = Number.parseInt(endStr ?? "", 10);
-    if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
-    return value >= start && value <= end && (value - start) % step === 0;
-  }
-
-  // Range: N-M
-  if (field.includes("-")) {
-    const [startStr, endStr] = field.split("-");
-    const start = Number.parseInt(startStr ?? "", 10);
-    const end = Number.parseInt(endStr ?? "", 10);
-    if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
-    return value >= start && value <= end;
-  }
-
-  // Exact
-  const exact = Number.parseInt(field, 10);
-  return Number.isFinite(exact) && value === exact;
+  return new Date(
+    Date.UTC(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate(),
+      date.getHours(),
+      date.getMinutes(),
+    ),
+  );
 }
 
 // ── Period estimation (for jitter) ──────────────────────────────────

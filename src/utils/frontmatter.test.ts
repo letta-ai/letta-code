@@ -28,6 +28,25 @@ Prompt body`;
     expect(body.includes("\r")).toBe(false);
   });
 
+  test("parses bodyless frontmatter without a trailing newline", () => {
+    const { frontmatter, body } = parseFrontmatter(
+      "---\r\nname: reflection\r\nmodel: auto\r\n---",
+    );
+
+    expect(frontmatter.name).toBe("reflection");
+    expect(frontmatter.model).toBe("auto");
+    expect(body).toBe("");
+  });
+
+  test("preserves explicit empty fields", () => {
+    const { frontmatter } = parseFrontmatter(
+      "---\nname: reflection\nmodel:\n---",
+    );
+
+    expect(Object.hasOwn(frontmatter, "model")).toBe(true);
+    expect(frontmatter.model).toBe("");
+  });
+
   test("parses BOM + CRLF frontmatter", () => {
     const content =
       "\uFEFF---\r\nname: reflection\r\ndescription: custom reflection\r\n---\r\nPrompt body";

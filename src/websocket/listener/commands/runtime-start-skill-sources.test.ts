@@ -40,6 +40,7 @@ describe("runtime_start skill sources", () => {
         },
         {
           socket: {} as WebSocket,
+          connectionId: "test-connection",
           runtime: listener,
           safeSocketSend: () => true,
           runDetachedListenerTask: () => {},

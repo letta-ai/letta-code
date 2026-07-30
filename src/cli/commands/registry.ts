@@ -552,7 +552,7 @@ export const commands: Record<string, Command> = {
     },
   },
   "/login": {
-    desc: "Sign in to Letta Constellation",
+    desc: "Sign in with Letta",
     order: 43,
     noArgs: true,
     handler: () => {

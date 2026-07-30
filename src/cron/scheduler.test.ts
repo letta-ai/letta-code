@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   type AddTaskInput,
   addTask,
   deleteTask,
   getTask,
+  readCronFile,
   updateTask,
 } from "@/cron/cron-file";
 import { cronMatchesTime } from "@/cron/parse-interval";
@@ -14,6 +15,7 @@ import {
   formatCronPrompt,
   getIntendedCronOccurrence,
   handleMissedOneShot,
+  handleTaskPreflight,
   wrapCronPrompt,
 } from "@/cron/scheduler";
 
@@ -255,6 +257,60 @@ describe("task lifecycle", () => {
     const { task } = addTask(makeInput());
     expect(task.fire_count).toBe(0);
     expect(task.last_fired_at).toBeNull();
+  });
+
+  test("persisted invalid recurring tasks expose one durable failure", () => {
+    const { task } = addTask(makeInput());
+    const data = readCronFile();
+    const persistedTask = data.tasks.find(
+      (candidate) => candidate.id === task.id,
+    );
+    if (!persistedTask) throw new Error("expected persisted cron task");
+    persistedTask.cron = "0-60 * * * *";
+    writeFileSync(
+      path.join(TEST_DIR, "crons.json"),
+      JSON.stringify(data, null, 2),
+    );
+    const persisted = getTask(task.id);
+    if (!persisted) throw new Error("expected persisted cron task");
+    const checkedAt = new Date("2026-03-26T14:30:00Z");
+
+    expect(handleTaskPreflight(persisted, checkedAt)).toBe(true);
+
+    const updated = getTask(task.id);
+    expect(updated).toEqual(
+      expect.objectContaining({
+        status: "active",
+        last_run_at: checkedAt.toISOString(),
+        last_run_outcome: "failed",
+        last_run_reason: "invalid_cron",
+        last_run_error:
+          'Invalid cron expression "0-60 * * * *". Delete and recreate this schedule.',
+        failed_count: 1,
+      }),
+    );
+    expect(
+      readCronRunLogEntries(getCronRunLogPath(task.id), {
+        jobId: task.id,
+        limit: 10,
+      }),
+    ).toEqual([
+      expect.objectContaining({
+        status: "error",
+        outcome: "failed",
+        reason: "invalid_cron",
+      }),
+    ]);
+
+    if (!updated) throw new Error("expected updated cron task");
+    expect(handleTaskPreflight(updated, checkedAt)).toBe(true);
+    expect(getTask(task.id)?.failed_count).toBe(1);
+    expect(
+      readCronRunLogEntries(getCronRunLogPath(task.id), {
+        jobId: task.id,
+        limit: 10,
+      }),
+    ).toHaveLength(1);
   });
 
   test("new one-shot task starts with status active", () => {

@@ -93,6 +93,25 @@ export type ConversationMessageListParams = Parameters<
 >;
 export type ConversationMessageListBody = ConversationMessageListParams[1];
 export type ConversationMessageListOptions = ConversationMessageListParams[2];
+export const DEFAULT_CONVERSATION_MESSAGE_ORDER = "desc";
+
+function toApiConversationMessageListBody(
+  body?: ConversationMessageListBody,
+): ConversationMessageListBody | undefined {
+  const order = body?.order ?? DEFAULT_CONVERSATION_MESSAGE_ORDER;
+  if (!body || order !== "desc" || (!body.before && !body.after)) {
+    return body;
+  }
+
+  // The Backend contract uses chronological cursors: before always means older
+  // and after always means newer. The API interprets them relative to sort order,
+  // so descending requests need their cursor keys swapped at this boundary.
+  return {
+    ...body,
+    before: body.after,
+    after: body.before,
+  };
+}
 
 export type ConversationMessageCompactParams = Parameters<
   APIClient["conversations"]["messages"]["compact"]
@@ -179,6 +198,11 @@ export interface Backend {
     options?: ConversationCreateOptions,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["create"]>>>;
 
+  /** Optional: not all backends support deleting conversations. */
+  deleteConversation?(
+    conversationId: string,
+  ): Promise<Awaited<ReturnType<APIClient["conversations"]["delete"]>>>;
+
   updateConversation(
     conversationId: string,
     body: ConversationUpdateBody,
@@ -247,6 +271,11 @@ export interface Backend {
   cancelConversation(
     conversationIdOrAgentId: string,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["cancel"]>>>;
+
+  cancelRun(
+    agentId: string,
+    runId: string,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
 
   retrieveRun(
     runId: string,
@@ -349,6 +378,11 @@ export class APIBackend implements Backend {
     return client.conversations.create(body, options);
   }
 
+  async deleteConversation(conversationId: string) {
+    const client = await this.getClient();
+    return client.conversations.delete(conversationId);
+  }
+
   async updateConversation(
     conversationId: string,
     body: ConversationUpdateBody,
@@ -373,7 +407,11 @@ export class APIBackend implements Backend {
     options?: ConversationMessageListOptions,
   ) {
     const client = await this.getClient();
-    return client.conversations.messages.list(conversationId, body, options);
+    return client.conversations.messages.list(
+      conversationId,
+      toApiConversationMessageListBody(body),
+      options,
+    );
   }
 
   async compactConversationMessages(
@@ -454,6 +492,11 @@ export class APIBackend implements Backend {
   async cancelConversation(conversationIdOrAgentId: string) {
     const client = await this.getClient();
     return client.conversations.cancel(conversationIdOrAgentId);
+  }
+
+  async cancelRun(agentId: string, runId: string) {
+    const client = await this.getClient();
+    return client.agents.messages.cancel(agentId, { run_ids: [runId] });
   }
 
   async retrieveRun(runId: string) {

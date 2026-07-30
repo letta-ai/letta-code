@@ -30,10 +30,12 @@ import {
   getModelInfoForLlmConfig,
   getModelShortName,
   type ModelReasoningEffort,
+  type ModelReasoningSelection,
 } from "@/agent/model";
 import type { PersonalityId } from "@/agent/personality-presets";
 import { shouldRecommendDefaultPrompt } from "@/agent/prompt-assets";
 import { reconcileExistingAgentState } from "@/agent/reconcile-existing-agent-state";
+import { prefetchModelCatalog } from "@/agent/remote-model-catalog";
 import { recordSessionEnd } from "@/agent/session-history";
 import { SessionStats } from "@/agent/stats";
 import {
@@ -143,7 +145,7 @@ import {
 import {
   getIntendedCronOccurrence,
   getTask,
-  handleMissedOneShot,
+  handleTaskPreflight,
   isProcessAlive,
   readCronFile,
   safeAppendCronRunLogForTask,
@@ -228,6 +230,7 @@ import {
   inferReasoningEffortFromModelPreset,
   mapHandleToLlmConfigPatch,
   providerTypeFromModelSettings,
+  reasoningEffortLlmConfigPatch,
 } from "./model-config";
 import { saveLastSessionBeforeExit } from "./session";
 import type {
@@ -236,6 +239,7 @@ import type {
   QueuedOverlayAction,
   StaticItem,
 } from "./types";
+import { closeMcp, useAgentMcpServers } from "./use-agent-mcp-servers";
 import { useApprovalFlow } from "./use-approval-flow";
 import { useBashHandlers } from "./use-bash-handlers";
 import { useConfigurationHandlers } from "./use-configuration-handlers";
@@ -305,7 +309,7 @@ function buildStartupCommandHints(options: {
   }
 
   if (!hasCloudCredentials) {
-    onboardingHints.push("→ **/login**     sign in to Constellation");
+    onboardingHints.push("→ **/login**     sign in with Letta");
   }
 
   const dedupedHints: string[] = [];
@@ -352,6 +356,7 @@ export function App({
   startupApprovals = [],
   messageHistory = [],
   resumedExistingConversation = false,
+  startupConversationTitleEligible = false,
   tokenStreaming = false,
   reasoningTabCycleEnabled: initialReasoningTabCycleEnabled = false,
   showCompactions = false,
@@ -364,9 +369,12 @@ export function App({
   systemInfoReminderEnabled = true,
   modsDisabled = false,
 }: AppProps) {
-  // Warm the model-access cache in the background so /model is fast on first open.
+  // Warm the model-access cache in the background so /model is fast on first
+  // open, and refresh the curated catalog from the cloud endpoint (bundled
+  // models.json stays as the offline/failure fallback).
   useEffect(() => {
     prefetchAvailableModelHandles();
+    prefetchModelCatalog();
   }, []);
 
   const [hasAvailableLocalModels, setHasAvailableLocalModels] = useState(
@@ -397,7 +405,6 @@ export function App({
 
   const projectDirectory = process.cwd();
 
-  // Track current conversation (always created fresh on startup)
   const [conversationId, setConversationId] = useState(initialConversationId);
   const [conversationSummary, setConversationSummary] = useState<string | null>(
     null,
@@ -410,7 +417,6 @@ export function App({
     telemetry.setCurrentAgentId(agentId);
   }, [agentId]);
 
-  // Keep a ref to the current conversationId for use in callbacks
   const conversationIdRef = useRef(conversationId);
   useEffect(() => {
     conversationIdRef.current = conversationId;
@@ -769,9 +775,9 @@ export function App({
   const [modelReasoningPrompt, setModelReasoningPrompt] = useState<{
     modelLabel: string;
     initialModelId: string;
-    initialEffort?: ModelReasoningEffort;
+    initialEffort?: ModelReasoningSelection;
     options: Array<{
-      effort: ModelReasoningEffort;
+      effort: ModelReasoningSelection;
       modelId: string;
       selection?: ModelSelectorSelection;
     }>;
@@ -1195,7 +1201,6 @@ export function App({
     [],
   );
 
-  // Show exit stats on exit (double Ctrl+C)
   const [showExitStats, setShowExitStats] = useState(false);
 
   const sharedReminderStateRef = useRef<SharedReminderState>(
@@ -1212,9 +1217,8 @@ export function App({
     new Set<string>(),
   );
 
-  // Only brand-new conversations without an explicit title should auto-generate one.
   const shouldAutoGenerateConversationTitleRef = useRef(
-    !resumedExistingConversation,
+    !resumedExistingConversation || startupConversationTitleEligible,
   );
   const isAutoConversationTitleInFlightRef = useRef(false);
   const shouldAutoGenerateConversationDescriptionRef = useRef(
@@ -1537,8 +1541,7 @@ export function App({
       for (const task of activeTasks) {
         if (firedThisMinute.has(task.id)) continue;
 
-        // Handle missed one-shots
-        if (handleMissedOneShot(task, now)) continue;
+        if (handleTaskPreflight(task, now)) continue;
 
         if (shouldFireTask(task, now)) {
           firedThisMinute.add(task.id);
@@ -2379,11 +2382,10 @@ export function App({
     );
   }, [agentId, agentName, modAdapter]);
 
-  // Keep buffers in sync with agentId for server-side tool hooks
   useEffect(() => {
     buffersRef.current.agentId = agentState?.id;
   }, [agentState?.id]);
-
+  useAgentMcpServers(agentState?.id);
   // Cache precomputed diffs from approval dialogs for tool return rendering
   // Key: toolCallId or "toolCallId:filePath" for Patch operations
   const precomputedDiffsRef = useRef<Map<string, AdvancedDiffSuccess>>(
@@ -3019,9 +3021,11 @@ export function App({
                 return withoutMemfs.replace(/\r\n/g, "\n").trim();
               };
               const sysNorm = normalize(agentSystem);
-              const { SYSTEM_PROMPTS, SYSTEM_PROMPT } = await import(
-                "@/agent/prompt-assets"
-              );
+              const {
+                getSystemPromptVariantContents,
+                SYSTEM_PROMPTS,
+                SYSTEM_PROMPT,
+              } = await import("@/agent/prompt-assets");
 
               // Best-effort preset detection.
               // Exact match is ideal, but allow prefix-matches because the stored
@@ -3037,14 +3041,10 @@ export function App({
                 );
               };
 
-              const promptMatches = (prompt: {
-                content: string;
-                memfsContent?: string;
-              }): boolean =>
-                contentMatches(prompt.content) ||
-                (prompt.memfsContent
-                  ? contentMatches(prompt.memfsContent)
-                  : false);
+              const promptMatches = (
+                prompt: (typeof SYSTEM_PROMPTS)[number],
+              ): boolean =>
+                getSystemPromptVariantContents(prompt).some(contentMatches);
 
               const defaultPrompt = SYSTEM_PROMPTS.find(
                 (p) => p.id === "default",
@@ -3409,9 +3409,10 @@ export function App({
             effectiveModelHandle,
             providerTypeFromModelSettings(resolvedConversationModelSettings),
           ),
-          ...(typeof reasoningEffort === "string"
-            ? { reasoning_effort: reasoningEffort }
-            : {}),
+          ...reasoningEffortLlmConfigPatch(
+            resolvedConversationModelSettings,
+            agentState.llm_config,
+          ),
           ...(typeof resolvedConversationContextWindowLimit === "number"
             ? { context_window: resolvedConversationContextWindowLimit }
             : {}),
@@ -3956,7 +3957,7 @@ export function App({
       // Non-critical, don't fail the exit
     }
 
-    // Flush telemetry before exit
+    await closeMcp();
     await telemetry.flush();
 
     setShowExitStats(true);
@@ -4070,7 +4071,7 @@ export function App({
   const reasoningCycleInFlightRef = useRef(false);
   const reasoningCycleDesiredRef = useRef<{
     modelHandle: string;
-    effort: string;
+    effort: ModelReasoningSelection;
     modelId: string;
     providerType?: string | null;
     serviceTier?: string | null;
@@ -4460,6 +4461,7 @@ export function App({
     conversationIdRef,
     currentModelHandle,
     currentModelId,
+    currentReasoningEffort,
     currentToolset,
     isAgentBusy,
     llmConfig,

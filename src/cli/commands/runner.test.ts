@@ -114,6 +114,7 @@ describe("command input preservation in handlers", () => {
     setActiveMcpCommandId("cmd-1");
     handleMcpUsage(
       {
+        agentId: "agent-test",
         buffersRef,
         refreshDerived: () => {},
         setCommandRunning: () => {},
@@ -129,7 +130,7 @@ describe("command input preservation in handlers", () => {
     });
     expect(line?.kind).toBe("command");
     if (line && line.kind === "command") {
-      expect(line.output).toContain("Usage: /mcp");
+      expect(line.output).toContain("/mcp help");
     }
   });
 

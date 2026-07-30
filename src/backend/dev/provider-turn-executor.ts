@@ -30,6 +30,9 @@ import type {
 } from "./headless-turn-executor";
 import { normalizeLocalProviderError } from "./local-provider-errors";
 
+const LOCAL_CONTEXT_COMPACTION_RESERVE_TOKENS = 16_384;
+const LOCAL_SMALL_CONTEXT_COMPACTION_RESERVE_RATIO = 0.2;
+
 export interface ProviderTurnInput {
   conversationId: string;
   agentId: string;
@@ -201,6 +204,56 @@ export function estimateProviderContextTokens(
   return total > 0 ? total : undefined;
 }
 
+/**
+ * Context pressure must be handled before the provider request, not only after
+ * an overflow. pi-ai first makes an oversized request valid by shrinking its
+ * output allowance to `contextWindow - estimatedContext - 4096`, floored at
+ * one token. A near-full request can therefore finish with `length` instead of
+ * throwing the overflow that our retry path would catch.
+ *
+ * Keep the same 16,384-token reserve as Pi's coding-agent harness, capped at
+ * 20% for small local windows. This is deliberately based on context usage,
+ * not the configured output limit: an intentionally small `max_tokens` value
+ * remains a normal provider length stop (the policy preserved by #3355).
+ *
+ * Upstream references, pinned when #3508 was fixed:
+ * - pi-ai clamp: https://github.com/earendil-works/pi/blob/cee5ff7520d8828bed9955ef00419e995d1f91e0/packages/ai/src/api/simple-options.ts#L12-L19
+ * - Pi reserve: https://github.com/earendil-works/pi/blob/cee5ff7520d8828bed9955ef00419e995d1f91e0/packages/coding-agent/src/core/compaction/compaction.ts#L128-L137
+ * - Pi threshold: https://github.com/earendil-works/pi/blob/cee5ff7520d8828bed9955ef00419e995d1f91e0/packages/coding-agent/src/core/compaction/compaction.ts#L235-L238
+ */
+export function contextCompactionThreshold(
+  contextWindow: number | undefined,
+): number | undefined {
+  if (
+    typeof contextWindow !== "number" ||
+    !Number.isFinite(contextWindow) ||
+    contextWindow <= 0
+  ) {
+    return undefined;
+  }
+
+  const reserveTokens = Math.min(
+    LOCAL_CONTEXT_COMPACTION_RESERVE_TOKENS,
+    Math.max(
+      1,
+      Math.floor(contextWindow * LOCAL_SMALL_CONTEXT_COMPACTION_RESERVE_RATIO),
+    ),
+  );
+  return Math.max(0, contextWindow - reserveTokens);
+}
+
+export function shouldCompactForContextPressure(input: {
+  contextTokens: number | undefined;
+  contextWindow: number | undefined;
+}): boolean {
+  const threshold = contextCompactionThreshold(input.contextWindow);
+  return (
+    input.contextTokens !== undefined &&
+    threshold !== undefined &&
+    input.contextTokens > threshold
+  );
+}
+
 function serializedLength(value: unknown): number {
   if (value === undefined || value === null) return 0;
   try {
@@ -241,12 +294,14 @@ function createUsageStatisticsChunk(
   const contextTokens = usageContextTokens ?? contextTokensEstimate;
   const cachedInputTokens = usage?.cacheRead;
   const cacheWriteTokens = usage?.cacheWrite;
+  const reasoningTokens = usage?.reasoning;
   if (
     promptTokens === undefined &&
     completionTokens === undefined &&
     totalTokens === undefined &&
     cachedInputTokens === undefined &&
     cacheWriteTokens === undefined &&
+    reasoningTokens === undefined &&
     contextTokens === undefined
   ) {
     return undefined;
@@ -263,6 +318,9 @@ function createUsageStatisticsChunk(
       : {}),
     ...(cacheWriteTokens !== undefined
       ? { cache_write_tokens: cacheWriteTokens }
+      : {}),
+    ...(reasoningTokens !== undefined
+      ? { reasoning_tokens: reasoningTokens }
       : {}),
     ...(contextTokens !== undefined ? { context_tokens: contextTokens } : {}),
   } as unknown as LettaStreamingResponse;

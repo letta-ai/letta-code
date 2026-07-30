@@ -54,6 +54,7 @@ export {
   formatTimezoneQualifiedIso,
   getIntendedCronOccurrence,
   handleMissedOneShot,
+  handleTaskPreflight,
   shouldFireTask,
   wrapCronPrompt,
 } from "./scheduler";

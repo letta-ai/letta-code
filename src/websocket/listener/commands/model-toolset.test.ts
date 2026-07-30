@@ -29,6 +29,26 @@ class NativeCatalogBackend extends FakeHeadlessBackend {
         max_tokens: 65536,
         provider_type: "google",
       },
+      {
+        handle: "proxy/claude-opus-4-6",
+        display_name: "Claude Opus 4.6",
+        provider_type: "openai",
+        provider_category: "byok",
+        model_endpoint: "https://proxy.example.com/openai/v1",
+      },
+      {
+        handle: "lc-openai/gpt-5.4",
+        display_name: "GPT-5.4",
+        provider_type: "openai",
+        provider_category: "byok",
+        model_endpoint: "https://api.openai.com/v1",
+      },
+      {
+        handle: "chatgpt-jin/gpt-5.6-sol-fast",
+        display_name: "GPT-5.6 Sol Fast",
+        provider_type: "chatgpt_oauth",
+        provider_category: "byok",
+      },
     ] as never;
   }
 }
@@ -68,6 +88,58 @@ describe("listener native model selection", () => {
       handle: "opencode/deepseek-v4-flash-free",
       label: "DeepSeek V4 Flash Free",
       description: "",
+    });
+    expect(response.entries).toContainEqual({
+      id: "proxy/claude-opus-4-6",
+      handle: "proxy/claude-opus-4-6",
+      label: "Claude Opus 4.6",
+      description: "",
+      updateArgs: {
+        provider_type: "openai",
+        openai_compatible_proxy: true,
+      },
+    });
+    expect(
+      response.entries.find((entry) => entry.handle === "lc-openai/gpt-5.4")
+        ?.updateArgs,
+    ).toBeUndefined();
+  });
+
+  test("applies explicit proxy effort from a device update without leaking it to direct OpenAI", async () => {
+    __testSetBackend(new NativeCatalogBackend());
+    await getAvailableModelHandles();
+
+    expect(
+      resolveModelForUpdate({
+        model_id: "proxy/claude-opus-4-6",
+        reasoning_effort: null,
+      })?.updateArgs,
+    ).toEqual({
+      provider_type: "openai",
+      openai_compatible_proxy: true,
+      reasoning_effort: null,
+    });
+    expect(
+      resolveModelForUpdate({
+        model_id: "lc-openai/gpt-5.4",
+        reasoning_effort: null,
+      })?.updateArgs,
+    ).toBeUndefined();
+  });
+
+  test("preserves ChatGPT OAuth provider identity for native Fast aliases", async () => {
+    __testSetBackend(new NativeCatalogBackend());
+    await getAvailableModelHandles();
+
+    expect(
+      resolveModelForUpdate({
+        model_id: "chatgpt-jin/gpt-5.6-sol-fast",
+      }),
+    ).toEqual({
+      id: "chatgpt-jin/gpt-5.6-sol-fast",
+      handle: "chatgpt-jin/gpt-5.6-sol-fast",
+      label: "GPT-5.6 Sol Fast",
+      updateArgs: { provider_type: "chatgpt_oauth" },
     });
   });
 

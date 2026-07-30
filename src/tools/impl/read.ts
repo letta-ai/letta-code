@@ -11,7 +11,7 @@ import { expandFilePath } from "@/utils/file-path";
 import { resizeImageIfNeeded } from "@/utils/image-resize.js";
 import { getUtf16Bom, readUtf8TextStrict } from "@/utils/text-files";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
-import { LIMITS } from "./truncation.js";
+import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface ReadArgs {
@@ -164,6 +164,17 @@ function formatWithLineNumbers(
 
   let result = formattedLines.join("\n");
 
+  // Apply total-character clamp (Claude Code applies the same 30K class of
+  // limit as bash/task output). Line and per-line caps alone allow up to
+  // ~4M chars (2,000 lines x 2,000 chars) in a single read.
+  let wasTruncatedByTotalChars = false;
+  if (result.length > LIMITS.READ_OUTPUT_CHARS) {
+    wasTruncatedByTotalChars = true;
+    // Overflow is written below from the raw file content, so skip the
+    // overflow write here (no workingDirectory passed).
+    result = truncateByChars(result, LIMITS.READ_OUTPUT_CHARS, "Read").content;
+  }
+
   // Add truncation notices if applicable
   const notices: string[] = [];
   const wasTruncatedByLineCount = actualEndLine < originalLineCount;
@@ -171,7 +182,9 @@ function formatWithLineNumbers(
   // Write to overflow file if content was truncated and overflow is enabled
   let overflowPath: string | undefined;
   if (
-    (wasTruncatedByLineCount || linesWereTruncatedInLength) &&
+    (wasTruncatedByLineCount ||
+      linesWereTruncatedInLength ||
+      wasTruncatedByTotalChars) &&
     OVERFLOW_CONFIG.ENABLED &&
     workingDirectory
   ) {
@@ -193,6 +206,12 @@ function formatWithLineNumbers(
   if (linesWereTruncatedInLength) {
     notices.push(
       `\n\n[Some lines exceeded ${LIMITS.READ_MAX_CHARS_PER_LINE.toLocaleString()} characters and were truncated.]`,
+    );
+  }
+
+  if (wasTruncatedByTotalChars) {
+    notices.push(
+      `\n\n[Use offset and limit parameters to read the file in smaller sections.]`,
     );
   }
 

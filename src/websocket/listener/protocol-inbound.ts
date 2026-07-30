@@ -36,7 +36,6 @@ import type {
   ConnectProviderCommand,
   ConversationCompactCommand,
   ConversationCreateCommand,
-  ConversationForkCommand,
   ConversationListCommand,
   ConversationMessagesListCommand,
   ConversationRecompileCommand,
@@ -110,6 +109,10 @@ function isExperimentId(value: unknown): value is ExperimentId {
 }
 
 import { isValidApprovalResponseBody } from "./approval";
+import {
+  isAppServerInfoCommand,
+  isConversationForkCommand,
+} from "./management-protocol-inbound";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
 export type ServerLifecycleMessage = {
@@ -168,6 +171,7 @@ function isInputCommand(value: unknown): value is InputCommand {
     messages?: unknown;
     client_tool_allowlist?: unknown;
     external_tool_scope_ids?: unknown;
+    exclude_interactive_tools?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
@@ -178,7 +182,9 @@ function isInputCommand(value: unknown): value is InputCommand {
       (payload.client_tool_allowlist === undefined ||
         isStringArray(payload.client_tool_allowlist)) &&
       (payload.external_tool_scope_ids === undefined ||
-        isStringArray(payload.external_tool_scope_ids))
+        isStringArray(payload.external_tool_scope_ids)) &&
+      (payload.exclude_interactive_tools === undefined ||
+        typeof payload.exclude_interactive_tools === "boolean")
     );
   }
   if (payload.kind === "approval_response") {
@@ -261,6 +267,7 @@ function getInvalidInputReason(value: unknown): {
     messages?: unknown;
     client_tool_allowlist?: unknown;
     external_tool_scope_ids?: unknown;
+    exclude_interactive_tools?: unknown;
     request_id?: unknown;
     decision?: unknown;
     error?: unknown;
@@ -281,6 +288,16 @@ function getInvalidInputReason(value: unknown): {
         runtime: candidate.runtime,
         reason:
           "Protocol violation: input.payload.client_tool_allowlist must be string[]",
+      };
+    }
+    if (
+      payload.exclude_interactive_tools !== undefined &&
+      typeof payload.exclude_interactive_tools !== "boolean"
+    ) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.payload.exclude_interactive_tools must be boolean",
       };
     }
     if (
@@ -402,7 +419,10 @@ function isSyncCommand(value: unknown): value is SyncCommand {
 
 function isDevicePermissionMode(value: unknown): boolean {
   return (
-    value === "standard" || value === "acceptEdits" || value === "unrestricted"
+    value === "standard" ||
+    value === "acceptEdits" ||
+    value === "unrestricted" ||
+    value === "strict"
   );
 }
 
@@ -988,17 +1008,28 @@ export function isUpdateModelCommand(
   const payload = c.payload as {
     model_id?: unknown;
     model_handle?: unknown;
+    reasoning_effort?: unknown;
   };
   const hasModelId =
     payload.model_id === undefined || typeof payload.model_id === "string";
   const hasModelHandle =
     payload.model_handle === undefined ||
     typeof payload.model_handle === "string";
+  const hasReasoningEffort =
+    payload.reasoning_effort === undefined ||
+    payload.reasoning_effort === null ||
+    payload.reasoning_effort === "none" ||
+    payload.reasoning_effort === "minimal" ||
+    payload.reasoning_effort === "low" ||
+    payload.reasoning_effort === "medium" ||
+    payload.reasoning_effort === "high" ||
+    payload.reasoning_effort === "xhigh" ||
+    payload.reasoning_effort === "max";
   const hasAtLeastOne =
     typeof payload.model_id === "string" ||
     typeof payload.model_handle === "string";
 
-  return hasModelId && hasModelHandle && hasAtLeastOne;
+  return hasModelId && hasModelHandle && hasReasoningEffort && hasAtLeastOne;
 }
 
 export function isUpdateToolsetCommand(
@@ -1399,24 +1430,6 @@ export function isConversationRecompileCommand(
   };
   return (
     c.type === "conversation_recompile" &&
-    typeof c.request_id === "string" &&
-    typeof c.conversation_id === "string" &&
-    (c.body === undefined || isObjectRecord(c.body))
-  );
-}
-
-export function isConversationForkCommand(
-  value: unknown,
-): value is ConversationForkCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    conversation_id?: unknown;
-    body?: unknown;
-  };
-  return (
-    c.type === "conversation_fork" &&
     typeof c.request_id === "string" &&
     typeof c.conversation_id === "string" &&
     (c.body === undefined || isObjectRecord(c.body))
@@ -2215,6 +2228,7 @@ export function parseServerMessage(
       isCronDeleteAllCommand(parsed) ||
       isSkillEnableCommand(parsed) ||
       isSkillDisableCommand(parsed) ||
+      isAppServerInfoCommand(parsed) ||
       isCreateAgentCommand(parsed) ||
       isAgentListCommand(parsed) ||
       isAgentRetrieveCommand(parsed) ||

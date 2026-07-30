@@ -448,6 +448,23 @@ export interface ApplyMemfsFlagsOptions {
   skipPromptUpdate?: boolean;
 }
 
+async function seedDefaultPersonalityFiles(
+  agentId: string,
+  memoryDir: string,
+  syncMode: "local" | "remote",
+  agentTags?: readonly string[] | null,
+): Promise<void> {
+  const { seedPersonalityDefaultMemoryFilesBestEffort } = await import(
+    "@/agent/personality-default-files"
+  );
+  await seedPersonalityDefaultMemoryFilesBestEffort({
+    agentId,
+    memoryDir,
+    agentTags,
+    syncMode,
+  });
+}
+
 /**
  * Apply the --memfs CLI flag (or /memfs enable) to an agent.
  *
@@ -483,6 +500,12 @@ export async function applyMemfsFlags(
       agentId,
       files: [],
     });
+    await seedDefaultPersonalityFiles(
+      agentId,
+      memoryDir,
+      "local",
+      options?.agentTags,
+    );
     settingsManager.setMemfsEnabled(agentId, true);
     return { action: "enabled", memoryDir };
   }
@@ -548,6 +571,13 @@ export async function applyMemfsFlags(
       const result = await pullMemory(agentId);
       pullSummary = result.summary;
     }
+
+    await seedDefaultPersonalityFiles(
+      agentId,
+      getScopedMemoryFilesystemRoot(agentId),
+      "remote",
+      options?.agentTags,
+    );
 
     // Fetch secrets from the server so they're available for $SECRET_NAME substitution.
     const { initSecretsFromServer } = await import("@/utils/secrets-store");
@@ -615,16 +645,23 @@ async function getMemfsSyncUnavailableMessage(): Promise<string> {
  * Skips the system prompt update since callers are expected to create
  * the agent with the correct memory mode upfront.
  */
+export interface EnableMemfsIfCloudOptions {
+  backend?: Backend;
+  agentTags?: string[] | null;
+}
+
 export async function enableMemfsIfCloud(
   agentId: string,
-  backend?: Backend,
+  options: EnableMemfsIfCloudOptions = {},
 ): Promise<void> {
-  const resolvedBackend = backend ?? (await import("@/backend")).getBackend();
+  const resolvedBackend =
+    options.backend ?? (await import("@/backend")).getBackend();
   if (!resolvedBackend.capabilities.remoteMemfs) return;
   if (!(await isLettaCloud())) return;
 
   try {
     await applyMemfsFlags(agentId, true, {
+      agentTags: options.agentTags ?? undefined,
       skipPromptUpdate: true,
     });
   } catch (error) {

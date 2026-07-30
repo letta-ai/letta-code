@@ -68,6 +68,7 @@ import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
 import { toolFilter } from "./filter";
+import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import {
   functionToolForm,
   type JsonSchema,
@@ -395,12 +396,14 @@ function filterExternalToolsByRuntimeContext(
 ): Map<string, ExternalToolDefinition> {
   return new Map(
     Array.from(externalTools.entries()).filter(([, tool]) => {
-      if (!tool.runtime) {
-        return true;
-      }
+      const matchesConnection =
+        tool.connectionId === undefined ||
+        tool.connectionId === runtimeContext.connectionId;
       return (
-        tool.runtime.agentId === runtimeContext.agentId &&
-        tool.runtime.conversationId === runtimeContext.conversationId
+        matchesConnection &&
+        (!tool.runtime ||
+          (tool.runtime.agentId === runtimeContext.agentId &&
+            tool.runtime.conversationId === runtimeContext.conversationId))
       );
     }),
   );
@@ -891,13 +894,8 @@ export interface ClientTool {
   parameters?: { [key: string]: unknown } | null;
 }
 
-// ═══════════════════════════════════════════════════════════════
 // EXTERNAL TOOLS (SDK-side execution)
-// ═══════════════════════════════════════════════════════════════
 
-/**
- * External tool definition from SDK
- */
 export interface ExternalToolDefinition {
   name: string;
   label?: string;
@@ -905,6 +903,7 @@ export interface ExternalToolDefinition {
   parameters: Record<string, unknown>; // JSON Schema
   /** Internal registration key; model-facing calls still use name. */
   registrationKey?: string;
+  connectionId?: string;
   /** Optional visibility scope; scoped tools are hidden unless selected for a turn. */
   scopeId?: string;
   /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
@@ -912,6 +911,8 @@ export interface ExternalToolDefinition {
     agentId?: string;
     conversationId?: string;
   };
+  /** Client-local executor owned by this tool (for example an MCP process). */
+  executor?: ExternalToolExecutor;
 }
 
 /**
@@ -1053,7 +1054,10 @@ export async function executeExternalTool(
       .join("\n");
 
     return {
-      toolReturn: textContent || JSON.stringify(result.content),
+      toolReturn: clampToolReturnContent(
+        textContent || JSON.stringify(result.content),
+        toolName,
+      ),
       status: result.isError ? "error" : "success",
     };
   } catch (error) {
@@ -2470,10 +2474,13 @@ async function executeModTool(
         redactions,
       );
       const toolStatus = getModToolStatus(result);
-      const flattenedResponse = scrubModToolReturnContent(
-        flattenToolResponse(result),
-        options.scopedAgentId,
-        redactions,
+      const flattenedResponse = clampToolReturnContent(
+        scrubModToolReturnContent(
+          flattenToolResponse(result),
+          options.scopedAgentId,
+          redactions,
+        ),
+        toolName,
       );
       const responseSize =
         typeof flattenedResponse === "string"
@@ -2746,26 +2753,14 @@ async function executeToolInner(
       options?.toolCallId ?? `ext-${Date.now()}`,
       name,
       eventArgs as Record<string, unknown>,
-      activeExternalExecutor,
+      externalTool?.executor ?? activeExternalExecutor,
       externalTool,
     );
   }
 
   const internalName = resolveInternalToolName(name, activeRegistry);
-  if (!internalName) {
-    const availableTools = [
-      ...Array.from(activeRegistry.keys()),
-      ...Array.from(activeExternalTools.keys()),
-      ...Array.from(activeModTools.keys()),
-    ];
-    return {
-      toolReturn: `Tool not found: ${name}. Available tools: ${availableTools.join(", ")}`,
-      status: "error",
-    };
-  }
-
-  const tool = activeRegistry.get(internalName);
-  if (!tool) {
+  const tool = internalName ? activeRegistry.get(internalName) : undefined;
+  if (!internalName || !tool) {
     const availableTools = [
       ...Array.from(activeRegistry.keys()),
       ...Array.from(activeExternalTools.keys()),
@@ -2854,10 +2849,7 @@ async function executeToolInner(
             },
           };
         }
-
-        // Inject secrets as environment variables instead of substituting into
-        // the command string. This prevents shell metacharacters in secrets
-        // (e.g. $$, backticks, quotes) from being interpreted by the shell.
+        // Keep secret values out of shell interpolation.
         const command = enhancedArgs.command ?? enhancedArgs.cmd;
         const secretEnv =
           typeof command === "string" ||
@@ -2867,6 +2859,9 @@ async function executeToolInner(
             : {};
         if (Object.keys(secretEnv).length > 0) {
           enhancedArgs = { ...enhancedArgs, secretEnv };
+        }
+        if (options?.parentScope) {
+          enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
         }
       }
 
@@ -2985,6 +2980,11 @@ async function executeToolInner(
         }
       }
 
+      flattenedResponse = clampToolReturnContent(
+        flattenedResponse,
+        internalName,
+      );
+
       // Track tool usage (calculate size for multimodal content)
       const responseSize =
         typeof flattenedResponse === "string"
@@ -3023,7 +3023,6 @@ async function executeToolInner(
         hookFeedback,
       );
 
-      // Return the full response (truncation happens in UI layer only)
       return {
         toolReturn: finalToolReturn,
         status: toolStatus,

@@ -1,6 +1,12 @@
+import { isAppServerInfoResponseMessage } from "./types/app-server-info";
+
+export type { AppServerInfoResponseMessage } from "./types/app-server-info";
+export { isAppServerInfoResponseMessage } from "./types/app-server-info";
+
 import type {
   AbortMessageCommand,
   AbortMessageResponseMessage,
+  AppServerInfoResponseMessage,
   ConversationListCommand,
   ConversationListResponseMessage,
   ExternalToolCallRequestMessage,
@@ -19,26 +25,33 @@ import type {
 
 export type AppServerChannel = "control" | "stream";
 
-/**
- * Receives every parsed protocol frame from both app-server websocket channels.
- * Treat this as the primary event stream: app-server may emit replay or turn
- * updates on the same channel that sent the triggering command, not only on the
- * stream channel. The channel argument is diagnostic/routing context.
- */
+export type AppServerRawCommand = Record<string, unknown> & {
+  type: string;
+  request_id?: string;
+};
+
+export type AppServerRawResponse = Record<string, unknown> & {
+  type: string;
+  request_id?: string;
+};
+
+export type AppServerSendCommand = WsProtocolCommand | AppServerRawCommand;
+
+/** Receives every parsed protocol frame from the app-server WebSocket. */
 export type AppServerMessageHandler = (
   message: WsProtocolMessage,
   channel: AppServerChannel,
 ) => void;
 
-/** Called synchronously before a protocol command is written to the control socket. */
-export type AppServerSendHandler = (command: WsProtocolCommand) => void;
+/** Called synchronously before a typed or raw command is written to the socket. */
+export type AppServerSendHandler = (command: AppServerSendCommand) => void;
 
 export interface AppServerDisconnectEvent {
   channel: AppServerChannel;
   event: unknown;
 }
 
-/** Called once when either websocket closes before client.close(). */
+/** Called once when the WebSocket closes before client.close(). */
 export type AppServerDisconnectHandler = (
   disconnect: AppServerDisconnectEvent,
 ) => void;
@@ -96,6 +109,13 @@ export type AppServerRequestBody = Record<string, unknown> & {
   request_id?: string;
 };
 
+export interface AppServerRawRequestOptions<
+  TResponse extends AppServerRawResponse,
+> {
+  timeoutMs?: number;
+  predicate: (message: unknown) => message is TResponse;
+}
+
 type PendingRequest = {
   resolve: (message: WsProtocolMessage) => void;
   reject: (error: Error) => void;
@@ -147,13 +167,21 @@ function normalizeBaseUrl(url: string): URL {
   return parsed;
 }
 
+export function resolveAppServerUrl(url: string): string {
+  const parsed = normalizeBaseUrl(url);
+  parsed.searchParams.delete("channel");
+  return parsed.toString();
+}
+
+/**
+ * @deprecated App-server uses one bidirectional WebSocket. Both historical
+ * channel names resolve to that same socket URL.
+ */
 export function resolveAppServerChannelUrl(
   url: string,
-  channel: AppServerChannel,
+  _channel: AppServerChannel,
 ): string {
-  const parsed = normalizeBaseUrl(url);
-  parsed.searchParams.set("channel", channel);
-  return parsed.toString();
+  return resolveAppServerUrl(url);
 }
 
 function attachSocketListener(
@@ -302,7 +330,10 @@ function streamDeltaErrorMessage(message: StreamDeltaMessage): string {
 }
 
 export class AppServerClient {
+  readonly socket: AppServerSocketLike;
+  /** @deprecated Alias for socket. */
   readonly control: AppServerSocketLike;
+  /** @deprecated Alias for socket; no second stream connection is created. */
   readonly stream: AppServerSocketLike;
 
   private readonly requestTimeoutMs: number;
@@ -324,34 +355,23 @@ export class AppServerClient {
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     const socketOptions = appServerSocketOptions(options.authToken);
-    this.control = new WebSocket(
-      resolveAppServerChannelUrl(options.url, "control"),
+    this.socket = new WebSocket(
+      resolveAppServerUrl(options.url),
       socketOptions,
     );
-    this.stream = new WebSocket(
-      resolveAppServerChannelUrl(options.url, "stream"),
-      socketOptions,
-    );
+    this.control = this.socket;
+    this.stream = this.socket;
 
-    attachSocketListener(this.control, "message", (event) => {
+    attachSocketListener(this.socket, "message", (event) => {
       this.handleMessage(event, "control");
     });
-    attachSocketListener(this.stream, "message", (event) => {
-      this.handleMessage(event, "stream");
-    });
-    attachSocketListener(this.control, "close", (event) => {
+    attachSocketListener(this.socket, "close", (event) => {
       this.handleDisconnect("control", event);
-    });
-    attachSocketListener(this.stream, "close", (event) => {
-      this.handleDisconnect("stream", event);
     });
   }
 
   async connect(): Promise<this> {
-    await Promise.all([
-      waitForSocketOpen(this.control),
-      waitForSocketOpen(this.stream),
-    ]);
+    await waitForSocketOpen(this.socket);
     return this;
   }
 
@@ -359,8 +379,7 @@ export class AppServerClient {
     if (this.explicitlyClosed) return;
     this.explicitlyClosed = true;
     this.rejectAllPending("App-server client closed");
-    this.control.close();
-    this.stream.close();
+    this.socket.close();
   }
 
   onMessage(handler: AppServerMessageHandler): () => void {
@@ -384,10 +403,54 @@ export class AppServerClient {
   }
 
   send(command: WsProtocolCommand): void {
+    this.writeCommand(command);
+  }
+
+  private writeCommand(command: AppServerSendCommand): void {
     for (const handler of this.sendHandlers) {
       handler(command);
     }
-    this.control.send(JSON.stringify(command));
+    this.socket.send(JSON.stringify(command));
+  }
+
+  /**
+   * Send a forward-compatible protocol command from a compatibility adapter.
+   * Prefer the typed wrappers above this boundary for normal product code.
+   */
+  sendRaw(command: AppServerRawCommand): void {
+    this.writeCommand(command);
+  }
+
+  /**
+   * Request a forward-compatible response without mirroring the full protocol
+   * union in a downstream compatibility adapter.
+   */
+  requestRaw<TResponse extends AppServerRawResponse>(
+    command: AppServerRawCommand & { request_id: string },
+    options: AppServerRawRequestOptions<TResponse>,
+  ): Promise<TResponse> {
+    const timeoutMs = options.timeoutMs ?? this.requestTimeoutMs;
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(command.request_id);
+        reject(new Error(`Timed out waiting for ${command.request_id}`));
+      }, timeoutMs);
+
+      this.pending.set(command.request_id, {
+        resolve: (message) => resolve(message as unknown as TResponse),
+        reject,
+        predicate: options.predicate,
+        timeout,
+      });
+
+      try {
+        this.sendRaw(command);
+      } catch (error) {
+        clearTimeout(timeout);
+        this.pending.delete(command.request_id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   }
 
   request<TMessage extends WsProtocolMessage = WsProtocolMessage>(
@@ -449,6 +512,24 @@ export class AppServerClient {
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
+  }
+
+  info(
+    options: Omit<
+      AppServerRequestOptions<AppServerInfoResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<AppServerInfoResponseMessage> {
+    return this.request(
+      {
+        type: "app_server_info",
+        request_id: this.nextRequestId("app-server-info"),
+      },
+      {
+        ...options,
+        predicate: isAppServerInfoResponseMessage,
+      },
+    );
   }
 
   runtimeStart(

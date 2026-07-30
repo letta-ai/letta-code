@@ -7,14 +7,9 @@ import type {
   SimpleStreamOptions,
   Tool,
   TSchema,
-  Usage,
 } from "@earendil-works/pi-ai";
-import {
-  isContextOverflow,
-  stream,
-  streamSimple,
-  Type,
-} from "@earendil-works/pi-ai/compat";
+import { isContextOverflow, Type } from "@earendil-works/pi-ai";
+
 import type { LocalCompactionStats } from "@/backend/local/compaction";
 import {
   emptyLocalUsage,
@@ -34,10 +29,15 @@ import {
   normalizeLocalProviderError,
 } from "./local-provider-errors";
 import {
+  elideImagePayloadsForProviderRetry,
+  isOversizedPayloadTransportFailure,
+} from "./pi-image-elision";
+import {
   applyPiEnvOverrides,
   reasoningForSettings,
   resolvePiModelForAgent,
 } from "./pi-model-factory";
+import { LocalPiModelsRuntime } from "./pi-models-runtime";
 import type {
   LlmEndErrorInfo,
   LlmEndInfo,
@@ -47,47 +47,18 @@ import type {
   ProviderTurnInput,
 } from "./provider-turn-executor";
 import {
-  estimateProviderRequestBytes,
+  contextTokensFromUsage,
+  estimateProviderContextTokens,
   providerLettaChunk,
   providerLocalMessage,
   providerStreamPart,
+  shouldCompactForContextPressure,
 } from "./provider-turn-executor";
 
 const LOCAL_PROVIDER_MAX_RETRIES = 3;
 const LOCAL_PROVIDER_ADAPTIVE_IMAGE_ELISION_AFTER_RETRIES =
   LOCAL_PROVIDER_MAX_RETRIES - 1;
 const LOCAL_CONTEXT_OVERFLOW_MAX_COMPACTIONS = 3;
-// Classifier threshold for oversized request payloads. This is a transport
-// limit, not a token limit: providers accept image-heavy requests whose
-// semantic token cost is small, but large raw bodies cause generic transport
-// failures (connection errors, SSE header timeouts) instead of clean,
-// classifiable overflow errors. When a retryable transport error occurs and
-// the serialized payload exceeds this threshold, we treat it as context
-// overflow (compact + retry) instead of retrying the same oversized payload.
-// It never blocks a request preemptively. Empirically (local-conv-48): ~7MB
-// of in-context images still succeeded against Anthropic at ~400k context
-// tokens, while ~11.8MB failed with "Connection error." on every provider.
-// 8MB keeps headroom under Anthropic's documented 32MB cap while staying
-// above known-good payloads. Local networks can fail below that threshold, so
-// LETTA_LOCAL_REQUEST_BYTE_LIMIT can lower the reactive classifier in dev.
-const DEFAULT_LOCAL_PROVIDER_REQUEST_BYTE_LIMIT = 8_000_000;
-const LOCAL_PROVIDER_REQUEST_BYTE_LIMIT_ENV = "LETTA_LOCAL_REQUEST_BYTE_LIMIT";
-
-function localProviderRequestByteLimit(): number {
-  const raw = process.env[LOCAL_PROVIDER_REQUEST_BYTE_LIMIT_ENV];
-  if (!raw) return DEFAULT_LOCAL_PROVIDER_REQUEST_BYTE_LIMIT;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return DEFAULT_LOCAL_PROVIDER_REQUEST_BYTE_LIMIT;
-  }
-  return Math.floor(parsed);
-}
-
-function localProviderRequestByteTarget(
-  limit = localProviderRequestByteLimit(),
-) {
-  return Math.floor(limit * 0.75);
-}
 
 export type PiStreamFunction = (
   model: Model<string>,
@@ -97,10 +68,30 @@ export type PiStreamFunction = (
   result(): Promise<AssistantMessage>;
 };
 
+export interface LocalContextPressure {
+  contextTokens: number;
+  contextWindow: number;
+  phase: "preflight" | "post_turn";
+  source: "estimate" | "usage";
+}
+
+interface LocalCompactionResult {
+  uiMessages: LocalMessage[];
+  summary: string;
+  stats?: LocalCompactionStats;
+}
+
 export interface PiStreamAdapterOptions {
   stream?: PiStreamFunction;
   abortSignal?: AbortSignal;
   localProviderAuthStorageDir?: string;
+  /**
+   * Per-backend pi-ai Models runtime used for model resolution and stream
+   * dispatch. A dedicated instance is created when not provided; the local
+   * backend passes its own so /model listing and turn execution share one
+   * provider registry.
+   */
+  modelsRuntime?: LocalPiModelsRuntime;
   onContextWindowOverflow?: (
     input: ProviderTurnInput,
     error: unknown,
@@ -109,14 +100,10 @@ export interface PiStreamAdapterOptions {
     summary: string;
     stats?: LocalCompactionStats;
   } | null>;
-  onContextUsage?: (
+  onContextPressure?: (
     input: ProviderTurnInput,
-    usage: Usage,
-  ) => Promise<{
-    uiMessages: LocalMessage[];
-    summary: string;
-    stats?: LocalCompactionStats;
-  } | null>;
+    pressure: LocalContextPressure,
+  ) => Promise<LocalCompactionResult | null>;
   onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
   onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
 }
@@ -489,177 +476,34 @@ function isOverflowError(error: unknown, contextWindow?: number): boolean {
   return isContextWindowOverflowError(error);
 }
 
-// Letta Code addition with no Pi analog. Pi compacts reactively on clean,
-// classifiable provider overflow errors (`isContextOverflow`, including
-// Anthropic 413 `request_too_large`). But oversized payloads frequently kill
-// the transport from a local device before any classifiable response arrives
-// ("Connection error.", SSE header timeouts), which the retry classifier
-// treats as transient — retrying the same oversized payload forever. Pi has
-// the same gap (earendil-works/pi #2810, #4642, #5369: "permanently bricking
-// sessions"). When a retryable transport failure occurs and the payload is
-// measurably oversized, classify it as context overflow so it enters the same
-// compaction path instead of the retry loop. This only ever runs after a real
-// provider failure; it never preemptively blocks a request.
-function isOversizedPayloadTransportFailure(input: ProviderTurnInput): boolean {
-  const requestBytes = estimateProviderRequestBytes(input);
-  const requestByteLimit = localProviderRequestByteLimit();
-  return requestBytes !== undefined && requestBytes > requestByteLimit;
-}
-
-interface ImageElisionCandidate {
-  messageIndex: number;
-  blockIndex: number;
-  mimeType?: string;
-  bytes: number;
-}
-
-interface ImagePayloadElision {
-  input: ProviderTurnInput;
-  beforeBytes: number;
-  afterBytes: number;
-  requestByteLimit: number;
-  requestByteTarget: number;
-  elidedImages: number;
-  elidedBytes: number;
-}
-
-function imagePayloadBytes(data: unknown): number {
-  return typeof data === "string" ? data.length : 0;
-}
-
-function imageElisionPlaceholder(mimeType: string | undefined, bytes: number) {
-  const mb = (bytes / 1_000_000).toFixed(1);
-  return `[Image omitted from this provider retry to reduce local request size: ${
-    mimeType ?? "image"
-  }, ~${mb}MB. The original image remains stored in conversation history.]`;
-}
-
-function imageElisionCandidates(
-  messages: readonly LocalMessage[],
-): ImageElisionCandidate[] {
-  const candidates: ImageElisionCandidate[] = [];
-  messages.forEach((message, messageIndex) => {
-    if (message.role !== "user" && message.role !== "toolResult") return;
-    if (!Array.isArray(message.content)) return;
-    message.content.forEach((block, blockIndex) => {
-      if (block.type !== "image") return;
-      const bytes = imagePayloadBytes(block.data);
-      if (bytes <= 0) return;
-      candidates.push({
-        messageIndex,
-        blockIndex,
-        mimeType: block.mimeType,
-        bytes,
-      });
-    });
-  });
-  // Prefer removing older images first; within a single message, remove larger
-  // blobs first. If the request is still too large, this naturally proceeds to
-  // newer images as needed.
-  return candidates.sort(
-    (a, b) =>
-      a.messageIndex - b.messageIndex ||
-      b.bytes - a.bytes ||
-      a.blockIndex - b.blockIndex,
-  );
-}
-
-function elideImagePayload(
-  messages: readonly LocalMessage[],
-  candidate: ImageElisionCandidate,
-): LocalMessage[] {
-  const message = messages[candidate.messageIndex];
-  if (!message) return [...messages];
-  if (message.role !== "user" && message.role !== "toolResult") {
-    return [...messages];
-  }
-  if (!Array.isArray(message.content)) return [...messages];
-  const block = message.content[candidate.blockIndex];
-  if (block?.type !== "image") return [...messages];
-
-  const content = [...message.content];
-  content[candidate.blockIndex] = {
-    type: "text",
-    text: imageElisionPlaceholder(candidate.mimeType, candidate.bytes),
-  };
-  const next = [...messages];
-  next[candidate.messageIndex] = { ...message, content } as LocalMessage;
-  return next;
-}
-
-function elideImagePayloadsForProviderRetry(
-  input: ProviderTurnInput,
-  options: { allowUnderLimit?: boolean } = {},
-): ImagePayloadElision | null {
-  const beforeBytes = estimateProviderRequestBytes(input);
-  const requestByteLimit = localProviderRequestByteLimit();
-  if (
-    beforeBytes === undefined ||
-    (!options.allowUnderLimit && beforeBytes <= requestByteLimit)
-  ) {
-    return null;
-  }
-  const requestByteTarget = options.allowUnderLimit
-    ? Math.min(
-        localProviderRequestByteTarget(requestByteLimit),
-        Math.floor(beforeBytes * 0.75),
-      )
-    : localProviderRequestByteTarget(requestByteLimit);
-
-  const candidates = imageElisionCandidates(input.uiMessages);
-  if (candidates.length === 0) return null;
-
-  let uiMessages = input.uiMessages;
-  let afterBytes = beforeBytes;
-  let elidedImages = 0;
-  let elidedBytes = 0;
-  for (const candidate of candidates) {
-    if (afterBytes <= requestByteTarget) break;
-    uiMessages = elideImagePayload(uiMessages, candidate);
-    elidedImages += 1;
-    elidedBytes += candidate.bytes;
-    afterBytes =
-      estimateProviderRequestBytes({ ...input, uiMessages }) ?? afterBytes;
-  }
-
-  if (elidedImages === 0 || afterBytes >= beforeBytes) return null;
-  return {
-    input: { ...input, uiMessages },
-    beforeBytes,
-    afterBytes,
-    requestByteLimit,
-    requestByteTarget,
-    elidedImages,
-    elidedBytes,
-  };
-}
-
-function defaultStream(
-  model: Model<string>,
-  context: Context,
-  options?: SimpleStreamOptions & Record<string, unknown>,
-) {
-  if (model.api === "bedrock-converse-stream") {
-    return stream(model, context, options);
-  }
-  return streamSimple(model, context, options);
-}
-
 export class PiStreamAdapter implements ProviderStreamAdapter {
   private readonly runStream: PiStreamFunction;
   private readonly abortSignal?: AbortSignal;
   private readonly localProviderAuthStorageDir?: string;
+  private readonly modelsRuntime: LocalPiModelsRuntime;
   private readonly onContextWindowOverflow?: PiStreamAdapterOptions["onContextWindowOverflow"];
-  private readonly onContextUsage?: PiStreamAdapterOptions["onContextUsage"];
+  private readonly onContextPressure?: PiStreamAdapterOptions["onContextPressure"];
   private readonly onLlmStart?: PiStreamAdapterOptions["onLlmStart"];
   private readonly onLlmEnd?: PiStreamAdapterOptions["onLlmEnd"];
 
   constructor(options: PiStreamAdapterOptions = {}) {
-    this.runStream = options.stream ?? defaultStream;
+    this.modelsRuntime =
+      options.modelsRuntime ??
+      new LocalPiModelsRuntime({
+        storageDir: options.localProviderAuthStorageDir,
+      });
+    // Stream dispatch goes through the pi-ai Models runtime so the provider
+    // that published the model owns the request; no global compat dispatch.
+    this.runStream =
+      options.stream ??
+      ((model, context, streamOptions) =>
+        model.api === "bedrock-converse-stream"
+          ? this.modelsRuntime.stream(model, context, streamOptions as never)
+          : this.modelsRuntime.streamSimple(model, context, streamOptions));
     this.abortSignal = options.abortSignal;
     this.localProviderAuthStorageDir = options.localProviderAuthStorageDir;
     this.onContextWindowOverflow = options.onContextWindowOverflow;
-    this.onContextUsage = options.onContextUsage;
+    this.onContextPressure = options.onContextPressure;
     this.onLlmStart = options.onLlmStart;
     this.onLlmEnd = options.onLlmEnd;
   }
@@ -681,6 +525,44 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     } as never);
   }
 
+  private async compactBeforeProviderCall(
+    input: ProviderTurnInput,
+  ): Promise<LocalCompactionResult | null> {
+    if (!this.onContextPressure) return null;
+
+    const contextTokens = estimateProviderContextTokens(input);
+    if (contextTokens === undefined) return null;
+
+    // Resolve through the same per-backend Models runtime as streamOnce. The
+    // provider-published Model remains the source of truth for contextWindow;
+    // Letta owns only the harness policy deciding when to compact around it.
+    const localModel = await resolveAvailableLocalModelForTurn({
+      model: input.agent.model,
+      modelSettings: input.agent.model_settings,
+      storageDir: this.localProviderAuthStorageDir,
+      modelsRuntime: this.modelsRuntime,
+    });
+    const resolved = await resolvePiModelForAgent(
+      localModel.model,
+      localModel.modelSettings,
+      {
+        localProviderAuthStorageDir: this.localProviderAuthStorageDir,
+        modelsRuntime: this.modelsRuntime,
+      },
+    );
+    const contextWindow = resolved.model.contextWindow;
+    if (!shouldCompactForContextPressure({ contextTokens, contextWindow })) {
+      return null;
+    }
+
+    return this.onContextPressure(input, {
+      contextTokens,
+      contextWindow,
+      phase: "preflight",
+      source: "estimate",
+    });
+  }
+
   private async *streamOnce(
     input: ProviderTurnInput,
   ): AsyncIterable<ProviderStreamEvent> {
@@ -689,11 +571,15 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       model: input.agent.model,
       modelSettings: input.agent.model_settings,
       storageDir: this.localProviderAuthStorageDir,
+      modelsRuntime: this.modelsRuntime,
     });
     const resolved = await resolvePiModelForAgent(
       localModel.model,
       localModel.modelSettings,
-      { localProviderAuthStorageDir: this.localProviderAuthStorageDir },
+      {
+        localProviderAuthStorageDir: this.localProviderAuthStorageDir,
+        modelsRuntime: this.modelsRuntime,
+      },
     );
     const context: Context = {
       systemPrompt: input.systemPrompt ?? input.agent.system,
@@ -790,6 +676,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       let streamError: unknown;
       let finalMessage: AssistantMessage | undefined;
+      let finalLocalMessage: LocalAssistantMessage | undefined;
       for await (const part of result) {
         if (part.type === "error") {
           const error = new PiProviderError(part.error);
@@ -803,9 +690,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         }
         if (part.type === "done") {
           finalMessage = part.message;
-          yield providerLocalMessage(
-            toLocalAssistantMessage(part.message, input),
-          );
+          finalLocalMessage = toLocalAssistantMessage(part.message, input);
+          yield providerLocalMessage(finalLocalMessage);
         }
         yield providerStreamPart(part);
       }
@@ -832,8 +718,31 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ) {
         throw new PiProviderError(finalMessage);
       }
-      if (this.onContextUsage) {
-        const compaction = await this.onContextUsage(input, finalMessage.usage);
+      if (this.onContextPressure) {
+        const usageContextTokens = contextTokensFromUsage(finalMessage.usage);
+        const contextTokens =
+          usageContextTokens ??
+          estimateProviderContextTokens({
+            ...input,
+            // Provider usage includes the completed assistant response. Match
+            // that scope when we fall back to estimation; using the original
+            // pre-response input here would postpone compaction by one turn.
+            uiMessages: [
+              ...input.uiMessages,
+              finalLocalMessage ?? toLocalAssistantMessage(finalMessage, input),
+            ],
+          });
+        const contextWindow = resolved.model.contextWindow;
+        const compaction =
+          shouldCompactForContextPressure({ contextTokens, contextWindow }) &&
+          contextTokens !== undefined
+            ? await this.onContextPressure(input, {
+                contextTokens,
+                contextWindow,
+                phase: "post_turn",
+                source: usageContextTokens === undefined ? "estimate" : "usage",
+              })
+            : null;
         if (compaction) {
           yield* this.emitCompactionChunks(compaction, "context_window_limit");
         }
@@ -855,10 +764,25 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
   async *stream(input: ProviderTurnInput): AsyncIterable<ProviderStreamEvent> {
     let activeInput = input;
+    let preflightCompactionChecked = false;
     let contextOverflowCompactions = 0;
     let transientRetries = 0;
 
     while (true) {
+      if (!preflightCompactionChecked) {
+        // Check once per turn. If compaction still cannot make the request fit,
+        // the provider overflow path remains the bounded recovery mechanism.
+        // Reclassifying the eventual output limit itself as overflow would
+        // recreate the behavior deliberately removed in #3355.
+        preflightCompactionChecked = true;
+        const compaction = await this.compactBeforeProviderCall(activeInput);
+        if (compaction) {
+          activeInput = { ...activeInput, uiMessages: compaction.uiMessages };
+          yield* this.emitCompactionChunks(compaction, "context_window_limit");
+          continue;
+        }
+      }
+
       let emittedModelOutput = false;
       try {
         for await (const event of this.streamOnce(activeInput)) {

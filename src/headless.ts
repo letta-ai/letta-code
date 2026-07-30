@@ -121,6 +121,7 @@ import {
   emitLocalToolReturns,
 } from "./headless-tool-events";
 import { computeDiffPreviews } from "./helpers/diff-preview";
+import { closeClientMcpServers, replaceClientMcpServers } from "./mcp-runtime";
 import { disableModsForProcess, shouldDisableMods } from "./mods/disable";
 import type { ModAdapter } from "./mods/mod-adapter";
 import { getTurnStartCancel } from "./mods/turn-start-cancel";
@@ -144,7 +145,10 @@ import {
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
 import { writeWireMessage, writeWireMessageAsync } from "./stream-json-writer";
-import { isInteractiveApprovalTool } from "./tools/interactive-policy";
+import {
+  INTERACTIVE_USER_INPUT_TOOL_NAMES,
+  isInteractiveApprovalTool,
+} from "./tools/interactive-policy";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -462,7 +466,7 @@ async function prepareHeadlessToolExecutionContext(params: {
     conversationId: params.conversationId,
     overrideModel: params.overrideModel,
     workingDirectory: getCurrentWorkingDirectory(),
-    exclude: ["AskUserQuestion"],
+    exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES],
     cachedAgent: params.cachedAgent,
     modContext: params.modContext,
     modEvents: params.modEvents,
@@ -662,13 +666,11 @@ async function sendScopedApprovalMessages(params: {
 async function flushAndExit(code: number): Promise<never> {
   const flushWritable = (stream: NodeJS.WriteStream): Promise<void> =>
     new Promise((resolve) => {
-      if (stream.destroyed || stream.writableEnded) {
-        resolve();
-        return;
-      }
+      if (stream.destroyed || stream.writableEnded) return resolve();
       stream.write("", () => resolve());
     });
 
+  await closeClientMcpServers();
   await Promise.allSettled([
     flushWritable(process.stdout),
     flushWritable(process.stderr),
@@ -1559,21 +1561,21 @@ export async function handleHeadlessCommand(
       agent = defaultAgent;
     }
   }
-
-  // All paths should have resolved to an agent by now
   if (!agent) {
     console.error("No agent found. Use --new-agent to create a new agent.");
     process.exit(1);
   }
   markMilestone("HEADLESS_AGENT_RESOLVED");
   telemetry.setCurrentAgentId(agent.id);
+  await replaceClientMcpServers(
+    agent.id,
+    settingsManager.getMcpServers(agent.id),
+    { stderr: "pipe" },
+  );
 
-  // Check if we're resuming an existing agent (not creating a new one)
   const isResumingAgent = !!(specifiedAgentId || (!forceNew && !fromAfFile));
+  // Refresh presets before applying optional model/system-prompt overrides.
 
-  // If resuming, always refresh model settings from presets to keep
-  // preset-derived fields in sync, then apply optional command-line
-  // overrides (model/system prompt).
   if (isResumingAgent) {
     if (model) {
       const modelHandle = resolveModel(model);
@@ -3742,7 +3744,6 @@ async function runBidirectionalMode(
       triggerSource,
       reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
-      systemPrompt: agent.system ?? undefined,
       recompileByConversation: systemPromptRecompileByConversation,
       recompileQueuedByConversation: queuedSystemPromptRecompileByConversation,
     });

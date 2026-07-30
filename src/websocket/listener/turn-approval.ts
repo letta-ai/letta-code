@@ -32,6 +32,7 @@ import {
   buildApprovalSuggestionPayload,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
+import { TO_SUBSCRIBERS } from "./connection";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import {
   createToolExecutionOutputEmitter,
@@ -43,6 +44,7 @@ import {
 } from "./interrupts";
 import {
   emitDequeuedUserMessage,
+  emitProtocolV2Message,
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
 import type { ProviderFallbackState } from "./provider-fallback";
@@ -64,6 +66,13 @@ import {
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime } from "./types";
+
+type ApprovalTransportOpenResult = "open" | "interrupted";
+
+type WaitForApprovalTransportOpen = (
+  socket: ListenerTransport,
+  shouldInterrupt: () => boolean,
+) => Promise<ApprovalTransportOpenResult>;
 
 type Decision =
   | {
@@ -140,6 +149,29 @@ export function resolveChannelApprovalSource(
   return [...sourcesByScope.values()].at(-1) ?? null;
 }
 
+const APPROVAL_TRANSPORT_REOPEN_POLL_MS = 50;
+
+async function waitForApprovalTransportOpen(
+  socket: ListenerTransport,
+  shouldInterrupt: () => boolean,
+): Promise<ApprovalTransportOpenResult> {
+  if (isListenerTransportOpen(socket)) {
+    return "open";
+  }
+
+  while (!shouldInterrupt()) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, APPROVAL_TRANSPORT_REOPEN_POLL_MS),
+    );
+
+    if (isListenerTransportOpen(socket)) {
+      return "open";
+    }
+  }
+
+  return "interrupted";
+}
+
 export async function handleApprovalStop(params: {
   approvals: Array<{
     toolCallId: string;
@@ -167,6 +199,8 @@ export async function handleApprovalStop(params: {
     classifyApprovals?: typeof classifyApprovalsWithSuggestions;
     executeApprovalBatch?: typeof executeApprovalBatch;
     ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
+    sendApprovalContinuation?: typeof sendApprovalContinuationWithRetry;
+    waitForApprovalTransportOpen?: WaitForApprovalTransportOpen;
   };
 }): Promise<ApprovalBranchResult> {
   const {
@@ -194,6 +228,10 @@ export async function handleApprovalStop(params: {
     dependencies?.executeApprovalBatch ?? executeApprovalBatch;
   const ensureSecretsHydrated =
     dependencies?.ensureSecretsHydrated ?? ensureSecretsHydratedForAgent;
+  const sendApprovalContinuation =
+    dependencies?.sendApprovalContinuation ?? sendApprovalContinuationWithRetry;
+  const waitForTransportOpen =
+    dependencies?.waitForApprovalTransportOpen ?? waitForApprovalTransportOpen;
 
   if (approvals.length === 0) {
     return {
@@ -422,6 +460,23 @@ export async function handleApprovalStop(params: {
     (decision): decision is Extract<Decision, { type: "approve" }> =>
       decision.type === "approve",
   );
+  const executionRunId =
+    runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
+  let persistedExecutionResults: ApprovalResult[];
+
+  if (approvedDecisions.length > 0 && !isListenerTransportOpen(socket)) {
+    const transportOpenResult = await waitForTransportOpen(
+      socket,
+      shouldInterrupt,
+    );
+    if (transportOpenResult === "interrupted") {
+      return interruptTermination();
+    }
+  }
+
+  if (shouldInterrupt()) {
+    return interruptTermination();
+  }
   lastExecutingToolCallIds = approvedDecisions.map(
     (decision) => decision.approval.toolCallId,
   );
@@ -437,8 +492,6 @@ export async function handleApprovalStop(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   });
-  const executionRunId =
-    runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
   emitToolExecutionStartedEvents(socket, runtime, {
     toolCalls: approvedDecisions.map((decision) => ({
       toolCallId: decision.approval.toolCallId,
@@ -467,21 +520,24 @@ export async function handleApprovalStop(params: {
   // Broadcast new file content to web clients when a file-mutating tool
   // (Edit, Write, MultiEdit) writes to disk, so all windows update immediately.
   const onFileWrite = (filePath: string, content: string) => {
-    if (
-      runtime.turnLifecycle.isCurrent(turnLease) &&
-      isListenerTransportOpen(socket)
-    ) {
-      socket.send(
-        JSON.stringify({
-          type: "file_ops",
-          path: filePath,
-          cg_entries: [],
-          ops: [],
-          source: "agent",
-          document_content: content,
-        }),
-      );
-    }
+    if (!runtime.turnLifecycle.isCurrent(turnLease)) return;
+    emitProtocolV2Message(
+      socket,
+      runtime,
+      {
+        type: "file_ops",
+        path: filePath,
+        cg_entries: [],
+        ops: [],
+        source: "agent",
+        document_content: content,
+      } as never,
+      {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      },
+      TO_SUBSCRIBERS,
+    );
   };
 
   let executionResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
@@ -527,7 +583,7 @@ export async function handleApprovalStop(params: {
   if (!runtime.turnLifecycle.isCurrent(turnLease)) {
     return interruptTermination();
   }
-  const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
+  persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
     runtime,
     executionResults,
     lastExecutingToolCallIds,
@@ -598,7 +654,7 @@ export async function handleApprovalStop(params: {
       sendOptions.imageFailureModesByMessageOtid,
       nextTurnInput.imageFailureModesByMessageOtid,
     );
-    sendResult = await sendApprovalContinuationWithRetry(
+    sendResult = await sendApprovalContinuation(
       conversationId,
       nextInputWithSkillContent,
       {

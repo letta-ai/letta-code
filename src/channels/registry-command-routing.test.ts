@@ -315,7 +315,7 @@ describe("ChannelRegistry command routing", () => {
     expect(replies[0]?.text).toContain("Conversation: conv-status.");
   });
 
-  test("/pause and /resume update the current route without agent delivery", async () => {
+  test("Telegram private topic commands use the root direct route", async () => {
     addRoute("telegram", {
       accountId: "acct-telegram",
       chatId: "123",
@@ -331,6 +331,7 @@ describe("ChannelRegistry command routing", () => {
       chatId: string;
       text: string;
       replyToMessageId?: string;
+      threadId?: string | null;
     }> = [];
     const registry = new ChannelRegistry();
     const delivered: unknown[] = [];
@@ -350,6 +351,7 @@ describe("ChannelRegistry command routing", () => {
           chatId,
           text,
           replyToMessageId: options?.replyToMessageId,
+          threadId: options?.threadId,
         });
       },
       onMessage: undefined,
@@ -365,6 +367,7 @@ describe("ChannelRegistry command routing", () => {
       text: "/pause",
       timestamp: Date.now(),
       messageId: "77",
+      threadId: "175380",
       chatType: "direct",
     });
 
@@ -372,6 +375,7 @@ describe("ChannelRegistry command routing", () => {
     expect(replies.at(-1)).toMatchObject({
       chatId: "123",
       replyToMessageId: "77",
+      threadId: "175380",
     });
     expect(replies.at(-1)?.text).toContain("paused agent routing");
     expect(getRoute("telegram", "123", "acct-telegram")).toBeNull();
@@ -385,6 +389,7 @@ describe("ChannelRegistry command routing", () => {
       text: "/resume",
       timestamp: Date.now(),
       messageId: "78",
+      threadId: "175380",
       chatType: "direct",
     });
 
@@ -392,10 +397,34 @@ describe("ChannelRegistry command routing", () => {
     expect(replies.at(-1)).toMatchObject({
       chatId: "123",
       replyToMessageId: "78",
+      threadId: "175380",
     });
     expect(replies.at(-1)?.text).toContain("resumed agent routing");
     expect(getRoute("telegram", "123", "acct-telegram")?.conversationId).toBe(
       "conv-1",
+    );
+
+    await adapter?.onMessage?.({
+      channel: "telegram",
+      accountId: "acct-telegram",
+      chatId: "123",
+      senderId: "456",
+      senderName: "Alice",
+      text: "/status",
+      timestamp: Date.now(),
+      messageId: "79",
+      threadId: "175380",
+      chatType: "direct",
+    });
+
+    expect(delivered).toHaveLength(0);
+    expect(replies.at(-1)).toMatchObject({
+      chatId: "123",
+      replyToMessageId: "79",
+      threadId: "175380",
+    });
+    expect(replies.at(-1)?.text).toContain(
+      "Route: Connected to a Letta agent conversation.",
     );
   });
 

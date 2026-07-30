@@ -3,6 +3,7 @@ import {
   CHANNEL_LIFECYCLE_APPROVAL_PENDING_MESSAGE,
   CHANNEL_LIFECYCLE_CONVERSATION_BUSY_TITLE,
   CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE,
+  CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE,
   extractChannelLifecycleRunId,
   formatChannelLifecycleErrorMessage,
   normalizeChannelLifecycleErrorMessage,
@@ -22,6 +23,42 @@ describe("normalizeChannelLifecycleErrorMessage", () => {
     expect(
       normalizeChannelLifecycleErrorMessage("Unexpected stop reason: error"),
     ).toBe(CHANNEL_LIFECYCLE_FALLBACK_ERROR_MESSAGE);
+  });
+
+  test.each([
+    ["raw Postgres lock timeout", "canceling statement due to lock timeout"],
+    [
+      "SQLAlchemy psycopg lock timeout",
+      [
+        "sqlalchemy.exc.OperationalError: (psycopg.errors.LockNotAvailable) canceling statement due to lock timeout",
+        "[SQL: UPDATE steps SET status=$1 WHERE steps.id = $2]",
+        "(Background on this error at: https://sqlalche.me/e/20/e3q8)",
+      ].join("\n"),
+    ],
+    [
+      "SQLSTATE 55P03 context",
+      'psycopg.errors.LockNotAvailable: could not obtain lock on row in relation "steps" SQLSTATE: 55P03',
+    ],
+  ])(
+    "replaces %s details with transient retry guidance",
+    (_label, rawError) => {
+      const message = normalizeChannelLifecycleErrorMessage(rawError);
+
+      expect(message).toBe(CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE);
+      expect(message).not.toContain("database");
+      expect(message).not.toContain("lock");
+      expect(message).not.toContain("55P03");
+      expect(message).not.toContain("canceling statement");
+      expect(message).not.toContain("steps");
+    },
+  );
+
+  test("keeps ordinary non-Postgres lock timeout details", () => {
+    expect(
+      normalizeChannelLifecycleErrorMessage(
+        "File lock timeout: /tmp/local.lock",
+      ),
+    ).toBe("File lock timeout: /tmp/local.lock");
   });
 
   test("replaces stuck approval conflicts with channel-safe guidance", () => {
@@ -93,6 +130,22 @@ describe("formatChannelLifecycleErrorMessage", () => {
         { codeBlock: true },
       ),
     ).not.toContain("```");
+  });
+
+  test("formats transient guidance without database internals", () => {
+    const message = formatChannelLifecycleErrorMessage(
+      "sqlalchemy.exc.OperationalError: SQLSTATE: 55P03 while updating steps",
+      { codeBlock: true, runId: "run-47960fe9" },
+    );
+
+    expect(message).toBe(
+      "Turn failed:\n" +
+        `${CHANNEL_LIFECYCLE_TRANSIENT_ERROR_MESSAGE}\n\n` +
+        "Run ID: run-47960fe9",
+    );
+    expect(message).not.toContain("```");
+    expect(message).not.toContain("55P03");
+    expect(message).not.toContain("steps");
   });
 
   test("appends explicit run IDs to generic channel errors", () => {

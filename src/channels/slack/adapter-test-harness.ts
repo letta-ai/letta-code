@@ -208,6 +208,17 @@ export class FakeSlackWriteClient {
   readonly assistant = {
     threads: {
       setStatus: mock(async (args: Record<string, unknown>) => {
+        const loadingMessages = args.loading_messages;
+        if (
+          Array.isArray(loadingMessages) &&
+          loadingMessages.some(
+            (message) => typeof message === "string" && message.length > 50,
+          )
+        ) {
+          throw new Error(
+            "invalid_arguments: loading_messages entries must be 50 characters or fewer",
+          );
+        }
         return FakeSlackWriteClient.setStatusHandler
           ? FakeSlackWriteClient.setStatusHandler(args)
           : { ok: true };

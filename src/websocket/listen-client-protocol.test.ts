@@ -757,13 +757,13 @@ describe("listen-client parseServerMessage", () => {
           conversation: { id: conversation.id },
           created: { agent: false, conversation: false },
         });
-
         const prepared = await prepareToolExecutionContextForModel(
           "anthropic/claude-sonnet-4",
           {
             clientToolAllowlist: ["RemoteLookup"],
             externalToolScopeIds: ["scope-1"],
             runtimeContext: {
+              connectionId: "test-connection",
               agentId: agent.id,
               conversationId: conversation.id,
             },
@@ -4049,7 +4049,6 @@ describe("listen-client v2 status builders", () => {
   });
 
   test("buildDeviceStatus includes only active bash and task background processes", () => {
-    const runtime = __listenClientTestUtils.createRuntime();
     backgroundProcesses.clear();
     backgroundTasks.clear();
 
@@ -4083,7 +4082,7 @@ describe("listen-client v2 status builders", () => {
         outputFile: "/tmp/task_2.log",
       });
 
-      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(runtime);
+      const deviceStatus = __listenClientTestUtils.buildDeviceStatus(null);
       expect(deviceStatus.background_processes).toEqual([
         {
           process_id: "task_1",
@@ -5288,7 +5287,7 @@ describe("listen-client capability-gated approval flow", () => {
       "default",
     );
     const scheduleQueuePumpMock = mock(() => {});
-    const cancelConversationMock = mock(async () => {});
+    const cancelRunMock = mock(async () => {});
 
     beginTestTurn(runtime, {
       initialStatus: "PROCESSING_API_RESPONSE",
@@ -5313,7 +5312,7 @@ describe("listen-client capability-gated approval flow", () => {
       },
       {
         scheduleQueuePump: scheduleQueuePumpMock,
-        cancelConversation: cancelConversationMock,
+        cancelRun: cancelRunMock,
       },
     );
 
@@ -5330,7 +5329,7 @@ describe("listen-client capability-gated approval flow", () => {
       expect.objectContaining({ connectionId: "conn-1" }),
       expect.any(Function),
     );
-    expect(cancelConversationMock).toHaveBeenCalledWith("agent-1", "default");
+    expect(cancelRunMock).toHaveBeenCalledWith("agent-1", "run-active");
 
     const outbound = socket.sentPayloads.map((payload) => JSON.parse(payload));
     const interruptedStatus = outbound.find(
@@ -5397,7 +5396,6 @@ describe("listen-client capability-gated approval flow", () => {
       requestTestApproval(runtime, socket, turnLease, "perm-late-after-abort"),
     ).rejects.toThrow("Cancelled by user");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
-    expect(runtime.listener.approvalRuntimeKeyByRequestId.size).toBe(0);
 
     __listenClientTestUtils.setActiveRuntime(null);
   });

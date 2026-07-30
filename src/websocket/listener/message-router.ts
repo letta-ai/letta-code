@@ -20,6 +20,7 @@ import {
 } from "@/websocket/terminal-handler";
 import { handleExecuteCommand } from "./commands";
 import { handleAgentConversationManagementProtocolCommand } from "./commands/agents-conversations";
+import { handleAppServerInfoCommand } from "./commands/app-server-info";
 import {
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
@@ -34,6 +35,7 @@ import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
+import { subscribeListenerConnection } from "./connection";
 import { getBootWorkingDirectory, getExportedCwdMap } from "./cwd";
 import { handleExternalToolCallResponseCommand } from "./external-tools";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
@@ -59,6 +61,7 @@ import { handleIncomingMessage } from "./turn";
 import type {
   ConversationRuntime,
   IncomingMessage,
+  ListenerConnectionId,
   ListenerRuntime,
   ProcessQueuedTurn,
   StartListenerOptions,
@@ -103,6 +106,7 @@ export type WireChannelIngress = (
 type MessageRouterParams = {
   runtime: ListenerRuntime;
   socket: WebSocket;
+  connectionId?: ListenerConnectionId;
   opts: StartListenerOptions;
   processQueuedTurn: ProcessQueuedTurn;
   fileCommandSession: FileCommandSession;
@@ -126,6 +130,7 @@ type MessageRouterParams = {
         conversation_id?: string | null;
       };
       response: ApprovalResponseBody;
+      connectionId: ListenerConnectionId;
       socket: ListenerTransport;
       opts: {
         onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -138,6 +143,7 @@ type MessageRouterParams = {
     listener: ListenerRuntime,
     params: {
       command: ChangeDeviceStateCommand;
+      connectionId: ListenerConnectionId;
       socket: WebSocket;
       opts: {
         onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -150,6 +156,7 @@ type MessageRouterParams = {
     listener: ListenerRuntime,
     params: {
       command: AbortMessageCommand;
+      connectionId: ListenerConnectionId;
       socket: WebSocket;
       opts: {
         onStatusChange?: StartListenerOptions["onStatusChange"];
@@ -208,6 +215,11 @@ function summarizeInputPayload(payload: unknown): string[] {
       fields,
       "external_tool_scope_ids",
       payload.external_tool_scope_ids,
+    );
+    pushField(
+      fields,
+      "exclude_interactive_tools",
+      payload.exclude_interactive_tools,
     );
   } else if (payload.kind === "approval_response") {
     pushField(fields, "request_id", payload.request_id);
@@ -358,6 +370,7 @@ export function createListenerMessageHandler(
   const {
     runtime,
     socket,
+    connectionId: explicitConnectionId,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -374,6 +387,7 @@ export function createListenerMessageHandler(
     wireChannelIngress,
     processIncomingMessage = handleIncomingMessage,
   } = params;
+  const connectionId = explicitConnectionId ?? opts.connectionId;
 
   return async (data: WebSocket.RawData): Promise<void> => {
     const raw = data.toString();
@@ -414,6 +428,10 @@ export function createListenerMessageHandler(
 
       console.log(`[Listen V2] Received ${summarizeV2Command(parsed)}`);
 
+      if (parsedScope) {
+        subscribeListenerConnection(runtime, connectionId, parsedScope);
+      }
+
       if (parsed.type === "__invalid_input") {
         emitLoopErrorNotice(socket, runtime, {
           message: parsed.reason,
@@ -425,9 +443,15 @@ export function createListenerMessageHandler(
         return;
       }
 
+      if (parsed.type === "app_server_info") {
+        handleAppServerInfoCommand(parsed, { socket, safeSocketSend });
+        return;
+      }
+
       if (
         handleRuntimeStartProtocolCommand(parsed, {
           socket,
+          connectionId,
           runtime,
           safeSocketSend,
           runDetachedListenerTask,
@@ -439,7 +463,7 @@ export function createListenerMessageHandler(
       }
 
       if (parsed.type === "external_tool_call_response") {
-        handleExternalToolCallResponseCommand(runtime, parsed);
+        handleExternalToolCallResponseCommand(runtime, connectionId, parsed);
         return;
       }
 
@@ -512,6 +536,7 @@ export function createListenerMessageHandler(
             await handleApprovalResponseInput(runtime, {
               runtime: parsed.runtime,
               response: parsed.payload,
+              connectionId,
               socket,
               opts: {
                 onStatusChange: opts.onStatusChange,
@@ -539,10 +564,12 @@ export function createListenerMessageHandler(
 
         const incoming: IncomingMessage = {
           type: "message",
+          connectionId,
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
           clientToolAllowlist: inputPayload.client_tool_allowlist,
           externalToolScopeIds: inputPayload.external_tool_scope_ids,
+          excludeInteractiveTools: inputPayload.exclude_interactive_tools,
           messages: inputPayload.messages,
         };
         const hasApprovalPayload = incoming.messages.some(
@@ -608,6 +635,7 @@ export function createListenerMessageHandler(
       if (parsed.type === "change_device_state") {
         await handleChangeDeviceStateInput(runtime, {
           command: parsed,
+          connectionId,
           socket,
           opts: {
             onStatusChange: opts.onStatusChange,
@@ -640,6 +668,7 @@ export function createListenerMessageHandler(
         try {
           const aborted = await handleAbortMessageInput(runtime, {
             command: parsed,
+            connectionId,
             socket,
             opts: {
               onStatusChange: opts.onStatusChange,
@@ -898,22 +927,23 @@ export function createListenerMessageHandler(
           parsed,
           socket,
           parsed.cwd ?? getBootWorkingDirectory(runtime),
+          connectionId,
         );
         return;
       }
 
       if (parsed.type === "terminal_input") {
-        handleTerminalInput(parsed);
+        handleTerminalInput(parsed, connectionId);
         return;
       }
 
       if (parsed.type === "terminal_resize") {
-        handleTerminalResize(parsed);
+        handleTerminalResize(parsed, connectionId);
         return;
       }
 
       if (parsed.type === "terminal_kill") {
-        handleTerminalKill(parsed);
+        handleTerminalKill(parsed, connectionId);
       }
     } catch (error) {
       trackListenerError(

@@ -14,17 +14,15 @@
 
 import { getBackend } from "@/backend";
 import type { CronPromptQueueItem, DequeuedBatch } from "@/queue/queue-runtime";
+import { TO_SUBSCRIBERS } from "@/websocket/listener/connection";
 import { ensureConversationQueueRuntime } from "@/websocket/listener/conversation-runtime";
+import { emitProtocolV2Message } from "@/websocket/listener/protocol-outbound";
 import { scheduleQueuePump } from "@/websocket/listener/queue";
 import {
   getActiveRuntime,
   getOrCreateConversationRuntime,
-  safeEmitWsEvent,
 } from "@/websocket/listener/runtime";
-import {
-  isListenerTransportOpen,
-  type ListenerTransport,
-} from "@/websocket/listener/transport";
+import type { ListenerTransport } from "@/websocket/listener/transport";
 import type {
   IncomingMessage,
   StartListenerOptions,
@@ -42,7 +40,7 @@ import {
   updateTask,
   verifySchedulerLease,
 } from "./cron-file";
-import { cronMatchesTime } from "./parse-interval";
+import { cronMatchesTime, isValidCron } from "./parse-interval";
 import {
   type CronPromptTiming,
   formatCronPrompt,
@@ -141,26 +139,25 @@ function emitCronsUpdated(
   task: CronTask,
   conversationId?: string | null,
 ): void {
-  if (!isListenerTransportOpen(socket)) {
-    return;
-  }
-
+  const listener = getActiveRuntime();
+  if (!listener) return;
+  const runtimeScope = {
+    agent_id: task.agent_id,
+    conversation_id: conversationId ?? task.conversation_id ?? "default",
+  };
   const payload = {
-    type: "crons_updated",
+    type: "crons_updated" as const,
     timestamp: Date.now(),
     agent_id: task.agent_id,
-    conversation_id: conversationId ?? task.conversation_id,
+    conversation_id: runtimeScope.conversation_id,
   };
-
-  try {
-    socket.send(JSON.stringify(payload));
-    safeEmitWsEvent("send", "protocol", payload);
-  } catch (err) {
-    console.error(
-      `[Cron] Error sending crons_updated for task ${task.id}:`,
-      err instanceof Error ? err.message : err,
-    );
-  }
+  emitProtocolV2Message(
+    socket,
+    listener,
+    payload,
+    runtimeScope,
+    TO_SUBSCRIBERS,
+  );
 }
 
 // ── Core tick logic ─────────────────────────────────────────────────
@@ -214,6 +211,45 @@ export function shouldFireTask(task: CronTask, now: Date): boolean {
   // Recurring: check if the cron expression matches this minute.
   // Jitter is applied as a setTimeout delay at the call site, not here.
   return cronMatchesTime(task.cron, now, task.timezone);
+}
+
+function getInvalidCronError(cron: string): string {
+  return `Invalid cron expression "${cron}". Delete and recreate this schedule.`;
+}
+
+function hasReportedInvalidCron(task: CronTask): boolean {
+  return (
+    task.last_run_outcome === "failed" &&
+    task.last_run_reason === "invalid_cron" &&
+    task.last_run_error === getInvalidCronError(task.cron)
+  );
+}
+
+/**
+ * Persist a visible failure for legacy recurring tasks that predate current
+ * cron validation. Keep the task active so the user can inspect and replace
+ * it instead of silently dropping it or garbage-collecting its definition.
+ */
+export function handleInvalidRecurringTask(task: CronTask, now: Date): boolean {
+  if (!task.recurring || isValidCron(task.cron)) return false;
+
+  const error = getInvalidCronError(task.cron);
+  if (hasReportedInvalidCron(task)) return true;
+
+  setLastRunOutcome(task.id, {
+    outcome: "failed",
+    reason: "invalid_cron",
+    runAt: now,
+    error,
+  });
+  safeAppendCronRunLogForTask(task, {
+    status: "error",
+    outcome: "failed",
+    reason: "invalid_cron",
+    error,
+    runAtMs: now.getTime(),
+  });
+  return true;
 }
 
 async function fireCronTask(
@@ -395,6 +431,13 @@ export function handleMissedOneShot(task: CronTask, now: Date): boolean {
   return false;
 }
 
+/** Apply scheduler lifecycle checks shared by the WS and TUI tick loops. */
+export function handleTaskPreflight(task: CronTask, now: Date): boolean {
+  return (
+    handleInvalidRecurringTask(task, now) || handleMissedOneShot(task, now)
+  );
+}
+
 export async function runCronTaskNow(taskId: string): Promise<{
   success: boolean;
   found: boolean;
@@ -481,8 +524,16 @@ function tick(
   for (const task of state.cachedTasks) {
     if (task.status !== "active") continue;
 
-    // Handle missed one-shots (skip firing if marked missed)
-    if (handleMissedOneShot(task, matchedAt)) continue;
+    // Older clients could persist expressions that the current cron dialect
+    // rejects. Surface that state once rather than silently never firing.
+    const invalidCronWasReported = hasReportedInvalidCron(task);
+    const invalidCron = task.recurring && !isValidCron(task.cron);
+    if (handleTaskPreflight(task, matchedAt)) {
+      if (invalidCron && !invalidCronWasReported) {
+        emitCronsUpdated(socket, task);
+      }
+      continue;
+    }
 
     // Per-minute dedup
     if (state.firedThisMinute.has(task.id)) continue;

@@ -8,7 +8,7 @@ import { isNonEmptyString } from "./public-utils";
 export const SLACK_ASSISTANT_STARTUP_STATUS = "is thinking...";
 export const SLACK_ASSISTANT_WORKING_STATUS = "is working...";
 
-const SLACK_STATUS_TEXT_MAX = 300;
+const SLACK_LOADING_MESSAGE_MAX = 50;
 
 export function sanitizeSlackStatusText(
   text: string,
@@ -44,7 +44,7 @@ export function resolveSlackConcreteActivity(
   if (event.kind === "command" && isNonEmptyString(event.command)) {
     return sanitizeSlackStatusText(
       formatSlackToolNameForDisplay(event.command),
-      SLACK_STATUS_TEXT_MAX,
+      SLACK_LOADING_MESSAGE_MAX,
     );
   }
   if (
@@ -61,7 +61,7 @@ export function resolveSlackConcreteActivity(
     }
     const sanitized = sanitizeSlackStatusText(
       description,
-      SLACK_STATUS_TEXT_MAX,
+      SLACK_LOADING_MESSAGE_MAX,
     );
     if (sanitized) {
       return sanitized;

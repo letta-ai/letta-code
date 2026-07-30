@@ -1,8 +1,8 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import { getBackend } from "@/backend";
 import {
   handleMcpAdd,
   type McpCommandContext,
+  mcpHelpText,
   setActiveCommandId as setActiveMcpCommandId,
 } from "@/cli/commands/mcp";
 import type { Buffers } from "@/cli/helpers/accumulator";
@@ -51,6 +51,7 @@ export async function handleConnectionCommand(
 
   if (trimmed.startsWith("/mcp")) {
     const mcpCtx: McpCommandContext = {
+      agentId,
       buffersRef,
       refreshDerived,
       setCommandRunning,
@@ -58,17 +59,6 @@ export async function handleConnectionCommand(
 
     const afterMcp = trimmed.slice(4).trim();
     const firstWord = afterMcp.split(/\s+/)[0]?.toLowerCase();
-
-    if (
-      firstWord !== "help" &&
-      !getBackend().capabilities.serverSideToolManagement
-    ) {
-      const cmd = commandRunner.start(msg, "Checking MCP support...");
-      cmd.fail(
-        "MCP server management is not supported by the local backend yet.",
-      );
-      return { submitted: true };
-    }
 
     if (!firstWord) {
       openOverlay(
@@ -93,32 +83,19 @@ export async function handleConnectionCommand(
     }
 
     if (firstWord === "connect") {
-      openOverlay(
-        "mcp-connect",
-        "/mcp connect",
-        "Opening MCP connect flow...",
-        "MCP connect dismissed",
+      const cmd = commandRunner.start(
+        msg,
+        "Checking MCP connection options...",
+      );
+      cmd.fail(
+        "The server-side MCP OAuth flow is deprecated in Letta Code. Use /mcp add to configure a client-local stdio, HTTP, or SSE server.",
       );
       return { submitted: true };
     }
 
     if (firstWord === "help") {
       const cmd = commandRunner.start(msg, "Showing MCP help...");
-      const output = [
-        "/mcp help",
-        "",
-        "Manage MCP servers.",
-        "",
-        "USAGE",
-        "  /mcp              — open MCP server manager",
-        "  /mcp add ...      — add a new server (without OAuth)",
-        "  /mcp connect      — interactive wizard with OAuth support",
-        "  /mcp help         — show this help",
-        "",
-        "EXAMPLES",
-        "  /mcp add --transport http notion https://mcp.notion.com/mcp",
-      ].join("\n");
-      cmd.finish(output, true);
+      cmd.finish(mcpHelpText(), true);
       return { submitted: true };
     }
 

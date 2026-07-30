@@ -88,6 +88,10 @@ async function downloadSlackFile(
 
   const result = await runSlackAttachmentDownloadTask({
     description: `Slack attachment download ${attachmentId} from message ${messageId} in ${request.chatId}`,
+    runtimeScope: {
+      agentId: ctx.route.agentId,
+      conversationId: ctx.route.conversationId,
+    },
     download: (signal) =>
       downloadAttachment.call(ctx.adapter, {
         attachmentId,

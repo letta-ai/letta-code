@@ -1,6 +1,6 @@
 ---
 name: self-configuration
-description: Modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, and local runtime settings. Use when the user asks you to change how you behave or how the harness runs you.
+description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, and local runtime settings. Use when the user asks how this agent or conversation is configured, or asks you to change how you behave or how the harness runs you.
 license: MIT
 ---
 
@@ -48,13 +48,28 @@ If a broken model or prompt prevents the agent from completing a turn, recover o
 
 Local settings, server state, and the current process are different sources of truth. Inspect the layer you intend to change before writing it.
 
-Start with the secret-safe local/runtime report:
+Start with the authenticated, backend-aware active configuration report:
+
+```bash
+letta agents config
+```
+
+With no arguments it uses `AGENT_ID` and `CONVERSATION_ID` from the current session. To inspect an explicit scope:
+
+```bash
+letta agents config --agent "$AGENT_ID"
+letta agents config --conversation "$CONVERSATION_ID"
+```
+
+The conversation form retrieves its parent agent automatically and reports both scopes plus the effective configured model. It works through the active API or local backend; do not read auth files, call REST directly, or decode local persistence paths yourself. A configured router handle such as `letta/auto` does not identify the underlying model selected for one inference.
+
+Use the secret-safe local/runtime report for harness settings, permissions, and backend diagnostics:
 
 ```bash
 python3 <SKILL_DIR>/scripts/show_config.py --cwd "$PWD"
 ```
 
-Before changing server state, read the relevant scopes without printing full system prompts or credentials:
+Before changing server state, the targeted helper can also read either scope without printing full system prompts or credentials:
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
@@ -349,7 +364,7 @@ letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s
 letta connect bedrock --method profile --profile "$AWS_PROFILE" --region "$AWS_REGION"
 ```
 
-Before connecting, verify whether the target agent/backend is API/Constellation or local. A provider saved to the wrong backend does not configure the current agent.
+Before connecting, verify whether the target agent/backend is Letta Cloud or local. A provider saved to the wrong backend does not configure the current agent.
 
 Never print provider keys. Shell expansion such as `--api-key "$OPENAI_API_KEY"` still puts the resolved secret in process argv, where process listings may expose it. Prefer the command's interactive secret prompt in a trusted TTY. If no safer input path exists, stop for explicit user approval rather than passing a provider secret autonomously. Browser login, device-code confirmation, or account consent also requires human consent; do not claim success before it completes.
 

@@ -1,13 +1,10 @@
 import { createHash } from "node:crypto";
 import {
   existsSync,
-  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   statSync,
-  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -57,6 +54,7 @@ import {
   unregisterModPermission,
   unregisterModPermissionsForOwner,
 } from "@/mods/permission-registry";
+import { ensureRuntimeDependenciesForModCache } from "@/mods/runtime-dependencies";
 import {
   getModToolDefinition,
   type ModToolDefinition,
@@ -109,6 +107,7 @@ export const LEGACY_GLOBAL_EXTENSIONS_DIRECTORY =
 export const MOD_CACHE_DIRECTORY = getModCacheDirectory();
 
 const requireFromRuntime = createRequire(import.meta.url);
+let resolveRuntimePackageDirectory = getRuntimePackageDirectory;
 
 export type LettaModDisposer = () => void;
 
@@ -220,6 +219,7 @@ export interface LoadLocalModsOptions extends ResolveLocalModSourcesOptions {
   generation?: number;
   onChange?: () => void;
   onDiagnostic?: (diagnostic: ModDiagnostic) => void;
+  onRegistryCreated?: (registry: LocalModRegistry) => void;
   registerCapabilitiesGlobally?: boolean;
   reservedToolNames?: Iterable<string>;
 }
@@ -413,54 +413,10 @@ function getRuntimePackageDirectory(packageName: string): string {
   );
 }
 
-function normalizeRuntimeDependencyPath(value: string): string {
-  const normalized = path.normalize(value).replace(/^\\\\\?\\/, "");
-  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-}
-
-function ensureRuntimeDependencySymlink(
-  cacheDirectory: string,
-  packageName: string,
+export function __testOverrideRuntimePackageDirectoryResolver(
+  resolver: ((packageName: string) => string) | null,
 ): void {
-  const nodeModulesDirectory = path.join(cacheDirectory, "node_modules");
-  const linkPath = path.join(nodeModulesDirectory, packageName);
-  const packageDirectory = path.resolve(
-    getRuntimePackageDirectory(packageName),
-  );
-
-  mkdirSync(nodeModulesDirectory, { recursive: true });
-  try {
-    const stats = lstatSync(linkPath);
-    if (!stats.isSymbolicLink()) return;
-
-    const existingTarget = readlinkSync(linkPath);
-    const resolvedTarget = path.resolve(nodeModulesDirectory, existingTarget);
-    if (
-      normalizeRuntimeDependencyPath(resolvedTarget) ===
-      normalizeRuntimeDependencyPath(packageDirectory)
-    ) {
-      return;
-    }
-
-    unlinkSync(linkPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-
-  try {
-    symlinkSync(
-      packageDirectory,
-      linkPath,
-      process.platform === "win32" ? "junction" : "dir",
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-  }
-}
-
-function ensureModCache(cacheDirectory: string): void {
-  mkdirSync(cacheDirectory, { recursive: true });
-  ensureRuntimeDependencySymlink(cacheDirectory, "react");
+  resolveRuntimePackageDirectory = resolver ?? getRuntimePackageDirectory;
 }
 
 function isPathInsideOrEqual(childPath: string, parentPath: string): boolean {
@@ -533,12 +489,6 @@ function createImportableModPath(
 ): string {
   const importCacheDirectory =
     getManagedPackageImportCacheDirectory(modPath, source) ?? cacheDirectory;
-  if (importCacheDirectory === cacheDirectory) {
-    ensureModCache(importCacheDirectory);
-  } else {
-    mkdirSync(importCacheDirectory, { recursive: true });
-  }
-
   const sourceText = readFileSync(modPath, "utf8");
   const hash = createHash("sha256")
     .update(sourceText)
@@ -546,6 +496,16 @@ function createImportableModPath(
     .slice(0, 16);
   const fileExtension = path.extname(modPath);
   const importableSource = prepareModForImport(modPath, sourceText);
+
+  if (importCacheDirectory === cacheDirectory) {
+    ensureRuntimeDependenciesForModCache(
+      importCacheDirectory,
+      importableSource,
+      resolveRuntimePackageDirectory,
+    );
+  } else {
+    mkdirSync(importCacheDirectory, { recursive: true });
+  }
   const baseName = path
     .basename(modPath, fileExtension)
     .replace(/[^a-zA-Z0-9_-]/g, "-");
@@ -1448,6 +1408,7 @@ export async function loadLocalMods(
     capabilities,
     options.registerCapabilitiesGlobally !== false,
   );
+  options.onRegistryCreated?.(registry);
 
   for (const source of sources) {
     for (const diagnostic of source.diagnostics ?? []) {
@@ -1799,6 +1760,13 @@ export function createModEngine(options: CreateModEngineOptions): ModEngine {
     const nextRegistry = await loadLocalMods({
       ...modOptions,
       generation: loadGeneration,
+      onRegistryCreated: (registry) => {
+        loadingRegistry = registry;
+        if (!disposed && loadGeneration === generation) {
+          activeRegistry = registry;
+          publish();
+        }
+      },
       onChange: () => {
         if (!disposed && loadingRegistry && loadGeneration === generation) {
           activeRegistry = loadingRegistry;

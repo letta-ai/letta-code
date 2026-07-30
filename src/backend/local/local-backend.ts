@@ -1,4 +1,3 @@
-import type { Usage } from "@earendil-works/pi-ai";
 import { GIT_MEMORY_ENABLED_TAG } from "@/agent/agent-tags";
 import {
   type InitializeLocalMemoryRepoFile,
@@ -16,23 +15,16 @@ import type {
   ConversationRecompileBody,
 } from "@/backend/backend";
 import { HeadlessBackend } from "@/backend/dev/headless-backend";
-import {
-  DeterministicPongExecutor,
-  type HeadlessTurnExecutor,
-} from "@/backend/dev/headless-turn-executor";
-import {
-  PiStreamAdapter,
-  type PiStreamFunction,
+import type { HeadlessTurnExecutor } from "@/backend/dev/headless-turn-executor";
+import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
+import type {
+  LocalContextPressure,
+  PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
 import type {
   LlmEndInfo,
   LlmStartInfo,
   ProviderTurnInput,
-} from "@/backend/dev/provider-turn-executor";
-import {
-  contextTokensFromUsage,
-  estimateProviderContextTokens,
-  ProviderTurnExecutor,
 } from "@/backend/dev/provider-turn-executor";
 import { isRecord } from "@/utils/type-guards";
 import {
@@ -49,6 +41,10 @@ import {
   summarizeLocalMessagesAll,
   summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
+import {
+  createLocalExecutor,
+  type LocalBackendExecutionMode,
+} from "./local-executor-factory";
 import type { LocalMessage } from "./local-message";
 import {
   listLocalModels,
@@ -72,8 +68,6 @@ import {
   type LocalCompiledSystemPrompt,
 } from "./system-prompt-compilation";
 
-export type LocalBackendExecutionMode = "pi" | "deterministic";
-
 export interface LocalBackendOptions {
   storageDir: string;
   defaultAgentId?: string;
@@ -83,6 +77,7 @@ export interface LocalBackendOptions {
   complete?: LocalCompleteFunction;
   memoryDir?: string;
   memfsEnabled?: boolean;
+  modelsRuntime?: LocalPiModelsRuntime;
 }
 
 /**
@@ -247,43 +242,6 @@ function formatMidConversationMemoryUpdate(
   ].join("\n");
 }
 
-function createLocalExecutor(
-  options: LocalBackendOptions,
-  onContextWindowOverflow?: (
-    input: ProviderTurnInput,
-    error: unknown,
-  ) => Promise<{
-    uiMessages: LocalMessage[];
-    summary: string;
-    stats?: LocalCompactionStats;
-  } | null>,
-  onContextUsage?: (
-    input: ProviderTurnInput,
-    usage: Usage,
-  ) => Promise<{
-    uiMessages: LocalMessage[];
-    summary: string;
-    stats?: LocalCompactionStats;
-  } | null>,
-  onLlmStart?: (info: LlmStartInfo) => void | Promise<void>,
-  onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>,
-): HeadlessTurnExecutor {
-  if (options.executor) return options.executor;
-  if (options.executionMode === "deterministic") {
-    return new DeterministicPongExecutor();
-  }
-  return new ProviderTurnExecutor(
-    new PiStreamAdapter({
-      stream: options.stream,
-      localProviderAuthStorageDir: options.storageDir,
-      onContextWindowOverflow,
-      onContextUsage,
-      onLlmStart,
-      onLlmEnd,
-    }),
-  );
-}
-
 export class LocalBackend extends HeadlessBackend {
   override readonly capabilities: BackendCapabilities = {
     remoteMemfs: false,
@@ -298,13 +256,18 @@ export class LocalBackend extends HeadlessBackend {
 
   private readonly memoryDir?: string;
   private readonly storageDir: string;
+  private readonly piModelsRuntime: LocalPiModelsRuntime;
   private readonly complete?: LocalCompleteFunction;
   private readonly memfsEnabledOverride?: boolean;
   private modEventHooks?: LocalBackendModEventHooks;
 
   constructor(options: LocalBackendOptions) {
     const localBackendRef: { current?: LocalBackend } = {};
-    const modelConfig = resolveLocalModelConfig(options.storageDir);
+    // One runtime per backend: listing/turns/compaction share Models state.
+    const runtime =
+      options.modelsRuntime ??
+      new LocalPiModelsRuntime({ storageDir: options.storageDir });
+    const modelConfig = resolveLocalModelConfig(options.storageDir, runtime);
     const storeOptions: LocalStoreOptions = {
       storageDir: options.storageDir,
       seedDefaultAgent: false,
@@ -313,7 +276,8 @@ export class LocalBackend extends HeadlessBackend {
       defaultAgentName: "Letta Code",
       defaultAgentModel: modelConfig.handle,
       defaultAgentModelSettings: modelConfig.modelSettings,
-      modelSettingsForModel: localModelSettingsForHandle,
+      modelSettingsForModel: (handle) =>
+        localModelSettingsForHandle(handle, runtime),
       conversationIdPrefix: "local-conv-",
       storedMessageIdPrefix: "letta-msg-",
       localMessageIdPrefix: "ui-msg-",
@@ -322,11 +286,12 @@ export class LocalBackend extends HeadlessBackend {
       options.defaultAgentId ?? "agent-local-default",
       createLocalExecutor(
         options,
+        runtime,
         (input, error) =>
           localBackendRef.current?.compactAfterContextOverflow(input, error) ??
           Promise.resolve(null),
-        (input, usage) =>
-          localBackendRef.current?.compactAfterContextUsage(input, usage) ??
+        (input, pressure) =>
+          localBackendRef.current?.compactForContextPressure(input, pressure) ??
           Promise.resolve(null),
         (info) =>
           localBackendRef.current?.emitLlmStart(info) ?? Promise.resolve(),
@@ -345,6 +310,7 @@ export class LocalBackend extends HeadlessBackend {
     this.memoryDir = options.memoryDir;
     this.complete = options.complete;
     this.memfsEnabledOverride = options.memfsEnabled;
+    this.piModelsRuntime = runtime;
   }
 
   /**
@@ -418,7 +384,9 @@ export class LocalBackend extends HeadlessBackend {
   }
 
   override async listModels() {
-    return listLocalModels(this.storageDir) as never;
+    return listLocalModels(this.storageDir, {
+      modelsRuntime: this.piModelsRuntime,
+    }) as never;
   }
 
   override async createAgent(
@@ -624,28 +592,14 @@ export class LocalBackend extends HeadlessBackend {
     };
   }
 
-  private async compactAfterContextUsage(
+  private async compactForContextPressure(
     input: ProviderTurnInput,
-    usage: Usage,
+    _pressure: LocalContextPressure,
   ): Promise<{
     uiMessages: LocalMessage[];
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
-    const contextTokens =
-      contextTokensFromUsage(usage) ?? estimateProviderContextTokens(input);
-    const contextWindow = this.effectiveContextWindow(
-      input.conversationId,
-      input.agentId,
-    );
-    if (
-      contextTokens === undefined ||
-      contextWindow === undefined ||
-      contextTokens <= contextWindow
-    ) {
-      return null;
-    }
-
     const result = await this.compactLocalConversation(
       input.conversationId,
       input.agentId,
@@ -893,6 +847,7 @@ export class LocalBackend extends HeadlessBackend {
       prompt: settings.prompt,
       clipChars: settings.clipChars,
       localProviderAuthStorageDir: this.storageDir,
+      modelsRuntime: this.piModelsRuntime,
     });
     const stats: LocalCompactionStats = {
       trigger,
@@ -945,6 +900,7 @@ export class LocalBackend extends HeadlessBackend {
       prompt: settings.prompt,
       clipChars: settings.clipChars,
       localProviderAuthStorageDir: this.storageDir,
+      modelsRuntime: this.piModelsRuntime,
     });
     const contextTokensAfter =
       Math.ceil(summary.length / 4) +

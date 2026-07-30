@@ -1,5 +1,7 @@
 import { getBackend } from "@/backend";
 import { refreshByokProviders } from "@/backend/api/providers";
+import { isOpenAICompatibleProxyEndpoint } from "@/utils/openai-endpoint";
+import type { ModelReasoningEffort } from "./model";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -9,12 +11,22 @@ export type AvailableModel = {
   maxContextWindow?: number;
   maxOutputTokens?: number;
   providerType?: string;
+  providerCategory?: string;
+  modelEndpoint?: string;
+  openAICompatibleProxy?: boolean;
+};
+
+export type ReasoningCapabilities = {
+  supported_efforts?: ModelReasoningEffort[] | null;
+  mandatory?: boolean;
 };
 
 type CacheEntry = {
   handles: Set<string>;
   contextWindows: Map<string, number>; // handle -> max_context_window
   providerTypes: Map<string, string>; // handle -> provider_type
+  reasoningCapabilities: Map<string, ReasoningCapabilities>; // handle -> reasoning capabilities
+  openAICompatibleProxyHandles: Set<string>;
   models: AvailableModel[];
   fetchedAt: number;
 };
@@ -33,6 +45,7 @@ function isFresh(now = Date.now()) {
 export type AvailableModelHandlesResult = {
   handles: Set<string>;
   providerTypes: Map<string, string>;
+  openAICompatibleProxyHandles: Set<string>;
   models: AvailableModel[];
   source: "cache" | "network";
   fetchedAt: number;
@@ -84,6 +97,20 @@ export function getCachedModelProviderTypes(): Map<string, string> | null {
   return new Map(cache.providerTypes);
 }
 
+export function getCachedModelReasoningCapabilities(): Map<
+  string,
+  ReasoningCapabilities
+> | null {
+  if (!cache) {
+    return null;
+  }
+  return new Map(cache.reasoningCapabilities);
+}
+
+export function getCachedOpenAICompatibleProxyHandles(): Set<string> | null {
+  return cache ? new Set(cache.openAICompatibleProxyHandles) : null;
+}
+
 export function getCachedAvailableModels(): AvailableModel[] | null {
   return cache?.models.map((model) => ({ ...model })) ?? null;
 }
@@ -96,8 +123,11 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
   // Build context window map from API response
   const contextWindows = new Map<string, number>();
   const providerTypes = new Map<string, string>();
+  const reasoningCapabilities = new Map<string, ReasoningCapabilities>();
+  const openAICompatibleProxyHandles = new Set<string>();
   const modelsByHandle = new Map<string, AvailableModel>();
   for (const model of modelsList) {
+    const modelRecord = model as unknown as Record<string, unknown>;
     if (model.handle && model.max_context_window) {
       contextWindows.set(model.handle, model.max_context_window);
     }
@@ -109,6 +139,27 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
           : undefined;
     if (model.handle && providerType) {
       providerTypes.set(model.handle, providerType);
+    }
+    const providerCategory =
+      typeof modelRecord.provider_category === "string"
+        ? modelRecord.provider_category
+        : undefined;
+    const modelEndpoint =
+      typeof modelRecord.model_endpoint === "string"
+        ? modelRecord.model_endpoint
+        : undefined;
+    const isOpenAICompatibleProxy =
+      providerCategory === "byok" &&
+      providerType === "openai" &&
+      isOpenAICompatibleProxyEndpoint(modelEndpoint);
+    if (model.handle && isOpenAICompatibleProxy) {
+      openAICompatibleProxyHandles.add(model.handle);
+    }
+    const capabilities = parseReasoningCapabilities(
+      modelRecord.reasoning_capabilities,
+    );
+    if (model.handle && capabilities) {
+      reasoningCapabilities.set(model.handle, capabilities);
     }
     if (model.handle) {
       const label =
@@ -126,6 +177,9 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
           ? { maxOutputTokens: model.max_tokens }
           : {}),
         ...(providerType ? { providerType } : {}),
+        ...(providerCategory ? { providerCategory } : {}),
+        ...(modelEndpoint ? { modelEndpoint } : {}),
+        ...(isOpenAICompatibleProxy ? { openAICompatibleProxy: true } : {}),
       };
       if (!modelsByHandle.has(model.handle)) {
         modelsByHandle.set(model.handle, availableModel);
@@ -136,9 +190,43 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
     handles,
     contextWindows,
     providerTypes,
+    reasoningCapabilities,
+    openAICompatibleProxyHandles,
     models: [...modelsByHandle.values()],
     fetchedAt: Date.now(),
   };
+}
+
+function parseReasoningCapabilities(
+  value: unknown,
+): ReasoningCapabilities | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const supported = record.supported_efforts;
+  const supported_efforts =
+    supported === null
+      ? null
+      : Array.isArray(supported)
+        ? supported.filter(isModelReasoningEffort)
+        : undefined;
+  return {
+    ...(supported_efforts !== undefined ? { supported_efforts } : {}),
+    ...(typeof record.mandatory === "boolean"
+      ? { mandatory: record.mandatory }
+      : {}),
+  };
+}
+
+function isModelReasoningEffort(value: unknown): value is ModelReasoningEffort {
+  return (
+    value === "none" ||
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh" ||
+    value === "max"
+  );
 }
 
 export async function getAvailableModelHandles(options?: {
@@ -151,6 +239,7 @@ export async function getAvailableModelHandles(options?: {
     return {
       handles: cache.handles,
       providerTypes: cache.providerTypes,
+      openAICompatibleProxyHandles: cache.openAICompatibleProxyHandles,
       models: cache.models,
       source: "cache",
       fetchedAt: cache.fetchedAt,
@@ -162,6 +251,7 @@ export async function getAvailableModelHandles(options?: {
     return {
       handles: entry.handles,
       providerTypes: entry.providerTypes,
+      openAICompatibleProxyHandles: entry.openAICompatibleProxyHandles,
       models: entry.models,
       source: "network",
       fetchedAt: entry.fetchedAt,
@@ -198,6 +288,7 @@ export async function getAvailableModelHandles(options?: {
   return {
     handles: entry.handles,
     providerTypes: entry.providerTypes,
+    openAICompatibleProxyHandles: entry.openAICompatibleProxyHandles,
     models: entry.models,
     source: "network",
     fetchedAt: entry.fetchedAt,

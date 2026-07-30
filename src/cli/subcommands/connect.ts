@@ -124,6 +124,7 @@ function formatUsage(): string {
     "  letta connect codex --method device-code",
     "  letta connect anthropic <api_key>",
     "  letta connect openai --api-key <api_key>",
+    "  letta connect ollama --base-url http://192.168.1.50:11434/v1",
     "  letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
     "  letta connect llama-cpp --base-url http://localhost:8080/v1",
     "  letta connect bedrock --method iam --access-key <id> --secret-key <key> --region <region>",
@@ -231,6 +232,14 @@ export async function runConnectSubcommand(
 
   const provider = resolveConnectProvider(providerToken);
   if (!provider) {
+    const localProvider = resolveConnectProvider(providerToken, "local");
+    if (localProvider) {
+      io.stderr(
+        `Provider "${providerToken}" is only available with the local backend.\n` +
+          `Retry with: letta --backend local connect ${argv.join(" ")}`,
+      );
+      return 1;
+    }
     io.stderr(
       `Unknown provider: ${providerToken}. Supported providers: ${listConnectProviderTokens().join(", ")}`,
     );

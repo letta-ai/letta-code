@@ -1,5 +1,9 @@
 import type { OutboundChannelMessage } from "@/channels/types";
 import {
+  buildSlackChatFootnote,
+  buildSlackReplyBlocksWithFootnote,
+} from "./presentation";
+import {
   normalizeSlackReactionName,
   resolveSlackOutboundThreadTs,
 } from "./public-utils";
@@ -87,6 +91,24 @@ async function sendSlackReaction(
   return { messageId: targetMessageId };
 }
 
+function buildSlackOutboundBlocks(
+  message: OutboundChannelMessage,
+): unknown[] | undefined {
+  if (!message.agentId || !message.conversationId) {
+    return undefined;
+  }
+
+  const footnote = buildSlackChatFootnote({
+    agentId: message.agentId,
+    conversationId: message.conversationId,
+  });
+  if (!footnote) {
+    return undefined;
+  }
+
+  return buildSlackReplyBlocksWithFootnote(message.text, footnote);
+}
+
 export function createSlackChannelSender(
   params: CreateSlackChannelSenderParams,
 ): SlackChannelSender {
@@ -103,9 +125,11 @@ export function createSlackChannelSender(
         threadId: message.threadId,
         replyToMessageId: message.replyToMessageId,
       });
+      const blocks = buildSlackOutboundBlocks(message);
       return await client.postMessage({
         channel: message.chatId,
         text: message.text,
+        ...(blocks ? { blocks } : {}),
         ...(threadTs ? { threadTs } : {}),
       });
     },

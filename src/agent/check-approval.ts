@@ -7,6 +7,7 @@ import type {
   Message,
   MessageType,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import { getBackend } from "@/backend";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
@@ -46,6 +47,19 @@ export interface ResumeData {
   pendingApproval: ApprovalRequest | null; // Deprecated: use pendingApprovals
   pendingApprovals: ApprovalRequest[];
   messageHistory: Message[];
+  conversation?: Conversation;
+}
+
+export function isResumedConversation(
+  conversation:
+    | Pick<Conversation, "summary" | "in_context_message_ids">
+    | undefined,
+): boolean {
+  if (!conversation) return true;
+  return Boolean(
+    conversation.summary?.trim() ||
+      (conversation.in_context_message_ids?.length ?? 0) > 0,
+  );
 }
 
 export interface GetResumeDataOptions {
@@ -434,7 +448,7 @@ async function fetchResumeTail(
   conversationId: string,
   limit = BACKFILL_PAGE_LIMIT,
 ): Promise<{
-  conversation?: { in_context_message_ids?: string[] | null };
+  conversation?: Conversation;
   messages: Message[];
 }> {
   const tail = await getBackend().getConversationResumeTail(
@@ -507,11 +521,13 @@ export async function getResumeDataFromBackend(
     let messages: Message[] = [];
 
     if (useConversationsApi) {
+      let conversation: Conversation | undefined;
       if (shouldFetchTail) {
         try {
           const tail = await fetchResumeTail(agent.id, activeConversationId);
           messages = tail.messages;
-          inContextMessageIds = tail.conversation?.in_context_message_ids;
+          conversation = tail.conversation;
+          inContextMessageIds = conversation?.in_context_message_ids;
         } catch (backfillError) {
           debugWarn(
             "check-approval",
@@ -520,8 +536,8 @@ export async function getResumeDataFromBackend(
         }
       }
 
-      if (!inContextMessageIds) {
-        const conversation =
+      if (!conversation) {
+        conversation =
           await getBackend().retrieveConversation(activeConversationId);
         inContextMessageIds = conversation.in_context_message_ids;
       }
@@ -536,6 +552,7 @@ export async function getResumeDataFromBackend(
           pendingApproval: null,
           pendingApprovals: [],
           messageHistory: prepareMessageHistory(messages),
+          conversation,
         };
       }
 
@@ -545,6 +562,7 @@ export async function getResumeDataFromBackend(
         pendingApproval,
         pendingApprovals,
         messageHistory: prepareMessageHistory(messages),
+        conversation,
       };
     }
 

@@ -11,6 +11,8 @@
     "src/types/protocol.ts",
     "src/types/app-server-protocol.ts",
     "src/app-server-client.ts",
+    "src/memory-confinement.ts",
+    "src/mcp-client.ts",
     "src/agent-presets.ts",
     "src/channels-public.ts",
     "src/channels-slack.ts",

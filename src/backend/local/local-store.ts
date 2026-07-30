@@ -32,6 +32,8 @@ import type {
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalCompactionStats } from "./compaction";
+import { selectLocalMessagesForFork } from "./local-conversation-fork";
+import { listLocalConversations } from "./local-conversation-list";
 import {
   emptyLocalUsage,
   type LocalAssistantMessage,
@@ -50,6 +52,7 @@ import {
   projectedMessageLookupKeys,
   projectLocalMessageToStoredMessages,
   removeOrphanLocalToolResults,
+  sourceLocalMessageIdFromStoredMessageId,
   withProjectedMessageDates,
 } from "./local-message-projection";
 import {
@@ -492,13 +495,6 @@ function getIncludedMessageTypes(
     (item): item is string => typeof item === "string" && item.length > 0,
   );
   return messageTypes.length > 0 ? new Set(messageTypes) : undefined;
-}
-
-function sourceLocalMessageIdFromStoredMessageId(messageId: string): string {
-  const variantSeparator = messageId.search(/:(assistant|reasoning|tool):/);
-  return variantSeparator >= 0
-    ? messageId.slice(0, variantSeparator)
-    : messageId;
 }
 
 function toStoredOutputFields(chunk: Record<string, unknown>) {
@@ -1489,28 +1485,8 @@ export class LocalStore {
   listConversations(body?: ConversationListBody): Conversation[] {
     this.loadConversationRecordsFromStorage();
     this.refreshLoadedConversationRecordsFromStorage();
-    const bodyRecord = (body ?? {}) as Record<string, unknown>;
-    const agentId = optionalString(bodyRecord.agent_id);
-    const after = optionalString(bodyRecord.after);
-    const limit = typeof bodyRecord.limit === "number" ? bodyRecord.limit : 20;
-    let conversations = [...this.conversations.values()].filter(
-      (conversation) =>
-        conversation.id !== "default" &&
-        (bodyRecord.include_hidden === true || !conversation.hidden) &&
-        (!agentId || conversation.agent_id === agentId),
-    );
-    conversations.sort((a, b) => {
-      const aDate = a.last_message_at ?? a.updated_at ?? a.created_at ?? "";
-      const bDate = b.last_message_at ?? b.updated_at ?? b.created_at ?? "";
-      return bDate.localeCompare(aDate);
-    });
-    if (after) {
-      const afterIndex = conversations.findIndex(
-        (conversation) => conversation.id === after,
-      );
-      if (afterIndex >= 0) conversations = conversations.slice(afterIndex + 1);
-    }
-    return conversations.slice(0, limit);
+
+    return listLocalConversations(this.conversations.values(), body);
   }
 
   createConversation(body: ConversationCreateBody): Conversation {
@@ -1602,7 +1578,7 @@ export class LocalStore {
 
   forkConversation(
     conversationId: string,
-    options: { agentId?: string; hidden?: boolean } = {},
+    options: { agentId?: string; hidden?: boolean; messageId?: string } = {},
   ): { id: string } {
     const source = this.findConversation(
       conversationId,
@@ -1616,6 +1592,15 @@ export class LocalStore {
       throw new LocalBackendNotFoundError("Agent", targetAgentId);
     }
     this.ensureAgent(targetAgentId);
+    const sourceMessages = selectLocalMessagesForFork(
+      this.localMessagesForConversation(source.id, source.agent_id),
+      options.messageId,
+      source.agent_id,
+      source.id,
+    );
+    if (!sourceMessages) {
+      throw new LocalBackendNotFoundError("Message", options.messageId ?? "");
+    }
     const forkedConversationId = this.nextConversationId(targetAgentId);
     const forked = createLocalConversationRecord(
       forkedConversationId,
@@ -1631,10 +1616,6 @@ export class LocalStore {
           ? { hidden: options.hidden }
           : {}),
       } as Partial<ConversationCreateBody>,
-    );
-    const sourceMessages = this.localMessagesForConversation(
-      source.id,
-      source.agent_id,
     );
     const forkedMessages = sourceMessages.map((message) =>
       this.cloneLocalMessageForConversation(message, forked.id, targetAgentId),
@@ -3140,7 +3121,7 @@ export class LocalStore {
     const agentsDir = join(this.storageDir, "agents");
     if (existsSync(agentsDir)) {
       for (const file of readdirSync(agentsDir)) {
-        if (!file.endsWith(".json")) continue;
+        if (!file.endsWith(".json") || file.startsWith("._")) continue;
         const raw = readJsonFile<unknown>(join(agentsDir, file));
         const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
         if (agent?.id) {

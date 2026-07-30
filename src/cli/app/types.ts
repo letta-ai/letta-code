@@ -39,6 +39,7 @@ export type AppProps = {
   startupApprovals?: ApprovalRequest[];
   messageHistory?: Message[];
   resumedExistingConversation?: boolean; // True if we explicitly resumed via --resume
+  startupConversationTitleEligible?: boolean;
   tokenStreaming?: boolean;
   reasoningTabCycleEnabled?: boolean;
   showCompactions?: boolean;
@@ -71,7 +72,6 @@ export type ActiveOverlay =
   | "memfs-sync"
   | "pin"
   | "mcp"
-  | "mcp-connect"
   | "install-github-app"
   | "help"
   | "hooks"

@@ -408,6 +408,21 @@ export async function createAgent(
     include: ["agent.tags"],
   });
 
+  if (backend.capabilities.localMemfs) {
+    const { getScopedMemoryFilesystemRoot } = await import(
+      "@/agent/memory-filesystem"
+    );
+    const { seedPersonalityDefaultMemoryFilesBestEffort } = await import(
+      "@/agent/personality-default-files"
+    );
+    await seedPersonalityDefaultMemoryFilesBestEffort({
+      agentId: fullAgent.id,
+      memoryDir: getScopedMemoryFilesystemRoot(fullAgent.id),
+      agentTags: fullAgent.tags,
+      syncMode: "local",
+    });
+  }
+
   // Persist system prompt preset — only for non-subagents and known presets or custom.
   // Guarded by isReady since settings may not be initialized in direct/test callers.
   if (!isSubagent && settingsManager.isReady) {

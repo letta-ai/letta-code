@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
 import sharp from "sharp";
 import { SYSTEM_REMINDER_OPEN } from "@/constants";
 import { TestDirectory } from "@/test-utils/test-fs";
@@ -75,6 +76,49 @@ describe("Read tool", () => {
     expect(result.content).toContain("Line 1");
     expect(result.content).toContain("Line 2");
     expect(result.content).not.toContain("Line 3");
+  });
+
+  test("clamps total output characters and points at overflow file", async () => {
+    testDir = new TestDirectory();
+    // 1,500 lines x ~120 chars ≈ 180K chars: under the 2,000-line and
+    // 2,000-chars-per-line caps, but far over the 30K total-character clamp.
+    // This is the exact shape of the bug where one Read returned 100K+ chars.
+    const line = "x".repeat(119);
+    const content = Array.from({ length: 1_500 }, () => line).join("\n");
+    const file = testDir.createFile("wide.txt", content);
+
+    const result = await read({ file_path: file, offset: 1, limit: 2000 });
+
+    expect(typeof result.content).toBe("string");
+    const text = result.content as string;
+    expect(text.length).toBeLessThan(31_000);
+    expect(text).toContain("[Output truncated: showing");
+    expect(text).toContain(
+      "[Use offset and limit parameters to read the file in smaller sections.]",
+    );
+    expect(text).toContain("[Full file content written to:");
+
+    // Overflow file holds the full raw content; clean it up.
+    const match = text.match(/Full file content written to: (.+\.txt)/);
+    expect(match).toBeDefined();
+    if (match?.[1]) {
+      expect(fs.existsSync(match[1])).toBe(true);
+      expect(fs.readFileSync(match[1], "utf-8")).toBe(content);
+      fs.unlinkSync(match[1]);
+    }
+  });
+
+  test("does not clamp reads under the total-character limit", async () => {
+    testDir = new TestDirectory();
+    const content = Array.from({ length: 100 }, (_, i) => `line ${i}`).join(
+      "\n",
+    );
+    const file = testDir.createFile("small.txt", content);
+
+    const result = await read({ file_path: file });
+
+    expect(result.content).not.toContain("[Output truncated");
+    expect(result.content).not.toContain("[Full file content written to:");
   });
 
   test("detects binary files and throws error", async () => {
