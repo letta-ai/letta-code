@@ -137,10 +137,14 @@ function updateArgsFromAvailableModel(
   model:
     | {
         openAICompatibleProxy?: boolean;
+        providerType?: string;
       }
     | null
     | undefined,
 ): Record<string, unknown> | undefined {
+  if (model?.providerType === "chatgpt_oauth") {
+    return { provider_type: model.providerType };
+  }
   if (!model?.openAICompatibleProxy) return undefined;
   return {
     provider_type: "openai",
