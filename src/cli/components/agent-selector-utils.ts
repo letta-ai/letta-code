@@ -108,6 +108,15 @@ export function truncateAgentId(id: string, availableWidth: number): string {
   return `${id.slice(0, prefixLen)}...${id.slice(-suffixLen)}`;
 }
 
+export function formatAgentMemoryBlockCount(
+  blockCount: number | null | undefined,
+): string | null {
+  if (blockCount === null || blockCount === undefined || blockCount <= 0) {
+    return null;
+  }
+  return `${blockCount} memory block${blockCount === 1 ? "" : "s"}`;
+}
+
 export function formatAgentModel(agent: AgentSelectorListAgent): string {
   let handle: string | null = null;
   if (agent.model) {
