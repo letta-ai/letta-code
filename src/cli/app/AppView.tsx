@@ -1727,7 +1727,6 @@ export function AppView(props: AppViewProps) {
             {/* Plan Mode Dialog - NOW RENDERED INLINE with tool call (see liveItems above) */}
 
             {/* AskUserQuestion now rendered inline via InlineQuestionApproval */}
-            {/* ApprovalDialog removed - all approvals now render inline via InlineGenericApproval fallback */}
           </>
         )}
       </Box>
