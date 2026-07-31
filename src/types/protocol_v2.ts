@@ -1661,6 +1661,7 @@ export interface UpdateModelResponseMessage {
   model_id?: string;
   model_handle?: string;
   model_settings?: Record<string, unknown> | null;
+  context_window_limit?: number | null;
   error?: string;
 }
 

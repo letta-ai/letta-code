@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import { join } from "node:path";
 import {
   clearAvailableModelsCache,
   getAvailableModelHandles,
@@ -7,7 +10,12 @@ import { models } from "@/agent/model";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import { settingsManager } from "@/settings-manager";
+import { createRuntime } from "@/websocket/listener/lifecycle";
+import { getOrCreateConversationRuntime } from "@/websocket/listener/runtime";
+import { LocalListenerTransport } from "@/websocket/listener/transport";
 import {
+  applyModelUpdateForRuntime,
   buildListModelsResponse,
   resolveModelForUpdate,
 } from "./model-toolset";
@@ -53,10 +61,24 @@ class NativeCatalogBackend extends FakeHeadlessBackend {
   }
 }
 
+class ApiCatalogBackend extends FakeHeadlessBackend {
+  override readonly capabilities = {
+    remoteMemfs: false,
+    serverSideToolManagement: false,
+    serverSecrets: false,
+    agentFileImportExport: false,
+    promptRecompile: false,
+    byokProviderRefresh: false,
+    localModelCatalog: false,
+    localMemfs: false,
+  };
+}
+
 describe("listener native model selection", () => {
-  afterEach(() => {
+  afterEach(async () => {
     clearAvailableModelsCache();
     __testSetBackend(null);
+    await settingsManager.reset();
   });
 
   test("resolves a backend-native list_models id from the cached catalog", async () => {
@@ -172,5 +194,57 @@ describe("listener native model selection", () => {
       label: preset?.label,
       updateArgs: { provider_type: "google" },
     });
+  });
+
+  test("returns the applied context limit after an extended-context update", async () => {
+    const storageDir = await mkdtemp(
+      join(os.tmpdir(), "model-response-context-"),
+    );
+    const previousHome = process.env.HOME;
+    try {
+      process.env.HOME = storageDir;
+      await settingsManager.reset();
+      await settingsManager.initialize();
+
+      const backend = new ApiCatalogBackend(
+        "agent-context-response",
+        undefined,
+        { storageDir },
+      );
+      __testSetBackend(backend);
+      const agent = await backend.updateAgent("agent-context-response", {
+        model: "anthropic/claude-opus-4-8",
+        context_window_limit: 200000,
+      });
+      const model = resolveModelForUpdate({
+        model_id: "opus-4.8-1m",
+      });
+      if (!model) throw new Error("Expected extended-context model preset");
+
+      const listener = createRuntime();
+      const response = await applyModelUpdateForRuntime({
+        socket: new LocalListenerTransport(),
+        listener,
+        scopedRuntime: getOrCreateConversationRuntime(
+          listener,
+          agent.id,
+          "default",
+        ),
+        requestId: "context-response",
+        model,
+      });
+
+      const persistedContextWindow = (await backend.retrieveAgent(agent.id))
+        .llm_config?.context_window;
+      expect(persistedContextWindow).toBeGreaterThan(200000);
+      expect(response.context_window_limit).toBe(persistedContextWindow);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 });

@@ -516,6 +516,13 @@ export async function applyModelUpdateForRuntime(params: {
     appliedTo = "conversation";
   }
 
+  const appliedModelScope = await getCurrentModelScopeSnapshot({
+    agentId,
+    conversationId,
+  });
+  const contextWindowLimit =
+    appliedModelScope.llmConfig?.context_window ?? null;
+
   const toolsetPreference = settingsManager.getToolsetPreference(agentId);
   const previousToolNames = scopedRuntime.currentLoadedTools;
   let nextToolset: ToolsetName;
@@ -588,6 +595,7 @@ export async function applyModelUpdateForRuntime(params: {
     model_id: model.id,
     model_handle: model.handle,
     model_settings: modelSettings,
+    context_window_limit: contextWindowLimit,
   };
 }
 
