@@ -5,6 +5,10 @@ import picomatch from "picomatch";
 import type WebSocket from "ws";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { readUtf8TextStrict, writeUtf8Text } from "@/utils/text-files";
+import {
+  createFileWatchSession,
+  type LoadFileWatchDependencies,
+} from "./file-watch-session";
 import { runGrepInFiles } from "./grep-in-files";
 import {
   isEditFileCommand,
@@ -412,36 +416,27 @@ export function createFileCommandSession(params: {
   socket: WebSocket;
   safeSocketSend: SafeSocketSend;
   runDetachedListenerTask: RunDetachedListenerTask;
+  loadFileWatchDependencies?: LoadFileWatchDependencies;
 }): {
   handle: (parsed: unknown) => boolean;
   dispose: () => void;
 } {
   const { socket, safeSocketSend, runDetachedListenerTask } = params;
-
-  // File watchers are keyed by absolute path and ref-counted so multiple
-  // windows watching the same file share one fs.watch() handle.
-  const fileWatchers = new Map<
-    string,
-    { watcher: import("node:fs").FSWatcher; refCount: number }
-  >();
-  // Debounce timers for fs.watch events; macOS/FSEvents can fire multiple
-  // rapid events for a single save.
-  const watchDebounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  // Paths where unwatch_file arrived while the watch_file async task was still
-  // in flight. The task checks this set after its await and bails if present.
-  const cancelledWatches = new Set<string>();
+  const fileWatchSession = createFileWatchSession({
+    loadDependencies: params.loadFileWatchDependencies,
+    runDetachedTask: (task) => runDetachedListenerTask("watch_file", task),
+    emitFileChanged: (path, lastModified) => {
+      safeSocketSend(
+        socket,
+        { type: "file_changed", path, lastModified },
+        "listener_file_changed_send_failed",
+        "listener_watch_file",
+      );
+    },
+  });
 
   const dispose = (): void => {
-    for (const { watcher } of fileWatchers.values()) {
-      watcher.close();
-    }
-    fileWatchers.clear();
-
-    for (const timer of watchDebounceTimers.values()) {
-      clearTimeout(timer);
-    }
-    watchDebounceTimers.clear();
-    cancelledWatches.clear();
+    fileWatchSession.dispose();
   };
 
   const handle = (parsed: unknown): boolean => {
@@ -830,88 +825,12 @@ export function createFileCommandSession(params: {
 
     // File watching (no runtime scope required)
     if (isWatchFileCommand(parsed)) {
-      runDetachedListenerTask("watch_file", async () => {
-        const existing = fileWatchers.get(parsed.path);
-        if (existing) {
-          existing.refCount++;
-          return;
-        }
-        try {
-          const { watch } = await import("node:fs");
-          const { stat } = await import("node:fs/promises");
-          // Check if unwatch arrived while we were awaiting imports
-          if (cancelledWatches.delete(parsed.path)) return;
-          const watcher = watch(
-            parsed.path,
-            { persistent: false },
-            (eventType) => {
-              // Handle both "change" (normal write) and "rename" (atomic
-              // write-then-rename, common on Linux). We stat() the original
-              // path -- if it still exists the content was updated; if not
-              // the file was deleted and the catch handler cleans up.
-              if (eventType !== "change" && eventType !== "rename") return;
-              // Debounce: macOS/FSEvents can fire multiple rapid events
-              // for a single save. Collapse into one file_changed push.
-              const existing = watchDebounceTimers.get(parsed.path);
-              if (existing) clearTimeout(existing);
-              watchDebounceTimers.set(
-                parsed.path,
-                setTimeout(() => {
-                  watchDebounceTimers.delete(parsed.path);
-                  stat(parsed.path)
-                    .then((s) => {
-                      safeSocketSend(
-                        socket,
-                        {
-                          type: "file_changed",
-                          path: parsed.path,
-                          lastModified: Math.round(s.mtimeMs),
-                        },
-                        "listener_file_changed_send_failed",
-                        "listener_watch_file",
-                      );
-                    })
-                    .catch(() => {
-                      // File deleted -- stop watching
-                      const entry = fileWatchers.get(parsed.path);
-                      if (entry) {
-                        entry.watcher.close();
-                        fileWatchers.delete(parsed.path);
-                      }
-                    });
-                }, 150),
-              );
-            },
-          );
-          watcher.on("error", () => {
-            watcher.close();
-            fileWatchers.delete(parsed.path);
-          });
-          fileWatchers.set(parsed.path, { watcher, refCount: 1 });
-        } catch {
-          // fs.watch not supported or path invalid -- silently ignore
-        }
-      });
+      fileWatchSession.watchFile(parsed.path);
       return true;
     }
 
     if (isUnwatchFileCommand(parsed)) {
-      const entry = fileWatchers.get(parsed.path);
-      if (entry) {
-        entry.refCount--;
-        if (entry.refCount <= 0) {
-          entry.watcher.close();
-          fileWatchers.delete(parsed.path);
-        }
-      } else {
-        // watch_file async task may still be in flight -- mark for cancel
-        cancelledWatches.add(parsed.path);
-      }
-      const timer = watchDebounceTimers.get(parsed.path);
-      if (timer) {
-        clearTimeout(timer);
-        watchDebounceTimers.delete(parsed.path);
-      }
+      fileWatchSession.unwatchFile(parsed.path);
       return true;
     }
 
