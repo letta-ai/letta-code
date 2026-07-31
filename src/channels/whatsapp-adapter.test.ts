@@ -1,8 +1,28 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   createWhatsAppAdapter,
   isWhatsAppConflictDisconnect,
+  type WhatsAppAdapterDependencies,
+  type WhatsAppReconnectScheduler,
 } from "@/channels/whatsapp/adapter";
+import type { LidStore } from "@/channels/whatsapp/lid-store";
+import {
+  clearWhatsAppConnectionState,
+  getWhatsAppConnectionState,
+} from "@/channels/whatsapp/state";
+
+const activeHarnesses: Array<{
+  accountId: string;
+  adapter: { stop(): Promise<void> };
+}> = [];
+
+afterEach(async () => {
+  for (const harness of activeHarnesses) {
+    await harness.adapter.stop();
+    clearWhatsAppConnectionState(harness.accountId);
+  }
+  activeHarnesses.length = 0;
+});
 
 describe("WhatsApp adapter helpers", () => {
   test("detects session conflict disconnects by message", () => {
@@ -67,5 +87,313 @@ describe("WhatsApp adapter helpers", () => {
         ],
       }),
     ).resolves.toBeUndefined();
+    await adapter.stop();
+  });
+});
+
+type SchedulerEntry = {
+  callback: () => void;
+  canceled: boolean;
+  delayMs: number;
+  dueAt: number;
+  fired: boolean;
+  unref: boolean;
+};
+
+function createTestScheduler() {
+  const entries: SchedulerEntry[] = [];
+  let nowMs = 0;
+  const scheduler: WhatsAppReconnectScheduler = {
+    now: () => nowMs,
+    schedule(delayMs, callback, options) {
+      const entry: SchedulerEntry = {
+        callback,
+        canceled: false,
+        delayMs,
+        dueAt: nowMs + delayMs,
+        fired: false,
+        unref: options?.unref === true,
+      };
+      entries.push(entry);
+      return {
+        cancel() {
+          entry.canceled = true;
+        },
+      };
+    },
+  };
+
+  function run(entry: SchedulerEntry): void {
+    entry.fired = true;
+    nowMs = entry.dueAt;
+    entry.callback();
+  }
+
+  return {
+    entries,
+    scheduler,
+    advanceToNext() {
+      const next = entries
+        .filter((entry) => !entry.canceled && !entry.fired)
+        .sort((left, right) => left.dueAt - right.dueAt)[0];
+      if (!next) throw new Error("expected pending scheduler task");
+      run(next);
+    },
+    advanceBy(delayMs: number) {
+      const target = nowMs + delayMs;
+      for (;;) {
+        const next = entries
+          .filter(
+            (entry) => !entry.canceled && !entry.fired && entry.dueAt <= target,
+          )
+          .sort((left, right) => left.dueAt - right.dueAt)[0];
+        if (!next) break;
+        run(next);
+      }
+      nowMs = target;
+    },
+    pending() {
+      return entries.filter((entry) => !entry.canceled && !entry.fired);
+    },
+    runCanceled() {
+      for (const entry of entries.filter(
+        (candidate) => candidate.canceled && !candidate.fired,
+      )) {
+        run(entry);
+      }
+    },
+  };
+}
+
+function createReconnectHarness(accountId: string) {
+  type ConnectionUpdate = (update: Record<string, unknown>) => void;
+  const scheduler = createTestScheduler();
+  const updates: ConnectionUpdate[] = [];
+  let createSocketCalls = 0;
+  let releaseCalls = 0;
+  const emptyStore: LidStore = {
+    resolve() {
+      return null;
+    },
+    record() {
+      return { status: "idempotent" };
+    },
+    flush() {},
+  };
+  const createSocket: NonNullable<
+    WhatsAppAdapterDependencies["createSocket"]
+  > = async ({ onConnectionUpdate }) => {
+    createSocketCalls += 1;
+    updates.push(onConnectionUpdate as ConnectionUpdate);
+    return {
+      sock: {
+        ev: { on: () => undefined },
+        ws: { close: () => undefined },
+        user: { id: "15551234567@s.whatsapp.net", lid: undefined },
+      },
+      saveCreds: async () => undefined,
+      DisconnectReason: {},
+      release: () => {
+        releaseCalls += 1;
+      },
+    };
+  };
+  const adapter = createWhatsAppAdapter(
+    {
+      channel: "whatsapp",
+      accountId,
+      enabled: true,
+      dmPolicy: "pairing",
+      allowedUsers: [],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+      agentId: "agent-whatsapp",
+      selfChatMode: false,
+      groupMode: "disabled",
+    },
+    {
+      createSocket,
+      loadRuntimeModule: async () => ({}),
+      lidStore: emptyStore,
+      reconnectScheduler: scheduler.scheduler,
+    },
+  );
+  activeHarnesses.push({ accountId, adapter });
+
+  return {
+    adapter,
+    scheduler,
+    get createSocketCalls() {
+      return createSocketCalls;
+    },
+    get releaseCalls() {
+      return releaseCalls;
+    },
+    close(index = updates.length - 1, message = "timed out") {
+      updates[index]?.({
+        connection: "close",
+        lastDisconnect: { error: { message } },
+      });
+    },
+    open(index = updates.length - 1) {
+      updates[index]?.({ connection: "open" });
+    },
+  };
+}
+
+async function flushReconnectMicrotasks(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe("WhatsApp reconnect circuit breaker", () => {
+  test("counts duplicate closes from one socket generation once", async () => {
+    const harness = createReconnectHarness("reconnect-duplicate-close");
+    await harness.adapter.start();
+
+    for (let index = 0; index < 6; index += 1) {
+      harness.close();
+    }
+    harness.open(0);
+    expect(harness.scheduler.pending()).toHaveLength(1);
+    expect(harness.scheduler.pending()[0]?.delayMs).toBe(2000);
+    expect(harness.scheduler.pending()[0]?.unref).toBe(false);
+
+    harness.scheduler.advanceToNext();
+    await flushReconnectMicrotasks();
+    expect(harness.createSocketCalls).toBe(2);
+    expect(harness.adapter.isRunning()).toBe(true);
+  });
+
+  test("ignores stale closes from older socket generations", async () => {
+    const harness = createReconnectHarness("reconnect-stale-generation");
+    await harness.adapter.start();
+
+    harness.close(0);
+    harness.scheduler.advanceToNext();
+    await flushReconnectMicrotasks();
+    expect(harness.createSocketCalls).toBe(2);
+
+    harness.close(0, "late stale close");
+    expect(harness.scheduler.pending()).toHaveLength(0);
+
+    harness.close(1);
+    expect(harness.scheduler.pending()).toHaveLength(1);
+  });
+
+  test("trips after six distinct unstable generations despite brief opens", async () => {
+    const accountId = "reconnect-six-generations";
+    const harness = createReconnectHarness(accountId);
+    await harness.adapter.start();
+
+    for (let index = 0; index < 6; index += 1) {
+      harness.open();
+      harness.close(index, `unstable ${index}`);
+      if (index < 5) {
+        harness.scheduler.advanceToNext();
+        await flushReconnectMicrotasks();
+      }
+    }
+
+    expect(harness.adapter.isRunning()).toBe(false);
+    expect(harness.scheduler.pending()).toHaveLength(0);
+    expect(getWhatsAppConnectionState(accountId).lastError).toContain(
+      "disconnected 6 times in 60s",
+    );
+    expect(getWhatsAppConnectionState(accountId).lastError).toContain(
+      "Another client may be competing",
+    );
+    expect(harness.releaseCalls).toBe(6);
+  });
+
+  test("resets history and backoff only after sixty seconds of stable uptime", async () => {
+    const harness = createReconnectHarness("reconnect-stable-reset");
+    await harness.adapter.start();
+
+    harness.close();
+    expect(harness.scheduler.pending()[0]?.delayMs).toBe(2000);
+    harness.scheduler.advanceToNext();
+    await flushReconnectMicrotasks();
+    harness.open();
+    expect(harness.scheduler.pending()[0]?.delayMs).toBe(60_000);
+    expect(harness.scheduler.pending()[0]?.unref).toBe(true);
+    harness.scheduler.advanceBy(59_999);
+    harness.close();
+    expect(harness.scheduler.pending()[0]?.delayMs).toBe(4000);
+    expect(harness.scheduler.pending()[0]?.unref).toBe(false);
+
+    harness.scheduler.advanceToNext();
+    await flushReconnectMicrotasks();
+    harness.open();
+    harness.scheduler.advanceBy(60_000);
+    harness.close();
+    expect(harness.scheduler.pending()[0]?.delayMs).toBe(2000);
+  });
+
+  test("stop cancels reconnect and stability tasks and stale callbacks cannot reconnect", async () => {
+    const harness = createReconnectHarness("reconnect-stop-cancels");
+    await harness.adapter.start();
+    harness.open();
+    const stableTask = harness.scheduler.pending()[0];
+
+    await harness.adapter.stop();
+    expect(stableTask?.canceled).toBe(true);
+    harness.scheduler.runCanceled();
+    expect(harness.createSocketCalls).toBe(1);
+
+    await harness.adapter.start();
+    harness.close();
+    const reconnectTask = harness.scheduler.pending()[0];
+    await harness.adapter.stop();
+    expect(reconnectTask?.canceled).toBe(true);
+    harness.scheduler.runCanceled();
+    await flushReconnectMicrotasks();
+    expect(harness.createSocketCalls).toBe(2);
+  });
+
+  test("explicit conflict stops without another reconnect and preserves conflict error", async () => {
+    const accountId = "reconnect-explicit-conflict";
+    const harness = createReconnectHarness(accountId);
+    await harness.adapter.start();
+    harness.close();
+    const reconnectTask = harness.scheduler.pending()[0];
+
+    harness.close(undefined, "Stream Errored (conflict)");
+
+    expect(harness.adapter.isRunning()).toBe(false);
+    expect(reconnectTask?.canceled).toBe(true);
+    expect(harness.scheduler.pending()).toHaveLength(0);
+    harness.scheduler.runCanceled();
+    await flushReconnectMicrotasks();
+    expect(harness.createSocketCalls).toBe(1);
+    expect(getWhatsAppConnectionState(accountId).lastError).toContain(
+      "Another WhatsApp client is using this linked-device session",
+    );
+  });
+
+  test("explicit start after circuit-breaker stop begins with clean history", async () => {
+    const harness = createReconnectHarness("reconnect-explicit-start");
+    await harness.adapter.start();
+    for (let index = 0; index < 6; index += 1) {
+      harness.close();
+      if (index < 5) {
+        harness.scheduler.advanceToNext();
+        await flushReconnectMicrotasks();
+      }
+    }
+    expect(harness.adapter.isRunning()).toBe(false);
+
+    await harness.adapter.start();
+    harness.close();
+    expect(harness.scheduler.pending()[0]?.delayMs).toBe(2000);
+    harness.scheduler.advanceToNext();
+    await flushReconnectMicrotasks();
+    for (let index = 0; index < 4; index += 1) {
+      harness.close();
+      harness.scheduler.advanceToNext();
+      await flushReconnectMicrotasks();
+    }
+    expect(harness.adapter.isRunning()).toBe(true);
   });
 });
