@@ -751,7 +751,7 @@ export interface CanUseToolResponseAllow {
 export interface CanUseToolResponseDeny {
   behavior: "deny";
   message: string;
-  /** TODO: Not wired up yet - infrastructure exists in TUI */
+  /** Whether this denial should interrupt the active turn. */
   interrupt?: boolean;
 }
 
