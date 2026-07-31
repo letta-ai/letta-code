@@ -146,13 +146,14 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
 
   const deliver = async (
     entries: WhatsAppInboundDebounceEntry<TOwner, TKey>[],
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const deliverMessage = params.getDeliver();
     const first = entries[0];
-    if (!deliverMessage || !first) return;
+    if (!deliverMessage || !first) return false;
     const inbound =
       entries.length === 1 ? first.inbound : mergeInboundMessages(entries);
     await deliverMessage(inbound);
+    return true;
   };
 
   const debouncer = createInboundDebouncer<
@@ -166,7 +167,13 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
         (entry) => entry.generation === generation,
       );
       if (activeEntries.length === 0) return;
-      await deliver(activeEntries);
+      const delivered = await deliver(activeEntries);
+      if (
+        delivered &&
+        activeEntries.every((entry) => entry.generation === generation)
+      ) {
+        startReadReceipts(activeEntries);
+      }
     },
     onError: (error, entries) => {
       reportDeliveryError(error, entries);
@@ -177,15 +184,21 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
     async dispatch(entries) {
       if (entries.length === 0) return;
       const entryGeneration = generation;
-      startReadReceipts(entries);
       if (debounceMs === 0) {
+        const deliveredEntries: WhatsAppInboundDebounceEntry<TOwner, TKey>[] =
+          [];
         for (const entry of entries) {
           if (entryGeneration !== generation) return;
           try {
-            await deliver([entry]);
+            if (await deliver([entry])) {
+              deliveredEntries.push(entry);
+            }
           } catch (error) {
             reportDeliveryError(error, [entry]);
           }
+        }
+        if (entryGeneration === generation) {
+          startReadReceipts(deliveredEntries);
         }
         return;
       }
