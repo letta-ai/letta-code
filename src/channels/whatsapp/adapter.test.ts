@@ -143,8 +143,15 @@ function makeHarness(
   };
 }
 
+type DebounceConnectionUpdateHandler = NonNullable<
+  Parameters<
+    NonNullable<WhatsAppAdapterDependencies["createSocket"]>
+  >[0]["onConnectionUpdate"]
+>;
+
 type DebounceHarnessSocket = {
   upsertHandler?: (payload: unknown) => unknown;
+  connectionUpdate?: DebounceConnectionUpdateHandler;
   readCalls: string[][];
   closed: number;
 };
@@ -163,8 +170,12 @@ function makeDebounceHarness(options: {
   };
   const createSocket: NonNullable<
     WhatsAppAdapterDependencies["createSocket"]
-  > = async () => {
-    const socketRecord: DebounceHarnessSocket = { readCalls: [], closed: 0 };
+  > = async (runtimeOptions) => {
+    const socketRecord: DebounceHarnessSocket = {
+      connectionUpdate: runtimeOptions.onConnectionUpdate,
+      readCalls: [],
+      closed: 0,
+    };
     const socket = {
       ev: {
         on(event: string, handler: (payload: unknown) => void) {
@@ -211,6 +222,12 @@ function makeDebounceHarness(options: {
       await sockets[socketIndex]?.upsertHandler?.({
         type: emitOptions?.type ?? "notify",
         messages,
+      });
+    },
+    closeConnection(socketIndex = sockets.length - 1) {
+      sockets[socketIndex]?.connectionUpdate?.({
+        connection: "close",
+        lastDisconnect: { error: { message: "network" } },
       });
     },
   };
@@ -646,10 +663,11 @@ describe("WhatsApp adapter inbound debounce and read receipts", () => {
       }),
     ]);
 
-    expect(harness.sockets[0]?.readCalls).toEqual([["one", "two"]]);
     expect(received).toEqual([]);
+    expect(harness.sockets[0]?.readCalls).toEqual([]);
     await sleep(60);
     expect(received).toHaveLength(1);
+    expect(harness.sockets[0]?.readCalls).toEqual([["one", "two"]]);
     expect(received[0]?.chatId).toBe(group("120363"));
     expect(received[0]?.senderId).toBe("15550000006");
     expect(received[0]?.text).toBe("first\nsecond");
@@ -766,9 +784,11 @@ describe("WhatsApp adapter inbound debounce and read receipts", () => {
     await harness.adapter.start();
 
     await harness.emit([makeTextMessage(phone("15550000061"), "old", "old")]);
+    expect(harness.sockets[0]?.readCalls).toEqual([]);
     await harness.adapter.stop();
     await sleep(70);
     expect(received).toEqual([]);
+    expect(harness.sockets[0]?.readCalls).toEqual([]);
 
     await harness.adapter.start();
     await harness.emit(
@@ -777,13 +797,60 @@ describe("WhatsApp adapter inbound debounce and read receipts", () => {
     );
     await sleep(70);
     expect(received).toEqual([]);
+    expect(harness.sockets[0]?.readCalls).toEqual([]);
     expect(harness.sockets[1]?.readCalls).toEqual([]);
 
     await harness.emit([
       makeTextMessage(phone("15550000063"), "fresh", "fresh"),
     ]);
-    expect(harness.sockets[1]?.readCalls).toEqual([["fresh"]]);
+    expect(harness.sockets[1]?.readCalls).toEqual([]);
     await sleep(70);
     expect(received.map((message) => message.text)).toEqual(["fresh"]);
+    expect(harness.sockets[1]?.readCalls).toEqual([["fresh"]]);
+  });
+
+  test("connection close invalidates pending debounce and stale socket traffic without reads", async () => {
+    const received: InboundChannelMessage[] = [];
+    const harness = makeDebounceHarness({
+      store: createLidStore(join(dir, "lid.json")),
+      accountPatch: { inboundDebounceMs: 40 },
+      onMessage: async (message) => {
+        received.push(message);
+      },
+    });
+    await harness.adapter.start();
+
+    await harness.emit([makeTextMessage(phone("15550000071"), "old", "old")]);
+    expect(harness.sockets[0]?.readCalls).toEqual([]);
+    harness.closeConnection(0);
+    await sleep(70);
+    expect(received).toEqual([]);
+    expect(harness.sockets[0]?.readCalls).toEqual([]);
+
+    await harness.emit(
+      [makeTextMessage(phone("15550000072"), "stale", "stale")],
+      { socketIndex: 0 },
+    );
+    await sleep(70);
+    expect(received).toEqual([]);
+    expect(harness.sockets[0]?.readCalls).toEqual([]);
+    await harness.adapter.stop();
+  });
+
+  test("handler rejection does not mark messages read", async () => {
+    const harness = makeDebounceHarness({
+      store: createLidStore(join(dir, "lid.json")),
+      accountPatch: { inboundDebounceMs: 20 },
+      onMessage: async () => {
+        throw new Error("handler failed");
+      },
+    });
+    await harness.adapter.start();
+
+    await harness.emit([
+      makeTextMessage(phone("15550000081"), "rejected", "rejected"),
+    ]);
+    await sleep(60);
+    expect(harness.sockets[0]?.readCalls).toEqual([]);
   });
 });
