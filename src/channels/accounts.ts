@@ -56,6 +56,8 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   acknowledge_message_reaction: "acknowledgeMessageReaction",
   group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
+  waiting_behavior: "waitingBehavior",
+  message_prefix: "messagePrefix",
   listen_mode: "listenMode",
   media_max_bytes: "mediaMaxBytes",
   mention_patterns: "mentionPatterns",
@@ -66,6 +68,11 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   thread_policy_by_channel: "threadPolicyByChannel",
   transcribe_voice: "transcribeVoice",
   download_media: "downloadMedia",
+  attachment_filter: "attachmentFilter",
+  attachment_mime_types: "attachmentMimeTypes",
+  attachment_allowed_recipients: "attachmentAllowedRecipients",
+  attachment_allowed_paths: "attachmentAllowedPaths",
+  attachment_path_recursive: "attachmentPathRecursive",
 };
 
 let warnedAboutDualKeys = false;
@@ -239,6 +246,15 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
     (cloned as WhatsAppChannelAccount).mentionPatterns = [
       ...(account.mentionPatterns ?? []),
     ];
+    (cloned as WhatsAppChannelAccount).attachmentMimeTypes = [
+      ...(account.attachmentMimeTypes ?? []),
+    ];
+    (cloned as WhatsAppChannelAccount).attachmentAllowedRecipients = [
+      ...(account.attachmentAllowedRecipients ?? []),
+    ];
+    (cloned as WhatsAppChannelAccount).attachmentAllowedPaths = [
+      ...(account.attachmentAllowedPaths ?? []),
+    ];
   }
 
   if (isSignalChannelAccount(account)) {
@@ -357,6 +373,24 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
     next.downloadMedia = next.downloadMedia === true;
     next.transcribeVoice = next.transcribeVoice === true;
+    next.attachmentFilter = next.attachmentFilter === true;
+    next.attachmentMimeTypes = [...(next.attachmentMimeTypes ?? [])];
+    next.attachmentAllowedRecipients = [
+      ...(next.attachmentAllowedRecipients ?? []),
+    ];
+    next.attachmentAllowedPaths = [...(next.attachmentAllowedPaths ?? [])];
+    next.attachmentPathRecursive = next.attachmentPathRecursive === true;
+    next.inboundDebounceMs =
+      typeof next.inboundDebounceMs === "number" &&
+      Number.isFinite(next.inboundDebounceMs) &&
+      next.inboundDebounceMs >= 0 &&
+      next.inboundDebounceMs <= 10000
+        ? Math.trunc(next.inboundDebounceMs)
+        : 0;
+    next.waitingBehavior =
+      next.waitingBehavior === "typing_indicator" ? "typing_indicator" : "off";
+    next.messagePrefix =
+      typeof next.messagePrefix === "string" ? next.messagePrefix : undefined;
   }
   if (isSignalChannelAccount(next)) {
     next.baseUrl = next.baseUrl ?? "";
@@ -443,6 +477,16 @@ function makeDefaultLegacyAccount(
       transcribeVoice: config.transcribeVoice === true,
       downloadMedia: config.downloadMedia === true,
       mediaMaxBytes: config.mediaMaxBytes,
+      attachmentFilter: config.attachmentFilter === true,
+      attachmentMimeTypes: [...(config.attachmentMimeTypes ?? [])],
+      attachmentAllowedRecipients: [
+        ...(config.attachmentAllowedRecipients ?? []),
+      ],
+      attachmentAllowedPaths: [...(config.attachmentAllowedPaths ?? [])],
+      attachmentPathRecursive: config.attachmentPathRecursive === true,
+      inboundDebounceMs: config.inboundDebounceMs ?? 0,
+      waitingBehavior: config.waitingBehavior ?? "off",
+      messagePrefix: config.messagePrefix,
       createdAt: now,
       updatedAt: now,
     };

@@ -221,9 +221,11 @@ describe("formatChannelNotification", () => {
 
     const reminder = buildChannelReminderText(msg);
 
-    expect(reminder).not.toContain("Ogg/Opus");
-    expect(reminder).not.toContain(".ogg");
-    expect(reminder).not.toContain("not MP3/M4A/WAV");
+    expect(reminder).toContain("Ogg/Opus files");
+    expect(reminder).toContain("become push-to-talk voice memos");
+    expect(reminder).toContain(".ogg");
+    expect(reminder).toContain("MP3/M4A/WAV files");
+    expect(reminder).toContain("regular document attachments");
   });
 
   test("escapes XML special characters in notification text without over-escaping quotes", () => {

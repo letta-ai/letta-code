@@ -122,6 +122,18 @@ export function createAccountFromPatch(
       transcribeVoice: normalizedPatch.transcribeVoice === true,
       downloadMedia: normalizedPatch.downloadMedia === true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
+      attachmentFilter: normalizedPatch.attachmentFilter === true,
+      attachmentMimeTypes: normalizedPatch.attachmentMimeTypes ?? [],
+      attachmentAllowedRecipients:
+        normalizedPatch.attachmentAllowedRecipients ?? [],
+      attachmentAllowedPaths: normalizedPatch.attachmentAllowedPaths ?? [],
+      attachmentPathRecursive: normalizedPatch.attachmentPathRecursive === true,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs ?? 0,
+      waitingBehavior:
+        normalizedPatch.waitingBehavior === "typing_indicator"
+          ? "typing_indicator"
+          : "off",
+      messagePrefix: normalizedPatch.messagePrefix,
       createdAt: now,
       updatedAt: now,
     };
@@ -282,6 +294,36 @@ export function mergeAccountPatch(
       downloadMedia:
         normalizedPatch.downloadMedia ?? existing.downloadMedia ?? false,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
+      attachmentFilter:
+        normalizedPatch.attachmentFilter ?? existing.attachmentFilter ?? false,
+      attachmentMimeTypes:
+        normalizedPatch.attachmentMimeTypes ??
+        existing.attachmentMimeTypes ??
+        [],
+      attachmentAllowedRecipients:
+        normalizedPatch.attachmentAllowedRecipients ??
+        existing.attachmentAllowedRecipients ??
+        [],
+      attachmentAllowedPaths:
+        normalizedPatch.attachmentAllowedPaths ??
+        existing.attachmentAllowedPaths ??
+        [],
+      attachmentPathRecursive:
+        normalizedPatch.attachmentPathRecursive ??
+        existing.attachmentPathRecursive ??
+        false,
+      inboundDebounceMs:
+        normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs ?? 0,
+      waitingBehavior:
+        normalizedPatch.waitingBehavior === "typing_indicator"
+          ? "typing_indicator"
+          : normalizedPatch.waitingBehavior === "off"
+            ? "off"
+            : (existing.waitingBehavior ?? "off"),
+      messagePrefix:
+        normalizedPatch.messagePrefix !== undefined
+          ? normalizedPatch.messagePrefix
+          : existing.messagePrefix,
       updatedAt: nextUpdatedAt,
     };
   }

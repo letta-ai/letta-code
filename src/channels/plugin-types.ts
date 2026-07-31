@@ -1,3 +1,4 @@
+import type { WhatsAppWaitingBehavior } from "@/channels/whatsapp/waiting-behavior-config-types";
 import type {
   ChannelAccount,
   ChannelAdapter,
@@ -172,6 +173,8 @@ export interface ChannelPluginAccountPatch {
   allowBots?: ChannelAllowBotsMode;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
+  messagePrefix?: string;
   selfChatMode?: boolean;
   allowedGroups?: string[];
   mentionPatterns?: string[];
@@ -182,6 +185,11 @@ export interface ChannelPluginAccountPatch {
   richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+  attachmentFilter?: boolean;
+  attachmentMimeTypes?: string[];
+  attachmentAllowedRecipients?: string[];
+  attachmentAllowedPaths?: string[];
+  attachmentPathRecursive?: boolean;
 }
 
 export type ChannelAccountPatch = ChannelCommonAccountPatch &

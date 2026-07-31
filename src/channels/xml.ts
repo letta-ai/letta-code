@@ -71,6 +71,43 @@ export function buildChannelReminderText(msg: InboundChannelMessage): string {
     SYSTEM_REMINDER_CLOSE,
   ];
 
+  if (msg.channel === "slack") {
+    lines.splice(
+      lines.length - 2,
+      0,
+      'On Slack, MessageChannel also supports action="react" with emoji + messageId, action="upload-file" with media, and action="download-file" with attachmentId + messageId.',
+      'For Slack requests that require nontrivial work or several tool calls, send a short MessageChannel action="send" acknowledgement before starting other tools. This gives the Slack user verbal acknowledgement and a View in web link. Do not do this for no-ops, reaction-only responses, or simple no-tool answers.',
+    );
+  }
+  if (msg.channel === "telegram") {
+    lines.splice(
+      lines.length - 2,
+      0,
+      'On Telegram, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media.',
+    );
+  }
+  if (msg.channel === "discord") {
+    lines.splice(
+      lines.length - 2,
+      0,
+      'On Discord, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Discord reactions accept native Unicode emoji and custom emoji syntax like <:name:id>.',
+    );
+  }
+  if (msg.channel === "whatsapp") {
+    lines.splice(
+      lines.length - 2,
+      0,
+      'On WhatsApp, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Ogg/Opus files (.ogg, .oga, .opus) become push-to-talk voice memos; MP3/M4A/WAV files become regular document attachments. Replies are sent as the linked WhatsApp number.',
+    );
+  }
+  if (msg.channel === "signal") {
+    lines.splice(
+      lines.length - 2,
+      0,
+      'On Signal, MessageChannel also supports action="react" with emoji + messageId, and action="upload-file" with media. Replies are sent as the linked Signal account through signal-cli-rest-api.',
+    );
+  }
+
   if (hasNotificationAttachmentPaths(msg)) {
     lines.splice(
       lines.length - 2,

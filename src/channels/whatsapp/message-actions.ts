@@ -2,7 +2,6 @@ import type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
 } from "@/channels/plugin-types";
-import { getWhatsAppOutboundMediaValidationError } from "./media";
 
 async function sendWhatsAppMessage(
   ctx: ChannelMessageActionContext,
@@ -12,14 +11,6 @@ async function sendWhatsAppMessage(
 
   if (text.trim().length === 0 && !request.mediaPath) {
     return "Error: WhatsApp send requires message or media.";
-  }
-
-  const mediaValidationError = getWhatsAppOutboundMediaValidationError({
-    mediaPath: request.mediaPath,
-    fileName: request.filename,
-  });
-  if (mediaValidationError) {
-    return `Error: ${mediaValidationError}`;
   }
 
   const formatted = formatText(text);
@@ -76,7 +67,7 @@ export const whatsappMessageActions: ChannelMessageActionAdapter = {
           media: {
             type: "string",
             description:
-              "Absolute local file path to upload. For WhatsApp voice memos/audio uploads, provide Ogg/Opus only (.ogg, .oga, or .opus); MP3/M4A/WAV files are rejected because they do not render as WhatsApp push-to-talk voice notes.",
+              "Absolute local file path to upload. Ogg/Opus files (.ogg, .oga, .opus) become push-to-talk voice memos; MP3/M4A/WAV files become regular document attachments. Other documents use extension-derived MIME classification when known.",
           },
         },
       },

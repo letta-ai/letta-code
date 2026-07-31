@@ -54,6 +54,8 @@ export interface InboundDebouncer<T> {
   enqueue: (item: T) => Promise<void>;
   /** Force an immediate flush for a specific key, if any buffer is pending. */
   flushKey: (key: string) => Promise<void>;
+  /** Force every pending buffer to flush. */
+  flushAll: () => Promise<void>;
 }
 
 export function createInboundDebouncer<T>(
@@ -151,6 +153,13 @@ export function createInboundDebouncer<T>(
     await flushBuffer(key, buffer);
   };
 
+  const flushAllInternal = async (): Promise<void> => {
+    const pending = Array.from(buffers.entries()).map(([key, buffer]) =>
+      flushBuffer(key, buffer),
+    );
+    await Promise.all(pending);
+  };
+
   const scheduleFlush = (key: string, buffer: DebounceBuffer<T>): void => {
     if (buffer.timeout) {
       clearTimeout(buffer.timeout);
@@ -240,5 +249,6 @@ export function createInboundDebouncer<T>(
   return {
     enqueue,
     flushKey: flushKeyInternal,
+    flushAll: flushAllInternal,
   };
 }

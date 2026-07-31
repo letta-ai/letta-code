@@ -15,8 +15,11 @@ describe("whatsapp protocol-inbound validators", () => {
         account: {
           config: {
             agent_id: "agent-1",
+            message_prefix: "🤖 ",
             self_chat_mode: true,
             group_mode: "disabled",
+            inbound_debounce_ms: 1250.9,
+            waiting_behavior: "typing_indicator",
           },
         },
       }),
@@ -38,6 +41,12 @@ describe("whatsapp protocol-inbound validators", () => {
             mention_patterns: ["\\bloop\\b"],
             download_media: true,
             media_max_bytes: 1048576,
+            attachment_filter: true,
+            attachment_mime_types: ["image/png"],
+            attachment_allowed_recipients: ["15551234567"],
+            attachment_allowed_paths: ["/tmp/uploads"],
+            attachment_path_recursive: true,
+            waiting_behavior: "off",
           },
         },
       }),
@@ -51,6 +60,47 @@ describe("whatsapp protocol-inbound validators", () => {
         channel_id: "whatsapp",
         request_id: "r1",
         account: { config: { group_mode: "all" } },
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects invalid inbound debounce values", () => {
+    expect(
+      isChannelAccountCreateCommand({
+        type: "channel_account_create",
+        channel_id: "whatsapp",
+        request_id: "r1",
+        account: { config: { inbound_debounce_ms: -1 } },
+      }),
+    ).toBe(false);
+    expect(
+      isChannelAccountCreateCommand({
+        type: "channel_account_create",
+        channel_id: "whatsapp",
+        request_id: "r1",
+        account: { config: { inbound_debounce_ms: "100" } },
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects invalid waiting behavior", () => {
+    expect(
+      isChannelAccountCreateCommand({
+        type: "channel_account_create",
+        channel_id: "whatsapp",
+        request_id: "r1",
+        account: { config: { waiting_behavior: "always" } },
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects non-string message prefixes", () => {
+    expect(
+      isChannelAccountCreateCommand({
+        type: "channel_account_create",
+        channel_id: "whatsapp",
+        request_id: "r1",
+        account: { config: { message_prefix: 42 } },
       }),
     ).toBe(false);
   });

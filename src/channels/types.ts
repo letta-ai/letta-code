@@ -14,6 +14,8 @@ import type {
   StopReasonType,
 } from "@/types/protocol_v2";
 
+import type { WhatsAppBehaviorConfig } from "./whatsapp/behavior-config-types";
+
 /**
  * Vendor-neutral model-picker payload produced by the generic channel
  * `/model` handler. Adapters decide how (or whether) to render it.
@@ -661,7 +663,7 @@ export interface DiscordChannelConfig {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelConfig {
+export interface WhatsAppChannelConfig extends WhatsAppBehaviorConfig {
   channel: "whatsapp";
   enabled: boolean;
   dmPolicy: DmPolicy;
@@ -848,7 +850,9 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelAccount extends ChannelAccountBase {
+export interface WhatsAppChannelAccount
+  extends ChannelAccountBase,
+    WhatsAppBehaviorConfig {
   channel: "whatsapp";
   /** Agent ID used for account-bound DM and group auto-routing. */
   agentId: string | null;

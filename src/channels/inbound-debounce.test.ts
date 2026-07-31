@@ -165,6 +165,25 @@ describe("createInboundDebouncer", () => {
     expect(flushed).toEqual([["a", "b"]]);
   });
 
+  test("flushAll drains multiple pending keys", async () => {
+    const debouncer = createInboundDebouncer<Item>({
+      debounceMs: 1000,
+      buildKey: (item) => item.key,
+      onFlush: async (items) => {
+        flushed.push(items.map((i) => i.value));
+      },
+    });
+
+    await debouncer.enqueue({ key: "a", value: "a1" });
+    await debouncer.enqueue({ key: "b", value: "b1" });
+    await debouncer.flushAll();
+
+    expect(flushed.map((batch) => batch.sort()).sort()).toEqual([
+      ["a1"],
+      ["b1"],
+    ]);
+  });
+
   test("null key forces immediate flush", async () => {
     const debouncer = createInboundDebouncer<Item>({
       debounceMs: 50,
