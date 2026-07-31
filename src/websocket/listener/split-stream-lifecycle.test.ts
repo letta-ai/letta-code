@@ -286,6 +286,58 @@ describe("split stream listener lifecycle", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  test("current split open handler failure reconnects without onError", async () => {
+    process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS = "1000";
+    const onConnected = mock(() => {});
+    const onDisconnected = mock(() => {});
+    const onNeedsReregister = mock(() => {});
+    const onError = mock(() => {});
+    await startClient({
+      onConnected,
+      onDisconnected,
+      onNeedsReregister,
+      onError,
+    });
+    await waitFor(
+      () =>
+        countConnectionsForChannel("control") === 1 &&
+        countConnectionsForChannel("stream") === 1 &&
+        onConnected.mock.calls.length === 1,
+      "initial split sockets did not open",
+    );
+    const listener = getActiveRuntime();
+    const failedControlSocket = listener?.socket;
+    const failedStreamSocket = listener?.streamSocket ?? null;
+    if (!listener || !failedControlSocket || !failedStreamSocket) {
+      throw new Error("initial split socket pair missing");
+    }
+
+    const trackOpenFailure = mock(() => {});
+    handleListenerSocketOpenFailure({
+      runtime: listener,
+      controlSocket: failedControlSocket,
+      streamSocket: failedStreamSocket,
+      error: new Error("split open handler failed"),
+      trackListenerError: trackOpenFailure,
+    });
+
+    expect(trackOpenFailure).toHaveBeenCalledTimes(1);
+    await waitFor(
+      () =>
+        countConnectionsForChannel("control") === 2 &&
+        countConnectionsForChannel("stream") === 2 &&
+        onConnected.mock.calls.length === 2,
+      "listener did not reconnect after split open handler failure",
+    );
+
+    expect(getActiveRuntime()).toBe(listener);
+    expect(listener.socket).not.toBe(failedControlSocket);
+    expect(listener.streamSocket).not.toBe(failedStreamSocket);
+    expect(onDisconnected).not.toHaveBeenCalled();
+    expect(onNeedsReregister).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
   test("split stream handshake stall retries without clearing runtime turn state", async () => {
     process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS = "25";
     const onConnected = mock(() => {});
