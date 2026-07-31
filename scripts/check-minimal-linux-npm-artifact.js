@@ -10,8 +10,11 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tempDir = mkdtempSync(join(tmpdir(), "letta-code-minimal-linux-npm-"));
 const imageTag = `letta-code-minimal-linux-npm:${process.pid}`;
 const platform = "linux/amd64";
-const dockerNodeVersion = "${NODE_VERSION}";
-const dockerNodeArch = "${node_arch}";
+const dockerNodeVersion = "$" + "{NODE_VERSION}";
+const dockerNodeArch = "$" + "{node_arch}";
+const skipBuild =
+  process.argv.includes("--skip-build") ||
+  process.env.LETTA_CODE_MINIMAL_LINUX_ARTIFACT_SKIP_BUILD === "1";
 
 function run(command, args, options = {}) {
   console.log(`$ ${[command, ...args].join(" ")}`);
@@ -64,7 +67,7 @@ RUN set -eux; \
 WORKDIR /workspace
 `;
 
-const ptySmoke = String.raw`
+const ptySmoke = `
 set -eux
 if command -v make >/dev/null 2>&1; then
   echo "make unexpectedly present before npm install" >&2
@@ -121,7 +124,11 @@ NODE
 
 try {
   run("docker", ["version"], { stdio: "ignore" });
-  run("bun", ["run", "build"]);
+  if (skipBuild) {
+    console.log("$ bun run build (skipped; using existing build output)");
+  } else {
+    run("bun", ["run", "build"]);
+  }
 
   const packOutput = capture("npm", [
     "pack",
