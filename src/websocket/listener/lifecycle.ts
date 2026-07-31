@@ -1446,7 +1446,6 @@ async function connectWithRetry(
         streamSocket,
         error,
         trackListenerError,
-        onError: opts.onError,
       });
     });
   });

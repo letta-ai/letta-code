@@ -208,15 +208,16 @@ export function handleListenerSocketOpenFailure({
   streamSocket,
   error,
   trackListenerError,
-  onError,
 }: {
   runtime: ListenerRuntime;
   controlSocket: WebSocket;
   streamSocket: WebSocket | null;
   error: unknown;
   trackListenerError: TrackListenerError;
-  onError: (error: Error) => void;
 }): void {
+  if (!isCurrentSocketPair(runtime, controlSocket, streamSocket)) {
+    return;
+  }
   trackListenerError(
     "listener_open_handler_failed",
     error,
@@ -226,5 +227,4 @@ export function handleListenerSocketOpenFailure({
     console.error("[Listen] WebSocket open handler failed:", error);
   }
   terminateCurrentSocketPair(runtime, controlSocket, streamSocket);
-  onError(error instanceof Error ? error : new Error(String(error)));
 }

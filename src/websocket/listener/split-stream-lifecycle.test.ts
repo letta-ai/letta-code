@@ -15,6 +15,7 @@ import {
 import { requestApprovalOverWS } from "@/websocket/listener/approval";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
+import { handleListenerSocketOpenFailure } from "@/websocket/listener/split-stream-lifecycle";
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -347,6 +348,11 @@ describe("split stream listener lifecycle", () => {
     );
 
     hangNextStreamUpgrade = true;
+    const staleControlSocket = listener.socket;
+    const staleStreamSocket = listener.streamSocket ?? null;
+    if (!staleControlSocket || !staleStreamSocket) {
+      throw new Error("initial split socket pair missing");
+    }
     const initialControlIndex = lastConnectionIndexForChannel("control");
     connections[initialControlIndex]?.terminate();
     await waitFor(
@@ -374,6 +380,21 @@ describe("split stream listener lifecycle", () => {
     expect(conversationRuntime.pendingApprovalResolvers.size).toBe(1);
     expect(onDisconnected).not.toHaveBeenCalled();
     expect(onNeedsReregister).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+
+    const recoveredControlSocket = listener.socket;
+    const recoveredStreamSocket = listener.streamSocket;
+    const trackStaleFailure = mock(() => {});
+    handleListenerSocketOpenFailure({
+      runtime: listener,
+      controlSocket: staleControlSocket,
+      streamSocket: staleStreamSocket,
+      error: new Error("late failure from stale open handler"),
+      trackListenerError: trackStaleFailure,
+    });
+    expect(trackStaleFailure).not.toHaveBeenCalled();
+    expect(listener.socket).toBe(recoveredControlSocket);
+    expect(listener.streamSocket).toBe(recoveredStreamSocket);
     expect(onError).not.toHaveBeenCalled();
 
     const controlCountAfterRecovery = countConnectionsForChannel("control");
