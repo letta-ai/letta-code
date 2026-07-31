@@ -125,14 +125,25 @@ function applyMessagePrefix(text: string, prefix: string | undefined): string {
   return prefix && text.trim().length > 0 ? `${prefix}${text}` : text;
 }
 
-function withMessagePrefix(
-  message: OutboundChannelMessage,
+function withPayloadMessagePrefix(
+  payload: Record<string, unknown>,
   prefix: string | undefined,
-): OutboundChannelMessage {
-  if (message.reaction || message.removeReaction || !message.text) {
-    return message;
+): Record<string, unknown> {
+  if (!prefix) return payload;
+  if (typeof payload.text === "string") {
+    return { ...payload, text: applyMessagePrefix(payload.text, prefix) };
   }
-  return { ...message, text: applyMessagePrefix(message.text, prefix) };
+  if (typeof payload.caption === "string") {
+    return { ...payload, caption: applyMessagePrefix(payload.caption, prefix) };
+  }
+  return payload;
+}
+
+function buildPrefixedWhatsAppOutboundPayload(
+  msg: OutboundChannelMessage,
+  prefix: string | undefined,
+): Record<string, unknown> {
+  return withPayloadMessagePrefix(buildWhatsAppOutboundPayload(msg), prefix);
 }
 
 function matchesSelf(
@@ -610,12 +621,14 @@ export function createWhatsAppAdapter(
       } catch {
         // Presence is best-effort.
       }
-      const outbound = withMessagePrefix(msg, account.messagePrefix);
-      const payload = buildWhatsAppOutboundPayload(outbound);
+      const payload = buildPrefixedWhatsAppOutboundPayload(
+        msg,
+        account.messagePrefix,
+      );
       const result = await sendToWhatsApp(
         targetJid,
         payload,
-        buildQuotedOptions(targetJid, outbound.replyToMessageId),
+        buildQuotedOptions(targetJid, msg.replyToMessageId),
       );
       const id = result.key?.id ?? "";
       rememberSent(id, result);
@@ -630,9 +643,13 @@ export function createWhatsAppAdapter(
         selfLid,
         resolveLid: (lidJid) => lidStore.resolve(lidJid),
       });
+      const payload = withPayloadMessagePrefix(
+        { text },
+        options?.applyMessagePrefix ? account.messagePrefix : undefined,
+      );
       const result = await sendToWhatsApp(
         targetJid,
-        { text: applyMessagePrefix(text, account.messagePrefix) },
+        payload,
         buildQuotedOptions(targetJid, options?.replyToMessageId),
       );
       rememberSent(result.key?.id ?? "", result);
@@ -645,7 +662,10 @@ export function createWhatsAppAdapter(
       await adapter.sendDirectReply(
         event.source.chatId,
         formatChannelControlRequestPrompt(event),
-        { replyToMessageId: event.source.messageId },
+        {
+          replyToMessageId: event.source.messageId,
+          applyMessagePrefix: false,
+        },
       );
     },
 
@@ -672,7 +692,10 @@ export function createWhatsAppAdapter(
               formatChannelLifecycleErrorMessage(errorText, {
                 runId: event.runId,
               }),
-              { replyToMessageId: source.messageId },
+              {
+                replyToMessageId: source.messageId,
+                applyMessagePrefix: false,
+              },
             );
           } catch (error) {
             console.warn(

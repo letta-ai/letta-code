@@ -319,6 +319,8 @@ export interface ChannelAdapter {
        * example Slack Block Kit) may render it; others fall back to text.
        */
       modelPicker?: ChannelModelPickerData;
+      /** Channel-specific opt-in for direct replies that should be treated as ordinary outbound agent text. */
+      applyMessagePrefix?: boolean;
     },
   ): Promise<void>;
 

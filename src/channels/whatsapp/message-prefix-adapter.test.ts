@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { OutboundChannelMessage } from "@/channels/types";
+import type {
+  ChannelControlRequestEvent,
+  ChannelTurnLifecycleEvent,
+  ChannelTurnSource,
+  OutboundChannelMessage,
+} from "@/channels/types";
 import {
   createWhatsAppAdapter,
   type WhatsAppAdapterDependencies,
@@ -22,6 +27,9 @@ const account = {
   createdAt: new Date(0).toISOString(),
   updatedAt: new Date(0).toISOString(),
 };
+
+const chatId = "15550000001@s.whatsapp.net";
+const prefix = "[bot] ";
 
 const temporaryDirectories: string[] = [];
 const adapters: Array<Awaited<ReturnType<typeof createWhatsAppAdapter>>> = [];
@@ -66,6 +74,22 @@ function makeHarness(messagePrefix?: string) {
   return { adapter, payloads, presence };
 }
 
+function directSource(
+  overrides: Partial<ChannelTurnSource> = {},
+): ChannelTurnSource {
+  return {
+    channel: "whatsapp",
+    accountId: account.accountId,
+    chatId,
+    chatType: "direct",
+    senderId: "15550000001",
+    messageId: "incoming-1",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+    ...overrides,
+  };
+}
+
 afterEach(async () => {
   try {
     for (const adapter of adapters) await adapter.stop().catch(() => undefined);
@@ -86,104 +110,228 @@ async function send(
   await adapter.sendMessage(message);
 }
 
+function payloadText(payload: Record<string, unknown>): string {
+  if (typeof payload.text !== "string")
+    throw new Error("expected text payload");
+  return payload.text;
+}
+
 describe("WhatsApp message prefix adapter behavior", () => {
-  test("prefixes text exactly without mutating the caller object", async () => {
-    const harness = makeHarness("[bot] ");
+  test("prefixes text exactly once without mutating the caller object", async () => {
+    const harness = makeHarness(prefix);
     const message: OutboundChannelMessage = {
       channel: "whatsapp",
       accountId: account.accountId,
-      chatId: "15550000001@s.whatsapp.net",
+      chatId,
       text: "hello",
     };
     await send(harness.adapter, message);
-    expect(harness.payloads).toEqual([{ text: "[bot] hello" }]);
+    await harness.adapter.sendMessage(message);
+    expect(harness.payloads).toEqual([
+      { text: "[bot] hello" },
+      { text: "[bot] hello" },
+    ]);
     expect(message).toEqual({
       channel: "whatsapp",
       accountId: account.accountId,
-      chatId: "15550000001@s.whatsapp.net",
+      chatId,
       text: "hello",
     });
   });
 
-  test("prefixes non-empty media captions and leaves empty captions absent", async () => {
-    const captioned = makeHarness("[bot] ");
-    await send(captioned.adapter, {
-      channel: "whatsapp",
-      accountId: account.accountId,
-      chatId: "15550000001@s.whatsapp.net",
-      text: "caption",
-      mediaPath: "/tmp/photo.png",
-    });
-    expect(captioned.payloads[0]).toEqual({
-      image: { url: "/tmp/photo.png" },
-      caption: "[bot] caption",
-    });
+  test("prefixes final media captions exactly once after text/title selection", async () => {
+    const cases: Array<{
+      name: string;
+      message: OutboundChannelMessage;
+      payload: Record<string, unknown>;
+    }> = [
+      {
+        name: "image text caption",
+        message: {
+          channel: "whatsapp",
+          accountId: account.accountId,
+          chatId,
+          text: "caption",
+          mediaPath: "/tmp/photo.png",
+        },
+        payload: {
+          image: { url: "/tmp/photo.png" },
+          caption: "[bot] caption",
+        },
+      },
+      {
+        name: "video title caption",
+        message: {
+          channel: "whatsapp",
+          accountId: account.accountId,
+          chatId,
+          text: "",
+          title: "clip title",
+          mediaPath: "/tmp/clip.mp4",
+        },
+        payload: {
+          video: { url: "/tmp/clip.mp4" },
+          caption: "[bot] clip title",
+        },
+      },
+      {
+        name: "text beats title",
+        message: {
+          channel: "whatsapp",
+          accountId: account.accountId,
+          chatId,
+          text: "caption",
+          title: "ignored title",
+          mediaPath: "/tmp/second.jpg",
+        },
+        payload: {
+          image: { url: "/tmp/second.jpg" },
+          caption: "[bot] caption",
+        },
+      },
+      {
+        name: "document title caption",
+        message: {
+          channel: "whatsapp",
+          accountId: account.accountId,
+          chatId,
+          text: "",
+          title: "document title",
+          mediaPath: "/tmp/report.pdf",
+        },
+        payload: {
+          document: { url: "/tmp/report.pdf" },
+          fileName: "report.pdf",
+          mimetype: "application/octet-stream",
+          caption: "[bot] document title",
+        },
+      },
+    ];
 
-    for (const text of ["", "   "]) {
-      const emptyCaption = makeHarness("[bot] ");
-      await send(emptyCaption.adapter, {
-        channel: "whatsapp",
-        accountId: account.accountId,
-        chatId: "15550000001@s.whatsapp.net",
-        text,
-        mediaPath: "/tmp/photo.png",
-      });
-      expect(emptyCaption.payloads[0]).toEqual({
-        image: { url: "/tmp/photo.png" },
-      });
+    for (const testCase of cases) {
+      const harness = makeHarness(prefix);
+      await send(harness.adapter, testCase.message);
+      expect(harness.payloads[0]).toEqual(testCase.payload);
     }
   });
 
-  test("does not prefix reactions or removals and prefixes direct replies", async () => {
-    const harness = makeHarness("[bot] ");
+  test("leaves empty media captions absent and voice memos captionless", async () => {
+    for (const mediaPath of ["/tmp/photo.png", "/tmp/report.pdf"]) {
+      const emptyCaption = makeHarness(prefix);
+      await send(emptyCaption.adapter, {
+        channel: "whatsapp",
+        accountId: account.accountId,
+        chatId,
+        text: "   ",
+        title: "   ",
+        mediaPath,
+      });
+      expect(emptyCaption.payloads[0]).not.toHaveProperty("caption");
+    }
+
+    const voiceMemo = makeHarness(prefix);
+    await send(voiceMemo.adapter, {
+      channel: "whatsapp",
+      accountId: account.accountId,
+      chatId,
+      text: "voice caption",
+      title: "voice title",
+      mediaPath: "/tmp/voice.ogg",
+    });
+    expect(voiceMemo.payloads[0]).toEqual({
+      audio: { url: "/tmp/voice.ogg" },
+      mimetype: "audio/ogg; codecs=opus",
+      ptt: true,
+    });
+  });
+
+  test("does not prefix reactions or removals and only prefixes opt-in direct replies", async () => {
+    const harness = makeHarness(prefix);
     await harness.adapter.start();
     await harness.adapter.sendMessage({
       channel: "whatsapp",
       accountId: account.accountId,
-      chatId: "15550000001@s.whatsapp.net",
+      chatId,
       text: "ignored",
-      reaction: "👍",
+      reaction: "ok",
       targetMessageId: "target",
     });
     await harness.adapter.sendMessage({
       channel: "whatsapp",
       accountId: account.accountId,
-      chatId: "15550000001@s.whatsapp.net",
+      chatId,
       text: "ignored",
       removeReaction: true,
       targetMessageId: "target",
     });
-    await harness.adapter.sendDirectReply(
-      "15550000001@s.whatsapp.net",
-      "reply",
-    );
+    await harness.adapter.sendDirectReply(chatId, "system reply");
+    await harness.adapter.sendDirectReply(chatId, "ordinary reply", {
+      applyMessagePrefix: true,
+    });
+
     expect(harness.payloads[0]).toEqual({
       react: {
-        text: "👍",
-        key: { remoteJid: "15550000001@s.whatsapp.net", id: "target" },
+        text: "ok",
+        key: { remoteJid: chatId, id: "target" },
       },
     });
     expect(harness.payloads[1]).toEqual({
       react: {
         text: "",
-        key: { remoteJid: "15550000001@s.whatsapp.net", id: "target" },
+        key: { remoteJid: chatId, id: "target" },
       },
     });
-    expect(harness.payloads[2]).toEqual({ text: "[bot] reply" });
+    expect(harness.payloads[2]).toEqual({ text: "system reply" });
+    expect(harness.payloads[3]).toEqual({ text: "[bot] ordinary reply" });
+  });
+
+  test("approval control prompts and lifecycle error replies are unprefixed", async () => {
+    const harness = makeHarness(prefix);
+    await harness.adapter.start();
+
+    await harness.adapter.handleControlRequestEvent?.({
+      requestId: "approval-1",
+      kind: "generic_tool_approval",
+      source: directSource(),
+      toolName: "Bash",
+      input: { command: "pwd" },
+    } satisfies ChannelControlRequestEvent);
+
+    await harness.adapter.handleTurnLifecycleEvent?.({
+      type: "finished",
+      outcome: "error",
+      batchId: "batch-1",
+      runId: "run-1",
+      stopReason: "error",
+      error: "boom",
+      sources: [directSource({ messageId: "incoming-2" })],
+    } satisfies ChannelTurnLifecycleEvent);
+
+    expect(harness.payloads).toHaveLength(2);
+    const [controlPayload, lifecyclePayload] = harness.payloads;
+    if (!controlPayload || !lifecyclePayload) {
+      throw new Error("expected control and lifecycle payloads");
+    }
+    const controlText = payloadText(controlPayload);
+    const lifecycleText = payloadText(lifecyclePayload);
+    expect(controlText).toStartWith("The agent wants approval");
+    expect(controlText).not.toStartWith(prefix);
+    expect(lifecycleText).toStartWith("Turn failed:");
+    expect(lifecycleText).not.toStartWith(prefix);
   });
 
   test("absent and empty prefixes preserve payloads and one-shot composing", async () => {
-    for (const prefix of [undefined, ""]) {
-      const harness = makeHarness(prefix);
+    for (const emptyPrefix of [undefined, ""]) {
+      const harness = makeHarness(emptyPrefix);
       await send(harness.adapter, {
         channel: "whatsapp",
         accountId: account.accountId,
-        chatId: "15550000001@s.whatsapp.net",
+        chatId,
         text: "hello",
       });
       expect(harness.payloads).toEqual([{ text: "hello" }]);
       expect(harness.presence).toEqual([
-        { presence: "composing", jid: "15550000001@s.whatsapp.net" },
+        { presence: "composing", jid: chatId },
       ]);
     }
   });
