@@ -52,6 +52,7 @@ describe("split stream listener lifecycle", () => {
   let connections: WebSocket[];
   let connectionChannels: Array<string | null>;
   let hangNextStreamUpgrade: boolean;
+  let rejectNextStreamUpgrade: boolean;
   let streamUpgradeAttempts: number;
   let stalledUpgradeSockets: Set<Duplex>;
 
@@ -89,6 +90,7 @@ describe("split stream listener lifecycle", () => {
     connections = [];
     connectionChannels = [];
     hangNextStreamUpgrade = false;
+    rejectNextStreamUpgrade = false;
     streamUpgradeAttempts = 0;
     stalledUpgradeSockets = new Set();
     server = new WebSocketServer({ noServer: true });
@@ -103,6 +105,15 @@ describe("split stream listener lifecycle", () => {
           stalledUpgradeSockets.add(socket);
           socket.once("close", () => stalledUpgradeSockets.delete(socket));
           socket.on("error", () => {});
+          return;
+        }
+        if (rejectNextStreamUpgrade) {
+          rejectNextStreamUpgrade = false;
+          socket.end(
+            "HTTP/1.1 503 Service Unavailable\r\n" +
+              "Connection: close\r\n" +
+              "Content-Length: 0\r\n\r\n",
+          );
           return;
         }
       }
@@ -234,6 +245,45 @@ describe("split stream listener lifecycle", () => {
     }
     return -1;
   }
+
+  test("split stream upgrade rejection retries the paired listener sockets", async () => {
+    process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS = "1000";
+    const onConnected = mock(() => {});
+    const onDisconnected = mock(() => {});
+    const onNeedsReregister = mock(() => {});
+    const onError = mock(() => {});
+    await startClient({
+      onConnected,
+      onDisconnected,
+      onNeedsReregister,
+      onError,
+    });
+    await waitFor(
+      () =>
+        countConnectionsForChannel("control") === 1 &&
+        countConnectionsForChannel("stream") === 1,
+      "initial split sockets did not open",
+    );
+    const listener = getActiveRuntime();
+    expect(listener).not.toBeNull();
+
+    rejectNextStreamUpgrade = true;
+    const initialControlIndex = lastConnectionIndexForChannel("control");
+    connections[initialControlIndex]?.terminate();
+    await waitFor(
+      () =>
+        countConnectionsForChannel("control") === 3 &&
+        countConnectionsForChannel("stream") === 2 &&
+        streamUpgradeAttempts === 3 &&
+        onConnected.mock.calls.length === 2,
+      "listener did not retry after the split stream upgrade was rejected",
+    );
+
+    expect(getActiveRuntime()).toBe(listener);
+    expect(onDisconnected).not.toHaveBeenCalled();
+    expect(onNeedsReregister).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
 
   test("split stream handshake stall retries without clearing runtime turn state", async () => {
     process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS = "25";
