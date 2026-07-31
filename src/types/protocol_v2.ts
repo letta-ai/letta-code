@@ -173,6 +173,13 @@ export type ToolsetName =
 
 export type ToolsetPreference = ToolsetName | "auto";
 
+export interface ClientToolsetConfig {
+  /** Request-scoped base toolset. Omitted preserves the runtime preference. */
+  base?: ToolsetPreference;
+  /** Additional bundled client tools to load before applying the allowlist. */
+  include?: string[];
+}
+
 export interface AvailableSkillSummary {
   id: string;
   name: string;
@@ -737,6 +744,12 @@ export interface InputCreateMessagePayload {
    * client tools for this turn.
    */
   client_tool_allowlist?: string[];
+  /**
+   * Optional request-scoped built-in toolset selection. The base chooses the
+   * harness preset without changing persisted settings; include adds bundled
+   * client tools before the allowlist is applied.
+   */
+  client_toolset?: ClientToolsetConfig;
   /**
    * Optional scoped external tools to expose for this turn. Runtime-start
    * external tools with a scope_id stay hidden unless selected here; unscoped

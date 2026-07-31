@@ -21,6 +21,7 @@ import type { SharedReminderState } from "@/reminders/state";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
+  ClientToolsetConfig,
   ControlRequest,
   ExternalToolCallResult,
   LoopStatus,
@@ -74,6 +75,7 @@ export interface IncomingMessage {
   noCoalesce?: boolean;
   channelTurnSources?: ChannelTurnSource[];
   clientToolAllowlist?: string[];
+  clientToolset?: ClientToolsetConfig;
   externalToolScopeIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;

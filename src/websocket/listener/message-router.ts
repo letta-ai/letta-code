@@ -211,6 +211,14 @@ function summarizeInputPayload(payload: unknown): string[] {
   if (payload.kind === "create_message") {
     pushField(fields, "messages", payload.messages);
     pushField(fields, "client_tool_allowlist", payload.client_tool_allowlist);
+    if (isRecord(payload.client_toolset)) {
+      pushField(fields, "client_toolset.base", payload.client_toolset.base);
+      pushField(
+        fields,
+        "client_toolset.include",
+        payload.client_toolset.include,
+      );
+    }
     pushField(
       fields,
       "external_tool_scope_ids",
@@ -568,6 +576,7 @@ export function createListenerMessageHandler(
           agentId: parsed.runtime.agent_id,
           conversationId: parsed.runtime.conversation_id,
           clientToolAllowlist: inputPayload.client_tool_allowlist,
+          clientToolset: inputPayload.client_toolset,
           externalToolScopeIds: inputPayload.external_tool_scope_ids,
           excludeInteractiveTools: inputPayload.exclude_interactive_tools,
           messages: inputPayload.messages,
