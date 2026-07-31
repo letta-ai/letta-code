@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,6 +14,8 @@ import {
   type ReflectionMemoryWorktree,
 } from "@/agent/memory-worktree";
 import { finalizeReflectionMemoryWorktreeLaunch } from "@/cli/helpers/reflection-launcher";
+import { buildModInvocationContext } from "@/mods/context";
+import type { ModEvents } from "@/mods/event-emitter";
 import { telemetry } from "@/telemetry";
 
 let tempDir: string;
@@ -45,6 +53,9 @@ function writeParentMemoryFile(relativePath: string, content: string): void {
 async function finalizeLaunch(
   worktree: ReflectionMemoryWorktree,
   subagentSuccess: boolean,
+  overrides: Partial<
+    Parameters<typeof finalizeReflectionMemoryWorktreeLaunch>[0]
+  > = {},
 ) {
   return await finalizeReflectionMemoryWorktreeLaunch({
     worktree,
@@ -57,6 +68,7 @@ async function finalizeLaunch(
     telemetryContext: { triggerSource: "manual" },
     recompileByConversation: new Map(),
     recompileQueuedByConversation: new Set(),
+    ...overrides,
   });
 }
 
@@ -91,6 +103,66 @@ afterEach(() => {
 });
 
 describe("reflection worktree completion messaging", () => {
+  test("reflection_complete can discard a successful proposal before merge", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(
+      join(worktree.worktreeDir, "reflection.md"),
+      "proposed\n",
+      "utf-8",
+    );
+    git(worktree.worktreeDir, ["add", "reflection.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+
+    const emit = mock(async (name, event) => ({
+      diagnostics: [],
+      handlerCount: 1,
+      name,
+      results: [{ action: "discard" as const }],
+      event,
+    }));
+    const modEvents = { emit } as ModEvents;
+    const result = await finalizeLaunch(worktree, true, {
+      durationMs: 1234,
+      stepCount: 7,
+      modContext: buildModInvocationContext({
+        agent: { id: "agent-test" },
+        conversationId: "conv-test",
+      }),
+      modEvents,
+    });
+
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit.mock.calls[0]?.[0]).toBe("reflection_complete");
+    expect(emit.mock.calls[0]?.[1]).toMatchObject({
+      agentId: "agent-test",
+      conversationId: "conv-test",
+      reflectionAgentId: "agent-reflection-test",
+      trigger: "manual",
+      success: true,
+      model: "reflection-model",
+      stepCount: 7,
+      durationMs: 1234,
+      defaultAction: "merge",
+      worktree: {
+        id: worktree.id,
+        path: worktree.worktreeDir,
+        branch: worktree.branchName,
+        baseCommit: worktree.baseHead,
+        parentMemoryPath: memoryDir,
+      },
+    });
+    expect(result.integration.status).toBe("discarded");
+    expect(result.completionSuccess).toBe(true);
+    expect(result.completionMessage).toBe(
+      "Reflected; proposed memory changes were discarded by a mod.",
+    );
+    expect(existsSync(worktree.worktreeDir)).toBe(false);
+    expect(existsSync(join(memoryDir, "reflection.md"))).toBe(false);
+    expect(readFileSync(join(memoryDir, "persona.md"), "utf-8")).toBe("base\n");
+  });
+
   test("parent dirty cleans up and leaves the transcript retryable", async () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,

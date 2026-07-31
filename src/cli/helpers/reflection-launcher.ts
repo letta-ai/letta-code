@@ -27,6 +27,8 @@ import {
   finalizeAutoReflectionPayload,
   getReflectionTranscriptState,
 } from "@/cli/helpers/reflection-transcript";
+import { emitModEvent, type ModEvents } from "@/mods/event-emitter";
+import type { ModContext, ModReflectionCompletionAction } from "@/mods/types";
 import { type ReflectionWorktreeCleanupOutcome, telemetry } from "@/telemetry";
 import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { debugLog, debugWarn } from "@/utils/debug";
@@ -115,6 +117,7 @@ function getReflectionWorktreeCleanupOutcome(
       return { outcome: "subagent_failed", integrationStatus: "failed" };
     case "merged":
     case "no_changes":
+    case "discarded":
       return undefined;
   }
 }
@@ -219,6 +222,8 @@ export interface ReflectionLaunchOptions {
     },
   ) => void | Promise<void>;
   feedbackContext?: ReflectionFeedbackContext;
+  modContext?: ModContext;
+  modEvents?: ModEvents;
 }
 
 function isReflectionSubagentActiveForAgent(agentId: string): boolean {
@@ -333,6 +338,8 @@ function getReflectionCompletionMessage(
     case "no_changes":
       return ({ action }) =>
         `${action}; no durable memory changes were needed.`;
+    case "discarded":
+      return "Reflected; proposed memory changes were discarded by a mod.";
     case "parent_dirty":
       return "Tried to reflect, but parent memory had uncommitted changes; will retry later.";
     case "merge_conflict":
@@ -388,6 +395,10 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   telemetryContext?: {
     triggerSource: ReflectionLaunchTriggerSource;
   };
+  stepCount?: number;
+  durationMs?: number;
+  modContext?: ModContext;
+  modEvents?: ModEvents;
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
   logRecompileFailure?: (message: string) => void;
@@ -396,9 +407,57 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   completionSuccess: boolean;
   completionMessage: string;
 }> {
+  const defaultAction: ModReflectionCompletionAction = params.subagentSuccess
+    ? "merge"
+    : "discard";
+  let finalizationAction = defaultAction;
+  if (params.modContext && params.modEvents) {
+    try {
+      const emission = await emitModEvent(
+        params.modEvents,
+        "reflection_complete",
+        {
+          agentId: params.agentId,
+          conversationId: params.conversationId,
+          reflectionAgentId: params.subagentAgentId ?? null,
+          trigger: params.telemetryContext?.triggerSource ?? "manual",
+          success: params.subagentSuccess,
+          ...(params.subagentError ? { error: params.subagentError } : {}),
+          model: params.model ?? null,
+          stepCount: params.stepCount ?? null,
+          durationMs: params.durationMs ?? null,
+          defaultAction,
+          worktree: {
+            id: params.worktree.id,
+            path: params.worktree.worktreeDir,
+            branch: params.worktree.branchName,
+            baseCommit: params.worktree.baseHead,
+            parentMemoryPath: params.worktree.parentMemoryDir,
+          },
+        },
+        params.modContext,
+      );
+      const requestedAction = emission.results.find(
+        (result) => result.action === "merge" || result.action === "discard",
+      )?.action;
+      if (params.subagentSuccess && requestedAction) {
+        finalizationAction = requestedAction;
+      }
+    } catch (error) {
+      debugWarn(
+        "mods",
+        `Failed to emit reflection_complete: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
   const integration = await finalizeReflectionMemoryWorktree(params.worktree, {
-    shouldMerge: params.subagentSuccess,
+    shouldMerge: params.subagentSuccess && finalizationAction === "merge",
     knownNoChanges: params.knownNoChanges,
+    successfulDiscard:
+      params.subagentSuccess && finalizationAction === "discard",
   });
   const completionSuccess =
     params.subagentSuccess &&
@@ -562,7 +621,11 @@ export async function launchReflectionSubagent(
               conversationId: completionConversationId,
               subagentAgentId: reflectionAgentId ?? undefined,
               model: reflectionModel,
+              stepCount,
+              durationMs,
               telemetryContext: { triggerSource },
+              modContext: options.modContext,
+              modEvents: options.modEvents,
               recompileByConversation,
               recompileQueuedByConversation,
               logRecompileFailure: (message) => debugWarn("memory", message),

@@ -9,6 +9,7 @@ export const TUI_MOD_CAPABILITIES: ModCapabilities = {
     turns: true,
     compact: true,
     llm: true,
+    reflection: true,
   },
   permissions: true,
   providers: true,

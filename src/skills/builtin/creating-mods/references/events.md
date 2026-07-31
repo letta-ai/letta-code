@@ -22,6 +22,7 @@ letta.capabilities.events.tools
 letta.capabilities.events.turns
 letta.capabilities.events.compact
 letta.capabilities.events.llm
+letta.capabilities.events.reflection
 ```
 
 Guard events when writing portable mods:
@@ -57,9 +58,9 @@ letta.events.on("tool_start", (event, ctx) => {
 });
 ```
 
-Lifecycle, turn, tool, compaction, and llm events are wired today.
+Lifecycle, turn, tool, compaction, llm, and reflection events are wired today.
 
-Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform or cancel outbound user-message turns. `tool_start` handlers can transform the tool arguments before execution. Compaction and llm handlers are notification-only.
+Lifecycle handlers are notification-only and should not return values. `turn_start` handlers can transform or cancel outbound user-message turns. `tool_start` handlers can transform the tool arguments before execution. `reflection_complete` handlers can choose whether a successful proposal is merged or discarded. Compaction and llm handlers are notification-only.
 
 `compact_start`/`compact_end` and `llm_start`/`llm_end` only fire on the **local backend**, where compaction and provider requests run client-side. On the Letta Cloud backend that work happens server-side and these events do not fire, so guard with `letta.capabilities.events.compact` / `letta.capabilities.events.llm` for portable mods.
 
@@ -75,6 +76,7 @@ Lifecycle handlers are notification-only and should not return values. `turn_sta
 "compact_end"
 "llm_start"
 "llm_end"
+"reflection_complete"
 ```
 
 `conversation_open` event:
@@ -296,6 +298,49 @@ Handlers run in registration order. Later handlers see the current input after e
 ```
 
 `llm_end` fires when a provider request ends, success or failure. Successful requests include token usage. Requests that fail before usage is available set `usage: null` and include `error`. Retry/failover effects are not supported yet; both events are notification-only and return values are ignored. A throwing handler is isolated and never breaks the provider request.
+
+`reflection_complete` event:
+
+```ts
+{
+  agentId: string;
+  conversationId: string;
+  reflectionAgentId: string | null;
+  trigger: "manual" | "step-count" | "compaction-event";
+  success: boolean;
+  error?: string;
+  model: string | null;
+  stepCount: number | null;
+  durationMs: number | null;
+  defaultAction: "merge" | "discard";
+  worktree: {
+    id: string;
+    path: string;
+    branch: string;
+    baseCommit: string;
+    parentMemoryPath: string;
+  };
+}
+```
+
+`reflection_complete` fires after the reflection subagent finishes but before
+its memory worktree is merged or discarded. A handler can inspect the proposal,
+run a review in another conversation, and return a finalization action:
+
+```ts
+letta.events.on("reflection_complete", async (event, ctx) => {
+  if (!event.success) return;
+  const reviewer = await ctx.conversation.fork();
+  // Send the worktree path and review instructions, consume the response, then:
+  return { action: "discard" };
+});
+```
+
+Handlers run in registration order and the first valid `merge` or `discard`
+action wins. Successful reflections merge by default. Failed reflections are
+always discarded and cannot be forced to merge by a mod. The event blocks
+finalization while handlers run, so handlers must complete their review before
+returning; deferred proposals are not persisted by this event.
 
 Handlers also receive:
 

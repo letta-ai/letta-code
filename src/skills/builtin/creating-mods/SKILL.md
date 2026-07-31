@@ -88,6 +88,7 @@ letta.capabilities.events.tools
 letta.capabilities.events.turns
 letta.capabilities.events.compact
 letta.capabilities.events.llm
+letta.capabilities.events.reflection
 letta.capabilities.permissions
 letta.capabilities.providers
 letta.capabilities.ui.panels

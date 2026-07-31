@@ -194,6 +194,7 @@ export function buildReflectionMemoryScope(
 export type ReflectionMemoryWorktreeFinalizeStatus =
   | "merged"
   | "no_changes"
+  | "discarded"
   | "parent_dirty"
   | "merge_conflict"
   | "dirty_uncommitted"
@@ -213,7 +214,11 @@ export interface ReflectionMemoryWorktreeFinalizeResult {
 export function reflectionIntegrationConsumesTranscript(
   result: ReflectionMemoryWorktreeFinalizeResult,
 ): boolean {
-  return result.status === "merged" || result.status === "no_changes";
+  return (
+    result.status === "merged" ||
+    result.status === "no_changes" ||
+    result.status === "discarded"
+  );
 }
 
 export function reflectionIntegrationShouldRecompile(
@@ -274,7 +279,11 @@ async function cleanupWorktreeAndBranch(
 
 async function finalizeReflectionMemoryWorktreeImpl(
   worktree: ReflectionMemoryWorktree,
-  options: { shouldMerge: boolean; knownNoChanges?: boolean },
+  options: {
+    shouldMerge: boolean;
+    knownNoChanges?: boolean;
+    successfulDiscard?: boolean;
+  },
 ): Promise<ReflectionMemoryWorktreeFinalizeResult> {
   if (!existsSync(worktree.worktreeDir) && options.knownNoChanges) {
     const branchHead = (
@@ -349,10 +358,23 @@ async function finalizeReflectionMemoryWorktreeImpl(
     );
     debugLog(
       "memfs-git",
-      "reflection finalized id=%s status=failed commitCount=%d cleanedUp=true retryable=true",
+      "reflection finalized id=%s status=%s commitCount=%d cleanedUp=true retryable=%s",
       worktree.id,
+      options.successfulDiscard ? "discarded" : "failed",
       commitCount,
+      options.successfulDiscard ? "false" : "true",
     );
+    if (options.successfulDiscard) {
+      return {
+        status: "discarded",
+        parentMemoryDir: worktree.parentMemoryDir,
+        reflectionWorktreeDir: worktree.worktreeDir,
+        reflectionBranch: worktree.branchName,
+        commitCount,
+        head,
+        summary: "Reflection memory changes were discarded by a mod.",
+      };
+    }
     return {
       status: "failed",
       parentMemoryDir: worktree.parentMemoryDir,
@@ -485,7 +507,11 @@ async function finalizeReflectionMemoryWorktreeImpl(
 
 export async function finalizeReflectionMemoryWorktree(
   worktree: ReflectionMemoryWorktree,
-  options: { shouldMerge: boolean; knownNoChanges?: boolean },
+  options: {
+    shouldMerge: boolean;
+    knownNoChanges?: boolean;
+    successfulDiscard?: boolean;
+  },
 ): Promise<ReflectionMemoryWorktreeFinalizeResult> {
   return await finalizeReflectionMemoryWorktreeImpl(worktree, options);
 }

@@ -2002,13 +2002,12 @@ export async function handleHeadlessCommand(
       systemInfoReminderEnabled,
       effectiveReflectionSettings,
       headlessModAdapter,
+      initialHeadlessModContext,
     );
     return;
   }
-
   // Create buffers to accumulate stream (pass agent.id for server-side tool hooks)
   const buffers = createBuffers(agent.id);
-
   telemetry.setSessionStatsGetter(() => sessionStats.getSnapshot());
 
   // Use agent.id as session_id for all stream-json messages
@@ -3657,6 +3656,7 @@ async function runBidirectionalMode(
   systemInfoReminderEnabled: boolean,
   reflectionSettings: ReflectionSettings,
   headlessModAdapter: ModAdapter,
+  headlessModContext: ModContext,
 ): Promise<void> {
   const sessionId = agent.id;
   const backend = getBackend();
@@ -3717,7 +3717,6 @@ async function runBidirectionalMode(
     uuid: `init-${agent.id}`,
   };
   writeWireMessage(initEvent);
-
   // Track current operation for interrupt support
   let currentAbortController: AbortController | null = null;
   // Latch: an interrupt may arrive on stdin between the user message and
@@ -3746,10 +3745,11 @@ async function runBidirectionalMode(
       description: AUTO_REFLECTION_DESCRIPTION,
       recompileByConversation: systemPromptRecompileByConversation,
       recompileQueuedByConversation: queuedSystemPromptRecompileByConversation,
+      modContext: headlessModContext,
+      modEvents: headlessModAdapter.events,
     });
     return result.launched;
   };
-
   // Resolve pending approvals for this conversation before retrying user input.
   const resolveAllPendingApprovals = async () => {
     const { getResumeDataFromBackend } = await import("@/agent/check-approval");

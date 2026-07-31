@@ -10,6 +10,7 @@ export const MOD_CAPABILITY_IDS = [
   "events.tools",
   "events.compact",
   "events.llm",
+  "events.reflection",
   "ui.panels",
 ] as const;
 
@@ -30,6 +31,7 @@ export const DEFAULT_MOD_CAPABILITIES: ModCapabilities = {
     turns: true,
     compact: true,
     llm: true,
+    reflection: true,
   },
   permissions: true,
   providers: true,
@@ -47,6 +49,7 @@ export const DISABLED_MOD_CAPABILITIES: ModCapabilities = {
     turns: false,
     compact: false,
     llm: false,
+    reflection: false,
   },
   permissions: false,
   providers: false,
@@ -67,6 +70,7 @@ export function cloneModCapabilities(
       turns: capabilities.events.turns,
       compact: capabilities.events.compact,
       llm: capabilities.events.llm,
+      reflection: capabilities.events.reflection,
     },
     permissions: capabilities.permissions,
     providers: capabilities.providers,

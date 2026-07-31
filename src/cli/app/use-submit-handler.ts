@@ -2321,6 +2321,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       systemPromptRecompileByConversationRef.current,
                     recompileQueuedByConversation:
                       queuedSystemPromptRecompileByConversationRef.current,
+                    modContext: modAdapter.context,
+                    modEvents: modAdapter.events,
                     onCompletionMessage: (completionMessage) => {
                       appendTaskNotificationEvents([completionMessage]);
                     },
@@ -3194,7 +3196,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 );
                 return { submitted: true };
               }
-
               const result = await launchReflectionSubagent({
                 agentId,
                 conversationId: reflectionConversationId,
@@ -3207,6 +3208,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   systemPromptRecompileByConversationRef.current,
                 recompileQueuedByConversation:
                   queuedSystemPromptRecompileByConversationRef.current,
+                modContext: modAdapter.context,
+                modEvents: modAdapter.events,
                 onCompletionMessage: (completionMessage) => {
                   appendTaskNotificationEvents([completionMessage]);
                 },
@@ -3216,7 +3219,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   surface: "letta_code_tui",
                 },
               });
-
               if (!result.launched) {
                 const skippedMessage = getReflectionLaunchSkippedMessage(
                   result.reason,
@@ -3232,7 +3234,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                 }
                 return { submitted: true };
               }
-
               cmd.finish(
                 `Reflecting on the recent conversation. View the transcript here: ${result.payloadPath}`,
                 true,
@@ -3317,13 +3318,11 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                         ]);
                         return;
                       }
-
                       const { worktree, reflectionPrompt } =
                         await prepareReflectionMemoryWorktreeLaunch({
                           agentId,
                           instruction: reflectArgs.instruction,
                         });
-
                       spawnBackgroundSubagentTask({
                         subagentType: "reflection",
                         prompt: reflectionPrompt,
@@ -3362,6 +3361,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                                 subagentAgentId: reflectionAgentId ?? undefined,
                                 model: reflectionModel,
                                 telemetryContext: { triggerSource: "manual" },
+                                modContext: modAdapter.context,
+                                modEvents: modAdapter.events,
                                 recompileByConversation:
                                   systemPromptRecompileByConversationRef.current,
                                 recompileQueuedByConversation:
@@ -3382,7 +3383,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       });
                       reflectionReservationDelegated = true;
                       finalReflectionSpawned = true;
-
                       telemetry.trackReflectionStart("manual", {
                         conversationId: reflectionConversationId,
                         startMessageId: autoReflectionPayload.startMessageId,
@@ -3429,7 +3429,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                     },
               instruction: reflectArgs.instruction,
             });
-
             if (!reflectionPayload) {
               releaseReflectionReservation();
               cmd.fail(
@@ -3437,7 +3436,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               );
               return { submitted: true };
             }
-
             const { worktree, reflectionPrompt } =
               await prepareReflectionMemoryWorktreeLaunch({
                 agentId,
@@ -3481,6 +3479,8 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                       subagentAgentId: reflectionAgentId ?? undefined,
                       model: reflectionModel,
                       telemetryContext: { triggerSource: "manual" },
+                      modContext: modAdapter.context,
+                      modEvents: modAdapter.events,
                       recompileByConversation:
                         systemPromptRecompileByConversationRef.current,
                       recompileQueuedByConversation:

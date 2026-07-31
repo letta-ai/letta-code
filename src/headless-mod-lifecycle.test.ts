@@ -44,6 +44,7 @@ describe("headless mod adapter", () => {
         turns: true,
         compact: true,
         llm: true,
+        reflection: true,
       },
       permissions: true,
       providers: true,

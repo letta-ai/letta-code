@@ -16,7 +16,10 @@ import type {
 } from "@/mods/types";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import { getBootWorkingDirectory } from "./cwd";
+import {
+  getBootWorkingDirectory,
+  getConversationWorkingDirectory,
+} from "./cwd";
 import { ensureMemfsSyncedForAgent } from "./memfs-sync";
 import type { ListenerRuntime } from "./types";
 
@@ -29,6 +32,7 @@ export const LISTENER_MOD_CAPABILITIES: ModCapabilities = {
     turns: true,
     compact: false,
     llm: false,
+    reflection: true,
   },
   permissions: true,
   providers: true,
@@ -215,6 +219,26 @@ export async function ensureListenerModAdaptersForAgent(
   const globalAdapter = ensureListenerModAdapter(runtime);
   const agentAdapter = await ensureListenerAgentModAdapter(runtime, agentId);
   return agentAdapter ? [globalAdapter, agentAdapter] : [globalAdapter];
+}
+
+export async function createListenerReflectionModOptions(
+  runtime: ListenerRuntime,
+  agentId: string,
+  conversationId: string,
+): Promise<{ modContext: ModContext; modEvents: ModEvents }> {
+  const adapters = await ensureListenerModAdaptersForAgent(runtime, agentId);
+  return {
+    modContext: createListenerModContext({
+      sessionId: conversationId,
+      workingDirectory: getConversationWorkingDirectory(
+        runtime,
+        agentId,
+        conversationId,
+      ),
+      agent: { id: agentId },
+    }),
+    modEvents: createListenerModEvents(adapters),
+  };
 }
 
 export function getLoadedListenerModAdapters(

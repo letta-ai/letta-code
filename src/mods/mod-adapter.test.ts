@@ -80,6 +80,57 @@ function sleep(ms: number): Promise<void> {
 }
 
 describe("mod adapter", () => {
+  test("delivers reflection_complete and returns the requested action", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "reflection.ts"),
+        `export default function(letta) {
+          letta.events.on("reflection_complete", (event) => {
+            return event.success ? { action: "discard" } : undefined;
+          });
+        }`,
+      );
+      const adapter = createModAdapter({
+        cacheDirectory: path.join(root, "mod-cache"),
+        getClient: async () => ({}) as unknown as Letta,
+        globalModsDirectory: modDir,
+      });
+      await adapter.reload();
+
+      const result = await adapter.events.emit(
+        "reflection_complete",
+        {
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          reflectionAgentId: "agent-reflection",
+          trigger: "step-count",
+          success: true,
+          model: "letta/auto-memory",
+          stepCount: 12,
+          durationMs: 1234,
+          defaultAction: "merge",
+          worktree: {
+            id: "reflection-1",
+            path: "/tmp/reflection-1",
+            branch: "letta/reflection/1",
+            baseCommit: "base",
+            parentMemoryPath: "/tmp/memory",
+          },
+        },
+        createModContext(),
+      );
+
+      expect(result.handlerCount).toBe(1);
+      expect(result.results).toEqual([{ action: "discard" }]);
+      adapter.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   test("LETTA_DISABLE_MODS disables the adapter", () => {
     const original = process.env[LETTA_DISABLE_MODS_ENV];
     try {
