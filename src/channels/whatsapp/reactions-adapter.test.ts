@@ -439,6 +439,81 @@ describe("WhatsApp reaction adapter integration", () => {
     expect(harness.sentMessages).toHaveLength(0);
   });
 
+  test("unrefs and clears message-store TTL timers", async () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    const timers: Array<
+      ReturnType<typeof setTimeout> & { unrefCalled: boolean }
+    > = [];
+    const cleared: unknown[] = [];
+    globalThis.setTimeout = ((callback: unknown, timeout?: number) => {
+      void callback;
+      void timeout;
+      const timer = {
+        unrefCalled: false,
+        unref() {
+          timer.unrefCalled = true;
+        },
+      } as ReturnType<typeof setTimeout> & { unrefCalled: boolean };
+      timers.push(timer);
+      return timer;
+    }) as unknown as typeof setTimeout;
+    globalThis.clearTimeout = ((timer?: unknown) => {
+      if (timer !== undefined) cleared.push(timer);
+    }) as unknown as typeof clearTimeout;
+    try {
+      const harness = makeHarness();
+      await harness.start();
+      await harness.emitUpsert([
+        {
+          key: { remoteJid: REACTOR, id: "timer-target", fromMe: false },
+          message: { conversation: "timer target" },
+          messageTimestamp: Math.floor(Date.now() / 1000),
+        },
+      ]);
+      expect(timers).toHaveLength(1);
+      expect(timers[0]?.unrefCalled).toBe(true);
+      await harness.adapter.stop();
+      expect(cleared).toContain(timers[0]);
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+  });
+
+  test("caps outbound ownership cache", async () => {
+    const harness = makeHarness();
+    await harness.start();
+    const timestamp = Math.floor(Date.now() / 1000);
+    await harness.emitUpsert(
+      Array.from({ length: 5001 }, (_, index) => ({
+        key: {
+          remoteJid: REACTOR,
+          id: `cached-outbound-${index}`,
+          fromMe: true,
+        },
+        message: { conversation: `cached outbound ${index}` },
+        messageTimestamp: timestamp,
+      })),
+    );
+
+    await harness.emit([
+      reactionEntry({
+        targetId: "cached-outbound-0",
+        targetFromMe: false,
+        reactionId: "evicted-cache-target",
+      }),
+      reactionEntry({
+        targetId: "cached-outbound-5000",
+        targetFromMe: false,
+        reactionId: "retained-cache-target",
+      }),
+    ]);
+    expect(harness.delivered.map((message) => message.messageId)).toEqual([
+      "retained-cache-target",
+    ]);
+  });
+
   test("enforces group policy and preserves mention semantics", async () => {
     const cases: Array<{
       groupMode: "disabled" | "mention" | "open";
