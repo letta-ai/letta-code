@@ -116,7 +116,6 @@ async function makeHarness(
         sendCount += 1;
         return { key: { id: `outbound-${sendCount}` } };
       },
-      async readMessages() {},
     };
     return {
       sock: socket,
