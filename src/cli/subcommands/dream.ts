@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { CLI_NUMERIC_OPTION_MAX, parsePositiveIntFlag } from "@/cli/flag-utils";
 import {
   type ParsedSource,
   parseFromSource,
@@ -36,7 +37,7 @@ Options:
                               the agent edits it in place, using judgment
   --effort <level>            Reflection effort (reserved; not yet implemented)
   --timeout <seconds>         Fail if the reflection pass has not completed
-                              in this many seconds (default: 1500)
+                              in 1-86400 seconds (default: 1500)
   -i, --instruction <text>    Additional instruction for the reflection pass
   --prompt <text>             Advanced: replace the reflection task prompt
                               entirely (you supply the transcript/memory
@@ -145,13 +146,17 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     );
   }
 
-  let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
-  if (parsed.values.timeout) {
-    timeoutSeconds = Number.parseInt(parsed.values.timeout, 10);
-    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
-      console.error(`Error: Invalid --timeout "${parsed.values.timeout}"`);
-      return 1;
-    }
+  let timeoutSeconds: number;
+  try {
+    timeoutSeconds =
+      parsePositiveIntFlag({
+        rawValue: parsed.values.timeout,
+        flagName: "timeout",
+        maxValue: CLI_NUMERIC_OPTION_MAX.timeoutSeconds,
+      }) ?? DEFAULT_TIMEOUT_SECONDS;
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : error}`);
+    return 1;
   }
 
   await settingsManager.initialize();

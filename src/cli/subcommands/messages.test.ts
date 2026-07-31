@@ -173,4 +173,35 @@ describe("messages subcommand conversation scoping", () => {
       capture.restore();
     }
   });
+
+  test.each([
+    ["search", "--limit", "10junk"],
+    ["list", "--limit", "-1"],
+    ["transcript", "--limit", "0"],
+    ["transcript", "--max-pages", "1.5"],
+    ["transcript", "--max-pages", "1001"],
+  ])(
+    "%s rejects invalid numeric option before initialization",
+    async (action, flag, value) => {
+      const capture = captureConsole();
+      try {
+        const code = await runMessages([
+          action,
+          value.startsWith("-") ? `${flag}=${value}` : flag,
+          ...(value.startsWith("-") ? [] : [value]),
+        ]);
+
+        expect(code).toBe(1);
+        expect(initializeSettingsMock).not.toHaveBeenCalled();
+        expect(searchMessagesForBackendMock).not.toHaveBeenCalled();
+        expect(backendMock.listAgentMessages).not.toHaveBeenCalled();
+        expect(backendMock.listConversationMessages).not.toHaveBeenCalled();
+        expect(capture.stderr.join("\n")).toContain(
+          `${flag} must be an integer between 1 and 1000`,
+        );
+      } finally {
+        capture.restore();
+      }
+    },
+  );
 });

@@ -3,6 +3,7 @@ import {
   type EnvironmentConnection,
   listEnvironments,
 } from "@/backend/api/environments";
+import { CLI_NUMERIC_OPTION_MAX, parsePositiveIntFlag } from "@/cli/flag-utils";
 import { settingsManager } from "@/settings-manager";
 import { getVersion } from "@/version.ts";
 
@@ -27,7 +28,7 @@ Aliases:
   letta envs current
 
 List options:
-  --limit <n>       Max results (default: 50)
+  --limit <n>       Max results (1-1000; default: 50)
   --after <id>      Pagination cursor from a previous environment id
   --online-only     Only include environments with a fresh active connection
 
@@ -40,12 +41,6 @@ Notes:
     to route a message through a specific registered environment.
 `.trim(),
   );
-}
-
-function parseLimit(value: unknown, fallback: number): number {
-  if (typeof value !== "string" || value.length === 0) return fallback;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isNaN(parsed) ? fallback : parsed;
 }
 
 function isOnline(environment: EnvironmentConnection): boolean {
@@ -160,6 +155,21 @@ export async function runEnvironmentsSubcommand(
     return 1;
   }
 
+  let limit = 50;
+  if (action === "list") {
+    try {
+      limit =
+        parsePositiveIntFlag({
+          rawValue: parsed.values.limit,
+          flagName: "limit",
+          maxValue: CLI_NUMERIC_OPTION_MAX.pageSize,
+        }) ?? 50;
+    } catch (error) {
+      console.error(`Error: ${error instanceof Error ? error.message : error}`);
+      return 1;
+    }
+  }
+
   await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
   const list = deps.listEnvironments ?? listEnvironments;
   const deviceId = settingsManager.getOrCreateDeviceId();
@@ -192,7 +202,6 @@ export async function runEnvironmentsSubcommand(
     return 0;
   }
 
-  const limit = parseLimit(parsed.values.limit, 50);
   const onlineOnly = parsed.values["online-only"] ?? false;
   const result = await list({
     limit,

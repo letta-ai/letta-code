@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { getBackend } from "@/backend";
 import { searchMessagesForBackend } from "@/backend/message-search";
+import { CLI_NUMERIC_OPTION_MAX, parsePositiveIntFlag } from "@/cli/flag-utils";
 import { settingsManager } from "@/settings-manager";
 
 type SearchMode = "vector" | "fts" | "hybrid";
@@ -55,7 +56,7 @@ Search options:
   --mode <mode>         Search mode: vector, fts, hybrid (default: hybrid)
   --start-date <date>   Filter messages after this date (ISO format)
   --end-date <date>     Filter messages before this date (ISO format)
-  --limit <n>           Max results (default: 10)
+  --limit <n>           Max results (1-1000; default: 10)
   --all-agents          Search all agents, not just current agent
   --agent <id>          Explicit agent ID (overrides LETTA_AGENT_ID)
   --agent-id <id>       Alias for --agent
@@ -70,7 +71,7 @@ List options:
   --after <message-id>  Cursor: get messages after this ID
   --before <message-id> Cursor: get messages before this ID
   --order <asc|desc>    Sort order (default: desc = newest first)
-  --limit <n>           Max results (default: 20)
+  --limit <n>           Max results (1-1000; default: 20)
   --start-date <date>   Client-side filter: after this date (ISO format)
   --end-date <date>     Client-side filter: before this date (ISO format)
 
@@ -79,8 +80,8 @@ Transcript options:
   --conversation-id <id> Alias for --conversation
   --agent <id>           Required when conversation is "default"
   --agent-id <id>        Alias for --agent
-  --limit <n>            Page size while fetching (default: 100)
-  --max-pages <n>        Max pagination pages to fetch (default: 200)
+  --limit <n>            Page size while fetching (1-1000; default: 100)
+  --max-pages <n>        Max pages to fetch (1-1000; default: 200)
   --out <path>           Write transcript text to file
   --output <path>        Alias for --out
 
@@ -90,12 +91,6 @@ Notes:
   - For agent-to-agent messaging, use: letta -p --from-agent <sender-id> --agent <target-id> "message"
 `.trim(),
   );
-}
-
-function parseLimit(value: unknown, fallback: number): number {
-  if (typeof value !== "string" || value.length === 0) return fallback;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isNaN(parsed) ? fallback : parsed;
 }
 
 function parseMode(value: unknown): SearchMode | undefined {
@@ -181,6 +176,32 @@ export async function runMessagesSubcommand(
   if (parsed.values.help || !action || action === "help") {
     printUsage();
     return 0;
+  }
+
+  let limit: number | undefined;
+  let maxPages: number | undefined;
+  try {
+    if (action === "search" || action === "list" || action === "transcript") {
+      const defaultLimit =
+        action === "search" ? 10 : action === "list" ? 20 : 100;
+      limit =
+        parsePositiveIntFlag({
+          rawValue: parsed.values.limit,
+          flagName: "limit",
+          maxValue: CLI_NUMERIC_OPTION_MAX.pageSize,
+        }) ?? defaultLimit;
+    }
+    if (action === "transcript") {
+      maxPages =
+        parsePositiveIntFlag({
+          rawValue: parsed.values["max-pages"],
+          flagName: "max-pages",
+          maxValue: CLI_NUMERIC_OPTION_MAX.pageCount,
+        }) ?? 200;
+    }
+  } catch (error) {
+    console.error(`Error: ${error instanceof Error ? error.message : error}`);
+    return 1;
   }
 
   try {
@@ -392,7 +413,7 @@ export async function runMessagesSubcommand(
         search_mode: parseMode(parsed.values.mode) ?? "hybrid",
         start_date: parsed.values["start-date"],
         end_date: parsed.values["end-date"],
-        limit: parseLimit(parsed.values.limit, 10),
+        limit: limit ?? 10,
         ...(scopedAgentId ? { agent_id: scopedAgentId } : {}),
         ...(typeof conversationId === "string"
           ? { conversation_id: conversationId }
@@ -428,7 +449,7 @@ export async function runMessagesSubcommand(
         return 1;
       }
       const listBody = {
-        limit: parseLimit(parsed.values.limit, 20),
+        limit: limit ?? 20,
         after: parsed.values.after,
         before: parsed.values.before,
         order,
@@ -491,15 +512,15 @@ export async function runMessagesSubcommand(
         return 1;
       }
 
-      const pageLimit = Math.max(1, parseLimit(parsed.values.limit, 100));
-      const maxPages = Math.max(1, parseLimit(parsed.values["max-pages"], 200));
+      const pageLimit = limit ?? 100;
+      const pageCount = maxPages ?? 200;
       const outputPathRaw = parsed.values.out || parsed.values.output;
 
       const messages = await fetchConversationMessages(
         conversationId,
         agentId || undefined,
         pageLimit,
-        maxPages,
+        pageCount,
       );
 
       const transcript = messages
