@@ -61,6 +61,7 @@ type RegistryHarness = {
   deliveries: ChannelInboundDelivery[];
   sendCount: number;
   emit: (messages: Record<string, unknown>[]) => Promise<void>;
+  emitReaction: (entries: Record<string, unknown>[]) => Promise<void>;
 };
 
 function makeAccount(
@@ -93,11 +94,27 @@ function makeMessage(
   };
 }
 
+function makeReactionEntry(
+  remoteJid: string,
+  id: string,
+  key: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    key: { remoteJid, id: "target-message", fromMe: true },
+    reaction: {
+      key: { remoteJid, id, fromMe: false, ...key },
+      text: "👍",
+      senderTimestampMs: Date.now(),
+    },
+  };
+}
+
 async function makeHarness(
   account: WhatsAppChannelAccount,
   lidPath: string,
 ): Promise<RegistryHarness> {
   const upsertHandlers: Array<(payload: unknown) => unknown> = [];
+  const reactionHandlers: Array<(payload: unknown) => unknown> = [];
   const deliveries: ChannelInboundDelivery[] = [];
   let sendCount = 0;
 
@@ -108,6 +125,7 @@ async function makeHarness(
       ev: {
         on(event: string, handler: (payload: unknown) => void) {
           if (event === "messages.upsert") upsertHandlers.push(handler);
+          if (event === "messages.reaction") reactionHandlers.push(handler);
         },
       },
       ws: { close() {} },
@@ -147,6 +165,12 @@ async function makeHarness(
       const handler = upsertHandlers.at(-1);
       if (!handler) throw new Error("messages.upsert handler was not captured");
       await handler({ type: "notify", messages });
+    },
+    async emitReaction(entries) {
+      const handler = reactionHandlers.at(-1);
+      if (!handler)
+        throw new Error("messages.reaction handler was not captured");
+      await handler(entries);
     },
   };
 }
@@ -234,6 +258,23 @@ describe("WhatsApp canonical identity through ChannelRegistry", () => {
       });
     }
     expect(getRoutesForChannel("whatsapp", ACCOUNT_ID)).toHaveLength(1);
+    expect(getPendingPairings("whatsapp", ACCOUNT_ID)).toHaveLength(0);
+    expect(harness.sendCount).toBe(0);
+  });
+
+  test("unpaired reactions do not create pairing prompts", async () => {
+    const account = makeAccount();
+    __testOverrideLoadChannelAccounts(() => [account]);
+    const harness = await makeHarness(account, join(tempDir, "lid.json"));
+
+    await harness.emitReaction([
+      makeReactionEntry(RAW_LID, "pending-reaction", {
+        senderPn: CANONICAL_PHONE_JID,
+        senderLid: RAW_LID,
+      }),
+    ]);
+
+    expect(harness.deliveries).toHaveLength(0);
     expect(getPendingPairings("whatsapp", ACCOUNT_ID)).toHaveLength(0);
     expect(harness.sendCount).toBe(0);
   });

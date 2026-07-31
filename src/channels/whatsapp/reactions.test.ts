@@ -58,6 +58,35 @@ describe("WhatsApp reaction parser", () => {
     }
   });
 
+  test("preserves Baileys PN/LID identity fields on reaction keys", () => {
+    const parsed = parseWhatsAppReactionEntry(
+      entry({
+        reaction: {
+          ...entry().reaction,
+          key: {
+            remoteJid: "120363-987@g.us",
+            id: "reaction-event",
+            participant: "200000@lid",
+            participantPn: "15550000003@s.whatsapp.net",
+            participantLid: "200000@lid",
+            senderPn: "15550000004@s.whatsapp.net",
+            senderLid: "300000@lid",
+          },
+        },
+      }),
+    );
+
+    expect(parsed?.reactionKey).toEqual(
+      expect.objectContaining({
+        participant: "200000@lid",
+        participantPn: "15550000003@s.whatsapp.net",
+        participantLid: "200000@lid",
+        senderPn: "15550000004@s.whatsapp.net",
+        senderLid: "300000@lid",
+      }),
+    );
+  });
+
   test("preserves group participants and accepts numeric/toNumber timestamps", () => {
     const numeric = parseWhatsAppReactionEntry(entry());
     expect(numeric?.reactorParticipant).toBe("15550000003@s.whatsapp.net");
@@ -90,6 +119,16 @@ describe("WhatsApp reaction parser", () => {
       }),
       entry({
         reaction: { ...entry().reaction, text: "x".repeat(65) },
+      }),
+      entry({
+        reaction: {
+          ...entry().reaction,
+          key: {
+            remoteJid: "120363-987@g.us",
+            id: "reaction-event",
+            senderPn: 123,
+          },
+        },
       }),
       entry({ key: { remoteJid: "malformed", id: "target-message" } }),
     ];
