@@ -110,6 +110,13 @@ import {
   safeEmitWsEvent,
   setActiveRuntime,
 } from "./runtime";
+import {
+  handleListenerSocketOpenFailure,
+  isCurrentSocketPair,
+  prepareSplitStreamTransport,
+  shouldHandleControlSocketClose,
+  terminateControlAfterStreamClose,
+} from "./split-stream-lifecycle";
 import { notifyStreamObserversRuntimeStopped } from "./stream-observers";
 import {
   getListenerTransportKind,
@@ -404,74 +411,6 @@ function getParsedRuntimeScope(
         ? runtime.conversation_id
         : "default",
   };
-}
-
-function terminateControlAfterStreamClose(
-  runtime: ListenerRuntime,
-  streamSocket: WebSocket,
-  code: number,
-  reason: Buffer,
-): void {
-  if (runtime.streamSocket !== streamSocket) {
-    return;
-  }
-  if (code === 1000 && reason.toString() === "Replaced by new connection") {
-    runtime.intentionallyClosed = true;
-  }
-  runtime.streamSocket = null;
-  runtime.streamTransport = null;
-
-  const controlSocket = runtime.socket;
-  if (
-    controlSocket &&
-    (controlSocket.readyState === WebSocket.OPEN ||
-      controlSocket.readyState === WebSocket.CONNECTING)
-  ) {
-    // The stream channel has no independent replay or reconnect path. Closing
-    // control tears down the paired session so its normal reconnect/bootstrap
-    // flow restores one coherent connection instead of silently losing frames.
-    controlSocket.terminate();
-  }
-}
-
-async function waitForStreamSocketOpen(
-  streamSocket: WebSocket,
-  runtime: ListenerRuntime,
-): Promise<ListenerTransport | null> {
-  if (streamSocket.readyState === WebSocket.OPEN) {
-    runtime.streamTransport = streamSocket;
-    return streamSocket;
-  }
-
-  if (
-    streamSocket.readyState === WebSocket.CLOSING ||
-    streamSocket.readyState === WebSocket.CLOSED
-  ) {
-    return null;
-  }
-
-  return await new Promise<ListenerTransport | null>((resolve) => {
-    const handleOpen = () => {
-      cleanup();
-      runtime.streamTransport = streamSocket;
-      resolve(streamSocket);
-    };
-
-    const handleFailure = () => {
-      cleanup();
-      resolve(null);
-    };
-
-    const cleanup = () => {
-      streamSocket.off("open", handleOpen);
-      streamSocket.off("error", handleFailure);
-      streamSocket.off("close", handleFailure);
-    };
-
-    streamSocket.once("open", handleOpen);
-    streamSocket.once("error", handleFailure);
-    streamSocket.once("close", handleFailure);
-  });
 }
 
 /**
@@ -1202,7 +1141,10 @@ export async function attachOpenListenerSocket(
   });
 
   socket.on("close", (code: number, reason: Buffer) => {
-    if (runtime !== getActiveRuntime()) {
+    if (
+      runtime !== getActiveRuntime() ||
+      runtime.connections.get(opts.connectionId) !== connection
+    ) {
       return;
     }
 
@@ -1464,29 +1406,49 @@ async function connectWithRetry(
   const transport = socket;
   const processQueuedTurn = createConnectionTurnProcessor(runtime);
 
-  socket.on("open", async () => {
-    let streamTransport: ListenerTransport | null = null;
-    if (streamSocket) {
-      streamTransport = await waitForStreamSocketOpen(streamSocket, runtime);
-    }
-    openListenerConnection({
-      runtime,
-      connectionId: opts.connectionId,
-      writer: socket,
-      streamWriter: streamTransport,
-      options: opts,
+  socket.on("open", () => {
+    void (async () => {
+      const streamOpen = await prepareSplitStreamTransport({
+        runtime,
+        controlSocket: socket,
+        streamSocket,
+        trackListenerError,
+      });
+      if (streamOpen.kind !== "ready") {
+        return;
+      }
+      const streamTransport = streamOpen.transport;
+      if (!isCurrentSocketPair(runtime, socket, streamSocket)) {
+        return;
+      }
+      openListenerConnection({
+        runtime,
+        connectionId: opts.connectionId,
+        writer: socket,
+        streamWriter: streamTransport,
+        options: opts,
+      });
+      await startConnectedListenerRuntime(
+        runtime,
+        transport,
+        opts,
+        processQueuedTurn,
+        {
+          startHeartbeat: true,
+          startCronScheduler: true,
+          streamTransport,
+        },
+      );
+    })().catch((error) => {
+      handleListenerSocketOpenFailure({
+        runtime,
+        controlSocket: socket,
+        streamSocket,
+        error,
+        trackListenerError,
+        onError: opts.onError,
+      });
     });
-    await startConnectedListenerRuntime(
-      runtime,
-      transport,
-      opts,
-      processQueuedTurn,
-      {
-        startHeartbeat: true,
-        startCronScheduler: true,
-        streamTransport,
-      },
-    );
   });
 
   socket.on(
@@ -1513,7 +1475,7 @@ async function connectWithRetry(
   );
 
   socket.on("close", (code: number, reason: Buffer) => {
-    if (runtime !== getActiveRuntime()) {
+    if (!shouldHandleControlSocketClose(runtime, socket, opts.connectionId)) {
       return;
     }
 
