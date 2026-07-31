@@ -1,4 +1,3 @@
-import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
 import {
   estimateSystemPromptTokensFromMemoryDir,
@@ -40,6 +39,10 @@ import { getBootWorkingDirectory, getExportedCwdMap } from "./cwd";
 import { handleExternalToolCallResponseCommand } from "./external-tools";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import { enqueueInboundUserMessage } from "./inbound-queue";
+import {
+  isNewConversationCreateMessageInput,
+  resolveCreateMessageRuntimeScope,
+} from "./new-conversation-sentinel";
 import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
@@ -428,7 +431,7 @@ export function createListenerMessageHandler(
 
       console.log(`[Listen V2] Received ${summarizeV2Command(parsed)}`);
 
-      if (parsedScope) {
+      if (parsedScope && !isNewConversationCreateMessageInput(parsed)) {
         subscribeListenerConnection(runtime, connectionId, parsedScope);
       }
 
@@ -562,20 +565,13 @@ export function createListenerMessageHandler(
           return;
         }
 
-        const incoming: IncomingMessage = {
-          type: "message",
-          connectionId,
-          agentId: parsed.runtime.agent_id,
-          conversationId: parsed.runtime.conversation_id,
-          clientToolAllowlist: inputPayload.client_tool_allowlist,
-          externalToolScopeIds: inputPayload.external_tool_scope_ids,
-          excludeInteractiveTools: inputPayload.exclude_interactive_tools,
-          messages: inputPayload.messages,
-        };
-        const hasApprovalPayload = incoming.messages.some(
-          (payload): payload is ApprovalCreate =>
-            "type" in payload && payload.type === "approval",
-        );
+        const hasApprovalPayload = inputPayload.messages.some((payload) => {
+          if (!isRecord(payload)) {
+            return false;
+          }
+          const payloadType = (payload as Record<string, unknown>).type;
+          return payloadType === "approval";
+        });
         if (hasApprovalPayload) {
           emitLoopErrorNotice(socket, runtime, {
             message:
@@ -587,6 +583,33 @@ export function createListenerMessageHandler(
           });
           return;
         }
+
+        const createsConversation = isNewConversationCreateMessageInput(parsed);
+        const resolvedRuntime = createsConversation
+          ? await resolveCreateMessageRuntimeScope(parsed.runtime)
+          : parsed.runtime;
+        if (
+          createsConversation &&
+          (runtime !== getActiveRuntime() || runtime.intentionallyClosed)
+        ) {
+          console.log(
+            "[Listen V2] Dropping input after conversation creation: runtime mismatch or closed",
+          );
+          return;
+        }
+        parsedScope = resolvedRuntime;
+        subscribeListenerConnection(runtime, connectionId, resolvedRuntime);
+
+        const incoming: IncomingMessage = {
+          type: "message",
+          connectionId,
+          agentId: resolvedRuntime.agent_id,
+          conversationId: resolvedRuntime.conversation_id,
+          clientToolAllowlist: inputPayload.client_tool_allowlist,
+          externalToolScopeIds: inputPayload.external_tool_scope_ids,
+          excludeInteractiveTools: inputPayload.exclude_interactive_tools,
+          messages: inputPayload.messages,
+        };
 
         const scopedRuntime = getOrCreateScopedRuntime(
           runtime,
@@ -605,7 +628,7 @@ export function createListenerMessageHandler(
             options: opts,
             processQueuedTurn,
             processIncomingMessage,
-            actingUserId: parsed.runtime.acting_user_id,
+            actingUserId: resolvedRuntime.acting_user_id,
             trackListenerError,
           });
         };
@@ -622,7 +645,7 @@ export function createListenerMessageHandler(
           enqueueInboundUserMessage(
             scopedRuntime,
             stampedIncoming,
-            parsed.runtime.acting_user_id,
+            resolvedRuntime.acting_user_id,
           );
           scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
           return;
