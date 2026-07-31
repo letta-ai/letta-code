@@ -54,11 +54,11 @@ describe("WhatsApp JID helpers", () => {
   });
 
   test("refuses to send to unresolved LIDs", () => {
-    expect(() => resolveSendJid({ chatId: "abc@lid" })).toThrow(/unresolved/i);
+    expect(() => resolveSendJid({ chatId: "123@lid" })).toThrow(/unresolved/i);
     expect(
       resolveSendJid({
-        chatId: "abc@lid",
-        lidToJid: new Map([["abc@lid", "15551234567@s.whatsapp.net"]]),
+        chatId: "123@lid",
+        resolveLid: () => "15551234567@s.whatsapp.net",
       }),
     ).toBe("15551234567@s.whatsapp.net");
   });
