@@ -196,6 +196,13 @@ export function toAccountSnapshot(
       transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,
+      attachmentFilter: account.attachmentFilter === true,
+      attachmentMimeTypes: [...(account.attachmentMimeTypes ?? [])],
+      attachmentAllowedRecipients: [
+        ...(account.attachmentAllowedRecipients ?? []),
+      ],
+      attachmentAllowedPaths: [...(account.attachmentAllowedPaths ?? [])],
+      attachmentPathRecursive: account.attachmentPathRecursive === true,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -387,6 +394,13 @@ export function getChannelConfigSnapshot(
       transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,
+      attachmentFilter: account.attachmentFilter === true,
+      attachmentMimeTypes: [...(account.attachmentMimeTypes ?? [])],
+      attachmentAllowedRecipients: [
+        ...(account.attachmentAllowedRecipients ?? []),
+      ],
+      attachmentAllowedPaths: [...(account.attachmentAllowedPaths ?? [])],
+      attachmentPathRecursive: account.attachmentPathRecursive === true,
     };
   }
 

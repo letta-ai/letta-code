@@ -263,6 +263,9 @@ const whatsappConfigCodec: ChannelConfigCodec<WhatsAppChannelConfig> = {
   parse(parsed) {
     const rawAllowedGroups = parsed.allowed_groups;
     const rawMentionPatterns = parsed.mention_patterns;
+    const rawAttachmentMimeTypes = parsed.attachment_mime_types;
+    const rawAttachmentAllowedRecipients = parsed.attachment_allowed_recipients;
+    const rawAttachmentAllowedPaths = parsed.attachment_allowed_paths;
     return {
       channel: "whatsapp",
       enabled: parsed.enabled !== false,
@@ -283,6 +286,17 @@ const whatsappConfigCodec: ChannelConfigCodec<WhatsAppChannelConfig> = {
         typeof parsed.media_max_bytes === "number"
           ? parsed.media_max_bytes
           : undefined,
+      attachmentFilter: parsed.attachment_filter === true,
+      attachmentMimeTypes: Array.isArray(rawAttachmentMimeTypes)
+        ? (rawAttachmentMimeTypes as string[])
+        : [],
+      attachmentAllowedRecipients: Array.isArray(rawAttachmentAllowedRecipients)
+        ? (rawAttachmentAllowedRecipients as string[])
+        : [],
+      attachmentAllowedPaths: Array.isArray(rawAttachmentAllowedPaths)
+        ? (rawAttachmentAllowedPaths as string[])
+        : [],
+      attachmentPathRecursive: parsed.attachment_path_recursive === true,
     };
   },
 };
