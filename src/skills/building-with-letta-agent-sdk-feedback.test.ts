@@ -88,7 +88,9 @@ describe("Agent SDK feedback logger", () => {
       version: "0.5.7",
       surface: "local",
     });
-    expect(statSync(outputPath).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(outputPath).mode & 0o777).toBe(0o600);
+    }
   });
 
   test("rejects nonzero friction without a suggestion", () => {
