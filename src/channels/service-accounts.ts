@@ -35,6 +35,37 @@ import {
   isWhatsAppChannelAccount,
 } from "./types";
 
+const DEFAULT_CHANNEL_ACCOUNT_STARTUP_TIMEOUT_MS = 10_000;
+let channelAccountStartupTimeoutOverrideMs: number | undefined;
+const channelAccountLifecycleGenerations = new Map<string, number>();
+
+export function __testOverrideChannelAccountStartupTimeout(
+  timeoutMs: number | undefined,
+): void {
+  channelAccountStartupTimeoutOverrideMs = timeoutMs;
+}
+
+function beginChannelAccountLifecycle(
+  channelId: string,
+  accountId: string,
+): number {
+  const key = `${channelId}:${accountId}`;
+  const generation = (channelAccountLifecycleGenerations.get(key) ?? 0) + 1;
+  channelAccountLifecycleGenerations.set(key, generation);
+  return generation;
+}
+
+function isCurrentChannelAccountLifecycle(
+  channelId: string,
+  accountId: string,
+  generation: number,
+): boolean {
+  return (
+    channelAccountLifecycleGenerations.get(`${channelId}:${accountId}`) ===
+    generation
+  );
+}
+
 export function createChannelAccountLive(
   channelId: string,
   patch: ChannelAccountPatch,
@@ -311,6 +342,10 @@ export async function startChannelAccountLive(
   accountId: string,
 ): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
+  const lifecycleGeneration = beginChannelAccountLifecycle(
+    channelId,
+    accountId,
+  );
   const existing = await getChannelAccountWithSecrets(channelId, accountId);
   if (!existing) {
     throw new Error(
@@ -346,31 +381,48 @@ export async function startChannelAccountLive(
     });
   }
 
+  const startupController = new AbortController();
+  const startupTimeoutMs =
+    channelAccountStartupTimeoutOverrideMs ??
+    DEFAULT_CHANNEL_ACCOUNT_STARTUP_TIMEOUT_MS;
   let startupTimeout: ReturnType<typeof setTimeout> | undefined;
   try {
-    await Promise.race([
-      ensureChannelRegistry().startChannelAccount(channelId, accountId),
-      new Promise<never>((_, reject) => {
-        startupTimeout = setTimeout(() => {
-          reject(
-            new Error(
-              `Timed out starting ${channelId} account "${accountId}". Check the credentials and try again.`,
-            ),
-          );
-        }, 10_000);
-      }),
-    ]);
-  } catch (error) {
-    upsertChannelAccount(channelId, {
-      ...existing,
-      enabled: false,
-      updatedAt: new Date().toISOString(),
+    startupTimeout = setTimeout(() => {
+      startupController.abort(
+        new Error(
+          `Timed out starting ${channelId} account "${accountId}". Check the credentials and try again.`,
+        ),
+      );
+    }, startupTimeoutMs);
+    await ensureChannelRegistry().startChannelAccount(channelId, accountId, {
+      signal: startupController.signal,
     });
+  } catch (error) {
+    if (
+      isCurrentChannelAccountLifecycle(
+        channelId,
+        accountId,
+        lifecycleGeneration,
+      )
+    ) {
+      upsertChannelAccount(channelId, {
+        ...existing,
+        enabled: false,
+        updatedAt: new Date().toISOString(),
+      });
+    }
     throw error;
   } finally {
     if (startupTimeout) {
       clearTimeout(startupTimeout);
     }
+  }
+  if (
+    !isCurrentChannelAccountLifecycle(channelId, accountId, lifecycleGeneration)
+  ) {
+    throw new Error(
+      `Starting ${channelId}/${accountId} was superseded by a newer lifecycle operation.`,
+    );
   }
   const snapshot = await refreshChannelAccountDisplayNameLive(
     channelId,
@@ -379,6 +431,13 @@ export async function startChannelAccountLive(
       force: channelId === "slack" || channelId === "discord",
     },
   );
+  if (
+    !isCurrentChannelAccountLifecycle(channelId, accountId, lifecycleGeneration)
+  ) {
+    throw new Error(
+      `Starting ${channelId}/${accountId} was superseded by a newer lifecycle operation.`,
+    );
+  }
   await refreshLoadedMessageChannelTool();
   return snapshot;
 }
@@ -388,6 +447,7 @@ export async function stopChannelAccountLive(
   accountId: string,
 ): Promise<ChannelAccountSnapshot> {
   assertSupportedChannelId(channelId);
+  beginChannelAccountLifecycle(channelId, accountId);
   const existing = await getChannelAccountWithSecrets(channelId, accountId);
   if (!existing) {
     throw new Error(
@@ -413,6 +473,7 @@ export async function removeChannelAccountLive(
   accountId: string,
 ): Promise<boolean> {
   assertSupportedChannelId(channelId);
+  beginChannelAccountLifecycle(channelId, accountId);
   const existing = getChannelAccount(channelId, accountId);
   if (!existing) {
     return false;
