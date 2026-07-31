@@ -681,6 +681,8 @@ export interface WhatsAppChannelConfig {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** Inbound text debounce window in ms; 0/default disables. */
+  inboundDebounceMs?: number;
 }
 
 export interface SignalChannelConfig {
@@ -866,6 +868,8 @@ export interface WhatsAppChannelAccount extends ChannelAccountBase {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  /** Inbound text debounce window in ms; 0/default disables. */
+  inboundDebounceMs?: number;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {

@@ -14,6 +14,7 @@ const WHATSAPP_CONFIG_KEYS = new Set([
   "transcribe_voice",
   "download_media",
   "media_max_bytes",
+  "inbound_debounce_ms",
 ]);
 
 function isNullableString(value: unknown): value is string | null {
@@ -38,6 +39,10 @@ function isPositiveNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function isValidInboundDebounceMs(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
 export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppChannelAccount> =
   {
     isValidConfig(config) {
@@ -60,7 +65,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         (config.download_media === undefined ||
           isBoolean(config.download_media)) &&
         (config.media_max_bytes === undefined ||
-          isPositiveNumber(config.media_max_bytes))
+          isPositiveNumber(config.media_max_bytes)) &&
+        (config.inbound_debounce_ms === undefined ||
+          isValidInboundDebounceMs(config.inbound_debounce_ms))
       );
     },
 
@@ -90,6 +97,9 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         mediaMaxBytes: isPositiveNumber(config.media_max_bytes)
           ? config.media_max_bytes
           : undefined,
+        inboundDebounceMs: isValidInboundDebounceMs(config.inbound_debounce_ms)
+          ? Math.trunc(Math.min(config.inbound_debounce_ms, 10000))
+          : undefined,
       };
     },
 
@@ -103,6 +113,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
+        inbound_debounce_ms: account.inboundDebounceMs ?? 0,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },
@@ -117,6 +128,7 @@ export const whatsappAccountConfigAdapter: ChannelAccountConfigAdapter<WhatsAppC
         transcribe_voice: account.transcribeVoice === true,
         download_media: account.downloadMedia === true,
         media_max_bytes: account.mediaMaxBytes,
+        inbound_debounce_ms: account.inboundDebounceMs ?? 0,
         ...toWhatsAppConnectionConfig(account.accountId),
       };
     },

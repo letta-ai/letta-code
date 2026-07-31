@@ -12,6 +12,11 @@ import type {
 } from "@/channels/types";
 import { resolveInboundIdentity } from "./identity";
 import {
+  createWhatsAppInboundDebounceController,
+  type WhatsAppInboundDebounceController,
+  type WhatsAppInboundDebounceEntry,
+} from "./inbound-debounce";
+import {
   isGroupJid,
   isSelfChat,
   isStatusOrBroadcastJid,
@@ -26,6 +31,7 @@ import {
   extractMentionedJids,
   extractReplyParticipant,
   extractWhatsAppText,
+  unwrapWhatsAppMessageContent,
 } from "./media";
 import { loadWhatsAppModule } from "./runtime";
 import { createWhatsAppSocket, getWhatsAppAuthDir } from "./session";
@@ -52,6 +58,7 @@ type WhatsAppSocket = {
   ) => Promise<{ key?: { id?: string }; message?: unknown }>;
   sendPresenceUpdate?: (presence: string, jid?: string) => Promise<void>;
   groupMetadata?: (jid: string) => Promise<{ subject?: string }>;
+  readMessages?: (keys: WhatsAppMessageKey[]) => Promise<unknown>;
 };
 
 type WhatsAppMessageKey = {
@@ -198,6 +205,11 @@ function getLifecycleErrorReplyKey(source: ChannelTurnSource): string | null {
   return `${source.chatId}:${source.messageId ?? ""}`;
 }
 
+function isWhatsAppReactionMessage(message: unknown): boolean {
+  const content = unwrapWhatsAppMessageContent(message);
+  return !!content?.reactionMessage;
+}
+
 export function createWhatsAppAdapter(
   account: WhatsAppChannelAccount,
   dependencies: WhatsAppAdapterDependencies = {},
@@ -224,6 +236,10 @@ export function createWhatsAppAdapter(
     );
   let lidStoreDirty = false;
   const messageStore = new Map<string, unknown>();
+  let inboundDebounce: WhatsAppInboundDebounceController<
+    WhatsAppSocket,
+    WhatsAppMessageKey
+  > | null = null;
 
   function flushLidStoreIfDirty(): void {
     if (!lidStoreDirty) return;
@@ -262,18 +278,20 @@ export function createWhatsAppAdapter(
     if (!id) return;
     sentMessageIds.add(id);
     if (message) messageStore.set(id, message);
-    setTimeout(
+    const cleanupTimer = setTimeout(
       () => {
         sentMessageIds.delete(id);
         messageStore.delete(id);
       },
       24 * 60 * 60 * 1000,
     );
+    cleanupTimer.unref?.();
   }
 
   function clearActiveSocket(closeWebSocket: boolean): void {
     const currentSock = sock;
     const releaseLease = releaseSocketLease;
+    inboundDebounce?.cancelPending();
     sock = null;
     releaseSocketLease = null;
     if (closeWebSocket) {
@@ -315,6 +333,7 @@ export function createWhatsAppAdapter(
         scheduleReconnect(message);
       });
     }, delay);
+    reconnectTimer.unref?.();
   }
 
   async function connect(): Promise<void> {
@@ -375,28 +394,54 @@ export function createWhatsAppAdapter(
       result.release();
       return;
     }
-    sock = result.sock as WhatsAppSocket;
+    const connectedSocket = result.sock as WhatsAppSocket;
+    sock = connectedSocket;
     releaseSocketLease = result.release;
-    sock.ev?.on?.("messages.upsert", (event) => {
-      return handleMessagesUpsert(event).catch((error) => {
-        console.error(
-          `[WhatsApp:${account.accountId}] inbound handler failed:`,
-          error instanceof Error ? error.message : error,
-        );
-      });
+    connectedSocket.ev?.on?.("messages.upsert", (event) => {
+      return handleMessagesUpsert(event, connectedSocket, generation).catch(
+        (error) => {
+          console.error(
+            `[WhatsApp:${account.accountId}] inbound handler failed:`,
+            error instanceof Error ? error.message : error,
+          );
+        },
+      );
     });
   }
 
-  async function getGroupLabel(groupJid: string): Promise<string | undefined> {
+  async function getGroupLabel(
+    groupJid: string,
+    batchSocket: WhatsAppSocket,
+  ): Promise<string | undefined> {
     try {
-      return (await sock?.groupMetadata?.(groupJid))?.subject;
+      return (await batchSocket.groupMetadata?.(groupJid))?.subject;
     } catch {
       return undefined;
     }
   }
 
-  async function handleMessagesUpsert(event: unknown): Promise<void> {
+  function isActiveBatch(
+    batchSocket: WhatsAppSocket,
+    generation: number,
+  ): boolean {
+    return (
+      running &&
+      !stopping &&
+      sock === batchSocket &&
+      generation === connectionGeneration
+    );
+  }
+
+  async function handleMessagesUpsert(
+    event: unknown,
+    batchSocket: WhatsAppSocket,
+    generation: number,
+  ): Promise<void> {
+    const acceptedEntries: Array<
+      WhatsAppInboundDebounceEntry<WhatsAppSocket, WhatsAppMessageKey>
+    > = [];
     try {
+      if (!isActiveBatch(batchSocket, generation)) return;
       const record = asRecord(event);
       if (record.type !== "notify" && record.type !== "append") return;
       const messages = Array.isArray(record.messages)
@@ -404,9 +449,11 @@ export function createWhatsAppAdapter(
         : [];
       const isHistory = record.type === "append";
       for (const msg of messages) {
+        if (!isActiveBatch(batchSocket, generation)) return;
         const remoteJid = msg.key?.remoteJid ?? "";
         const messageId = msg.key?.id ?? "";
         if (!remoteJid || !messageId || !msg.message) continue;
+        if (isWhatsAppReactionMessage(msg.message)) continue;
         if (isStatusOrBroadcastJid(remoteJid)) continue;
         if (sentMessageIds.has(messageId)) {
           sentMessageIds.delete(messageId);
@@ -414,7 +461,11 @@ export function createWhatsAppAdapter(
         }
         if (!messageStore.has(messageId)) {
           messageStore.set(messageId, msg);
-          setTimeout(() => messageStore.delete(messageId), 24 * 60 * 60 * 1000);
+          const cleanupTimer = setTimeout(
+            () => messageStore.delete(messageId),
+            24 * 60 * 60 * 1000,
+          );
+          cleanupTimer.unref?.();
         }
 
         const selfChat = isSelfChat(remoteJid, selfPhoneJid, selfLid);
@@ -462,6 +513,7 @@ export function createWhatsAppAdapter(
           mediaMaxBytes: account.mediaMaxBytes,
           transcribeVoice: account.transcribeVoice === true,
         });
+        if (!isActiveBatch(batchSocket, generation)) return;
         const body = attachmentResult.transcriptionText || text;
         if (!body.trim() && attachmentResult.attachments.length === 0) continue;
 
@@ -483,10 +535,11 @@ export function createWhatsAppAdapter(
         if (!groupAllowed) continue;
 
         const chatLabel = group
-          ? await getGroupLabel(chatId)
+          ? await getGroupLabel(chatId, batchSocket)
           : selfChat
             ? "Self (WhatsApp)"
             : msg.pushName?.trim() || senderId;
+        if (!isActiveBatch(batchSocket, generation)) return;
 
         const inbound: InboundChannelMessage = {
           channel: CHANNEL_ID,
@@ -510,10 +563,26 @@ export function createWhatsAppAdapter(
         console.log(
           `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${preview(body)}"`,
         );
-        await adapter.onMessage?.(inbound);
+        acceptedEntries.push({
+          inbound,
+          receipt:
+            msg.key && batchSocket.readMessages
+              ? {
+                  owner: batchSocket,
+                  key: msg.key,
+                  markRead: (keys) => batchSocket.readMessages?.(keys),
+                }
+              : undefined,
+        });
       }
     } finally {
       flushLidStoreIfDirty();
+      if (
+        acceptedEntries.length > 0 &&
+        isActiveBatch(batchSocket, generation)
+      ) {
+        await inboundDebounce?.dispatch(acceptedEntries);
+      }
     }
   }
 
@@ -548,11 +617,13 @@ export function createWhatsAppAdapter(
 
     async stop() {
       if (!running) {
+        inboundDebounce?.cancelPending();
         flushLidStoreIfDirty();
         return;
       }
       stopping = true;
       running = false;
+      inboundDebounce?.cancelPending();
       if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -669,6 +740,23 @@ export function createWhatsAppAdapter(
       );
     },
   };
+
+  inboundDebounce = createWhatsAppInboundDebounceController({
+    account,
+    getDeliver: () => adapter.onMessage,
+    onDeliveryError(error) {
+      console.warn(
+        `[WhatsApp:${account.accountId}] failed to deliver inbound batch:`,
+        error instanceof Error ? error.message : error,
+      );
+    },
+    onReadReceiptError(error) {
+      console.warn(
+        `[WhatsApp:${account.accountId}] failed to mark messages read:`,
+        error instanceof Error ? error.message : error,
+      );
+    },
+  });
 
   return adapter;
 }

@@ -283,6 +283,12 @@ const whatsappConfigCodec: ChannelConfigCodec<WhatsAppChannelConfig> = {
         typeof parsed.media_max_bytes === "number"
           ? parsed.media_max_bytes
           : undefined,
+      inboundDebounceMs:
+        typeof parsed.inbound_debounce_ms === "number" &&
+        Number.isFinite(parsed.inbound_debounce_ms) &&
+        parsed.inbound_debounce_ms >= 0
+          ? Math.trunc(Math.min(parsed.inbound_debounce_ms, 10000))
+          : undefined,
     };
   },
 };

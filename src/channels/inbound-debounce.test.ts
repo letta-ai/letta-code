@@ -165,6 +165,41 @@ describe("createInboundDebouncer", () => {
     expect(flushed).toEqual([["a", "b"]]);
   });
 
+  test("flushAll forces every pending key to flush", async () => {
+    const debouncer = createInboundDebouncer<Item>({
+      debounceMs: 1000,
+      buildKey: (item) => item.key,
+      onFlush: async (items) => {
+        flushed.push(items.map((i) => i.value));
+      },
+    });
+
+    await debouncer.enqueue({ key: "a", value: "a1" });
+    await debouncer.enqueue({ key: "b", value: "b1" });
+    await debouncer.enqueue({ key: "a", value: "a2" });
+    await debouncer.flushAll();
+    const sorted = flushed.map((batch) => [...batch].sort()).sort();
+    expect(sorted).toEqual([["a1", "a2"], ["b1"]]);
+  });
+
+  test("cancelAll drops pending debounced buffers", async () => {
+    const debouncer = createInboundDebouncer<Item>({
+      debounceMs: 20,
+      buildKey: (item) => item.key,
+      onFlush: async (items) => {
+        flushed.push(items.map((i) => i.value));
+      },
+    });
+
+    await debouncer.enqueue({ key: "k", value: "a" });
+    debouncer.cancelAll();
+    await sleep(50);
+    expect(flushed).toEqual([]);
+    await debouncer.enqueue({ key: "k", value: "b" });
+    await sleep(50);
+    expect(flushed).toEqual([["b"]]);
+  });
+
   test("null key forces immediate flush", async () => {
     const debouncer = createInboundDebouncer<Item>({
       debounceMs: 50,

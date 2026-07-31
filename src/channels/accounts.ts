@@ -207,6 +207,13 @@ function prepareAccountForStorage(account: ChannelAccount): ChannelAccount {
   return cloned;
 }
 
+function normalizeInboundDebounceMs(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return Math.trunc(Math.min(value, 10000));
+}
+
 function cloneAccount<T extends ChannelAccount>(account: T): T {
   const cloned = {
     ...account,
@@ -357,6 +364,7 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     next.mentionPatterns = [...(next.mentionPatterns ?? [])];
     next.downloadMedia = next.downloadMedia === true;
     next.transcribeVoice = next.transcribeVoice === true;
+    next.inboundDebounceMs = normalizeInboundDebounceMs(next.inboundDebounceMs);
   }
   if (isSignalChannelAccount(next)) {
     next.baseUrl = next.baseUrl ?? "";
@@ -443,6 +451,7 @@ function makeDefaultLegacyAccount(
       transcribeVoice: config.transcribeVoice === true,
       downloadMedia: config.downloadMedia === true,
       mediaMaxBytes: config.mediaMaxBytes,
+      inboundDebounceMs: config.inboundDebounceMs,
       createdAt: now,
       updatedAt: now,
     };

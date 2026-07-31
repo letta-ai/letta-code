@@ -98,6 +98,7 @@ describe("WhatsApp channel service", () => {
           mention_patterns: ["\\bloop\\b"],
           download_media: true,
           media_max_bytes: 1048576,
+          inbound_debounce_ms: 250.9,
         },
       },
       { accountId: "personal" },
@@ -110,12 +111,69 @@ describe("WhatsApp channel service", () => {
     expect(created.mentionPatterns).toEqual(["\\bloop\\b"]);
     expect(created.downloadMedia).toBe(true);
     expect(created.mediaMaxBytes).toBe(1048576);
+    expect(created.inboundDebounceMs).toBe(250);
+    expect(created.config).toEqual(
+      expect.objectContaining({ inbound_debounce_ms: 250 }),
+    );
+
+    const clamped = updateChannelAccountLive("whatsapp", "personal", {
+      config: { inbound_debounce_ms: 20_000 },
+    });
+    expect(clamped.inboundDebounceMs).toBe(10_000);
 
     const updated = updateChannelAccountLive("whatsapp", "personal", {
       config: { group_mode: "open", self_chat_mode: true },
     });
     expect(updated.groupMode).toBe("open");
     expect(updated.selfChatMode).toBe(true);
+    expect(updated.inboundDebounceMs).toBe(10_000);
+  });
+
+  test("loads old WhatsApp accounts without debounce and accepts stored snake_case debounce", () => {
+    const oldAccount = {
+      channel: "whatsapp" as const,
+      accountId: "old",
+      enabled: true,
+      dmPolicy: "pairing" as const,
+      allowedUsers: [],
+      agentId: null,
+      selfChatMode: true,
+      groupMode: "disabled" as const,
+      allowedGroups: [],
+      mentionPatterns: [],
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    const storedSnakeAccount = {
+      channel: "whatsapp" as const,
+      accountId: "snake",
+      enabled: true,
+      dmPolicy: "pairing" as const,
+      allowedUsers: [],
+      agentId: null,
+      selfChatMode: true,
+      groupMode: "disabled" as const,
+      allowedGroups: [],
+      mentionPatterns: [],
+      inbound_debounce_ms: 999.8,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+    __testOverrideLoadChannelAccounts(() => [oldAccount, storedSnakeAccount]);
+    clearChannelAccountStores();
+
+    expect(getChannelConfigSnapshot("whatsapp", "old")).toEqual(
+      expect.objectContaining({
+        inboundDebounceMs: undefined,
+        config: expect.objectContaining({ inbound_debounce_ms: 0 }),
+      }),
+    );
+    expect(getChannelConfigSnapshot("whatsapp", "snake")).toEqual(
+      expect.objectContaining({
+        inboundDebounceMs: 999,
+        config: expect.objectContaining({ inbound_debounce_ms: 999 }),
+      }),
+    );
   });
 
   test("bind updates the account-level agent id", () => {
