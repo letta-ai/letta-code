@@ -682,6 +682,7 @@ export interface WhatsAppChannelConfig extends WhatsAppAttachmentPolicyConfig {
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  inboundDebounceMs?: number;
 }
 
 export interface SignalChannelConfig {
@@ -869,6 +870,7 @@ export interface WhatsAppChannelAccount
   downloadMedia?: boolean;
   /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  inboundDebounceMs?: number;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {

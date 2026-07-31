@@ -297,6 +297,12 @@ const whatsappConfigCodec: ChannelConfigCodec<WhatsAppChannelConfig> = {
         ? (rawAttachmentAllowedPaths as string[])
         : [],
       attachmentPathRecursive: parsed.attachment_path_recursive === true,
+      inboundDebounceMs:
+        typeof parsed.inbound_debounce_ms === "number" &&
+        Number.isFinite(parsed.inbound_debounce_ms) &&
+        parsed.inbound_debounce_ms >= 0
+          ? Math.trunc(Math.min(parsed.inbound_debounce_ms, 10000))
+          : undefined,
     };
   },
 };
