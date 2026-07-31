@@ -111,4 +111,21 @@ describe("WhatsApp MessageChannel actions", () => {
       }),
     );
   });
+
+  test("removes reactions without requiring an emoji", async () => {
+    const { ctx, sent } = makeContext("react", {
+      remove: true,
+      messageId: "target-msg",
+    });
+    await expect(whatsappMessageActions.handleAction(ctx)).resolves.toContain(
+      "Reaction removed",
+    );
+    expect(sent[0]).toEqual(
+      expect.objectContaining({
+        reaction: undefined,
+        removeReaction: true,
+        targetMessageId: "target-msg",
+      }),
+    );
+  });
 });

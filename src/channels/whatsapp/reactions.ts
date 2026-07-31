@@ -6,6 +6,10 @@ export interface WhatsAppReactionKey {
   id: string;
   fromMe?: boolean;
   participant?: string;
+  senderPn?: string;
+  senderLid?: string;
+  participantPn?: string;
+  participantLid?: string;
   [key: string]: unknown;
 }
 
@@ -49,20 +53,28 @@ function parseKey(value: unknown): WhatsAppReactionKey | null {
   if (value.fromMe !== undefined && typeof value.fromMe !== "boolean") {
     return null;
   }
-  if (
-    value.participant !== undefined &&
-    typeof value.participant !== "string"
-  ) {
-    return null;
+  const optionalJidFields = [
+    "participant",
+    "senderPn",
+    "senderLid",
+    "participantPn",
+    "participantLid",
+  ] as const;
+  for (const field of optionalJidFields) {
+    if (value[field] !== undefined && typeof value[field] !== "string") {
+      return null;
+    }
   }
   return {
     ...value,
     id: value.id,
     remoteJid: typeof value.remoteJid === "string" ? value.remoteJid : "",
     ...(value.fromMe === undefined ? {} : { fromMe: value.fromMe }),
-    ...(value.participant === undefined
-      ? {}
-      : { participant: value.participant }),
+    ...Object.fromEntries(
+      optionalJidFields.flatMap((field) =>
+        value[field] === undefined ? [] : [[field, value[field]]],
+      ),
+    ),
   };
 }
 

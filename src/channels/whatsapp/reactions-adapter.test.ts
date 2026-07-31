@@ -44,6 +44,10 @@ function reactionEntry(
     targetFromMe?: boolean;
     reactionFromMe?: boolean;
     participant?: string;
+    senderPn?: string;
+    senderLid?: string;
+    participantPn?: string;
+    participantLid?: string;
     text?: unknown;
     senderTimestampMs?: unknown;
   } = {},
@@ -60,7 +64,21 @@ function reactionEntry(
         remoteJid: chatId,
         id: overrides.reactionId ?? "reaction-event",
         fromMe: overrides.reactionFromMe ?? false,
-        participant: overrides.participant ?? REACTOR,
+        ...(overrides.participant === undefined
+          ? {}
+          : { participant: overrides.participant }),
+        ...(overrides.senderPn === undefined
+          ? {}
+          : { senderPn: overrides.senderPn }),
+        ...(overrides.senderLid === undefined
+          ? {}
+          : { senderLid: overrides.senderLid }),
+        ...(overrides.participantPn === undefined
+          ? {}
+          : { participantPn: overrides.participantPn }),
+        ...(overrides.participantLid === undefined
+          ? {}
+          : { participantLid: overrides.participantLid }),
       },
       text: overrides.text === undefined ? "👍" : overrides.text,
       senderTimestampMs:
@@ -89,6 +107,11 @@ function makeHarness(
   }
   const delivered: InboundChannelMessage[] = [];
   const eventNames: string[] = [];
+  const sentMessages: Array<{
+    jid: string;
+    payload: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  }> = [];
   const handlers = new Map<string, (payload: unknown) => unknown>();
   let connectionUpdate: ((update: unknown) => void) | undefined;
   let readCalls = 0;
@@ -106,8 +129,13 @@ function makeHarness(
       readCalls += 1;
       return Promise.resolve();
     },
-    async sendMessage() {
-      return { key: { id: outboundId, fromMe: true, remoteJid: REACTOR } };
+    async sendMessage(
+      jid: string,
+      payload: Record<string, unknown>,
+      options?: Record<string, unknown>,
+    ) {
+      sentMessages.push({ jid, payload, options });
+      return { key: { id: outboundId, fromMe: true, remoteJid: jid } };
     },
     async sendPresenceUpdate() {},
   };
@@ -142,6 +170,7 @@ function makeHarness(
     adapter,
     delivered,
     eventNames,
+    sentMessages,
     readCalls: () => readCalls,
     async start() {
       await adapter.start();
@@ -270,6 +299,144 @@ describe("WhatsApp reaction adapter integration", () => {
       }),
     ]);
     expect(conflicting.delivered).toHaveLength(0);
+  });
+
+  test("resolves first LID reactions from Baileys key identity fields", async () => {
+    const directLid = "707070@lid";
+    const direct = makeHarness();
+    await direct.start();
+    await direct.emit([
+      reactionEntry({
+        chatId: directLid,
+        reactionId: "direct-lid-first-reaction",
+        senderPn: REACTOR,
+        senderLid: directLid,
+      }),
+    ]);
+    expect(direct.delivered[0]?.chatId).toBe(REACTOR);
+    expect(direct.delivered[0]?.senderId).toBe("15550000002");
+
+    const groupLid = "808080@lid";
+    const group = makeHarness();
+    await group.start();
+    await group.emit([
+      reactionEntry({
+        chatId: GROUP,
+        reactionId: "group-lid-first-reaction",
+        participant: groupLid,
+        participantPn: REACTOR,
+      }),
+    ]);
+    expect(group.delivered[0]?.chatId).toBe(GROUP);
+    expect(group.delivered[0]?.senderId).toBe("15550000002");
+  });
+
+  test("ignores synthetic reaction messages on messages.upsert", async () => {
+    const harness = makeHarness();
+    await harness.start();
+    await harness.emitUpsert([
+      {
+        key: { remoteJid: REACTOR, id: "synthetic-reaction", fromMe: false },
+        message: {
+          reactionMessage: {
+            key: { remoteJid: REACTOR, id: "target-message", fromMe: true },
+            text: "👍",
+          },
+        },
+        messageTimestamp: Math.floor(Date.now() / 1000),
+      },
+      {
+        key: { remoteJid: REACTOR, id: "ordinary", fromMe: false },
+        message: { conversation: "ordinary" },
+        messageTimestamp: Math.floor(Date.now() / 1000),
+      },
+    ]);
+    expect(harness.delivered.map((message) => message.messageId)).toEqual([
+      "ordinary",
+    ]);
+  });
+
+  test("uses stored group target keys for outbound add and removal reactions", async () => {
+    const harness = makeHarness();
+    await harness.start();
+    await harness.emitUpsert([
+      {
+        key: {
+          remoteJid: GROUP,
+          id: "group-target",
+          fromMe: false,
+          participant: REACTOR,
+        },
+        message: { conversation: "group message" },
+        messageTimestamp: Math.floor(Date.now() / 1000),
+      },
+    ]);
+
+    await harness.adapter.sendMessage({
+      channel: "whatsapp",
+      accountId: account.accountId,
+      chatId: GROUP,
+      text: "",
+      reaction: "👍",
+      targetMessageId: "group-target",
+    });
+    await harness.adapter.sendMessage({
+      channel: "whatsapp",
+      accountId: account.accountId,
+      chatId: GROUP,
+      text: "",
+      removeReaction: true,
+      targetMessageId: "group-target",
+    });
+
+    expect(harness.sentMessages.at(-2)).toEqual(
+      expect.objectContaining({
+        jid: GROUP,
+        payload: {
+          react: {
+            text: "👍",
+            key: expect.objectContaining({
+              remoteJid: GROUP,
+              id: "group-target",
+              fromMe: false,
+              participant: REACTOR,
+            }),
+          },
+        },
+      }),
+    );
+    expect(harness.sentMessages.at(-1)).toEqual(
+      expect.objectContaining({
+        jid: GROUP,
+        payload: {
+          react: {
+            text: "",
+            key: expect.objectContaining({
+              remoteJid: GROUP,
+              id: "group-target",
+              fromMe: false,
+              participant: REACTOR,
+            }),
+          },
+        },
+      }),
+    );
+  });
+
+  test("rejects group outbound reactions after target-key state is gone", async () => {
+    const harness = makeHarness();
+    await harness.start();
+    await expect(
+      harness.adapter.sendMessage({
+        channel: "whatsapp",
+        accountId: account.accountId,
+        chatId: GROUP,
+        text: "",
+        reaction: "👍",
+        targetMessageId: "missing-group-target",
+      }),
+    ).rejects.toThrow(/current adapter process/);
+    expect(harness.sentMessages).toHaveLength(0);
   });
 
   test("enforces group policy and preserves mention semantics", async () => {

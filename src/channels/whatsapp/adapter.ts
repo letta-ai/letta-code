@@ -28,6 +28,7 @@ import {
   extractMentionedJids,
   extractReplyParticipant,
   extractWhatsAppText,
+  unwrapWhatsAppMessageContent,
 } from "./media";
 import {
   isWhatsAppReactionGroupEligible,
@@ -40,6 +41,8 @@ import { setWhatsAppConnectionState } from "./state";
 
 const CHANNEL_ID = "whatsapp";
 const DEDUPE_MAX_SIZE = 5000;
+const MESSAGE_STORE_MAX_SIZE = DEDUPE_MAX_SIZE;
+const MESSAGE_STORE_TTL_MS = 24 * 60 * 60 * 1000;
 const RECONNECT_MAX_MS = 30_000;
 const MAX_MENTION_PATTERN_LENGTH = 256;
 const MENTION_MATCH_TEXT_MAX_LENGTH = 2000;
@@ -89,6 +92,16 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object"
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function unrefTimeout(timer: ReturnType<typeof setTimeout>): void {
+  const unref = (timer as { unref?: () => void }).unref;
+  if (typeof unref === "function") unref.call(timer);
+}
+
+function isSyntheticReactionMessage(message: unknown): boolean {
+  const content = unwrapWhatsAppMessageContent(message);
+  return !!content?.reactionMessage;
 }
 
 export function isWhatsAppConflictDisconnect(update: unknown): boolean {
@@ -230,7 +243,11 @@ export function createWhatsAppAdapter(
       join(getWhatsAppAuthDir(account.accountId), "lid-mappings.json"),
     );
   let lidStoreDirty = false;
+  // Process-local target cache. After restart we cannot prove ownership for
+  // LID target.fromMe:false reactions or reconstruct group participant keys
+  // until the target message is observed again.
   const messageStore = new Map<string, unknown>();
+  const messageStoreTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   function flushLidStoreIfDirty(): void {
     if (!lidStoreDirty) return;
@@ -265,17 +282,62 @@ export function createWhatsAppAdapter(
     return false;
   }
 
+  function clearMessageStoreTimer(id: string): void {
+    const timer = messageStoreTimers.get(id);
+    if (timer) clearTimeout(timer);
+    messageStoreTimers.delete(id);
+  }
+
+  function dropStoredMessage(id: string): void {
+    sentMessageIds.delete(id);
+    messageStore.delete(id);
+    clearMessageStoreTimer(id);
+  }
+
+  function scheduleMessageStoreExpiry(id: string): void {
+    clearMessageStoreTimer(id);
+    const timer = setTimeout(() => {
+      sentMessageIds.delete(id);
+      messageStore.delete(id);
+      messageStoreTimers.delete(id);
+    }, MESSAGE_STORE_TTL_MS);
+    unrefTimeout(timer);
+    messageStoreTimers.set(id, timer);
+  }
+
+  function capMessageStore(): void {
+    while (messageStore.size > MESSAGE_STORE_MAX_SIZE) {
+      const first = messageStore.keys().next().value;
+      if (typeof first !== "string") break;
+      dropStoredMessage(first);
+    }
+    while (sentMessageIds.size > MESSAGE_STORE_MAX_SIZE) {
+      const first = sentMessageIds.values().next().value;
+      if (typeof first !== "string") break;
+      dropStoredMessage(first);
+    }
+  }
+
+  function rememberStoredMessage(id: string, message: unknown): void {
+    if (!id) return;
+    messageStore.set(id, message);
+    scheduleMessageStoreExpiry(id);
+    capMessageStore();
+  }
+
   function rememberSent(id: string, message?: unknown): void {
     if (!id) return;
     sentMessageIds.add(id);
-    if (message) messageStore.set(id, message);
-    setTimeout(
-      () => {
-        sentMessageIds.delete(id);
-        messageStore.delete(id);
-      },
-      24 * 60 * 60 * 1000,
-    );
+    if (message !== undefined) messageStore.set(id, message);
+    scheduleMessageStoreExpiry(id);
+    capMessageStore();
+  }
+
+  function clearMessageStore(): void {
+    for (const timer of messageStoreTimers.values()) clearTimeout(timer);
+    messageStoreTimers.clear();
+    messageStore.clear();
+    sentMessageIds.clear();
   }
 
   function isKnownOutboundMessage(messageId: string): boolean {
@@ -283,6 +345,31 @@ export function createWhatsAppAdapter(
     const stored = messageStore.get(messageId);
     if (!stored) return false;
     return asRecord(asRecord(stored).key).fromMe === true;
+  }
+
+  function getStoredTargetKey(
+    messageId: string,
+  ): Record<string, unknown> | null {
+    const key = asRecord(asRecord(messageStore.get(messageId)).key);
+    if (typeof key.id !== "string" || key.id !== messageId) return null;
+    const remoteJid =
+      typeof key.remoteJid === "string" ? stripDeviceSuffix(key.remoteJid) : "";
+    if (!remoteJid) return null;
+    return { ...key, remoteJid, id: messageId };
+  }
+
+  function buildReactionTargetKey(
+    targetJid: string,
+    messageId: string,
+  ): Record<string, unknown> {
+    const storedKey = getStoredTargetKey(messageId);
+    if (storedKey) return storedKey;
+    if (isGroupJid(targetJid)) {
+      throw new Error(
+        "WhatsApp group reactions require the original target message key from the current adapter process; after restart, react only after the target message is observed again.",
+      );
+    }
+    return { remoteJid: targetJid, id: messageId };
   }
 
   function clearActiveSocket(closeWebSocket: boolean): void {
@@ -430,13 +517,14 @@ export function createWhatsAppAdapter(
         const messageId = msg.key?.id ?? "";
         if (!remoteJid || !messageId || !msg.message) continue;
         if (isStatusOrBroadcastJid(remoteJid)) continue;
+        if (isSyntheticReactionMessage(msg.message)) continue;
         if (sentMessageIds.has(messageId)) {
+          rememberStoredMessage(messageId, msg);
           sentMessageIds.delete(messageId);
           continue;
         }
         if (!messageStore.has(messageId)) {
-          messageStore.set(messageId, msg);
-          setTimeout(() => messageStore.delete(messageId), 24 * 60 * 60 * 1000);
+          rememberStoredMessage(messageId, msg);
         }
 
         const selfChat = isSelfChat(remoteJid, selfPhoneJid, selfLid);
@@ -549,7 +637,8 @@ export function createWhatsAppAdapter(
     // key.fromMe, but not mere store membership because inbound messages
     // are stored there too.
     const targetIsOurs =
-      parsed.targetFromMe === true || isKnownOutboundMessage(parsed.targetMessageId);
+      parsed.targetFromMe === true ||
+      isKnownOutboundMessage(parsed.targetMessageId);
     if (!targetIsOurs) return;
     if (parsed.reactionKey.fromMe === true) return;
     if (isStatusOrBroadcastJid(parsed.chatId)) return;
@@ -569,6 +658,10 @@ export function createWhatsAppAdapter(
         selfLid,
         remoteJid: parsed.chatId,
         participant: parsed.reactorParticipant,
+        senderPn: parsed.reactionKey.senderPn,
+        senderLid: parsed.reactionKey.senderLid,
+        participantPn: parsed.reactionKey.participantPn,
+        participantLid: parsed.reactionKey.participantLid,
       },
       lidStore,
     );
@@ -691,6 +784,7 @@ export function createWhatsAppAdapter(
 
     async stop() {
       if (!running) {
+        clearMessageStore();
         flushLidStoreIfDirty();
         return;
       }
@@ -703,6 +797,7 @@ export function createWhatsAppAdapter(
       connectionGeneration += 1;
       clearActiveSocket(true);
       setWhatsAppConnectionState(account.accountId, { status: "disconnected" });
+      clearMessageStore();
       flushLidStoreIfDirty();
     },
 
@@ -712,7 +807,12 @@ export function createWhatsAppAdapter(
 
     async sendMessage(msg: OutboundChannelMessage) {
       if (!running) throw new Error("WhatsApp adapter is not running.");
-      if (!msg.text?.trim() && !msg.mediaPath?.trim() && !msg.reaction) {
+      if (
+        !msg.text?.trim() &&
+        !msg.mediaPath?.trim() &&
+        !msg.reaction &&
+        !msg.removeReaction
+      ) {
         throw new Error("WhatsApp send requires message or media.");
       }
       const targetJid = resolveSendJid({
@@ -727,7 +827,7 @@ export function createWhatsAppAdapter(
         const result = await sendToWhatsApp(targetJid, {
           react: {
             text: msg.removeReaction ? "" : (msg.reaction ?? ""),
-            key: { remoteJid: targetJid, id: target },
+            key: buildReactionTargetKey(targetJid, target),
           },
         });
         const id = result.key?.id ?? target;
