@@ -29,14 +29,48 @@ import {
   clearTargetStores,
 } from "@/channels/targets";
 import type { ChannelAdapter, InboundChannelMessage } from "@/channels/types";
+import {
+  createStartedSlackAdapter,
+  installSlackAdapterTestHooks,
+  resolveSlackThreadHistoryMock,
+  resolveSlackThreadStarterMock,
+} from "./slack/adapter-test-harness";
+
+installSlackAdapterTestHooks();
 
 const createConversation = mock(async () => ({ id: "conv-slack" }));
+
+function createPage(items: unknown[]) {
+  return {
+    getPaginatedItems: () => items,
+  };
+}
+
+function contentText(content: unknown): string {
+  if (!Array.isArray(content)) return String(content);
+  return content
+    .map((part) => {
+      if (part && typeof part === "object" && "text" in part) {
+        return String((part as { text?: unknown }).text ?? "");
+      }
+      return JSON.stringify(part);
+    })
+    .join("\n");
+}
+
+const listConversationMessages = mock(
+  async (_conversationId: string, _body?: unknown, _options?: unknown) =>
+    createPage([{ id: "msg-existing", message_type: "user_message" }]),
+);
 
 mock.module("@/backend/api/client", () => ({
   getServerUrl: () => "https://api.letta.com",
   getClient: async () => ({
     conversations: {
       create: createConversation,
+      messages: {
+        list: listConversationMessages,
+      },
     },
   }),
 }));
@@ -57,6 +91,10 @@ describe("slack channel registry", () => {
     __testOverrideSaveTargetStore(null);
     createConversation.mockReset();
     createConversation.mockResolvedValue({ id: "conv-slack" });
+    listConversationMessages.mockReset();
+    listConversationMessages.mockResolvedValue(
+      createPage([{ id: "msg-existing", message_type: "user_message" }]),
+    );
   }
 
   function createInboundMessage(
@@ -150,6 +188,8 @@ describe("slack channel registry", () => {
     expect(createConversation).toHaveBeenCalledTimes(1);
     const route = getRoute("slack", "C123", "slack-bot", "1712790000.000050");
     expect(route).toEqual(expect.objectContaining({ outboundEnabled: false }));
+    expect(route?.bootstrapUserMessageSeenAt).toBeUndefined();
+    expect(listConversationMessages).not.toHaveBeenCalled();
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0]?.turnSources).toEqual([
       expect.objectContaining({
@@ -171,6 +211,143 @@ describe("slack channel registry", () => {
         "slack-bot",
       ),
     ).toBeNull();
+  });
+
+  test("persisted orphan Slack thread route recovers formatted bootstrap context once", async () => {
+    const nonUserMessages = [
+      { id: "summary-1", message_type: "summary_message" },
+      { id: "assistant-1", message_type: "assistant_message" },
+    ];
+    listConversationMessages
+      .mockImplementationOnce(async (_conversationId, body) => {
+        const requestedTypes =
+          (body as { include_return_message_types?: string[] })
+            .include_return_message_types ?? [];
+        return createPage(
+          requestedTypes.length === 0
+            ? nonUserMessages
+            : nonUserMessages.filter((message) =>
+                requestedTypes.includes(message.message_type),
+              ),
+        );
+      })
+      .mockResolvedValueOnce(
+        createPage([{ id: "msg-recovered", message_type: "user_message" }]),
+      );
+    __testOverrideLoadRoutes(() => [
+      {
+        accountId: "slack-bot",
+        chatId: "C123",
+        chatType: "channel",
+        threadId: "1712790000.000050",
+        agentId: "agent-1",
+        conversationId: "conv-recovered",
+        enabled: true,
+        outboundEnabled: true,
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = await createStartedSlackAdapter({
+      accountId: "slack-bot",
+      agentId: "agent-1",
+      defaultPermissionMode: "unrestricted",
+      dmPolicy: "open",
+      allowedUsers: [],
+    });
+    registry.registerAdapter(adapter);
+
+    const deliveries: Array<{ content: unknown; turnSources?: unknown[] }> = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    resolveSlackThreadStarterMock.mockResolvedValueOnce({
+      text: "Original root problem statement",
+      userId: "U111",
+      ts: "1712790000.000050",
+      attachments: [
+        {
+          id: "FROOT",
+          name: "root-screenshot.png",
+          mimeType: "image/png",
+          kind: "image",
+          localPath: "/tmp/root-screenshot.png",
+        },
+      ],
+    });
+    resolveSlackThreadHistoryMock.mockResolvedValueOnce([
+      {
+        text: "Prior human investigation notes",
+        userId: "U222",
+        ts: "1712795000.000060",
+      },
+    ]);
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        text: "bump",
+        messageId: "1712800001.000300",
+      }),
+    );
+
+    expect(createConversation).not.toHaveBeenCalled();
+    expect(listConversationMessages).toHaveBeenCalledTimes(1);
+    expect(listConversationMessages.mock.calls[0]?.[0]).toBe("conv-recovered");
+    expect(listConversationMessages.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        limit: 1,
+        order: "desc",
+        include_return_message_types: ["user_message"],
+        agent_id: "agent-1",
+      }),
+    );
+    expect(
+      getRoute("slack", "C123", "slack-bot", "1712790000.000050")
+        ?.bootstrapUserMessageSeenAt,
+    ).toBeUndefined();
+    const recoveredContent = contentText(deliveries[0]?.content);
+    expect(recoveredContent).toContain("Original root problem statement");
+    expect(recoveredContent).toContain("Prior human investigation notes");
+    expect(recoveredContent).toContain("/tmp/root-screenshot.png");
+    expect(recoveredContent).toContain("bump");
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        text: "follow-up",
+        messageId: "1712800002.000400",
+      }),
+    );
+
+    expect(listConversationMessages).toHaveBeenCalledTimes(2);
+    const markedRoute = getRoute(
+      "slack",
+      "C123",
+      "slack-bot",
+      "1712790000.000050",
+    );
+    expect(markedRoute?.bootstrapUserMessageSeenAt).toEqual(expect.any(String));
+    const incrementalContent = contentText(deliveries[1]?.content);
+    expect(incrementalContent).toContain("follow-up");
+    expect(incrementalContent).not.toContain("Original root problem statement");
+    expect(incrementalContent).not.toContain("Prior human investigation notes");
+    expect(incrementalContent).not.toContain("/tmp/root-screenshot.png");
+
+    await adapter.onMessage?.(
+      createInboundMessage({
+        text: "post-marker",
+        messageId: "1712800003.000500",
+      }),
+    );
+
+    expect(listConversationMessages).toHaveBeenCalledTimes(2);
+    expect(contentText(deliveries[2]?.content)).toContain("post-marker");
+    expect(resolveSlackThreadStarterMock).toHaveBeenCalledTimes(1);
+    expect(deliveries).toHaveLength(3);
   });
 
   test("an explicit Slack mention upgrades a listen-only route for outbound replies", async () => {

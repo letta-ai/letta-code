@@ -7,6 +7,7 @@ import {
   getAllRoutes,
   getRoute,
   getRoutesForChannel,
+  loadRoutes,
   removeRoute,
   removeRoutesForScope,
 } from "@/channels/routing";
@@ -112,6 +113,29 @@ describe("routing", () => {
 
     const slackRoutes = getRoutesForChannel("slack");
     expect(slackRoutes).toHaveLength(0);
+  });
+
+  test("loadRoutes preserves Slack bootstrap user-message markers", () => {
+    __testOverrideLoadRoutes(() => [
+      {
+        accountId: "slack-bot",
+        chatId: "C123",
+        chatType: "channel",
+        threadId: "1712790000.000050",
+        agentId: "agent-a",
+        conversationId: "conv-1",
+        enabled: true,
+        bootstrapUserMessageSeenAt: "2026-04-11T00:01:00.000Z",
+        createdAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    loadRoutes("slack");
+
+    expect(
+      getRoute("slack", "C123", "slack-bot", "1712790000.000050")
+        ?.bootstrapUserMessageSeenAt,
+    ).toBe("2026-04-11T00:01:00.000Z");
   });
 
   test("getAllRoutes returns all routes", () => {
