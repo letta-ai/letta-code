@@ -13,6 +13,7 @@ import type {
   ListModelsResponseModelEntry,
   StopReasonType,
 } from "@/types/protocol_v2";
+import type { WhatsAppAttachmentPolicyConfig } from "./whatsapp/attachment-policy-types";
 
 /**
  * Vendor-neutral model-picker payload produced by the generic channel
@@ -661,7 +662,7 @@ export interface DiscordChannelConfig {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelConfig {
+export interface WhatsAppChannelConfig extends WhatsAppAttachmentPolicyConfig {
   channel: "whatsapp";
   enabled: boolean;
   dmPolicy: DmPolicy;
@@ -848,7 +849,9 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelAccount extends ChannelAccountBase {
+export interface WhatsAppChannelAccount
+  extends ChannelAccountBase,
+    WhatsAppAttachmentPolicyConfig {
   channel: "whatsapp";
   /** Agent ID used for account-bound DM and group auto-routing. */
   agentId: string | null;

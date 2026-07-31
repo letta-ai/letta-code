@@ -1,8 +1,18 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { InboundChannelMessage } from "@/channels/types";
+import type {
+  InboundChannelMessage,
+  WhatsAppChannelAccount,
+} from "@/channels/types";
 import {
   createWhatsAppAdapter,
   type WhatsAppAdapterDependencies,
@@ -14,8 +24,8 @@ import {
 } from "@/channels/whatsapp/jid";
 import { createLidStore, type LidStore } from "@/channels/whatsapp/lid-store";
 
-const account = {
-  channel: "whatsapp" as const,
+const account: WhatsAppChannelAccount = {
+  channel: "whatsapp",
   accountId: "phase-b-test",
   enabled: true,
   dmPolicy: "pairing" as const,
@@ -61,9 +71,13 @@ function instrumentStore(store: LidStore): LidStore & { flushes: number } {
 function makeHarness(
   store: LidStore,
   onMessage: (message: InboundChannelMessage) => Promise<void>,
+  accountOverrides: Partial<WhatsAppChannelAccount> = {},
 ) {
   let upsertHandler: ((payload: unknown) => unknown) | undefined;
   const sentJids: string[] = [];
+  const sentPayloads: Array<Record<string, unknown>> = [];
+  const sentOptions: Array<Record<string, unknown> | undefined> = [];
+  const presenceUpdates: Array<{ presence: string; jid?: string }> = [];
   const socket = {
     ev: {
       on(event: string, handler: (payload: unknown) => void) {
@@ -72,9 +86,18 @@ function makeHarness(
     },
     ws: { close() {} },
     user: { id: phone("15551234567"), lid: lid("777000111") },
-    async sendMessage(jid: string) {
+    async sendMessage(
+      jid: string,
+      payload: Record<string, unknown>,
+      options?: Record<string, unknown>,
+    ) {
       sentJids.push(jid);
+      sentPayloads.push(payload);
+      sentOptions.push(options);
       return { key: { id: "outbound" } };
+    },
+    async sendPresenceUpdate(presence: string, jid?: string) {
+      presenceUpdates.push({ presence, jid });
     },
   };
   const createSocket: NonNullable<
@@ -90,7 +113,10 @@ function makeHarness(
     loadRuntimeModule: async () => ({}),
     lidStore: store,
   };
-  const adapter = createWhatsAppAdapter(account, dependencies);
+  const adapter = createWhatsAppAdapter(
+    { ...account, ...accountOverrides },
+    dependencies,
+  );
   adapter.onMessage = onMessage;
   return {
     adapter,
@@ -98,6 +124,9 @@ function makeHarness(
       await upsertHandler?.({ type: "notify", messages });
     },
     sentJids,
+    sentPayloads,
+    sentOptions,
+    presenceUpdates,
   };
 }
 
@@ -326,6 +355,127 @@ describe("WhatsApp adapter canonical identity integration", () => {
 
     await harness.adapter.sendDirectReply(known, "reply");
     expect(harness.sentJids).toEqual([mapped, mapped]);
+  });
+
+  test("attachment policy denial happens before presence or network send", async () => {
+    const store = instrumentStore(createLidStore(join(dir, "lid.json")));
+    const filePath = join(dir, "deny.txt");
+    writeFileSync(filePath, "nope");
+    const harness = makeHarness(store, async () => undefined, {
+      attachmentFilter: true,
+      attachmentAllowedRecipients: [phone("15550000013")],
+      attachmentMimeTypes: ["image/png"],
+      attachmentAllowedPaths: [dir],
+    });
+    await harness.adapter.start();
+
+    await expect(
+      harness.adapter.sendMessage({
+        channel: "whatsapp",
+        accountId: account.accountId,
+        chatId: phone("15550000013"),
+        text: "blocked",
+        mediaPath: filePath,
+      }),
+    ).rejects.toThrow(/MIME type .*text\/plain.* is not allowed/);
+    expect(harness.presenceUpdates).toHaveLength(0);
+    expect(harness.sentJids).toHaveLength(0);
+  });
+
+  test("attachment policy evaluates the resolved phone for stored LID targets", async () => {
+    const store = instrumentStore(createLidStore(join(dir, "lid.json")));
+    const known = lid("13131313");
+    const mapped = phone("15550000013");
+    store.record(known, mapped);
+    const filePath = join(dir, "photo.png");
+    writeFileSync(filePath, "png");
+    const harness = makeHarness(store, async () => undefined, {
+      attachmentFilter: true,
+      attachmentAllowedRecipients: ["15550000013"],
+      attachmentMimeTypes: ["image/png"],
+      attachmentAllowedPaths: [dir],
+    });
+    await harness.adapter.start();
+
+    await harness.adapter.sendMessage({
+      channel: "whatsapp",
+      accountId: account.accountId,
+      chatId: known,
+      text: "ok",
+      mediaPath: filePath,
+    });
+
+    expect(harness.sentJids).toEqual([mapped]);
+    expect(harness.sentPayloads[0]).toEqual({
+      image: { url: realpathSync(filePath) },
+      caption: "ok",
+    });
+  });
+
+  test("attachment policy preserves exact group JID allowlists", async () => {
+    const store = instrumentStore(createLidStore(join(dir, "lid.json")));
+    const filePath = join(dir, "photo.png");
+    writeFileSync(filePath, "png");
+    const targetGroup = group("120363000000");
+    const harness = makeHarness(store, async () => undefined, {
+      attachmentFilter: true,
+      attachmentAllowedRecipients: [targetGroup],
+      attachmentMimeTypes: ["image/png"],
+      attachmentAllowedPaths: [dir],
+    });
+    await harness.adapter.start();
+
+    await harness.adapter.sendMessage({
+      channel: "whatsapp",
+      accountId: account.accountId,
+      chatId: targetGroup,
+      text: "group",
+      mediaPath: filePath,
+    });
+    await expect(
+      harness.adapter.sendMessage({
+        channel: "whatsapp",
+        accountId: account.accountId,
+        chatId: group("120363000001"),
+        text: "group",
+        mediaPath: filePath,
+      }),
+    ).rejects.toThrow(/not allowed/);
+
+    expect(harness.sentJids).toEqual([targetGroup]);
+  });
+
+  test("attachment policy passes canonical symlink target and MIME to Baileys", async () => {
+    const store = instrumentStore(createLidStore(join(dir, "lid.json")));
+    const root = join(dir, "allowed");
+    mkdirSync(root);
+    const realFile = join(root, "song.mp3");
+    const linkPath = join(dir, "song-link.bin");
+    writeFileSync(realFile, "audio");
+    symlinkSync(realFile, linkPath);
+    const harness = makeHarness(store, async () => undefined, {
+      attachmentFilter: true,
+      attachmentAllowedRecipients: [phone("15550000014")],
+      attachmentMimeTypes: ["audio/mpeg"],
+      attachmentAllowedPaths: [root],
+    });
+    await harness.adapter.start();
+
+    await harness.adapter.sendMessage({
+      channel: "whatsapp",
+      accountId: account.accountId,
+      chatId: phone("15550000014"),
+      text: "listen",
+      mediaPath: linkPath,
+      fileName: "fake.bin",
+    });
+
+    expect(harness.sentPayloads[0]).toEqual({
+      document: { url: realpathSync(realFile) },
+      fileName: "song.mp3",
+      mimetype: "audio/mpeg",
+      caption: "listen",
+    });
   });
 
   test("handler failure still flushes dirty observations", async () => {

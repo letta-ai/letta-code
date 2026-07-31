@@ -10,6 +10,7 @@ import type {
   OutboundChannelMessage,
   WhatsAppChannelAccount,
 } from "@/channels/types";
+import { decideWhatsAppAttachmentPolicy } from "./attachment-policy";
 import { resolveInboundIdentity } from "./identity";
 import {
   isGroupJid,
@@ -29,6 +30,7 @@ import {
   extractReplyParticipant,
   extractWhatsAppText,
   unwrapWhatsAppMessageContent,
+  type WhatsAppResolvedOutboundMedia,
 } from "./media";
 import {
   isWhatsAppReactionGroupEligible,
@@ -821,6 +823,27 @@ export function createWhatsAppAdapter(
         selfLid,
         resolveLid: (lidJid) => lidStore.resolve(lidJid),
       });
+      let resolvedMedia: WhatsAppResolvedOutboundMedia | undefined;
+      if (msg.mediaPath && account.attachmentFilter === true) {
+        const decision = decideWhatsAppAttachmentPolicy({
+          policy: {
+            enabled: true,
+            allowedMimeTypes: account.attachmentMimeTypes ?? [],
+            allowedRecipients: account.attachmentAllowedRecipients ?? [],
+            allowedDirectories: account.attachmentAllowedPaths ?? [],
+            recursiveDirectories: account.attachmentPathRecursive === true,
+          },
+          mediaPath: msg.mediaPath,
+          targetJid,
+        });
+        if (!decision.allowed) {
+          throw new Error(decision.reason);
+        }
+        resolvedMedia = {
+          mediaPath: decision.mediaPath,
+          mimeType: decision.mimeType,
+        };
+      }
       if (msg.reaction || msg.removeReaction) {
         const target = msg.targetMessageId ?? msg.replyToMessageId;
         if (!target) throw new Error("WhatsApp reactions require messageId.");
@@ -839,7 +862,7 @@ export function createWhatsAppAdapter(
       } catch {
         // Presence is best-effort.
       }
-      const payload = buildWhatsAppOutboundPayload(msg);
+      const payload = buildWhatsAppOutboundPayload(msg, resolvedMedia);
       const result = await sendToWhatsApp(
         targetJid,
         payload,

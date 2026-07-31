@@ -73,6 +73,11 @@ describe("WhatsApp channel service", () => {
         groupMode: "disabled",
         dmPolicy: "pairing",
         agentId: null,
+        attachmentFilter: false,
+        attachmentMimeTypes: [],
+        attachmentAllowedRecipients: [],
+        attachmentAllowedPaths: [],
+        attachmentPathRecursive: false,
       }),
     );
     expect(created.config).toEqual(
@@ -80,8 +85,71 @@ describe("WhatsApp channel service", () => {
         self_chat_mode: true,
         group_mode: "disabled",
         agent_id: null,
+        attachment_filter: false,
+        attachment_mime_types: [],
+        attachment_allowed_recipients: [],
+        attachment_allowed_paths: [],
+        attachment_path_recursive: false,
       }),
     );
+  });
+
+  test("loads legacy accounts default-off and saves attachment policy as snake_case", () => {
+    let savedAccounts: Array<Record<string, unknown>> = [];
+    __testOverrideLoadChannelAccounts((channelId) =>
+      channelId === "whatsapp"
+        ? [
+            {
+              channel: "whatsapp",
+              accountId: "legacy",
+              enabled: true,
+              dmPolicy: "pairing",
+              allowedUsers: [],
+              agentId: null,
+              selfChatMode: false,
+              groupMode: "open",
+              createdAt: "2026-04-30T00:00:00.000Z",
+              updatedAt: "2026-04-30T00:00:00.000Z",
+            },
+          ]
+        : [],
+    );
+    __testOverrideSaveChannelAccounts((_channelId, accounts) => {
+      savedAccounts = accounts as unknown as Array<Record<string, unknown>>;
+    });
+    clearChannelAccountStores();
+
+    const snapshot = getChannelConfigSnapshot("whatsapp", "legacy");
+    expect(snapshot).toEqual(
+      expect.objectContaining({
+        attachmentFilter: false,
+        attachmentMimeTypes: [],
+        attachmentAllowedRecipients: [],
+        attachmentAllowedPaths: [],
+        attachmentPathRecursive: false,
+      }),
+    );
+
+    updateChannelAccountLive("whatsapp", "legacy", {
+      config: {
+        attachment_filter: true,
+        attachment_mime_types: ["image/png"],
+        attachment_allowed_recipients: ["15551234567"],
+        attachment_allowed_paths: ["/tmp/uploads"],
+        attachment_path_recursive: true,
+      },
+    });
+
+    expect(savedAccounts[0]).toEqual(
+      expect.objectContaining({
+        attachment_filter: true,
+        attachment_mime_types: ["image/png"],
+        attachment_allowed_recipients: ["15551234567"],
+        attachment_allowed_paths: ["/tmp/uploads"],
+        attachment_path_recursive: true,
+      }),
+    );
+    expect(savedAccounts[0]).not.toHaveProperty("attachmentFilter");
   });
 
   test("normalizes plugin config from snake_case", () => {
@@ -98,6 +166,11 @@ describe("WhatsApp channel service", () => {
           mention_patterns: ["\\bloop\\b"],
           download_media: true,
           media_max_bytes: 1048576,
+          attachment_filter: true,
+          attachment_mime_types: ["image/png"],
+          attachment_allowed_recipients: ["15551234567"],
+          attachment_allowed_paths: ["/tmp/uploads"],
+          attachment_path_recursive: true,
         },
       },
       { accountId: "personal" },
@@ -110,6 +183,20 @@ describe("WhatsApp channel service", () => {
     expect(created.mentionPatterns).toEqual(["\\bloop\\b"]);
     expect(created.downloadMedia).toBe(true);
     expect(created.mediaMaxBytes).toBe(1048576);
+    expect(created.attachmentFilter).toBe(true);
+    expect(created.attachmentMimeTypes).toEqual(["image/png"]);
+    expect(created.attachmentAllowedRecipients).toEqual(["15551234567"]);
+    expect(created.attachmentAllowedPaths).toEqual(["/tmp/uploads"]);
+    expect(created.attachmentPathRecursive).toBe(true);
+    expect(created.config).toEqual(
+      expect.objectContaining({
+        attachment_filter: true,
+        attachment_mime_types: ["image/png"],
+        attachment_allowed_recipients: ["15551234567"],
+        attachment_allowed_paths: ["/tmp/uploads"],
+        attachment_path_recursive: true,
+      }),
+    );
 
     const updated = updateChannelAccountLive("whatsapp", "personal", {
       config: { group_mode: "open", self_chat_mode: true },

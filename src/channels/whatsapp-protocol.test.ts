@@ -24,6 +24,11 @@ describe("whatsapp gateway config validators", () => {
           mention_patterns: ["\\bloop\\b"],
           download_media: true,
           media_max_bytes: 1048576,
+          attachment_filter: true,
+          attachment_mime_types: ["image/png"],
+          attachment_allowed_recipients: ["15551234567"],
+          attachment_allowed_paths: ["/tmp/uploads"],
+          attachment_path_recursive: true,
         },
       }),
     ).toBe(true);
@@ -54,6 +59,8 @@ describe("whatsapp gateway config validators", () => {
           plugin_config: {
             agent_id: "agent-1",
             self_chat_mode: false,
+            attachment_filter: true,
+            attachment_mime_types: ["image/png"],
           },
         },
         "plugin_config",
