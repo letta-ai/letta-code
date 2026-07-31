@@ -3,7 +3,7 @@ import {
   type SpawnOptions,
   spawn,
 } from "node:child_process";
-import { createRequire } from "node:module";
+import crossSpawn from "cross-spawn";
 
 export type PackageManagerProcessFactory = (
   command: string,
@@ -11,13 +11,8 @@ export type PackageManagerProcessFactory = (
   options: SpawnOptions,
 ) => ChildProcess;
 
-const requireFromHere = createRequire(import.meta.url);
-const crossSpawn = requireFromHere(
-  "cross-spawn",
-) as PackageManagerProcessFactory;
-
 function isWindowsCommandShim(command: string): boolean {
-  return command.toLowerCase().endsWith(".cmd");
+  return /\.(?:cmd|bat)$/i.test(command);
 }
 
 export function getPackageManagerProcessFactory({

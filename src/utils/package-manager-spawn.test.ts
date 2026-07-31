@@ -13,42 +13,45 @@ function createChildProcess(): ChildProcess {
   return new EventEmitter() as ChildProcess;
 }
 
-test("selects the Windows shim launcher instead of native spawn on win32", () => {
-  const child = createChildProcess();
-  const calls: Array<{
-    args: string[];
-    command: string;
-    options: SpawnOptions;
-  }> = [];
-  const nativeSpawn: PackageManagerProcessFactory = () => {
-    throw new Error("spawn EINVAL");
-  };
-  const windowsSpawn: PackageManagerProcessFactory = (
-    command,
-    args,
-    options,
-  ) => {
-    calls.push({ args, command, options });
-    return child;
-  };
+test.each(["npm.cmd", "npm.bat"])(
+  "selects the Windows shim launcher for %s",
+  (command) => {
+    const child = createChildProcess();
+    const calls: Array<{
+      args: string[];
+      command: string;
+      options: SpawnOptions;
+    }> = [];
+    const nativeSpawn: PackageManagerProcessFactory = () => {
+      throw new Error("spawn EINVAL");
+    };
+    const windowsSpawn: PackageManagerProcessFactory = (
+      command,
+      args,
+      options,
+    ) => {
+      calls.push({ args, command, options });
+      return child;
+    };
 
-  const launcher = getPackageManagerProcessFactory({
-    nativeSpawn,
-    platform: "win32",
-    windowsSpawn,
-  });
+    const launcher = getPackageManagerProcessFactory({
+      nativeSpawn,
+      platform: "win32",
+      windowsSpawn,
+    });
 
-  expect(
-    launcher("npm.cmd", ["install", "pkg@1.0.0"], { stdio: "ignore" }),
-  ).toBe(child);
-  expect(calls).toEqual([
-    {
-      command: "npm.cmd",
-      args: ["install", "pkg@1.0.0"],
-      options: { stdio: "ignore" },
-    },
-  ]);
-});
+    expect(
+      launcher(command, ["install", "pkg@1.0.0"], { stdio: "ignore" }),
+    ).toBe(child);
+    expect(calls).toEqual([
+      {
+        command,
+        args: ["install", "pkg@1.0.0"],
+        options: { stdio: "ignore" },
+      },
+    ]);
+  },
+);
 
 test.skipIf(process.platform !== "win32")(
   "executes a cmd shim with argument boundaries intact on Windows",
