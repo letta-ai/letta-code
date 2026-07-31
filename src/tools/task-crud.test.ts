@@ -1,9 +1,54 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { task_create } from "@/tools/impl/task-create";
-import { task_get } from "@/tools/impl/task-get";
-import { task_list } from "@/tools/impl/task-list";
-import { task_update } from "@/tools/impl/task-update";
-import { _resetTaskStoreForTests } from "@/tools/impl/tasks/store";
+import {
+  getRuntimeContext,
+  type RuntimeContextSnapshot,
+  runOutsideRuntimeContext,
+  runWithRuntimeContext,
+} from "@/runtime-context";
+import { task_create as taskCreateImpl } from "@/tools/impl/task-create";
+import { task_get as taskGetImpl } from "@/tools/impl/task-get";
+import { task_list as taskListImpl } from "@/tools/impl/task-list";
+import { task_update as taskUpdateImpl } from "@/tools/impl/task-update";
+import {
+  _resetTaskStoreForTests,
+  clearTaskStoreScope,
+} from "@/tools/impl/tasks/store";
+
+const DEFAULT_SCOPE = {
+  agentId: "agent-default",
+  conversationId: "conversation-default",
+} satisfies RuntimeContextSnapshot;
+
+function inTaskScope<T>(
+  fn: () => T,
+  scope: RuntimeContextSnapshot = DEFAULT_SCOPE,
+): T {
+  return runWithRuntimeContext(scope, fn);
+}
+
+function withDefaultTaskScope<T>(fn: () => T): T {
+  const runtimeContext = getRuntimeContext();
+  if (runtimeContext?.agentId && runtimeContext.conversationId) {
+    return fn();
+  }
+  return inTaskScope(fn);
+}
+
+function task_create(...args: Parameters<typeof taskCreateImpl>) {
+  return withDefaultTaskScope(() => taskCreateImpl(...args));
+}
+
+function task_get(...args: Parameters<typeof taskGetImpl>) {
+  return withDefaultTaskScope(() => taskGetImpl(...args));
+}
+
+function task_list(...args: Parameters<typeof taskListImpl>) {
+  return withDefaultTaskScope(() => taskListImpl(...args));
+}
+
+function task_update(...args: Parameters<typeof taskUpdateImpl>) {
+  return withDefaultTaskScope(() => taskUpdateImpl(...args));
+}
 
 describe("Task CRUD family", () => {
   beforeEach(() => {
@@ -45,6 +90,83 @@ describe("Task CRUD family", () => {
     await expect(task_create({ description: "x" } as never)).rejects.toThrow(
       /subject/,
     );
+  });
+
+  test("TaskCreate rejects execution without an agent/conversation scope", async () => {
+    await expect(
+      runOutsideRuntimeContext(() =>
+        taskCreateImpl({ subject: "x", description: "y" }),
+      ),
+    ).rejects.toThrow(/agent and conversation execution scope/);
+  });
+
+  test("Task CRUD isolates concurrent agent and conversation scopes", async () => {
+    const scopeA = { agentId: "agent-a", conversationId: "conversation-a" };
+    const scopeB = { agentId: "agent-b", conversationId: "conversation-b" };
+
+    const [taskA, taskB] = await Promise.all([
+      inTaskScope(
+        () => task_create({ subject: "A", description: "scope A" }),
+        scopeA,
+      ),
+      inTaskScope(
+        () => task_create({ subject: "B", description: "scope B" }),
+        scopeB,
+      ),
+    ]);
+
+    const [listA, listB] = await Promise.all([
+      inTaskScope(() => task_list({}), scopeA),
+      inTaskScope(() => task_list({}), scopeB),
+    ]);
+
+    expect(listA.tasks.map((task) => task.taskId)).toEqual([taskA.taskId]);
+    expect(listB.tasks.map((task) => task.taskId)).toEqual([taskB.taskId]);
+    await expect(
+      inTaskScope(() => task_get({ taskId: taskA.taskId }), scopeB),
+    ).rejects.toThrow(/not found/);
+    await expect(
+      inTaskScope(
+        () => task_update({ taskId: taskA.taskId, status: "completed" }),
+        scopeB,
+      ),
+    ).rejects.toThrow(/not found/);
+  });
+
+  test("Task CRUD isolates default conversations belonging to different agents", async () => {
+    const agentA = { agentId: "agent-a", conversationId: "default" };
+    const agentB = { agentId: "agent-b", conversationId: "default" };
+    const taskA = await inTaskScope(
+      () => task_create({ subject: "A", description: "agent A" }),
+      agentA,
+    );
+
+    expect((await inTaskScope(() => task_list({}), agentB)).tasks).toEqual([]);
+    await expect(
+      inTaskScope(() => task_get({ taskId: taskA.taskId }), agentB),
+    ).rejects.toThrow(/not found/);
+  });
+
+  test("clearing one task scope leaves other scopes intact", async () => {
+    const scopeA = { agentId: "agent-a", conversationId: "conversation-a" };
+    const scopeB = { agentId: "agent-b", conversationId: "conversation-b" };
+    await inTaskScope(
+      () => task_create({ subject: "A", description: "scope A" }),
+      scopeA,
+    );
+    const taskB = await inTaskScope(
+      () => task_create({ subject: "B", description: "scope B" }),
+      scopeB,
+    );
+
+    expect(clearTaskStoreScope(scopeA)).toBe(true);
+    expect((await inTaskScope(() => task_list({}), scopeA)).tasks).toEqual([]);
+    expect(
+      (await inTaskScope(() => task_list({}), scopeB)).tasks.map(
+        (task) => task.taskId,
+      ),
+    ).toEqual([taskB.taskId]);
+    expect(clearTaskStoreScope(scopeA)).toBe(false);
   });
 
   test("TaskCreate rejects non-string metadata values", async () => {

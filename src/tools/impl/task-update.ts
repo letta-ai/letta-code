@@ -1,3 +1,4 @@
+import { requireTaskStoreScope } from "./tasks/scope.js";
 import {
   TaskNotFoundError,
   type TaskRecord,
@@ -78,7 +79,7 @@ export async function task_update(args: TaskUpdateArgs): Promise<TaskRecord> {
   const addBlockedBy = validateStringArray(args.addBlockedBy, "addBlockedBy");
 
   try {
-    return updateTask({
+    return updateTask(requireTaskStoreScope(), {
       taskId: args.taskId,
       status: args.status as TaskStatus | undefined,
       subject: args.subject,

@@ -4,12 +4,14 @@
  * This powers TaskCreate / TaskGet / TaskList / TaskUpdate — the replacement
  * for the older stateless `TodoWrite` tool. Tasks have stable IDs, dependency
  * edges (blocks/blockedBy), optional owner, and a free-form metadata bag.
- *
- * Scope: process-lifetime. Same model as `process_manager.ts`'s background
- * task registry. A future follow-up may scope per-conversation.
  */
 
 export type TaskStatus = "pending" | "in_progress" | "completed" | "deleted";
+
+export interface TaskStoreScope {
+  agentId: string;
+  conversationId: string;
+}
 
 export interface TaskRecord {
   taskId: string;
@@ -27,13 +29,39 @@ export interface TaskRecord {
   updatedAt: number;
 }
 
-const tasks = new Map<string, TaskRecord>();
-/** Stable insertion order for TaskList */
-const insertionOrder: string[] = [];
+type ScopedTaskStore = {
+  tasks: Map<string, TaskRecord>;
+  /** Stable insertion order for TaskList */
+  insertionOrder: string[];
+};
+
+const taskStoresByAgent = new Map<string, Map<string, ScopedTaskStore>>();
 let taskIdCounter = 1;
 
 function nextTaskId(): string {
   return `task_${taskIdCounter++}`;
+}
+
+function getTaskStore(
+  scope: TaskStoreScope,
+  create: boolean,
+): ScopedTaskStore | undefined {
+  let storesByConversation = taskStoresByAgent.get(scope.agentId);
+  if (!storesByConversation) {
+    if (!create) return undefined;
+    storesByConversation = new Map();
+    taskStoresByAgent.set(scope.agentId, storesByConversation);
+  }
+
+  let store = storesByConversation.get(scope.conversationId);
+  if (!store && create) {
+    store = {
+      tasks: new Map(),
+      insertionOrder: [],
+    };
+    storesByConversation.set(scope.conversationId, store);
+  }
+  return store;
 }
 
 function cloneMetadata(
@@ -60,7 +88,14 @@ export interface CreateTaskInput {
   metadata?: Record<string, string>;
 }
 
-export function createTask(input: CreateTaskInput): TaskRecord {
+export function createTask(
+  scope: TaskStoreScope,
+  input: CreateTaskInput,
+): TaskRecord {
+  const store = getTaskStore(scope, true);
+  if (!store) {
+    throw new Error("Failed to initialize task store");
+  }
   const now = Date.now();
   const record: TaskRecord = {
     taskId: nextTaskId(),
@@ -74,13 +109,16 @@ export function createTask(input: CreateTaskInput): TaskRecord {
     createdAt: now,
     updatedAt: now,
   };
-  tasks.set(record.taskId, record);
-  insertionOrder.push(record.taskId);
+  store.tasks.set(record.taskId, record);
+  store.insertionOrder.push(record.taskId);
   return { ...record };
 }
 
-export function getTask(taskId: string): TaskRecord | undefined {
-  const t = tasks.get(taskId);
+export function getTask(
+  scope: TaskStoreScope,
+  taskId: string,
+): TaskRecord | undefined {
+  const t = getTaskStore(scope, false)?.tasks.get(taskId);
   return t ? { ...t } : undefined;
 }
 
@@ -88,10 +126,16 @@ export interface ListTasksOptions {
   includeDeleted?: boolean;
 }
 
-export function listTasks(options: ListTasksOptions = {}): TaskRecord[] {
+export function listTasks(
+  scope: TaskStoreScope,
+  options: ListTasksOptions = {},
+): TaskRecord[] {
+  const store = getTaskStore(scope, false);
+  if (!store) return [];
+
   const out: TaskRecord[] = [];
-  for (const id of insertionOrder) {
-    const t = tasks.get(id);
+  for (const id of store.insertionOrder) {
+    const t = store.tasks.get(id);
     if (!t) continue;
     if (!options.includeDeleted && t.status === "deleted") continue;
     out.push({ ...t });
@@ -118,8 +162,11 @@ export class TaskNotFoundError extends Error {
   }
 }
 
-export function updateTask(input: UpdateTaskInput): TaskRecord {
-  const existing = tasks.get(input.taskId);
+export function updateTask(
+  scope: TaskStoreScope,
+  input: UpdateTaskInput,
+): TaskRecord {
+  const existing = getTaskStore(scope, false)?.tasks.get(input.taskId);
   if (!existing) {
     throw new TaskNotFoundError(input.taskId);
   }
@@ -147,9 +194,19 @@ export function updateTask(input: UpdateTaskInput): TaskRecord {
   return { ...existing };
 }
 
+export function clearTaskStoreScope(scope: TaskStoreScope): boolean {
+  const storesByConversation = taskStoresByAgent.get(scope.agentId);
+  if (!storesByConversation) return false;
+
+  const deleted = storesByConversation.delete(scope.conversationId);
+  if (storesByConversation.size === 0) {
+    taskStoresByAgent.delete(scope.agentId);
+  }
+  return deleted;
+}
+
 /** Test-only hook to reset state between unit tests. */
 export function _resetTaskStoreForTests(): void {
-  tasks.clear();
-  insertionOrder.length = 0;
+  taskStoresByAgent.clear();
   taskIdCounter = 1;
 }

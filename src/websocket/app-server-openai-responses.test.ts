@@ -2,6 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import OpenAI from "openai";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
+import {
+  clearTaskStoreScope,
+  createTask,
+  listTasks,
+} from "@/tools/impl/tasks/store";
 import { type AppServerHandle, startAppServer } from "@/websocket/app-server";
 import {
   __testResetConversationMap,
@@ -451,6 +456,13 @@ describe("app-server Responses API", () => {
     }> = [];
     stubToolTurn((conversationId, messages) => {
       turns.push({ conversationId, messages });
+      createTask(
+        { agentId: TEST_AGENT.id, conversationId },
+        {
+          subject: `Task for ${conversationId}`,
+          description: "Verify Responses API task scope cleanup",
+        },
+      );
     });
     handle = await startAppServer({
       listen: "ws://127.0.0.1:0",
@@ -499,6 +511,24 @@ describe("app-server Responses API", () => {
       "conv-responses-3",
     ]);
     expect(deleted).toEqual(["conv-responses-2"]);
+    expect(
+      listTasks({
+        agentId: TEST_AGENT.id,
+        conversationId: "conv-responses-2",
+      }),
+    ).toEqual([]);
+    expect(
+      listTasks({
+        agentId: TEST_AGENT.id,
+        conversationId: "conv-responses-1",
+      }),
+    ).toHaveLength(2);
+    expect(
+      listTasks({
+        agentId: TEST_AGENT.id,
+        conversationId: "conv-responses-3",
+      }),
+    ).toHaveLength(1);
     expect(turns.map((turn) => turn.conversationId)).toEqual([
       "conv-responses-1",
       "conv-responses-2",
@@ -511,6 +541,14 @@ describe("app-server Responses API", () => {
       [{ role: "user", content: [{ type: "text", text: "second message" }] }],
       [{ role: "user", content: [{ type: "text", text: "separate chat" }] }],
     ]);
+    clearTaskStoreScope({
+      agentId: TEST_AGENT.id,
+      conversationId: "conv-responses-1",
+    });
+    clearTaskStoreScope({
+      agentId: TEST_AGENT.id,
+      conversationId: "conv-responses-3",
+    });
   });
 
   test("rejects stored response state until retrieval and cleanup are supported", async () => {

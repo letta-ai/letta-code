@@ -8,6 +8,7 @@ import {
   parsePatchOperations,
 } from "@/cli/helpers/format-args-display.js";
 import { CLI_GLYPHS } from "@/cli/helpers/glyphs";
+import { taskCrudTodos } from "@/cli/helpers/task-crud-rendering";
 import {
   getDisplayToolName,
   isFileEditTool,
@@ -26,7 +27,6 @@ import {
 } from "@/cli/helpers/tool-name-mapping.js";
 import { formatUnifiedExecOutputForTui } from "@/cli/helpers/unified-exec-output.js";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import { listTasks } from "@/tools/impl/tasks/store.js";
 import { clipToolReturn } from "@/tools/manager.js";
 import { isRecord } from "@/utils/type-guards";
 import { Text } from "./Text";
@@ -154,12 +154,16 @@ export const ToolCallMessage = memo(
     isStreaming,
     expandedToolCallId,
     lastShellToolCallId,
+    agentId,
+    conversationId,
   }: {
     line: ToolCallLine;
     precomputedDiffs?: Map<string, AdvancedDiffSuccess>;
     isStreaming?: boolean;
     expandedToolCallId?: string | null;
     lastShellToolCallId?: string | null;
+    agentId?: string;
+    conversationId?: string;
   }) => {
     const columns = useTerminalWidth();
     try {
@@ -483,16 +487,11 @@ export const ToolCallMessage = memo(
         // see the live task state instead of raw JSON.
         if (isTaskCrudTool(rawName) && line.resultOk !== false) {
           try {
-            const tasks = listTasks();
-            if (tasks.length > 0) {
-              const safeTodos = tasks.map((t) => ({
-                content: t.subject,
-                status: (t.status === "deleted" ? "completed" : t.status) as
-                  | "pending"
-                  | "in_progress"
-                  | "completed",
-                id: t.taskId,
-              }));
+            const safeTodos =
+              agentId && conversationId
+                ? taskCrudTodos({ agentId, conversationId })
+                : [];
+            if (safeTodos.length > 0) {
               return <TodoRenderer todos={safeTodos} />;
             }
           } catch {

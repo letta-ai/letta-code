@@ -2,6 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
+import {
+  createTask,
+  listTasks,
+  type TaskStoreScope,
+} from "@/tools/impl/tasks/store";
 import { type AppServerHandle, startAppServer } from "@/websocket/app-server";
 import { parseAppServerWebsocketAuthSettings } from "@/websocket/app-server-auth";
 import {
@@ -185,12 +190,20 @@ describe("app-server OpenAI-compatible API", () => {
 
   test("header-less requests run statelessly with transcript replay", async () => {
     const created: string[] = [];
-    __testSetBackend(fakeBackend(created));
+    const deleted: string[] = [];
+    __testSetBackend(fakeBackend(created, deleted));
     const conversationsUsed: string[] = [];
     const messageCounts: number[] = [];
-    stubTurn((conversationId, _agentId, messages) => {
+    const taskScopes: TaskStoreScope[] = [];
+    stubTurn((conversationId, agentId, messages) => {
       conversationsUsed.push(conversationId);
       messageCounts.push(messages.length);
+      const scope = { agentId, conversationId };
+      taskScopes.push(scope);
+      createTask(scope, {
+        subject: `Task for ${conversationId}`,
+        description: "Verify ephemeral cleanup",
+      });
     });
     handle = await startAppServer({
       listen: "ws://127.0.0.1:0",
@@ -216,6 +229,11 @@ describe("app-server OpenAI-compatible API", () => {
     expect(conversationsUsed).toEqual(["conv-test-1", "conv-test-2"]);
     expect(created).toEqual(["conv-test-1", "conv-test-2"]);
     expect(messageCounts).toEqual([1, 3]);
+    expect(await waitFor(() => deleted.length === 2)).toBe(true);
+    expect(deleted).toEqual(["conv-test-1", "conv-test-2"]);
+    for (const scope of taskScopes) {
+      expect(listTasks(scope)).toEqual([]);
+    }
   });
 
   test("POST /v1/chat/completions streams SSE chunks", async () => {

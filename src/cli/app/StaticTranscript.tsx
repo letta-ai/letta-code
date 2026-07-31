@@ -25,6 +25,8 @@ export function StaticTranscript({
   precomputedDiffs,
   hiddenToolCallId,
   lastShellToolCallId,
+  agentId,
+  conversationId,
 }: {
   renderEpoch: number;
   items: StaticItem[];
@@ -33,6 +35,8 @@ export function StaticTranscript({
   showCompactionsEnabled: boolean;
   precomputedDiffs: Map<string, AdvancedDiffSuccess>;
   hiddenToolCallId?: string;
+  agentId: string;
+  conversationId: string;
   /** Used to show ctrl+o hint on the last committed tool call.
    *  Intentionally NOT included in the Static key — passing it here without
    *  keying on it means the hint shows correctly when an item first commits,
@@ -64,6 +68,8 @@ export function StaticTranscript({
                   precomputedDiffs={precomputedDiffs}
                   expandedToolCallId={hiddenToolCallId}
                   lastShellToolCallId={lastShellToolCallId}
+                  agentId={agentId}
+                  conversationId={conversationId}
                 />
               ) : item.kind === "subagent_group" ? (
                 <SubagentGroupStatic agents={item.agents} />

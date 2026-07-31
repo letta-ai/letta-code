@@ -1,5 +1,3 @@
-// src/cli/app/AppView.tsx
-
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { Box } from "ink";
@@ -501,6 +499,8 @@ export function AppView(props: AppViewProps) {
         precomputedDiffs={precomputedDiffsRef.current}
         hiddenToolCallId={expandedToolCallId ?? undefined}
         lastShellToolCallId={lastShellToolCallId ?? undefined}
+        agentId={agentId}
+        conversationId={conversationId}
       />
 
       <Box flexDirection="column">
@@ -607,7 +607,6 @@ export function AppView(props: AppViewProps) {
                         ) : ln.kind === "tool_call" &&
                           ln.toolCallId &&
                           queuedIds.has(ln.toolCallId) ? (
-                          // Render stub for queued (decided but not executed) approval
                           <PendingApprovalStub
                             toolName={
                               approvalMap.get(ln.toolCallId)?.toolName ||
@@ -620,7 +619,6 @@ export function AppView(props: AppViewProps) {
                         ) : ln.kind === "tool_call" &&
                           ln.toolCallId &&
                           pendingIds.has(ln.toolCallId) ? (
-                          // Render stub for pending (undecided) approval
                           <PendingApprovalStub
                             toolName={
                               approvalMap.get(ln.toolCallId)?.toolName ||
@@ -636,6 +634,8 @@ export function AppView(props: AppViewProps) {
                             isStreaming={streaming}
                             expandedToolCallId={expandedToolCallId}
                             lastShellToolCallId={lastShellToolCallId}
+                            agentId={agentId}
+                            conversationId={conversationId}
                           />
                         ) : ln.kind === "error" ? (
                           <ErrorMessage line={ln} />

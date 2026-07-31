@@ -4,6 +4,7 @@ import type {
   ServerResponse,
 } from "node:http";
 import { getBackend } from "@/backend";
+import { clearTaskStoreScope } from "@/tools/impl/tasks/store";
 import {
   chatKeyFromHeaders,
   createConversationSerialized,
@@ -655,6 +656,12 @@ export async function handleResponses(
   if (!headerChatKey) {
     void getBackend()
       .deleteConversation?.(conversationId)
+      .then(() => {
+        clearTaskStoreScope({
+          agentId: agent.id,
+          conversationId,
+        });
+      })
       .catch(() => {
         options.onLog?.(
           `OpenAI-compat failed to delete ephemeral conversation ${conversationId}`,
