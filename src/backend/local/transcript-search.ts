@@ -13,6 +13,7 @@ import {
   type LocalTranscriptManifest,
 } from "./local-store";
 import type { StoredMessage } from "./local-types";
+import { readLocalTranscriptJsonl } from "./transcript-jsonl";
 
 export type LocalTranscriptSearchBody = {
   query?: unknown;
@@ -53,18 +54,6 @@ function readJsonFile<T>(path: string): T | undefined {
     return JSON.parse(readFileSync(path, "utf8")) as T;
   } catch {
     return undefined;
-  }
-}
-
-function readJsonlFile(path: string): unknown[] {
-  if (!existsSync(path)) return [];
-  try {
-    return readFileSync(path, "utf8")
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as unknown);
-  } catch {
-    return [];
   }
 }
 
@@ -362,7 +351,7 @@ function collectConversationMessages(input: {
     return [];
 
   const messagesPath = join(conversationDir, "messages.jsonl");
-  const rows = readJsonlFile(messagesPath);
+  const rows = readLocalTranscriptJsonl<unknown>(messagesPath);
   if (rows.length === 0) return [];
   const manifest = readJsonFile<LocalTranscriptManifest>(
     join(conversationDir, "manifest.json"),

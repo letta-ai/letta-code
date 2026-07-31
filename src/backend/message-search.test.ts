@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -341,6 +341,19 @@ describe("message search backend routing", () => {
       expect(results).toHaveLength(1);
       expect(results[0]?.message_id).toBe("legacy-msg-1");
 
+      await appendFile(
+        join(conversationDir, "messages.jsonl"),
+        '{"id":"partial"',
+      );
+      const recoveredResults = searchLocalTranscriptMessages(storageDir, {
+        query: "LEGACY_LOCAL_NEEDLE",
+        agent_id: "agent-legacy",
+        conversation_id: "legacy-conv",
+        limit: 10,
+      });
+      expect(recoveredResults).toHaveLength(1);
+      expect(recoveredResults[0]?.message_id).toBe("legacy-msg-1");
+
       const futureResults = searchLocalTranscriptMessages(storageDir, {
         query: "LEGACY_LOCAL_NEEDLE",
         agent_id: "agent-legacy",
@@ -348,6 +361,16 @@ describe("message search backend routing", () => {
         limit: 10,
       });
       expect(futureResults).toHaveLength(0);
+
+      await appendFile(join(conversationDir, "messages.jsonl"), "\n");
+      expect(() =>
+        searchLocalTranscriptMessages(storageDir, {
+          query: "LEGACY_LOCAL_NEEDLE",
+          agent_id: "agent-legacy",
+          conversation_id: "legacy-conv",
+          limit: 10,
+        }),
+      ).toThrow("line 2");
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
