@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type WebSocket from "ws";
 import { createFileCommandSession } from "./file-commands";
+import type { FileWatchDependencies } from "./file-watch-session";
 
-function createHarness() {
+function createHarness(options?: {
+  loadFileWatchDependencies?: () => Promise<FileWatchDependencies>;
+}) {
   const sent: unknown[] = [];
   const tasks: Promise<void>[] = [];
   const session = createFileCommandSession({
@@ -17,6 +20,7 @@ function createHarness() {
     runDetachedListenerTask: (_commandName, task) => {
       tasks.push(task());
     },
+    loadFileWatchDependencies: options?.loadFileWatchDependencies,
   });
 
   return {
@@ -229,5 +233,38 @@ describe("listener file commands without file index", () => {
       files: [{ path: "src/target.ts", type: "file" }],
       success: true,
     });
+  });
+
+  test("disposal closes the session watcher and suppresses later file events", async () => {
+    let closeCount = 0;
+    let watchListener: ((eventType: "change" | "rename") => void) | undefined;
+    const harness = createHarness({
+      loadFileWatchDependencies: async () => ({
+        watch: (_path, _options, listener) => {
+          watchListener = listener;
+          return {
+            close: () => {
+              closeCount += 1;
+            },
+            on: () => {},
+          };
+        },
+        stat: async () => ({ mtimeMs: 1234 }),
+      }),
+    });
+
+    expect(
+      harness.session.handle({
+        type: "watch_file",
+        path: "/tmp/session-watch.txt",
+        request_id: "watch-session-disposal",
+      }),
+    ).toBe(true);
+    await harness.flush();
+    harness.session.dispose();
+    watchListener?.("change");
+
+    expect(closeCount).toBe(1);
+    expect(harness.sent).toEqual([]);
   });
 });
