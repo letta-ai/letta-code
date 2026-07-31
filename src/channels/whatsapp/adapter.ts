@@ -11,7 +11,6 @@ import type {
   WhatsAppChannelAccount,
 } from "@/channels/types";
 import {
-  applyWhatsAppMessagePrefix,
   asRecord,
   buildWhatsAppQuotedOptions,
   getWhatsAppDisplayName,
@@ -21,7 +20,7 @@ import {
   previewWhatsAppText,
   shouldProcessWhatsAppGroup,
   timestampToMs,
-  withWhatsAppMessagePrefix,
+  withWhatsAppPayloadMessagePrefix,
 } from "./adapter-helpers";
 import type {
   WhatsAppMessage,
@@ -839,12 +838,14 @@ export function createWhatsAppAdapter(
           // Presence is best-effort.
         }
       }
-      const outbound = withWhatsAppMessagePrefix(msg, account.messagePrefix);
-      const payload = buildWhatsAppOutboundPayload(outbound, resolvedMedia);
+      const payload = withWhatsAppPayloadMessagePrefix(
+        buildWhatsAppOutboundPayload(msg, resolvedMedia),
+        account.messagePrefix,
+      );
       const result = await sendToWhatsApp(
         targetJid,
         payload,
-        buildWhatsAppQuotedOptions(targetJid, outbound.replyToMessageId),
+        buildWhatsAppQuotedOptions(targetJid, msg.replyToMessageId),
       );
       const id = result.key?.id ?? "";
       outboundMessages.rememberSent(id, result);
@@ -860,9 +861,13 @@ export function createWhatsAppAdapter(
         resolveLid: (lidJid) => lidStore.resolve(lidJid),
       });
       await typing.clearChat(targetJid);
+      const payload = withWhatsAppPayloadMessagePrefix(
+        { text },
+        options?.applyMessagePrefix ? account.messagePrefix : undefined,
+      );
       const result = await sendToWhatsApp(
         targetJid,
-        { text: applyWhatsAppMessagePrefix(text, account.messagePrefix) },
+        payload,
         buildWhatsAppQuotedOptions(targetJid, options?.replyToMessageId),
       );
       outboundMessages.rememberSent(result.key?.id ?? "", result);

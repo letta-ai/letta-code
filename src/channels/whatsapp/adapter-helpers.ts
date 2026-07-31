@@ -1,6 +1,5 @@
 import type {
   ChannelTurnSource,
-  OutboundChannelMessage,
   WhatsAppChannelAccount,
 } from "@/channels/types";
 import { stripDeviceSuffix } from "./jid";
@@ -66,17 +65,24 @@ export function applyWhatsAppMessagePrefix(
   return prefix && text.trim().length > 0 ? `${prefix}${text}` : text;
 }
 
-export function withWhatsAppMessagePrefix(
-  message: OutboundChannelMessage,
+export function withWhatsAppPayloadMessagePrefix(
+  payload: Record<string, unknown>,
   prefix: string | undefined,
-): OutboundChannelMessage {
-  if (message.reaction || message.removeReaction || !message.text) {
-    return message;
+): Record<string, unknown> {
+  if (!prefix) return payload;
+  if (typeof payload.text === "string") {
+    return {
+      ...payload,
+      text: applyWhatsAppMessagePrefix(payload.text, prefix),
+    };
   }
-  return {
-    ...message,
-    text: applyWhatsAppMessagePrefix(message.text, prefix),
-  };
+  if (typeof payload.caption === "string") {
+    return {
+      ...payload,
+      caption: applyWhatsAppMessagePrefix(payload.caption, prefix),
+    };
+  }
+  return payload;
 }
 
 function matchesSelf(

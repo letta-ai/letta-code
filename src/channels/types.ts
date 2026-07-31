@@ -321,6 +321,8 @@ export interface ChannelAdapter {
        * example Slack Block Kit) may render it; others fall back to text.
        */
       modelPicker?: ChannelModelPickerData;
+      /** Channel-specific opt-in for direct replies that should be treated as ordinary outbound agent text. */
+      applyMessagePrefix?: boolean;
     },
   ): Promise<void>;
 
@@ -674,7 +676,6 @@ export interface WhatsAppChannelConfig
   agentId: string | null;
   /** Default true. When true, only the user's own Message Yourself chat routes. */
   selfChatMode: boolean;
-  /** Default disabled. Controls group-message ingestion. */
   groupMode: WhatsAppGroupMode;
   /** Optional allowlist of WhatsApp group JIDs. Empty/undefined allows any group when groupMode is not disabled. */
   allowedGroups?: string[];
@@ -860,7 +861,6 @@ export interface WhatsAppChannelAccount
   agentId: string | null;
   /** Default true. Explicitly set false before replying under the linked user's identity. */
   selfChatMode: boolean;
-  /** Default disabled. Controls group-message ingestion. */
   groupMode: WhatsAppGroupMode;
   /** Optional allowlist of WhatsApp group JIDs. */
   allowedGroups?: string[];
