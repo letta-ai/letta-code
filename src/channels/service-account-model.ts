@@ -122,6 +122,9 @@ export function createAccountFromPatch(
       transcribeVoice: normalizedPatch.transcribeVoice === true,
       downloadMedia: normalizedPatch.downloadMedia === true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
+      messagePrefix: normalizedPatch.messagePrefix,
+      inboundDebounceMs: normalizedPatch.inboundDebounceMs,
+      waitingBehavior: normalizedPatch.waitingBehavior,
       createdAt: now,
       updatedAt: now,
     };
@@ -282,6 +285,14 @@ export function mergeAccountPatch(
       downloadMedia:
         normalizedPatch.downloadMedia ?? existing.downloadMedia ?? false,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
+      messagePrefix:
+        normalizedPatch.messagePrefix !== undefined
+          ? normalizedPatch.messagePrefix
+          : existing.messagePrefix,
+      inboundDebounceMs:
+        normalizedPatch.inboundDebounceMs ?? existing.inboundDebounceMs,
+      waitingBehavior:
+        normalizedPatch.waitingBehavior ?? existing.waitingBehavior,
       updatedAt: nextUpdatedAt,
     };
   }
