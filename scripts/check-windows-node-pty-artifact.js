@@ -14,7 +14,8 @@ if (process.platform !== "win32") {
   process.exit(0);
 }
 
-const globalRoot = execFileSync("npm", ["root", "-g"], {
+const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const globalRoot = execFileSync(npmCommand, ["root", "-g"], {
   encoding: "utf8",
 }).trim();
 const packageJson = join(globalRoot, "@letta-ai", "letta-code", "package.json");
