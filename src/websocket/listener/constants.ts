@@ -1,6 +1,11 @@
 export const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 export const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 export const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
+// Split listener pairs are only usable once both control and stream sockets
+// complete their opening handshake. If the stream upgrade makes no progress,
+// tear down the incomplete pair and let the normal reconnect path build a
+// coherent replacement instead of awaiting the stream socket forever.
+export const LISTENER_STREAM_OPEN_TIMEOUT_MS = 30000; // 30 seconds
 
 // Listener heartbeat: app-level ping/pong over the cloud relay. Each `ping`
 // refreshes the environment's lastHeartbeat (the relay marks an env offline
