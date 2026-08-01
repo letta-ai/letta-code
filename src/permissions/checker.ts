@@ -19,6 +19,7 @@ import type { PermissionModeState } from "@/tools/permission-mode-state";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import { evaluateCrossAgentGuard, extractFilePath } from "./cross-agent-guard";
+import { envFlagEnabled, getMandatoryApproval } from "./mandatory-approval";
 import {
   type MatcherOptions,
   matchesBashPattern,
@@ -107,12 +108,6 @@ interface ModPermissionCheckOptions {
   modContext?: ModContext | null;
   phase?: "approval" | "execution";
   toolCallId?: string | null;
-}
-
-function envFlagEnabled(name: string): boolean {
-  const value = process.env[name];
-  if (!value) return false;
-  return value === "1" || value.toLowerCase() === "true";
 }
 
 function isPermissionsV2Enabled(): boolean {
@@ -361,6 +356,9 @@ function checkPermissionForEngine(
       };
     }
   }
+
+  const mandatoryApproval = getMandatoryApproval(canonicalTool, toolArgs);
+  if (mandatoryApproval) return { result: mandatoryApproval, trace };
 
   if (sessionRules.alwaysAsk) {
     for (const pattern of sessionRules.alwaysAsk) {
