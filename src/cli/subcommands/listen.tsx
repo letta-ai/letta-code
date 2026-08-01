@@ -421,9 +421,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     const deviceId = settingsManager.getOrCreateDeviceId();
     const startupMode = await resolveListenerStartupMode(channelNames);
 
+    const customRouterEnabled =
+      startupMode.kind === "unsupported-self-hosted" &&
+      process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR === "1";
     if (
       startupMode.kind === "unsupported-self-hosted" &&
-      process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR !== "1"
+      !customRouterEnabled
     ) {
       console.error(
         `Self-hosted listener registration is not available for ${startupMode.serverUrl}.`,
@@ -436,7 +439,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     }
 
     let registerOptions: RegisterOptions | null = null;
-    if (startupMode.kind === "remote") {
+    if (startupMode.kind === "remote" || customRouterEnabled) {
       try {
         registerOptions = await resolveListenerRegistrationOptions(
           deviceId,

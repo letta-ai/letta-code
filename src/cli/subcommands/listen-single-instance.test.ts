@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { runListenSubcommand } from "@/cli/subcommands/listen";
@@ -23,6 +25,8 @@ describe("standalone listener single-instance wiring", () => {
   const originalBaseUrl = process.env.LETTA_BASE_URL;
   const originalSpawnerIdentity = process.env.LETTA_LISTENER_INSTANCE_ID;
   const originalDesktopMode = process.env.LETTA_DESKTOP_MODE;
+  const originalIgnoreSelfHostedListenerError =
+    process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
 
   let tempHome: string;
   let errors: string[];
@@ -35,6 +39,7 @@ describe("standalone listener single-instance wiring", () => {
     delete process.env.LETTA_BASE_URL;
     delete process.env.LETTA_LISTENER_INSTANCE_ID;
     delete process.env.LETTA_DESKTOP_MODE;
+    delete process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
 
     settingsManager.initialize = mock(
       async () => {},
@@ -84,6 +89,12 @@ describe("standalone listener single-instance wiring", () => {
       delete process.env.LETTA_DESKTOP_MODE;
     } else {
       process.env.LETTA_DESKTOP_MODE = originalDesktopMode;
+    }
+    if (originalIgnoreSelfHostedListenerError === undefined) {
+      delete process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR;
+    } else {
+      process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR =
+        originalIgnoreSelfHostedListenerError;
     }
 
     await rm(tempHome, { recursive: true, force: true });
@@ -156,6 +167,41 @@ describe("standalone listener single-instance wiring", () => {
       expect(errors.join("\n")).not.toContain("already running");
     } finally {
       await incumbent.release();
+    }
+  });
+
+  test("registers with an explicitly enabled custom environment server", async () => {
+    let registrationRequests = 0;
+    const server = createServer((request, response) => {
+      if (
+        request.method === "POST" &&
+        request.url === "/v1/environments/register"
+      ) {
+        registrationRequests++;
+      }
+      response.writeHead(400, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ message: "expected test rejection" }));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address() as AddressInfo;
+    process.env.LETTA_BASE_URL = `http://127.0.0.1:${address.port}`;
+    process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR = "1";
+
+    try {
+      const exitCode = await runListenSubcommand([
+        "--env-name",
+        "custom-router",
+      ]);
+
+      expect(exitCode).toBe(1);
+      expect(registrationRequests).toBe(1);
+      expect(errors.join("\n")).toContain("expected test rejection");
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
     }
   });
 });
