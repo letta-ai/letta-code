@@ -239,7 +239,9 @@ jobs:
       - name: Windows node-pty artifact smoke test
         if: runner.os == 'Windows'
         shell: pwsh
-        run: bun run check:windows-node-pty-artifact
+        run: |
+          $env:LETTA_CODE_GLOBAL_NODE_MODULES = npm root -g
+          bun run check:windows-node-pty-artifact
 
       - name: Test npm install flow (Unix)
         if: runner.os != 'Windows'

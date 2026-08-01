@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { execFileSync } from "node:child_process";
+import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -14,10 +14,10 @@ if (process.platform !== "win32") {
   process.exit(0);
 }
 
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-const globalRoot = execFileSync(npmCommand, ["root", "-g"], {
-  encoding: "utf8",
-}).trim();
+const globalRoot = (
+  process.env.LETTA_CODE_GLOBAL_NODE_MODULES ||
+  execSync("npm root -g", { encoding: "utf8" })
+).trim();
 const packageJson = join(globalRoot, "@letta-ai", "letta-code", "package.json");
 
 if (!existsSync(packageJson)) {
