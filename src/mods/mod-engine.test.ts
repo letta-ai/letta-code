@@ -111,7 +111,6 @@ const TOOL_ONLY_MOD_CAPABILITIES: ModCapabilities = {
     turns: false,
     compact: false,
     llm: false,
-    reflection: false,
   },
   permissions: false,
   providers: false,
@@ -119,6 +118,7 @@ const TOOL_ONLY_MOD_CAPABILITIES: ModCapabilities = {
     panels: false,
   },
 };
+
 describe("mod engine", () => {
   afterEach(() => {
     clearModPermissions();
@@ -803,7 +803,6 @@ describe("mod engine", () => {
           letta.events.on("tool_start", () => {});
           letta.events.on("compact_start", () => {});
           letta.events.on("llm_start", () => {});
-          letta.events.on("reflection_complete", () => {});
           letta.tools.register({
             name: "visible_tool",
             description: "Visible tool",
@@ -811,6 +810,7 @@ describe("mod engine", () => {
           });
         }`,
       );
+
       const engine = createEngine(root, TOOL_ONLY_MOD_CAPABILITIES);
       await engine.reload();
       const snapshot = engine.getSnapshot();

@@ -254,15 +254,15 @@ export interface PendingControlRequest {
 }
 
 export type ReflectionTriggerMode = "off" | "step-count" | "compaction-event";
-
+export type ReflectionMergeMode = "auto" | "explicit";
 export type ReflectionSettingsScope = "local_project" | "global" | "both";
-
 export interface ReflectionSettingsSnapshot {
   agent_id: string;
   trigger: ReflectionTriggerMode;
   step_count: number;
+  merge: ReflectionMergeMode;
+  merge_instructions: string;
 }
-
 export type ChannelId = string;
 
 export type ChannelPluginConfig = Record<string, unknown>;
@@ -1967,7 +1967,6 @@ export interface GetReflectionSettingsCommand {
   request_id: string;
   runtime: RuntimeScope;
 }
-
 export interface SetReflectionSettingsCommand {
   type: "set_reflection_settings";
   /** Echoed back in the response for request correlation. */
@@ -1976,6 +1975,8 @@ export interface SetReflectionSettingsCommand {
   settings: {
     trigger: ReflectionTriggerMode;
     step_count: number;
+    merge?: ReflectionMergeMode;
+    merge_instructions?: string;
   };
   scope?: ReflectionSettingsScope;
 }
@@ -2371,7 +2372,6 @@ export interface GetReflectionSettingsResponseMessage {
   reflection_settings: ReflectionSettingsSnapshot | null;
   error?: string;
 }
-
 export interface SetReflectionSettingsResponseMessage {
   type: "set_reflection_settings_response";
   request_id: string;

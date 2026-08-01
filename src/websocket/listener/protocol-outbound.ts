@@ -289,11 +289,12 @@ export function buildDeviceStatus(
           agent_id: scopedAgentId,
           trigger: reflectionSettings?.trigger ?? "compaction-event",
           step_count: reflectionSettings?.stepCount ?? 25,
+          merge: reflectionSettings?.merge ?? "auto",
+          merge_instructions: reflectionSettings?.mergeInstructions ?? "",
         }
       : null,
   };
 }
-
 export function buildLoopStatus(
   runtime: RuntimeCarrier,
   params?: {
@@ -347,7 +348,6 @@ export function buildLoopStatus(
         : [],
   };
 }
-
 export function buildQueueSnapshot(
   runtime: RuntimeCarrier,
   params?: {

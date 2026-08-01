@@ -77,7 +77,6 @@ export interface ModEventCapabilities {
   turns: boolean;
   compact: boolean;
   llm: boolean;
-  reflection: boolean;
 }
 
 export interface ModCapabilities {
@@ -179,8 +178,7 @@ export type ModEventName =
   | "compact_start"
   | "compact_end"
   | "llm_start"
-  | "llm_end"
-  | "reflection_complete";
+  | "llm_end";
 
 export type ModConversationOpenReason =
   | "startup"
@@ -318,36 +316,6 @@ export interface ModLlmEndEvent {
   error?: ModLlmEndError;
 }
 
-export type ModReflectionTrigger = "manual" | "step-count" | "compaction-event";
-
-export type ModReflectionCompletionAction = "merge" | "discard";
-
-export interface ModReflectionWorktree {
-  id: string;
-  path: string;
-  branch: string;
-  baseCommit: string;
-  parentMemoryPath: string;
-}
-
-export interface ModReflectionCompleteEvent {
-  agentId: string;
-  conversationId: string;
-  reflectionAgentId: string | null;
-  trigger: ModReflectionTrigger;
-  success: boolean;
-  error?: string;
-  model: string | null;
-  stepCount: number | null;
-  durationMs: number | null;
-  defaultAction: ModReflectionCompletionAction;
-  worktree: ModReflectionWorktree;
-}
-
-export interface ModReflectionCompleteResult {
-  action?: ModReflectionCompletionAction;
-}
-
 export interface ModEventMap {
   conversation_open: ModConversationOpenEvent;
   conversation_close: ModConversationCloseEvent;
@@ -359,7 +327,6 @@ export interface ModEventMap {
   compact_end: ModCompactEndEvent;
   llm_start: ModLlmStartEvent;
   llm_end: ModLlmEndEvent;
-  reflection_complete: ModReflectionCompleteEvent;
 }
 
 export interface ModEventResultMap {
@@ -373,7 +340,6 @@ export interface ModEventResultMap {
   compact_end: undefined;
   llm_start: undefined;
   llm_end: undefined;
-  reflection_complete: ModReflectionCompleteResult | undefined;
 }
 
 export interface ModInvocationContext extends ModContext {}

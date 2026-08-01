@@ -191,10 +191,23 @@ export function buildReflectionMemoryScope(
   };
 }
 
+export function buildReflectionIntegrationMemoryScope(
+  worktree: ReflectionMemoryWorktree,
+): ReflectionMemoryScope {
+  return {
+    primaryRoot: worktree.worktreeDir,
+    writableRoots: [
+      worktree.worktreeDir,
+      worktree.parentMemoryDir,
+      worktree.gitCommonDir,
+    ],
+    readonlyRoots: [],
+  };
+}
+
 export type ReflectionMemoryWorktreeFinalizeStatus =
   | "merged"
   | "no_changes"
-  | "discarded"
   | "parent_dirty"
   | "merge_conflict"
   | "dirty_uncommitted"
@@ -209,16 +222,13 @@ export interface ReflectionMemoryWorktreeFinalizeResult {
   head?: string;
   summary: string;
   error?: string;
+  failurePhase?: "reflection" | "integration";
 }
 
 export function reflectionIntegrationConsumesTranscript(
   result: ReflectionMemoryWorktreeFinalizeResult,
 ): boolean {
-  return (
-    result.status === "merged" ||
-    result.status === "no_changes" ||
-    result.status === "discarded"
-  );
+  return result.status === "merged" || result.status === "no_changes";
 }
 
 export function reflectionIntegrationShouldRecompile(
@@ -255,6 +265,22 @@ async function getHead(cwd: string): Promise<string | undefined> {
   return head || undefined;
 }
 
+export interface ReflectionMemoryWorktreeState {
+  commitCount: number;
+  dirty: boolean;
+  head?: string;
+}
+
+export async function inspectReflectionMemoryWorktree(
+  worktree: ReflectionMemoryWorktree,
+): Promise<ReflectionMemoryWorktreeState> {
+  return {
+    commitCount: await getCommitCount(worktree),
+    dirty: (await getStatusPorcelain(worktree.worktreeDir)).length > 0,
+    head: await getHead(worktree.worktreeDir),
+  };
+}
+
 async function cleanupWorktreeAndBranch(
   parentMemoryDir: string,
   worktreeDir: string,
@@ -279,11 +305,7 @@ async function cleanupWorktreeAndBranch(
 
 async function finalizeReflectionMemoryWorktreeImpl(
   worktree: ReflectionMemoryWorktree,
-  options: {
-    shouldMerge: boolean;
-    knownNoChanges?: boolean;
-    successfulDiscard?: boolean;
-  },
+  options: ReflectionMemoryWorktreeFinalizeOptions,
 ): Promise<ReflectionMemoryWorktreeFinalizeResult> {
   if (!existsSync(worktree.worktreeDir) && options.knownNoChanges) {
     const branchHead = (
@@ -358,23 +380,10 @@ async function finalizeReflectionMemoryWorktreeImpl(
     );
     debugLog(
       "memfs-git",
-      "reflection finalized id=%s status=%s commitCount=%d cleanedUp=true retryable=%s",
+      "reflection finalized id=%s status=failed commitCount=%d cleanedUp=true retryable=true",
       worktree.id,
-      options.successfulDiscard ? "discarded" : "failed",
       commitCount,
-      options.successfulDiscard ? "false" : "true",
     );
-    if (options.successfulDiscard) {
-      return {
-        status: "discarded",
-        parentMemoryDir: worktree.parentMemoryDir,
-        reflectionWorktreeDir: worktree.worktreeDir,
-        reflectionBranch: worktree.branchName,
-        commitCount,
-        head,
-        summary: "Reflection memory changes were discarded by a mod.",
-      };
-    }
     return {
       status: "failed",
       parentMemoryDir: worktree.parentMemoryDir,
@@ -432,6 +441,58 @@ async function finalizeReflectionMemoryWorktreeImpl(
       head,
       summary:
         "Reflection produced memory updates, but the parent memory repo had uncommitted changes; the worktree was cleaned up so the transcript can be retried.",
+    };
+  }
+
+  if (options.requireAlreadyMerged) {
+    const alreadyMerged = await tryRunGit(worktree.parentMemoryDir, [
+      "merge-base",
+      "--is-ancestor",
+      worktree.branchName,
+      "HEAD",
+    ]);
+    if (!alreadyMerged) {
+      await cleanupWorktreeAndBranch(
+        worktree.parentMemoryDir,
+        worktree.worktreeDir,
+        worktree.branchName,
+        { force: true },
+      );
+      return {
+        status: "failed",
+        parentMemoryDir: worktree.parentMemoryDir,
+        reflectionWorktreeDir: worktree.worktreeDir,
+        reflectionBranch: worktree.branchName,
+        commitCount,
+        head,
+        failurePhase: "integration",
+        summary:
+          options.failureSummary ??
+          "The primary-agent integration conversation did not merge the reflection branch; the worktree was cleaned up so the transcript can be retried.",
+      };
+    }
+
+    const mergedHead = await getHead(worktree.parentMemoryDir);
+    await cleanupWorktreeAndBranch(
+      worktree.parentMemoryDir,
+      worktree.worktreeDir,
+      worktree.branchName,
+    );
+    debugLog(
+      "memfs-git",
+      "reflection finalized id=%s status=merged integration=primary_agent commitCount=%d parentHead=%s cleanedUp=true",
+      worktree.id,
+      commitCount,
+      mergedHead ?? "<none>",
+    );
+    return {
+      status: "merged",
+      parentMemoryDir: worktree.parentMemoryDir,
+      reflectionWorktreeDir: worktree.worktreeDir,
+      reflectionBranch: worktree.branchName,
+      commitCount,
+      head: mergedHead,
+      summary: `Primary agent integrated ${commitCount} reflection memory commit(s).`,
     };
   }
 
@@ -507,11 +568,14 @@ async function finalizeReflectionMemoryWorktreeImpl(
 
 export async function finalizeReflectionMemoryWorktree(
   worktree: ReflectionMemoryWorktree,
-  options: {
-    shouldMerge: boolean;
-    knownNoChanges?: boolean;
-    successfulDiscard?: boolean;
-  },
+  options: ReflectionMemoryWorktreeFinalizeOptions,
 ): Promise<ReflectionMemoryWorktreeFinalizeResult> {
   return await finalizeReflectionMemoryWorktreeImpl(worktree, options);
+}
+
+export interface ReflectionMemoryWorktreeFinalizeOptions {
+  shouldMerge: boolean;
+  knownNoChanges?: boolean;
+  failureSummary?: string;
+  requireAlreadyMerged?: boolean;
 }

@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  buildReflectionIntegrationMemoryScope,
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
   reflectionIntegrationConsumesTranscript,
@@ -57,6 +58,23 @@ afterEach(() => {
 });
 
 describe("reflection memory worktrees", () => {
+  test("integration scope makes both worktree and parent memory writable", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+
+    const scope = buildReflectionIntegrationMemoryScope(worktree);
+
+    expect(scope.primaryRoot).toBe(worktree.worktreeDir);
+    expect(scope.writableRoots).toEqual([
+      worktree.worktreeDir,
+      worktree.parentMemoryDir,
+      worktree.gitCommonDir,
+    ]);
+    expect(scope.readonlyRoots).toEqual([]);
+    await finalizeReflectionMemoryWorktree(worktree, { shouldMerge: false });
+  });
+
   test("detects uncommitted parent memory changes before launch", async () => {
     expect(await reflectionMemoryParentHasChanges(memoryDir)).toBe(false);
 

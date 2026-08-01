@@ -19,6 +19,11 @@ import type { ExperimentId } from "./experiments/types";
 import type { HooksConfig } from "./hooks/types";
 import type { McpServerConfig } from "./mcp-client";
 import type { PermissionRules } from "./permissions/types";
+import type {
+  ReflectionMergeMode,
+  ReflectionTrigger,
+  StoredReflectionSettings,
+} from "./reflection-settings";
 import { getRuntimeContext } from "./runtime-context";
 import { trackBoundaryError } from "./telemetry/error-reporting";
 import { debugWarn } from "./utils/debug.js";
@@ -79,15 +84,12 @@ export interface Settings {
   channelCredentialsStore?: "file" | "keyring" | "auto"; // Where channel/connection tokens are persisted
   recentModels: string[]; // Recently used model IDs (most recent first, max 5)
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
-  reflectionTrigger: "off" | "step-count" | "compaction-event";
+  reflectionTrigger: ReflectionTrigger;
   reflectionStepCount: number;
-  reflectionSettingsByAgent?: Record<
-    string,
-    {
-      trigger: "off" | "step-count" | "compaction-event";
-      stepCount: number;
-    }
-  >;
+  // Controls whether reflection changes merge immediately or through primary-agent integration.
+  reflectionMerge: ReflectionMergeMode;
+  reflectionMergeInstructions: string;
+  reflectionSettingsByAgent?: Record<string, StoredReflectionSettings>;
   conversationSwitchAlertEnabled: boolean; // Send system-reminder when switching conversations/agents
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   createDefaultAgents?: boolean; // Create Memo/Incognito default agents on startup (default: true)
@@ -154,15 +156,11 @@ export interface LocalProjectSettings {
   windowTitle?: WindowTitleConfig; // Local project-specific terminal window title
   profiles?: Record<string, string>; // DEPRECATED: old format, kept for migration
   memoryReminderInterval?: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
-  reflectionTrigger?: "off" | "step-count" | "compaction-event";
+  reflectionTrigger?: ReflectionTrigger;
   reflectionStepCount?: number;
-  reflectionSettingsByAgent?: Record<
-    string,
-    {
-      trigger: "off" | "step-count" | "compaction-event";
-      stepCount: number;
-    }
-  >;
+  reflectionMerge?: ReflectionMergeMode;
+  reflectionMergeInstructions?: string;
+  reflectionSettingsByAgent?: Record<string, StoredReflectionSettings>;
   // Server-indexed settings (agent IDs are server-specific)
   sessionsByServer?: Record<string, SessionRef>; // key = normalized base URL
   listenerEnvName?: string; // Saved environment name for listener connections (project-specific)
@@ -192,6 +190,8 @@ const DEFAULT_SETTINGS: Settings = {
   memoryReminderInterval: 25, // DEPRECATED: use reflection* fields
   reflectionTrigger: "step-count",
   reflectionStepCount: 25,
+  reflectionMerge: "auto",
+  reflectionMergeInstructions: "",
 };
 
 const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {};

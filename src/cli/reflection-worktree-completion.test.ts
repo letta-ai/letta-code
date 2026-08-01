@@ -1,12 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,8 +8,6 @@ import {
   type ReflectionMemoryWorktree,
 } from "@/agent/memory-worktree";
 import { finalizeReflectionMemoryWorktreeLaunch } from "@/cli/helpers/reflection-launcher";
-import { buildModInvocationContext } from "@/mods/context";
-import type { ModEvents } from "@/mods/event-emitter";
 import { telemetry } from "@/telemetry";
 
 let tempDir: string;
@@ -68,6 +60,7 @@ async function finalizeLaunch(
     telemetryContext: { triggerSource: "manual" },
     recompileByConversation: new Map(),
     recompileQueuedByConversation: new Set(),
+    updateIntegrationConversation: async () => {},
     ...overrides,
   });
 }
@@ -103,64 +96,142 @@ afterEach(() => {
 });
 
 describe("reflection worktree completion messaging", () => {
-  test("reflection_complete can discard a successful proposal before merge", async () => {
+  test("explicit integration can edit, commit, and merge in its conversation", async () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,
     });
-    writeFileSync(
-      join(worktree.worktreeDir, "reflection.md"),
-      "proposed\n",
-      "utf-8",
-    );
+    writeFileSync(join(worktree.worktreeDir, "reflection.md"), "draft\n");
     git(worktree.worktreeDir, ["add", "reflection.md"]);
     git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
 
-    const emit = mock(async (name, event) => ({
-      diagnostics: [],
-      handlerCount: 1,
-      name,
-      results: [{ action: "discard" as const }],
-      event,
-    }));
-    const modEvents = { emit } as ModEvents;
+    const updateIntegrationConversation = mock(async () => {});
     const result = await finalizeLaunch(worktree, true, {
-      durationMs: 1234,
-      stepCount: 7,
-      modContext: buildModInvocationContext({
-        agent: { id: "agent-test" },
-        conversationId: "conv-test",
-      }),
-      modEvents,
-    });
-
-    expect(emit).toHaveBeenCalledTimes(1);
-    expect(emit.mock.calls[0]?.[0]).toBe("reflection_complete");
-    expect(emit.mock.calls[0]?.[1]).toMatchObject({
-      agentId: "agent-test",
-      conversationId: "conv-test",
-      reflectionAgentId: "agent-reflection-test",
-      trigger: "manual",
-      success: true,
-      model: "reflection-model",
-      stepCount: 7,
-      durationMs: 1234,
-      defaultAction: "merge",
-      worktree: {
-        id: worktree.id,
-        path: worktree.worktreeDir,
-        branch: worktree.branchName,
-        baseCommit: worktree.baseHead,
-        parentMemoryPath: memoryDir,
+      mergePolicy: "explicit",
+      updateIntegrationConversation,
+      runExplicitIntegration: async () => {
+        writeFileSync(
+          join(worktree.worktreeDir, "reflection.md"),
+          "reviewed\n",
+        );
+        git(worktree.worktreeDir, ["add", "reflection.md"]);
+        git(worktree.worktreeDir, ["commit", "-m", "review reflection"]);
+        git(memoryDir, [
+          "merge",
+          worktree.branchName,
+          "-m",
+          "merge reflection",
+        ]);
+        return {
+          success: true,
+          conversationId: "conv-review",
+        };
       },
     });
-    expect(result.integration.status).toBe("discarded");
-    expect(result.completionSuccess).toBe(true);
-    expect(result.completionMessage).toBe(
-      "Reflected; proposed memory changes were discarded by a mod.",
-    );
+
+    expect(result.integration.status).toBe("merged");
+    expect(result.integration.commitCount).toBe(2);
+    expect(result.integrationConversationId).toBe("conv-review");
+    expect(updateIntegrationConversation).toHaveBeenCalledWith("conv-review", {
+      summary: "Reflection integration (reflection agent-reflection-test)",
+      archived: true,
+    });
     expect(existsSync(worktree.worktreeDir)).toBe(false);
-    expect(existsSync(join(memoryDir, "reflection.md"))).toBe(false);
-    expect(readFileSync(join(memoryDir, "persona.md"), "utf-8")).toBe("base\n");
+  });
+
+  test("explicit integration failure cleans up for transcript retry", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(join(worktree.worktreeDir, "reflection.md"), "draft\n");
+    git(worktree.worktreeDir, ["add", "reflection.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+
+    const updateIntegrationConversation = mock(async () => {});
+    const result = await finalizeLaunch(worktree, true, {
+      mergePolicy: "explicit",
+      updateIntegrationConversation,
+      runExplicitIntegration: async () => ({
+        success: false,
+        error: "integration interrupted",
+        conversationId: "conv-review",
+      }),
+    });
+
+    expect(result.integration.status).toBe("failed");
+    expect(result.completionSuccess).toBe(false);
+    expect(result.completionMessage).toContain("integration interrupted");
+    expect(result.completionMessage).toContain("transcript can be retried");
+    expect(existsSync(worktree.worktreeDir)).toBe(false);
+    expect(updateIntegrationConversation).not.toHaveBeenCalled();
+    expect(telemetryState.events).toHaveLength(1);
+  });
+
+  test("verified agent merge succeeds even if its process reports an error", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(join(worktree.worktreeDir, "reflection.md"), "draft\n");
+    git(worktree.worktreeDir, ["add", "reflection.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+
+    const result = await finalizeLaunch(worktree, true, {
+      mergePolicy: "explicit",
+      runExplicitIntegration: async () => {
+        git(memoryDir, [
+          "merge",
+          worktree.branchName,
+          "-m",
+          "merge reflection",
+        ]);
+        return { success: false, error: "output stream closed" };
+      },
+    });
+
+    expect(result.integration.status).toBe("merged");
+    expect(result.completionSuccess).toBe(true);
+    expect(existsSync(worktree.worktreeDir)).toBe(false);
+  });
+
+  test("explicit integration cleans up uncommitted edits for retry", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(join(worktree.worktreeDir, "reflection.md"), "draft\n");
+    git(worktree.worktreeDir, ["add", "reflection.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+
+    const result = await finalizeLaunch(worktree, true, {
+      mergePolicy: "explicit",
+      runExplicitIntegration: async () => {
+        writeFileSync(join(worktree.worktreeDir, "reflection.md"), "dirty\n");
+        return { success: true };
+      },
+    });
+
+    expect(result.integration.status).toBe("dirty_uncommitted");
+    expect(result.integration.summary).toContain("uncommitted changes");
+    expect(result.completionSuccess).toBe(false);
+    expect(existsSync(worktree.worktreeDir)).toBe(false);
+    expect(telemetryState.events).toHaveLength(1);
+  });
+
+  test("explicit integration cleans up when the agent did not merge", async () => {
+    const worktree = await createReflectionMemoryWorktree({
+      parentMemoryDir: memoryDir,
+    });
+    writeFileSync(join(worktree.worktreeDir, "reflection.md"), "draft\n");
+    git(worktree.worktreeDir, ["add", "reflection.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+
+    const result = await finalizeLaunch(worktree, true, {
+      mergePolicy: "explicit",
+      runExplicitIntegration: async () => ({ success: true }),
+    });
+
+    expect(result.integration.status).toBe("failed");
+    expect(result.completionSuccess).toBe(false);
+    expect(result.completionMessage).toContain("did not merge");
+    expect(existsSync(worktree.worktreeDir)).toBe(false);
   });
 
   test("parent dirty cleans up and leaves the transcript retryable", async () => {
@@ -176,7 +247,10 @@ describe("reflection worktree completion messaging", () => {
     git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
     writeParentMemoryFile("parent-dirty.md", "dirty\n");
 
-    const result = await finalizeLaunch(worktree, true);
+    const result = await finalizeLaunch(worktree, true, {
+      mergePolicy: "explicit",
+      runExplicitIntegration: async () => ({ success: true }),
+    });
 
     expect(result.integration.status).toBe("parent_dirty");
     expect(result.integration.summary).toContain(

@@ -51,6 +51,14 @@ export function resolveSubagentWorkingDirectory(
     return env.USER_CWD || fallbackCwd;
   }
 
+  if (
+    options.subagentType !== "reflection" &&
+    options.launchProfile === "memory-subagent" &&
+    options.memoryScope?.primaryRoot
+  ) {
+    return options.memoryScope.primaryRoot;
+  }
+
   const primaryRoot =
     options.memoryScope?.primaryRoot ?? options.inheritedPrimaryRoot;
   if (

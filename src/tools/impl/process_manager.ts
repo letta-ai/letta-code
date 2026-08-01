@@ -38,6 +38,7 @@ export interface BackgroundProcess {
 export interface BackgroundTask {
   description: string;
   subagentType: string;
+  displayType?: string;
   subagentId: string;
   status: "running" | "completed" | "failed";
   output: string[];

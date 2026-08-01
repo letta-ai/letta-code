@@ -419,6 +419,9 @@ async function executeSubagent(
     const inheritedMemoryRoots = resolveAllowedMemoryRoots({
       currentAgentId: parentAgentId ?? null,
     });
+    const effectiveLaunchProfile = memoryScope
+      ? "memory-subagent"
+      : config.launchProfile;
     const localBackendStorageDir =
       backendMode === "local" ? getLocalBackendStorageDir() : null;
     const inheritedPrimaryRoot = resolveSubagentInheritedPrimaryRoot({
@@ -432,7 +435,7 @@ async function executeSubagent(
       getCurrentWorkingDirectory(),
       {
         subagentType: type,
-        launchProfile: config.launchProfile,
+        launchProfile: effectiveLaunchProfile,
         inheritedPrimaryRoot,
         memoryScope,
       },
@@ -445,7 +448,7 @@ async function executeSubagent(
       backendMode,
       localBackendStorageDir,
       parentAgentId,
-      launchProfile: config.launchProfile,
+      launchProfile: effectiveLaunchProfile,
       inheritedPrimaryRoot,
       memoryScope,
       inheritedApiKey,
@@ -459,7 +462,7 @@ async function executeSubagent(
     // backend is available on this host.
     const sandbox = wrapSubagentLauncher({
       launcher,
-      launchProfile: config.launchProfile,
+      launchProfile: effectiveLaunchProfile,
       backendMode,
       memoryRoots: inheritedMemoryRoots.roots,
       inheritedPrimaryRoot,
@@ -737,6 +740,13 @@ ${SYSTEM_REMINDER_CLOSE}
 `;
 }
 
+export function shouldPrependDeploySystemReminder(
+  existingAgentId: string | undefined,
+  parentAgentId: string,
+): boolean {
+  return !existingAgentId || existingAgentId !== parentAgentId;
+}
+
 export function recallPromptForBackend(backendMode?: BackendMode): string {
   return backendMode === "local"
     ? recallSubagentLocalPrompt
@@ -876,7 +886,12 @@ export async function spawnSubagent(
       if (forkedContext) {
         const systemReminder = buildForkSystemReminder(type, backendMode);
         finalPrompt = systemReminder + prompt;
-      } else {
+      } else if (
+        shouldPrependDeploySystemReminder(
+          existingAgentId,
+          resolvedParentAgentId,
+        )
+      ) {
         const systemReminder = buildDeploySystemReminder(
           cachedParent.name ?? "",
           resolvedParentAgentId,

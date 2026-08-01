@@ -3722,6 +3722,7 @@ export function App({
             });
             return arenaResult.launched;
           }
+
           const result = await launchReflectionSubagent({
             agentId: reflectionAgentId,
             conversationId: conversationIdRef.current ?? "default",
@@ -3734,8 +3735,6 @@ export function App({
               _systemPromptRecompileByConversationRef.current,
             recompileQueuedByConversation:
               _queuedSystemPromptRecompileByConversationRef.current,
-            modContext: modAdapterRef.current?.context,
-            modEvents: modAdapterRef.current?.events,
             onCompletionMessage: (completionMessage) => {
               appendTaskNotificationEvents([completionMessage]);
             },
@@ -3757,6 +3756,7 @@ export function App({
       );
     }
   }, [agentName, agentDescription, appendTaskNotificationEvents]);
+
   const processConversation = useConversationLoop({
     abortControllerRef,
     agentIdRef,

@@ -575,13 +575,14 @@ const SUPPORTED_MOD_EVENT_NAMES = new Set<ModEventName>([
   "compact_end",
   "llm_start",
   "llm_end",
-  "reflection_complete",
 ]);
+
 function validateModEventName(name: string): asserts name is ModEventName {
   if (!SUPPORTED_MOD_EVENT_NAMES.has(name as ModEventName)) {
     throw new Error(`Unsupported mod event '${name}'`);
   }
 }
+
 function isModEventCapabilityEnabled(
   capabilities: ModCapabilities,
   name: ModEventName,
@@ -602,10 +603,9 @@ function isModEventCapabilityEnabled(
     case "llm_start":
     case "llm_end":
       return capabilities.events.llm;
-    case "reflection_complete":
-      return capabilities.events.reflection;
   }
 }
+
 function isTurnStartResultWithInput(
   name: ModEventName,
   result: unknown,

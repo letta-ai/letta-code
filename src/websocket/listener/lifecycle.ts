@@ -87,7 +87,6 @@ import { createFileCommandSession } from "./file-commands";
 import { startConnectionHeartbeat } from "./heartbeat";
 import { createListenerMessageHandler } from "./message-router";
 import {
-  createListenerReflectionModOptions,
   disposeListenerModAdapter,
   reloadListenerModAdapter,
 } from "./mod-adapter";
@@ -722,6 +721,7 @@ export async function wireChannelIngress(
       };
     }
   });
+
   registry.setReloadHandler(async ({ runtime }) => {
     const scopedRuntime = getOrCreateScopedRuntime(
       listener,
@@ -742,9 +742,11 @@ export async function wireChannelIngress(
       };
     }
   });
+
   registry.setReflectionHandler(async ({ runtime }) => {
     const agentId = runtime.agent_id;
     const conversationId = runtime.conversation_id;
+
     const result = await launchReflectionSubagent({
       agentId,
       conversationId,
@@ -754,11 +756,6 @@ export async function wireChannelIngress(
       recompileByConversation: listener.systemPromptRecompileByConversation,
       recompileQueuedByConversation:
         listener.queuedSystemPromptRecompileByConversation,
-      ...(await createListenerReflectionModOptions(
-        listener,
-        agentId,
-        conversationId,
-      )),
       feedbackContext: {
         surface: getListenerTelemetrySurface(),
       },
@@ -793,6 +790,7 @@ export async function wireChannelIngress(
         );
       },
     });
+
     if (!result.launched) {
       const skippedMessage = getReflectionLaunchSkippedMessage(
         result.reason,
@@ -801,6 +799,7 @@ export async function wireChannelIngress(
       if (skippedMessage) {
         return { handled: true, text: skippedMessage };
       }
+
       const message =
         result.error instanceof Error
           ? result.error.message
@@ -810,6 +809,7 @@ export async function wireChannelIngress(
         text: `Failed to start reflection: ${message}`,
       };
     }
+
     return {
       handled: true,
       text: "Started a reflection pass for this conversation.",

@@ -14,6 +14,7 @@ import {
 import {
   spawnBackgroundSubagentTask,
   waitForBackgroundSubagentAgentId,
+  waitForBackgroundSubagentConversationId,
   waitForBackgroundSubagentLink,
 } from "@/tools/impl/task";
 
@@ -110,6 +111,7 @@ describe("spawnBackgroundSubagentTask", () => {
 
     const launched = spawnBackgroundSubagentTask({
       subagentType: "reflection",
+      displayType: "reflection integration",
       prompt: "Reflect",
       description: "Reflect on memory",
       deps: {
@@ -127,7 +129,13 @@ describe("spawnBackgroundSubagentTask", () => {
     expect(launched.taskId).toMatch(/^task_\d+$/);
     expect(launched.subagentId).toBe("subagent-test-1");
     expect(backgroundTasks.get(launched.taskId)?.status).toBe("running");
+    expect(backgroundTasks.get(launched.taskId)?.displayType).toBe(
+      "reflection integration",
+    );
     expect(registerSubagentImpl).toHaveBeenCalledTimes(1);
+    expect(registerSubagentImpl.mock.calls[0]?.[1]).toBe(
+      "reflection integration",
+    );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -563,5 +571,45 @@ describe("waitForBackgroundSubagentLink", () => {
     );
 
     expect(agentId).toBeNull();
+  });
+
+  test("returns the conversation id after the subagent publishes it", async () => {
+    registerSubagent(
+      "subagent-link-5",
+      "general-purpose",
+      "Integrate",
+      "tc-5",
+      true,
+    );
+
+    setTimeout(() => {
+      updateSubagent("subagent-link-5", {
+        conversationId: "conv-integration-123",
+      });
+    }, 20);
+
+    const conversationId = await waitForBackgroundSubagentConversationId(
+      "subagent-link-5",
+      300,
+    );
+
+    expect(conversationId).toBe("conv-integration-123");
+  });
+
+  test("returns null when the conversation id is unavailable", async () => {
+    registerSubagent(
+      "subagent-link-6",
+      "general-purpose",
+      "Integrate",
+      "tc-6",
+      true,
+    );
+
+    const conversationId = await waitForBackgroundSubagentConversationId(
+      "subagent-link-6",
+      70,
+    );
+
+    expect(conversationId).toBeNull();
   });
 });

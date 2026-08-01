@@ -18,7 +18,6 @@ import type { StreamDelta } from "@/types/protocol_v2";
 import {
   createListenerModContext,
   createListenerModEvents,
-  createListenerReflectionModOptions,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import { emitCanonicalMessageDelta } from "./protocol-outbound";
@@ -158,11 +157,6 @@ export function buildMaybeLaunchReflectionSubagent(params: {
         runtime.listener.systemPromptRecompileByConversation,
       recompileQueuedByConversation:
         runtime.listener.queuedSystemPromptRecompileByConversation,
-      ...(await createListenerReflectionModOptions(
-        runtime.listener,
-        agentId,
-        conversationId,
-      )),
       feedbackContext: {
         surface: getListenerTelemetrySurface(),
       },

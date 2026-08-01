@@ -1,7 +1,16 @@
-// Reflection (sleep-time) trigger settings: resolution, persistence, and
-// step-count trigger evaluation.
+// Reflection (sleep-time) settings: resolution, persistence, merge policy,
+// and step-count trigger evaluation.
 
+import type {
+  ReflectionMergeMode,
+  ReflectionTrigger,
+} from "@/reflection-settings";
 import { settingsManager } from "@/settings-manager";
+
+export type {
+  ReflectionMergeMode,
+  ReflectionTrigger,
+} from "@/reflection-settings";
 
 const DEFAULT_STEP_COUNT = 25;
 
@@ -11,28 +20,39 @@ export type MemoryReminderMode =
   | "compaction"
   | "auto-compaction";
 
-export type ReflectionTrigger = "off" | "step-count" | "compaction-event";
-
 export interface ReflectionSettings {
   trigger: ReflectionTrigger;
   stepCount: number;
+  merge?: ReflectionMergeMode;
+  mergeInstructions?: string;
+}
+
+export interface ResolvedReflectionSettings extends ReflectionSettings {
+  merge: ReflectionMergeMode;
+  mergeInstructions: string;
 }
 
 type PersistedReflectionSettings = {
   trigger?: unknown;
   stepCount?: unknown;
+  merge?: unknown;
+  mergeInstructions?: unknown;
 };
 
 interface ReflectionSettingsCarrier {
   memoryReminderInterval?: MemoryReminderMode;
   reflectionTrigger?: unknown;
   reflectionStepCount?: unknown;
+  reflectionMerge?: unknown;
+  reflectionMergeInstructions?: unknown;
   reflectionSettingsByAgent?: Record<string, PersistedReflectionSettings>;
 }
 
-const DEFAULT_REFLECTION_SETTINGS: ReflectionSettings = {
+const DEFAULT_REFLECTION_SETTINGS: ResolvedReflectionSettings = {
   trigger: "compaction-event",
   stepCount: DEFAULT_STEP_COUNT,
+  merge: "auto",
+  mergeInstructions: "",
 };
 
 function isValidStepCount(value: unknown): value is number {
@@ -62,23 +82,41 @@ function normalizeTrigger(
   return fallback;
 }
 
+function normalizeMerge(
+  value: unknown,
+  fallback: ReflectionMergeMode,
+): ReflectionMergeMode {
+  return value === "auto" || value === "explicit" ? value : fallback;
+}
+
+function normalizeMergeInstructions(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value.trim() : fallback;
+}
+
 function applyExplicitReflectionOverrides(
-  base: ReflectionSettings,
+  base: ResolvedReflectionSettings,
   raw: {
     reflectionTrigger?: unknown;
     reflectionStepCount?: unknown;
+    reflectionMerge?: unknown;
+    reflectionMergeInstructions?: unknown;
   },
-): ReflectionSettings {
+): ResolvedReflectionSettings {
   return {
     trigger: normalizeTrigger(raw.reflectionTrigger, base.trigger),
     stepCount: normalizeStepCount(raw.reflectionStepCount, base.stepCount),
+    merge: normalizeMerge(raw.reflectionMerge, base.merge),
+    mergeInstructions: normalizeMergeInstructions(
+      raw.reflectionMergeInstructions,
+      base.mergeInstructions,
+    ),
   };
 }
 
 function applyPersistedAgentScopedSettings(
-  base: ReflectionSettings,
+  base: ResolvedReflectionSettings,
   raw: PersistedReflectionSettings | undefined,
-): ReflectionSettings {
+): ResolvedReflectionSettings {
   if (!raw) {
     return base;
   }
@@ -86,16 +124,23 @@ function applyPersistedAgentScopedSettings(
   return {
     trigger: normalizeTrigger(raw.trigger, base.trigger),
     stepCount: normalizeStepCount(raw.stepCount, base.stepCount),
+    merge: normalizeMerge(raw.merge, base.merge),
+    mergeInstructions: normalizeMergeInstructions(
+      raw.mergeInstructions,
+      base.mergeInstructions,
+    ),
   };
 }
 
 function legacyModeToReflectionSettings(
   mode: MemoryReminderMode | undefined,
-): ReflectionSettings {
+): ResolvedReflectionSettings {
   if (typeof mode === "number") {
     return {
       trigger: "step-count",
       stepCount: normalizeStepCount(mode, DEFAULT_STEP_COUNT),
+      merge: DEFAULT_REFLECTION_SETTINGS.merge,
+      mergeInstructions: DEFAULT_REFLECTION_SETTINGS.mergeInstructions,
     };
   }
 
@@ -103,6 +148,8 @@ function legacyModeToReflectionSettings(
     return {
       trigger: "off",
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
+      merge: DEFAULT_REFLECTION_SETTINGS.merge,
+      mergeInstructions: DEFAULT_REFLECTION_SETTINGS.mergeInstructions,
     };
   }
 
@@ -110,6 +157,8 @@ function legacyModeToReflectionSettings(
     return {
       trigger: "compaction-event",
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
+      merge: DEFAULT_REFLECTION_SETTINGS.merge,
+      mergeInstructions: DEFAULT_REFLECTION_SETTINGS.mergeInstructions,
     };
   }
 
@@ -117,6 +166,8 @@ function legacyModeToReflectionSettings(
     return {
       trigger: "compaction-event",
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
+      merge: DEFAULT_REFLECTION_SETTINGS.merge,
+      mergeInstructions: DEFAULT_REFLECTION_SETTINGS.mergeInstructions,
     };
   }
 
@@ -141,7 +192,7 @@ export function reflectionSettingsToLegacyMode(
 export function getReflectionSettings(
   agentId?: string,
   workingDirectory: string = process.cwd(),
-): ReflectionSettings {
+): ResolvedReflectionSettings {
   const globalSettings =
     settingsManager.getSettings() as unknown as ReflectionSettingsCarrier;
   let localSettings: ReflectionSettingsCarrier | null = null;
@@ -152,24 +203,6 @@ export function getReflectionSettings(
     ) as unknown as ReflectionSettingsCarrier;
   } catch {
     localSettings = null;
-  }
-
-  if (agentId) {
-    const localScoped = localSettings?.reflectionSettingsByAgent?.[agentId];
-    if (localScoped) {
-      return applyPersistedAgentScopedSettings(
-        DEFAULT_REFLECTION_SETTINGS,
-        localScoped,
-      );
-    }
-
-    const globalScoped = globalSettings.reflectionSettingsByAgent?.[agentId];
-    if (globalScoped) {
-      return applyPersistedAgentScopedSettings(
-        DEFAULT_REFLECTION_SETTINGS,
-        globalScoped,
-      );
-    }
   }
 
   let resolved = legacyModeToReflectionSettings(
@@ -184,6 +217,17 @@ export function getReflectionSettings(
       );
     }
     resolved = applyExplicitReflectionOverrides(resolved, localSettings);
+  }
+
+  if (agentId) {
+    resolved = applyPersistedAgentScopedSettings(
+      resolved,
+      globalSettings.reflectionSettingsByAgent?.[agentId],
+    );
+    resolved = applyPersistedAgentScopedSettings(
+      resolved,
+      localSettings?.reflectionSettingsByAgent?.[agentId],
+    );
   }
 
   return resolved;
@@ -216,6 +260,14 @@ export async function persistReflectionSettingsForAgent(
     persistLocalProject = true,
     persistGlobal = true,
   } = options;
+  const merge = normalizeMerge(
+    settings.merge,
+    DEFAULT_REFLECTION_SETTINGS.merge,
+  );
+  const mergeInstructions = normalizeMergeInstructions(
+    settings.mergeInstructions,
+    DEFAULT_REFLECTION_SETTINGS.mergeInstructions,
+  );
   const legacyMode = reflectionSettingsToLegacyMode(settings);
 
   if (persistLocalProject) {
@@ -232,11 +284,15 @@ export async function persistReflectionSettingsForAgent(
         memoryReminderInterval: legacyMode,
         reflectionTrigger: settings.trigger,
         reflectionStepCount: settings.stepCount,
+        reflectionMerge: merge,
+        reflectionMergeInstructions: mergeInstructions,
         reflectionSettingsByAgent: {
           ...(localSettings.reflectionSettingsByAgent ?? {}),
           [agentId]: {
             trigger: settings.trigger,
             stepCount: settings.stepCount,
+            merge,
+            mergeInstructions,
           },
         },
       },
@@ -250,11 +306,15 @@ export async function persistReflectionSettingsForAgent(
       memoryReminderInterval: legacyMode,
       reflectionTrigger: settings.trigger,
       reflectionStepCount: settings.stepCount,
+      reflectionMerge: merge,
+      reflectionMergeInstructions: mergeInstructions,
       reflectionSettingsByAgent: {
         ...(globalSettings.reflectionSettingsByAgent ?? {}),
         [agentId]: {
           trigger: settings.trigger,
           stepCount: settings.stepCount,
+          merge,
+          mergeInstructions,
         },
       },
     });

@@ -1471,7 +1471,6 @@ export function isConversationCompactCommand(
     (c.body === undefined || isObjectRecord(c.body))
   );
 }
-
 export function isGetReflectionSettingsCommand(
   value: unknown,
 ): value is GetReflectionSettingsCommand {
@@ -1487,7 +1486,6 @@ export function isGetReflectionSettingsCommand(
     isRuntimeScope(c.runtime)
   );
 }
-
 export function isSetReflectionSettingsCommand(
   value: unknown,
 ): value is SetReflectionSettingsCommand {
@@ -1511,6 +1509,8 @@ export function isSetReflectionSettingsCommand(
   const settings = c.settings as {
     trigger?: unknown;
     step_count?: unknown;
+    merge?: unknown;
+    merge_instructions?: unknown;
   };
   return (
     (settings.trigger === "off" ||
@@ -1519,13 +1519,17 @@ export function isSetReflectionSettingsCommand(
     typeof settings.step_count === "number" &&
     Number.isInteger(settings.step_count) &&
     settings.step_count > 0 &&
+    (settings.merge === undefined ||
+      settings.merge === "auto" ||
+      settings.merge === "explicit") &&
+    (settings.merge_instructions === undefined ||
+      typeof settings.merge_instructions === "string") &&
     (c.scope === undefined ||
       c.scope === "local_project" ||
       c.scope === "global" ||
       c.scope === "both")
   );
 }
-
 export function isGetExperimentsCommand(
   value: unknown,
 ): value is GetExperimentsCommand {
@@ -1536,7 +1540,6 @@ export function isGetExperimentsCommand(
   };
   return c.type === "get_experiments" && typeof c.request_id === "string";
 }
-
 export function isSetExperimentCommand(
   value: unknown,
 ): value is SetExperimentCommand {
@@ -1554,11 +1557,9 @@ export function isSetExperimentCommand(
     typeof c.enabled === "boolean"
   );
 }
-
 function isChannelId(value: unknown): value is string {
   return typeof value === "string" && isSupportedChannelId(value);
 }
-
 function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
   const hasValidDmPolicy =
     config.dm_policy === undefined ||
@@ -1582,7 +1583,6 @@ function hasValidChannelPolicyFields(config: Record<string, unknown>): boolean {
     hasValidEnabled
   );
 }
-
 function hasOnlyFields(
   value: Record<string, unknown>,
   allowedFields: ReadonlySet<string>,

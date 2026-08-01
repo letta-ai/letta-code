@@ -72,6 +72,8 @@ type TaskRunResult = {
 
 export interface SpawnBackgroundSubagentTaskArgs {
   subagentType: string;
+  /** User-facing task type; execution still uses subagentType. */
+  displayType?: string;
   prompt: string;
   description: string;
   model?: string;
@@ -314,6 +316,37 @@ export async function waitForBackgroundSubagentAgentId(
   }
 }
 
+export async function waitForBackgroundSubagentConversationId(
+  subagentId: string,
+  timeoutMs: number | null = null,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const deadline =
+    timeoutMs !== null && timeoutMs > 0 ? Date.now() + timeoutMs : null;
+
+  while (true) {
+    if (signal?.aborted) {
+      return null;
+    }
+
+    const agent = getSubagentSnapshot().agents.find((a) => a.id === subagentId);
+    if (!agent) {
+      return null;
+    }
+    if (agent.conversationId) {
+      return agent.conversationId;
+    }
+    if (agent.status === "error" || agent.status === "completed") {
+      return agent.conversationId ?? null;
+    }
+    if (deadline !== null && Date.now() >= deadline) {
+      return agent.conversationId ?? null;
+    }
+
+    await sleep(BACKGROUND_STARTUP_POLL_MS);
+  }
+}
+
 /**
  * Spawn a background subagent task and return task metadata immediately.
  * Notification/hook behavior is identical to Task's background path.
@@ -325,6 +358,7 @@ export function spawnBackgroundSubagentTask(
 
   const {
     subagentType,
+    displayType,
     prompt,
     description,
     model,
@@ -364,7 +398,7 @@ export function spawnBackgroundSubagentTask(
   const subagentId = generateSubagentIdFn();
   registerSubagentFn(
     subagentId,
-    subagentType,
+    displayType ?? subagentType,
     description,
     toolCallId,
     true,
@@ -380,6 +414,7 @@ export function spawnBackgroundSubagentTask(
   const bgTask: BackgroundTask = {
     description,
     subagentType,
+    displayType,
     subagentId,
     status: "running",
     output: [],
