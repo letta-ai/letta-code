@@ -94,6 +94,7 @@ describe("listener protocol ergonomics", () => {
           },
         ],
         client_tool_allowlist: undefined,
+        client_toolset: undefined,
         external_tool_scope_ids: undefined,
       },
     });

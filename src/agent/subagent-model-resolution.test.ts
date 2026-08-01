@@ -474,15 +474,35 @@ describe("buildSubagentArgs", () => {
     expect(promptArg).toBe(longPrompt);
   });
 
-  test("injects --no-system-info-reminder and --no-skills for reflection subagents", () => {
+  test("injects --no-system-info-reminder and --no-skills for non-Windows reflection subagents", () => {
     const args = buildSubagentArgs(
       "reflection",
       { ...baseConfig, name: "reflection" },
       null,
       "hello",
+      undefined,
+      undefined,
+      undefined,
+      { platform: "linux" },
     );
 
     expect(args).toContain("--no-system-info-reminder");
+    expect(args).toContain("--no-skills");
+  });
+
+  test("keeps the Windows environment reminder for reflection subagents", () => {
+    const args = buildSubagentArgs(
+      "reflection",
+      { ...baseConfig, name: "reflection" },
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { platform: "win32" },
+    );
+
+    expect(args).not.toContain("--no-system-info-reminder");
     expect(args).toContain("--no-skills");
   });
 
@@ -832,6 +852,33 @@ describe("resolveSubagentModel", () => {
       parentModelHandle: "lmstudio/local-model",
       backendMode: "local",
       availableHandles: new Set(["openai/gpt-5"]),
+    });
+
+    expect(result).toBe("openai/gpt-5");
+  });
+
+  test("user-configured models override local parent inheritance", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      recommendedModel: "auto",
+      recommendedModelSource: "user",
+      parentModelHandle: "lmstudio/local-model",
+      backendMode: "local",
+      availableHandles: new Set(["letta/auto"]),
+    });
+
+    expect(result).toBe("letta/auto");
+  });
+
+  test("explicit Task models override user-configured models", async () => {
+    const result = await resolveSubagentModel({
+      subagentType: "reflection",
+      userModel: "openai/gpt-5",
+      recommendedModel: "auto",
+      recommendedModelSource: "user",
+      parentModelHandle: "lmstudio/local-model",
+      backendMode: "local",
+      availableHandles: new Set(["letta/auto", "openai/gpt-5"]),
     });
 
     expect(result).toBe("openai/gpt-5");

@@ -33,6 +33,7 @@ import type {
   ChannelTargetsListCommand,
   ChatGPTUsageReadCommand,
   CheckoutBranchCommand,
+  ClientToolsetConfig,
   ConnectProviderCommand,
   ConversationCompactCommand,
   ConversationCreateCommand,
@@ -124,6 +125,26 @@ function isStringArray(value: unknown): value is string[] {
     Array.isArray(value) && value.every((item) => typeof item === "string")
   );
 }
+const TOOLSET_PREFERENCES = new Set([
+  "auto",
+  "codex",
+  "codex_snake",
+  "default",
+  "gemini",
+  "gemini_snake",
+  "none",
+]);
+
+function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
+  if (!isObjectRecord(value)) return false;
+  return (
+    (value.base === undefined ||
+      (typeof value.base === "string" &&
+        TOOLSET_PREFERENCES.has(value.base))) &&
+    (value.include === undefined || isStringArray(value.include))
+  );
+}
+
 function isStringRecord(value: unknown): value is Record<string, string> {
   return (
     !!value &&
@@ -170,6 +191,7 @@ function isInputCommand(value: unknown): value is InputCommand {
     kind?: unknown;
     messages?: unknown;
     client_tool_allowlist?: unknown;
+    client_toolset?: unknown;
     external_tool_scope_ids?: unknown;
     exclude_interactive_tools?: unknown;
     request_id?: unknown;
@@ -181,6 +203,8 @@ function isInputCommand(value: unknown): value is InputCommand {
       Array.isArray(payload.messages) &&
       (payload.client_tool_allowlist === undefined ||
         isStringArray(payload.client_tool_allowlist)) &&
+      (payload.client_toolset === undefined ||
+        isClientToolsetConfig(payload.client_toolset)) &&
       (payload.external_tool_scope_ids === undefined ||
         isStringArray(payload.external_tool_scope_ids)) &&
       (payload.exclude_interactive_tools === undefined ||
@@ -206,6 +230,7 @@ function legacyEnvironmentMessageToInputCommand(
     conversation_id?: unknown;
     messages?: unknown;
     clientToolAllowlist?: unknown;
+    clientToolset?: unknown;
     externalToolScopeIds?: unknown;
   };
   if (
@@ -233,6 +258,9 @@ function legacyEnvironmentMessageToInputCommand(
       messages: candidate.messages as InputCreateMessagePayload["messages"],
       client_tool_allowlist: isStringArray(candidate.clientToolAllowlist)
         ? candidate.clientToolAllowlist
+        : undefined,
+      client_toolset: isClientToolsetConfig(candidate.clientToolset)
+        ? candidate.clientToolset
         : undefined,
       external_tool_scope_ids: isStringArray(candidate.externalToolScopeIds)
         ? candidate.externalToolScopeIds
@@ -266,6 +294,7 @@ function getInvalidInputReason(value: unknown): {
     kind?: unknown;
     messages?: unknown;
     client_tool_allowlist?: unknown;
+    client_toolset?: unknown;
     external_tool_scope_ids?: unknown;
     exclude_interactive_tools?: unknown;
     request_id?: unknown;
@@ -288,6 +317,16 @@ function getInvalidInputReason(value: unknown): {
         runtime: candidate.runtime,
         reason:
           "Protocol violation: input.payload.client_tool_allowlist must be string[]",
+      };
+    }
+    if (
+      payload.client_toolset !== undefined &&
+      !isClientToolsetConfig(payload.client_toolset)
+    ) {
+      return {
+        runtime: candidate.runtime,
+        reason:
+          "Protocol violation: input.payload.client_toolset must contain an optional valid base and string[] include",
       };
     }
     if (

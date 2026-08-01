@@ -1644,11 +1644,6 @@ async function resolveBaseToolNamesForModel(
     baseToolNames = TOOL_NAMES;
   }
 
-  if (options?.exclude && options.exclude.length > 0) {
-    const excludeSet = new Set(options.exclude);
-    baseToolNames = baseToolNames.filter((name) => !excludeSet.has(name));
-  }
-
   if (options?.include && options.include.length > 0) {
     const seen = new Set(baseToolNames);
     for (const name of options.include) {
@@ -1657,6 +1652,11 @@ async function resolveBaseToolNamesForModel(
         seen.add(name);
       }
     }
+  }
+
+  if (options?.exclude && options.exclude.length > 0) {
+    const excludeSet = new Set(options.exclude);
+    baseToolNames = baseToolNames.filter((name) => !excludeSet.has(name));
   }
 
   baseToolNames = filterWorktreeTools(baseToolNames);
