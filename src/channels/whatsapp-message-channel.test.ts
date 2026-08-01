@@ -85,15 +85,20 @@ describe("WhatsApp MessageChannel actions", () => {
     );
   });
 
-  test("rejects MP3 voice memo uploads before calling the adapter", async () => {
+  test("forwards MP3 audio uploads to the adapter as documents", async () => {
     const { ctx, sent } = makeContext("upload-file", {
       mediaPath: "/tmp/voice.mp3",
     });
 
-    await expect(whatsappMessageActions.handleAction(ctx)).resolves.toMatch(
-      /Ogg\/Opus/,
+    await expect(whatsappMessageActions.handleAction(ctx)).resolves.toContain(
+      "Attachment sent",
     );
-    expect(sent).toHaveLength(0);
+    expect(sent[0]).toEqual(
+      expect.objectContaining({
+        channel: "whatsapp",
+        mediaPath: "/tmp/voice.mp3",
+      }),
+    );
   });
 
   test("sends reactions", async () => {

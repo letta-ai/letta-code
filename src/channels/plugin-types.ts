@@ -182,6 +182,11 @@ export interface ChannelPluginAccountPatch {
   richDraftStreaming?: boolean;
   downloadMedia?: boolean;
   mediaMaxBytes?: number;
+  attachmentFilter?: boolean;
+  attachmentMimeTypes?: string[];
+  attachmentAllowedRecipients?: string[];
+  attachmentAllowedPaths?: string[];
+  attachmentPathRecursive?: boolean;
 }
 
 export type ChannelAccountPatch = ChannelCommonAccountPatch &
