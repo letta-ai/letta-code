@@ -14,6 +14,7 @@
     "src/memory-confinement.ts",
     "src/mcp-client.ts",
     "src/agent-presets.ts",
+    "src/schedules.ts",
     "src/channels-public.ts",
     "src/channels-slack.ts",
     "src/types/md.d.ts",

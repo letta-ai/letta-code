@@ -26,6 +26,8 @@
     "dist/mcp-client.js.map",
     "dist/agent-presets.js",
     "dist/agent-presets.js.map",
+    "dist/schedules.js",
+    "dist/schedules.js.map",
     "dist/channels-public.js",
     "dist/channels-public.js.map",
     "dist/channels-slack.js",
@@ -69,6 +71,12 @@
       "browser": "./dist/agent-presets.js",
       "import": "./dist/agent-presets.js",
       "default": "./dist/agent-presets.js"
+    },
+    "./schedules": {
+      "types": "./dist/types/schedules.d.ts",
+      "browser": "./dist/schedules.js",
+      "import": "./dist/schedules.js",
+      "default": "./dist/schedules.js"
     },
     "./channels": {
       "types": "./dist/types/channels-public.d.ts",
@@ -171,6 +179,9 @@
     "*": {
       "agent-presets": [
         "./dist/types/agent-presets.d.ts"
+      ],
+      "schedules": [
+        "./dist/types/schedules.d.ts"
       ],
       "app-server-protocol": [
         "./dist/types/types/app-server-protocol.d.ts"
