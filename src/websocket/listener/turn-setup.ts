@@ -259,6 +259,7 @@ export async function prepareListenerTurn(params: {
     connectionId,
     agentId,
     conversationId,
+    clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
     // Headless clients (SDK sessions, automation) opt out of tools that
     // prompt the human mid-turn; the interactive set is owned by the harness.
