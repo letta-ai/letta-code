@@ -96,14 +96,15 @@ import {
   toQueuedMsg,
 } from "@/cli/helpers/queued-message-parts";
 import {
-  buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
   formatReflectionArenaDeferredMessage,
   launchReflectionArena,
   parseReflectionArenaChoiceAnswers,
   REFLECTION_ARENA_MODEL_A_DEFAULT,
   type ReflectionArenaChoiceQuestion,
+  type ReflectionArenaReadyPayload,
   sampleReflectionArenaComparisonModel,
+  surfaceReflectionArenaReady,
 } from "@/cli/helpers/reflection-arena";
 import {
   AUTO_REFLECTION_DESCRIPTION,
@@ -2581,6 +2582,39 @@ export function App({
   }, [commitEligibleLines]);
   refreshDerivedRef.current = refreshDerived;
 
+  // A deferred arena "ready" report held while the agent is busy. The report
+  // is long, so rendering it mid-turn buries it under agent output; surface it
+  // (plus the choice prompt) once the turn ends.
+  const [deferredArenaReady, setDeferredArenaReady] =
+    useState<ReflectionArenaReadyPayload | null>(null);
+
+  const surfaceArenaReady = useCallback(
+    (payload: ReflectionArenaReadyPayload) =>
+      surfaceReflectionArenaReady(
+        payload,
+        (message) => appendTaskNotificationEvents([message]),
+        setReflectionArenaChoicePending,
+      ),
+    [appendTaskNotificationEvents],
+  );
+
+  const queueReflectionArenaReady = useCallback(
+    (payload: ReflectionArenaReadyPayload) => {
+      // If the agent is idle, surface now; otherwise defer to end of turn.
+      if (!isAgentBusy()) surfaceArenaReady(payload);
+      else setDeferredArenaReady(payload);
+    },
+    [isAgentBusy, surfaceArenaReady],
+  );
+
+  // Surface the deferred report once idle. Setting state during render is the
+  // React-sanctioned "adjust state when a value changes" pattern: it re-renders
+  // and commits before paint, so the report lands as the turn's last event.
+  if (deferredArenaReady && !isAgentBusy()) {
+    setDeferredArenaReady(null);
+    surfaceArenaReady(deferredArenaReady);
+  }
+
   const handleReload = useCallback(async () => {
     settingsManager.clearCaches();
     await settingsManager.loadProjectSettings();
@@ -3718,12 +3752,9 @@ export function App({
                 model: currentModelId,
               },
               onReady: (message, readyRun) => {
-                appendTaskNotificationEvents([message]);
-                setReflectionArenaChoicePending({
+                queueReflectionArenaReady({
+                  message,
                   runId: readyRun.runId,
-                  questions: buildReflectionArenaChoiceQuestions(
-                    readyRun.runId,
-                  ),
                 });
               },
             });
@@ -3770,6 +3801,7 @@ export function App({
     agentDescription,
     currentModelId,
     appendTaskNotificationEvents,
+    queueReflectionArenaReady,
   ]);
 
   const processConversation = useConversationLoop({
@@ -4188,9 +4220,6 @@ export function App({
           runId: pending.runId,
           choice: answer.choice,
           notes: answer.notes,
-          onHfUploadComplete: (message) => {
-            appendTaskNotificationEvents([message]);
-          },
           recompileByConversation:
             _systemPromptRecompileByConversationRef.current,
           recompileQueuedByConversation:
@@ -4260,6 +4289,7 @@ export function App({
     hasBackfilledRef,
     isAgentBusy,
     isExecutingTool,
+    queueReflectionArenaReady,
     llmConfigRef,
     maybeCarryOverActiveConversationModel,
     needsEagerApprovalCheck,

@@ -13,10 +13,7 @@ import {
 } from "@/agent/memory-worktree";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import {
-  buildReflectionArenaHfChoiceRow,
-  maybeUploadReflectionArenaChoiceToHf,
-} from "@/cli/helpers/reflection-arena-hf-upload";
-import {
+  drainReflectionTelemetry,
   emitReflectionRunEnd,
   emitReflectionRunStart,
   finalizeReflectionMemoryWorktreeLaunch,
@@ -34,6 +31,7 @@ import {
 } from "@/cli/helpers/reflection-transcript";
 import { telemetry } from "@/telemetry";
 import { debugWarn } from "@/utils/debug";
+import { getVersion } from "@/version";
 
 const execFile = promisify(execFileCb);
 const REFLECTION_ARENA_TELEMETRY_TRANSCRIPT_MAX_CHARS = 1_000_000;
@@ -44,13 +42,14 @@ const REFLECTION_ARENA_COMPARISON_MODEL_POOL: Array<{
   model: string;
   weight: number;
 }> = [
-  { model: "lc-anthropic/claude-sonnet-5", weight: 1 },
-  { model: "lc-anthropic/claude-opus-4-8", weight: 3 },
-  { model: "lc-anthropic/claude-fable-5", weight: 1 },
+  { model: "anthropic/claude-sonnet-5", weight: 1 },
+  { model: "lc-anthropic/claude-opus-5", weight: 3 },
+  { model: "anthropic/claude-fable-5", weight: 1 },
   { model: "letta/auto", weight: 1 },
-  { model: "deepseek/deepseek-v4-pro", weight: 1 },
-  { model: "minimax-m3", weight: 1 },
-  { model: "gpt-5.5-plus-pro-high", weight: 3 },
+  { model: "openrouter/deepseek/deepseek-v4-pro", weight: 1 },
+  { model: "minimax/MiniMax-M3", weight: 1 },
+  { model: "moonshot/kimi-k3", weight: 1 },
+  { model: "openai/gpt-5.6-sol", weight: 3 },
 ];
 
 export function sampleReflectionArenaComparisonModel(
@@ -165,7 +164,6 @@ export type LaunchReflectionArenaResult =
 export interface FinalizeReflectionArenaChoiceOptions {
   choice: ReflectionArenaChoice;
   notes?: string;
-  onHfUploadComplete?: (message: string) => void;
   recompileByConversation: Map<string, Promise<void>>;
   recompileQueuedByConversation: Set<string>;
   runId: string;
@@ -180,6 +178,32 @@ export interface ReflectionArenaChoiceQuestion {
     label: string;
   }>;
   question: string;
+}
+
+/** Payload for an arena "ready" report deferred until the agent is idle. */
+export interface ReflectionArenaReadyPayload {
+  message: string;
+  runId: string;
+}
+
+/**
+ * Show an arena "ready" report and open the choice prompt. Called immediately
+ * when the agent is idle, or at end of turn after being deferred (the long
+ * report would otherwise be buried mid-turn under subsequent agent output).
+ */
+export function surfaceReflectionArenaReady(
+  payload: ReflectionArenaReadyPayload,
+  showReport: (message: string) => void,
+  showChoicePrompt: (pending: {
+    runId: string;
+    questions: ReflectionArenaChoiceQuestion[];
+  }) => void,
+): void {
+  showReport(payload.message);
+  showChoicePrompt({
+    runId: payload.runId,
+    questions: buildReflectionArenaChoiceQuestions(payload.runId),
+  });
 }
 
 const updateLocks = new Map<string, Promise<void>>();
@@ -198,8 +222,20 @@ async function getGitHead(cwd: string): Promise<string | null> {
   }
 }
 
+// Test-only seam: lets tests redirect arena run/choice-log persistence to a
+// temp dir so they never touch the real ~/.letta/reflection-arena data.
+let reflectionArenaRootOverride: string | null = null;
+
+export function setReflectionArenaRootOverrideForTests(
+  root: string | null,
+): void {
+  reflectionArenaRootOverride = root;
+}
+
 function getReflectionArenaRoot(): string {
-  return join(homedir(), ".letta", "reflection-arena");
+  return (
+    reflectionArenaRootOverride ?? join(homedir(), ".letta", "reflection-arena")
+  );
 }
 
 function getReflectionArenaRunsDir(): string {
@@ -424,11 +460,10 @@ function formatCandidateModelLink(candidate: ReflectionArenaCandidate): string {
 
 function formatReflectionArenaChoiceResult(params: {
   discarded: ReflectionArenaCandidateLabel[];
-  hfUploadMessage?: string;
   integration?: ReflectionMemoryWorktreeFinalizeResult;
   run: ReflectionArenaRun;
 }): string {
-  const { run, integration, discarded, hfUploadMessage } = params;
+  const { run, integration, discarded } = params;
   const chosen = run.choice?.chosen ?? "tie";
   const winner =
     chosen === "tie"
@@ -451,7 +486,6 @@ function formatReflectionArenaChoiceResult(params: {
     integration
       ? `Memory result: ${integration.summary}`
       : "Memory result: no candidate merged.",
-    ...(hfUploadMessage ? [hfUploadMessage] : []),
     `Run file: ${getReflectionArenaRunPath(run.runId)}`,
     `Choice log: ${getReflectionArenaChoiceLogPath()}`,
   ].join("\n");
@@ -518,14 +552,21 @@ async function readTranscriptPayloadForTelemetry(payloadPath: string): Promise<{
   }
 }
 
-async function uploadChoiceRecordToHf(params: {
+/**
+ * Record the reflection arena vote to telemetry (PostHog) and flush it
+ * immediately. Unlike reflection start/end events, the vote is a one-shot
+ * terminal event — if we only queue it, it can be lost when the session ends
+ * before the next periodic flush. Flushing here matches the behavior of
+ * emitReflectionRunStart/emitReflectionRunEnd.
+ */
+async function trackArenaVoteAndFlush(params: {
   run: ReflectionArenaRun;
   memoryBaseCommit: string | null;
   memoryCandidateCommit: string | null;
-}): Promise<string | undefined> {
+}): Promise<void> {
   const { run, memoryBaseCommit, memoryCandidateCommit } = params;
   const choice = run.choice;
-  if (!choice) return undefined;
+  if (!choice) return;
 
   const autoMemoryCandidate =
     run.candidates.find(
@@ -548,43 +589,31 @@ async function uploadChoiceRecordToHf(params: {
             Boolean(candidate),
           );
 
-  const row = buildReflectionArenaHfChoiceRow({
-    runId: run.runId,
-    choice: choice.chosen === "tie" ? "tie" : "win_loss",
-    winner: winner?.model ?? null,
-    loser: loser?.model ?? null,
-    winnerAgentId: winner?.result?.agentId ?? null,
-    loserAgentId: loser?.result?.agentId ?? null,
-    parentAgentId: run.agentId,
-    timestamp: choice.recordedAt,
-    feedback: choice.notes,
-    parentConversationId: run.conversationId,
-    memoryBaseCommit,
-    memoryCandidateCommit,
-  });
   const transcriptTelemetry = await readTranscriptPayloadForTelemetry(
     run.payloadPath,
   );
   telemetry.trackReflectionArenaVote({
-    ...row,
+    run_id: run.runId,
+    choice: choice.chosen === "tie" ? "tie" : "win_loss",
+    winner: winner?.model ?? null,
+    loser: loser?.model ?? null,
+    winner_agent_id: winner?.result?.agentId ?? null,
+    loser_agent_id: loser?.result?.agentId ?? null,
+    parent_agent_id: run.agentId,
+    timestamp: choice.recordedAt,
+    feedbackstr: choice.notes?.trim() || null,
+    parent_convo_id: run.conversationId,
+    lc_version: getVersion(),
+    memory_base_commit: memoryBaseCommit,
+    memory_candidate_commit: memoryCandidateCommit,
     transcript_payload: transcriptTelemetry.transcriptPayload,
     transcript_payload_chars: transcriptTelemetry.transcriptPayloadChars,
     transcript_payload_truncated:
       transcriptTelemetry.transcriptPayloadTruncated,
   });
 
-  const result = await maybeUploadReflectionArenaChoiceToHf(row);
-  if (result.uploaded) {
-    return `Uploaded reflection arena vote to HF ${result.repoId} dataset`;
-  }
-  if (result.reason === "missing_token") {
-    return "HF upload: no HF_TOKEN found; local log only. Run /secrets set HF_TOKEN to enable uploads.";
-  }
-  debugWarn(
-    "memory",
-    `Failed to upload reflection arena choice to Hugging Face: ${result.error ?? "unknown error"}`,
-  );
-  return `HF upload: failed via git-cache-v3; local log only. ${result.error ?? ""}`.trim();
+  // Fire-and-forget drain, matching emitReflectionRunStart/emitReflectionRunEnd.
+  drainReflectionTelemetry();
 }
 
 function candidateIsFinished(candidate: ReflectionArenaCandidate): boolean {
@@ -899,23 +928,16 @@ export async function finalizeReflectionArenaChoice(
   };
   await saveReflectionArenaRun(completedRun);
   await appendChoiceRecord(completedRun);
-  void uploadChoiceRecordToHf({
+  void trackArenaVoteAndFlush({
     run: completedRun,
     memoryBaseCommit,
     memoryCandidateCommit,
-  })
-    .then((message) => {
-      if (message) {
-        options.onHfUploadComplete?.(message);
-      }
-    })
-    .catch((error) => {
-      debugWarn(
-        "memory",
-        `Failed to upload reflection arena choice to Hugging Face: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      options.onHfUploadComplete?.("HF upload: failed; local log only.");
-    });
+  }).catch((error) => {
+    debugWarn(
+      "memory",
+      `Failed to record reflection arena vote telemetry: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
 
   return {
     message: formatReflectionArenaChoiceResult({
