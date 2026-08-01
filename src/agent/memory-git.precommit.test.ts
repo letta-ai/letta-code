@@ -12,7 +12,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PRE_COMMIT_HOOK_SCRIPT } from "@/agent/memory-git-hooks";
+import {
+  DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT,
+  PRE_COMMIT_HOOK_SCRIPT,
+  SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG,
+} from "@/agent/memory-git-hooks";
 
 let tempDir: string;
 
@@ -307,5 +311,76 @@ describe("pre-commit hook: non-memory files", () => {
     writeAndStage("memory/system/.sync-state.json", '{"bad": "frontmatter"}');
     const result = tryCommit();
     expect(result.success).toBe(true);
+  });
+});
+
+describe("pre-commit hook: system prompt token limit", () => {
+  const contentWithEstimatedTokens = (tokens: number): string => {
+    const frontmatter = "---\ndescription: Large block\n---\n\n";
+    return `${frontmatter}${"x".repeat(tokens * 4 - Buffer.byteLength(frontmatter))}`;
+  };
+
+  test("allows a staged system prompt below the default limit", () => {
+    writeAndStage(
+      "system/context.md",
+      contentWithEstimatedTokens(DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT - 1),
+    );
+    expect(tryCommit().success).toBe(true);
+  });
+
+  test("rejects a staged system prompt equal to the default limit", () => {
+    writeAndStage(
+      "system/context.md",
+      contentWithEstimatedTokens(DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT),
+    );
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain(
+      `must be less than ${DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT} tokens`,
+    );
+  });
+
+  test("uses the configured per-repo limit", () => {
+    git(`config --local ${SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG} 100`);
+    writeAndStage("system/context.md", contentWithEstimatedTokens(100));
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("must be less than 100 tokens");
+  });
+
+  test("sums nested system files", () => {
+    git(`config --local ${SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG} 100`);
+    writeAndStage("system/human/one.md", contentWithEstimatedTokens(50));
+    writeAndStage("system/project/two.md", contentWithEstimatedTokens(50));
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("approximately 100 tokens");
+  });
+
+  test("estimates the staged snapshot rather than unstaged content", () => {
+    writeAndStage("system/context.md", contentWithEstimatedTokens(100));
+    writeFileSync(
+      join(tempDir, "system/context.md"),
+      contentWithEstimatedTokens(DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT),
+      "utf-8",
+    );
+    expect(tryCommit().success).toBe(true);
+  });
+
+  test("allows disabling the limit for a repo", () => {
+    git(`config --local ${SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG} 0`);
+    writeAndStage(
+      "system/context.md",
+      contentWithEstimatedTokens(DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT),
+    );
+    expect(tryCommit().success).toBe(true);
+  });
+
+  test("rejects an invalid configured limit", () => {
+    git(`config --local ${SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG} nope`);
+    writeAndStage("system/context.md", `${VALID_FM}Context.\n`);
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("expected a positive integer, or 0");
   });
 });

@@ -66,7 +66,15 @@ git -c "http.extraHeader=$AUTH_HEADER" clone "$LETTA_BASE_URL/v1/git/<agent-id>/
 
 ## Pre-Commit Hook (Frontmatter Validation)
 
-The harness installs a git pre-commit hook that validates `.md` files under `memory/` before each commit. This prevents pushes that the server would reject.
+The harness installs a git pre-commit hook that validates `.md` files under `memory/` before each commit. This prevents pushes that the server would reject. It also estimates the complete staged context under `system/` and requires it to stay below 20,000 tokens by default, using the same heuristic as `letta memory tokens`.
+
+Configure the token limit for a memory repo with local git config:
+
+```bash
+git config --local letta.systemPromptTokenLimit 30000
+```
+
+The limit is exclusive (a value of `20000` requires fewer than 20,000 estimated tokens). Set it to `0` to disable this check for the repo.
 
 **Rules:**
 - Every `.md` file must have YAML frontmatter (`---` header and closing `---`)

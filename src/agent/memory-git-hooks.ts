@@ -10,6 +10,11 @@
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { debugLog } from "@/utils/debug";
+import { SYSTEM_PROMPT_BYTES_PER_TOKEN } from "@/utils/system-prompt-size";
+
+export const DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT = 20_000;
+export const SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG =
+  "letta.systemPromptTokenLimit";
 
 /**
  * Bash pre-commit hook that validates frontmatter in memory .md files.
@@ -23,6 +28,7 @@ import { debugLog } from "@/utils/debug";
  * - Only allowed agent-editable key: description
  * - Legacy key 'limit' is tolerated for backward compatibility
  * - read_only may exist (from server) but agent must not change it
+ * - The staged system/ context must stay below the configured token limit
  */
 export const PRE_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
 # Validate frontmatter in staged memory .md files
@@ -31,6 +37,9 @@ export const PRE_COMMIT_HOOK_SCRIPT = `#!/usr/bin/env bash
 AGENT_EDITABLE_KEYS="description"
 PROTECTED_KEYS="read_only"
 ALL_KNOWN_KEYS="description read_only limit"
+DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT=${DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT}
+SYSTEM_PROMPT_BYTES_PER_TOKEN=${SYSTEM_PROMPT_BYTES_PER_TOKEN}
+SYSTEM_PROMPT_TOKEN_LIMIT_CONFIG="${SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG}"
 errors=""
 
 # Skills must always be directories: skills/<name>/SKILL.md
@@ -156,8 +165,39 @@ for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memor
   fi
 done
 
+# Estimate the complete staged system prompt, not the working tree. This uses
+# the same bytes-per-token heuristic as the letta memory tokens command and sums the
+# rounded estimate for each markdown file. The optional memory/ prefix supports
+# legacy MemFS repos.
+system_prompt_token_limit=$(git config --local --get "$SYSTEM_PROMPT_TOKEN_LIMIT_CONFIG" 2>/dev/null || true)
+if [ -z "$system_prompt_token_limit" ]; then
+  system_prompt_token_limit=$DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT
+fi
+
+case "$system_prompt_token_limit" in
+  *[!0-9]*|"")
+    errors="$errors\\n  invalid $SYSTEM_PROMPT_TOKEN_LIMIT_CONFIG value '$system_prompt_token_limit' (expected a positive integer, or 0 to disable)"
+    ;;
+  0)
+    # Explicitly disabled for this memory repo.
+    ;;
+  *)
+    system_prompt_tokens=0
+    while IFS= read -r -d '' file; do
+      bytes=$(git cat-file -s ":$file")
+      file_tokens=$(( (bytes + SYSTEM_PROMPT_BYTES_PER_TOKEN - 1) / SYSTEM_PROMPT_BYTES_PER_TOKEN ))
+      system_prompt_tokens=$((system_prompt_tokens + file_tokens))
+    done < <(git ls-files -z -- 'system/*.md' 'memory/system/*.md')
+
+    if [ "$system_prompt_tokens" -ge "$system_prompt_token_limit" ]; then
+      errors="$errors\\n  system prompt is approximately $system_prompt_tokens tokens; it must be less than $system_prompt_token_limit tokens"
+      errors="$errors\\n  Reduce files under system/, or configure this repo with: git config --local $SYSTEM_PROMPT_TOKEN_LIMIT_CONFIG <tokens>"
+    fi
+    ;;
+esac
+
 if [ -n "$errors" ]; then
-  echo "Frontmatter validation failed:"
+  echo "MemFS pre-commit validation failed:"
   echo -e "$errors"
   exit 1
 fi
