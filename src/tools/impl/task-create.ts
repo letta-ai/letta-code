@@ -1,3 +1,4 @@
+import { requireTaskStoreScope } from "./tasks/scope.js";
 import { createTask, type TaskRecord } from "./tasks/store.js";
 import { validateRequiredParams } from "./validation.js";
 
@@ -36,7 +37,7 @@ export async function task_create(args: TaskCreateArgs): Promise<TaskRecord> {
     }
   }
 
-  return createTask({
+  return createTask(requireTaskStoreScope(), {
     subject: args.subject,
     description: args.description,
     activeForm: args.activeForm,
