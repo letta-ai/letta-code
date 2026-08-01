@@ -1,5 +1,9 @@
 # Contributing to Letta Code
 
+## AI Usage Policy
+
+All issues and pull requests must comply with the [AI Usage Policy](AI_POLICY.md). Disclose every AI tool used and ensure a human has reviewed, verified, and understands the complete submission. Noncompliant contributions are automatically closed unless the author is a trusted contributor or Letta maintainer.
+
 ## Fork the repo
 
 Fork the repository on GitHub by [clicking this link](https://github.com/letta-ai/letta-code/fork), then clone your fork:
