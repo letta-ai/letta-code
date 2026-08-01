@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 
-const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER"]);
 const NO_AI_TOOLS = /^(none|n\/a|no ai(?: tools?)?)\.?$/i;
 
 const VERIFICATION_PHRASES = {
