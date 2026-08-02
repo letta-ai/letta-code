@@ -234,6 +234,7 @@ function buildQueuedTurnMessage(
         {
           role: "user",
           content: mergedContent,
+          otid: crypto.randomUUID(),
         } satisfies MessageCreate,
       ],
     };
