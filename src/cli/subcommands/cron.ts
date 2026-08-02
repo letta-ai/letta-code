@@ -6,9 +6,9 @@
  *   letta cron add --prompt <text> --at <time> [--once] [--agent <id>] [--runner local|cloud]
  *   letta cron add --prompt <text> --cron <expr> [--agent <id>] [--runner local|cloud]
  *   letta cron list [--agent <id>] [--conversation <id>] [--runner local|cloud]
- *   letta cron get <id> [--runner local|cloud]
+ *   letta cron get <id|name> [--runner local|cloud]
  *   letta cron runs --id <id> [--runner local|cloud]
- *   letta cron delete <id> [--runner local|cloud]
+ *   letta cron delete <id|name> [--runner local|cloud]   (alias: remove)
  *   letta cron delete --all [--agent <id>] [--runner local|cloud]
  *
  * Runners (LET-9692):
@@ -50,6 +50,11 @@ import {
   resolveCronRunner,
   validateTargetDevice,
 } from "./cron-runner";
+import {
+  ensureSettingsForCloud,
+  printAmbiguousTaskName,
+  resolveTaskName,
+} from "./cron-task-ref";
 
 // ── Usage ───────────────────────────────────────────────────────────
 
@@ -61,9 +66,9 @@ Usage:
   letta cron add --prompt <text> --at <time> [--once] [options]
   letta cron add --prompt <text> --cron <expr> [options]
   letta cron list [options]
-  letta cron get <id> [--runner local|cloud]
+  letta cron get <id|name> [--runner local|cloud]
   letta cron runs --id <id> [--limit <n>] [--runner local|cloud]
-  letta cron delete <id> [--runner local|cloud]
+  letta cron delete <id|name> [--runner local|cloud]   (alias: remove)
   letta cron delete --all [--agent <id>] [--runner local|cloud]
 
 Add options:
@@ -163,16 +168,6 @@ async function probeCloudScheduleSupport(agentId: string): Promise<boolean> {
     }
     return true;
   }
-}
-
-/**
- * The local runner path never needs settings, so the cron subcommand does not
- * initialize them upfront; every cloud API call does (server URL + auth).
- * Idempotent — safe to call before each cloud request.
- */
-async function ensureSettingsForCloud(): Promise<void> {
-  const { settingsManager } = await import("@/settings-manager");
-  await settingsManager.initialize();
 }
 
 async function getRunnerForAgent(
@@ -545,12 +540,22 @@ async function handleList(values: CronArgValues): Promise<number> {
   }
 
   if (includeCloud && agentId) {
-    const resolved = await getRunnerForAgent(undefined, agentId);
-    const cloudCapable = !("error" in resolved) && resolved.runner === "cloud";
     const cloudExplicit = values.runner === "cloud";
 
-    if (cloudCapable || cloudExplicit) {
+    // No capability pre-probe here: the probe maps any 404/405 to "server
+    // doesn't serve Cloud schedules" and would skip this section silently,
+    // hiding real Cloud schedules behind e.g. a transient auth/visibility
+    // 404 (LET-10492). Listing is read-only, so just attempt it — cheap
+    // local-only cases (local-backend agents) still resolve without a
+    // network call, and every failure is surfaced as a warning.
+    const backendMode = resolveBackendMode();
+    const preliminary = resolveCronRunner({ agentId, backendMode });
+    const cloudCandidate =
+      !("error" in preliminary) && preliminary.runner === "cloud";
+
+    if (cloudCandidate || cloudExplicit) {
       try {
+        await ensureSettingsForCloud();
         const response = await listCloudSchedules(agentId);
         for (const schedule of response.scheduled_messages) {
           if (
@@ -562,9 +567,23 @@ async function handleList(values: CronArgValues): Promise<number> {
           output.push(formatCloudScheduleOutput(schedule));
         }
       } catch (err) {
-        console.error(
-          `Warning: failed to list Cloud schedules: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // Never skip silently (LET-10492) — but calibrate the tone: a 404/405
+        // usually means the server doesn't serve the schedule routes at all
+        // (self-hosted OSS core), which is an expected steady state, not a
+        // failure. It can also mean the agent isn't visible to the current
+        // credential, so name both.
+        if (
+          err instanceof ApiRequestError &&
+          (err.status === 404 || err.status === 405)
+        ) {
+          console.error(
+            "Note: Cloud schedules not listed (server does not serve the schedule routes, or this agent is not visible to the current credential).",
+          );
+        } else {
+          console.error(
+            `Warning: Cloud schedules not listed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
         if (cloudExplicit) {
           return 1;
         }
@@ -592,48 +611,78 @@ async function handleGet(
     return 1;
   }
 
-  const taskId = positionals[1];
-  if (!taskId) {
-    console.error("Error: task ID required. Usage: letta cron get <id>");
-    return 1;
-  }
-
-  // Local store is a cheap file read; check it first unless --runner cloud.
-  if (values.runner !== "cloud") {
-    const task = getTask(taskId);
-    if (task) {
-      console.log(JSON.stringify({ ...task, runner: "local" }, null, 2));
-      return 0;
-    }
-    if (values.runner === "local") {
-      console.error(`Error: task ${taskId} not found.`);
-      return 1;
-    }
-  }
-
-  const agentId = getAgentId(values.agent);
-  if (!agentId) {
+  const taskRef = positionals[1];
+  if (!taskRef) {
     console.error(
-      `Error: task ${taskId} not found locally, and --agent or LETTA_AGENT_ID is required to look up Cloud schedules.`,
+      "Error: task ID or name required. Usage: letta cron get <id|name>",
     );
     return 1;
   }
 
-  try {
-    await ensureSettingsForCloud();
-    const schedule = await getCloudSchedule(agentId, taskId);
-    console.log(JSON.stringify(formatCloudScheduleOutput(schedule), null, 2));
-    return 0;
-  } catch (err) {
-    if (err instanceof ApiRequestError && err.status === 404) {
-      console.error(`Error: task ${taskId} not found.`);
-    } else {
-      console.error(
-        `Error: ${err instanceof Error ? err.message : String(err)}`,
-      );
+  const agentId = getAgentId(values.agent);
+
+  // Local store is a cheap file read; check it first unless --runner cloud.
+  if (values.runner !== "cloud") {
+    const task = getTask(taskRef);
+    if (task) {
+      console.log(JSON.stringify({ ...task, runner: "local" }, null, 2));
+      return 0;
     }
+  }
+
+  // Cloud lookup by ID (unless --runner local).
+  if (values.runner !== "local" && agentId) {
+    try {
+      await ensureSettingsForCloud();
+      const schedule = await getCloudSchedule(agentId, taskRef);
+      console.log(JSON.stringify(formatCloudScheduleOutput(schedule), null, 2));
+      return 0;
+    } catch (err) {
+      if (!(err instanceof ApiRequestError && err.status === 404)) {
+        console.error(
+          `Error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return 1;
+      }
+      // 404 → not an ID; fall through to name resolution.
+    }
+  }
+
+  if (values.runner !== "local" && !agentId) {
+    console.error(
+      `Error: task ${taskRef} not found locally, and --agent or LETTA_AGENT_ID is required to look up Cloud schedules.`,
+    );
     return 1;
   }
+
+  // Not an ID in either store — try it as a task name (LET-10492).
+  const resolved = await resolveTaskName(taskRef, {
+    runner: values.runner,
+    agentId,
+  });
+  if (resolved && "ambiguous" in resolved) {
+    printAmbiguousTaskName(taskRef, resolved.ambiguous);
+    return 1;
+  }
+  if (resolved?.store === "local") {
+    const task = getTask(resolved.id);
+    if (task) {
+      console.log(JSON.stringify({ ...task, runner: "local" }, null, 2));
+      return 0;
+    }
+  }
+  if (resolved?.store === "cloud" && agentId) {
+    try {
+      const schedule = await getCloudSchedule(agentId, resolved.id);
+      console.log(JSON.stringify(formatCloudScheduleOutput(schedule), null, 2));
+      return 0;
+    } catch {
+      // fall through to not-found
+    }
+  }
+
+  console.error(`Error: task ${taskRef} not found.`);
+  return 1;
 }
 
 async function handleRuns(values: CronArgValues): Promise<number> {
@@ -722,52 +771,88 @@ async function handleDelete(
     return handleDeleteAll(values);
   }
 
-  const taskId = positionals[1];
-  if (!taskId) {
+  const taskRef = positionals[1];
+  if (!taskRef) {
     console.error(
-      "Error: task ID required. Usage: letta cron delete <id> or --all --agent <id>",
+      "Error: task ID or name required. Usage: letta cron delete <id|name> or --all --agent <id>",
     );
     return 1;
   }
 
   if (values.runner !== "cloud") {
-    const found = deleteTask(taskId);
+    const found = deleteTask(taskRef);
     if (found) {
-      console.log(JSON.stringify({ deleted: taskId, runner: "local" }));
+      console.log(JSON.stringify({ deleted: taskRef, runner: "local" }));
       return 0;
-    }
-    if (values.runner === "local") {
-      console.error(`Error: task ${taskId} not found.`);
-      return 1;
     }
   }
 
   const agentId = getAgentId(values.agent);
-  if (!agentId) {
-    console.error(
-      `Error: task ${taskId} not found locally, and --agent or LETTA_AGENT_ID is required to delete Cloud schedules.`,
-    );
-    return 1;
+
+  // Cloud delete by ID (unless --runner local).
+  if (values.runner !== "local") {
+    if (!agentId) {
+      console.error(
+        `Error: task ${taskRef} not found locally, and --agent or LETTA_AGENT_ID is required to delete Cloud schedules.`,
+      );
+      return 1;
+    }
+    try {
+      await ensureSettingsForCloud();
+      // Verify existence first: the cloud delete endpoint is a soft-delete
+      // update that reports success even for unknown IDs.
+      await getCloudSchedule(agentId, taskRef);
+      await deleteCloudSchedule(agentId, taskRef);
+      console.log(JSON.stringify({ deleted: taskRef, runner: "cloud" }));
+      return 0;
+    } catch (err) {
+      if (!(err instanceof ApiRequestError && err.status === 404)) {
+        console.error(
+          `Error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return 1;
+      }
+      // 404 → not an ID; fall through to name resolution.
+    }
   }
 
-  try {
-    await ensureSettingsForCloud();
-    // Verify existence first: the cloud delete endpoint is a soft-delete
-    // update that reports success even for unknown IDs.
-    await getCloudSchedule(agentId, taskId);
-    await deleteCloudSchedule(agentId, taskId);
-    console.log(JSON.stringify({ deleted: taskId, runner: "cloud" }));
+  // Not an ID in either store — try it as a task name (LET-10492): `add`
+  // requires --name, so the name is the handle users actually remember.
+  const resolved = await resolveTaskName(taskRef, {
+    runner: values.runner,
+    agentId,
+  });
+  if (resolved && "ambiguous" in resolved) {
+    printAmbiguousTaskName(taskRef, resolved.ambiguous);
+    return 1;
+  }
+  if (resolved?.store === "local" && deleteTask(resolved.id)) {
+    console.log(
+      JSON.stringify({ deleted: resolved.id, name: taskRef, runner: "local" }),
+    );
     return 0;
-  } catch (err) {
-    if (err instanceof ApiRequestError && err.status === 404) {
-      console.error(`Error: task ${taskId} not found.`);
-    } else {
+  }
+  if (resolved?.store === "cloud" && agentId) {
+    try {
+      await deleteCloudSchedule(agentId, resolved.id);
+      console.log(
+        JSON.stringify({
+          deleted: resolved.id,
+          name: taskRef,
+          runner: "cloud",
+        }),
+      );
+      return 0;
+    } catch (err) {
       console.error(
         `Error: ${err instanceof Error ? err.message : String(err)}`,
       );
+      return 1;
     }
-    return 1;
   }
+
+  console.error(`Error: task ${taskRef} not found.`);
+  return 1;
 }
 
 async function handleDeleteAll(values: CronArgValues): Promise<number> {
@@ -849,6 +934,10 @@ export async function runCronSubcommand(argv: string[]): Promise<number> {
     case "runs":
       return handleRuns(parsed.values);
     case "delete":
+    // "remove" reads naturally enough that agents/scripts reach for it, and
+    // the old "Unknown action" + usage dump was easy to misread as success
+    // in captured output (LET-10492).
+    case "remove":
       return handleDelete(parsed.values, parsed.positionals);
     default:
       console.error(`Unknown action: ${action}`);
