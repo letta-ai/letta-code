@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { runListenSubcommand } from "@/cli/subcommands/listen";
+import {
+  __listenSubcommandTestUtils,
+  runListenSubcommand,
+} from "@/cli/subcommands/listen";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { deriveListenerInstanceId } from "@/websocket/listen-register";
@@ -135,27 +138,11 @@ describe("standalone listener single-instance wiring", () => {
     await replacement.release();
   });
 
-  test("leaves legacy Desktop-managed children outside the manual guard", async () => {
-    const incumbent = await acquireManualListenerLock(scope(), {
-      lockRoot: path.join(tempHome, ".letta"),
-      ownerToken: "manual-incumbent",
-    });
+  test("leaves legacy Desktop-managed children outside the manual guard", () => {
     process.env.LETTA_DESKTOP_MODE = "1";
 
-    try {
-      const exitCode = await runListenSubcommand([
-        "--env-name",
-        "ci-env",
-        "--channels",
-        "not-a-channel",
-        "--install-channel-runtimes",
-      ]);
-
-      expect(exitCode).toBe(1);
-      expect(errors.join("\n")).toContain('Unknown channel "not-a-channel"');
-      expect(errors.join("\n")).not.toContain("already running");
-    } finally {
-      await incumbent.release();
-    }
+    expect(
+      __listenSubcommandTestUtils.shouldAcquireStandaloneListenerLock(),
+    ).toBe(false);
   });
 });

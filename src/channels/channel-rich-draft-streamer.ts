@@ -1,9 +1,9 @@
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
-import { getChannelAccount } from "@/channels/accounts";
-import { getChannelRegistry } from "@/channels/registry";
-import type { ChannelAdapter, ChannelTurnSource } from "@/channels/types";
-import { getRichDraftStreamingPolicy } from "@/channels/types";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { getChannelAccount } from "./accounts";
+import { getChannelRegistry } from "./registry";
+import type { ChannelAdapter, ChannelTurnSource } from "./types";
+import { getRichDraftStreamingPolicy } from "./types";
 
 const MESSAGE_CHANNEL_TOOL_NAMES = new Set([
   "MessageChannel",

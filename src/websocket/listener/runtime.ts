@@ -253,10 +253,10 @@ export function createConversationRuntime(
     agentId: normalizedAgentId,
     conversationId: normalizedConversationId,
     skillSources: listener.skillSourcesByConversation.get(runtimeKey)?.slice(),
-    activeChannelTurn: null,
     activeConnectionId: null,
     turnLifecycle,
     messageQueue: Promise.resolve(),
+    acceptedInputDispositions: new Map(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
     get lastStopReason() {

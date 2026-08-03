@@ -53,25 +53,35 @@ describe("listen reflection runtime state", () => {
     expect(recreated.contextTracker.pendingReflectionTrigger).toBe(true);
   });
 
-  test("listener reflection delegates MemFS root resolution to launcher", () => {
-    const turnPath = fileURLToPath(
-      new URL("./listener/turn.ts", import.meta.url),
+  test("automatic listener reflection uses the shared launcher", () => {
+    const turnEventsPath = fileURLToPath(
+      new URL("./listener/turn-events.ts", import.meta.url),
     );
-    const source = readFileSync(turnPath, "utf-8");
-
-    expect(source).not.toContain("memoryDir: getMemoryFilesystemRoot");
-    expect(source).not.toContain("memoryDir: getScopedMemoryFilesystemRoot");
-  });
-
-  test("listener lifecycle reflection uses the shared launcher", () => {
-    const lifecyclePath = fileURLToPath(
-      new URL("./listener/lifecycle.ts", import.meta.url),
-    );
-    const source = readFileSync(lifecyclePath, "utf-8");
+    const source = readFileSync(turnEventsPath, "utf-8");
 
     expect(source).toContain("launchReflectionSubagent({");
     expect(source).not.toContain("buildReflectionSubagentPrompt({");
     expect(source).not.toContain("memoryDir: getMemoryFilesystemRoot");
     expect(source).not.toContain("memoryDir: getScopedMemoryFilesystemRoot");
+  });
+
+  test("channel reflection delegates to the listener shared-launcher command", () => {
+    const gatewayPath = fileURLToPath(
+      new URL("../channels/gateway-local.ts", import.meta.url),
+    );
+    const commandsPath = fileURLToPath(
+      new URL("./listener/commands.ts", import.meta.url),
+    );
+    const gatewaySource = readFileSync(gatewayPath, "utf-8");
+    const commandsSource = readFileSync(commandsPath, "utf-8");
+
+    expect(gatewaySource).toContain("registry.setReflectionHandler");
+    expect(gatewaySource).toContain('executeRemoteCommand(runtime, "reflect")');
+    expect(commandsSource).toContain("launchReflectionSubagent({");
+    expect(commandsSource).not.toContain("buildReflectionSubagentPrompt({");
+    expect(commandsSource).not.toContain("memoryDir: getMemoryFilesystemRoot");
+    expect(commandsSource).not.toContain(
+      "memoryDir: getScopedMemoryFilesystemRoot",
+    );
   });
 });

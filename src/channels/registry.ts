@@ -415,7 +415,7 @@ export class ChannelRegistry {
 
   /**
    * Set the message handler and mark the registry as ready.
-   * Called from inside startListenerClient() with closure-scoped state.
+   * Called by the owning gateway after its App Server client is connected.
    */
   setMessageHandler(handler: ChannelMessageHandler): void {
     this.messageHandler = handler;

@@ -30,6 +30,7 @@ import {
   filterBuiltInToolNamesByClientAllowlist,
   GEMINI_DEFAULT_TOOLS,
   GEMINI_PASCAL_TOOLS,
+  getInternalToolName,
   getToolNames,
   isOpenAIModel,
   loadSpecificTools,
@@ -41,7 +42,7 @@ import {
   prepareToolExecutionContextForSpecificTools,
 } from "./manager";
 import type { PermissionModeState } from "./permission-mode-state";
-import type { ToolName } from "./tool-definitions";
+import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
 
 // Toolset definitions from manager.ts (single source of truth)
 
@@ -82,6 +83,40 @@ export type ToolsetName =
   | "gemini_snake"
   | "none";
 export type ToolsetPreference = ToolsetName | "auto";
+
+export interface ClientToolsetConfig {
+  /** Request-scoped base toolset. Omitted preserves the runtime preference. */
+  base?: ToolsetPreference;
+  /** Additional bundled client tools to load before applying the allowlist. */
+  include?: string[];
+}
+
+function resolveIncludedToolNames(toolNames: string[] | undefined): ToolName[] {
+  if (!toolNames) return [];
+
+  return toolNames.map((toolName) => {
+    const internalName = getInternalToolName(toolName);
+    if (!Object.hasOwn(TOOL_DEFINITIONS, internalName)) {
+      throw new Error(`Unknown bundled client tool: ${toolName}`);
+    }
+    return internalName as ToolName;
+  });
+}
+
+function appendUniqueToolNames(
+  baseToolNames: ToolName[],
+  includedToolNames: ToolName[],
+): ToolName[] {
+  const result = [...baseToolNames];
+  const seen = new Set(result);
+  for (const toolName of includedToolNames) {
+    if (!seen.has(toolName)) {
+      result.push(toolName);
+      seen.add(toolName);
+    }
+  }
+  return result;
+}
 
 export function deriveToolsetFromModel(
   modelIdentifier: string,
@@ -189,6 +224,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   providerType?: string | null;
   conversationId?: string | null;
   toolsetPreference: ToolsetPreference;
+  clientToolset?: ClientToolsetConfig;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];
@@ -206,6 +242,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     providerType,
     conversationId,
     toolsetPreference,
+    clientToolset,
     exclude,
     clientToolAllowlist,
     externalToolScopeIds,
@@ -222,8 +259,10 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     modelIdentifier && modelIdentifier.length > 0
       ? (resolveModel(modelIdentifier) ?? modelIdentifier)
       : null;
+  const effectiveToolsetPreference = clientToolset?.base ?? toolsetPreference;
+  const includedToolNames = resolveIncludedToolNames(clientToolset?.include);
 
-  if (toolsetPreference === "auto") {
+  if (effectiveToolsetPreference === "auto") {
     const derivedToolset = effectiveModel
       ? deriveToolsetFromModel(effectiveModel, providerType)
       : "default";
@@ -245,6 +284,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       effectiveModel ?? undefined,
       {
         exclude,
+        include: includedToolNames,
         clientToolAllowlist,
         externalToolScopeIds,
         workingDirectory,
@@ -274,7 +314,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     modelIdentifier: effectiveModel,
     permissionMode:
       permissionModeState?.mode ?? runtimeContext?.permissionMode ?? null,
-    toolset: toolsetPreference,
+    toolset: effectiveToolsetPreference,
     workingDirectory,
   });
   const modCapabilities = mergeModAdapterCapabilities(
@@ -283,9 +323,10 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   );
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     filterBuiltInToolNamesByClientAllowlist(
-      getToolNamesForToolset(toolsetPreference, channelToolScope).filter(
-        (toolName) => (exclude ? !exclude.includes(toolName) : true),
-      ),
+      appendUniqueToolNames(
+        getToolNamesForToolset(effectiveToolsetPreference, channelToolScope),
+        includedToolNames,
+      ).filter((toolName) => (exclude ? !exclude.includes(toolName) : true)),
       clientToolAllowlist,
     ),
     {
@@ -304,7 +345,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
 
   return {
     preparedToolContext,
-    toolset: toolsetPreference,
+    toolset: effectiveToolsetPreference,
     toolsetPreference,
     effectiveModel,
     agent: null,
@@ -464,6 +505,7 @@ export async function prepareToolExecutionContextForScope(params: {
   overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
   exclude?: ToolName[];
+  clientToolset?: ClientToolsetConfig;
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];
   workingDirectory?: string;
@@ -483,6 +525,7 @@ export async function prepareToolExecutionContextForScope(params: {
     overrideProviderType,
     cachedEffectiveModel,
     exclude,
+    clientToolset,
     clientToolAllowlist,
     externalToolScopeIds,
     workingDirectory,
@@ -559,6 +602,7 @@ export async function prepareToolExecutionContextForScope(params: {
     providerType: effectiveProviderType,
     conversationId: conversationId ?? undefined,
     toolsetPreference,
+    clientToolset,
     exclude,
     clientToolAllowlist,
     externalToolScopeIds,

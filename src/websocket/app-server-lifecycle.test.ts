@@ -93,6 +93,68 @@ afterEach(() => {
 });
 
 describe("app-server startup lifecycle", () => {
+  test("a shared-runtime bind failure leaves the listener runtime usable", async () => {
+    const occupied = createServer();
+    await new Promise<void>((resolve) =>
+      occupied.listen(0, "127.0.0.1", resolve),
+    );
+    const port = (occupied.address() as AddressInfo).port;
+    const runtime = createRuntime();
+    runtime.connectionId = "outbound-listener";
+    runtime.connectionName = "primary listener";
+    const onWsEvent = mock(() => {});
+    runtime.onWsEvent = onWsEvent;
+    setActiveRuntime(runtime);
+
+    try {
+      await expect(
+        startAppServer({
+          listen: `ws://127.0.0.1:${port}`,
+          runtime,
+        }),
+      ).rejects.toMatchObject({ code: "EADDRINUSE" });
+      expect(getActiveRuntime()).toBe(runtime);
+      expect(runtime.intentionallyClosed).toBe(false);
+      expect(runtime.connectionId).toBe("outbound-listener");
+      expect(runtime.connectionName).toBe("primary listener");
+      expect(runtime.onWsEvent).toBe(onWsEvent);
+    } finally {
+      await new Promise<void>((resolve) => occupied.close(() => resolve()));
+    }
+  });
+
+  test("a shared App Server preserves and does not own the listener runtime", async () => {
+    const runtime = createRuntime();
+    runtime.connectionId = "outbound-listener";
+    runtime.connectionName = "primary listener";
+    const onWsEvent = mock(() => {});
+    runtime.onWsEvent = onWsEvent;
+    setActiveRuntime(runtime);
+    const handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      runtime,
+      connectionName: "channel loopback",
+    });
+    const client = new WebSocket(handle.controlUrl);
+    await waitForOpen(client);
+    await waitFor(
+      () => runtime.connections.size === 1,
+      "shared App Server connection was not attached to listener runtime",
+    );
+
+    expect(getActiveRuntime()).toBe(runtime);
+    expect([...runtime.connections.keys()][0]).toMatch(/^app-server-/);
+    expect(runtime.connectionId).toBe("outbound-listener");
+    expect(runtime.connectionName).toBe("primary listener");
+    expect(runtime.onWsEvent).toBe(onWsEvent);
+
+    closeClient(client);
+    await handle.close();
+
+    expect(getActiveRuntime()).toBe(runtime);
+    expect(runtime.intentionallyClosed).toBe(false);
+  });
+
   test("a bind failure preserves the active runtime and a later start succeeds", async () => {
     const occupied = createServer();
     await new Promise<void>((resolve) =>

@@ -1,0 +1,71 @@
+name: Feature request
+description: Propose a focused improvement to Letta Code
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, search existing issues and explain the concrete user problem rather than submitting a generated feature list.
+
+  - type: checkboxes
+    id: ai-disclosure
+    attributes:
+      label: AI Disclosure
+      description: |
+        All issue authors must comply with our [AI Usage Policy](https://github.com/letta-ai/letta-code/blob/main/AI_POLICY.md).
+        Select **exactly one** authorship option, identify every AI tool used below, and acknowledge the policy.
+      options:
+        - label: This issue was written entirely by a human
+        - label: This issue was written with AI assistance and **reviewed and edited by a human**
+        - label: I have read the [AI Policy](https://github.com/letta-ai/letta-code/blob/main/AI_POLICY.md) and agree to its terms
+          required: true
+    validations:
+      required: true
+
+  - type: input
+    id: ai-tools
+    attributes:
+      label: AI Tool(s) Used
+      description: List every AI tool used to research or write this issue. If no AI tool was used, enter `None`.
+      placeholder: "e.g. Letta Code and ChatGPT, or None"
+    validations:
+      required: true
+
+  - type: textarea
+    id: human-verification
+    attributes:
+      label: Human Verification
+      description: |
+        Copy and paste the following phrase **exactly**:
+        `I have personally reviewed this request, verified that it addresses a real use case, and take responsibility for its contents.`
+      placeholder: "I have personally reviewed this request, verified that it addresses a real use case, and take responsibility for its contents."
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: Describe the concrete workflow or limitation this request addresses.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Explain the behavior you want and why it solves the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe workarounds or alternative designs you evaluated.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add examples, screenshots, or related issues that help explain the request.

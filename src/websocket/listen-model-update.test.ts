@@ -36,11 +36,11 @@ function readModelToolsetCommandSource(): string {
   return readFileSync(commandPath, "utf-8");
 }
 
-function readListenerLifecycleSource(): string {
-  const lifecyclePath = fileURLToPath(
-    new URL("./listener/lifecycle.ts", import.meta.url),
+function readLocalChannelGatewaySource(): string {
+  const gatewayPath = fileURLToPath(
+    new URL("../channels/gateway-local.ts", import.meta.url),
   );
-  return readFileSync(lifecyclePath, "utf-8");
+  return readFileSync(gatewayPath, "utf-8");
 }
 
 class MockSocket {
@@ -621,23 +621,23 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
   });
 });
 
-describe("listen-client channel model command wiring", () => {
-  test("wireChannelIngress routes channel /model through the model update helpers", () => {
-    const source = readListenerLifecycleSource();
+describe("local channel gateway model command wiring", () => {
+  test("routes channel /model through the App Server model protocol", () => {
+    const source = readLocalChannelGatewaySource();
 
     expect(source).toContain("registry.setModelHandler");
-    expect(source).toContain("getCurrentModelStatusForRuntime({");
+    expect(source).toContain("gateway.getModelStatus(runtime)");
     expect(source).toContain(
       "buildChannelCurrentModelMessage(channelId, status)",
     );
     expect(source).toContain('modelIdentifier.toLowerCase() === "list"');
-    expect(source).toContain("buildListModelsResponse(");
-    expect(source).toContain("resolveModelForUpdate({");
-    expect(source).toContain("applyModelUpdateForRuntime({");
+    expect(source).toContain("client.request<ListModelsResponseMessage>(");
+    expect(source).toContain("client.request<UpdateModelResponseMessage>(");
     expect(source).toContain("settingsManager.getRecentModels()");
     expect(source).toContain(
-      "settingsManager.addRecentModel(resolvedModel.handle)",
+      "settingsManager.addRecentModel(response.model_handle ?? modelIdentifier)",
     );
+    expect(source).toContain("gateway.updateModelStatus(");
   });
 });
 
