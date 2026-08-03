@@ -45,6 +45,12 @@ const APP_SERVER_PONG_TIMEOUT_MS = 90000;
 
 export interface StartAppServerOptions {
   listen?: string;
+  /**
+   * Attach the server to an already-running listener runtime. The caller
+   * retains ownership of that runtime; closing the server only detaches its
+   * client sockets.
+   */
+  runtime?: ListenerRuntime;
   websocketAuth?: AppServerWebsocketAuthSettings;
   connectionName?: string;
   /** Serve OpenAI-compatible models, Chat Completions, and Responses routes. */
@@ -166,12 +172,18 @@ export async function startAppServer(
   const wss = new WebSocketServer({ noServer: true });
   let resolvedInfo: AppServerListeningInfo | null = null;
   let nextConnectionOrdinal = 0;
-  const runtime = createRuntime();
-  runtime.onWsEvent = undefined;
-  runtime.connectionId = "app-server";
-  runtime.connectionName = options.connectionName ?? hostname();
+  const runtime = options.runtime ?? createRuntime();
+  const ownsRuntime = options.runtime === undefined;
+  if (ownsRuntime) {
+    runtime.onWsEvent = undefined;
+    runtime.connectionId = "app-server";
+    runtime.connectionName = options.connectionName ?? hostname();
+  }
   let startupReady: Promise<void> | null = null;
   const getStartupReady = (): Promise<void> => {
+    if (!ownsRuntime) {
+      return Promise.resolve();
+    }
     if (startupReady) {
       return startupReady;
     }
@@ -369,18 +381,28 @@ export async function startAppServer(
     });
   } catch (error) {
     clearInterval(heartbeatInterval);
-    runtime.intentionallyClosed = true;
+    if (ownsRuntime) runtime.intentionallyClosed = true;
     throw error;
   }
 
-  const existingRuntime = getActiveRuntime();
-  if (existingRuntime) {
-    stopRuntime(existingRuntime, true);
-    setActiveRuntime(null);
+  if (ownsRuntime) {
+    const existingRuntime = getActiveRuntime();
+    if (existingRuntime) {
+      stopRuntime(existingRuntime, true);
+      setActiveRuntime(null);
+    }
+    setActiveRuntime(runtime);
+  } else if (getActiveRuntime() !== runtime) {
+    clearInterval(heartbeatInterval);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    throw new Error(
+      "Shared app-server runtime must be the active listener runtime",
+    );
   }
-  setActiveRuntime(runtime);
-  telemetry.setSurface(getListenerTelemetrySurface());
-  telemetry.init();
+  if (ownsRuntime) {
+    telemetry.setSurface(getListenerTelemetrySurface());
+    telemetry.init();
+  }
 
   const address = getRequiredAddressInfo(server);
   const baseUrl = `ws://${listen.host}:${address.port}`;
@@ -400,7 +422,7 @@ export async function startAppServer(
       for (const client of wss.clients) {
         terminateSocket(client);
       }
-      if (getActiveRuntime() === runtime) {
+      if (ownsRuntime && getActiveRuntime() === runtime) {
         stopRuntime(runtime, true);
         setActiveRuntime(null);
       }

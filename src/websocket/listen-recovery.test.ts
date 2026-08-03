@@ -13,20 +13,11 @@ import {
   __testOverrideSavePendingControlRequestStore,
   clearPendingControlRequestStore,
 } from "@/channels/pending-control-requests";
-import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
-import type {
-  ChannelAdapter,
-  ChannelControlRequestEvent,
-} from "@/channels/types";
+import { getChannelRegistry } from "@/channels/registry";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
-import { createConnectionRequestKey } from "@/websocket/listener/connection";
-import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
-import type { ConversationRuntime } from "@/websocket/listener/types";
 
 const {
   createRuntime,
-  createListenerRuntime,
-  recoverPendingChannelControlRequests,
   resolveRecoveryBatchId,
   resolvePendingApprovalBatchId,
   rememberPendingApprovalBatchIds,
@@ -41,69 +32,6 @@ afterEach(async () => {
   __testOverrideSavePendingControlRequestStore(null);
   clearPendingControlRequestStore();
 });
-
-function createPendingControlRequestEvent(
-  overrides: Partial<ChannelControlRequestEvent> = {},
-): ChannelControlRequestEvent {
-  return {
-    requestId: "perm-tool-call-1",
-    kind: "ask_user_question",
-    source: {
-      channel: "slack",
-      accountId: "acct-slack",
-      chatId: "C123",
-      chatType: "channel",
-      messageId: "1712800000.000100",
-      threadId: "1712790000.000050",
-      agentId: "agent-1",
-      conversationId: "conv-1",
-    },
-    toolName: "AskUserQuestion",
-    input: {
-      questions: [
-        {
-          question: "Which approach should we use?",
-          header: "Approach",
-          options: [
-            {
-              label: "Fast path",
-              description: "Ship the smallest safe patch",
-            },
-            {
-              label: "Deep refactor",
-              description: "Restructure the code more thoroughly",
-            },
-          ],
-          multiSelect: false,
-        },
-      ],
-    },
-    ...overrides,
-  };
-}
-
-function createAdapter(
-  replies: Array<{ chatId: string; text: string; replyToMessageId?: string }>,
-): ChannelAdapter {
-  return {
-    id: "slack:acct-slack",
-    channelId: "slack",
-    accountId: "acct-slack",
-    name: "Slack",
-    start: async () => {},
-    stop: async () => {},
-    isRunning: () => true,
-    sendMessage: async () => ({ messageId: "msg-1" }),
-    sendDirectReply: async (chatId, text, options) => {
-      replies.push({
-        chatId,
-        text,
-        replyToMessageId: options?.replyToMessageId,
-      });
-    },
-    onMessage: undefined,
-  };
-}
 
 describe("resolveRecoveryBatchId cold-start", () => {
   test("empty batch map returns synthetic recovery-* batch ID", () => {
@@ -233,148 +161,5 @@ describe("resolvePendingApprovalBatchId original behavior preserved", () => {
       { toolCallId: "call-2" },
     ]);
     expect(batchId).toBeNull();
-  });
-});
-
-describe("channel control request recovery", () => {
-  test("recognizes a live pending approval stored under a composite key", async () => {
-    const replies: Array<{
-      chatId: string;
-      text: string;
-      replyToMessageId?: string;
-    }> = [];
-    const event = createPendingControlRequestEvent();
-    __testOverrideLoadPendingControlRequestStore(() => ({
-      requests: [event],
-    }));
-
-    const registry = new ChannelRegistry();
-    registry.registerAdapter(createAdapter(replies));
-    const listener = createListenerRuntime();
-    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
-    const requestKey = createConnectionRequestKey("client-a", event.requestId);
-    runtime.pendingApprovalResolvers.set(requestKey, {
-      requestId: event.requestId,
-      connectionIds: new Set(["client-a"]),
-      resolve: () => {},
-      reject: () => {},
-      controlRequest: {
-        type: "control_request",
-        request_id: event.requestId,
-        request: {
-          subtype: "can_use_tool",
-          tool_name: event.toolName,
-          input: event.input,
-          tool_call_id: "tool-call-1",
-          permission_suggestions: [],
-          blocked_path: null,
-        },
-      },
-    });
-    let backendRecoveryCalls = 0;
-
-    await recoverPendingChannelControlRequests(listener, {
-      recoverApprovalStateForSync: async () => {
-        backendRecoveryCalls += 1;
-      },
-    });
-
-    expect(backendRecoveryCalls).toBe(0);
-    expect(replies).toHaveLength(1);
-    expect(registry.hasPendingControlRequest(event.requestId)).toBe(true);
-  });
-
-  test("redelivers persisted channel prompts that are still pending after boot", async () => {
-    const replies: Array<{
-      chatId: string;
-      text: string;
-      replyToMessageId?: string;
-    }> = [];
-    const event = createPendingControlRequestEvent();
-    __testOverrideLoadPendingControlRequestStore(() => ({
-      requests: [event],
-    }));
-
-    const registry = new ChannelRegistry();
-    registry.registerAdapter(createAdapter(replies));
-    const listener = createListenerRuntime();
-    let recoveredRuntime: ConversationRuntime | undefined;
-
-    await recoverPendingChannelControlRequests(listener, {
-      recoverApprovalStateForSync: async (runtime) => {
-        recoveredRuntime = runtime;
-        runtime.recoveredApprovalState = {
-          agentId: "agent-1",
-          conversationId: "conv-1",
-          approvalsByRequestId: new Map([
-            [
-              event.requestId,
-              {
-                approval: {} as never,
-                approvalContext: null,
-                controlRequest: {
-                  type: "control_request",
-                  request_id: event.requestId,
-                  request: {
-                    subtype: "can_use_tool",
-                    tool_name: event.toolName,
-                    input: event.input,
-                    tool_call_id: "tool-call-1",
-                    permission_suggestions: [],
-                    blocked_path: null,
-                  },
-                  agent_id: "agent-1",
-                  conversation_id: "conv-1",
-                },
-              },
-            ],
-          ]),
-          pendingRequestIds: new Set([event.requestId]),
-          responsesByRequestId: new Map(),
-        };
-      },
-    });
-
-    expect(replies).toEqual([
-      {
-        chatId: "C123",
-        text: expect.stringContaining(
-          "SYSTEM MESSAGE — reply required to continue",
-        ),
-        replyToMessageId: "1712790000.000050",
-      },
-    ]);
-    expect(registry.hasPendingControlRequest(event.requestId)).toBe(true);
-    expect(recoveredRuntime?.activeChannelTurn?.sources).toEqual([
-      event.source,
-    ]);
-    expect(recoveredRuntime?.activeChannelTurn?.contextRecovered).toBe(true);
-    expect(recoveredRuntime?.activeChannelTurn?.progress).not.toBeNull();
-  });
-
-  test("clears persisted channel prompts that are no longer pending", async () => {
-    const saveSnapshots: Array<{ requests: ChannelControlRequestEvent[] }> = [];
-    const event = createPendingControlRequestEvent();
-    __testOverrideLoadPendingControlRequestStore(() => ({
-      requests: [event],
-    }));
-    __testOverrideSavePendingControlRequestStore((store) => {
-      saveSnapshots.push({
-        requests: store.requests,
-      });
-    });
-
-    const registry = new ChannelRegistry();
-    registry.registerAdapter(createAdapter([]));
-    const listener = createListenerRuntime();
-
-    await recoverPendingChannelControlRequests(listener, {
-      recoverApprovalStateForSync: async (runtime) => {
-        runtime.recoveredApprovalState = null;
-      },
-    });
-
-    expect(registry.hasPendingControlRequest(event.requestId)).toBe(false);
-    expect(saveSnapshots.at(-1)).toEqual({ requests: [] });
   });
 });

@@ -255,6 +255,7 @@ describe("listener turn lifecycle integration", () => {
         drainResult: { stopReason: "error" } as never,
         agentId: "agent-1",
         conversationId: "conv-1",
+        turnId: "test-turn-1",
       },
     );
 

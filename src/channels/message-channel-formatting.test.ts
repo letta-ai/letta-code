@@ -5,7 +5,7 @@ import {
   markdownToSignalTextStyles,
   markdownToSlackMrkdwn,
   markdownToTelegramHtml,
-} from "@/tools/impl/message-channel";
+} from "@/channels/message-channel-formatting";
 
 test("formats Telegram markdown as HTML", () => {
   const formatted = formatOutboundChannelMessage(

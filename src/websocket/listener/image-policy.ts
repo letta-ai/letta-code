@@ -5,13 +5,13 @@ import {
 import type { IncomingMessage } from "./types";
 
 export function getInboundImageFailureMode(
-  incoming?: Pick<IncomingMessage, "channelTurnSources">,
+  incoming?: Pick<IncomingMessage, "imageFailureMode">,
 ): "strict" | "drop" {
-  return (incoming?.channelTurnSources?.length ?? 0) > 0 ? "drop" : "strict";
+  return incoming?.imageFailureMode ?? "strict";
 }
 
 export function getInboundImageFailureModes(
-  incoming: Pick<IncomingMessage, "channelTurnSources" | "messages">,
+  incoming: Pick<IncomingMessage, "imageFailureMode" | "messages">,
 ): ImageFailureModesByMessageOtid | undefined {
   return getInboundImageFailureMode(incoming) === "drop"
     ? buildImageFailureModesByMessageOtid(incoming.messages, "drop")

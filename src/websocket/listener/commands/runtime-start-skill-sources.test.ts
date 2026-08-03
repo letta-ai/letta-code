@@ -61,4 +61,60 @@ describe("runtime_start skill sources", () => {
       await rm(storageDir, { recursive: true, force: true });
     }
   });
+
+  test("wait_for_replay delays the response until recovery replay completes", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "runtime-replay-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Replay synchronized worker",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const listener = createRuntime();
+      const order: string[] = [];
+      let finishReplay!: () => void;
+      const replayBlocked = new Promise<void>((resolve) => {
+        finishReplay = resolve;
+      });
+
+      const start = handleRuntimeStartCommand(
+        {
+          type: "runtime_start",
+          request_id: "runtime-wait-for-replay",
+          agent_id: agent.id,
+          conversation_id: "default",
+          recover_approvals: true,
+          wait_for_replay: true,
+        },
+        {
+          socket: {} as WebSocket,
+          connectionId: "test-connection",
+          runtime: listener,
+          safeSocketSend: () => {
+            order.push("response");
+            return true;
+          },
+          runDetachedListenerTask: () => {},
+          getOrCreateScopedRuntime,
+          replaySyncStateForRuntime: async () => {
+            order.push("replay-start");
+            await replayBlocked;
+            order.push("replay-end");
+          },
+        },
+      );
+
+      while (order.length === 0) await Bun.sleep(1);
+      expect(order).toEqual(["replay-start"]);
+      finishReplay();
+      await start;
+      expect(order).toEqual(["replay-start", "replay-end", "response"]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
 });

@@ -67,13 +67,13 @@ import { telemetry } from "@/telemetry";
 import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
+import { serializeClientTools } from "./client-tool-serialization";
 import { toolFilter } from "./filter";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import {
   functionToolForm,
   type JsonSchema,
   type ModelFacingToolForm,
-  serializeFunctionOnlyToolPayload,
 } from "./model-facing-tool";
 import {
   getEffectivePermissionModeState,
@@ -1089,32 +1089,12 @@ function buildClientToolsFromSnapshot(
   externalTools: Map<string, ExternalToolDefinition>,
   modTools: Map<string, ModToolDefinition>,
 ): ClientTool[] {
-  const builtInTools = Array.from(registry.entries()).map(([name, tool]) =>
-    serializeFunctionOnlyToolPayload(getServerToolName(name), tool.modelForm),
+  return serializeClientTools(
+    registry,
+    externalTools,
+    modTools,
+    getServerToolName,
   );
-  for (const name of externalTools.keys()) {
-    if (modTools.has(name)) {
-      debugLog(
-        "tools",
-        "mod tool %s shadows external tool with same name",
-        name,
-      );
-    }
-  }
-  const externalClientTools = Array.from(externalTools.values())
-    .filter((tool) => !modTools.has(tool.name))
-    .map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    }));
-  const modClientTools = Array.from(modTools.values()).map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters,
-  }));
-
-  return [...builtInTools, ...externalClientTools, ...modClientTools];
 }
 
 function capturePreparedToolExecutionContext(

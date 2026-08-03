@@ -2,7 +2,6 @@ import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agen
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
-import { getChannelRegistry } from "@/channels/registry";
 import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
@@ -11,6 +10,7 @@ import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import { settingsManager } from "@/settings-manager";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   DeviceStatus,
   DeviceStatusUpdateMessage,
@@ -31,10 +31,6 @@ import type {
 } from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
 import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
-import {
-  type ChannelTurnRuntimeCarrier,
-  getActiveChannelTurnProgressContext,
-} from "./channel-turn-session";
 import {
   nextListenerConnectionEventSeq,
   resolveListenerConnectionTargets,
@@ -398,11 +394,14 @@ const COALESCABLE_STATUS_MESSAGE_TYPES: ReadonlySet<string> = new Set([
   "update_subagent_state",
 ]);
 
+type OutboundProtocolMessage = WsProtocolMessage extends infer TMessage
+  ? TMessage extends WsProtocolMessage
+    ? Omit<TMessage, "runtime" | "event_seq" | "emitted_at" | "idempotency_key">
+    : never
+  : never;
+
 function classifyOutboundFrame(
-  message: Omit<
-    WsProtocolMessage,
-    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
-  >,
+  message: OutboundProtocolMessage,
 ): OutboundFrameClass {
   return COALESCABLE_STATUS_MESSAGE_TYPES.has(message.type)
     ? "status"
@@ -411,10 +410,7 @@ function classifyOutboundFrame(
 export function emitProtocolV2Message(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
-  message: Omit<
-    WsProtocolMessage,
-    "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
-  >,
+  message: OutboundProtocolMessage,
   scope:
     | {
         agent_id?: string | null;
@@ -496,6 +492,25 @@ export function emitProtocolV2Message(
         });
       },
     });
+  }
+}
+
+export function broadcastServiceProtocolMessage(
+  runtime: ListenerRuntime,
+  message: WsProtocolMessage,
+): void {
+  const payload = JSON.stringify(message);
+  for (const connection of runtime.connections.values()) {
+    if (!isListenerTransportOpen(connection.writer)) continue;
+    try {
+      connection.writer.send(payload);
+    } catch (error) {
+      trackBoundaryError({
+        context: "listener_service_event_broadcast",
+        errorType: "listener_service_event_send_failed",
+        error,
+      });
+    }
   }
 }
 
@@ -938,35 +953,6 @@ export function createLifecycleMessageBase<TMessageType extends string>(
   };
 }
 
-function dispatchChannelTurnProgressFromDelta(
-  runtime: RuntimeCarrier,
-  delta: StreamDelta,
-): void {
-  if (!runtime || !("activeChannelTurn" in runtime)) return;
-  const context = getActiveChannelTurnProgressContext(
-    runtime as ChannelTurnRuntimeCarrier,
-  );
-  if (!context) {
-    return;
-  }
-  const updates = context.progressBuilder.buildUpdates(delta);
-  if (updates.length === 0) {
-    return;
-  }
-  const registry = getChannelRegistry();
-  if (!registry) {
-    return;
-  }
-  for (const update of updates) {
-    void registry.dispatchTurnProgressEvent({
-      type: "progress",
-      sources: context.sources,
-      ...update,
-      ...(context.batchId ? { batchId: context.batchId } : {}),
-    });
-  }
-}
-
 export function emitCanonicalMessageDelta(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -977,7 +963,6 @@ export function emitCanonicalMessageDelta(
   },
 ): void {
   emitStreamDelta(socket, runtime, delta, scope);
-  dispatchChannelTurnProgressFromDelta(runtime, delta);
 }
 
 export function emitLoopErrorDelta(

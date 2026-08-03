@@ -33,6 +33,7 @@ export function subcommandNeedsEarlyBackendMode(
 ): boolean {
   switch (command) {
     case "app-server":
+    case "channel-gateway":
     case "agents":
     case "connect":
     case "dream":
@@ -102,6 +103,10 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runDreamSubcommand(rest);
     case "channels":
       return runChannelsSubcommand(rest);
+    case "channel-gateway": {
+      const { runChannelGatewaySubcommand } = await import("./channel-gateway");
+      return runChannelGatewaySubcommand(rest);
+    }
     case "local-backend":
       return runLocalBackendSubcommand(rest);
     case "trajectories":
