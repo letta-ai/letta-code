@@ -17,7 +17,8 @@ import {
   registerPiProvider,
 } from "@/backend/dev/pi-provider-mod-registry";
 import { settingsManager } from "@/settings-manager";
-import { ModelSelector } from "./ModelSelector";
+import { deriveToolsetFromModel } from "@/tools/toolset";
+import { ModelSelector, type ModelSelectorSelection } from "./ModelSelector";
 import { ProviderSelector } from "./ProviderSelector";
 
 class CaptureStream extends Writable {
@@ -162,6 +163,59 @@ describe("provider mod selector refresh", () => {
     await waitForOutput(stdout, "late-provider/late-model");
 
     expect(stdout.read()).toContain("late-provider/late-model");
+  });
+
+  test("preserves OAuth provider identity for custom aliases in the All category", async () => {
+    const handle = "chatgpt-cameron/gpt-5.6-sol";
+    const backend = new FakeHeadlessBackend();
+    backend.listModels = async () =>
+      [
+        {
+          handle,
+          display_name: "gpt-5.6-sol",
+          provider_type: "chatgpt_oauth",
+          provider_category: "byok",
+        },
+      ] as never;
+    __testSetBackend(backend);
+    clearAvailableModelsCache();
+
+    const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
+    const stdin = createInputStream();
+    let resolveSelection: (selection: ModelSelectorSelection) => void =
+      () => {};
+    const selected = new Promise<ModelSelectorSelection>((resolve) => {
+      resolveSelection = resolve;
+    });
+    const instance = render(
+      <ModelSelector
+        onCancel={() => {}}
+        onSelect={(selection) => resolveSelection(selection)}
+      />,
+      {
+        stdout,
+        stdin,
+        debug: true,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      },
+    );
+    renderedInstances.add(instance);
+
+    await waitForOutput(stdout, handle);
+    stdin.push("\r");
+    const selection = await selected;
+
+    expect(selection).toMatchObject({
+      handle,
+      updateArgs: { provider_type: "chatgpt_oauth" },
+    });
+    expect(
+      deriveToolsetFromModel(
+        selection.handle,
+        selection.updateArgs?.provider_type as string,
+      ),
+    ).toBe("codex");
   });
 
   test("refreshes an open provider selector when a provider registers", async () => {
