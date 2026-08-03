@@ -250,6 +250,7 @@ describe("channel slash commands", () => {
       "pause",
       "resume",
       "cancel",
+      "compact",
       "chat",
       "feedback",
       "model",
@@ -265,7 +266,7 @@ describe("channel slash commands", () => {
     expect(text).toContain("Telegram is connected to Letta Code.");
     expect(text).not.toContain("MessageChannel");
     expect(text).toContain(
-      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection, /reload.",
+      "Supported slash commands here: /help, /status, /whoami, /pause, /resume, /cancel, /compact, /chat, /feedback, /model, /reflection, /reload.",
     );
 
     const slackText = buildChannelHelpMessage("slack");
@@ -284,12 +285,15 @@ describe("channel slash commands", () => {
       "@agent /model <handle-or-id> - switch this thread's model",
     );
     expect(slackText).toContain("@agent /feedback <message>");
+    expect(slackText).toContain(
+      "@agent /compact - summarize this thread's active conversation history",
+    );
     expect(slackText).toContain("@agent /detach");
     expect(slackText).toContain(
       "@agent /reload - reload settings, local mods, and agent secrets",
     );
     expect(slackText).toContain(
-      "Legacy bang aliases still work after a mention: !help, !detach, !model, !new, !reload.",
+      "Legacy bang aliases still work after a mention: !help, !compact, !detach, !model, !new, !reload.",
     );
   });
 
@@ -834,17 +838,17 @@ describe("channel slash commands", () => {
   });
 
   test("builds a useful unsupported-command response", () => {
-    const command = parseChannelSlashCommand("/compact now");
+    const command = parseChannelSlashCommand("/doctor now");
     expect(command).not.toBeNull();
     if (!command) {
-      throw new Error("Expected /compact to parse as a channel slash command");
+      throw new Error("Expected /doctor to parse as a channel slash command");
     }
 
     const text = buildUnsupportedChannelCommandMessage("telegram", command);
-    expect(text).toContain("Telegram received /compact now");
+    expect(text).toContain("Telegram received /doctor now");
     expect(text).toContain("not supported in channels yet");
     expect(text).toContain(
-      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /chat, /feedback, /model, /reflection, /reload.",
+      "Supported slash commands: /help, /status, /whoami, /pause, /resume, /cancel, /compact, /chat, /feedback, /model, /reflection, /reload.",
     );
     expect(text).toContain("without a leading slash");
 
@@ -867,7 +871,7 @@ describe("channel slash commands", () => {
     );
     expect(bangText).toContain("Slack received !pause");
     expect(bangText).toContain(
-      "Supported bang commands: !help, !detach, !model, !new, !reload.",
+      "Supported bang commands: !help, !compact, !detach, !model, !new, !reload.",
     );
   });
 });

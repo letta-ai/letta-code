@@ -57,6 +57,7 @@ import {
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
 } from "./secrets-sync";
+import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
 import { buildMaybeLaunchReflectionSubagent } from "./turn-events";
 import type { ConversationRuntime, StartListenerOptions } from "./types";
@@ -454,8 +455,8 @@ function compactHelpOutput(): string {
 }
 
 /** /compact — Summarize conversation history through the active Backend. */
-async function handleCompactCommand(
-  socket: WebSocket,
+export async function handleCompactCommand(
+  socket: ListenerTransport,
   conversationRuntime: ConversationRuntime,
   args: string | undefined,
 ): Promise<string> {

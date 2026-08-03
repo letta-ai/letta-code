@@ -216,7 +216,7 @@ describe("ChannelRegistry command routing", () => {
       chatId: "123",
       senderId: "456",
       senderName: "Alice",
-      text: "/compact now",
+      text: "/doctor now",
       timestamp: Date.now(),
       messageId: "77",
       chatType: "direct",
@@ -229,7 +229,7 @@ describe("ChannelRegistry command routing", () => {
       replyToMessageId: "77",
     });
     expect(replies[0]?.text).toContain(
-      "Telegram received /compact now, but that slash command is not supported in channels yet.",
+      "Telegram received /doctor now, but that slash command is not supported in channels yet.",
     );
   });
 

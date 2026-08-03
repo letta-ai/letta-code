@@ -35,6 +35,7 @@ import {
 import type { ChannelRegistryEvent } from "./registry-events";
 import type {
   ChannelCancelHandler,
+  ChannelCompactHandler,
   ChannelInboundDelivery,
   ChannelMessageHandler,
   ChannelModelHandler,
@@ -164,6 +165,7 @@ export class ChannelRegistry {
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
   private approvalResponseHandler: ChannelApprovalResponseHandler | null = null;
   private cancelHandler: ChannelCancelHandler | null = null;
+  private compactHandler: ChannelCompactHandler | null = null;
   private reflectionHandler: ChannelReflectionHandler | null = null;
   private modelHandler: ChannelModelHandler | null = null;
   private reloadHandler: ChannelReloadHandler | null = null;
@@ -195,6 +197,7 @@ export class ChannelRegistry {
       getRoute: (channel, chatId, accountId, threadId) =>
         this.getRoute(channel, chatId, accountId, threadId),
       getCancelHandler: () => this.cancelHandler,
+      getCompactHandler: () => this.compactHandler,
       getReflectionHandler: () => this.reflectionHandler,
       getReloadHandler: () => this.reloadHandler,
       getModelHandler: () => this.modelHandler,
@@ -429,6 +432,10 @@ export class ChannelRegistry {
 
   setCancelHandler(handler: ChannelCancelHandler | null): void {
     this.cancelHandler = handler;
+  }
+
+  setCompactHandler(handler: ChannelCompactHandler | null): void {
+    this.compactHandler = handler;
   }
 
   setReflectionHandler(handler: ChannelReflectionHandler | null): void {
