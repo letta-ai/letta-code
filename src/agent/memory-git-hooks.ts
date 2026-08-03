@@ -9,12 +9,15 @@
 
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT,
+  LEGACY_MEMORY_POLICY_PATH,
+  MEMORY_POLICY_CHANGE_APPROVAL_ENV,
+  MEMORY_POLICY_CHANGE_APPROVAL_FILE,
+  MEMORY_POLICY_PATH,
+} from "@/agent/memory-policy";
 import { debugLog } from "@/utils/debug";
 import { SYSTEM_PROMPT_BYTES_PER_TOKEN } from "@/utils/system-prompt-size";
-
-export const DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT = 20_000;
-export const SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG =
-  "letta.systemPromptTokenLimit";
 
 /**
  * Bash pre-commit hook that validates frontmatter in memory .md files.
@@ -39,7 +42,10 @@ PROTECTED_KEYS="read_only"
 ALL_KNOWN_KEYS="description read_only limit"
 DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT=${DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT}
 SYSTEM_PROMPT_BYTES_PER_TOKEN=${SYSTEM_PROMPT_BYTES_PER_TOKEN}
-SYSTEM_PROMPT_TOKEN_LIMIT_CONFIG="${SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG}"
+MEMORY_POLICY_PATH="${MEMORY_POLICY_PATH}"
+LEGACY_MEMORY_POLICY_PATH="${LEGACY_MEMORY_POLICY_PATH}"
+MEMORY_POLICY_CHANGE_APPROVAL_ENV="${MEMORY_POLICY_CHANGE_APPROVAL_ENV}"
+MEMORY_POLICY_CHANGE_APPROVAL_FILE="${MEMORY_POLICY_CHANGE_APPROVAL_FILE}"
 errors=""
 
 # Skills must always be directories: skills/<name>/SKILL.md
@@ -165,36 +171,59 @@ for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memor
   fi
 done
 
+# Memory policy is tracked but protected from ordinary agent commits. The
+# approval-gated letta memory token-limit command sets this process-only marker.
+if ! git diff --cached --quiet -- "$MEMORY_POLICY_PATH" "$LEGACY_MEMORY_POLICY_PATH"; then
+  approval_file=$(git rev-parse --git-path "$MEMORY_POLICY_CHANGE_APPROVAL_FILE")
+  approval_token="\${!MEMORY_POLICY_CHANGE_APPROVAL_ENV:-}"
+  stored_approval_token=""
+  if [ -f "$approval_file" ]; then
+    stored_approval_token=$(cat "$approval_file")
+  fi
+  rm -f "$approval_file"
+  if [ -z "$approval_token" ] || [ "$approval_token" != "$stored_approval_token" ]; then
+    errors="$errors\\n  memory policy is protected; use: letta memory token-limit set <tokens>"
+  fi
+fi
+
+# Read the policy from the staged snapshot so an unstaged edit cannot affect a
+# commit. The restricted one-key YAML format avoids executing policy content.
+policy_path=""
+for candidate in "$MEMORY_POLICY_PATH" "$LEGACY_MEMORY_POLICY_PATH"; do
+  if git cat-file -e ":$candidate" 2>/dev/null; then
+    policy_path="$candidate"
+    break
+  fi
+done
+
+system_prompt_token_limit=$DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT
+if [ -n "$policy_path" ]; then
+  policy_content=$(git show ":$policy_path")
+  policy_lines=$(printf '%s\\n' "$policy_content" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -Ev '^($|#)' || true)
+  policy_count=$(printf '%s\\n' "$policy_lines" | grep -c . || true)
+  policy_value=$(printf '%s\\n' "$policy_lines" | sed -nE 's/^system_prompt_token_limit:[[:space:]]*([0-9]+)$/\\1/p')
+  if [ "$policy_count" -ne 1 ] || [ -z "$policy_value" ] || [ "$policy_value" -le 0 ] 2>/dev/null; then
+    errors="$errors\\n  $policy_path: expected exactly 'system_prompt_token_limit: <positive integer>'"
+  else
+    system_prompt_token_limit=$policy_value
+  fi
+fi
+
 # Estimate the complete staged system prompt, not the working tree. This uses
 # the same bytes-per-token heuristic as the letta memory tokens command and sums the
 # rounded estimate for each markdown file. The optional memory/ prefix supports
 # legacy MemFS repos.
-system_prompt_token_limit=$(git config --local --get "$SYSTEM_PROMPT_TOKEN_LIMIT_CONFIG" 2>/dev/null || true)
-if [ -z "$system_prompt_token_limit" ]; then
-  system_prompt_token_limit=$DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT
+system_prompt_tokens=0
+while IFS= read -r -d '' file; do
+  bytes=$(git cat-file -s ":$file")
+  file_tokens=$(( (bytes + SYSTEM_PROMPT_BYTES_PER_TOKEN - 1) / SYSTEM_PROMPT_BYTES_PER_TOKEN ))
+  system_prompt_tokens=$((system_prompt_tokens + file_tokens))
+done < <(git ls-files -z -- 'system/*.md' 'memory/system/*.md')
+
+if [ "$system_prompt_tokens" -ge "$system_prompt_token_limit" ]; then
+  errors="$errors\\n  system prompt is approximately $system_prompt_tokens tokens; it must be less than $system_prompt_token_limit tokens"
+  errors="$errors\\n  Reduce files under system/, or request approval for: letta memory token-limit set <tokens>"
 fi
-
-case "$system_prompt_token_limit" in
-  *[!0-9]*|"")
-    errors="$errors\\n  invalid $SYSTEM_PROMPT_TOKEN_LIMIT_CONFIG value '$system_prompt_token_limit' (expected a positive integer, or 0 to disable)"
-    ;;
-  0)
-    # Explicitly disabled for this memory repo.
-    ;;
-  *)
-    system_prompt_tokens=0
-    while IFS= read -r -d '' file; do
-      bytes=$(git cat-file -s ":$file")
-      file_tokens=$(( (bytes + SYSTEM_PROMPT_BYTES_PER_TOKEN - 1) / SYSTEM_PROMPT_BYTES_PER_TOKEN ))
-      system_prompt_tokens=$((system_prompt_tokens + file_tokens))
-    done < <(git ls-files -z -- 'system/*.md' 'memory/system/*.md')
-
-    if [ "$system_prompt_tokens" -ge "$system_prompt_token_limit" ]; then
-      errors="$errors\\n  system prompt is approximately $system_prompt_tokens tokens; it must be less than $system_prompt_token_limit tokens"
-      errors="$errors\\n  Reduce files under system/, or configure this repo with: git config --local $SYSTEM_PROMPT_TOKEN_LIMIT_CONFIG <tokens>"
-    fi
-    ;;
-esac
 
 if [ -n "$errors" ]; then
   echo "MemFS pre-commit validation failed:"

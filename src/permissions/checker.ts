@@ -18,6 +18,7 @@ import type { ModContext } from "@/mods/types";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
+import { envFlagEnabled, getConfigApproval } from "./config-approval";
 import { evaluateCrossAgentGuard, extractFilePath } from "./cross-agent-guard";
 import {
   type MatcherOptions,
@@ -101,26 +102,17 @@ const FILE_TOOLS_V1 = [
 ];
 
 type ToolArgs = Record<string, unknown>;
-
 interface ModPermissionCheckOptions {
   conversationId?: string | null;
   modContext?: ModContext | null;
   phase?: "approval" | "execution";
   toolCallId?: string | null;
 }
-
-function envFlagEnabled(name: string): boolean {
-  const value = process.env[name];
-  if (!value) return false;
-  return value === "1" || value.toLowerCase() === "true";
-}
-
 function isPermissionsV2Enabled(): boolean {
   const value = process.env.LETTA_PERMISSIONS_V2;
   if (!value) return true;
   return !(value === "0" || value.toLowerCase() === "false");
 }
-
 function shouldAttachTrace(result: PermissionCheckResult): boolean {
   if (envFlagEnabled("LETTA_PERMISSION_TRACE_ALL")) {
     return true;
@@ -361,6 +353,10 @@ function checkPermissionForEngine(
       };
     }
   }
+
+  const protectedConfigApproval = getConfigApproval(toolName, toolArgs);
+  if (protectedConfigApproval)
+    return { result: protectedConfigApproval, trace };
 
   if (sessionRules.alwaysAsk) {
     for (const pattern of sessionRules.alwaysAsk) {

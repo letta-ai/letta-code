@@ -116,15 +116,14 @@ Measure the current working-tree estimate with the shared estimator:
 letta memory tokens --format json --quiet --memory-dir "$MEMORY_DIR"
 ```
 
-The hook evaluates the staged Git snapshot, so stage the intended memory changes before comparing its result with the CLI estimate. Configure the limit per memory repo through local Git config:
+The hook evaluates the staged Git snapshot, so stage the intended memory changes before comparing its result with the CLI estimate. Read or configure the tracked memory policy with:
 
 ```bash
-cd "$MEMORY_DIR"
-git config --local --get letta.systemPromptTokenLimit
-git config --local letta.systemPromptTokenLimit 30000
+letta memory token-limit get --memory-dir "$MEMORY_DIR"
+letta memory token-limit set 30000 --memory-dir "$MEMORY_DIR"
 ```
 
-The configured value is exclusive: `20000` requires an estimate below 20,000 tokens. Set it to `0` only when the user explicitly asks to disable enforcement. Prefer moving non-core material out of `system/` rather than raising the limit automatically. The local Git setting is not synced with memory content, so configure each memory-repo checkout that needs a non-default limit.
+The configured value is exclusive: `20000` requires an estimate below 20,000 tokens. Prefer moving non-core material out of `system/` rather than raising the limit automatically. The setting lives in tracked `system/.letta-policy.yml`, syncs with the memory repo, and cannot be changed or removed by an ordinary commit. `token-limit set` always requires fresh human approval when invoked through an agent tool and creates the protected policy commit; never edit the policy file directly or bypass its hook.
 
 ## Server-side agent and conversation settings
 

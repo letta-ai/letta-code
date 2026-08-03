@@ -68,13 +68,14 @@ git -c "http.extraHeader=$AUTH_HEADER" clone "$LETTA_BASE_URL/v1/git/<agent-id>/
 
 The harness installs a git pre-commit hook that validates `.md` files under `memory/` before each commit. This prevents pushes that the server would reject. It also estimates the complete staged context under `system/` and requires it to stay below 20,000 tokens by default, using the same heuristic as `letta memory tokens`.
 
-Configure the token limit for a memory repo with local git config:
+Count the current working-tree estimate and check the configured limit before committing:
 
 ```bash
-git config --local letta.systemPromptTokenLimit 30000
+letta memory tokens --format json --quiet --memory-dir "$MEMORY_DIR"
+letta memory token-limit get --memory-dir "$MEMORY_DIR"
 ```
 
-The limit is exclusive (a value of `20000` requires fewer than 20,000 estimated tokens). Set it to `0` to disable this check for the repo.
+The token count command measures the working tree, while the hook evaluates the staged Git snapshot. Before comparing them, ensure the intended files under `system/` are staged with no additional unstaged changes. The limit is exclusive: a configured value of `20000` requires fewer than 20,000 estimated tokens.
 
 **Rules:**
 - Every `.md` file must have YAML frontmatter (`---` header and closing `---`)

@@ -12,11 +12,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { PRE_COMMIT_HOOK_SCRIPT } from "@/agent/memory-git-hooks";
 import {
   DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT,
-  PRE_COMMIT_HOOK_SCRIPT,
-  SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG,
-} from "@/agent/memory-git-hooks";
+  formatMemoryPolicy,
+  MEMORY_POLICY_CHANGE_APPROVAL_ENV,
+  MEMORY_POLICY_CHANGE_APPROVAL_FILE,
+  MEMORY_POLICY_PATH,
+} from "@/agent/memory-policy";
 
 let tempDir: string;
 
@@ -28,11 +31,11 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: "test@test.com",
 };
 
-function git(args: string): string {
+function git(args: string, env: NodeJS.ProcessEnv = GIT_ENV): string {
   return execSync(`git ${args}`, {
     cwd: tempDir,
     encoding: "utf-8",
-    env: GIT_ENV,
+    env,
   });
 }
 
@@ -43,9 +46,12 @@ function writeAndStage(relativePath: string, content: string): void {
   git(`add ${relativePath}`);
 }
 
-function tryCommit(): { success: boolean; output: string } {
+function tryCommit(env: NodeJS.ProcessEnv = GIT_ENV): {
+  success: boolean;
+  output: string;
+} {
   try {
-    const output = git('commit -m "test"');
+    const output = git('commit -m "test"', env);
     return { success: true, output };
   } catch (err) {
     const output =
@@ -54,6 +60,19 @@ function tryCommit(): { success: boolean; output: string } {
         : String(err);
     return { success: false, output };
   }
+}
+
+function installPolicy(limit: number): void {
+  const approvalToken = "test-policy-approval-token";
+  writeAndStage(MEMORY_POLICY_PATH, formatMemoryPolicy(limit));
+  writeFileSync(
+    join(tempDir, ".git", MEMORY_POLICY_CHANGE_APPROVAL_FILE),
+    approvalToken,
+  );
+  git('commit -m "set policy"', {
+    ...GIT_ENV,
+    [MEMORY_POLICY_CHANGE_APPROVAL_ENV]: approvalToken,
+  });
 }
 
 /** Valid frontmatter for convenience */
@@ -341,7 +360,7 @@ describe("pre-commit hook: system prompt token limit", () => {
   });
 
   test("uses the configured per-repo limit", () => {
-    git(`config --local ${SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG} 100`);
+    installPolicy(100);
     writeAndStage("system/context.md", contentWithEstimatedTokens(100));
     const result = tryCommit();
     expect(result.success).toBe(false);
@@ -349,7 +368,7 @@ describe("pre-commit hook: system prompt token limit", () => {
   });
 
   test("sums nested system files", () => {
-    git(`config --local ${SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG} 100`);
+    installPolicy(100);
     writeAndStage("system/human/one.md", contentWithEstimatedTokens(50));
     writeAndStage("system/project/two.md", contentWithEstimatedTokens(50));
     const result = tryCommit();
@@ -367,20 +386,37 @@ describe("pre-commit hook: system prompt token limit", () => {
     expect(tryCommit().success).toBe(true);
   });
 
-  test("allows disabling the limit for a repo", () => {
-    git(`config --local ${SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG} 0`);
-    writeAndStage(
-      "system/context.md",
-      contentWithEstimatedTokens(DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT),
-    );
-    expect(tryCommit().success).toBe(true);
-  });
-
-  test("rejects an invalid configured limit", () => {
-    git(`config --local ${SYSTEM_PROMPT_TOKEN_LIMIT_GIT_CONFIG} nope`);
-    writeAndStage("system/context.md", `${VALID_FM}Context.\n`);
+  test("rejects changing the tracked policy without approval", () => {
+    installPolicy(100);
+    writeAndStage(MEMORY_POLICY_PATH, formatMemoryPolicy(200));
     const result = tryCommit();
     expect(result.success).toBe(false);
-    expect(result.output).toContain("expected a positive integer, or 0");
+    expect(result.output).toContain("memory policy is protected");
+  });
+
+  test("rejects a forged approval environment variable", () => {
+    installPolicy(100);
+    writeAndStage(MEMORY_POLICY_PATH, formatMemoryPolicy(200));
+    const result = tryCommit({
+      ...GIT_ENV,
+      [MEMORY_POLICY_CHANGE_APPROVAL_ENV]: "1",
+    });
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("memory policy is protected");
+  });
+
+  test("rejects deleting the tracked policy without approval", () => {
+    installPolicy(100);
+    git(`rm ${MEMORY_POLICY_PATH}`);
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("memory policy is protected");
+  });
+
+  test("rejects an invalid tracked policy", () => {
+    writeAndStage(MEMORY_POLICY_PATH, "system_prompt_token_limit: nope\n");
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("positive integer");
   });
 });
