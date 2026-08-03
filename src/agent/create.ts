@@ -2,20 +2,13 @@
  * Utilities for creating an agent on the Letta API backend
  **/
 
-import type {
-  AgentState,
-  AgentType,
-} from "@letta-ai/letta-client/resources/agents/agents";
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { type BackendCapabilities, getBackend } from "@/backend";
 import { apiRequest, getApiRequestConfig } from "@/backend/api/request";
-import { DEFAULT_AGENT_NAME, DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
+import { DEFAULT_AGENT_NAME } from "@/constants";
 import { settingsManager } from "@/settings-manager";
-import { buildCreatedAgentTags } from "./agent-tags";
 import { getModelContextWindow } from "./available-models";
-import {
-  DEFAULT_CREATED_AGENT_BASE_TOOLS,
-  LETTA_CODE_AGENT_TYPE,
-} from "./create-agent-request";
+import { buildCreateAgentRequest } from "./create-agent-request";
 import { getDefaultMemoryBlocks } from "./memory";
 import {
   formatAvailableModels,
@@ -261,9 +254,7 @@ export async function createAgent(
   // Only attach server-side tools to the agent.
   // Client-side tools (Read, Write, Bash, etc.) are passed via client_tools at runtime,
   // NOT attached to the agent. This is the new pattern - no more stub tool registration.
-  const defaultBaseTools =
-    options.baseTools ?? DEFAULT_CREATED_AGENT_BASE_TOOLS;
-  const toolNames = [...defaultBaseTools];
+  const toolNames = options.baseTools;
 
   // Determine which memory blocks to use:
   // 1. If options.memoryBlocks is provided, use those (custom blocks and/or block references)
@@ -344,49 +335,38 @@ export async function createAgent(
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
   // - memory_blocks: new blocks to create inline
   // - block_ids: references to existing blocks (for shared memory)
-  const tags = buildCreatedAgentTags({
-    tags: options.tags,
-    isSubagent,
-    enableMemfs: memfsConfig.enableMemfs,
-  });
-
   const agentDescription =
     options.description ?? `Letta Code agent created in ${process.cwd()}`;
 
-  const createAgentRequestBase = {
-    agent_type: LETTA_CODE_AGENT_TYPE as AgentType,
-    system: systemPromptContent,
+  const createAgentRequestBase = await buildCreateAgentRequest({
     name,
     description: agentDescription,
-    embedding: embeddingModelVal || undefined,
     model: modelHandle,
-    ...(contextWindow && { context_window_limit: contextWindow }),
-    // New blocks created inline with agent (saves ~2s of sequential API calls)
-    memory_blocks:
+    system: systemPromptContent,
+    memoryPromptMode: memMode,
+    memoryBlocks:
       filteredMemoryBlocks.length > 0 ? filteredMemoryBlocks : undefined,
-    // Referenced block IDs (existing blocks to attach)
-    block_ids: referencedBlockIds.length > 0 ? referencedBlockIds : undefined,
-    tags,
-    ...(isSubagent && { hidden: true }),
-    // should be default off, but just in case
-    include_base_tools: false,
-    include_base_tool_rules: false,
-    initial_message_sequence: [],
-    parallel_tool_calls: parallelToolCallsVal,
-    compaction_settings: {
-      model: DEFAULT_SUMMARIZATION_MODEL,
-    },
-  };
+    blockIds: referencedBlockIds,
+    extraTags: options.tags,
+    enableMemfs: memfsConfig.enableMemfs,
+    isSubagent,
+    baseTools: toolNames,
+    embedding: embeddingModelVal || undefined,
+    hidden: isSubagent || undefined,
+    parallelToolCalls: parallelToolCallsVal,
+  });
 
   const createWithTools = (tools: string[]) =>
     backend.createAgent({
       ...createAgentRequestBase,
+      ...(contextWindow && { context_window_limit: contextWindow }),
       tools,
+      agent_type: createAgentRequestBase.agent_type,
     });
 
   const agent = await createAgentWithBaseToolsRecovery(
     createWithTools,
-    toolNames,
+    createAgentRequestBase.tools,
     addBaseToolsToServer,
   );
 
