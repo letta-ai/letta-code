@@ -464,6 +464,7 @@ describe("WhatsApp reaction adapter integration", () => {
     try {
       const harness = makeHarness();
       await harness.start();
+      const timersAfterStart = timers.length;
       await harness.emitUpsert([
         {
           key: { remoteJid: REACTOR, id: "timer-target", fromMe: false },
@@ -471,10 +472,11 @@ describe("WhatsApp reaction adapter integration", () => {
           messageTimestamp: Math.floor(Date.now() / 1000),
         },
       ]);
-      expect(timers).toHaveLength(1);
-      expect(timers[0]?.unrefCalled).toBe(true);
+      expect(timers).toHaveLength(timersAfterStart + 1);
+      const messageStoreTimer = timers.at(-1);
+      expect(messageStoreTimer?.unrefCalled).toBe(true);
       await harness.adapter.stop();
-      expect(cleared).toContain(timers[0]);
+      expect(cleared).toContain(messageStoreTimer);
     } finally {
       globalThis.setTimeout = originalSetTimeout;
       globalThis.clearTimeout = originalClearTimeout;

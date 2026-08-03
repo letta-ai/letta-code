@@ -321,14 +321,13 @@ export function createWhatsAppAdapter(
           );
         }
         if (update.connection === "close" && !stopping) {
-          if (closedGeneration === generation) return CLAIM_CONNECTION_STATE;
-          closedGeneration = generation;
-          const closingSocket = sock;
-          if (closingSocket) void typing.clearOwner(closingSocket);
-          clearActiveSocket(false);
-          const lastDisconnect = asRecord(update.lastDisconnect);
-          const error = asRecord(lastDisconnect.error);
           if (isWhatsAppConflictDisconnect(update)) {
+            closedGeneration = generation;
+            const closingSocket = sock;
+            if (closingSocket) void typing.clearOwner(closingSocket);
+            clearActiveSocket(false);
+            const lastDisconnect = asRecord(update.lastDisconnect);
+            const error = asRecord(lastDisconnect.error);
             running = false;
             stopping = true;
             clearWhatsAppReconnectTimer();
@@ -346,6 +345,13 @@ export function createWhatsAppAdapter(
             );
             return CLAIM_CONNECTION_STATE;
           }
+          if (closedGeneration === generation) return CLAIM_CONNECTION_STATE;
+          closedGeneration = generation;
+          const closingSocket = sock;
+          if (closingSocket) void typing.clearOwner(closingSocket);
+          clearActiveSocket(false);
+          const lastDisconnect = asRecord(update.lastDisconnect);
+          const error = asRecord(lastDisconnect.error);
           const now = reconnectScheduler.now();
           while (recentDisconnects.length > 0) {
             const oldest = recentDisconnects[0];
