@@ -31,6 +31,11 @@ export interface SecretBackend {
   set(options: SecretSetOptions): Promise<void>;
   delete(options: SecretLocator): Promise<boolean>;
   isAvailable(): Promise<boolean>;
+  /**
+   * Whether a credential outlives the writing login session. Linux Secret
+   * Service needs the session bus, so keep a fallback copy when this is false.
+   */
+  isDurable: boolean;
 }
 
 export interface BunSecretsLike {
@@ -524,6 +529,8 @@ function createBunSecretBackend(
     },
     delete: async (options) => bunSecrets.delete(options),
     isAvailable: async () => true,
+    // Bun's store is the platform store, so durability follows the platform.
+    isDurable: platform !== "linux",
   };
 }
 
@@ -716,6 +723,7 @@ function createMacKeyringBackend(): SecretBackend {
       if (macSecurityResultIsMissing(result)) return false;
       throw commandError("macOS Keychain", "delete", result);
     },
+    isDurable: true,
     isAvailable: async () => {
       const runtime = getRuntime();
       return Boolean(
@@ -833,6 +841,7 @@ function createWindowsCredentialBackend(): SecretBackend {
       setWindowsCredential(service, name, value),
     delete: ({ service, name }) => deleteWindowsCredential(service, name),
     isAvailable: async () => Boolean(getPowerShellPath(getRuntime())),
+    isDurable: true,
   };
 }
 
@@ -948,6 +957,8 @@ function createLinuxSecretServiceBackend(): SecretBackend {
       }
       throw commandError("secret-tool", "clear", result);
     },
+    // Reached over the session bus; a headless process may not see this item.
+    isDurable: false,
     isAvailable: async () => {
       const runtime = getRuntime();
       return Boolean(
