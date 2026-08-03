@@ -5,12 +5,13 @@
  * - "local": the runtime-local scheduler (~/.letta/crons.json), executed by
  *   the WS listener process on this device. Dies with the device/sandbox.
  * - "cloud": durable Cloud schedules (`/v1/agents/:id/schedule`), fired by a
- *   cloud worker into the agent's managed cloud sandbox.
+ *   cloud worker into a target listener or the agent's managed Cloud sandbox.
  *
- * Default policy: cloud agents get the cloud runner everywhere (laptop, VPS,
- * managed sandbox) — durability is the default. `--runner local` is the
- * explicit opt-in for schedules that must execute on a specific machine
- * (e.g. they need that device's filesystem). Local-backend agents
+ * Default policy: cloud agents get the cloud runner everywhere. When no runner
+ * or computer is explicit, creation targets the active external listener to
+ * preserve execution locality. `--runner cloud` deliberately selects the
+ * managed Cloud sandbox; `--runner local` selects process-local storage.
+ * Local-backend agents
  * (`agent-local-*`) always use the local runner, and servers that don't serve
  * the Cloud schedule routes (self-hosted OSS core) fall back to it.
  *
@@ -19,6 +20,11 @@
  * LETTA_BASE_URL at a localhost proxy that forwards to the Letta API, so URL
  * shape says nothing about capability.
  */
+
+import {
+  type EnvironmentConnection,
+  isEnvironmentOnline,
+} from "@/backend/api/environments";
 
 export type CronRunner = "local" | "cloud";
 
@@ -99,7 +105,7 @@ export function resolveCronRunner(
 /**
  * Synthetic ids the Desktop environment proxy injects into
  * `letta environments list` responses. Neither is a targetable device:
- * - "__letta_cloud__": the synthetic "Cloud" row (the default sandbox target)
+ * - "__letta_cloud__": the synthetic "Cloud" row (the sandbox target)
  * - "local": the synthetic offline placeholder when no local device is registered
  * Values mirror CLOUD_DEVICE_ID / LOCAL_CONNECTION_ID in the desktop app.
  */
@@ -129,7 +135,7 @@ export function validateTargetDevice(
     return {
       ok: false,
       error:
-        '"Cloud" is the default execution target, not a computer. Omit --computer to run in the agent\'s cloud sandbox.',
+        '"Cloud" is not a computer. Pass --runner cloud to run in the agent\'s Cloud sandbox.',
     };
   }
 
@@ -145,6 +151,51 @@ export function validateTargetDevice(
     return {
       ok: false,
       error: `Device ${deviceId} is this computer's local desktop connection, not a computer connected to your Letta account. Cloud schedules can only target connected computers — run \`letta server\` on that machine (or enable remote access in the desktop app) to connect it.`,
+    };
+  }
+
+  return { ok: true };
+}
+
+const INFERRED_TARGET_GUIDANCE =
+  "Pass --runner cloud to use the Cloud sandbox, --computer <deviceId> to choose a connected computer, or --runner local to use this process.";
+
+/**
+ * A default Cloud schedule preserves the current turn's execution locality.
+ * Unlike an explicit --computer, an inferred target must be proven to be a
+ * live external listener because there is no user-supplied target for the
+ * Cloud API to validate or correct.
+ */
+export function validateInferredTargetDevice(
+  deviceId: string,
+  environment: EnvironmentConnection | null,
+): TargetDeviceValidity {
+  const basicValidity = validateTargetDevice(deviceId, environment);
+  if (!basicValidity.ok) {
+    return {
+      ok: false,
+      error: `Cannot target the current runtime (${basicValidity.error}) ${INFERRED_TARGET_GUIDANCE}`,
+    };
+  }
+
+  if (deviceId.startsWith("sandbox-")) {
+    return {
+      ok: false,
+      error: `The current runtime is a managed sandbox, which is not a targetable external environment. ${INFERRED_TARGET_GUIDANCE}`,
+    };
+  }
+
+  if (!environment) {
+    return {
+      ok: false,
+      error: `The current runtime (${deviceId}) is not registered as a Cloud environment. ${INFERRED_TARGET_GUIDANCE}`,
+    };
+  }
+
+  if (!isEnvironmentOnline(environment)) {
+    return {
+      ok: false,
+      error: `The current runtime (${deviceId}) is not online in the Cloud environments registry. ${INFERRED_TARGET_GUIDANCE}`,
     };
   }
 

@@ -13,7 +13,8 @@
  *
  * Runners (LET-9692):
  * - "cloud" (default for cloud agents): durable Cloud schedules stored by the
- *   Letta API and executed in the agent's managed cloud sandbox.
+ *   Letta API. The implicit default targets the active external listener;
+ *   explicit --runner cloud executes in the agent's managed Cloud sandbox.
  * - "local": runtime-local tasks in ~/.letta/crons.json, executed by the WS
  *   listener on this device. Default for local-backend agents and self-hosted
  *   servers; explicit opt-in (--runner local) for schedules that must run on
@@ -21,6 +22,8 @@
  */
 
 import { parseArgs } from "node:util";
+import { getRuntimeEnvironmentDeviceId } from "@/backend/api/client";
+import type { EnvironmentConnection } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import {
   type CloudSchedule,
@@ -48,6 +51,7 @@ import {
   CLOUD_EXECUTION_TARGET,
   type CronRunner,
   resolveCronRunner,
+  validateInferredTargetDevice,
   validateTargetDevice,
 } from "./cron-runner";
 import {
@@ -80,17 +84,19 @@ Add options:
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
   --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID or "default")
   --runner <runner>      Where the schedule lives and fires:
-                           cloud - durable Cloud schedule; executes in the
-                                   agent's managed cloud sandbox (default for
-                                   cloud agents)
+                           cloud - durable Cloud schedule (default for cloud
+                                   agents); the implicit default targets this
+                                   active external listener. Explicit
+                                   --runner cloud uses the Cloud sandbox
                            local - this device's scheduler (~/.letta/crons.json);
                                    only fires while a session runs here (default
                                    for local-backend agents / self-hosted)
-  --computer <id>        (cloud runner only) Execute on one of your
-                         connected computers (deviceId from
-                         \`letta environments list\`) instead of the agent's
-                         cloud sandbox. Falls back to the sandbox if the
-                         computer is offline at fire time.
+  --computer <id>        (cloud runner only) Override execution with a
+                         connected external environment (deviceId from
+                         \`letta environments list\`). Falls back to the Cloud
+                         sandbox if the computer is offline at fire time.
+                         Managed sandboxes and Desktop-local connections are
+                         not currently valid Cloud schedule targets.
 
 List/filter options:
   --agent <id>           Filter by agent ID
@@ -206,7 +212,7 @@ function isRunnerFlagValid(value: string | undefined): boolean {
  */
 async function lookupEnvironmentForTarget(
   deviceId: string,
-): Promise<{ organizationId?: string } | null> {
+): Promise<EnvironmentConnection | null> {
   try {
     const { getEnvironmentConnection } = await import(
       "@/backend/api/environments"
@@ -340,7 +346,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     return 1;
   }
 
-  const targetDeviceId = values.computer?.trim() || undefined;
+  let targetDeviceId = values.computer?.trim() || undefined;
 
   const resolved = await getRunnerForAgent(values.runner, agentId);
   if ("error" in resolved) {
@@ -359,10 +365,8 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     return 1;
   }
 
-  // Pre-validate the target against the environments list: it can contain
-  // entries that are not valid Cloud-schedule targets (synthetic Cloud row,
-  // desktop-local connections). Catch those with an actionable error before
-  // hitting the server's registry 404.
+  // Pre-validate explicit targets against entries that are visible through a
+  // Desktop proxy but cannot be addressed by the Cloud environments registry.
   if (targetDeviceId) {
     const validity = validateTargetDevice(
       targetDeviceId,
@@ -372,6 +376,20 @@ async function handleAdd(values: CronArgValues): Promise<number> {
       console.error(`Error: ${validity.error}`);
       return 1;
     }
+  } else if (resolved.runner === "cloud" && values.runner !== "cloud") {
+    // The durable default preserves the locality of the current agent turn.
+    // Infer only at create time: old targetless schedules deliberately remain
+    // Cloud-sandbox schedules, and dispatch must never guess a target later.
+    const inferredDeviceId = getRuntimeEnvironmentDeviceId();
+    const validity = validateInferredTargetDevice(
+      inferredDeviceId,
+      await lookupEnvironmentForTarget(inferredDeviceId),
+    );
+    if (!validity.ok) {
+      console.error(`Error: ${validity.error}`);
+      return 1;
+    }
+    targetDeviceId = inferredDeviceId;
   }
 
   if (resolved.runner === "cloud") {

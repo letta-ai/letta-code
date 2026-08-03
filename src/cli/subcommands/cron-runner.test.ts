@@ -4,6 +4,7 @@ import {
   CLOUD_CRON_UTC_NOTE,
   CLOUD_DEVICE_FALLBACK_NOTE,
   resolveCronRunner,
+  validateInferredTargetDevice,
   validateTargetDevice,
 } from "./cron-runner";
 
@@ -222,7 +223,7 @@ describe("validateTargetDevice", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("Omit --computer");
+      expect(result.error).toContain("--runner cloud");
     }
   });
 
@@ -244,4 +245,64 @@ describe("validateTargetDevice", () => {
       expect(result.error).toContain("local desktop connection");
     }
   });
+});
+
+describe("validateInferredTargetDevice", () => {
+  const onlineEnvironment = {
+    id: "environment-1",
+    connectionId: "connection-1",
+    deviceId: "device-external-1",
+    connectionName: "external listener",
+    organizationId: "org-1",
+    podId: null,
+    connectedAt: Date.now(),
+    lastHeartbeat: Date.now(),
+    lastSeenAt: Date.now(),
+    firstSeenAt: Date.now(),
+  };
+
+  test("accepts a registered online external listener", () => {
+    expect(
+      validateInferredTargetDevice(
+        onlineEnvironment.deviceId,
+        onlineEnvironment,
+      ),
+    ).toEqual({ ok: true });
+  });
+
+  test.each([
+    ["unregistered", "device-missing", null],
+    [
+      "offline",
+      "device-external-1",
+      {
+        ...onlineEnvironment,
+        connectionId: null,
+        lastHeartbeat: Date.now() - 300_000,
+      },
+    ],
+    [
+      "Desktop-local",
+      "device-local-1",
+      {
+        ...onlineEnvironment,
+        deviceId: "device-local-1",
+        organizationId: "local",
+      },
+    ],
+    ["synthetic local", "local", null],
+    ["synthetic Cloud", "__letta_cloud__", null],
+    ["managed sandbox", "sandbox-agent-example", null],
+  ])(
+    "rejects %s identities with runner guidance",
+    (_label, deviceId, environment) => {
+      const result = validateInferredTargetDevice(deviceId, environment);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toContain("--runner cloud");
+        expect(result.error).toContain("--computer <deviceId>");
+        expect(result.error).toContain("--runner local");
+      }
+    },
+  );
 });

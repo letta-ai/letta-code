@@ -18,10 +18,10 @@ This skill lets you create, list, and manage scheduled tasks using the `letta cr
 
 There are two schedule runners, selected with the optional `--runner local|cloud` flag:
 
-- **`cloud`** (default for cloud agents): a durable Cloud schedule stored by the Letta API. It fires from the cloud and executes in the agent's cloud sandbox, so it survives local shutdown — the computer, sandbox, or session that created it can disappear and the schedule still fires.
+- **`cloud`** (default for cloud agents): a durable Cloud schedule stored by the Letta API. With no runner or computer flag, it targets the registered external listener running the current turn, preserving execution locality while surviving process restarts.
 - **`local`**: a task local to the current computer (`~/.letta/crons.json`), executed by the Letta session running there. It only fires while a session is running on that computer, and it dies with that computer's local state.
 
-You normally don't need the flag — the default does the right thing. Local-backend agents (`agent-local-*`) and self-hosted servers always use the local runner.
+You normally don't need the flag. Use explicit `--runner cloud` to run in the agent's Cloud sandbox instead of the current listener. Local-backend agents (`agent-local-*`) and self-hosted servers use the local runner.
 
 If the scheduled work must run on a **specific computer** (it needs that computer's filesystem, local services, or credentials — e.g. a bring-your-own machine like a Railway/VPS box or a home workstation), prefer a Cloud schedule that executes on that computer:
 
@@ -29,11 +29,11 @@ If the scheduled work must run on a **specific computer** (it needs that compute
 letta cron add ... --computer <deviceId>
 ```
 
-The deviceId comes from `letta environments list`. The computer must be connected to your Letta account (run `letta server` on it, or enable remote access in the desktop app). The schedule stays durable in the cloud; if the computer is offline when it fires, execution falls back to the agent's cloud sandbox. Use `--runner local` (run on the target computer itself) only when that sandbox fallback is unacceptable — a local task never runs anywhere but its own computer.
+The deviceId comes from `letta environments list`. The computer must be a registered external environment, such as a manual `letta server`, VPS, or Railway listener. Managed sandboxes and Desktop-local proxy connections are not currently valid targets. The schedule stays durable in the cloud; if the computer is offline when it fires, execution falls back to the agent's Cloud sandbox. Use `--runner local` on the target computer only when that fallback is unacceptable.
 
 Notes for the cloud runner:
 
-- Untargeted schedules execute in the agent's cloud sandbox, not on the computer where you created them; `--computer` executes on the named computer with sandbox fallback.
+- The implicit default infers the current registered external listener. `--computer` overrides it. Explicit `--runner cloud` creates an untargeted Cloud-sandbox schedule.
 - Recurring `--cron` expressions are currently interpreted in UTC (the CLI output includes a note about this). `--at` and `--every` are unaffected.
 - If creating a Cloud schedule fails, no schedule is created — there is no silent fallback to local storage. Retry, or pass `--runner local` deliberately.
 
@@ -70,7 +70,7 @@ letta cron add --name <short-name> --description <text> --prompt <text> <schedul
 | `--agent <id>` | Agent ID (defaults to `LETTA_AGENT_ID` from the current shell/session) |
 | `--conversation <id>` | Conversation ID (defaults to `LETTA_CONVERSATION_ID` from the current shell/session, otherwise `"default"`) |
 | `--runner <runner>` | `cloud` or `local` — see "Where Schedules Run" above (defaults to `cloud` for cloud agents) |
-| `--computer <id>` | (cloud runner only) Execute on a connected computer instead of the agent's sandbox; falls back to the sandbox if the computer is offline |
+| `--computer <id>` | (cloud runner only) Override execution with a registered external environment; falls back to the Cloud sandbox if it is offline |
 
 ### Listing Tasks
 
