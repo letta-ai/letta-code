@@ -544,7 +544,7 @@ export function ModelSelector({
     [byokProviderAliases],
   );
 
-  // Letta API (all): all non-BYOK handles from API, including recommended models.
+  // Letta API (all): preserve backend metadata when aliases are not yet classified as BYOK.
   const allLettaModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
