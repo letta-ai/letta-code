@@ -8,6 +8,7 @@ import {
   buildChannelCancelUnavailableMessage,
   buildChannelChatLinkMessage,
   buildChannelChatUnavailableMessage,
+  buildChannelCompactUnavailableMessage,
   buildChannelDetachedMessage,
   buildChannelDetachUnsupportedMessage,
   buildChannelModelUnavailableMessage,
@@ -22,6 +23,7 @@ import {
 import type { ChannelRegistryEvent } from "./registry-events";
 import type {
   ChannelCancelHandler,
+  ChannelCompactHandler,
   ChannelModelHandler,
   ChannelReflectionHandler,
   ChannelReloadHandler,
@@ -53,6 +55,7 @@ export function createChannelCommandRouter(deps: {
     threadId?: string | null,
   ) => ChannelRoute | null;
   getCancelHandler: () => ChannelCancelHandler | null;
+  getCompactHandler: () => ChannelCompactHandler | null;
   getReflectionHandler: () => ChannelReflectionHandler | null;
   getReloadHandler: () => ChannelReloadHandler | null;
   getModelHandler: () => ChannelModelHandler | null;
@@ -141,6 +144,35 @@ export function createChannelCommandRouter(deps: {
     }
 
     return { handled: true };
+  }
+
+  async function handleCompactSlashCommand(
+    command: { args: string },
+    msg: InboundChannelMessage,
+  ): Promise<{ handled: boolean; text?: string }> {
+    const route = loadAndFindRawRouteForMessage(msg);
+    if (!route?.enabled) {
+      return {
+        handled: true,
+        text: buildChannelNoRouteMessage(msg.channel),
+      };
+    }
+
+    const compactHandler = deps.getCompactHandler();
+    if (!compactHandler) {
+      return {
+        handled: true,
+        text: buildChannelCompactUnavailableMessage(msg.channel),
+      };
+    }
+
+    return compactHandler({
+      runtime: {
+        agent_id: route.agentId,
+        conversation_id: route.conversationId,
+      },
+      ...(command.args ? { args: command.args } : {}),
+    });
   }
 
   async function handleChatSlashCommand(
@@ -448,6 +480,7 @@ export function createChannelCommandRouter(deps: {
   return {
     handleCancelSlashCommand,
     handleChatSlashCommand,
+    handleCompactSlashCommand,
     handleDetachSlashCommand,
     handleModelSlashCommand,
     handleNewConversationSlashCommand,

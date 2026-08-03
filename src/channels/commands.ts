@@ -37,48 +37,27 @@ export type ChannelSlashCommandHandlerResult = {
   modelPicker?: ChannelModelPickerData;
 };
 
+type ChannelSlashCommandHandler = (
+  command: ParsedChannelSlashCommand,
+  msg: InboundChannelMessage,
+) => Promise<ChannelSlashCommandHandlerResult>;
+
 type ChannelDirectReplyPayload = {
   text: string;
   modelPicker?: ChannelModelPickerData;
 };
 
 export type ChannelSlashCommandHandlers = {
-  cancel?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  chat?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  detach?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  model?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  newConversation?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  pause?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  reflection?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  reload?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
-  resume?: (
-    command: ParsedChannelSlashCommand,
-    msg: InboundChannelMessage,
-  ) => Promise<ChannelSlashCommandHandlerResult>;
+  cancel?: ChannelSlashCommandHandler;
+  compact?: ChannelSlashCommandHandler;
+  chat?: ChannelSlashCommandHandler;
+  detach?: ChannelSlashCommandHandler;
+  model?: ChannelSlashCommandHandler;
+  newConversation?: ChannelSlashCommandHandler;
+  pause?: ChannelSlashCommandHandler;
+  reflection?: ChannelSlashCommandHandler;
+  reload?: ChannelSlashCommandHandler;
+  resume?: ChannelSlashCommandHandler;
 };
 
 export type ChannelStatusContext = {
@@ -128,6 +107,11 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
     summary: "Cancel the in-progress agent turn for this chat.",
   },
   {
+    name: "compact",
+    kind: "agent-scoped",
+    summary: "Summarize this conversation's active history.",
+  },
+  {
     name: "chat",
     kind: "direct",
     summary: "Show the Letta web chat link for this channel route.",
@@ -158,6 +142,7 @@ const CHANNEL_SLASH_COMMANDS: ChannelSlashCommandDefinition[] = [
 
 const SLACK_MENTION_COMMAND_NAMES = [
   "help",
+  "compact",
   "detach",
   "model",
   "new",
@@ -282,6 +267,7 @@ const SLACK_MENTION_SLASH_COMMAND_EXAMPLES = [
   "@agent /model list",
   "@agent /model <handle-or-id>",
   "@agent /cancel",
+  "@agent /compact",
   "@agent /chat",
   "@agent /feedback <message>",
   "@agent /reflection",
@@ -337,6 +323,7 @@ export function buildChannelHelpMessage(channelId: string): string {
       "@agent /model <handle-or-id> - switch this thread's model",
       "@agent /status - show route and listener status",
       "@agent /cancel - cancel the current turn",
+      "@agent /compact - summarize this thread's active conversation history",
       "@agent /chat - show the web chat link",
       "@agent /feedback <message> - send feedback to the Letta team from this routed thread",
       "@agent /reflection - start a memory reflection pass",
@@ -801,6 +788,13 @@ export function buildChannelReflectionUnavailableMessage(
   return `${displayName} cannot start reflection for this chat because the listener is not ready yet. Try again in a moment.`;
 }
 
+export function buildChannelCompactUnavailableMessage(
+  channelId: string,
+): string {
+  const displayName = channelDisplayName(channelId);
+  return `${displayName} cannot compact this chat's routed conversation because the listener is not ready yet. Try again in a moment.`;
+}
+
 export function buildChannelReloadUnavailableMessage(
   channelId: string,
 ): string {
@@ -919,6 +913,12 @@ export async function tryHandleChannelSlashCommand(
             command,
             handler: options.handlers?.cancel,
             defaultText: buildChannelCancelAcceptedMessage(msg.channel),
+          });
+        case "compact":
+          return handleScopedCommand({
+            msg,
+            command,
+            handler: options.handlers?.compact,
           });
         case "chat":
           return handleScopedCommand({

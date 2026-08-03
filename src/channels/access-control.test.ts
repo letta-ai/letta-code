@@ -228,13 +228,14 @@ describe("channel command tiers", () => {
     expect(canRunChannelCommand(userGate, "whoami")).toBe(true);
     expect(canRunChannelCommand(userGate, "pause")).toBe(false);
     expect(canRunChannelCommand(userGate, "model")).toBe(false);
+    expect(canRunChannelCommand(userGate, "compact")).toBe(false);
     expect(canRunChannelCommand(userGate, "reload")).toBe(false);
   });
 
   test("userAllowedCommands extends the floor and normalizes names", () => {
     const account = makeAccount({
       adminUsers: ["admin-1"],
-      userAllowedCommands: ["/Model", "cancel", "reload"],
+      userAllowedCommands: ["/Model", "cancel", "compact", "reload"],
     });
     const gate = resolveChannelCommandGate({
       account,
@@ -243,6 +244,7 @@ describe("channel command tiers", () => {
     });
     expect(canRunChannelCommand(gate, "model")).toBe(true);
     expect(canRunChannelCommand(gate, "cancel")).toBe(true);
+    expect(canRunChannelCommand(gate, "compact")).toBe(true);
     expect(canRunChannelCommand(gate, "reload")).toBe(true);
     expect(canRunChannelCommand(gate, "pause")).toBe(false);
   });
@@ -308,6 +310,7 @@ describe("channel command tiers", () => {
     expect(canRunChannelCommand(gate, "whoami")).toBe(true);
     expect(canRunChannelCommand(gate, "cancel")).toBe(false);
     expect(canRunChannelCommand(gate, "model")).toBe(false);
+    expect(canRunChannelCommand(gate, "compact")).toBe(false);
     expect(canRunChannelCommand(gate, "pause")).toBe(false);
     expect(canRunChannelCommand(gate, "reload")).toBe(false);
 

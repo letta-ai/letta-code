@@ -33,11 +33,11 @@ import {
   replayPendingApprovalRequestsToConnection,
 } from "./approval";
 import { resolveListenerReconnectAuth } from "./auth";
+import { wireChannelRuntimeCommands } from "./channel-runtime-commands";
 import {
   recoverActiveChannelTurn,
   uniqueChannelTurnSources,
 } from "./channel-turn-session";
-import { handleReloadCommand } from "./commands";
 import { handleChannelRegistryEvent } from "./commands/channel-registry-events";
 import {
   applyModelUpdateForRuntime,
@@ -517,6 +517,7 @@ export async function wireChannelIngress(
       processQueuedTurn,
     }),
   );
+  wireChannelRuntimeCommands({ registry, listener, socket });
 
   registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
     if (!modelIdentifier) {
@@ -654,27 +655,6 @@ export async function wireChannelIngress(
           modelIdentifier,
           error instanceof Error ? error.message : "Failed to update model",
         ),
-      };
-    }
-  });
-
-  registry.setReloadHandler(async ({ runtime }) => {
-    const scopedRuntime = getOrCreateScopedRuntime(
-      listener,
-      runtime.agent_id,
-      runtime.conversation_id,
-    );
-    try {
-      const output = await handleReloadCommand(scopedRuntime);
-      emitDeviceStatusUpdate(socket, scopedRuntime, runtime);
-      return {
-        handled: true,
-        text: output,
-      };
-    } catch (error) {
-      return {
-        handled: true,
-        text: `Failed to reload listener settings: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
   });

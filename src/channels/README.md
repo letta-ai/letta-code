@@ -176,14 +176,21 @@ Typed slash commands are handled before normal channel ingress so operational
 commands do not get delivered to the agent as regular user messages. The shared
 channel command set is:
 
+- `/help` — show channel usage and available commands.
 - `/status` — show account, listener, route, agent, and conversation state.
+- `/whoami` — show the sender's access scope, tier, and runnable commands.
 - `/pause` — disable agent replies for the current routed chat.
 - `/resume` — re-enable agent replies for the current routed chat.
 - `/cancel` — abort the in-progress agent turn for the current routed chat.
+- `/compact [mode]` — summarize the current route's active conversation
+  history; accepts the same modes as the CLI command.
 - `/chat` — show the Letta web chat link for the current route.
-- `/whoami` — show the sender's access scope, tier, and runnable commands.
+- `/feedback <message>` — send product feedback with route context.
+- `/model [list|handle]` — show, list, or switch the routed conversation's
+  model.
 - `/reflection` — start a memory reflection pass for the current route's agent
   conversation when MemFS is enabled.
+- `/reload` — reload settings, local mods, and agent secrets.
 
 Slack-native slash command payloads currently exist only for `/cancel`; the rest
 are expected to be sent as normal channel messages in the relevant chat/thread.
