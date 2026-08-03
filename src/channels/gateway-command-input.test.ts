@@ -15,6 +15,7 @@ test("gateway command input handles piped chunks and Windows line endings", () =
   expect(lines).toEqual(["first", "second"]);
 
   commandInput.close();
+  expect(input.isPaused()).toBe(true);
   input.write("ignored\n");
   expect(lines).toEqual(["first", "second"]);
   input.destroy();

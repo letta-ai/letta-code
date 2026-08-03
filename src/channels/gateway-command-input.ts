@@ -19,6 +19,9 @@ export function listenForGatewayCommands(
   };
   input.on("data", onData);
   return {
-    close: () => input.removeListener("data", onData),
+    close: () => {
+      input.removeListener("data", onData);
+      input.pause();
+    },
   };
 }
