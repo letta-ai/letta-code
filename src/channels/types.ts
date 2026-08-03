@@ -7,12 +7,15 @@
  * platform chat IDs to agent+conversation pairs.
  */
 
+import type { WhatsAppMessagePrefixConfig } from "@/channels/whatsapp/message-prefix-config-types";
 import type { PermissionMode } from "@/permissions/mode";
 import type {
   ApprovalResponseBody,
   ListModelsResponseModelEntry,
   StopReasonType,
 } from "@/types/protocol_v2";
+import type { WhatsAppAttachmentPolicyConfig } from "./whatsapp/attachment-policy-types";
+import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 
 /**
  * Vendor-neutral model-picker payload produced by the generic channel
@@ -318,6 +321,8 @@ export interface ChannelAdapter {
        * example Slack Block Kit) may render it; others fall back to text.
        */
       modelPicker?: ChannelModelPickerData;
+      /** Channel-specific opt-in for direct replies that should be treated as ordinary outbound agent text. */
+      applyMessagePrefix?: boolean;
     },
   ): Promise<void>;
 
@@ -661,7 +666,9 @@ export interface DiscordChannelConfig {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelConfig {
+export interface WhatsAppChannelConfig
+  extends WhatsAppAttachmentPolicyConfig,
+    WhatsAppMessagePrefixConfig {
   channel: "whatsapp";
   enabled: boolean;
   dmPolicy: DmPolicy;
@@ -669,18 +676,15 @@ export interface WhatsAppChannelConfig {
   agentId: string | null;
   /** Default true. When true, only the user's own Message Yourself chat routes. */
   selfChatMode: boolean;
-  /** Default disabled. Controls group-message ingestion. */
   groupMode: WhatsAppGroupMode;
   /** Optional allowlist of WhatsApp group JIDs. Empty/undefined allows any group when groupMode is not disabled. */
   allowedGroups?: string[];
-  /** Optional textual aliases for group mention detection. */
   mentionPatterns?: string[];
-  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When true, supported inbound media is downloaded to local channel storage. */
   downloadMedia?: boolean;
-  /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  inboundDebounceMs?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export interface SignalChannelConfig {
@@ -848,24 +852,24 @@ export interface DiscordChannelAccount extends ChannelAccountBase {
   allowBots?: DiscordAllowBotsMode;
 }
 
-export interface WhatsAppChannelAccount extends ChannelAccountBase {
+export interface WhatsAppChannelAccount
+  extends ChannelAccountBase,
+    WhatsAppAttachmentPolicyConfig,
+    WhatsAppMessagePrefixConfig {
   channel: "whatsapp";
   /** Agent ID used for account-bound DM and group auto-routing. */
   agentId: string | null;
   /** Default true. Explicitly set false before replying under the linked user's identity. */
   selfChatMode: boolean;
-  /** Default disabled. Controls group-message ingestion. */
   groupMode: WhatsAppGroupMode;
   /** Optional allowlist of WhatsApp group JIDs. */
   allowedGroups?: string[];
-  /** Optional textual aliases for group mention detection. */
   mentionPatterns?: string[];
-  /** When true and OPENAI_API_KEY is set, voice memos are auto-transcribed. */
   transcribeVoice?: boolean;
-  /** When true, supported inbound media is downloaded to local channel storage. */
   downloadMedia?: boolean;
-  /** Maximum inbound media bytes to download. Undefined uses channel default. */
   mediaMaxBytes?: number;
+  inboundDebounceMs?: number;
+  waitingBehavior?: WhatsAppWaitingBehavior;
 }
 
 export interface SignalChannelAccount extends ChannelAccountBase {

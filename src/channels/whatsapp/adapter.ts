@@ -10,12 +10,38 @@ import type {
   OutboundChannelMessage,
   WhatsAppChannelAccount,
 } from "@/channels/types";
+import {
+  asRecord,
+  buildWhatsAppQuotedOptions,
+  getWhatsAppDisplayName,
+  getWhatsAppLifecycleErrorReplyKey,
+  isWhatsAppConflictDisconnect,
+  isWhatsAppReactionMessage,
+  previewWhatsAppText,
+  shouldProcessWhatsAppGroup,
+  timestampToMs,
+  withWhatsAppPayloadMessagePrefix,
+} from "./adapter-helpers";
+import type {
+  WhatsAppMessage,
+  WhatsAppMessageKey,
+  WhatsAppSocket,
+} from "./adapter-types";
+import { decideWhatsAppAttachmentPolicy } from "./attachment-policy";
+import { createWhatsAppDedupeClaims } from "./dedupe-claims";
 import { resolveInboundIdentity } from "./identity";
+import {
+  createWhatsAppInboundDebounceController,
+  type WhatsAppInboundDebounceController,
+  type WhatsAppInboundDebounceEntry,
+} from "./inbound-debounce";
 import {
   isGroupJid,
   isSelfChat,
   isStatusOrBroadcastJid,
+  isStrictPhoneJid,
   resolveSendJid,
+  senderIdFromJid,
   stripDeviceSuffix,
 } from "./jid";
 import type { LidStore } from "./lid-store";
@@ -26,178 +52,46 @@ import {
   extractMentionedJids,
   extractReplyParticipant,
   extractWhatsAppText,
+  type WhatsAppResolvedOutboundMedia,
 } from "./media";
+import { createWhatsAppMessageStore } from "./message-store";
+import {
+  isWhatsAppReactionGroupEligible,
+  parseWhatsAppReactionEntry,
+  type WhatsAppReaction,
+} from "./reactions";
+import {
+  createDefaultWhatsAppReconnectScheduler,
+  type WhatsAppReconnectScheduler,
+  type WhatsAppReconnectTimer,
+} from "./reconnect-scheduler";
 import { loadWhatsAppModule } from "./runtime";
 import { createWhatsAppSocket, getWhatsAppAuthDir } from "./session";
 import { setWhatsAppConnectionState } from "./state";
+import {
+  createWhatsAppTypingController,
+  type WhatsAppTypingController,
+  type WhatsAppTypingPresence,
+} from "./typing-controller";
+
+export { isWhatsAppConflictDisconnect };
+export type { WhatsAppReconnectScheduler };
 
 const CHANNEL_ID = "whatsapp";
 const DEDUPE_MAX_SIZE = 5000;
 const RECONNECT_MAX_MS = 30_000;
-const MAX_MENTION_PATTERN_LENGTH = 256;
-const MENTION_MATCH_TEXT_MAX_LENGTH = 2000;
-
-type EventEmitterLike = {
-  on?: (event: string, handler: (payload: unknown) => void) => void;
-};
-
-type WhatsAppSocket = {
-  ev?: EventEmitterLike;
-  ws?: { close?: () => void };
-  user?: { id?: string; lid?: string };
-  sendMessage?: (
-    jid: string,
-    payload: Record<string, unknown>,
-    options?: Record<string, unknown>,
-  ) => Promise<{ key?: { id?: string }; message?: unknown }>;
-  sendPresenceUpdate?: (presence: string, jid?: string) => Promise<void>;
-  groupMetadata?: (jid: string) => Promise<{ subject?: string }>;
-};
-
-type WhatsAppMessageKey = {
-  remoteJid?: string | null;
-  id?: string | null;
-  fromMe?: boolean | null;
-  participant?: string | null;
-  senderPn?: string | null;
-  senderLid?: string | null;
-  participantPn?: string | null;
-  participantLid?: string | null;
-};
-
-type WhatsAppMessage = {
-  key?: WhatsAppMessageKey;
-  message?: unknown;
-  messageTimestamp?: number | { toNumber?: () => number } | null;
-  pushName?: string | null;
-};
+const MAX_UNSTABLE_DISCONNECTS = 6;
+const RECONNECT_WINDOW_MS = 60_000;
+const STABLE_OPEN_RESET_MS = RECONNECT_WINDOW_MS;
 
 export type WhatsAppAdapterDependencies = {
   createSocket?: typeof createWhatsAppSocket;
   loadRuntimeModule?: typeof loadWhatsAppModule;
   lidStore?: LidStore;
+  reconnectScheduler?: WhatsAppReconnectScheduler;
 };
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-export function isWhatsAppConflictDisconnect(update: unknown): boolean {
-  const record = asRecord(update);
-  if (record.connection !== "close") return false;
-  const lastDisconnect = asRecord(record.lastDisconnect);
-  const error = asRecord(lastDisconnect.error);
-  const output = asRecord(error.output);
-  const statusCode = output.statusCode;
-  const message = typeof error.message === "string" ? error.message : "";
-  return (
-    statusCode === 440 ||
-    /\bconflict\b/i.test(message) ||
-    /connection replaced/i.test(message)
-  );
-}
-
-function timestampToMs(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value * 1000;
-  }
-  if (value && typeof value === "object") {
-    const toNumber = (value as { toNumber?: () => number }).toNumber;
-    if (typeof toNumber === "function") {
-      return toNumber.call(value) * 1000;
-    }
-  }
-  return Date.now();
-}
-
-function preview(text: string): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  return normalized.length <= 80 ? normalized : `${normalized.slice(0, 79)}…`;
-}
-
-function getDisplayName(account: WhatsAppChannelAccount): string {
-  return account.displayName ?? "WhatsApp";
-}
-
-function matchesSelf(
-  jid: string,
-  selfPhoneJid: string | null,
-  selfLid: string | null,
-): boolean {
-  const normalized = stripDeviceSuffix(jid);
-  return (
-    (!!selfPhoneJid && normalized === stripDeviceSuffix(selfPhoneJid)) ||
-    (!!selfLid && normalized === stripDeviceSuffix(selfLid))
-  );
-}
-
-function shouldProcessGroup(params: {
-  account: WhatsAppChannelAccount;
-  groupJid: string;
-  text: string;
-  mentionedJids: string[];
-  replyParticipant: string | null;
-  selfPhoneJid: string | null;
-  selfLid: string | null;
-}): boolean {
-  const {
-    account,
-    groupJid,
-    text,
-    mentionedJids,
-    replyParticipant,
-    selfPhoneJid,
-    selfLid,
-  } = params;
-  if (account.groupMode === "disabled") return false;
-  if (
-    account.allowedGroups?.length &&
-    !account.allowedGroups.includes(groupJid)
-  ) {
-    return false;
-  }
-  if (account.groupMode === "open") return true;
-  if (mentionedJids.some((jid) => matchesSelf(jid, selfPhoneJid, selfLid))) {
-    return true;
-  }
-  if (
-    replyParticipant &&
-    matchesSelf(replyParticipant, selfPhoneJid, selfLid)
-  ) {
-    return true;
-  }
-  const matchText = text.slice(0, MENTION_MATCH_TEXT_MAX_LENGTH);
-  for (const pattern of account.mentionPatterns ?? []) {
-    if (pattern.length > MAX_MENTION_PATTERN_LENGTH) continue;
-    try {
-      if (new RegExp(pattern, "i").test(matchText)) return true;
-    } catch {
-      // Ignore invalid user-provided patterns.
-    }
-  }
-  return false;
-}
-
-function buildQuotedOptions(
-  targetJid: string,
-  replyToMessageId?: string,
-): Record<string, unknown> | undefined {
-  if (!replyToMessageId) return undefined;
-  return {
-    quoted: {
-      key: { remoteJid: targetJid, id: replyToMessageId },
-      message: { conversation: "" },
-    },
-  };
-}
-
-function getLifecycleErrorReplyKey(source: ChannelTurnSource): string | null {
-  if (!source.chatId) return null;
-  return `${source.chatId}:${source.messageId ?? ""}`;
-}
-
+const CLAIM_CONNECTION_STATE = { claimedConnectionState: true } as const;
 export function createWhatsAppAdapter(
   account: WhatsAppChannelAccount,
   dependencies: WhatsAppAdapterDependencies = {},
@@ -206,24 +100,35 @@ export function createWhatsAppAdapter(
   let running = false;
   let stopping = false;
   let reconnectAttempts = 0;
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectTimer: WhatsAppReconnectTimer | null = null;
+  let stableOpenTimer: WhatsAppReconnectTimer | null = null;
   let selfPhoneJid: string | null = null;
   let selfLid: string | null = null;
   let connectedAtMs = 0;
   let connectionGeneration = 0;
+  const recentDisconnects: number[] = [];
+  let closedGeneration: number | null = null;
+  const reconnectScheduler =
+    dependencies.reconnectScheduler ??
+    createDefaultWhatsAppReconnectScheduler();
   let releaseSocketLease: (() => void) | null = null;
+  let typing!: WhatsAppTypingController<WhatsAppSocket>;
   let downloadContentFromMessage:
     | ((message: unknown, type: string) => Promise<AsyncIterable<Uint8Array>>)
     | null = null;
-  const sentMessageIds = new Set<string>();
-  const seenMessageIds = new Set<string>();
+  const dedupeClaims = createWhatsAppDedupeClaims(DEDUPE_MAX_SIZE);
   const lidStore =
     dependencies.lidStore ??
     createLidStore(
       join(getWhatsAppAuthDir(account.accountId), "lid-mappings.json"),
     );
   let lidStoreDirty = false;
-  const messageStore = new Map<string, unknown>();
+  const outboundMessages = createWhatsAppMessageStore(canonicalizeChatId);
+  const { messages: messageStore } = outboundMessages;
+  let inboundDebounce: WhatsAppInboundDebounceController<
+    WhatsAppSocket,
+    WhatsAppMessageKey
+  > | null = null;
 
   function flushLidStoreIfDirty(): void {
     if (!lidStoreDirty) return;
@@ -248,32 +153,11 @@ export function createWhatsAppAdapter(
     return true;
   }
 
-  function rememberSeen(id: string): boolean {
-    if (seenMessageIds.has(id)) return true;
-    seenMessageIds.add(id);
-    if (seenMessageIds.size > DEDUPE_MAX_SIZE) {
-      const first = seenMessageIds.values().next().value;
-      if (first) seenMessageIds.delete(first);
-    }
-    return false;
-  }
-
-  function rememberSent(id: string, message?: unknown): void {
-    if (!id) return;
-    sentMessageIds.add(id);
-    if (message) messageStore.set(id, message);
-    setTimeout(
-      () => {
-        sentMessageIds.delete(id);
-        messageStore.delete(id);
-      },
-      24 * 60 * 60 * 1000,
-    );
-  }
-
   function clearActiveSocket(closeWebSocket: boolean): void {
+    clearStableOpenTimer();
     const currentSock = sock;
     const releaseLease = releaseSocketLease;
+    inboundDebounce?.cancelPending();
     sock = null;
     releaseSocketLease = null;
     if (closeWebSocket) {
@@ -284,6 +168,40 @@ export function createWhatsAppAdapter(
       }
     }
     releaseLease?.();
+  }
+
+  function clearWhatsAppReconnectTimer(): void {
+    const timer = reconnectTimer;
+    reconnectTimer = null;
+    timer?.task?.cancel();
+  }
+
+  function clearStableOpenTimer(): void {
+    const timer = stableOpenTimer;
+    stableOpenTimer = null;
+    timer?.task?.cancel();
+  }
+
+  function scheduleStableOpenReset(generation: number): void {
+    clearStableOpenTimer();
+    const timer: WhatsAppReconnectTimer = {
+      generation,
+      task: null,
+    };
+    stableOpenTimer = timer;
+    timer.task = reconnectScheduler.schedule(
+      STABLE_OPEN_RESET_MS,
+      () => {
+        if (stableOpenTimer !== timer) return;
+        stableOpenTimer = null;
+        if (timer.generation !== connectionGeneration || stopping || !running) {
+          return;
+        }
+        reconnectAttempts = 0;
+        recentDisconnects.length = 0;
+      },
+      { unref: true },
+    );
   }
 
   async function ensureRuntimeHelpers(): Promise<void> {
@@ -297,40 +215,93 @@ export function createWhatsAppAdapter(
     }
   }
 
+  function canonicalizeChatId(chatId: string): string | null {
+    try {
+      return resolveSendJid({
+        chatId,
+        selfPhoneJid,
+        selfLid,
+        resolveLid: (lidJid) => lidStore.resolve(lidJid),
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  function getTypingOwner(): WhatsAppSocket | null {
+    return sock;
+  }
+
+  function sendTypingPresence(
+    owner: WhatsAppSocket,
+    chatId: string,
+    presence: WhatsAppTypingPresence,
+  ): unknown {
+    return owner.sendPresenceUpdate?.(presence, chatId);
+  }
+
   function scheduleReconnect(reason?: string): void {
     if (stopping || !running || reconnectTimer) return;
     reconnectAttempts += 1;
     const delay = Math.min(RECONNECT_MAX_MS, 1000 * 2 ** reconnectAttempts);
+    const generation = connectionGeneration;
+    const timer: WhatsAppReconnectTimer = {
+      generation,
+      task: null,
+    };
     console.warn(
       `[WhatsApp:${account.accountId}] disconnected${reason ? ` (${reason})` : ""}; reconnecting in ${Math.round(delay / 1000)}s.`,
     );
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      void connect().catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        setWhatsAppConnectionState(account.accountId, {
-          status: "error",
-          lastError: message,
+    reconnectTimer = timer;
+    timer.task = reconnectScheduler.schedule(
+      delay,
+      () => {
+        if (reconnectTimer !== timer) return;
+        reconnectTimer = null;
+        if (timer.generation !== connectionGeneration || stopping || !running) {
+          return;
+        }
+        const reconnectGeneration = connectionGeneration + 1;
+        void connect().catch((error) => {
+          if (
+            reconnectGeneration !== connectionGeneration ||
+            stopping ||
+            !running
+          ) {
+            return;
+          }
+          const message =
+            error instanceof Error ? error.message : String(error);
+          setWhatsAppConnectionState(account.accountId, {
+            status: "error",
+            lastError: message,
+          });
+          scheduleReconnect(message);
         });
-        scheduleReconnect(message);
-      });
-    }, delay);
+      },
+      { unref: true },
+    );
   }
 
   async function connect(): Promise<void> {
+    clearWhatsAppReconnectTimer();
     connectionGeneration += 1;
     const generation = connectionGeneration;
+    if (sock) await typing.clearOwner(sock);
     clearActiveSocket(true);
     await ensureRuntimeHelpers();
-    connectedAtMs = Date.now();
+    connectedAtMs = reconnectScheduler.now();
     const result = await (dependencies.createSocket ?? createWhatsAppSocket)({
       accountId: account.accountId,
       printQr: true,
       messageStore,
       onConnectionUpdate(update) {
-        if (generation !== connectionGeneration) return;
+        if (generation !== connectionGeneration) return CLAIM_CONNECTION_STATE;
         if (update.connection === "open") {
-          reconnectAttempts = 0;
+          if (stopping || !running || closedGeneration === generation) {
+            return CLAIM_CONNECTION_STATE;
+          }
+          scheduleStableOpenReset(generation);
           selfPhoneJid = stripDeviceSuffix(sock?.user?.id ?? null) || null;
           selfLid = stripDeviceSuffix(sock?.user?.lid ?? null) || null;
           const mode = account.selfChatMode
@@ -341,12 +312,17 @@ export function createWhatsAppAdapter(
           );
         }
         if (update.connection === "close" && !stopping) {
-          clearActiveSocket(false);
-          const lastDisconnect = asRecord(update.lastDisconnect);
-          const error = asRecord(lastDisconnect.error);
           if (isWhatsAppConflictDisconnect(update)) {
+            closedGeneration = generation;
+            const closingSocket = sock;
+            if (closingSocket) void typing.clearOwner(closingSocket);
+            clearActiveSocket(false);
+            const lastDisconnect = asRecord(update.lastDisconnect);
+            const error = asRecord(lastDisconnect.error);
             running = false;
             stopping = true;
+            clearWhatsAppReconnectTimer();
+            clearStableOpenTimer();
             const message =
               typeof error.message === "string"
                 ? error.message
@@ -358,12 +334,45 @@ export function createWhatsAppAdapter(
             console.warn(
               `[WhatsApp:${account.accountId}] disconnected due to session conflict; not reconnecting automatically. Stop any other WhatsApp server using this account/auth session, then restart this server.`,
             );
-            return;
+            return CLAIM_CONNECTION_STATE;
+          }
+          if (closedGeneration === generation) return CLAIM_CONNECTION_STATE;
+          closedGeneration = generation;
+          const closingSocket = sock;
+          if (closingSocket) void typing.clearOwner(closingSocket);
+          clearActiveSocket(false);
+          const lastDisconnect = asRecord(update.lastDisconnect);
+          const error = asRecord(lastDisconnect.error);
+          const now = reconnectScheduler.now();
+          while (recentDisconnects.length > 0) {
+            const oldest = recentDisconnects[0];
+            if (oldest === undefined || now - oldest <= RECONNECT_WINDOW_MS) {
+              break;
+            }
+            recentDisconnects.shift();
+          }
+          recentDisconnects.push(now);
+          if (recentDisconnects.length >= MAX_UNSTABLE_DISCONNECTS) {
+            running = false;
+            stopping = true;
+            clearWhatsAppReconnectTimer();
+            clearStableOpenTimer();
+            const loopMessage = `WhatsApp disconnected ${recentDisconnects.length} times in ${RECONNECT_WINDOW_MS / 1000}s; stopping to avoid reconnect loop. Another client may be competing for this session. Restart this WhatsApp channel to retry.`;
+            setWhatsAppConnectionState(account.accountId, {
+              status: "error",
+              lastError: loopMessage,
+            });
+            console.warn(`[WhatsApp:${account.accountId}] ${loopMessage}`);
+            return CLAIM_CONNECTION_STATE;
           }
           scheduleReconnect(
             typeof error.message === "string" ? error.message : undefined,
           );
         }
+        if (update.connection === "close" && stopping) {
+          return CLAIM_CONNECTION_STATE;
+        }
+        return undefined;
       },
     });
     if (generation !== connectionGeneration || stopping || !running) {
@@ -375,28 +384,64 @@ export function createWhatsAppAdapter(
       result.release();
       return;
     }
-    sock = result.sock as WhatsAppSocket;
+    const connectedSocket = result.sock as WhatsAppSocket;
+    sock = connectedSocket;
     releaseSocketLease = result.release;
-    sock.ev?.on?.("messages.upsert", (event) => {
-      return handleMessagesUpsert(event).catch((error) => {
-        console.error(
-          `[WhatsApp:${account.accountId}] inbound handler failed:`,
-          error instanceof Error ? error.message : error,
-        );
-      });
+    connectedSocket.ev?.on?.("messages.upsert", (event) => {
+      return handleMessagesUpsert(event, connectedSocket, generation).catch(
+        (error) => {
+          console.error(
+            `[WhatsApp:${account.accountId}] inbound handler failed:`,
+            error instanceof Error ? error.message : error,
+          );
+        },
+      );
+    });
+    connectedSocket.ev?.on?.("messages.reaction", (event) => {
+      return handleReactionBatch(event, connectedSocket, generation).catch(
+        (error) => {
+          console.error(
+            `[WhatsApp:${account.accountId}] reaction handler failed:`,
+            error instanceof Error ? error.message : error,
+          );
+        },
+      );
     });
   }
 
-  async function getGroupLabel(groupJid: string): Promise<string | undefined> {
+  async function getGroupLabel(
+    groupJid: string,
+    batchSocket: WhatsAppSocket,
+  ): Promise<string | undefined> {
     try {
-      return (await sock?.groupMetadata?.(groupJid))?.subject;
+      return (await batchSocket.groupMetadata?.(groupJid))?.subject;
     } catch {
       return undefined;
     }
   }
 
-  async function handleMessagesUpsert(event: unknown): Promise<void> {
+  function isActiveBatch(
+    batchSocket: WhatsAppSocket,
+    generation: number,
+  ): boolean {
+    return (
+      running &&
+      !stopping &&
+      sock === batchSocket &&
+      generation === connectionGeneration
+    );
+  }
+
+  async function handleMessagesUpsert(
+    event: unknown,
+    batchSocket: WhatsAppSocket,
+    generation: number,
+  ): Promise<void> {
+    const acceptedEntries: Array<
+      WhatsAppInboundDebounceEntry<WhatsAppSocket, WhatsAppMessageKey>
+    > = [];
     try {
+      if (!isActiveBatch(batchSocket, generation)) return;
       const record = asRecord(event);
       if (record.type !== "notify" && record.type !== "append") return;
       const messages = Array.isArray(record.messages)
@@ -404,17 +449,19 @@ export function createWhatsAppAdapter(
         : [];
       const isHistory = record.type === "append";
       for (const msg of messages) {
+        if (!isActiveBatch(batchSocket, generation)) return;
         const remoteJid = msg.key?.remoteJid ?? "";
         const messageId = msg.key?.id ?? "";
         if (!remoteJid || !messageId || !msg.message) continue;
+        if (isWhatsAppReactionMessage(msg.message)) continue;
         if (isStatusOrBroadcastJid(remoteJid)) continue;
-        if (sentMessageIds.has(messageId)) {
-          sentMessageIds.delete(messageId);
+        if (outboundMessages.isSent(messageId)) {
+          outboundMessages.rememberStored(messageId, msg);
+          outboundMessages.forgetSent(messageId);
           continue;
         }
         if (!messageStore.has(messageId)) {
-          messageStore.set(messageId, msg);
-          setTimeout(() => messageStore.delete(messageId), 24 * 60 * 60 * 1000);
+          outboundMessages.rememberStored(messageId, msg);
         }
 
         const selfChat = isSelfChat(remoteJid, selfPhoneJid, selfLid);
@@ -449,21 +496,37 @@ export function createWhatsAppAdapter(
 
         const group = isGroupJid(remoteJid);
         const chatId = identity.chatId;
-        if (rememberSeen(`${chatId}:${messageId}`)) continue;
+        const dedupeKey = `${chatId}:${messageId}`;
+        if (!dedupeClaims.tryClaim(dedupeKey, generation)) continue;
 
         const text = extractWhatsAppText(msg.message);
-        const attachmentResult = await collectWhatsAppAttachments({
-          accountId: account.accountId,
-          chatId,
-          messageId,
-          message: msg.message,
-          downloadContentFromMessage: downloadContentFromMessage ?? undefined,
-          downloadMedia: account.downloadMedia === true,
-          mediaMaxBytes: account.mediaMaxBytes,
-          transcribeVoice: account.transcribeVoice === true,
-        });
+        let attachmentResult: Awaited<
+          ReturnType<typeof collectWhatsAppAttachments>
+        >;
+        try {
+          attachmentResult = await collectWhatsAppAttachments({
+            accountId: account.accountId,
+            chatId,
+            messageId,
+            message: msg.message,
+            downloadContentFromMessage: downloadContentFromMessage ?? undefined,
+            downloadMedia: account.downloadMedia === true,
+            mediaMaxBytes: account.mediaMaxBytes,
+            transcribeVoice: account.transcribeVoice === true,
+          });
+        } catch (error) {
+          dedupeClaims.release(dedupeKey, generation);
+          throw error;
+        }
+        if (!isActiveBatch(batchSocket, generation)) {
+          dedupeClaims.release(dedupeKey, generation);
+          return;
+        }
         const body = attachmentResult.transcriptionText || text;
-        if (!body.trim() && attachmentResult.attachments.length === 0) continue;
+        if (!body.trim() && attachmentResult.attachments.length === 0) {
+          dedupeClaims.commit(dedupeKey, generation);
+          continue;
+        }
 
         const senderId = identity.senderId;
 
@@ -471,7 +534,7 @@ export function createWhatsAppAdapter(
         const replyParticipant = extractReplyParticipant(msg.message);
         const groupAllowed = !group
           ? true
-          : shouldProcessGroup({
+          : shouldProcessWhatsAppGroup({
               account,
               groupJid: chatId,
               text: body,
@@ -480,13 +543,20 @@ export function createWhatsAppAdapter(
               selfPhoneJid,
               selfLid,
             });
-        if (!groupAllowed) continue;
+        if (!groupAllowed) {
+          dedupeClaims.commit(dedupeKey, generation);
+          continue;
+        }
 
         const chatLabel = group
-          ? await getGroupLabel(chatId)
+          ? await getGroupLabel(chatId, batchSocket)
           : selfChat
             ? "Self (WhatsApp)"
             : msg.pushName?.trim() || senderId;
+        if (!isActiveBatch(batchSocket, generation)) {
+          dedupeClaims.release(dedupeKey, generation);
+          return;
+        }
 
         const inbound: InboundChannelMessage = {
           channel: CHANNEL_ID,
@@ -508,9 +578,172 @@ export function createWhatsAppAdapter(
         };
 
         console.log(
-          `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${preview(body)}"`,
+          `[WhatsApp:${account.accountId}] inbound chatId=${chatId} sender=${senderId} text="${previewWhatsAppText(body)}"`,
         );
-        await adapter.onMessage?.(inbound);
+        acceptedEntries.push({
+          inbound,
+          receipt:
+            msg.key && batchSocket.readMessages
+              ? {
+                  owner: batchSocket,
+                  key: msg.key,
+                  markRead: (keys) => batchSocket.readMessages?.(keys),
+                }
+              : undefined,
+          onDeliveryStarted: () => dedupeClaims.commit(dedupeKey, generation),
+          onDiscarded: () => dedupeClaims.release(dedupeKey, generation),
+        });
+      }
+    } finally {
+      flushLidStoreIfDirty();
+      if (acceptedEntries.length > 0) {
+        if (isActiveBatch(batchSocket, generation)) {
+          await inboundDebounce?.dispatch(acceptedEntries);
+        } else {
+          for (const entry of acceptedEntries) entry.onDiscarded?.();
+        }
+      }
+    }
+  }
+
+  async function handleReactionEntry(
+    parsed: WhatsAppReaction,
+    raw: unknown,
+    batchSocket: WhatsAppSocket,
+    generation: number,
+  ): Promise<void> {
+    if (!isActiveBatch(batchSocket, generation)) return;
+    // Baileys may deliver reactions via a LID chat where it cannot equate
+    // our PN identity, producing targetFromMe:false for our own messages.
+    // isKnownOutboundMessage also checks sentMessageIds and the store's
+    // key.fromMe, but not mere store membership because inbound messages
+    // are stored there too.
+    const targetIsOurs =
+      parsed.targetFromMe === true ||
+      outboundMessages.isKnownOutbound(parsed.targetMessageId);
+    if (!targetIsOurs) return;
+    if (parsed.reactionKey.fromMe === true) return;
+    if (isStatusOrBroadcastJid(parsed.chatId)) return;
+    if (
+      parsed.timestampMs !== undefined &&
+      parsed.timestampMs < connectedAtMs - 1000
+    ) {
+      return;
+    }
+    if (outboundMessages.isSent(parsed.reactionMessageId)) {
+      outboundMessages.forgetSent(parsed.reactionMessageId);
+      return;
+    }
+    const identity = resolveInboundIdentity(
+      {
+        selfPhoneJid,
+        selfLid,
+        remoteJid: parsed.chatId,
+        participant: parsed.reactorParticipant,
+        senderPn: parsed.reactionKey.senderPn,
+        senderLid: parsed.reactionKey.senderLid,
+        participantPn: parsed.reactionKey.participantPn,
+        participantLid: parsed.reactionKey.participantLid,
+      },
+      lidStore,
+    );
+    if (!identity || !applyObservedMappings(identity.observedMappings)) return;
+    const dedupeKey = `reaction:${identity.chatId}:${parsed.reactionMessageId}`;
+    if (!dedupeClaims.tryClaim(dedupeKey, generation)) return;
+
+    const selfChat = isSelfChat(parsed.chatId, selfPhoneJid, selfLid);
+    if (account.selfChatMode && !selfChat) {
+      dedupeClaims.commit(dedupeKey, generation);
+      return;
+    }
+
+    const group = isGroupJid(identity.chatId);
+    if (
+      group &&
+      !isWhatsAppReactionGroupEligible({
+        groupMode: account.groupMode,
+        allowedGroups: account.allowedGroups,
+        groupJid: identity.chatId,
+        targetFromMe: targetIsOurs,
+      })
+    ) {
+      dedupeClaims.commit(dedupeKey, generation);
+      return;
+    }
+
+    const chatLabel = group
+      ? await getGroupLabel(identity.chatId, batchSocket)
+      : selfChat
+        ? "Self (WhatsApp)"
+        : identity.senderId;
+    if (!isActiveBatch(batchSocket, generation)) {
+      dedupeClaims.release(dedupeKey, generation);
+      return;
+    }
+    const targetSenderId = isStrictPhoneJid(selfPhoneJid)
+      ? senderIdFromJid(selfPhoneJid)
+      : isStrictPhoneJid(parsed.targetKey.participant)
+        ? senderIdFromJid(parsed.targetKey.participant)
+        : undefined;
+    const actor = identity.senderId;
+    const text =
+      parsed.action === "added"
+        ? `${actor} reacted ${parsed.emoji}`
+        : `${actor} removed a reaction`;
+    const inbound: InboundChannelMessage = {
+      channel: CHANNEL_ID,
+      accountId: account.accountId,
+      chatId: identity.chatId,
+      senderId: actor,
+      senderName: actor,
+      chatLabel,
+      text,
+      timestamp: parsed.timestampMs ?? Date.now(),
+      messageId: parsed.reactionMessageId,
+      chatType: group ? "channel" : "direct",
+      isMention: !group || account.groupMode === "mention",
+      raw,
+      reaction: {
+        action: parsed.action,
+        emoji: parsed.emoji,
+        targetMessageId: parsed.targetMessageId,
+        ...(targetSenderId ? { targetSenderId } : {}),
+      },
+    };
+
+    dedupeClaims.commit(dedupeKey, generation);
+    try {
+      await adapter.onMessage?.(inbound);
+    } catch (error) {
+      console.error(
+        `[WhatsApp:${account.accountId}] reaction delivery failed:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  async function handleReactionBatch(
+    event: unknown,
+    batchSocket: WhatsAppSocket,
+    generation: number,
+  ): Promise<void> {
+    try {
+      if (!isActiveBatch(batchSocket, generation) || !Array.isArray(event)) {
+        return;
+      }
+      for (const raw of event) {
+        if (!isActiveBatch(batchSocket, generation)) return;
+        try {
+          const parsed = parseWhatsAppReactionEntry(raw);
+          if (parsed) {
+            await handleReactionEntry(parsed, raw, batchSocket, generation);
+          }
+        } catch (error) {
+          console.error(
+            `[WhatsApp:${account.accountId}] reaction entry failed:`,
+            error instanceof Error ? error.message : error,
+          );
+        }
       }
     } finally {
       flushLidStoreIfDirty();
@@ -536,30 +769,35 @@ export function createWhatsAppAdapter(
     id: `${CHANNEL_ID}:${account.accountId}`,
     channelId: CHANNEL_ID,
     accountId: account.accountId,
-    name: getDisplayName(account),
+    name: getWhatsAppDisplayName(account),
 
     async start() {
       if (running) return;
       running = true;
       stopping = false;
+      reconnectAttempts = 0;
+      recentDisconnects.length = 0;
+      closedGeneration = null;
       await connect();
       console.log(`[WhatsApp:${account.accountId}] Adapter started.`);
     },
 
     async stop() {
-      if (!running) {
-        flushLidStoreIfDirty();
-        return;
-      }
+      const wasRunning = running;
       stopping = true;
       running = false;
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
+      inboundDebounce?.cancelPending();
+      clearWhatsAppReconnectTimer();
+      clearStableOpenTimer();
       connectionGeneration += 1;
+      await typing.clearAll();
       clearActiveSocket(true);
-      setWhatsAppConnectionState(account.accountId, { status: "disconnected" });
+      if (wasRunning) {
+        setWhatsAppConnectionState(account.accountId, {
+          status: "disconnected",
+        });
+      }
+      outboundMessages.clear();
       flushLidStoreIfDirty();
     },
 
@@ -569,7 +807,12 @@ export function createWhatsAppAdapter(
 
     async sendMessage(msg: OutboundChannelMessage) {
       if (!running) throw new Error("WhatsApp adapter is not running.");
-      if (!msg.text?.trim() && !msg.mediaPath?.trim() && !msg.reaction) {
+      if (
+        !msg.text?.trim() &&
+        !msg.mediaPath?.trim() &&
+        !msg.reaction &&
+        !msg.removeReaction
+      ) {
         throw new Error("WhatsApp send requires message or media.");
       }
       const targetJid = resolveSendJid({
@@ -578,32 +821,60 @@ export function createWhatsAppAdapter(
         selfLid,
         resolveLid: (lidJid) => lidStore.resolve(lidJid),
       });
+      const hadManagedTyping = typing.isActive(targetJid);
+      await typing.clearChat(targetJid);
+      let resolvedMedia: WhatsAppResolvedOutboundMedia | undefined;
+      if (msg.mediaPath && account.attachmentFilter === true) {
+        const decision = decideWhatsAppAttachmentPolicy({
+          policy: {
+            enabled: true,
+            allowedMimeTypes: account.attachmentMimeTypes ?? [],
+            allowedRecipients: account.attachmentAllowedRecipients ?? [],
+            allowedDirectories: account.attachmentAllowedPaths ?? [],
+            recursiveDirectories: account.attachmentPathRecursive === true,
+          },
+          mediaPath: msg.mediaPath,
+          targetJid,
+        });
+        if (!decision.allowed) {
+          throw new Error(decision.reason);
+        }
+        resolvedMedia = {
+          mediaPath: decision.mediaPath,
+          mimeType: decision.mimeType,
+        };
+      }
       if (msg.reaction || msg.removeReaction) {
         const target = msg.targetMessageId ?? msg.replyToMessageId;
         if (!target) throw new Error("WhatsApp reactions require messageId.");
         const result = await sendToWhatsApp(targetJid, {
           react: {
             text: msg.removeReaction ? "" : (msg.reaction ?? ""),
-            key: { remoteJid: targetJid, id: target },
+            key: outboundMessages.buildReactionTargetKey(targetJid, target),
           },
         });
         const id = result.key?.id ?? target;
-        rememberSent(id, result);
+        outboundMessages.rememberSent(id, result);
         return { messageId: id };
       }
-      try {
-        await sock?.sendPresenceUpdate?.("composing", targetJid);
-      } catch {
-        // Presence is best-effort.
+      if (!hadManagedTyping) {
+        try {
+          await sock?.sendPresenceUpdate?.("composing", targetJid);
+        } catch {
+          // Presence is best-effort.
+        }
       }
-      const payload = buildWhatsAppOutboundPayload(msg);
+      const payload = withWhatsAppPayloadMessagePrefix(
+        buildWhatsAppOutboundPayload(msg, resolvedMedia),
+        account.messagePrefix,
+      );
       const result = await sendToWhatsApp(
         targetJid,
         payload,
-        buildQuotedOptions(targetJid, msg.replyToMessageId),
+        buildWhatsAppQuotedOptions(targetJid, msg.replyToMessageId),
       );
       const id = result.key?.id ?? "";
-      rememberSent(id, result);
+      outboundMessages.rememberSent(id, result);
       return { messageId: id };
     },
 
@@ -615,17 +886,21 @@ export function createWhatsAppAdapter(
         selfLid,
         resolveLid: (lidJid) => lidStore.resolve(lidJid),
       });
+      await typing.clearChat(targetJid);
+      const payload = withWhatsAppPayloadMessagePrefix(
+        { text },
+        options?.applyMessagePrefix ? account.messagePrefix : undefined,
+      );
       const result = await sendToWhatsApp(
         targetJid,
-        { text },
-        buildQuotedOptions(targetJid, options?.replyToMessageId),
+        payload,
+        buildWhatsAppQuotedOptions(targetJid, options?.replyToMessageId),
       );
-      rememberSent(result.key?.id ?? "", result);
+      outboundMessages.rememberSent(result.key?.id ?? "", result);
     },
 
     async handleControlRequestEvent(event: ChannelControlRequestEvent) {
-      // Never post approval/control prompts into groups. Direct/self-chat
-      // routes may use the normal text approval flow.
+      // Never post approval/control prompts into groups.
       if (event.source.chatType === "channel") return;
       await adapter.sendDirectReply(
         event.source.chatId,
@@ -637,14 +912,29 @@ export function createWhatsAppAdapter(
     async handleTurnLifecycleEvent(
       event: ChannelTurnLifecycleEvent,
     ): Promise<void> {
-      if (!running || event.type !== "finished") return;
+      if (!running) return;
+      if (event.type === "queued") return;
+      if (event.type === "processing") {
+        if (account.waitingBehavior === "typing_indicator") {
+          for (const source of event.sources) {
+            typing.start({ batchId: event.batchId, source });
+          }
+        }
+        return;
+      }
+
+      await Promise.all(
+        event.sources.map((source) =>
+          typing.stop({ batchId: event.batchId, source }),
+        ),
+      );
 
       const errorText = event.outcome === "error" ? event.error?.trim() : null;
       if (!errorText) return;
 
       const uniqueSources = new Map<string, ChannelTurnSource>();
       for (const source of event.sources) {
-        const key = getLifecycleErrorReplyKey(source);
+        const key = getWhatsAppLifecycleErrorReplyKey(source);
         if (!key || uniqueSources.has(key)) continue;
         uniqueSources.set(key, source);
       }
@@ -669,6 +959,29 @@ export function createWhatsAppAdapter(
       );
     },
   };
+
+  inboundDebounce = createWhatsAppInboundDebounceController({
+    account,
+    getDeliver: () => adapter.onMessage,
+    onDeliveryError(error) {
+      console.warn(
+        `[WhatsApp:${account.accountId}] failed to deliver inbound batch:`,
+        error instanceof Error ? error.message : error,
+      );
+    },
+    onReadReceiptError(error) {
+      console.warn(
+        `[WhatsApp:${account.accountId}] failed to mark messages read:`,
+        error instanceof Error ? error.message : error,
+      );
+    },
+  });
+  typing = createWhatsAppTypingController<WhatsAppSocket>({
+    accountId: account.accountId,
+    canonicalizeChatId,
+    getOwner: getTypingOwner,
+    sendPresence: sendTypingPresence,
+  });
 
   return adapter;
 }

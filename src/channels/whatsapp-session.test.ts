@@ -4,8 +4,41 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   acquireWhatsAppSessionLease,
+  createWhatsAppSocket,
+  getWhatsAppAuthDir,
   renderQrTerminal,
 } from "@/channels/whatsapp/session";
+import {
+  clearWhatsAppConnectionState,
+  getWhatsAppConnectionState,
+  setWhatsAppConnectionState,
+} from "@/channels/whatsapp/state";
+
+function createSocketRuntimeHarness() {
+  const handlers = new Map<
+    string,
+    (payload?: unknown) => void | Promise<void>
+  >();
+  const sock = {
+    ev: {
+      on(event: string, handler: (payload?: unknown) => void | Promise<void>) {
+        handlers.set(event, handler);
+      },
+    },
+    user: { id: "15551234567@s.whatsapp.net", lid: "15551234567@lid" },
+    ws: { close() {} },
+  };
+  const runtime = {
+    makeWASocket: () => sock,
+    useMultiFileAuthState: async () => ({
+      state: { creds: {}, keys: {} },
+      saveCreds: async () => undefined,
+    }),
+    fetchLatestBaileysVersion: async () => ({ version: [2, 3000, 0] }),
+    DisconnectReason: { loggedOut: 401 },
+  };
+  return { handlers, runtime };
+}
 
 describe("WhatsApp session", () => {
   test("renders qrcode-terminal with the module as this", () => {
@@ -37,6 +70,42 @@ describe("WhatsApp session", () => {
     };
 
     expect(renderQrTerminal(qrMod, "pairing-payload")).toBeUndefined();
+  });
+
+  test("preserves adapter-claimed terminal close state", async () => {
+    const accountId = `session-claimed-close-${Date.now()}-${Math.random()}`;
+    const { handlers, runtime } = createSocketRuntimeHarness();
+    let result: Awaited<ReturnType<typeof createWhatsAppSocket>> | null = null;
+
+    try {
+      result = await createWhatsAppSocket({
+        accountId,
+        printQr: false,
+        loadRuntimeModule: async () => runtime,
+        onConnectionUpdate(update) {
+          if (update.connection !== "close") return;
+          setWhatsAppConnectionState(accountId, {
+            status: "error",
+            lastError: "terminal conflict wins",
+          });
+          return { claimedConnectionState: true };
+        },
+      });
+
+      await handlers.get("connection.update")?.({
+        connection: "close",
+        lastDisconnect: { error: { message: "generic disconnected loser" } },
+      });
+
+      expect(getWhatsAppConnectionState(accountId)).toMatchObject({
+        status: "error",
+        lastError: "terminal conflict wins",
+      });
+    } finally {
+      result?.release();
+      clearWhatsAppConnectionState(accountId);
+      rmSync(getWhatsAppAuthDir(accountId), { recursive: true, force: true });
+    }
   });
 
   test("prevents concurrent session leases for the same account", () => {

@@ -360,6 +360,9 @@ export function createChannelInboundRouter(deps: {
     // exact topic route exists; a disabled exact route remains authoritative.
     const route = loadRouteForInboundMessage(msg, accountId);
     if (!route) {
+      if (msg.reaction) {
+        return;
+      }
       await adapter.sendDirectReply(
         msg.chatId,
         buildUnboundRouteInstructions(msg.channel, msg.chatId),

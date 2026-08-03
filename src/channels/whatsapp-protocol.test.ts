@@ -7,6 +7,7 @@ describe("whatsapp gateway config validators", () => {
       isValidChannelPluginConfigPayload("whatsapp", {
         config: {
           agent_id: "agent-1",
+          message_prefix: "[bot] ",
           self_chat_mode: true,
           group_mode: "disabled",
         },
@@ -24,6 +25,11 @@ describe("whatsapp gateway config validators", () => {
           mention_patterns: ["\\bloop\\b"],
           download_media: true,
           media_max_bytes: 1048576,
+          attachment_filter: true,
+          attachment_mime_types: ["image/png"],
+          attachment_allowed_recipients: ["15551234567"],
+          attachment_allowed_paths: ["/tmp/uploads"],
+          attachment_path_recursive: true,
         },
       }),
     ).toBe(true);
@@ -33,6 +39,14 @@ describe("whatsapp gateway config validators", () => {
     expect(
       isValidChannelPluginConfigPayload("whatsapp", {
         config: { group_mode: "all" },
+      }),
+    ).toBe(false);
+  });
+
+  test("rejects non-string message prefixes", () => {
+    expect(
+      isValidChannelPluginConfigPayload("whatsapp", {
+        config: { message_prefix: 42 },
       }),
     ).toBe(false);
   });
@@ -54,6 +68,8 @@ describe("whatsapp gateway config validators", () => {
           plugin_config: {
             agent_id: "agent-1",
             self_chat_mode: false,
+            attachment_filter: true,
+            attachment_mime_types: ["image/png"],
           },
         },
         "plugin_config",
