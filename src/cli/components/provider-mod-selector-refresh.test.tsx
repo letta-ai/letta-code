@@ -166,7 +166,7 @@ describe("provider mod selector refresh", () => {
   });
 
   test("preserves OAuth provider identity for custom aliases in the All category", async () => {
-    const handle = "chatgpt-cameron/gpt-5.6-sol";
+    const handle = "chatgpt-work/gpt-5.6-sol";
     const backend = new FakeHeadlessBackend();
     backend.listModels = async () =>
       [
