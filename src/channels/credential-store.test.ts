@@ -252,6 +252,99 @@ describe("channel credential storage", () => {
     expect(rehydrated?.appToken).toBe("xapp-secret");
   });
 
+  test("serializes concurrent updates before rollback and file commit", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    await upsertChannelAccountWithSecrets("slack", makeSlackAccount());
+
+    const botTokenName = buildChannelSecretName(
+      "slack",
+      "slack-account",
+      "botToken",
+    );
+    const appTokenName = buildChannelSecretName(
+      "slack",
+      "slack-account",
+      "appToken",
+    );
+    let signalFirstUpdateAtSecondWrite: () => void = () => {};
+    const firstUpdateAtSecondWrite = new Promise<void>((resolve) => {
+      signalFirstUpdateAtSecondWrite = resolve;
+    });
+    let releaseFirstUpdateFailure: () => void = () => {};
+    const allowFirstUpdateFailure = new Promise<void>((resolve) => {
+      releaseFirstUpdateFailure = resolve;
+    });
+    __setChannelSecretStoreOverrideForTests({
+      get: async (name) => secrets.get(name) ?? null,
+      set: async (name, value) => {
+        if (name === appTokenName && value === "xapp-first") {
+          signalFirstUpdateAtSecondWrite();
+          await allowFirstUpdateFailure;
+          throw new Error("first update second write failed");
+        }
+        secrets.set(name, value);
+      },
+      delete: async (name) => secrets.delete(name),
+    });
+
+    const firstUpdate = upsertChannelAccountWithSecrets("slack", {
+      ...makeSlackAccount(),
+      botToken: "xoxb-first",
+      appToken: "xapp-first",
+    });
+    await firstUpdateAtSecondWrite;
+
+    let secondUpdateSettled = false;
+    const secondUpdate = upsertChannelAccountWithSecrets("slack", {
+      ...makeSlackAccount(),
+      appToken: "xapp-second",
+    }).then(
+      (account) => {
+        secondUpdateSettled = true;
+        return account;
+      },
+      (error) => {
+        secondUpdateSettled = true;
+        throw error;
+      },
+    );
+    await Promise.resolve();
+    expect(secondUpdateSettled).toBe(false);
+
+    releaseFirstUpdateFailure();
+    await expect(firstUpdate).rejects.toThrow(
+      "first update second write failed",
+    );
+    const secondAccount = (await secondUpdate) as SlackChannelAccount;
+
+    expect(secondAccount.botToken).toBe("xoxb-secret");
+    expect(secondAccount.appToken).toBe("xapp-second");
+    expect(secrets.get(botTokenName)).toBe("xoxb-secret");
+    expect(secrets.get(appTokenName)).toBe("xapp-second");
+    const persistedText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+    expect(persistedText).not.toContain("xoxb-secret");
+    expect(persistedText).not.toContain("xoxb-first");
+    expect(persistedText).not.toContain("xapp-first");
+    expect(persistedText).not.toContain("xapp-second");
+    expect(JSON.parse(persistedText).accounts[0]).toMatchObject({
+      __letta_secret_refs: {
+        botToken: true,
+        appToken: true,
+      },
+    });
+
+    clearChannelAccountStores();
+    const rehydrated = (await getChannelAccountWithSecrets(
+      "slack",
+      "slack-account",
+    )) as SlackChannelAccount | null;
+    expect(rehydrated?.botToken).toBe("xoxb-secret");
+    expect(rehydrated?.appToken).toBe("xapp-second");
+  });
+
   test("reports the original write error together with rollback failures", async () => {
     __setActiveChannelCredentialsStoreModeForTests("keyring");
     await upsertChannelAccountWithSecrets("slack", makeSlackAccount());
