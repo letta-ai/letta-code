@@ -72,7 +72,10 @@ term.onExit(({ exitCode }) => {
     );
     process.exit(1);
   }
+  // ConPTY can retain a native handle after the child exits. This is a one-shot
+  // check, so exit explicitly once the PTY proof is complete.
   console.log("Windows node-pty PTY smoke passed");
+  process.exit(0);
 });
 
 term.write(`echo ${marker}\r\n`);
