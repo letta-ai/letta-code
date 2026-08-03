@@ -13,6 +13,9 @@ type AccountAgentBinding = {
   binding?: {
     agentId?: string | null;
   };
+  config?: {
+    agent_id?: unknown;
+  };
 };
 
 function normalizeAgentId(agentId: string | null | undefined): string | null {
@@ -26,7 +29,12 @@ export function getChannelAccountAgentId(
   const binding = account as AccountAgentBinding;
   return (
     normalizeAgentId(binding.agentId) ??
-    normalizeAgentId(binding.binding?.agentId)
+    normalizeAgentId(binding.binding?.agentId) ??
+    normalizeAgentId(
+      typeof binding.config?.agent_id === "string"
+        ? binding.config.agent_id
+        : undefined,
+    )
   );
 }
 

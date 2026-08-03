@@ -29,4 +29,12 @@ export type ChannelRegistryEvent =
       agentId: string;
       conversationId: string;
       defaultPermissionMode: ChannelDefaultPermissionMode;
+    }
+  | {
+      type: "channel_conversation_created";
+      channelId: string;
+      accountId: string;
+      agentId: string;
+      conversationId: string;
+      defaultPermissionMode?: ChannelDefaultPermissionMode;
     };

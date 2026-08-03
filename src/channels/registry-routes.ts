@@ -25,16 +25,130 @@ import type {
 
 export function createChannelRouteProvisioner(deps: {
   emitEvent: (event: ChannelRegistryEvent) => void;
+  createConversation?: (params: {
+    agent_id: string;
+    summary?: string;
+  }) => Promise<{ id: string }>;
 }) {
   async function createConversationForAgent(
     agentId: string,
     summary?: string,
   ): Promise<string> {
-    const conversation = await getBackend().createConversation({
+    const createConversation =
+      deps.createConversation ??
+      ((params) => getBackend().createConversation(params));
+    const conversation = await createConversation({
       agent_id: agentId,
       ...(summary ? { summary } : {}),
     });
     return conversation.id;
+  }
+
+  type AutoRouteResult = {
+    route: ChannelRoute;
+    isFirstRouteTurn: boolean;
+  };
+  const autoRouteInFlight = new Map<string, Promise<AutoRouteResult | null>>();
+
+  function loadAutoRoute(
+    msg: InboundChannelMessage,
+    accountId: string,
+    threadId: string | null,
+  ): ChannelRoute | null {
+    let route = getRouteFromStore(msg.channel, msg.chatId, accountId, threadId);
+    if (!route) {
+      loadRoutes(msg.channel);
+      route = getRouteFromStore(msg.channel, msg.chatId, accountId, threadId);
+    }
+    return route;
+  }
+
+  async function provisionAutoRoute(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+    accountId: string,
+    threadId: string | null,
+  ): Promise<AutoRouteResult | null> {
+    const existingRoute = loadAutoRoute(msg, accountId, threadId);
+    if (existingRoute) {
+      return { route: existingRoute, isFirstRouteTurn: false };
+    }
+    const resolution = await adapter.resolveAutoRoute?.(msg);
+    if (!resolution) return null;
+    const agentId = resolution.agentId.trim();
+    if (!agentId) {
+      throw new Error(
+        `Channel adapter ${msg.channel}/${accountId} returned an empty agentId from resolveAutoRoute().`,
+      );
+    }
+
+    const conversationId = await createConversationForAgent(
+      agentId,
+      resolution.conversationSummary,
+    );
+    const now = new Date().toISOString();
+    const createdRoute: ChannelRoute = {
+      accountId,
+      chatId: msg.chatId,
+      chatType: msg.chatType,
+      threadId,
+      agentId,
+      conversationId,
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+    addRoute(msg.channel, createdRoute);
+
+    loadTargetStore(msg.channel);
+    upsertChannelTarget(msg.channel, {
+      accountId,
+      targetId: threadId ? `${msg.chatId}:${threadId}` : msg.chatId,
+      targetType: "channel",
+      chatId: msg.chatId,
+      label: msg.chatLabel ?? `${msg.channel} chat ${msg.chatId}`,
+      discoveredAt: now,
+      lastSeenAt: now,
+      lastMessageId: msg.messageId,
+    });
+    deps.emitEvent({ type: "targets_updated", channelId: msg.channel });
+    deps.emitEvent({
+      type: "channel_conversation_created",
+      channelId: msg.channel,
+      accountId,
+      agentId,
+      conversationId,
+    });
+    return { route: createdRoute, isFirstRouteTurn: true };
+  }
+
+  async function ensureAutoRoute(
+    adapter: ChannelAdapter,
+    msg: InboundChannelMessage,
+  ): Promise<AutoRouteResult | null> {
+    const accountId = msg.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+    const threadId = msg.threadId ?? null;
+    const route = loadAutoRoute(msg, accountId, threadId);
+    if (route) return { route, isFirstRouteTurn: false };
+    if (!adapter.resolveAutoRoute) return null;
+
+    const key = JSON.stringify([msg.channel, accountId, msg.chatId, threadId]);
+    const existingProvision = autoRouteInFlight.get(key);
+    if (existingProvision) {
+      const result = await existingProvision;
+      return result ? { route: result.route, isFirstRouteTurn: false } : null;
+    }
+
+    const provision = provisionAutoRoute(adapter, msg, accountId, threadId);
+    autoRouteInFlight.set(key, provision);
+    try {
+      return await provision;
+    } finally {
+      if (autoRouteInFlight.get(key) === provision) {
+        autoRouteInFlight.delete(key);
+      }
+    }
   }
 
   async function createSlackRoute(
@@ -543,6 +657,7 @@ export function createChannelRouteProvisioner(deps: {
 
   return {
     createConversationForAgent,
+    ensureAutoRoute,
     createSlackRoute,
     ensureSlackRoute,
     ensureTelegramRoute,

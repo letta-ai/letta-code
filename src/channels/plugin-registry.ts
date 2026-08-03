@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { isRecord } from "@/utils/type-guards";
 import { getChannelDir, getChannelsRoot } from "./config";
 import { CUSTOM_CHANNEL_CONFIG_SCHEMA } from "./custom/plugin";
+import { LINEAR_CHANNEL_CONFIG_SCHEMA } from "./linear/plugin";
 import type {
   ChannelConfigSchema,
   ChannelPlugin,
@@ -124,6 +125,32 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
     load: async () => {
       const { signalChannelPlugin } = await import("@/channels/signal/plugin");
       return signalChannelPlugin;
+    },
+  },
+};
+
+/**
+ * Experimental adapters shipped with Letta Code while retaining the generic
+ * plugin account/config model. This keeps them usable from the CLI without
+ * promising bespoke Desktop UI or first-party compatibility fields.
+ */
+const BUNDLED_CHANNEL_PLUGIN_REGISTRATIONS: Record<
+  string,
+  ChannelPluginRegistration
+> = {
+  linear: {
+    metadata: {
+      id: "linear",
+      displayName: "Linear (Experimental)",
+      runtimePackages: [],
+      runtimeModules: [],
+      source: "bundled",
+      firstParty: false,
+      configSchema: LINEAR_CHANNEL_CONFIG_SCHEMA,
+    },
+    load: async () => {
+      const { linearChannelPlugin } = await import("@/channels/linear/plugin");
+      return linearChannelPlugin;
     },
   },
 };
@@ -267,7 +294,10 @@ function discoverUserChannelRegistrations(): Map<
     if (!isValidChannelId(entry)) {
       continue;
     }
-    if (Object.hasOwn(FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS, entry)) {
+    if (
+      Object.hasOwn(FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS, entry) ||
+      Object.hasOwn(BUNDLED_CHANNEL_PLUGIN_REGISTRATIONS, entry)
+    ) {
       continue;
     }
 
@@ -289,6 +319,9 @@ function getChannelPluginRegistration(
       channelId as FirstPartyChannelId
     ];
   }
+  if (Object.hasOwn(BUNDLED_CHANNEL_PLUGIN_REGISTRATIONS, channelId)) {
+    return BUNDLED_CHANNEL_PLUGIN_REGISTRATIONS[channelId] ?? null;
+  }
   return discoverUserChannelRegistrations().get(channelId) ?? null;
 }
 
@@ -300,6 +333,9 @@ export function getSupportedChannelIds(): string[] {
   const discovered = discoverUserChannelRegistrations();
   return [
     ...FIRST_PARTY_CHANNEL_IDS,
+    ...Object.keys(BUNDLED_CHANNEL_PLUGIN_REGISTRATIONS).sort((left, right) =>
+      left.localeCompare(right),
+    ),
     ...[...discovered.keys()].sort((left, right) => left.localeCompare(right)),
   ];
 }

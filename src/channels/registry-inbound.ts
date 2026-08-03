@@ -327,6 +327,27 @@ export function createChannelInboundRouter(deps: {
       return;
     }
 
+    // Bundled and user plugins can opt into central auto-routing without
+    // owning Letta API calls or persisted routing state.
+    if (senderAccess === "allow" && adapter.resolveAutoRoute) {
+      const autoRouteResult = await deps.routes.ensureAutoRoute(adapter, msg);
+      if (autoRouteResult) {
+        const preparedMessage = adapter.prepareInboundMessage
+          ? await adapter.prepareInboundMessage(msg, {
+              isFirstRouteTurn: autoRouteResult.isFirstRouteTurn,
+            })
+          : msg;
+        deps.deliver({
+          route: autoRouteResult.route,
+          content: formatChannelNotification(preparedMessage),
+          turnSources: [
+            buildChannelTurnSource(autoRouteResult.route, preparedMessage),
+          ],
+        });
+        return;
+      }
+    }
+
     // 1. Pairing handshake: the sender access gate above already allowed
     // allowlisted/approved senders and denied blocked ones; "pair" means
     // this DM sender still needs a pairing code.

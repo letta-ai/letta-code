@@ -84,6 +84,48 @@ afterEach(() => {
   rmSync(channelsRoot, { recursive: true, force: true });
 });
 
+test("registers the bundled experimental Linear channel", async () => {
+  expect(isSupportedChannelId("linear")).toBe(true);
+  expect(getSupportedChannelIds()).toContain("linear");
+  expect(getChannelPluginMetadata("linear")).toMatchObject({
+    id: "linear",
+    displayName: "Linear (Experimental)",
+    source: "bundled",
+    firstParty: false,
+  });
+  expect(
+    getChannelPluginMetadata("linear").configSchema?.fields.map(
+      (field) => field.key,
+    ),
+  ).toEqual(["auth", "agent_id", "poll_interval_ms", "reply_enabled"]);
+
+  const plugin = await loadChannelPlugin("linear");
+  expect(plugin.metadata.source).toBe("bundled");
+  expect(plugin.runSetup).toBeFunction();
+});
+
+test("does not let a user plugin shadow the bundled Linear channel", async () => {
+  const channelDir = join(channelsRoot, "linear");
+  mkdirSync(channelDir, { recursive: true });
+  writeFileSync(
+    join(channelDir, "channel.json"),
+    JSON.stringify({
+      id: "linear",
+      displayName: "Shadow Linear",
+      entry: "./plugin.mjs",
+    }),
+  );
+  writeFileSync(
+    join(channelDir, "plugin.mjs"),
+    "throw new Error('shadow plugin loaded');\n",
+  );
+
+  expect(getChannelDisplayName("linear")).toBe("Linear (Experimental)");
+  await expect(loadChannelPlugin("linear")).resolves.toMatchObject({
+    metadata: { id: "linear", source: "bundled" },
+  });
+});
+
 test("discovers user channel plugins from channel.json manifests", async () => {
   writeDemoChannel();
 
