@@ -53,13 +53,17 @@ describe("resolveCronRunner", () => {
     expect(result).toMatchObject({ runner: "local" });
   });
 
-  test("server without schedule routes defaults to local runner", () => {
+  test("cloud agent errors when the server lacks schedule routes", () => {
     const result = resolveCronRunner({
       agentId: "agent-123",
       backendMode: "api",
       cloudSchedulesSupported: false,
     });
-    expect(result).toMatchObject({ runner: "local" });
+    expect("error" in result).toBe(true);
+    if ("error" in result) {
+      expect(result.error).toContain("--runner local");
+      expect(result.error).toContain("supports durable Cloud schedules");
+    }
   });
 
   test("--runner cloud errors for local-backend agents", () => {
@@ -88,6 +92,9 @@ describe("resolveCronRunner", () => {
       cloudSchedulesSupported: false,
     });
     expect("error" in result).toBe(true);
+    if ("error" in result) {
+      expect(result.error).toContain("--runner local");
+    }
   });
 
   test("--runner cloud is honored for cloud agents", () => {
@@ -181,7 +188,7 @@ describe("buildCloudScheduleInput", () => {
     expect(built.notes).toContain(CLOUD_DEVICE_FALLBACK_NOTE);
   });
 
-  test("untargeted schedules omit target_device_id entirely", () => {
+  test("managed-sandbox schedules omit target_device_id entirely", () => {
     const built = buildCloudScheduleInput({
       ...base,
       cron: "*/5 * * * *",
@@ -211,9 +218,12 @@ describe("validateTargetDevice", () => {
     expect(result).toEqual({ ok: true });
   });
 
-  test("unknown device (no local entry) passes through to server validation", () => {
+  test("unknown device is rejected before schedule creation", () => {
     const result = validateTargetDevice("device-unknown", null);
-    expect(result).toEqual({ ok: true });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("not registered");
+    }
   });
 
   test("synthetic Cloud row is rejected with omit guidance", () => {

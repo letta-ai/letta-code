@@ -16,26 +16,22 @@ This skill lets you create, list, and manage scheduled tasks using the `letta cr
 
 ## Where Schedules Run (`--runner`)
 
-There are two schedule runners, selected with the optional `--runner local|cloud` flag:
+For a Cloud agent, the creation choices are:
 
-- **`cloud`** (default for cloud agents): a durable Cloud schedule stored by the Letta API. It fires from the cloud and executes in the agent's cloud sandbox, so it survives local shutdown — the computer, sandbox, or session that created it can disappear and the schedule still fires.
-- **`local`**: a task local to the current computer (`~/.letta/crons.json`), executed by the Letta session running there. It only fires while a session is running on that computer, and it dies with that computer's local state.
+- **No explicit choice**: create a durable Cloud timer targeted to the verified computer that runs `letta cron add`.
+- **`--computer <id>`**: select another connected computer from `letta environments list`.
+- **`--runner cloud`**: select the managed Cloud sandbox without targeting a computer.
+- **`--runner local`**: create an in-process schedule in `~/.letta/crons.json`. It only fires while a Letta session is running on that computer.
 
-You normally don't need the flag — the default does the right thing. Local-backend agents (`agent-local-*`) and self-hosted servers always use the local runner.
+If the current computer cannot be verified as Cloud-routable, default creation fails and tells you to choose `--runner cloud`, `--computer <id>`, or `--runner local`. Local-backend agents (`agent-local-*`) and local backend mode use the local runner. An API server without durable Cloud schedule routes fails creation instead of silently writing a local schedule; choose `--runner local` deliberately or use a server that supports durable Cloud schedules.
 
-If the scheduled work must run on a **specific computer** (it needs that computer's filesystem, local services, or credentials — e.g. a bring-your-own machine like a Railway/VPS box or a home workstation), prefer a Cloud schedule that executes on that computer:
+A device-targeted schedule remains durable in the cloud and can fall back to the agent sandbox when its target is offline. It never substitutes another device. Use `--runner local` when sandbox fallback is unacceptable.
 
-```bash
-letta cron add ... --computer <deviceId>
-```
+Notes for Cloud schedules:
 
-The deviceId comes from `letta environments list`. The computer must be connected to your Letta account (run `letta server` on it, or enable remote access in the desktop app). The schedule stays durable in the cloud; if the computer is offline when it fires, execution falls back to the agent's cloud sandbox. Use `--runner local` (run on the target computer itself) only when that sandbox fallback is unacceptable — a local task never runs anywhere but its own computer.
-
-Notes for the cloud runner:
-
-- Untargeted schedules execute in the agent's cloud sandbox, not on the computer where you created them; `--computer` executes on the named computer with sandbox fallback.
+- Explicit `--runner cloud` executes in the managed Cloud sandbox; `--computer` and the verified-computer default are device-targeted.
 - Recurring `--cron` expressions are currently interpreted in UTC (the CLI output includes a note about this). `--at` and `--every` are unaffected.
-- If creating a Cloud schedule fails, no schedule is created — there is no silent fallback to local storage. Retry, or pass `--runner local` deliberately.
+- If creating a Cloud schedule fails, no schedule is created — there is no silent fallback to local storage.
 
 ## CLI Usage
 
@@ -69,8 +65,8 @@ letta cron add --name <short-name> --description <text> --prompt <text> <schedul
 |------|-------------|
 | `--agent <id>` | Agent ID (defaults to `LETTA_AGENT_ID` from the current shell/session) |
 | `--conversation <id>` | Conversation ID (defaults to `LETTA_CONVERSATION_ID` from the current shell/session, otherwise `"default"`) |
-| `--runner <runner>` | `cloud` or `local` — see "Where Schedules Run" above (defaults to `cloud` for cloud agents) |
-| `--computer <id>` | (cloud runner only) Execute on a connected computer instead of the agent's sandbox; falls back to the sandbox if the computer is offline |
+| `--runner <runner>` | Explicitly select the managed Cloud sandbox (`cloud`) or the in-process local file schedule (`local`) |
+| `--computer <id>` | Select another connected computer; falls back only to the agent sandbox if that target is offline |
 
 ### Listing Tasks
 
@@ -200,7 +196,7 @@ Include context about what the user originally asked for, so you can give a help
 - **One-shot cleanup (local runner)**: One-shot local tasks are garbage-collected 24 hours after firing.
 - **Timezone**: Local-runner tasks use the user's local timezone. Cloud-runner recurring `--cron` expressions are currently interpreted in UTC.
 - **Default binding precedence**: `letta cron add` uses `--agent` / `--conversation` first, then falls back to `LETTA_AGENT_ID` / `LETTA_CONVERSATION_ID`, then finally uses `"default"` for the conversation if no env var is present.
-- **Local scheduler requirement**: Local-runner tasks only fire while a Letta session is running on that computer (a WS listener must be active). If no session is running, tasks will be marked as missed. Cloud-runner schedules fire from the cloud regardless.
+- **Local scheduler requirement**: Local-runner tasks only fire while a Letta session is running on that computer (a WS listener must be active). If no session is running, tasks will be marked as missed. Durable Cloud schedules fire from the cloud and may target a verified computer or the managed Cloud sandbox.
 - **`--at` for specific times**: `--at "3:00pm"` schedules a one-shot. If the time has already passed today, it schedules for tomorrow.
 - **`--every` for daily**: `--every 1d` fires daily at midnight. For a specific time of day, use `--cron` instead (e.g. `--cron "0 9 * * *"` for 9am daily).
 

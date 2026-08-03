@@ -4,15 +4,15 @@
  * Two runners own scheduled tasks:
  * - "local": the runtime-local scheduler (~/.letta/crons.json), executed by
  *   the WS listener process on this device. Dies with the device/sandbox.
- * - "cloud": durable Cloud schedules (`/v1/agents/:id/schedule`), fired by a
- *   cloud worker into the agent's managed cloud sandbox.
+ * - "cloud": durable Cloud schedules (`/v1/agents/:id/schedule`), dispatched
+ *   by a cloud worker to a targeted listener or the managed Cloud sandbox.
  *
- * Default policy: cloud agents get the cloud runner everywhere (laptop, VPS,
- * managed sandbox) — durability is the default. `--runner local` is the
- * explicit opt-in for schedules that must execute on a specific machine
- * (e.g. they need that device's filesystem). Local-backend agents
- * (`agent-local-*`) always use the local runner, and servers that don't serve
- * the Cloud schedule routes (self-hosted OSS core) fall back to it.
+ * Default policy: cloud agents get durable Cloud schedules targeted to the
+ * invocation's verified execution computer. `--runner cloud` explicitly opts
+ * into the managed Cloud sandbox instead, while `--runner local` creates an
+ * in-process schedule owned by this device. Local-backend agents
+ * (`agent-local-*`) and local backend mode use the local runner. API/Cloud
+ * agents fail closed when the configured server lacks Cloud schedule routes.
  *
  * Cloud support is determined by probing the schedule route, not by
  * inspecting the base URL: managed sandboxes and Desktop sessions point
@@ -73,15 +73,9 @@ export function resolveCronRunner(
   }
 
   if (cloudSchedulesSupported === false) {
-    if (explicit === "cloud") {
-      return {
-        error:
-          "This Letta server does not serve Cloud schedule routes (self-hosted?). Use --runner local.",
-      };
-    }
     return {
-      runner: "local",
-      reason: "server does not support Cloud schedules",
+      error:
+        "This Letta server does not support durable Cloud schedules. Use --runner local deliberately, or use a server that supports durable Cloud schedules.",
     };
   }
 
@@ -117,9 +111,9 @@ export type TargetDeviceValidity = { ok: true } | { ok: false; error: string };
  * and a synthetic Cloud row. Targeting either would earn an unhelpful server
  * 404; fail earlier with an actionable message instead.
  *
- * `environment` is null when the device wasn't found locally — that case is
- * allowed through so the server's own registry check stays the backstop
- * (the local list may be unavailable or incomplete).
+ * `environment` is null when the device could not be verified through the
+ * configured server. Schedule creation must reject that case rather than
+ * silently creating a target the Cloud scheduler cannot route.
  */
 export function validateTargetDevice(
   deviceId: string,
@@ -141,7 +135,14 @@ export function validateTargetDevice(
     };
   }
 
-  if (environment?.organizationId === "local") {
+  if (!environment) {
+    return {
+      ok: false,
+      error: `Computer ${deviceId} is not registered with this Letta account. Run \`letta environments list\` to choose a connected computer.`,
+    };
+  }
+
+  if (environment.organizationId === "local") {
     return {
       ok: false,
       error: `Device ${deviceId} is this computer's local desktop connection, not a computer connected to your Letta account. Cloud schedules can only target connected computers — run \`letta server\` on that machine (or enable remote access in the desktop app) to connect it.`,

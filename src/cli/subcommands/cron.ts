@@ -12,15 +12,16 @@
  *   letta cron delete --all [--agent <id>] [--runner local|cloud]
  *
  * Runners (LET-9692):
- * - "cloud" (default for cloud agents): durable Cloud schedules stored by the
- *   Letta API and executed in the agent's managed cloud sandbox.
+ * - "cloud": durable Cloud schedules stored by the Letta API. Explicit
+ *   `--runner cloud` executes in the managed cloud sandbox; the default for a
+ *   cloud agent targets the verified computer running this invocation.
  * - "local": runtime-local tasks in ~/.letta/crons.json, executed by the WS
- *   listener on this device. Default for local-backend agents and self-hosted
- *   servers; explicit opt-in (--runner local) for schedules that must run on
- *   this specific machine.
+ *   listener on this device. Default for local-backend agents/mode; explicit
+ *   opt-in (--runner local) for schedules that must run on this machine.
  */
 
 import { parseArgs } from "node:util";
+import { getRuntimeEnvironmentDeviceId } from "@/backend/api/client";
 import { ApiRequestError } from "@/backend/api/request";
 import {
   type CloudSchedule,
@@ -80,12 +81,11 @@ Add options:
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
   --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID or "default")
   --runner <runner>      Where the schedule lives and fires:
-                           cloud - durable Cloud schedule; executes in the
-                                   agent's managed cloud sandbox (default for
-                                   cloud agents)
+                           cloud - durable Cloud schedule; explicitly executes
+                                   in the agent's managed cloud sandbox
                            local - this device's scheduler (~/.letta/crons.json);
                                    only fires while a session runs here (default
-                                   for local-backend agents / self-hosted)
+                                   for local-backend agents / local mode)
   --computer <id>        (cloud runner only) Execute on one of your
                          connected computers (deviceId from
                          \`letta environments list\`) instead of the agent's
@@ -197,23 +197,36 @@ function isRunnerFlagValid(value: string | undefined): boolean {
   return value === undefined || value === "local" || value === "cloud";
 }
 
+type TargetEnvironmentLookup =
+  | { environment: { organizationId?: string } | null }
+  | { error: string };
+
 /**
- * Best-effort lookup of a --computer deviceId in the environments registry
- * (through the same base URL the schedule request will use, so Desktop's
- * merged local+cloud view is what gets validated). Returns null when the
- * lookup fails or the device is unknown — the server-side registry check on
- * schedule create remains the backstop for those cases.
+ * Look up a deviceId in the environments registry through the same base URL
+ * the schedule request will use. A 404 proves the device is absent; other
+ * failures remain distinct so they are not mislabeled as registration state.
  */
 async function lookupEnvironmentForTarget(
   deviceId: string,
-): Promise<{ organizationId?: string } | null> {
+): Promise<TargetEnvironmentLookup> {
   try {
     const { getEnvironmentConnection } = await import(
       "@/backend/api/environments"
     );
-    return await getEnvironmentConnection(deviceId);
-  } catch {
-    return null;
+    return { environment: await getEnvironmentConnection(deviceId) };
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 404) {
+      return { environment: null };
+    }
+    const detail =
+      error instanceof ApiRequestError
+        ? `server returned ${error.status}`
+        : error instanceof Error
+          ? error.message
+          : "unknown verification error";
+    return {
+      error: `Could not verify computer ${deviceId}: ${detail}. No schedule was created.`,
+    };
   }
 }
 
@@ -340,7 +353,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     return 1;
   }
 
-  const targetDeviceId = values.computer?.trim() || undefined;
+  let targetDeviceId = values.computer?.trim() || undefined;
 
   const resolved = await getRunnerForAgent(values.runner, agentId);
   if ("error" in resolved) {
@@ -359,19 +372,41 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     return 1;
   }
 
-  // Pre-validate the target against the environments list: it can contain
-  // entries that are not valid Cloud-schedule targets (synthetic Cloud row,
-  // desktop-local connections). Catch those with an actionable error before
-  // hitting the server's registry 404.
+  // Explicit computer targets and invocation-local defaults must both be
+  // proven Cloud-routable before schedule creation. Explicit --runner cloud
+  // deliberately stays untargeted so it retains managed-sandbox semantics.
   if (targetDeviceId) {
-    const validity = validateTargetDevice(
-      targetDeviceId,
-      await lookupEnvironmentForTarget(targetDeviceId),
-    );
+    const lookup = await lookupEnvironmentForTarget(targetDeviceId);
+    if ("error" in lookup) {
+      console.error(`Error: ${lookup.error}`);
+      return 1;
+    }
+    const validity = validateTargetDevice(targetDeviceId, lookup.environment);
     if (!validity.ok) {
       console.error(`Error: ${validity.error}`);
       return 1;
     }
+  } else if (resolved.runner === "cloud" && values.runner !== "cloud") {
+    const activeDeviceId = getRuntimeEnvironmentDeviceId();
+    const lookup = await lookupEnvironmentForTarget(activeDeviceId);
+    if ("error" in lookup) {
+      console.error(`Error: ${lookup.error}`);
+      console.error(
+        "Use --runner cloud for the managed Cloud sandbox, --computer <id> for a connected computer, or --runner local for an in-process schedule.",
+      );
+      return 1;
+    }
+    const validity = validateTargetDevice(activeDeviceId, lookup.environment);
+    if (!validity.ok) {
+      console.error(
+        `Error: cannot create a default schedule for this computer: ${validity.error}`,
+      );
+      console.error(
+        "Use --runner cloud for the managed Cloud sandbox, --computer <id> for a connected computer, or --runner local for an in-process schedule.",
+      );
+      return 1;
+    }
+    targetDeviceId = activeDeviceId;
   }
 
   if (resolved.runner === "cloud") {

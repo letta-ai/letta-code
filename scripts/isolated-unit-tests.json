@@ -26,6 +26,11 @@
       "reason": "Uses a top-level Bun module mock for backend search."
     },
     {
+      "path": "src/cli/subcommands/cron.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Runs a real HTTP server while mutating the settings singleton, console methods, process environment, and local cron storage."
+    },
+    {
       "path": "src/hooks/prompt-executor.test.ts",
       "timeoutMs": 15000,
       "reason": "Uses a top-level Bun module mock for backend generation."

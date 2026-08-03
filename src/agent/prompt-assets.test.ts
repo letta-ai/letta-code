@@ -92,6 +92,32 @@ describe("buildSystemPrompt", () => {
     expect(result).not.toContain('--author="$AGENT_NAME');
   });
 
+  test("memfs prompt documents cron execution precedence", () => {
+    const result = buildSystemPrompt("letta", "memfs");
+
+    expect(result).toContain(
+      "no explicit choice creates a durable Cloud timer targeted to the verified computer that runs `letta cron add`",
+    );
+    expect(result).toContain(
+      "`--computer <id>` to select another connected computer",
+    );
+    expect(result).toContain(
+      "explicit `--runner cloud` to select the managed Cloud sandbox",
+    );
+    expect(result).toContain(
+      "`--runner local` to create an in-process schedule in the local file",
+    );
+    expect(result).toContain(
+      "If the current computer cannot be verified as Cloud-routable, creation fails",
+    );
+    expect(result).toContain(
+      "can fall back to the agent sandbox when its target is offline; it never substitutes another device",
+    );
+    expect(result).not.toContain(
+      "schedules default to durable Cloud schedules that fire from the cloud and execute in your cloud sandbox",
+    );
+  });
+
   test("memfs prompt explains shared-memory projections", () => {
     const result = buildSystemPrompt("letta", "memfs");
 
