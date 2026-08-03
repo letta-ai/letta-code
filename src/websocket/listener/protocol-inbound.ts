@@ -710,11 +710,19 @@ export function isGetTreeCommand(value: unknown): value is GetTreeCommand {
 
 export function isReadFileCommand(value: unknown): value is ReadFileCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as { type?: unknown; path?: unknown; request_id?: unknown };
+  const c = value as {
+    type?: unknown;
+    path?: unknown;
+    request_id?: unknown;
+    encoding?: unknown;
+  };
   return (
     c.type === "read_file" &&
     typeof c.path === "string" &&
-    typeof c.request_id === "string"
+    typeof c.request_id === "string" &&
+    (c.encoding === undefined ||
+      c.encoding === "utf8" ||
+      c.encoding === "base64")
   );
 }
 

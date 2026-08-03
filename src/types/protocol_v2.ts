@@ -1074,6 +1074,12 @@ export interface ReadFileCommand {
   path: string;
   /** Echoed back in the response for request correlation. */
   request_id: string;
+  /**
+   * Content encoding for the response. Defaults to "utf8" (strict UTF-8
+   * text). "base64" returns raw bytes base64-encoded, enabling binary
+   * reads such as image previews on web clients without Electron IPC.
+   */
+  encoding?: "utf8" | "base64";
 }
 
 export interface ReadFileResponseMessage {
@@ -1081,6 +1087,8 @@ export interface ReadFileResponseMessage {
   request_id: string;
   path: string;
   content: string | null;
+  /** Encoding of `content`. Mirrors the request; "utf8" when omitted. */
+  encoding?: "utf8" | "base64";
   success: boolean;
   error?: string;
 }
