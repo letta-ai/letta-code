@@ -1,6 +1,5 @@
 name: Bug report
 description: Report a reproducible problem with Letta Code
-title: ""
 labels: ["bug"]
 body:
   - type: markdown

@@ -1,6 +1,5 @@
 name: Feature request
 description: Propose a focused improvement to Letta Code
-title: ""
 labels: ["enhancement"]
 body:
   - type: markdown
