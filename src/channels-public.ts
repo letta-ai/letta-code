@@ -15,6 +15,8 @@ export type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
   ChannelMessageActionRequest,
+  ChannelMessageActionRoute,
+  ChannelMessageActionTransport,
   ChannelResolvedMessageTarget,
 } from "./channels/plugin-types";
 export type {

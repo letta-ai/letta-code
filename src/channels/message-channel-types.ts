@@ -1,7 +1,7 @@
 import type { ChannelMessageActionName } from "@/channels/plugin-types";
 import type { ChannelTurnSource, SupportedChannelId } from "@/channels/types";
 
-export interface MessageChannelArgs {
+export interface MessageChannelInput {
   channel: string;
   action: string;
   chat_id?: string;
@@ -17,6 +17,9 @@ export interface MessageChannelArgs {
   media?: string;
   filename?: string;
   title?: string;
+}
+
+export interface MessageChannelArgs extends MessageChannelInput {
   /** Injected by executeTool() — NOT read from global context. */
   parentScope?: { agentId: string; conversationId: string };
   /** Injected by executeTool() for channel-originated turns. */

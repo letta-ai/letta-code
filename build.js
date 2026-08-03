@@ -246,6 +246,9 @@ await Bun.build({
   naming: {
     entry: "gateway-core.js",
   },
+  loader: {
+    ".md": "text",
+  },
 });
 
 await Bun.build({
