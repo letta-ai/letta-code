@@ -24,6 +24,8 @@ export function dispatchInboundMessageWhenReady(params: {
   processQueuedTurn: ProcessQueuedTurn;
   processIncomingMessage: typeof handleIncomingMessage;
   actingUserId?: string;
+  onAdmitted?: (admission: "direct" | "queued") => void;
+  onRejected?: (error: string) => void;
   trackListenerError: (
     errorType: string,
     error: unknown,
@@ -39,6 +41,8 @@ export function dispatchInboundMessageWhenReady(params: {
     processQueuedTurn,
     processIncomingMessage,
     actingUserId,
+    onAdmitted,
+    onRejected,
     trackListenerError,
   } = params;
 
@@ -51,8 +55,17 @@ export function dispatchInboundMessageWhenReady(params: {
         shouldQueueInboundMessage(incoming) &&
         !shouldProcessInboundMessageDirectly(runtime, incoming)
       ) {
-        enqueueInboundUserMessage(runtime, incoming, actingUserId);
-        scheduleQueuePump(runtime, socket, options, processQueuedTurn);
+        const enqueued = enqueueInboundUserMessage(
+          runtime,
+          incoming,
+          actingUserId,
+        );
+        if (enqueued) {
+          onAdmitted?.("queued");
+          scheduleQueuePump(runtime, socket, options, processQueuedTurn);
+        } else {
+          onRejected?.("Listener queue rejected the input");
+        }
         return;
       }
 
@@ -61,6 +74,7 @@ export function dispatchInboundMessageWhenReady(params: {
         options.onStatusChange,
         options.connectionId,
       );
+      onAdmitted?.("direct");
       await processIncomingMessage(
         incoming,
         socket,
@@ -87,6 +101,7 @@ export function dispatchInboundMessageWhenReady(params: {
         error,
         "listener_message_queue",
       );
+      onRejected?.(error instanceof Error ? error.message : String(error));
       if (process.env.DEBUG) {
         console.error("[Listen] Error handling queued input:", error);
       }

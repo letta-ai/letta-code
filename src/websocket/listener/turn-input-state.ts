@@ -9,6 +9,7 @@ import type { ImageFailureModesByMessageOtid } from "@/utils/message-image-norma
 
 export type TurnInputState = {
   messages: Array<MessageCreate | ApprovalCreate>;
+  clientMessageIds: string[];
   imageFailureModesByMessageOtid?: ImageFailureModesByMessageOtid;
 };
 
@@ -39,9 +40,11 @@ export function ensureTurnInputMessageOtids(
 export function createTurnInputState(
   messages: Array<MessageCreate | ApprovalCreate>,
   imageFailureModesByMessageOtid?: ImageFailureModesByMessageOtid,
+  clientMessageIds: string[] = [],
 ): TurnInputState {
   return {
     messages,
+    clientMessageIds,
     ...(imageFailureModesByMessageOtid
       ? { imageFailureModesByMessageOtid }
       : {}),
@@ -62,7 +65,11 @@ export function updateTurnInputMessagesPreservingOtids(
       }
     }
   }
-  return createTurnInputState(messages, state.imageFailureModesByMessageOtid);
+  return createTurnInputState(
+    messages,
+    state.imageFailureModesByMessageOtid,
+    state.clientMessageIds,
+  );
 }
 
 export function refreshTurnInputOtidsForNewRequest(
@@ -76,6 +83,7 @@ export function refreshTurnInputOtidsForNewRequest(
       refreshedMessages,
       state.imageFailureModesByMessageOtid,
     ),
+    state.clientMessageIds,
   );
 }
 
@@ -96,6 +104,7 @@ export function rebuildTurnInputWithFreshDenials(
       getContentMessages(rebuiltMessages),
       state.imageFailureModesByMessageOtid,
     ),
+    state.clientMessageIds,
   );
 }
 

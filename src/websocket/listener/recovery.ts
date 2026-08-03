@@ -43,6 +43,7 @@ import {
 import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
+import { markCoreOwned } from "./input-state";
 import {
   createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
@@ -193,6 +194,7 @@ export async function drainRecoveryStreamWithEmission(
     agentId?: string | null;
     conversationId: string;
     turnLease: TurnLease;
+    clientMessageIds?: string[];
   },
 ): Promise<Awaited<ReturnType<typeof drainStreamWithResume>>> {
   let recoveryRunIdSent = false;
@@ -209,6 +211,7 @@ export async function drainRecoveryStreamWithEmission(
         runtime.turnLifecycle.setRunId(params.turnLease, maybeRunId);
         if (!recoveryRunIdSent) {
           recoveryRunIdSent = true;
+          markCoreOwned(runtime, params.clientMessageIds ?? [], maybeRunId);
           emitLoopStatusUpdate(socket, runtime, {
             agent_id: params.agentId ?? undefined,
             conversation_id: params.conversationId,
@@ -870,6 +873,7 @@ export async function resolveRecoveredApprovalResponse(
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
         messages: continuationInput.messages,
+        clientMessageIds: continuationInput.clientMessageIds,
         ...(queuedChannelTurnSources?.length
           ? { channelTurnSources: queuedChannelTurnSources }
           : {}),

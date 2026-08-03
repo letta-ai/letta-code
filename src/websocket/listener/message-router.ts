@@ -40,6 +40,7 @@ import { getBootWorkingDirectory, getExportedCwdMap } from "./cwd";
 import { handleExternalToolCallResponseCommand } from "./external-tools";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import { enqueueInboundUserMessage } from "./inbound-queue";
+import { prepareRuntimeInputCommand } from "./input-state";
 import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
@@ -602,6 +603,13 @@ export function createListenerMessageHandler(
           incoming.agentId,
           incoming.conversationId,
         );
+        const inputState = prepareRuntimeInputCommand(
+          scopedRuntime,
+          inputPayload,
+          parsed.request_id,
+          incoming,
+        );
+        if (!inputState) return;
 
         const processIncomingMessageDirectly = (
           directIncoming: IncomingMessage,
@@ -615,6 +623,8 @@ export function createListenerMessageHandler(
             processQueuedTurn,
             processIncomingMessage,
             actingUserId: parsed.runtime.acting_user_id,
+            onAdmitted: inputState.onAdmitted,
+            onRejected: inputState.onDropped,
             trackListenerError,
           });
         };
@@ -628,12 +638,17 @@ export function createListenerMessageHandler(
             return;
           }
 
-          enqueueInboundUserMessage(
+          const enqueued = enqueueInboundUserMessage(
             scopedRuntime,
             stampedIncoming,
             parsed.runtime.acting_user_id,
           );
-          scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+          if (enqueued) {
+            inputState.onAdmitted("queued");
+            scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+          } else {
+            inputState.onDropped("Listener queue rejected the input");
+          }
           return;
         }
 

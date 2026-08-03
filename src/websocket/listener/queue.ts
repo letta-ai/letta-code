@@ -209,6 +209,11 @@ function buildQueuedTurnMessage(
 ): IncomingMessage | null {
   const channelTurnSources = collectBatchChannelTurnSources(runtime, batch);
   const actingUserId = pickBatchActingUserId(batch.items);
+  const clientMessageIds = batch.items.flatMap((item) =>
+    item.kind === "message" && item.clientMessageId
+      ? [item.clientMessageId]
+      : [],
+  );
   const primaryItem = getPrimaryQueueMessageItem(batch.items);
   if (!primaryItem) {
     // No user message in the batch — this is a notification-only batch.
@@ -274,6 +279,7 @@ function buildQueuedTurnMessage(
     ...template,
     ...(channelTurnSources ? { channelTurnSources } : {}),
     ...(actingUserId ? { actingUserId } : {}),
+    clientMessageIds,
     messages,
   };
 }

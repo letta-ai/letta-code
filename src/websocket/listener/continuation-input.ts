@@ -13,5 +13,6 @@ export function appendQueuedTurnToInput(
       state.imageFailureModesByMessageOtid,
       getInboundImageFailureModes(queuedTurn),
     ),
+    [...state.clientMessageIds, ...(queuedTurn.clientMessageIds ?? [])],
   );
 }

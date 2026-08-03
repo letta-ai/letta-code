@@ -74,7 +74,7 @@ function startQuestionApproval(
     ),
     dequeuedBatchId: "batch-1",
     msgRunIds: [],
-    turnInput: { messages: [] },
+    turnInput: { messages: [], clientMessageIds: [] },
     pendingNormalizationInterruptedToolCallIds: [],
     turnToolContextId: null,
     turnLease,

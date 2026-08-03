@@ -1,4 +1,5 @@
 import { QueueRuntime } from "@/queue/queue-runtime";
+import { markRuntimeInputsDropped } from "./input-state";
 import { scheduleQueueEmit } from "./protocol-outbound";
 import { getQueueItemScope, getQueueItemsScope } from "./queue";
 import {
@@ -30,13 +31,25 @@ export function ensureConversationQueueRuntime(
           conversation_id: runtime.conversationId,
         });
       },
-      onCleared: (_reason, _clearedCount, items) => {
+      onCleared: (reason, _clearedCount, items) => {
         runtime.pendingTurns = 0;
+        markRuntimeInputsDropped(
+          runtime,
+          items.flatMap((item) =>
+            item.kind === "message" && item.clientMessageId
+              ? [item.clientMessageId]
+              : [],
+          ),
+          `Listener queue cleared: ${reason}`,
+        );
         scheduleQueueEmit(listener, getQueueItemsScope(items));
         evictConversationRuntimeIfIdle(runtime);
       },
-      onDropped: (item, _reason, queueLen) => {
+      onDropped: (item, reason, queueLen) => {
         runtime.pendingTurns = queueLen;
+        if (item.kind === "message" && item.clientMessageId) {
+          markRuntimeInputsDropped(runtime, [item.clientMessageId], reason);
+        }
         runtime.queuedMessagesByItemId.delete(item.id);
         scheduleQueueEmit(listener, getQueueItemScope(item));
         evictConversationRuntimeIfIdle(runtime);

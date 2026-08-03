@@ -777,7 +777,26 @@ export type InputPayload =
 export interface InputCommand {
   type: "input";
   runtime: RuntimeScope;
+  /** Correlates create_message admission and ownership updates. */
+  request_id?: string;
   payload: InputPayload;
+}
+
+export type RuntimeInputStatus =
+  | "admitted"
+  | "core_owned"
+  | "rejected"
+  | "dropped";
+
+/** Critical, correlated ownership transition for one submitted user input. */
+export interface RuntimeInputStateMessage extends RuntimeEnvelope {
+  type: "runtime_input_state";
+  request_id: string;
+  client_message_id: string;
+  status: RuntimeInputStatus;
+  admission?: "direct" | "queued";
+  run_id?: string;
+  error?: string;
 }
 
 export interface ChangeDeviceStatePayload {
@@ -2883,6 +2902,7 @@ export type WsProtocolMessage =
   | ExternalToolCallRequestMessage
   | AbortMessageResponseMessage
   | SyncResponseMessage
+  | RuntimeInputStateMessage
   | TerminalOutputMessage
   | TerminalSpawnedMessage
   | TerminalExitedMessage

@@ -13,11 +13,13 @@ describe("queued continuation input", () => {
             otid: "approval-1",
           },
         ],
+        clientMessageIds: [],
       },
       {
         type: "message",
         agentId: "agent-1",
         conversationId: "conv-1",
+        clientMessageIds: ["cm-queued"],
         channelTurnSources: [
           {
             channel: "slack",
@@ -48,6 +50,7 @@ describe("queued continuation input", () => {
     );
 
     expect(result.messages).toHaveLength(2);
+    expect(result.clientMessageIds).toEqual(["cm-queued"]);
     expect(result.messages[1]).toMatchObject({
       role: "user",
       otid: queuedOtid,
@@ -59,7 +62,7 @@ describe("queued continuation input", () => {
 
   test("keeps interactive queued input strict by default", () => {
     const result = appendQueuedTurnToInput(
-      { messages: [] },
+      { messages: [], clientMessageIds: [] },
       {
         type: "message",
         agentId: "agent-1",

@@ -77,6 +77,8 @@ export interface IncomingMessage {
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;
   externalToolScopeIds?: string[];
+  /** Stable transport identities represented by this input after queue merging. */
+  clientMessageIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
   messages: Array<

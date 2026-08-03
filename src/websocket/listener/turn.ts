@@ -32,6 +32,7 @@ import {
   PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
+import { markCoreOwned } from "./input-state";
 import {
   emitInterruptToolReturnMessage,
   emitToolExecutionFinishedEvents,
@@ -373,6 +374,7 @@ async function handleIncomingMessageInner(
             if (!runIdSent) {
               runIdSent = true;
               msgRunIds.push(maybeRunId);
+              markCoreOwned(runtime, turnInput.clientMessageIds, maybeRunId);
               emitLoopStatusUpdate(socket, runtime, {
                 agent_id: agentId,
                 conversation_id: conversationId,

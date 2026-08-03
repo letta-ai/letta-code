@@ -452,6 +452,7 @@ export async function resolveStaleApprovals(
           agentId: runtime.agentId ?? undefined,
           conversationId: recoveryConversationId,
           turnLease,
+          clientMessageIds: continuationInput.clientMessageIds,
         },
       );
       assertCurrentTurnLease();

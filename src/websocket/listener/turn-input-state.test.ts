@@ -19,6 +19,19 @@ describe("listener turn input state", () => {
     expect(messages[0]?.otid).toBeString();
   });
 
+  test("preserves transport identities while refreshing OTIDs", () => {
+    const state = refreshTurnInputOtidsForNewRequest(
+      createTurnInputState(
+        [{ role: "user", content: "hello", otid: "otid-1" }],
+        undefined,
+        ["cm-1", "cm-2"],
+      ),
+    );
+
+    expect(state.messages[0]?.otid).not.toBe("otid-1");
+    expect(state.clientMessageIds).toEqual(["cm-1", "cm-2"]);
+  });
+
   test("moves image failure policy to refreshed message OTIDs", () => {
     const state = refreshTurnInputOtidsForNewRequest(
       createTurnInputState(

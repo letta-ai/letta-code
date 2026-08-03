@@ -247,6 +247,7 @@ export async function prepareListenerTurn(params: {
       channelTurnSources: msg.channelTurnSources,
       messages: currentInput,
     }),
+    msg.clientMessageIds,
   );
   if (currentInput !== messagesToSend) {
     inboundUserTranscriptLines = buildInboundUserTranscriptLines(currentInput);

@@ -128,6 +128,10 @@ describe("queue noCoalesce batching", () => {
 
     const batch = consumeQueuedTurn(runtime);
     expect(batch?.dequeuedBatch.items).toHaveLength(2);
+    expect(batch?.queuedTurn.clientMessageIds).toEqual([
+      "otid-one",
+      "otid-two",
+    ]);
     expect(consumeQueuedTurn(runtime)).toBeNull();
   });
 
