@@ -1,13 +1,15 @@
 import type { ReflectionSettings } from "@/cli/helpers/memory-reminder";
 
 export function formatReflectionSettings(settings: ReflectionSettings): string {
-  const merge =
-    settings.merge === "explicit" ? "explicit integration" : "auto-merge";
+  const memoryUpdates =
+    settings.merge === "explicit"
+      ? "agent reviews before applying"
+      : "apply automatically";
   if (settings.trigger === "off") {
-    return `Off, ${merge}`;
+    return `Off, ${memoryUpdates}`;
   }
   if (settings.trigger === "compaction-event") {
-    return `Compaction event, ${merge}`;
+    return `On compaction, ${memoryUpdates}`;
   }
-  return `Step count (every ${settings.stepCount} turns), ${merge}`;
+  return `Every ${settings.stepCount} steps, ${memoryUpdates}`;
 }

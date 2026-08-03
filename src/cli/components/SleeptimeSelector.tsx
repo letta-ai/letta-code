@@ -1,5 +1,5 @@
 import { Box, useInput } from "ink";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import type {
   ReflectionMergeMode,
   ReflectionSettings,
@@ -12,7 +12,13 @@ import { Text } from "./Text";
 const SOLID_LINE = "─";
 const DEFAULT_STEP_COUNT = "25";
 
-type FocusRow = "trigger" | "step-count" | "merge" | "merge-instructions";
+type FocusRow =
+  | "trigger-off"
+  | "trigger-step-count"
+  | "trigger-compaction"
+  | "merge-auto"
+  | "merge-explicit"
+  | "merge-instructions";
 
 interface SleeptimeSelectorProps {
   initialSettings: ReflectionSettings;
@@ -27,6 +33,41 @@ const TRIGGER_OPTIONS: readonly ReflectionTrigger[] = [
   "compaction-event",
 ];
 const MERGE_OPTIONS: readonly ReflectionMergeMode[] = ["auto", "explicit"];
+
+function triggerFocusRow(trigger: ReflectionTrigger): FocusRow {
+  switch (trigger) {
+    case "off":
+      return "trigger-off";
+    case "step-count":
+      return "trigger-step-count";
+    case "compaction-event":
+      return "trigger-compaction";
+  }
+}
+
+function mergeFocusRow(merge: ReflectionMergeMode): FocusRow {
+  return merge === "explicit" ? "merge-explicit" : "merge-auto";
+}
+
+function ChoiceRow(props: {
+  focused: boolean;
+  selected: boolean;
+  children: ReactNode;
+}) {
+  const { focused, selected, children } = props;
+  return (
+    <Box flexDirection="row">
+      <Text>{focused ? "> " : "  "}</Text>
+      <Text
+        backgroundColor={selected ? colors.selector.itemHighlighted : undefined}
+        color={selected ? "black" : undefined}
+        bold={selected}
+      >
+        {children}
+      </Text>
+    </Box>
+  );
+}
 
 function cycleOption<T extends string>(
   options: readonly T[],
@@ -95,27 +136,30 @@ export function SleeptimeSelector({
   const [mergeInstructions, setMergeInstructions] = useState(
     initialState.mergeInstructions,
   );
-  const [focusRow, setFocusRow] = useState<FocusRow>("trigger");
+  const [focusRow, setFocusRow] = useState<FocusRow>(() =>
+    triggerFocusRow(initialState.trigger),
+  );
   const [validationError, setValidationError] = useState<string | null>(null);
   const visibleRows = useMemo(() => {
-    const rows: FocusRow[] = ["trigger"];
-    if (trigger === "step-count") {
-      rows.push("step-count");
-    }
-    rows.push("merge");
+    const rows: FocusRow[] = [
+      "trigger-off",
+      "trigger-step-count",
+      "trigger-compaction",
+      "merge-auto",
+      "merge-explicit",
+    ];
     if (merge === "explicit") {
       rows.push("merge-instructions");
     }
     return rows;
-  }, [merge, trigger]);
-  const isEditingStepCount =
-    focusRow === "step-count" && trigger === "step-count";
+  }, [merge]);
+  const isEditingStepCount = focusRow === "trigger-step-count";
   const isEditingMergeInstructions =
     focusRow === "merge-instructions" && merge === "explicit";
 
   useEffect(() => {
     if (!visibleRows.includes(focusRow)) {
-      setFocusRow(visibleRows[visibleRows.length - 1] ?? "trigger");
+      setFocusRow(visibleRows[visibleRows.length - 1] ?? "trigger-off");
     }
   }, [focusRow, visibleRows]);
 
@@ -145,6 +189,29 @@ export function SleeptimeSelector({
     });
   };
 
+  const selectFocusedOption = () => {
+    switch (focusRow) {
+      case "trigger-off":
+        setTrigger("off");
+        break;
+      case "trigger-step-count":
+        setTrigger("step-count");
+        break;
+      case "trigger-compaction":
+        setTrigger("compaction-event");
+        break;
+      case "merge-auto":
+        setMerge("auto");
+        break;
+      case "merge-explicit":
+        setMerge("explicit");
+        break;
+      case "merge-instructions":
+        break;
+    }
+    setValidationError(null);
+  };
+
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       onCancel();
@@ -168,26 +235,35 @@ export function SleeptimeSelector({
       return;
     }
 
-    if (key.upArrow || key.downArrow) {
+    if (key.upArrow || key.downArrow || key.tab) {
       if (visibleRows.length === 0) return;
       setValidationError(null);
-      const direction = key.downArrow ? 1 : -1;
+      const direction = key.upArrow ? -1 : 1;
       const currentIndex = visibleRows.indexOf(focusRow);
       const safeIndex = currentIndex >= 0 ? currentIndex : 0;
       const nextIndex =
         (safeIndex + direction + visibleRows.length) % visibleRows.length;
-      const nextRow = visibleRows[nextIndex] ?? "trigger";
+      const nextRow = visibleRows[nextIndex] ?? "trigger-off";
       setFocusRow(nextRow);
       return;
     }
 
-    if (key.leftArrow || key.rightArrow || key.tab) {
+    if (input === " " && !isEditingMergeInstructions) {
+      selectFocusedOption();
+      return;
+    }
+
+    if (key.leftArrow || key.rightArrow) {
       setValidationError(null);
       const direction: -1 | 1 = key.leftArrow ? -1 : 1;
-      if (focusRow === "trigger") {
-        setTrigger((prev) => cycleOption(TRIGGER_OPTIONS, prev, direction));
-      } else if (focusRow === "merge") {
-        setMerge((prev) => cycleOption(MERGE_OPTIONS, prev, direction));
+      if (focusRow.startsWith("trigger-")) {
+        const nextTrigger = cycleOption(TRIGGER_OPTIONS, trigger, direction);
+        setTrigger(nextTrigger);
+        setFocusRow(triggerFocusRow(nextTrigger));
+      } else if (focusRow.startsWith("merge-")) {
+        const nextMerge = cycleOption(MERGE_OPTIONS, merge, direction);
+        setMerge(nextMerge);
+        setFocusRow(mergeFocusRow(nextMerge));
       }
       return;
     }
@@ -196,6 +272,7 @@ export function SleeptimeSelector({
 
     if (key.backspace || key.delete) {
       if (isEditingStepCount) {
+        setTrigger("step-count");
         setStepCountInput((prev) => prev.slice(0, -1));
       } else {
         setMergeInstructions((prev) => prev.slice(0, -1));
@@ -217,6 +294,7 @@ export function SleeptimeSelector({
       !key.rightArrow
     ) {
       if (isEditingStepCount) {
+        setTrigger("step-count");
         setStepCountInput((prev) => `${prev}${input}`);
       } else {
         setMergeInstructions((prev) => `${prev}${input}`);
@@ -232,120 +310,79 @@ export function SleeptimeSelector({
 
       <Box height={1} />
 
-      <Text bold color={colors.selector.title}>
-        Configure your sleep-time (dream) settings
-      </Text>
-
-      <Box height={1} />
-
       {memfsEnabled ? (
         <>
-          <Box flexDirection="row">
-            <Text>{focusRow === "trigger" ? "> " : "  "}</Text>
-            <Text bold>Trigger event:</Text>
-            <Text>{"   "}</Text>
-            <Text
-              backgroundColor={
-                trigger === "off" ? colors.selector.itemHighlighted : undefined
-              }
-              color={trigger === "off" ? "black" : undefined}
-              bold={trigger === "off"}
-            >
-              {" Off "}
+          <Text bold color={colors.selector.title}>
+            Dream Settings
+          </Text>
+          <Box height={1} />
+          <ChoiceRow
+            focused={focusRow === "trigger-off"}
+            selected={trigger === "off"}
+          >
+            {" Off "}
+          </ChoiceRow>
+          <ChoiceRow
+            focused={focusRow === "trigger-step-count"}
+            selected={trigger === "step-count"}
+          >
+            {` Every [${stepCountInput}${isEditingStepCount ? "█" : ""}] steps `}
+          </ChoiceRow>
+          {validationError && (
+            <Text color={colors.error.text}>
+              {`    Error: ${validationError}`}
             </Text>
-            <Text> </Text>
-            <Text
-              backgroundColor={
-                trigger === "step-count"
-                  ? colors.selector.itemHighlighted
-                  : undefined
-              }
-              color={trigger === "step-count" ? "black" : undefined}
-              bold={trigger === "step-count"}
-            >
-              {" Step count "}
-            </Text>
-            <Text> </Text>
-            <Text
-              backgroundColor={
-                trigger === "compaction-event"
-                  ? colors.selector.itemHighlighted
-                  : undefined
-              }
-              color={trigger === "compaction-event" ? "black" : undefined}
-              bold={trigger === "compaction-event"}
-            >
-              {" Compaction event "}
-            </Text>
-          </Box>
-
-          {trigger === "step-count" && (
-            <>
-              <Box height={1} />
-              <Box flexDirection="row">
-                <Text>{focusRow === "step-count" ? "> " : "  "}</Text>
-                <Text bold>Step count: </Text>
-                <Text>{stepCountInput}</Text>
-                {isEditingStepCount && <Text>█</Text>}
-                {validationError && (
-                  <Text color={colors.error.text}>
-                    {` (error: ${validationError})`}
-                  </Text>
-                )}
-              </Box>
-            </>
           )}
+          <ChoiceRow
+            focused={focusRow === "trigger-compaction"}
+            selected={trigger === "compaction-event"}
+          >
+            {" On compaction "}
+          </ChoiceRow>
 
           <Box height={1} />
-          <Box flexDirection="row">
-            <Text>{focusRow === "merge" ? "> " : "  "}</Text>
-            <Text bold>Merge:</Text>
-            <Text>{"   "}</Text>
-            <Text
-              backgroundColor={
-                merge === "auto" ? colors.selector.itemHighlighted : undefined
-              }
-              color={merge === "auto" ? "black" : undefined}
-              bold={merge === "auto"}
-            >
-              {" Auto "}
-            </Text>
-            <Text> </Text>
-            <Text
-              backgroundColor={
-                merge === "explicit"
-                  ? colors.selector.itemHighlighted
-                  : undefined
-              }
-              color={merge === "explicit" ? "black" : undefined}
-              bold={merge === "explicit"}
-            >
-              {" Explicit integration "}
-            </Text>
-          </Box>
+          <Text bold color={colors.selector.title}>
+            Memory updates
+          </Text>
+          <Box height={1} />
+          <ChoiceRow
+            focused={focusRow === "merge-auto"}
+            selected={merge === "auto"}
+          >
+            {" Apply automatically "}
+          </ChoiceRow>
+          <ChoiceRow
+            focused={focusRow === "merge-explicit"}
+            selected={merge === "explicit"}
+          >
+            {" Agent reviews before applying "}
+          </ChoiceRow>
 
           {merge === "explicit" && (
             <>
               <Box height={1} />
+              <Text bold>{"  Review instructions"}</Text>
               <Box flexDirection="row">
                 <Text>{focusRow === "merge-instructions" ? "> " : "  "}</Text>
-                <Text bold>Integration instructions: </Text>
-                <Text>{mergeInstructions || "(none)"}</Text>
-                {isEditingMergeInstructions && <Text>█</Text>}
+                <Text>
+                  {`[${mergeInstructions}${isEditingMergeInstructions ? "█" : ""}]`}
+                </Text>
               </Box>
             </>
           )}
 
           <Box height={1} />
           <Text dimColor>
-            {"  Enter to save · ↑↓ rows · ←→/Tab options · Esc cancel"}
+            {
+              "  Enter save · ↑↓/Tab move · Space select · ←→ options · Esc cancel"
+            }
           </Text>
         </>
       ) : (
         <>
           <Text>
-            Sleep-time reflection requires the memory filesystem (memfs) to be
-            enabled for this agent.
+            Dream settings require the memory filesystem (MemFS) to be enabled
+            for this agent.
           </Text>
 
           <Box height={1} />

@@ -9,9 +9,16 @@ describe("formatReflectionSettings", () => {
         stepCount: 25,
         merge: "explicit",
       }),
-    ).toBe("Compaction event, explicit integration");
+    ).toBe("On compaction, agent reviews before applying");
     expect(formatReflectionSettings({ trigger: "off", stepCount: 25 })).toBe(
-      "Off, auto-merge",
+      "Off, apply automatically",
     );
+    expect(
+      formatReflectionSettings({
+        trigger: "step-count",
+        stepCount: 10,
+        merge: "auto",
+      }),
+    ).toBe("Every 10 steps, apply automatically");
   });
 });
