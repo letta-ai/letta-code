@@ -130,7 +130,11 @@ export function LettaLoginOverlay({
 
   return (
     <OverlayShell command="/login" title="Sign in with Letta">
-      <LettaLoginView onComplete={onComplete} onCancel={onCancel} />
+      <LettaLoginView
+        activateCloudBackend={false}
+        onComplete={onComplete}
+        onCancel={onCancel}
+      />
     </OverlayShell>
   );
 }
