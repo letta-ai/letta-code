@@ -255,6 +255,14 @@ export function extractPrimaryShellCommand(command: string): string {
   return unwrapped.trim();
 }
 
+function normalizeShellWords(command: string): string {
+  const tokens = tokenizeShell(command);
+  const executable = tokens[0];
+  if (!executable) return command.trim();
+  tokens[0] = normalizeExecutableToken(executable);
+  return tokens.join(" ");
+}
+
 export function normalizeBashRulePayload(payload: string): string {
   const trimmed = payload.trim();
   if (!trimmed) {
@@ -266,7 +274,7 @@ export function normalizeBashRulePayload(payload: string): string {
     ? trimmed.slice(0, -2).trimEnd()
     : trimmed;
   const unwrapped = unwrapShellLauncherCommand(withoutWildcard);
-  const normalized = normalizeGitCommandPrefix(unwrapped);
+  const normalized = normalizeGitCommandPrefix(normalizeShellWords(unwrapped));
 
   if (hasWildcardSuffix) {
     return `${normalized}:*`;

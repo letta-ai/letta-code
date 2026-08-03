@@ -68,6 +68,26 @@ describe("estimateSystemPromptSize", () => {
     ]);
   });
 
+  test("falls back to the legacy memory/system layout", () => {
+    mkdirSync(join(tmpRoot, "memory", "system"), { recursive: true });
+    writeFileSync(join(tmpRoot, "memory", "system", "persona.md"), "abcdefgh");
+
+    const { total, files } = estimateSystemPromptSize(tmpRoot);
+    expect(total).toBe(2);
+    expect(files).toEqual([{ path: "memory/system/persona.md", tokens: 2 }]);
+  });
+
+  test("prefers current system blocks over the legacy layout", () => {
+    mkdirSync(join(tmpRoot, "system"), { recursive: true });
+    mkdirSync(join(tmpRoot, "memory", "system"), { recursive: true });
+    writeFileSync(join(tmpRoot, "system", "persona.md"), "abcd");
+    writeFileSync(join(tmpRoot, "memory", "system", "persona.md"), "abcdefgh");
+
+    const { total, files } = estimateSystemPromptSize(tmpRoot);
+    expect(total).toBe(1);
+    expect(files).toEqual([{ path: "system/persona.md", tokens: 1 }]);
+  });
+
   test("walks nested directories", () => {
     mkdirSync(join(tmpRoot, "system", "project"), { recursive: true });
     mkdirSync(join(tmpRoot, "system", "human", "prefs"), { recursive: true });

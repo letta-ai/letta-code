@@ -1,27 +1,25 @@
 import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import {
-  formatMemoryPolicy,
-  LEGACY_MEMORY_POLICY_PATH,
-  MEMORY_POLICY_CHANGE_APPROVAL_ENV,
-  MEMORY_POLICY_CHANGE_APPROVAL_FILE,
-  MEMORY_POLICY_PATH,
-  readMemoryPolicyTokenLimit,
-} from "@/agent/memory-policy";
+  formatMemoryTokenLimit,
+  MEMORY_TOKEN_LIMIT_POLICY_PATH,
+  MEMORY_TOKEN_LIMIT_UPDATE_ENV,
+  readMemoryTokenLimit,
+} from "@/agent/memory-token-limit";
 import { estimateSystemPromptSize } from "@/utils/system-prompt-size";
 
-const SYSTEM_PROMPT_TOKEN_LIMIT_SETTING = "systemPromptTokenLimit";
+const USAGE_EXIT = 64;
+const IO_EXIT = 65;
 
-interface MemoryConfigInput {
+interface MemoryTokenLimitInput {
   operation?: string;
   value?: string;
   memoryDir?: string;
   agentMemoryDir?: string;
 }
 
-function resolveMemoryDir(input: MemoryConfigInput): string | null {
+function resolveMemoryDir(input: MemoryTokenLimitInput): string | null {
   const candidate =
     input.memoryDir || process.env.MEMORY_DIR || input.agentMemoryDir;
   return candidate ? resolve(candidate) : null;
@@ -30,16 +28,13 @@ function resolveMemoryDir(input: MemoryConfigInput): string | null {
 function runGit(
   memoryDir: string,
   args: string[],
-  approvalToken?: string,
+  allowPolicyUpdate = false,
 ): string {
   return execFileSync("git", args, {
     cwd: memoryDir,
     encoding: "utf8",
-    env: approvalToken
-      ? {
-          ...process.env,
-          [MEMORY_POLICY_CHANGE_APPROVAL_ENV]: approvalToken,
-        }
+    env: allowPolicyUpdate
+      ? { ...process.env, [MEMORY_TOKEN_LIMIT_UPDATE_ENV]: "1" }
       : process.env,
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
@@ -51,170 +46,150 @@ function parsePositiveInteger(value: string | undefined): number | null {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function printResult(
+  limit: number,
+  source: string,
+  changed?: boolean,
+  commit?: string,
+): void {
+  console.log(
+    JSON.stringify(
+      {
+        ...(changed === undefined ? {} : { changed }),
+        limit,
+        source,
+        ...(commit ? { commit } : {}),
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 export async function runMemoryTokenLimitAction(
-  input: MemoryConfigInput,
+  input: MemoryTokenLimitInput,
 ): Promise<number> {
   const memoryDir = resolveMemoryDir(input);
   if (!memoryDir) {
     console.error(
       "Missing memory dir. Pass --memory-dir, set MEMORY_DIR, or pass --agent.",
     );
-    return 64;
+    return USAGE_EXIT;
   }
   if (!existsSync(memoryDir)) {
     console.error(`Memory directory does not exist: ${memoryDir}`);
-    return 64;
+    return USAGE_EXIT;
   }
 
   const operation = input.operation ?? "get";
   if (operation === "get") {
     if (input.value !== undefined) {
       console.error("The get operation does not accept a value.");
-      return 64;
+      return USAGE_EXIT;
     }
     try {
-      const policy = readMemoryPolicyTokenLimit(memoryDir);
-      console.log(
-        JSON.stringify(
-          {
-            key: SYSTEM_PROMPT_TOKEN_LIMIT_SETTING,
-            value: policy.limit,
-            source: policy.source,
-          },
-          null,
-          2,
-        ),
-      );
+      const policy = readMemoryTokenLimit(memoryDir);
+      printResult(policy.limit, policy.source);
       return 0;
     } catch (error) {
       console.error(error instanceof Error ? error.message : String(error));
-      return 1;
+      return IO_EXIT;
     }
   }
 
   if (operation !== "set") {
     console.error(`Unknown memory token-limit operation: ${operation}`);
-    return 64;
+    return USAGE_EXIT;
   }
 
   const limit = parsePositiveInteger(input.value);
   if (limit === null) {
     console.error("System prompt token limit must be a positive integer.");
-    return 64;
-  }
-
-  const estimate = estimateSystemPromptSize(memoryDir);
-  if (estimate.total >= limit) {
-    console.error(
-      `System prompt is approximately ${estimate.total} tokens; the configured limit must be greater than the current estimate.`,
-    );
-    return 1;
+    return USAGE_EXIT;
   }
 
   try {
-    runGit(memoryDir, ["rev-parse", "--is-inside-work-tree"]);
-    const status = runGit(memoryDir, ["status", "--porcelain"]);
-    if (status) {
+    const estimate = estimateSystemPromptSize(memoryDir);
+    if (estimate.total >= limit) {
       console.error(
-        "Memory repo has uncommitted changes. Commit, discard, or sync them before changing memory configuration.",
+        `System prompt is approximately ${estimate.total} tokens; the configured limit must be greater than the current estimate.`,
       );
-      return 1;
+      return USAGE_EXIT;
     }
 
-    const policyRelativePath = existsSync(join(memoryDir, MEMORY_POLICY_PATH))
-      ? MEMORY_POLICY_PATH
-      : existsSync(join(memoryDir, LEGACY_MEMORY_POLICY_PATH))
-        ? LEGACY_MEMORY_POLICY_PATH
-        : MEMORY_POLICY_PATH;
-    const policyPath = join(memoryDir, policyRelativePath);
+    runGit(memoryDir, ["rev-parse", "--is-inside-work-tree"]);
+    if (
+      runGit(memoryDir, [
+        "status",
+        "--porcelain",
+        "--",
+        MEMORY_TOKEN_LIMIT_POLICY_PATH,
+      ])
+    ) {
+      console.error(
+        "The token-limit policy has uncommitted changes. Commit or discard them before changing the limit.",
+      );
+      return IO_EXIT;
+    }
+
+    const policyPath = join(memoryDir, MEMORY_TOKEN_LIMIT_POLICY_PATH);
     const policyExisted = existsSync(policyPath);
     mkdirSync(dirname(policyPath), { recursive: true });
-    writeFileSync(policyPath, formatMemoryPolicy(limit), "utf8");
-    runGit(memoryDir, ["add", "--", policyRelativePath]);
+    writeFileSync(policyPath, formatMemoryTokenLimit(limit), "utf8");
+    runGit(memoryDir, ["add", "--", MEMORY_TOKEN_LIMIT_POLICY_PATH]);
 
     const staged = runGit(memoryDir, [
       "diff",
       "--cached",
       "--name-only",
       "--",
-      policyRelativePath,
+      MEMORY_TOKEN_LIMIT_POLICY_PATH,
     ]);
     if (!staged) {
-      console.log(
-        JSON.stringify(
-          {
-            changed: false,
-            key: SYSTEM_PROMPT_TOKEN_LIMIT_SETTING,
-            value: limit,
-            source: policyRelativePath,
-          },
-          null,
-          2,
-        ),
-      );
+      printResult(limit, MEMORY_TOKEN_LIMIT_POLICY_PATH, false);
       return 0;
     }
 
-    const approvalToken = randomBytes(32).toString("hex");
-    const approvalPath = resolve(
-      memoryDir,
-      runGit(memoryDir, [
-        "rev-parse",
-        "--git-path",
-        MEMORY_POLICY_CHANGE_APPROVAL_FILE,
-      ]),
-    );
-    writeFileSync(approvalPath, approvalToken, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
     try {
+      runGit(
+        memoryDir,
+        [
+          "commit",
+          "-m",
+          `config: set system prompt token limit to ${limit}`,
+          "--",
+          MEMORY_TOKEN_LIMIT_POLICY_PATH,
+        ],
+        true,
+      );
+    } catch (error) {
       try {
-        runGit(
-          memoryDir,
-          [
-            "commit",
-            "-m",
-            `config: set system prompt token limit to ${limit}`,
-            "--",
-            policyRelativePath,
-          ],
-          approvalToken,
-        );
-      } catch (error) {
-        try {
-          runGit(memoryDir, ["reset", "HEAD", "--", policyRelativePath]);
-          if (policyExisted) {
-            runGit(memoryDir, ["checkout", "--", policyRelativePath]);
-          } else {
-            rmSync(policyPath, { force: true });
-          }
-        } catch {
-          // Preserve the original commit error; cleanup is best-effort.
+        runGit(memoryDir, [
+          "reset",
+          "HEAD",
+          "--",
+          MEMORY_TOKEN_LIMIT_POLICY_PATH,
+        ]);
+        if (policyExisted) {
+          runGit(memoryDir, ["checkout", "--", MEMORY_TOKEN_LIMIT_POLICY_PATH]);
+        } else {
+          rmSync(policyPath, { force: true });
         }
-        throw error;
+      } catch {
+        // Preserve the original commit error; cleanup is best-effort.
       }
-    } finally {
-      rmSync(approvalPath, { force: true });
+      throw error;
     }
-    const commit = runGit(memoryDir, ["rev-parse", "HEAD"]);
-    console.log(
-      JSON.stringify(
-        {
-          changed: true,
-          commit,
-          key: SYSTEM_PROMPT_TOKEN_LIMIT_SETTING,
-          value: limit,
-          source: policyRelativePath,
-          sync: "Commit created; push or allow the harness to sync memory.",
-        },
-        null,
-        2,
-      ),
+
+    printResult(
+      limit,
+      MEMORY_TOKEN_LIMIT_POLICY_PATH,
+      true,
+      runGit(memoryDir, ["rev-parse", "HEAD"]),
     );
     return 0;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
-    return 1;
+    return IO_EXIT;
   }
 }

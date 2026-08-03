@@ -1,13 +1,19 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PRE_COMMIT_HOOK_SCRIPT } from "@/agent/memory-git-hooks";
 import {
   DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT,
-  MEMORY_POLICY_PATH,
-} from "@/agent/memory-policy";
+  MEMORY_TOKEN_LIMIT_POLICY_PATH,
+} from "@/agent/memory-token-limit";
 import { runMemorySubcommand } from "@/cli/subcommands/memory";
 
 describe("letta memory token-limit", () => {
@@ -67,7 +73,7 @@ describe("letta memory token-limit", () => {
     try {
       expect(await runMemorySubcommand(["token-limit", "get"])).toBe(0);
       expect(JSON.parse(output.join("\n"))).toMatchObject({
-        value: DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT,
+        limit: DEFAULT_SYSTEM_PROMPT_TOKEN_LIMIT,
         source: "default",
       });
     } finally {
@@ -85,13 +91,36 @@ describe("letta memory token-limit", () => {
       log.mockRestore();
     }
 
-    expect(readFileSync(join(memoryDir, MEMORY_POLICY_PATH), "utf8")).toBe(
-      "system_prompt_token_limit: 30000\n",
-    );
+    expect(
+      readFileSync(join(memoryDir, MEMORY_TOKEN_LIMIT_POLICY_PATH), "utf8"),
+    ).toBe("system_prompt_token_limit: 30000\n");
     expect(git(["log", "-1", "--pretty=%s"])).toBe(
       "config: set system prompt token limit to 30000",
     );
     expect(git(["status", "--porcelain"])).toBe("");
+  });
+
+  test("sets the limit without committing unrelated changes", async () => {
+    const systemDir = join(memoryDir, "system");
+    mkdirSync(systemDir, { recursive: true });
+    const contextPath = join(systemDir, "context.md");
+    writeFileSync(contextPath, "---\ndescription: Context\n---\n\nOriginal.\n");
+    git(["add", "system/context.md"]);
+    git(["commit", "-m", "add context"]);
+    writeFileSync(contextPath, "---\ndescription: Context\n---\n\nModified.\n");
+
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(await runMemorySubcommand(["token-limit", "set", "30000"])).toBe(
+        0,
+      );
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(git(["status", "--porcelain", "--", "system/context.md"])).not.toBe(
+      "",
+    );
   });
 
   test("rejects a non-positive token limit", async () => {

@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import { isPathWithinRoots, normalizeMemoryPath } from "./memory-paths";
+import { isReadOnlyLettaCliInvocation } from "./read-only-letta-cli";
 import {
   extractDashCArgument,
   isShellExecutor,
@@ -173,14 +174,6 @@ const SAFE_MEMORY_COMMANDS = new Set([
   "cd",
   "sleep",
 ]);
-
-// letta CLI read-only subcommands: group -> allowed actions
-const SAFE_LETTA_COMMANDS: Record<string, Set<string>> = {
-  memory: new Set(["status", "help", "backups", "export", "tokens"]),
-  memfs: new Set(["status", "help", "backups", "export", "tokens"]),
-  agents: new Set(["list", "help"]),
-  messages: new Set(["search", "list", "help"]),
-};
 
 // gh CLI read-only commands: category -> allowed actions
 // null means any action is allowed for that category
@@ -1181,21 +1174,9 @@ function isSafeSegment(
   }
 
   if (command === "letta") {
-    const group = tokens[1];
-    if (!group) {
-      return false;
-    }
-    if (!(group in SAFE_LETTA_COMMANDS)) {
-      return false;
-    }
-    const action = tokens[2];
-    if (!action) {
-      return false;
-    }
-    return action === "token-limit"
-      ? tokens[3] === "get"
-      : (SAFE_LETTA_COMMANDS[group]?.has(action) ?? false);
+    return isReadOnlyLettaCliInvocation(tokens);
   }
+
   if (command === "find") {
     return isSafeFindInvocation(tokens);
   }
