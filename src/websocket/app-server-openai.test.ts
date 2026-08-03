@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
+import { LocalBackend } from "@/backend/local/local-backend";
 import { type AppServerHandle, startAppServer } from "@/websocket/app-server";
 import { parseAppServerWebsocketAuthSettings } from "@/websocket/app-server-auth";
 import {
@@ -419,6 +423,73 @@ describe("app-server OpenAI-compatible API", () => {
       "conv-test-1",
     ]);
     expect(created.length).toBe(2);
+  });
+
+  test("chat-key header creates and reuses a local conversation", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "letta-openai-chat-key-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+        memfsEnabled: false,
+      });
+      const agent = await backend.createAgent({
+        name: "telegram-agent",
+      } as never);
+      __testSetBackend(backend);
+
+      const conversationsUsed: string[] = [];
+      stubTurn((conversationId) => {
+        conversationsUsed.push(conversationId);
+      });
+      handle = await startAppServer({
+        listen: "ws://127.0.0.1:0",
+        openaiApi: true,
+      });
+
+      const listConversations = async () =>
+        (await backend.listConversations({
+          agent_id: agent.id,
+        } as never)) as unknown as Array<{ id: string }>;
+      const send = (message: string) =>
+        fetch(httpUrl(handle as AppServerHandle, "/v1/chat/completions"), {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-letta-chat-key": "telegram:123456789",
+          },
+          body: JSON.stringify({
+            model: "telegram-agent",
+            messages: [{ role: "user", content: message }],
+          }),
+        });
+
+      expect(await listConversations()).toEqual([]);
+
+      const first = await send("Hello");
+      expect(first.status).toBe(200);
+      const conversationsAfterFirstTurn = await listConversations();
+      expect(conversationsAfterFirstTurn).toHaveLength(1);
+      const createdConversation = conversationsAfterFirstTurn[0];
+      if (!createdConversation) {
+        throw new Error("Expected the first request to create a conversation");
+      }
+      expect(conversationsUsed).toEqual([createdConversation.id]);
+
+      const second = await send("Follow-up");
+      expect(second.status).toBe(200);
+      expect(await listConversations()).toHaveLength(1);
+      expect(conversationsUsed).toEqual([
+        createdConversation.id,
+        createdConversation.id,
+      ]);
+    } finally {
+      if (handle) {
+        await handle.close();
+        handle = null;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("openwebui chat id is honored only for streaming requests", async () => {
