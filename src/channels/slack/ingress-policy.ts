@@ -123,6 +123,13 @@ export type SlackAppMentionIngressPolicy =
   | SlackAppMentionIngressAccepted
   | SlackIngressIgnored;
 
+export function isSlackMentionOnlyChannel(
+  channelId: string,
+  mentionOnlyChannels: readonly string[] | undefined,
+): boolean {
+  return mentionOnlyChannels?.includes(channelId) === true;
+}
+
 function hasRecordValue(value: unknown): boolean {
   return value !== null && typeof value === "object";
 }

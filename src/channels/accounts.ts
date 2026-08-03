@@ -57,6 +57,7 @@ const SNAKE_TO_CAMEL: Record<string, string> = {
   group_mode: "groupMode",
   inbound_debounce_ms: "inboundDebounceMs",
   listen_mode: "listenMode",
+  mention_only_channels: "mentionOnlyChannels",
   message_prefix: "messagePrefix",
   media_max_bytes: "mediaMaxBytes",
   attachment_filter: "attachmentFilter",
@@ -352,6 +353,13 @@ function normalizeLoadedAccount<T extends ChannelAccount>(account: T): T {
     delete (next as unknown as Record<string, unknown>).progressUi;
     (next as SlackChannelAccount).listenMode =
       (next as SlackChannelAccount).listenMode === true;
+    const mentionOnlyChannels = (next as SlackChannelAccount)
+      .mentionOnlyChannels;
+    (next as SlackChannelAccount).mentionOnlyChannels = Array.isArray(
+      mentionOnlyChannels,
+    )
+      ? [...mentionOnlyChannels]
+      : [];
     (next as SlackChannelAccount).allowBots = normalizeSlackAllowBotsMode(
       (next as SlackChannelAccount).allowBots,
     );
@@ -531,6 +539,7 @@ function makeDefaultLegacyAccount(
     defaultPermissionMode: DEFAULT_SLACK_PERMISSION_MODE,
     transcribeVoice: config.transcribeVoice === true,
     listenMode: config.listenMode === true,
+    mentionOnlyChannels: [...(config.mentionOnlyChannels ?? [])],
     allowBots: config.allowBots ?? false,
     createdAt: now,
     updatedAt: now,

@@ -592,6 +592,7 @@ export interface SlackChannelConfig {
   transcribeVoice?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
+  mentionOnlyChannels?: string[];
   /**
    * Bot-authored inbound policy. Default false drops bot messages. "mentions"
    * accepts only explicit foreign bot mentions. There is intentionally no
@@ -769,6 +770,7 @@ export interface SlackChannelAccount extends ChannelAccountBase {
   transcribeVoice?: boolean;
   /** When true, unmentioned Slack thread replies are delivered read-only until an @mention. */
   listenMode?: boolean;
+  mentionOnlyChannels?: string[];
   /**
    * Bot-authored inbound policy. Default false drops bot messages. "mentions"
    * accepts only explicit foreign bot mentions. There is intentionally no
@@ -784,7 +786,6 @@ export interface SlackChannelAccount extends ChannelAccountBase {
    */
   inboundDebounceMs?: number;
 }
-
 export interface DiscordChannelAccount extends ChannelAccountBase {
   channel: "discord";
   token: string;

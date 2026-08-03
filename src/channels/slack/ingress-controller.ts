@@ -10,6 +10,7 @@ import type { AgentThreadTracker } from "./agent-thread-tracker";
 import { shouldAcceptSlackInboundBotMessage } from "./bot-policy";
 import type { SlackInboundDebounceController } from "./inbound-debounce";
 import {
+  isSlackMentionOnlyChannel,
   resolveSlackAppMentionIngressPolicy,
   resolveSlackMessageIngressPolicy,
 } from "./ingress-policy";
@@ -185,6 +186,13 @@ export function createSlackIngressController(params: {
           message: rawMessage,
           wasMentioned: basePolicy.wasMentioned,
         })
+      ) {
+        return;
+      }
+      if (
+        basePolicy.chatType === "channel" &&
+        !basePolicy.wasMentioned &&
+        isSlackMentionOnlyChannel(channelId, config.mentionOnlyChannels)
       ) {
         return;
       }

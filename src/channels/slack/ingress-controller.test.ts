@@ -289,6 +289,132 @@ test("slack adapter auto-routes unmentioned replies in agent-participated thread
   );
 });
 
+test("slack adapter drops unmentioned replies in configured mention-only channels", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    mentionOnlyChannels: ["C123"],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  await adapter.sendMessage({
+    channel: "slack",
+    chatId: "C123",
+    text: "agent reply",
+    threadId: "1712790000.000050",
+  });
+
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      user: "U123",
+      text: "unmentioned follow-up",
+      ts: "1712800000.000100",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  expect(onMessage).not.toHaveBeenCalled();
+});
+
+test("slack adapter routes explicit mentions in configured mention-only channels", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    mentionOnlyChannels: ["C123"],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      user: "U123",
+      text: "<@U0AS42PTEAX> please build this",
+      ts: "1712800000.000100",
+      thread_ts: "1712790000.000050",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      chatId: "C123",
+      text: "please build this",
+      isMention: true,
+    }),
+  );
+});
+
+test("slack adapter leaves DMs unaffected by mention-only channel config", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    mentionOnlyChannels: ["C123"],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "D123",
+      user: "U123",
+      text: "direct follow-up",
+      ts: "1712800000.000100",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      chatId: "D123",
+      text: "direct follow-up",
+      chatType: "direct",
+    }),
+  );
+});
+
 test("slack adapter scopes agent-thread auto-routing by channel", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
