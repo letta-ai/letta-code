@@ -186,12 +186,20 @@ function resolveChannelRestoreAgentScope(
   );
 }
 
+function shouldAcquireStandaloneListenerLock(): boolean {
+  return shouldAcquireManualListenerLock(
+    getSpawnerListenerInstanceId(),
+    process.env.LETTA_DESKTOP_MODE === "1",
+  );
+}
+
 export const __listenSubcommandTestUtils = {
   createListenerProcessAnchorPromise,
   flushListenerTelemetryEnd,
   getListenerServerUrl,
   resolveListenerStartupMode,
   resolveListenerRegistrationOptions,
+  shouldAcquireStandaloneListenerLock,
 };
 
 const LISTEN_OPTIONS = {
@@ -469,12 +477,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       // A spawner owns Desktop child lifecycle. Standalone `letta server`
       // and its `letta remote` alias instead claim their exact local
       // registration slot before starting channel adapters or registering.
-      if (
-        shouldAcquireManualListenerLock(
-          getSpawnerListenerInstanceId(),
-          process.env.LETTA_DESKTOP_MODE === "1",
-        )
-      ) {
+      if (shouldAcquireStandaloneListenerLock()) {
         const listenerInstanceId = registerOptions.listenerInstanceId;
         if (!listenerInstanceId) {
           throw new Error("Listener registration identity was not resolved.");
