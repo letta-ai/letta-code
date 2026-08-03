@@ -807,6 +807,15 @@ describe("WhatsApp adapter inbound debounce and read receipts", () => {
     await sleep(70);
     expect(received.map((message) => message.text)).toEqual(["replayed"]);
     expect(harness.sockets[1]?.readCalls).toEqual([["old"]]);
+
+    await harness.adapter.stop();
+    await harness.adapter.start();
+    await harness.emit([
+      makeTextMessage(phone("15550000061"), "old", "duplicate replay"),
+    ]);
+    await sleep(70);
+    expect(received.map((message) => message.text)).toEqual(["replayed"]);
+    expect(harness.sockets[2]?.readCalls).toEqual([]);
   });
 
   test("connection close invalidates pending debounce and stale socket traffic without reads", async () => {

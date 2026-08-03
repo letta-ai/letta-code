@@ -242,9 +242,12 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
         return;
       }
       await Promise.all(
-        entries.map((entry) =>
-          debouncer.enqueue({ ...entry, generation: entryGeneration }),
-        ),
+        entries.map((entry) => {
+          const pendingEntry = { ...entry, generation: entryGeneration };
+          pendingEntries.delete(entry);
+          pendingEntries.add(pendingEntry);
+          return debouncer.enqueue(pendingEntry);
+        }),
       );
     },
     async flushAll() {
