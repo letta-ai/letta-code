@@ -18,15 +18,7 @@ describe("queued continuation input", () => {
         type: "message",
         agentId: "agent-1",
         conversationId: "conv-1",
-        channelTurnSources: [
-          {
-            channel: "slack",
-            chatId: "C123",
-            messageId: "1712345.0001",
-            agentId: "agent-1",
-            conversationId: "conv-1",
-          },
-        ],
+        imageFailureMode: "drop",
         messages: [
           {
             role: "user",

@@ -244,7 +244,7 @@ export async function prepareListenerTurn(params: {
   const turnInput = createTurnInputState(
     currentInput,
     getInboundImageFailureModes({
-      channelTurnSources: msg.channelTurnSources,
+      imageFailureMode: msg.imageFailureMode,
       messages: currentInput,
     }),
   );
@@ -271,7 +271,6 @@ export async function prepareListenerTurn(params: {
     permissionModeState,
     skillSources: runtime.skillSources,
     cachedAgent,
-    channelTurnSources: msg.channelTurnSources,
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
   });

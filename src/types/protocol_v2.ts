@@ -35,6 +35,9 @@ import type {
   AppServerInfoResponseMessage,
 } from "./app-server-info";
 import type { ConversationForkBody } from "./conversation-fork-protocol";
+import type { CronRunLogPage, CronTask } from "./schedule-protocol";
+
+export type * from "./schedule-protocol";
 
 export type DmPolicy = "pairing" | "allowlist" | "open";
 
@@ -56,77 +59,6 @@ export interface ExperimentSnapshot {
   enabled: boolean;
   source: ExperimentSource;
   override: boolean | null;
-}
-
-export type CronTaskStatus = "active" | "fired" | "missed" | "cancelled";
-export type CronCancelReason = "conversation_not_found" | "expired";
-export type CronRunOutcome = "queued" | "missed" | "failed" | "skipped";
-export type CronRunReason =
-  | "scheduled_time_matched"
-  | "one_off_due"
-  | "scheduler_inactive"
-  | "started_too_late"
-  | "queue_full"
-  | "runtime_unavailable"
-  | "task_cancelled"
-  | "invalid_cron"
-  | "scheduler_error";
-export interface CronTask {
-  id: string;
-  agent_id: string;
-  conversation_id: string;
-  name: string;
-  description: string;
-  cron: string;
-  timezone: string;
-  recurring: boolean;
-  prompt: string;
-  status: CronTaskStatus;
-  created_at: string;
-  expires_at: string | null;
-  last_fired_at: string | null;
-  fire_count: number;
-  cancel_reason: CronCancelReason | null;
-  jitter_offset_ms: number;
-  last_run_at: string | null;
-  last_run_outcome: CronRunOutcome | null;
-  last_run_reason: CronRunReason | null;
-  last_run_error: string | null;
-  last_missed_at: string | null;
-  missed_count: number;
-  failed_count: number;
-  scheduled_for: string | null;
-  fired_at: string | null;
-  missed_at: string | null;
-}
-
-export type CronRunLogStatus = "ok" | "error" | "skipped";
-
-export interface CronRunLogEntry {
-  ts: number;
-  jobId: string;
-  action: "finished";
-  status?: CronRunLogStatus;
-  outcome?: CronRunOutcome;
-  reason?: CronRunReason;
-  error?: string;
-  summary?: string;
-  agentId?: string;
-  conversationId?: string;
-  runId?: string;
-  runAtMs?: number;
-  queueItemId?: string;
-  scheduledFor?: string | null;
-  firedAt?: string;
-}
-
-export interface CronRunLogPage {
-  entries: CronRunLogEntry[];
-  total: number;
-  offset: number;
-  limit: number;
-  hasMore: boolean;
-  nextOffset: number | null;
 }
 
 /**
@@ -666,6 +598,15 @@ export interface StreamDeltaMessage extends RuntimeEnvelope {
   subagent_id?: string;
 }
 
+/** Exactly-once terminal lifecycle event for a completed harness turn. */
+export interface TurnFinishedMessage extends RuntimeEnvelope {
+  type: "turn_finished";
+  turn_id: string;
+  stop_reason: StopReasonType;
+  run_id?: string;
+  error?: string;
+}
+
 /**
  * Subagent state snapshot.
  * Emitted via `update_subagent_state` on every subagent mutation.
@@ -738,6 +679,8 @@ export type ApprovalResponseBody =
 export interface InputCreateMessagePayload {
   kind: "create_message";
   messages: Array<MessageCreate & { client_message_id?: string }>;
+  /** Handling policy for unsupported or failed image inputs. */
+  image_failure_mode?: "strict" | "drop";
   /**
    * Optional request-scoped allowlist for locally executed client tools.
    * Undefined preserves the listener's normal toolset; an empty array means no
@@ -776,8 +719,23 @@ export type InputPayload =
 
 export interface InputCommand {
   type: "input";
+  /**
+   * Optional correlation id. When present, the listener acknowledges that the
+   * input was accepted into its normal dispatch/queue path without waiting for
+   * the turn to finish.
+   */
+  request_id?: string;
   runtime: RuntimeScope;
   payload: InputPayload;
+}
+
+export interface InputAcceptedResponseMessage {
+  type: "input_accepted";
+  request_id: string;
+  runtime: RuntimeScope;
+  accepted: boolean;
+  disposition?: "started" | "queued";
+  error?: string;
 }
 
 export interface ChangeDeviceStatePayload {
@@ -878,6 +836,8 @@ export interface RuntimeStartCommand {
   recover_approvals?: boolean;
   /** Force the initial state replay to include update_device_status. Defaults to true. */
   force_device_status?: boolean;
+  /** Resolve runtime_start only after its initial state replay has been emitted. */
+  wait_for_replay?: boolean;
   /** Controller-owned tools registered atomically with the resolved runtime. */
   external_tools?: readonly RuntimeStartExternalToolsGroup[];
 }
@@ -2641,6 +2601,13 @@ export interface ExecuteCommandCommand {
   args?: string;
 }
 
+export interface ExecuteCommandResponseMessage {
+  type: "execute_command_response";
+  request_id: string;
+  success: boolean;
+  output: string;
+}
+
 // ─────────────────────────────────────────────────
 //  Queue item commands
 // ─────────────────────────────────────────────────
@@ -2875,10 +2842,13 @@ export type WsProtocolCommandType = WsProtocolCommand["type"];
 
 export type WsProtocolMessage =
   | ControlRequest
+  | InputAcceptedResponseMessage
+  | ExecuteCommandResponseMessage
   | DeviceStatusUpdateMessage
   | LoopStatusUpdateMessage
   | QueueUpdateMessage
   | StreamDeltaMessage
+  | TurnFinishedMessage
   | SubagentStateUpdateMessage
   | ExternalToolCallRequestMessage
   | AbortMessageResponseMessage

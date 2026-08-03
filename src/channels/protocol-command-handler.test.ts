@@ -11,12 +11,16 @@ import {
   getActiveChannelCredentialsStoreMode,
 } from "@/channels/credential-store";
 import {
+  handleChannelsProtocolCommand,
+  setChannelsServiceLoaderOverride,
+} from "@/channels/protocol-command-handler";
+import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
   clearAllRoutes,
   getRoute,
 } from "@/channels/routing";
-import { __listenClientTestUtils } from "@/websocket/listener/client";
+import { __listenClientTestUtils as listenerTestUtils } from "@/websocket/listener/client";
 
 class MockSocket {
   public sentPayloads: string[] = [];
@@ -29,6 +33,26 @@ class MockSocket {
 }
 
 const actualChannelsService = await import("@/channels/service");
+
+const __listenClientTestUtils = {
+  ...listenerTestUtils,
+  setChannelsServiceLoaderForTests: setChannelsServiceLoaderOverride,
+  handleChannelsProtocolCommand: (
+    command: Parameters<typeof handleChannelsProtocolCommand>[0],
+    socket: WebSocket,
+    ..._legacyArgs: unknown[]
+  ) =>
+    handleChannelsProtocolCommand(
+      command,
+      socket,
+      (_name, task) => void task(),
+      (target, payload) => {
+        if (target.readyState !== WebSocket.OPEN) return false;
+        target.send(JSON.stringify(payload));
+        return true;
+      },
+    ),
+};
 
 afterEach(() => {
   __listenClientTestUtils.setChannelsServiceLoaderForTests(null);
@@ -97,6 +121,64 @@ async function expectCommandCompletesWithoutSecretFlush(
 }
 
 describe("channel account list responses", () => {
+  test("rejects plugin-specific config inside the gateway process", async () => {
+    setupInMemoryChannelStores();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    try {
+      const cases = [
+        {
+          requestId: "signal-invalid-create",
+          channelId: "signal",
+          config: { group_mode: "all" },
+        },
+        {
+          requestId: "discord-invalid-allowed-channels",
+          channelId: "discord",
+          config: { token: "test-token", allowed_channels: ["channel-1", 42] },
+        },
+        {
+          requestId: "discord-invalid-permission-mode",
+          channelId: "discord",
+          config: { token: "test-token", default_permission_mode: "banana" },
+        },
+        {
+          requestId: "discord-unknown-field",
+          channelId: "discord",
+          config: { bot_token: "test-token" },
+        },
+      ];
+      for (const { requestId, channelId, config } of cases) {
+        socket.sentPayloads = [];
+        await sendChannelCommand(
+          {
+            type: "channel_account_create",
+            request_id: requestId,
+            channel_id: channelId,
+            account: {
+              account_id: `${channelId}-invalid`,
+              config,
+            },
+          } as ChannelsCommand,
+          socket,
+          runtime,
+        );
+
+        expect(findMessage(socket, "channel_account_create_response")).toEqual({
+          type: "channel_account_create_response",
+          request_id: requestId,
+          success: false,
+          channel_id: channelId,
+          account: null,
+          error: "Invalid channel account config",
+        });
+      }
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
   test("creates custom app accounts on the built-in custom channel", async () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => []);

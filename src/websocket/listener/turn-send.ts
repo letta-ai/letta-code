@@ -26,6 +26,7 @@ export function createTurnInputSender(params: {
   providerFallback: ProviderFallbackState;
   buildSendOptions: () => Parameters<typeof sendMessageStream>[2];
   onTerminal: (transition: TurnFinishTransition) => void;
+  getTurnId: () => string;
 }): {
   send: (
     input: Array<MessageCreate | ApprovalCreate>,
@@ -73,6 +74,7 @@ export function createTurnInputSender(params: {
             drainResult: result.drainResult,
             agentId: params.agentId,
             conversationId: params.conversationId,
+            turnId: params.getTurnId(),
           },
         ),
       );
