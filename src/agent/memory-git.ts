@@ -324,36 +324,17 @@ async function prepareAttachedRepositoryForGitOps(args: {
   await ensureLocalMemfsGitConfig(args.directory, args.agentId);
 }
 
-/**
- * Move a stale non-git directory occupying a repository mount path aside so
- * the mount can be cloned. Agents (or older builds) sometimes created plain
- * directories at `$MEMORY_DIR/../<name>` before the git mount existed; their
- * contents are preserved at `<name>.pre-mount-<timestamp>` next to the mount
- * rather than deleted, since they may hold un-synced work.
- */
-function moveStaleMountAside(directory: string): string {
-  const timestamp = new Date()
-    .toISOString()
-    .replace(/[:.]/g, "-")
-    .replace(/Z$/, "");
-  const backupPath = `${directory}.pre-mount-${timestamp}`;
-  renameSync(directory, backupPath);
-  return backupPath;
-}
-
 export async function cloneRepositoryMount(args: {
   agentId: string;
   repositoryName: string;
   directory: string;
   remoteUrl: string;
   token: string;
-}): Promise<{ movedAsidePath?: string }> {
-  let movedAsidePath: string | undefined;
+}): Promise<void> {
   if (existsSync(args.directory) && !existsSync(join(args.directory, ".git"))) {
-    movedAsidePath = moveStaleMountAside(args.directory);
-    debugWarn(
-      "memfs-git",
-      `Mount path for ${args.repositoryName} existed but was not a git repository; moved it to ${movedAsidePath}`,
+    throw new Error(
+      `repository mount path already exists and is not a git repository: ${args.directory}. ` +
+        `Move or delete that directory, then re-run the sync to clone the mount.`,
     );
   }
 
@@ -381,7 +362,6 @@ export async function cloneRepositoryMount(args: {
   }
 
   await prepareAttachedRepositoryForGitOps(args);
-  return { movedAsidePath };
 }
 
 /**
@@ -1569,16 +1549,14 @@ async function syncAttachedRepository(args: {
   const directory = getRepositoryMountDir(args.agentId, repositoryName);
   const remoteUrl = getRepositoryRemoteUrl(args.agentId, repositoryName);
 
-  const { movedAsidePath } = await cloneRepositoryMount({
+  await cloneRepositoryMount({
     agentId: args.agentId,
     repositoryName,
     directory,
     remoteUrl,
     token: args.token,
   });
-  return movedAsidePath
-    ? `${repositoryName}: ${directory} (previous non-git contents moved to ${movedAsidePath})`
-    : `${repositoryName}: ${directory}`;
+  return `${repositoryName}: ${directory}`;
 }
 
 export async function syncAttachedAgentRepositories(

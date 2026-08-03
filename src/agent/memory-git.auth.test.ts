@@ -749,7 +749,7 @@ describe("cloneRepositoryMount", () => {
     expect(helpers[1]).toContain("password=");
   });
 
-  test("moves aside a stale non-git directory and clones the mount", async () => {
+  test("fails with an actionable error when a non-git directory occupies the mount path", async () => {
     process.env.LETTA_BASE_URL = "https://api.letta.com";
     const remote = makeRemoteWithContent();
     const mountParent = mkdtempSync(join(tmpdir(), "repo-mount-"));
@@ -760,25 +760,22 @@ describe("cloneRepositoryMount", () => {
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, "stranded.md"), "un-synced work", "utf-8");
 
-    const { movedAsidePath } = await cloneRepositoryMount({
-      agentId: "agent-123",
-      repositoryName: "shared-notes",
-      directory,
-      remoteUrl: remote,
-      token: "test-token",
-    });
+    await expect(
+      cloneRepositoryMount({
+        agentId: "agent-123",
+        repositoryName: "shared-notes",
+        directory,
+        remoteUrl: remote,
+        token: "test-token",
+      }),
+    ).rejects.toThrow(/not a git repository.*Move or delete/s);
 
-    expect(existsSync(join(directory, ".git"))).toBe(true);
-    expect(existsSync(join(directory, "shared.md"))).toBe(true);
-    // Stranded content is preserved, not deleted.
-    expect(movedAsidePath).toBeDefined();
-    expect(movedAsidePath).toContain("shared-notes.pre-mount-");
-    expect(existsSync(join(movedAsidePath as string, "stranded.md"))).toBe(
-      true,
-    );
+    // The directory is left untouched for the agent to inspect and resolve.
+    expect(existsSync(join(directory, "stranded.md"))).toBe(true);
+    expect(existsSync(join(directory, ".git"))).toBe(false);
   });
 
-  test("pulls an existing git mount without moving it aside", async () => {
+  test("pulls an existing git mount", async () => {
     process.env.LETTA_BASE_URL = "https://api.letta.com";
     const remote = makeRemoteWithContent();
     const mountParent = mkdtempSync(join(tmpdir(), "repo-mount-"));
@@ -798,7 +795,7 @@ describe("cloneRepositoryMount", () => {
     commitFile(other, "update.md", "second agent write");
     git(other, "push origin main");
 
-    const { movedAsidePath } = await cloneRepositoryMount({
+    await cloneRepositoryMount({
       agentId: "agent-123",
       repositoryName: "shared-notes",
       directory,
@@ -806,7 +803,6 @@ describe("cloneRepositoryMount", () => {
       token: "test-token",
     });
 
-    expect(movedAsidePath).toBeUndefined();
     expect(existsSync(join(directory, "update.md"))).toBe(true);
   });
 });
