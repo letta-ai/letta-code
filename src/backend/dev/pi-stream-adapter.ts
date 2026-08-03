@@ -24,6 +24,7 @@ import { isRecord } from "@/utils/type-guards";
 import { isContextWindowOverflowError } from "./context-window-overflow";
 import {
   isRetryableLocalProviderError,
+  LocalProviderRetryExhaustedError,
   localProviderRetryDelayMs,
   localProviderRetryMessage,
   normalizeLocalProviderError,
@@ -453,7 +454,10 @@ function isModelOutputEvent(event: ProviderStreamEvent): boolean {
   }
 }
 
-function llmEndErrorFromError(error: unknown): {
+function llmEndErrorFromError(
+  error: unknown,
+  options: { forceNonRetryable?: boolean } = {},
+): {
   error: LlmEndErrorInfo;
   stopReason: string;
 } {
@@ -463,7 +467,7 @@ function llmEndErrorFromError(error: unknown): {
       message: info.message,
       detail: info.detail,
       errorType: info.error_type,
-      retryable: info.retryable,
+      retryable: options.forceNonRetryable ? false : info.retryable,
     },
     stopReason: info.stop_reason,
   };
@@ -565,6 +569,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
   private async *streamOnce(
     input: ProviderTurnInput,
+    retryOptions: { terminalRetryableProviderFailure?: boolean } = {},
   ): AsyncIterable<ProviderStreamEvent> {
     const tools = toPiTools(input.clientTools);
     const localModel = await resolveAvailableLocalModelForTurn({
@@ -645,6 +650,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
     const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
     const llmStartedAt = Date.now();
     let llmEnded = false;
+    let emittedModelOutput = false;
     const emitLlmEnd = async (
       info: Omit<
         LlmEndInfo,
@@ -678,6 +684,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       let finalMessage: AssistantMessage | undefined;
       let finalLocalMessage: LocalAssistantMessage | undefined;
       for await (const part of result) {
+        const providerEvent = providerStreamPart(part);
+        if (isModelOutputEvent(providerEvent)) emittedModelOutput = true;
         if (part.type === "error") {
           const error = new PiProviderError(part.error);
           if (
@@ -693,7 +701,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           finalLocalMessage = toLocalAssistantMessage(part.message, input);
           yield providerLocalMessage(finalLocalMessage);
         }
-        yield providerStreamPart(part);
+        yield providerEvent;
       }
 
       if (streamError) throw streamError;
@@ -749,7 +757,12 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       }
     } catch (error) {
       if (!llmEnded) {
-        const endError = llmEndErrorFromError(error);
+        const endError = llmEndErrorFromError(error, {
+          forceNonRetryable:
+            retryOptions.terminalRetryableProviderFailure &&
+            !emittedModelOutput &&
+            isRetryableLocalProviderError(error),
+        });
         await emitLlmEnd({
           stopReason: endError.stopReason,
           usage: null,
@@ -785,7 +798,10 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
 
       let emittedModelOutput = false;
       try {
-        for await (const event of this.streamOnce(activeInput)) {
+        for await (const event of this.streamOnce(activeInput, {
+          terminalRetryableProviderFailure:
+            transientRetries >= LOCAL_PROVIDER_MAX_RETRIES,
+        })) {
           if (isModelOutputEvent(event)) emittedModelOutput = true;
           yield event;
         }
@@ -895,12 +911,15 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         }
 
-        if (
-          emittedModelOutput ||
-          transientRetries >= LOCAL_PROVIDER_MAX_RETRIES ||
-          !retryableTransportError
-        ) {
+        if (emittedModelOutput || !retryableTransportError) {
           throw error;
+        }
+
+        if (transientRetries >= LOCAL_PROVIDER_MAX_RETRIES) {
+          throw new LocalProviderRetryExhaustedError(
+            error,
+            transientRetries + 1,
+          );
         }
 
         transientRetries += 1;

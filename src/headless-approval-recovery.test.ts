@@ -136,4 +136,19 @@ describe("headless approval recovery wiring", () => {
     );
     expect(segment).not.toContain("await resolveAllPendingApprovals();");
   });
+
+  test("direct llm_api_error retry path honors run retryable metadata", () => {
+    const start = source.indexOf(
+      "// Case 3: Transient LLM API error - retry with exponential backoff up to a limit",
+    );
+    const end = source.indexOf("const invalidIdsDetected =", start);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const segment = source.slice(start, end);
+    expect(segment).toContain("shouldRetryPostStreamRunError({");
+    expect(segment).toContain("retryable: initialRunErrorInfo?.retryable");
+    expect(segment).toContain('stopReason === "llm_api_error"');
+  });
 });

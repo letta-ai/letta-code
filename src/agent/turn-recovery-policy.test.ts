@@ -287,6 +287,15 @@ describe("provider detail retry helpers", () => {
     expect(
       shouldRetryPostStreamRunError({
         stopReason: "llm_api_error",
+        errorType: "llm_error",
+        detail:
+          'Codex error: {"type":"error","error":{"type":"server_error","code":"server_error","message":"You can retry your request."}}',
+        retryable: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRetryPostStreamRunError({
+        stopReason: "llm_api_error",
         detail: "unclassified provider transport failure",
       }),
     ).toBe(true);

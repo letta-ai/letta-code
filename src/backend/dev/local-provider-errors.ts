@@ -15,6 +15,31 @@ export interface LocalProviderErrorInfo {
   stop_reason: "llm_api_error" | "error";
 }
 
+export class LocalProviderRetryExhaustedError extends Error {
+  readonly attempts: number;
+  readonly detail: string;
+
+  constructor(cause: unknown, attempts: number) {
+    const causeMessage = fallbackErrorMessage(cause);
+    super(
+      `Local provider retry budget exhausted after ${attempts} attempts: ${causeMessage}`,
+    );
+    this.name = "LocalProviderRetryExhaustedError";
+    this.attempts = attempts;
+    this.detail = localProviderErrorDetail(cause);
+    (this as Error & { cause?: unknown }).cause = cause;
+  }
+}
+
+function isLocalProviderRetryExhaustedError(
+  error: unknown,
+): error is LocalProviderRetryExhaustedError {
+  return (
+    error instanceof LocalProviderRetryExhaustedError ||
+    (isRecord(error) && error.name === "LocalProviderRetryExhaustedError")
+  );
+}
+
 const LOCAL_PROVIDER_MAX_RETRY_DELAY_MS = 60_000;
 const RETRYABLE_LOCAL_PROVIDER_DETAIL_PATTERNS = [
   "server_error",
@@ -162,6 +187,7 @@ function statusCode(error: unknown): number | undefined {
 
 export function isRetryableLocalProviderError(error: unknown): boolean {
   if (isContextWindowOverflowError(error)) return false;
+  if (isLocalProviderRetryExhaustedError(error)) return false;
 
   const detail = localProviderErrorDetail(error);
   const status = statusCode(error);
@@ -192,9 +218,20 @@ function isLikelyProviderError(error: unknown, retryable: boolean): boolean {
 export function normalizeLocalProviderError(
   error: unknown,
 ): LocalProviderErrorInfo {
-  const retryable = isRetryableLocalProviderError(error);
   const detail = localProviderErrorDetail(error);
   const message = fallbackErrorMessage(error);
+
+  if (isLocalProviderRetryExhaustedError(error)) {
+    return {
+      message,
+      detail,
+      error_type: "llm_error",
+      retryable: false,
+      stop_reason: "llm_api_error",
+    };
+  }
+
+  const retryable = isRetryableLocalProviderError(error);
   const isProviderError = isLikelyProviderError(error, retryable);
   return {
     message,
@@ -228,7 +265,35 @@ export function localProviderRetryDelayMs(
   );
 }
 
+function isOpenAICodexProviderError(error: unknown): boolean {
+  if (!isRecord(error) || !isRecord(error.assistant)) return false;
+  return (
+    error.assistant.provider === "openai-codex" ||
+    error.assistant.api === "openai-codex-responses"
+  );
+}
+
+function openAICodexRetryMessage(error: unknown): string | undefined {
+  if (!isOpenAICodexProviderError(error)) return undefined;
+  const message = fallbackErrorMessage(error);
+  const webSocketClose = message.match(/WebSocket closed(?:\s+(\d+))?/i);
+  if (webSocketClose) {
+    const code = webSocketClose[1] ? ` (${webSocketClose[1]})` : "";
+    return `OpenAI Codex WebSocket closed${code}`;
+  }
+
+  if (/\bCodex error\b/i.test(message)) {
+    const backendCode =
+      message.match(/"code"\s*:\s*"([^"]+)"/)?.[1] ??
+      message.match(/"type"\s*:\s*"([^"]+)"/)?.[1];
+    return `OpenAI Codex backend ${backendCode ?? "error"}`;
+  }
+
+  return undefined;
+}
+
 export function localProviderRetryMessage(error: unknown): string {
   const status = statusCode(error);
-  return `${status !== undefined ? `HTTP ${status}: ` : ""}${fallbackErrorMessage(error)}`;
+  const message = openAICodexRetryMessage(error) ?? fallbackErrorMessage(error);
+  return `${status !== undefined ? `HTTP ${status}: ` : ""}${message}`;
 }
