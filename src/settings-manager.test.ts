@@ -63,11 +63,8 @@ afterEach(async () => {
 
   // Restore original HOME AFTER reset completes
   process.env.HOME = originalHome;
-  if (originalApiKey === undefined) {
-    delete process.env.LETTA_API_KEY;
-  } else {
-    process.env.LETTA_API_KEY = originalApiKey;
-  }
+  if (originalApiKey === undefined) delete process.env.LETTA_API_KEY;
+  else process.env.LETTA_API_KEY = originalApiKey;
   if (originalLocalBackendFlag === undefined) {
     delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
   } else {

@@ -27,6 +27,7 @@ import {
   deleteSecureTokens,
   getSecureTokensWithStatus,
   isKeychainAvailable,
+  isKeychainDurable,
   type SecureTokens,
   setSecureTokens,
 } from "./utils/secrets.js";
@@ -520,6 +521,9 @@ class SettingsManager {
           try {
             await setSecureTokens(tokensToMigrate);
             this.updateSecureTokensCache(tokensToMigrate);
+
+            // Session-scoped stores are invisible to headless processes.
+            if (!(await isKeychainDurable())) return;
 
             // Remove tokens from settings file
             const updatedSettings = { ...this.settings };

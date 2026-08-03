@@ -295,6 +295,21 @@ export async function isKeychainAvailable(): Promise<boolean> {
   }
 }
 
+/**
+ * Whether the active backend keeps credentials readable outside the login
+ * session that wrote them.
+ *
+ * Returns false when there is no backend at all, so callers that use this to
+ * decide whether discarding a fallback copy is safe fail closed.
+ */
+export async function isKeychainDurable(): Promise<boolean> {
+  const backend = getSecretBackend();
+  if (!backend) {
+    return false;
+  }
+  return backend.isDurable;
+}
+
 export function __resetSecretWarningStateForTests(): void {
   warnedSecretReadFailures.clear();
 }
