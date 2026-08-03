@@ -11,6 +11,7 @@
 import { existsSync } from "node:fs";
 import * as os from "node:os";
 import WebSocket from "ws";
+import { requireNodePty } from "@/utils/node-pty-loader";
 
 const IS_BUN = typeof Bun !== "undefined";
 
@@ -209,8 +210,9 @@ function spawnNodePty(
   socket: WebSocket,
 ): TerminalSession {
   const terminalKey = getTerminalKey(connectionId, terminal_id);
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pty = require("node-pty") as NodePtyModule;
+  // Throws a tagged, actionable error when the prebuilt binary is unloadable;
+  // handleTerminalSpawn forwards the message to the client as terminal_exited.
+  const pty = requireNodePty() as NodePtyModule;
 
   const handleData = makeOutputBatcher((data) =>
     sendTerminalMessage(socket, { type: "terminal_output", terminal_id, data }),
