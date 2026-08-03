@@ -28,6 +28,7 @@ const keychainAvailablePrecompute = await isKeychainAvailable();
 
 // Store original HOME to restore after tests
 const originalHome = process.env.HOME;
+const originalApiKey = process.env.LETTA_API_KEY;
 const originalLocalBackendFlag = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
 const originalLocalBackendDir = process.env.LETTA_LOCAL_BACKEND_DIR;
 let testHomeDir: string;
@@ -46,6 +47,7 @@ beforeEach(async () => {
 
   // Override HOME for tests (must be done BEFORE initialize is called)
   process.env.HOME = testHomeDir;
+  delete process.env.LETTA_API_KEY;
   delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
   delete process.env.LETTA_LOCAL_BACKEND_DIR;
 });
@@ -61,6 +63,11 @@ afterEach(async () => {
 
   // Restore original HOME AFTER reset completes
   process.env.HOME = originalHome;
+  if (originalApiKey === undefined) {
+    delete process.env.LETTA_API_KEY;
+  } else {
+    process.env.LETTA_API_KEY = originalApiKey;
+  }
   if (originalLocalBackendFlag === undefined) {
     delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
   } else {
