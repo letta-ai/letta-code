@@ -204,6 +204,20 @@ await Bun.build({
   },
 });
 
+// Pure scheduled-turn envelope contract shared by scheduler producers and
+// transcript consumers.
+await Bun.build({
+  entrypoints: ["./src/schedules.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "schedules.js",
+  },
+});
+
 await Bun.build({
   entrypoints: ["./src/channels-public.ts"],
   outdir: "./dist",
@@ -213,6 +227,21 @@ await Bun.build({
   sourcemap: "external",
   naming: {
     entry: "channels-public.js",
+  },
+});
+
+await Bun.build({
+  entrypoints: ["./src/gateway-core.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "gateway-core.js",
+  },
+  loader: {
+    ".md": "text",
   },
 });
 

@@ -244,7 +244,7 @@ export async function prepareListenerTurn(params: {
   const turnInput = createTurnInputState(
     currentInput,
     getInboundImageFailureModes({
-      channelTurnSources: msg.channelTurnSources,
+      imageFailureMode: msg.imageFailureMode,
       messages: currentInput,
     }),
   );
@@ -259,6 +259,7 @@ export async function prepareListenerTurn(params: {
     connectionId,
     agentId,
     conversationId,
+    clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
     // Headless clients (SDK sessions, automation) opt out of tools that
     // prompt the human mid-turn; the interactive set is owned by the harness.
@@ -270,7 +271,6 @@ export async function prepareListenerTurn(params: {
     permissionModeState,
     skillSources: runtime.skillSources,
     cachedAgent,
-    channelTurnSources: msg.channelTurnSources,
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
   });

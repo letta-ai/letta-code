@@ -339,7 +339,7 @@ describe("discord protocol-inbound validators", () => {
     expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
-  test("discord account create rejects non-string allowed_channels", () => {
+  test("defers non-string Discord allowed_channels validation to the gateway", () => {
     const msg = {
       type: "channel_account_create",
       channel_id: "discord",
@@ -348,10 +348,10 @@ describe("discord protocol-inbound validators", () => {
         config: { token: "test-token", allowed_channels: ["channel-1", 42] },
       },
     };
-    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+    expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
-  test("discord account create rejects invalid default_permission_mode", () => {
+  test("defers Discord permission-mode validation to the gateway", () => {
     const msg = {
       type: "channel_account_create",
       channel_id: "discord",
@@ -360,17 +360,17 @@ describe("discord protocol-inbound validators", () => {
         config: { token: "test-token", default_permission_mode: "banana" },
       },
     };
-    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+    expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
-  test("discord account create rejects unknown nested plugin config fields", () => {
+  test("defers unknown nested Discord fields to the gateway", () => {
     const msg = {
       type: "channel_account_create",
       channel_id: "discord",
       request_id: "r1",
       account: { config: { bot_token: "xoxb-test" } },
     };
-    expect(isChannelAccountCreateCommand(msg)).toBe(false);
+    expect(isChannelAccountCreateCommand(msg)).toBe(true);
   });
 
   test("discord account create rejects legacy top-level plugin fields", () => {

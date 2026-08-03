@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend";
+import {
+  createAssistantMessageStream,
+  type HeadlessTurnExecutor,
+} from "@/backend/dev/headless-turn-executor";
+import { LocalBackend } from "@/backend/local/local-backend";
 import { type AppServerHandle, startAppServer } from "@/websocket/app-server";
 import { parseAppServerWebsocketAuthSettings } from "@/websocket/app-server-auth";
 import {
@@ -419,6 +427,115 @@ describe("app-server OpenAI-compatible API", () => {
       "conv-test-1",
     ]);
     expect(created.length).toBe(2);
+  });
+
+  test("chat-key header creates and reuses a local conversation", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "letta-openai-chat-key-"));
+    try {
+      const secret = "violet-river-7391";
+      let turnCount = 0;
+      const executor: HeadlessTurnExecutor = {
+        async execute(input) {
+          turnCount += 1;
+          const historyContainsSecret = JSON.stringify(input.history).includes(
+            secret,
+          );
+          const text =
+            turnCount === 1
+              ? "I'll remember it."
+              : historyContainsSecret
+                ? `The secret was ${secret}.`
+                : "I don't know the secret.";
+          return createAssistantMessageStream({
+            content: [{ type: "text", text }],
+          });
+        },
+      };
+      const backend = new LocalBackend({
+        storageDir,
+        executor,
+        memfsEnabled: false,
+      });
+      const agent = await backend.createAgent({
+        name: "continuity-agent",
+      } as never);
+      __testSetBackend(backend);
+      handle = await startAppServer({
+        listen: "ws://127.0.0.1:0",
+        openaiApi: true,
+      });
+
+      const listConversations = async () =>
+        (await backend.listConversations({
+          agent_id: agent.id,
+        } as never)) as unknown as Array<{ id: string }>;
+      const send = (message: string) =>
+        fetch(httpUrl(handle as AppServerHandle, "/v1/chat/completions"), {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-letta-chat-key": "external-chat:conversation-123",
+          },
+          body: JSON.stringify({
+            model: "continuity-agent",
+            messages: [{ role: "user", content: message }],
+          }),
+        });
+
+      expect(await listConversations()).toEqual([]);
+
+      const first = await send(`Remember this secret: ${secret}`);
+      expect(first.status).toBe(200);
+      const firstBody = (await first.json()) as {
+        choices: Array<{ message: { content: string } }>;
+      };
+      expect(firstBody.choices[0]?.message.content).toBe("I'll remember it.");
+      const conversationsAfterFirstTurn = await listConversations();
+      expect(conversationsAfterFirstTurn).toHaveLength(1);
+      const createdConversation = conversationsAfterFirstTurn[0];
+      if (!createdConversation) {
+        throw new Error("Expected the first request to create a conversation");
+      }
+
+      const second = await send("What was the secret?");
+      expect(second.status).toBe(200);
+      const secondBody = (await second.json()) as {
+        choices: Array<{ message: { content: string } }>;
+      };
+      expect(secondBody.choices[0]?.message.content).toBe(
+        `The secret was ${secret}.`,
+      );
+      expect(await listConversations()).toHaveLength(1);
+
+      const messagePage = await backend.listConversationMessages(
+        createdConversation.id,
+        { agent_id: agent.id, order: "asc" } as never,
+      );
+      const messages = messagePage.getPaginatedItems() as Array<{
+        message_type: string;
+        content: unknown;
+      }>;
+      expect(messages.map((message) => message.message_type)).toEqual([
+        "user_message",
+        "assistant_message",
+        "user_message",
+        "assistant_message",
+      ]);
+      expect(
+        messages.map((message) => JSON.stringify(message.content)),
+      ).toEqual([
+        expect.stringContaining(`Remember this secret: ${secret}`),
+        expect.stringContaining("I'll remember it."),
+        expect.stringContaining("What was the secret?"),
+        expect.stringContaining(`The secret was ${secret}.`),
+      ]);
+    } finally {
+      if (handle) {
+        await handle.close();
+        handle = null;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("openwebui chat id is honored only for streaming requests", async () => {

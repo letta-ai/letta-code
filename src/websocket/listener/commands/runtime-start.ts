@@ -324,6 +324,17 @@ export async function handleRuntimeStartCommand(
       parsed.external_tools ?? [],
     );
 
+    if (parsed.wait_for_replay) {
+      await context.replaySyncStateForRuntime(
+        context.runtime,
+        context.socket,
+        runtimeScope,
+        {
+          recoverApprovals: parsed.recover_approvals !== false,
+          forceDeviceStatus: parsed.force_device_status !== false,
+        },
+      );
+    }
     const sent = sendRuntimeStartResponse(context, parsed, {
       success: true,
       runtime: runtimeScope,
@@ -331,7 +342,7 @@ export async function handleRuntimeStartCommand(
       conversation,
       created,
     });
-    shouldReplayState = sent;
+    shouldReplayState = sent && !parsed.wait_for_replay;
   } catch (error) {
     sendRuntimeStartResponse(context, parsed, {
       success: false,

@@ -16,6 +16,8 @@ export {
   resolveSlackMessageIngressPolicy,
   shouldSkipSlackMessageByLastSeen,
 } from "./channels/slack/ingress-policy";
+export type { CreateSlackMessageActionAdapterOptions } from "./channels/slack/message-action-contract";
+export { createSlackMessageActionAdapter } from "./channels/slack/message-action-contract";
 export {
   resolveSlackConcreteActivity,
   SLACK_ASSISTANT_STARTUP_STATUS,

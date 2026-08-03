@@ -4,14 +4,9 @@ import {
   type ApprovalResult,
   executeApprovalBatch,
 } from "@/agent/approval-execution";
-import { getChannelRegistry } from "@/channels/registry";
-import type { ChannelTurnSource } from "@/channels/types";
 import { computeDiffPreviews } from "@/helpers/diff-preview";
 import { formatPermissionDenial } from "@/permissions/format-denial";
-import {
-  getInteractiveApprovalKind,
-  isInteractiveApprovalTool,
-} from "@/tools/interactive-policy";
+import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
 import type {
   ApprovalResponseBody,
@@ -119,35 +114,6 @@ export type ApprovalBranchResult =
       >["drainResult"];
     } & ApprovalBranchProgress)
   | { kind: "error"; message: string };
-
-function getChannelApprovalSourceScopeKey(source: ChannelTurnSource): string {
-  return [
-    source.channel,
-    source.accountId ?? "",
-    source.chatId,
-    source.threadId ?? "",
-  ].join(":");
-}
-
-export function resolveChannelApprovalSource(
-  runtime: ConversationRuntime,
-): ChannelTurnSource | null {
-  const sources = runtime.activeChannelTurn?.sources ?? [];
-  if (sources.length === 0) {
-    return null;
-  }
-
-  const sourcesByScope = new Map<string, ChannelTurnSource>();
-  for (const source of sources) {
-    sourcesByScope.set(getChannelApprovalSourceScopeKey(source), source);
-  }
-
-  if (sourcesByScope.size !== 1) {
-    return null;
-  }
-
-  return [...sourcesByScope.values()].at(-1) ?? null;
-}
 
 const APPROVAL_TRANSPORT_REOPEN_POLL_MS = 50;
 
@@ -341,24 +307,6 @@ export async function handleApprovalStop(params: {
         conversation_id: conversationId,
       };
 
-      const registry = getChannelRegistry();
-      const channelSource = resolveChannelApprovalSource(runtime);
-      if (registry && channelSource) {
-        await registry.registerPendingControlRequest({
-          requestId,
-          kind:
-            getInteractiveApprovalKind(ac.approval.toolName) ??
-            "generic_tool_approval",
-          source: channelSource,
-          toolName: ac.approval.toolName,
-          input: ac.parsedArgs,
-        });
-        if (shouldInterrupt()) {
-          registry.clearPendingControlRequest(requestId);
-          return interruptTermination();
-        }
-      }
-
       let responseBody: ApprovalResponseBody;
       try {
         responseBody = await requestApprovalOverWS(
@@ -373,8 +321,6 @@ export async function handleApprovalStop(params: {
           return interruptTermination();
         }
         throw error;
-      } finally {
-        registry?.clearPendingControlRequest(requestId);
       }
 
       if (shouldInterrupt()) {
@@ -462,7 +408,6 @@ export async function handleApprovalStop(params: {
   );
   const executionRunId =
     runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
-  let persistedExecutionResults: ApprovalResult[];
 
   if (approvedDecisions.length > 0 && !isListenerTransportOpen(socket)) {
     const transportOpenResult = await waitForTransportOpen(
@@ -555,7 +500,6 @@ export async function handleApprovalStop(params: {
       workingDirectory: turnWorkingDirectory,
       parentScope:
         agentId && conversationId ? { agentId, conversationId } : undefined,
-      channelTurnSources: runtime.activeChannelTurn?.sources,
       onFileWrite,
     });
   } catch (error) {
@@ -583,7 +527,7 @@ export async function handleApprovalStop(params: {
   if (!runtime.turnLifecycle.isCurrent(turnLease)) {
     return interruptTermination();
   }
-  persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
+  const persistedExecutionResults = normalizeExecutionResultsForInterruptParity(
     runtime,
     executionResults,
     lastExecutingToolCallIds,

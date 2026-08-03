@@ -25,7 +25,6 @@ import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType, StreamDelta } from "@/types/protocol_v2";
 import { debugLog, isDebugEnabled } from "@/utils/debug";
-import { createChannelRichDraftStreamer } from "./channel-rich-draft-streamer";
 import {
   EMPTY_RESPONSE_MAX_RETRIES,
   LLM_API_ERROR_MAX_RETRIES,
@@ -156,10 +155,6 @@ async function handleIncomingMessageInner(
   let lastExecutionResults: ApprovalResult[] | null = null;
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
-  const richDraftStreamer = createChannelRichDraftStreamer({
-    batchId: dequeuedBatchId,
-    sources: msg.channelTurnSources,
-  });
 
   const turnLease =
     existingTurnLease ??
@@ -184,7 +179,13 @@ async function handleIncomingMessageInner(
     return transition;
   };
   const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) =>
-    noteFinalization(finishListenerTurn(runtime, turnLease, options));
+    noteFinalization(
+      finishListenerTurn(runtime, turnLease, {
+        ...options,
+        socket: options.socket ?? socket,
+        turnId: activeDequeuedBatchId,
+      }),
+    );
   const finishIfInterrupted = (runId?: string | null): boolean => {
     if (
       !turnAbortSignal.aborted &&
@@ -317,6 +318,7 @@ async function handleIncomingMessageInner(
       providerFallback,
       buildSendOptions,
       onTerminal: noteFinalization,
+      getTurnId: () => activeDequeuedBatchId,
     });
 
     const currentInputWithSkillContent = injectQueuedSkillContent(
@@ -411,10 +413,6 @@ async function handleIncomingMessageInner(
             }
           }
 
-          richDraftStreamer?.handleChunk(
-            chunk as unknown as LettaStreamingResponse,
-          );
-
           if (shouldOutput) {
             const normalizedChunk = normalizeToolReturnWireMessage(
               chunk as unknown as Record<string, unknown>,
@@ -445,9 +443,6 @@ async function handleIncomingMessageInner(
       const fallbackError = result.fallbackError ?? null;
       if (finishIfInterrupted(runId || runtime.activeRunId)) {
         break;
-      }
-      if (stopReason === "requires_approval" || stopReason === "end_turn") {
-        await richDraftStreamer?.flushPending();
       }
       if (finishIfInterrupted(runId || runtime.activeRunId)) {
         break;
@@ -869,6 +864,7 @@ async function handleIncomingMessageInner(
             drainResult: approvalResult.drainResult,
             agentId,
             conversationId,
+            turnId: activeDequeuedBatchId,
           }),
         );
         return;
@@ -973,7 +969,6 @@ async function handleIncomingMessageInner(
       });
     }
 
-    richDraftStreamer?.dispose();
     if (runtime.activeConnectionId === connectionId) {
       runtime.activeConnectionId = null;
     }

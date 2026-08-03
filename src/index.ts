@@ -70,6 +70,7 @@ import {
   validateFlagConflicts,
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
+import { isHeadlessStartup } from "./cli/startup-mode";
 import {
   runSubcommand,
   subcommandNeedsEarlyBackendMode,
@@ -830,7 +831,7 @@ async function main(): Promise<void> {
     importFlagValue: values.import,
     fromAfFlagValue: values["from-af"],
   });
-  const isHeadless = values.prompt || values.run || !process.stdin.isTTY;
+  const isHeadless = isHeadlessStartup(values, process.stdin.isTTY, command);
   const terminalThemePromise = !isHeadless
     ? initTerminalTheme().catch(() => undefined)
     : Promise.resolve(undefined);
@@ -944,7 +945,6 @@ async function main(): Promise<void> {
     });
   }
 
-  // Fail if an unknown command/argument is passed (and we're not in headless mode where it might be a prompt)
   if (command && !isHeadless) {
     console.error(`Error: Unknown command or argument "${command}"`);
     console.error("Run 'letta --help' for usage information.");

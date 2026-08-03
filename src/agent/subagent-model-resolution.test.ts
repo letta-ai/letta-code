@@ -443,15 +443,35 @@ describe("buildSubagentArgs", () => {
     expect(promptArg).toBe(longPrompt);
   });
 
-  test("injects --no-system-info-reminder and --no-skills for reflection subagents", () => {
+  test("injects --no-system-info-reminder and --no-skills for non-Windows reflection subagents", () => {
     const args = buildSubagentArgs(
       "reflection",
       { ...baseConfig, name: "reflection" },
       null,
       "hello",
+      undefined,
+      undefined,
+      undefined,
+      { platform: "linux" },
     );
 
     expect(args).toContain("--no-system-info-reminder");
+    expect(args).toContain("--no-skills");
+  });
+
+  test("keeps the Windows environment reminder for reflection subagents", () => {
+    const args = buildSubagentArgs(
+      "reflection",
+      { ...baseConfig, name: "reflection" },
+      null,
+      "hello",
+      undefined,
+      undefined,
+      undefined,
+      { platform: "win32" },
+    );
+
+    expect(args).not.toContain("--no-system-info-reminder");
     expect(args).toContain("--no-skills");
   });
 

@@ -6,7 +6,6 @@ import type {
   ApprovalResult,
 } from "@/agent/approval-execution";
 import type { SkillSource } from "@/agent/skill-sources";
-import type { ChannelTurnSource } from "@/channels/types";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ModAdapter } from "@/mods/mod-adapter";
@@ -21,6 +20,7 @@ import type { SharedReminderState } from "@/reminders/state";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
 import type {
   ApprovalResponseBody,
+  ClientToolsetConfig,
   ControlRequest,
   ExternalToolCallResult,
   LoopStatus,
@@ -28,7 +28,10 @@ import type {
   StopReasonType,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
-import type { ActiveChannelTurn } from "./channel-turn-session";
+import type {
+  ServiceCommandRequest,
+  ServiceCommandResponse,
+} from "@/types/service-protocol";
 import type { ListenerTransport } from "./transport";
 import type { TurnLifecycle } from "./turn-lifecycle";
 
@@ -38,7 +41,7 @@ export interface StartListenerOptions {
   supportsSplitStatusChannels?: boolean;
   deviceId: string;
   connectionName: string;
-  onConnected: (connectionId: string) => void;
+  onConnected: (connectionId: string) => void | Promise<void>;
   onDisconnected: () => void;
   onNeedsReregister?: () => void;
   onError: (error: Error) => void;
@@ -72,8 +75,9 @@ export interface IncomingMessage {
   conversationId?: string;
   /** Queue this message as its own turn; never merge with other messages. */
   noCoalesce?: boolean;
-  channelTurnSources?: ChannelTurnSource[];
+  imageFailureMode?: "strict" | "drop";
   clientToolAllowlist?: string[];
+  clientToolset?: ClientToolsetConfig;
   externalToolScopeIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
@@ -174,11 +178,12 @@ export type ConversationRuntime = {
   conversationId: string;
   /** Runtime-scoped SDK override. Undefined uses the process defaults. */
   skillSources: SkillSource[] | undefined;
-  activeChannelTurn: ActiveChannelTurn | null;
   /** Connection currently executing this conversation's turn, if client-owned. */
   activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;
   messageQueue: Promise<void>;
+  /** Recently accepted ingress IDs, retained for idempotent client retries. */
+  acceptedInputDispositions: Map<string, "started" | "queued">;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
   readonly lastStopReason: StopReasonType | null;
@@ -294,6 +299,10 @@ export type ListenerRuntime = {
   processServicesReady: Promise<void> | null;
   /** Generation owned by processServicesReady, or null when no attempt is active. */
   processServicesReadyGeneration: number | null;
+  serviceCommandHandler:
+    | ((command: ServiceCommandRequest) => Promise<ServiceCommandResponse>)
+    | null;
+  serviceCommandTypes: Set<WsProtocolCommand["type"]>;
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
