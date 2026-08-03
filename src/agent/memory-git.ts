@@ -324,13 +324,39 @@ async function prepareAttachedRepositoryForGitOps(args: {
   await ensureLocalMemfsGitConfig(args.directory, args.agentId);
 }
 
-async function cloneRepositoryMount(args: {
+/**
+ * Move a stale non-git directory occupying a repository mount path aside so
+ * the mount can be cloned. Agents (or older builds) sometimes created plain
+ * directories at `$MEMORY_DIR/../<name>` before the git mount existed; their
+ * contents are preserved at `<name>.pre-mount-<timestamp>` next to the mount
+ * rather than deleted, since they may hold un-synced work.
+ */
+function moveStaleMountAside(directory: string): string {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[:.]/g, "-")
+    .replace(/Z$/, "");
+  const backupPath = `${directory}.pre-mount-${timestamp}`;
+  renameSync(directory, backupPath);
+  return backupPath;
+}
+
+export async function cloneRepositoryMount(args: {
   agentId: string;
   repositoryName: string;
   directory: string;
   remoteUrl: string;
   token: string;
-}): Promise<void> {
+}): Promise<{ movedAsidePath?: string }> {
+  let movedAsidePath: string | undefined;
+  if (existsSync(args.directory) && !existsSync(join(args.directory, ".git"))) {
+    movedAsidePath = moveStaleMountAside(args.directory);
+    debugWarn(
+      "memfs-git",
+      `Mount path for ${args.repositoryName} existed but was not a git repository; moved it to ${movedAsidePath}`,
+    );
+  }
+
   if (!existsSync(args.directory)) {
     mkdirSync(args.directory, { recursive: true });
     try {
@@ -347,10 +373,6 @@ async function cloneRepositoryMount(args: {
       rmSync(args.directory, { recursive: true, force: true });
       throw err;
     }
-  } else if (!existsSync(join(args.directory, ".git"))) {
-    throw new Error(
-      `repository mount path already exists and is not a git repository: ${args.directory}`,
-    );
   } else {
     await prepareAttachedRepositoryForGitOps(args);
     await runGitWithRetry(args.directory, ["pull", "--ff-only"], args.token, {
@@ -359,6 +381,7 @@ async function cloneRepositoryMount(args: {
   }
 
   await prepareAttachedRepositoryForGitOps(args);
+  return { movedAsidePath };
 }
 
 /**
@@ -750,16 +773,25 @@ echo password=${token}
     helper = `!f() { echo "username=letta"; echo "password=${token}"; }; f`;
   }
 
+  // Git accumulates credential helpers across config scopes (system → global
+  // → local) and asks each in order; a system/global helper like macOS
+  // osxkeychain can hold a stale credential for the Letta host and answer
+  // before our repo-local helper, sending the wrong identity (observed as
+  // HTTP 500s on plain `git pull` in shared memory mounts, LET-10545). An
+  // empty helper entry resets the accumulated list, so write "" then our
+  // helper — scoped to the Letta remote URL only, leaving the user's helpers
+  // intact for every other host (e.g. /memory-repository GitHub mirrors).
+  const writeHelperWithReset = async (key: string) => {
+    await gitConfig(dir, ["config", "--replace-all", key, ""]);
+    await gitConfig(dir, ["config", "--add", key, helper]);
+  };
+
   // Primary config: normalized origin key (most robust for git's credential lookup)
-  await gitConfig(dir, [
-    "config",
-    `credential.${normalizedBaseUrl}.helper`,
-    helper,
-  ]);
+  await writeHelperWithReset(`credential.${normalizedBaseUrl}.helper`);
 
   // Backcompat: also set raw configured URL key if it differs (older repos/configs)
   if (rawBaseUrl !== normalizedBaseUrl) {
-    await gitConfig(dir, ["config", `credential.${rawBaseUrl}.helper`, helper]);
+    await writeHelperWithReset(`credential.${rawBaseUrl}.helper`);
   }
 
   debugLog(
@@ -1537,14 +1569,16 @@ async function syncAttachedRepository(args: {
   const directory = getRepositoryMountDir(args.agentId, repositoryName);
   const remoteUrl = getRepositoryRemoteUrl(args.agentId, repositoryName);
 
-  await cloneRepositoryMount({
+  const { movedAsidePath } = await cloneRepositoryMount({
     agentId: args.agentId,
     repositoryName,
     directory,
     remoteUrl,
     token: args.token,
   });
-  return `${repositoryName}: ${directory}`;
+  return movedAsidePath
+    ? `${repositoryName}: ${directory} (previous non-git contents moved to ${movedAsidePath})`
+    : `${repositoryName}: ${directory}`;
 }
 
 export async function syncAttachedAgentRepositories(

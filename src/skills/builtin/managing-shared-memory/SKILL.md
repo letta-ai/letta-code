@@ -81,6 +81,8 @@ letta shared-memory history shared-notes --path docs/plan.md
 ## Troubleshooting
 
 - **Prompt lists a repository but `$MEMORY_DIR/../<name>` is missing** — the repository was attached without materializing the mount. Run `letta shared-memory sync`.
+- **A plain (non-git) directory already exists at the mount path** — `sync` moves it aside to `<name>.pre-mount-<timestamp>` and clones the real mount; check the moved directory for any un-synced work and copy it into the mount.
+- **Never hand-clone the repository to another location (e.g. /tmp) to work around a broken mount** — fix the mount with `letta shared-memory sync` so every session and other agents see the same checkout.
 - **Permission denied under another agent's directory** — shared repositories mount per-agent. Only your own mount (under your agent directory) is accessible; another agent's mount of the same repository is walled off by the cross-agent guard. Run `letta shared-memory sync` to get your own mount.
 - **Push rejected (non-fast-forward)** — another agent pushed first: `git pull --rebase`, resolve any conflicts, push again.
 
