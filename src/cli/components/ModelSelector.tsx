@@ -544,7 +544,7 @@ export function ModelSelector({
     [byokProviderAliases],
   );
 
-  // Letta API (all): all non-BYOK handles from API, including recommended models.
+  // Letta API (all): preserve backend metadata when aliases are not yet classified as BYOK.
   const allLettaModels = useMemo(() => {
     if (availableHandles === undefined) return [];
 
@@ -552,18 +552,14 @@ export function ModelSelector({
       .filter((handle) => !isByokHandle(handle))
       .map((handle) => {
         const staticModel = pickPreferredStaticModel(handle);
-        if (staticModel) {
-          return {
-            ...staticModel,
-            id: handle,
-            handle,
-          };
-        }
         return {
+          ...(staticModel ?? { label: handle, description: "" }),
           id: handle,
           handle,
-          label: handle,
-          description: "",
+          updateArgs: withProviderTypeMetadata(
+            handle,
+            staticModel?.updateArgs as Record<string, unknown> | undefined,
+          ),
         } satisfies UiModel;
       });
 
@@ -584,6 +580,7 @@ export function ModelSelector({
     isByokHandle,
     pickPreferredStaticModel,
     searchQuery,
+    withProviderTypeMetadata,
   ]);
 
   // Convert BYOK handle to base provider handle for models.json lookup
