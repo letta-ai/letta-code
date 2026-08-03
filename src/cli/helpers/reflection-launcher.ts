@@ -48,6 +48,13 @@ export function getReflectionMergeLaunchOptions(agentId: string) {
   } as const;
 }
 
+export function getReflectionFinalizationContext(agentId: string) {
+  return {
+    agentId,
+    ...getReflectionMergeLaunchOptions(agentId),
+  } as const;
+}
+
 /** Max background wait for the reflection subagent's agent ID before emitting `reflection_start` (previously 1s inline, timed out ~100% of the time). */
 export const REFLECTION_AGENT_ID_WAIT_MS = 30_000;
 

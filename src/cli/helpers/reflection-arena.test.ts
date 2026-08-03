@@ -5,9 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createReflectionMemoryWorktree } from "@/agent/memory-worktree";
 import { reflectionMemoryWorktreeHasNoChanges } from "@/cli/helpers/reflection-arena";
+import { getReflectionFinalizationContext } from "@/cli/helpers/reflection-launcher";
+import { settingsManager } from "@/settings-manager";
 
 let tempDir: string;
 let memoryDir: string;
+
+const originalGetLocalProjectSettings = settingsManager.getLocalProjectSettings;
+const originalGetSettings = settingsManager.getSettings;
 
 const GIT_ENV = {
   ...process.env,
@@ -35,7 +40,45 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  (settingsManager as typeof settingsManager).getLocalProjectSettings =
+    originalGetLocalProjectSettings;
+  (settingsManager as typeof settingsManager).getSettings = originalGetSettings;
   rmSync(tempDir, { recursive: true, force: true });
+});
+
+describe("reflection arena finalization", () => {
+  test("uses the owning agent's explicit merge settings", () => {
+    (settingsManager as typeof settingsManager).getLocalProjectSettings = () =>
+      ({
+        reflectionSettingsByAgent: {
+          "agent-arena-owner": {
+            merge: "explicit",
+            mergeInstructions: "Preserve the winning proposal's intent.",
+          },
+          "agent-selected-elsewhere": {
+            merge: "auto",
+            mergeInstructions: "",
+          },
+        },
+      }) as unknown as ReturnType<
+        typeof settingsManager.getLocalProjectSettings
+      >;
+    (settingsManager as typeof settingsManager).getSettings =
+      (() => ({})) as typeof settingsManager.getSettings;
+
+    expect(getReflectionFinalizationContext("agent-arena-owner")).toEqual({
+      agentId: "agent-arena-owner",
+      mergePolicy: "explicit",
+      mergeInstructions: "Preserve the winning proposal's intent.",
+    });
+    expect(
+      getReflectionFinalizationContext("agent-selected-elsewhere"),
+    ).toEqual({
+      agentId: "agent-selected-elsewhere",
+      mergePolicy: "auto",
+      mergeInstructions: "",
+    });
+  });
 });
 
 describe("reflection arena worktree snapshots", () => {
