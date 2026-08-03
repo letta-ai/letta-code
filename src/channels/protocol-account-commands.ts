@@ -42,8 +42,8 @@ export async function handleAccountConfigLifecycleCommand(
     startChannelLive,
     stopChannelAccountLive,
     stopChannelLive,
-    createChannelAccountLive,
-    updateChannelAccountLive,
+    createChannelAccountLiveWithSecrets,
+    updateChannelAccountLiveWithSecrets,
     bindChannelAccountLive,
     unbindChannelAccountLive,
   } = service;
@@ -167,7 +167,7 @@ export async function handleAccountConfigLifecycleCommand(
 
       const pluginConfig =
         getChannelPluginConfig(parsed.account as Record<string, unknown>) ?? {};
-      const created = createChannelAccountLive(
+      const created = await createChannelAccountLiveWithSecrets(
         effectiveChannelId,
         {
           displayName:
@@ -251,7 +251,7 @@ export async function handleAccountConfigLifecycleCommand(
         allowedUsers: parsed.patch.allowed_users,
         config: pluginConfig,
       };
-      const account = updateChannelAccountLive(
+      const account = await updateChannelAccountLiveWithSecrets(
         parsed.channel_id,
         parsed.account_id,
         accountPatch,

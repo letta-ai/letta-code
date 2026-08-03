@@ -15,6 +15,7 @@ import {
   getChannelAccountWithSecrets,
   hydrateChannelAccountSecrets,
   removeChannelAccountWithSecrets,
+  upsertChannelAccount,
   upsertChannelAccountWithSecrets,
 } from "@/channels/accounts";
 import { __testOverrideChannelsRoot } from "@/channels/config";
@@ -26,6 +27,10 @@ import {
   buildChannelSecretName,
   getActiveChannelCredentialsStoreMode,
 } from "@/channels/credential-store";
+import {
+  bindChannelAccountLive,
+  createChannelAccountLiveWithSecrets,
+} from "@/channels/service-accounts";
 import type {
   SlackChannelAccount,
   TelegramChannelAccount,
@@ -139,6 +144,323 @@ describe("channel credential storage", () => {
 
     expect(hydrated?.botToken).toBe("xoxb-secret");
     expect(hydrated?.appToken).toBe("xapp-secret");
+  });
+
+  test("secure Telegram create preserves refs through synchronous account binding", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    await createChannelAccountLiveWithSecrets(
+      "telegram",
+      {
+        displayName: "Telegram Bot",
+        enabled: false,
+        dmPolicy: "pairing",
+        allowedUsers: [],
+        config: {
+          token: "telegram-secret",
+          transcribe_voice: false,
+        },
+      },
+      { accountId: "telegram-account" },
+    );
+
+    bindChannelAccountLive(
+      "telegram",
+      "telegram-account",
+      "agent-1",
+      "conversation-1",
+    );
+
+    const persistedText = readFileSync(
+      join(channelsRoot, "telegram", "accounts.json"),
+      "utf-8",
+    );
+    expect(persistedText).not.toContain("telegram-secret");
+    const persisted = JSON.parse(persistedText) as {
+      accounts: Array<Record<string, unknown>>;
+    };
+    expect(persisted.accounts[0]).toMatchObject({
+      binding: {
+        agentId: "agent-1",
+        conversationId: "conversation-1",
+      },
+      __letta_secret_refs: { token: true },
+    });
+    expect(
+      secrets.get(
+        buildChannelSecretName("telegram", "telegram-account", "token"),
+      ),
+    ).toBe("telegram-secret");
+  });
+
+  test("failed multi-secret update restores keyring and persisted account state", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    await upsertChannelAccountWithSecrets("slack", makeSlackAccount());
+
+    const botTokenName = buildChannelSecretName(
+      "slack",
+      "slack-account",
+      "botToken",
+    );
+    const appTokenName = buildChannelSecretName(
+      "slack",
+      "slack-account",
+      "appToken",
+    );
+    __setChannelSecretStoreOverrideForTests({
+      get: async (name) => secrets.get(name) ?? null,
+      set: async (name, value) => {
+        if (name === appTokenName && value === "xapp-new") {
+          throw new Error("second keyring write failed");
+        }
+        secrets.set(name, value);
+      },
+      delete: async (name) => secrets.delete(name),
+    });
+
+    await expect(
+      upsertChannelAccountWithSecrets("slack", {
+        ...makeSlackAccount(),
+        botToken: "xoxb-new",
+        appToken: "xapp-new",
+      }),
+    ).rejects.toThrow("second keyring write failed");
+
+    expect(secrets.get(botTokenName)).toBe("xoxb-secret");
+    expect(secrets.get(appTokenName)).toBe("xapp-secret");
+    const persistedText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+    expect(persistedText).not.toContain("xoxb-secret");
+    expect(persistedText).not.toContain("xapp-secret");
+    expect(persistedText).not.toContain("xoxb-new");
+    expect(persistedText).not.toContain("xapp-new");
+    expect(JSON.parse(persistedText).accounts[0]).toMatchObject({
+      __letta_secret_refs: {
+        botToken: true,
+        appToken: true,
+      },
+    });
+
+    clearChannelAccountStores();
+    const rehydrated = (await getChannelAccountWithSecrets(
+      "slack",
+      "slack-account",
+    )) as SlackChannelAccount | null;
+    expect(rehydrated?.botToken).toBe("xoxb-secret");
+    expect(rehydrated?.appToken).toBe("xapp-secret");
+  });
+
+  test("serializes concurrent updates before rollback and file commit", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    await upsertChannelAccountWithSecrets("slack", makeSlackAccount());
+
+    const botTokenName = buildChannelSecretName(
+      "slack",
+      "slack-account",
+      "botToken",
+    );
+    const appTokenName = buildChannelSecretName(
+      "slack",
+      "slack-account",
+      "appToken",
+    );
+    let signalFirstUpdateAtSecondWrite: () => void = () => {};
+    const firstUpdateAtSecondWrite = new Promise<void>((resolve) => {
+      signalFirstUpdateAtSecondWrite = resolve;
+    });
+    let releaseFirstUpdateFailure: () => void = () => {};
+    const allowFirstUpdateFailure = new Promise<void>((resolve) => {
+      releaseFirstUpdateFailure = resolve;
+    });
+    __setChannelSecretStoreOverrideForTests({
+      get: async (name) => secrets.get(name) ?? null,
+      set: async (name, value) => {
+        if (name === appTokenName && value === "xapp-first") {
+          signalFirstUpdateAtSecondWrite();
+          await allowFirstUpdateFailure;
+          throw new Error("first update second write failed");
+        }
+        secrets.set(name, value);
+      },
+      delete: async (name) => secrets.delete(name),
+    });
+
+    const firstUpdate = upsertChannelAccountWithSecrets("slack", {
+      ...makeSlackAccount(),
+      botToken: "xoxb-first",
+      appToken: "xapp-first",
+    });
+    await firstUpdateAtSecondWrite;
+
+    let secondUpdateSettled = false;
+    const secondUpdate = upsertChannelAccountWithSecrets("slack", {
+      ...makeSlackAccount(),
+      appToken: "xapp-second",
+    }).then(
+      (account) => {
+        secondUpdateSettled = true;
+        return account;
+      },
+      (error) => {
+        secondUpdateSettled = true;
+        throw error;
+      },
+    );
+    await Promise.resolve();
+    expect(secondUpdateSettled).toBe(false);
+
+    releaseFirstUpdateFailure();
+    await expect(firstUpdate).rejects.toThrow(
+      "first update second write failed",
+    );
+    const secondAccount = (await secondUpdate) as SlackChannelAccount;
+
+    expect(secondAccount.botToken).toBe("xoxb-secret");
+    expect(secondAccount.appToken).toBe("xapp-second");
+    expect(secrets.get(botTokenName)).toBe("xoxb-secret");
+    expect(secrets.get(appTokenName)).toBe("xapp-second");
+    const persistedText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+    expect(persistedText).not.toContain("xoxb-secret");
+    expect(persistedText).not.toContain("xoxb-first");
+    expect(persistedText).not.toContain("xapp-first");
+    expect(persistedText).not.toContain("xapp-second");
+    expect(JSON.parse(persistedText).accounts[0]).toMatchObject({
+      __letta_secret_refs: {
+        botToken: true,
+        appToken: true,
+      },
+    });
+
+    clearChannelAccountStores();
+    const rehydrated = (await getChannelAccountWithSecrets(
+      "slack",
+      "slack-account",
+    )) as SlackChannelAccount | null;
+    expect(rehydrated?.botToken).toBe("xoxb-secret");
+    expect(rehydrated?.appToken).toBe("xapp-second");
+  });
+
+  test("reports the original write error together with rollback failures", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    await upsertChannelAccountWithSecrets("slack", makeSlackAccount());
+
+    const botTokenName = buildChannelSecretName(
+      "slack",
+      "slack-account",
+      "botToken",
+    );
+    const appTokenName = buildChannelSecretName(
+      "slack",
+      "slack-account",
+      "appToken",
+    );
+    __setChannelSecretStoreOverrideForTests({
+      get: async (name) => secrets.get(name) ?? null,
+      set: async (name, value) => {
+        if (name === appTokenName && value === "xapp-new") {
+          throw new Error("second keyring write failed");
+        }
+        if (name === botTokenName && value === "xoxb-secret") {
+          throw new Error("bot token rollback failed");
+        }
+        secrets.set(name, value);
+      },
+      delete: async (name) => secrets.delete(name),
+    });
+
+    try {
+      await upsertChannelAccountWithSecrets("slack", {
+        ...makeSlackAccount(),
+        botToken: "xoxb-new",
+        appToken: "xapp-new",
+      });
+      throw new Error("Expected secure account update to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(AggregateError);
+      expect(error).toHaveProperty(
+        "message",
+        expect.stringContaining("second keyring write failed"),
+      );
+      expect(error).toHaveProperty(
+        "message",
+        expect.stringContaining("Failed to restore botToken"),
+      );
+      expect((error as AggregateError).errors[0]).toHaveProperty(
+        "message",
+        "second keyring write failed",
+      );
+    }
+  });
+
+  test("sync saves keep hydrated keyring credentials redacted", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    await upsertChannelAccountWithSecrets("slack", makeSlackAccount());
+    clearChannelAccountStores();
+    const hydrated = (await getChannelAccountWithSecrets(
+      "slack",
+      "slack-account",
+    )) as SlackChannelAccount | null;
+    if (!hydrated) {
+      throw new Error("Expected hydrated Slack account");
+    }
+
+    upsertChannelAccount("slack", { ...hydrated, enabled: false });
+
+    const persistedText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+    expect(persistedText).not.toContain("xoxb-secret");
+    expect(persistedText).not.toContain("xapp-secret");
+    expect(persistedText).toContain("__letta_secret_refs");
+  });
+
+  test("failed multi-secret create removes newly written keyring values", async () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+    const appTokenName = buildChannelSecretName(
+      "slack",
+      "slack-account",
+      "appToken",
+    );
+    __setChannelSecretStoreOverrideForTests({
+      get: async (name) => secrets.get(name) ?? null,
+      set: async (name, value) => {
+        if (name === appTokenName) {
+          throw new Error("keyring rejected second secret");
+        }
+        secrets.set(name, value);
+      },
+      delete: async (name) => secrets.delete(name),
+    });
+
+    await expect(
+      upsertChannelAccountWithSecrets("slack", makeSlackAccount()),
+    ).rejects.toThrow("keyring rejected second secret");
+
+    expect(secrets.size).toBe(0);
+    expect(existsSync(join(channelsRoot, "slack", "accounts.json"))).toBe(
+      false,
+    );
+  });
+
+  test("sync keyring save keeps plaintext until secrets are persisted", () => {
+    __setActiveChannelCredentialsStoreModeForTests("keyring");
+
+    upsertChannelAccount("slack", makeSlackAccount());
+
+    const persistedText = readFileSync(
+      join(channelsRoot, "slack", "accounts.json"),
+      "utf-8",
+    );
+    expect(persistedText).toContain("xoxb-secret");
+    expect(persistedText).toContain("xapp-secret");
+    expect(persistedText).not.toContain("__letta_secret_refs");
   });
 
   test("keyring mode migrates existing plaintext tokens out of accounts.json", async () => {
