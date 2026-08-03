@@ -256,10 +256,27 @@ export interface ChannelResolvedMessageTarget {
   label?: string;
 }
 
+/** Minimal outbound surface consumed by channel-owned MessageChannel actions. */
+export type ChannelMessageActionTransport = Pick<
+  ChannelAdapter,
+  "sendMessage" | "downloadAttachment"
+>;
+
+/** Route identity required by MessageChannel action implementations. */
+export type ChannelMessageActionRoute = Pick<
+  ChannelRoute,
+  | "accountId"
+  | "chatId"
+  | "chatType"
+  | "threadId"
+  | "agentId"
+  | "conversationId"
+>;
+
 export interface ChannelMessageActionContext {
   request: ChannelMessageActionRequest;
-  route: ChannelRoute;
-  adapter: ChannelAdapter;
+  route: ChannelMessageActionRoute;
+  adapter: ChannelMessageActionTransport;
   /**
    * Format user-authored markdown/plain text for the target channel before the
    * plugin sends it. The shared MessageChannel tool owns cross-channel text

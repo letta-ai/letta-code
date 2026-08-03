@@ -51,7 +51,6 @@ function makeHandler(
     },
     runDetachedListenerTask: () => {},
     trackListenerError: () => {},
-    wireChannelIngress: async () => {},
     ...overrides,
   });
 }

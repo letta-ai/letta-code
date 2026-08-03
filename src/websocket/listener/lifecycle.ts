@@ -1,22 +1,8 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import WebSocket from "ws";
-import {
-  buildChannelCurrentModelMessage,
-  buildChannelCurrentModelUnavailableMessage,
-  buildChannelModelListMessage,
-  buildChannelModelListUnavailableMessage,
-  buildChannelModelNotFoundText,
-  buildChannelModelUpdatedMessage,
-  buildChannelModelUpdateFailedMessage,
-} from "@/channels/commands";
-import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
-import { getChannelRegistry } from "@/channels/registry";
-import type { ChannelTurnSource } from "@/channels/types";
-import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
 import { startScheduler as startCronScheduler } from "@/cron/scheduler";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
-import { settingsManager } from "@/settings-manager";
 import {
   getListenerTelemetrySurface,
   getTerminalTelemetrySurface,
@@ -27,24 +13,11 @@ import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
 import { killAllTerminals } from "@/websocket/terminal-handler";
 import {
-  getPendingApprovalRequestIds,
   rejectPendingApprovalResolvers,
   rejectPendingApprovalResolversForConnection,
   replayPendingApprovalRequestsToConnection,
 } from "./approval";
 import { resolveListenerReconnectAuth } from "./auth";
-import {
-  recoverActiveChannelTurn,
-  uniqueChannelTurnSources,
-} from "./channel-turn-session";
-import { handleReloadCommand } from "./commands";
-import { handleChannelRegistryEvent } from "./commands/channel-registry-events";
-import {
-  applyModelUpdateForRuntime,
-  buildListModelsResponse,
-  getCurrentModelStatusForRuntime,
-  resolveModelForUpdate,
-} from "./commands/model-toolset";
 import {
   getOrCreateProcessTransport,
   markListenerConnectionInitialized,
@@ -71,11 +44,8 @@ import {
   handleApprovalResponseInput,
   handleChangeDeviceStateInput,
 } from "./control-inputs";
-import {
-  ensureConversationQueueRuntime,
-  getOrCreateScopedRuntime,
-} from "./conversation-runtime";
-import { loadPersistedCwdMap, seedConversationWorkingDirectory } from "./cwd";
+import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { loadPersistedCwdMap } from "./cwd";
 import {
   installExternalToolBridge,
   rejectPendingExternalToolCalls,
@@ -87,26 +57,19 @@ import {
   disposeListenerModAdapter,
   reloadListenerModAdapter,
 } from "./mod-adapter";
-import {
-  getOrCreateConversationPermissionModeStateRef,
-  loadPersistedPermissionModeMap,
-  persistPermissionModeMapForRuntime,
-} from "./permission-mode";
+import { loadPersistedPermissionModeMap } from "./permission-mode";
 import {
   clearProcessServices,
   installProcessEventRouting,
   invalidateProcessServices,
   waitForProcessServicesSlot,
 } from "./process-services";
-import { emitDeviceStatusUpdate, emitStreamDelta } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
 import { recoverApprovalStateForSync } from "./recovery";
 import {
   clearConversationRuntimeState,
   clearRuntimeTimers,
   getActiveRuntime,
-  getOrCreateConversationRuntime,
-  getRecoveredApprovalStateForScope,
   safeEmitWsEvent,
   setActiveRuntime,
 } from "./runtime";
@@ -124,7 +87,6 @@ import {
   type ListenerTransport,
   LocalListenerTransport,
 } from "./transport";
-import { escapeTaskNotificationSummary } from "./turn-events";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -266,128 +228,6 @@ export async function replaySyncStateForRuntime(
   );
 }
 
-export async function recoverPendingChannelControlRequests(
-  listener: ListenerRuntime,
-  opts?: {
-    recoverApprovalStateForSync?: (
-      runtime: ConversationRuntime,
-      scope: { agent_id: string; conversation_id: string },
-    ) => Promise<void>;
-  },
-): Promise<void> {
-  const registry = getChannelRegistry();
-  if (!registry) {
-    return;
-  }
-
-  const pendingEntries = registry.getPendingControlRequests();
-  if (pendingEntries.length === 0) {
-    return;
-  }
-
-  const recoverFn =
-    opts?.recoverApprovalStateForSync ?? recoverApprovalStateForSync;
-  const entriesByScope = new Map<
-    string,
-    {
-      scope: { agent_id: string; conversation_id: string };
-      entries: typeof pendingEntries;
-    }
-  >();
-
-  for (const entry of pendingEntries) {
-    const scope = {
-      agent_id: entry.event.source.agentId,
-      conversation_id: entry.event.source.conversationId,
-    };
-    const scopeKey = `${scope.agent_id}:${scope.conversation_id}`;
-    const existing = entriesByScope.get(scopeKey);
-    if (existing) {
-      existing.entries.push(entry);
-      continue;
-    }
-    entriesByScope.set(scopeKey, {
-      scope,
-      entries: [entry],
-    });
-  }
-
-  for (const { scope, entries } of entriesByScope.values()) {
-    const runtime = getOrCreateScopedRuntime(
-      listener,
-      scope.agent_id,
-      scope.conversation_id,
-    );
-    const livePendingRequestIds = getPendingApprovalRequestIds(runtime);
-    const shouldRecoverFromBackend = entries.some(
-      (entry) => !livePendingRequestIds.has(entry.event.requestId),
-    );
-
-    if (shouldRecoverFromBackend) {
-      try {
-        await recoverFn(runtime, scope);
-      } catch (error) {
-        trackListenerError(
-          "listener_channel_control_request_recovery_failed",
-          error,
-          "listener_channel_control_request_recovery",
-        );
-        if (isDebugEnabled()) {
-          console.warn(
-            "[Listen] Channel control request recovery failed:",
-            error,
-          );
-        }
-        continue;
-      }
-    }
-
-    const recoveredPendingRequestIds =
-      getRecoveredApprovalStateForScope(listener, scope)?.pendingRequestIds ??
-      new Set<string>();
-
-    const stillPendingEntries = entries.filter((entry) => {
-      const requestId = entry.event.requestId;
-      return (
-        livePendingRequestIds.has(requestId) ||
-        recoveredPendingRequestIds.has(requestId)
-      );
-    });
-    if (
-      stillPendingEntries.length > 0 &&
-      (!runtime.activeChannelTurn ||
-        runtime.activeChannelTurn.sources.length === 0)
-    ) {
-      const recoveredSources = uniqueChannelTurnSources(
-        stillPendingEntries.map((entry) => entry.event.source),
-      );
-      recoverActiveChannelTurn(runtime, {
-        sources: recoveredSources,
-        batchId: `recovered-${stillPendingEntries[0]?.event.requestId ?? crypto.randomUUID()}`,
-        progress: createChannelTurnProgressBuilder(),
-      });
-    }
-
-    for (const entry of entries) {
-      const requestId = entry.event.requestId;
-      const stillPending =
-        livePendingRequestIds.has(requestId) ||
-        recoveredPendingRequestIds.has(requestId);
-
-      if (!stillPending) {
-        registry.clearPendingControlRequest(requestId);
-        continue;
-      }
-
-      if (entry.deliveredThisProcess) {
-        continue;
-      }
-
-      await registry.redeliverPendingControlRequest(requestId);
-    }
-  }
-}
-
 function getParsedRuntimeScope(
   parsed: unknown,
 ): { agent_id: string; conversation_id: string } | null {
@@ -411,359 +251,6 @@ function getParsedRuntimeScope(
         ? runtime.conversation_id
         : "default",
   };
-}
-
-/**
- * Wire channel ingress into the listener.
- *
- * Registers the ChannelRegistry's message handler and marks it as ready,
- * allowing buffered and future inbound channel messages to flow through
- * the queue pump.
- *
- * Called from the socket "open" handler - same pattern as startCronScheduler.
- * Uses closure-scoped socket/opts/processQueuedTurn.
- */
-export async function wireChannelIngress(
-  listener: ListenerRuntime,
-  socket: ListenerTransport,
-  opts: StartListenerOptions,
-  processQueuedTurn: ProcessQueuedTurn,
-): Promise<void> {
-  const registry = getChannelRegistry();
-  if (!registry) return;
-
-  registry.setMessageHandler((delivery) => {
-    // Follow the same pattern as cron/scheduler.ts:131-157
-    const rawRuntime = getOrCreateConversationRuntime(
-      listener,
-      delivery.route.agentId,
-      delivery.route.conversationId,
-    );
-    if (!rawRuntime) return;
-
-    const seededWorkingDirectory = seedConversationWorkingDirectory(
-      listener,
-      delivery.route.agentId,
-      delivery.route.conversationId,
-      listener.bootWorkingDirectory,
-    );
-    if (seededWorkingDirectory) {
-      emitDeviceStatusUpdate(socket, rawRuntime);
-    }
-
-    if (delivery.defaultPermissionMode) {
-      const permissionModeState = getOrCreateConversationPermissionModeStateRef(
-        listener,
-        delivery.route.agentId,
-        delivery.route.conversationId,
-      );
-      if (permissionModeState.mode !== delivery.defaultPermissionMode) {
-        permissionModeState.mode = delivery.defaultPermissionMode;
-        persistPermissionModeMapForRuntime(listener);
-      }
-    }
-
-    const conversationRuntime = ensureConversationQueueRuntime(
-      listener,
-      rawRuntime,
-    );
-
-    const enqueuedItem = enqueueChannelTurn(
-      conversationRuntime,
-      delivery.route,
-      delivery.content,
-      delivery.turnSources,
-    );
-    if (!enqueuedItem) {
-      return;
-    }
-
-    for (const turnSource of delivery.turnSources ?? []) {
-      void registry.dispatchTurnLifecycleEvent({
-        type: "queued",
-        source: turnSource,
-      });
-    }
-
-    scheduleQueuePump(conversationRuntime, socket, opts, processQueuedTurn);
-  });
-
-  registry.setEventHandler((event) => {
-    handleChannelRegistryEvent(event, socket, listener);
-  });
-
-  await recoverPendingChannelControlRequests(listener);
-
-  registry.setApprovalResponseHandler(async ({ runtime, response }) =>
-    handleApprovalResponseInput(listener, {
-      runtime,
-      response,
-      socket,
-      opts,
-      processQueuedTurn,
-    }),
-  );
-
-  registry.setCancelHandler(async ({ runtime }) =>
-    handleAbortMessageInput(listener, {
-      command: {
-        type: "abort_message",
-        runtime,
-        request_id: `channel-cancel-${crypto.randomUUID()}`,
-        run_id: null,
-      },
-      socket,
-      opts,
-      processQueuedTurn,
-    }),
-  );
-
-  registry.setModelHandler(async ({ channelId, runtime, modelIdentifier }) => {
-    if (!modelIdentifier) {
-      try {
-        const status = await getCurrentModelStatusForRuntime({
-          agentId: runtime.agent_id,
-          conversationId: runtime.conversation_id,
-        });
-        const text = buildChannelCurrentModelMessage(channelId, status);
-        try {
-          const response = await buildListModelsResponse(
-            `channel-model-picker-${crypto.randomUUID()}`,
-          );
-          if (!response.success) {
-            return {
-              handled: true,
-              text,
-            };
-          }
-          return {
-            handled: true,
-            text,
-            modelPicker: {
-              current: status,
-              entries: response.entries,
-              availableHandles: response.available_handles,
-              recentHandles: settingsManager.getRecentModels(),
-            },
-          };
-        } catch {
-          return {
-            handled: true,
-            text,
-          };
-        }
-      } catch (error) {
-        return {
-          handled: true,
-          text: buildChannelCurrentModelUnavailableMessage(
-            channelId,
-            error instanceof Error
-              ? error.message
-              : "Failed to load current model",
-          ),
-        };
-      }
-    }
-
-    if (modelIdentifier.toLowerCase() === "list") {
-      try {
-        const response = await buildListModelsResponse(
-          `channel-model-list-${crypto.randomUUID()}`,
-        );
-        if (!response.success) {
-          return {
-            handled: true,
-            text: buildChannelModelListUnavailableMessage(
-              channelId,
-              response.error ?? "Failed to list models",
-            ),
-          };
-        }
-        return {
-          handled: true,
-          text: buildChannelModelListMessage(channelId, {
-            entries: response.entries,
-            availableHandles: response.available_handles,
-            recentHandles: settingsManager.getRecentModels(),
-          }),
-        };
-      } catch (error) {
-        return {
-          handled: true,
-          text: buildChannelModelListUnavailableMessage(
-            channelId,
-            error instanceof Error ? error.message : "Failed to list models",
-          ),
-        };
-      }
-    }
-
-    const resolvedModel = resolveModelForUpdate({
-      model_id: modelIdentifier,
-      model_handle: modelIdentifier,
-    });
-    if (!resolvedModel) {
-      return {
-        handled: true,
-        text: buildChannelModelUpdateFailedMessage(
-          channelId,
-          modelIdentifier,
-          buildChannelModelNotFoundText(channelId),
-        ),
-      };
-    }
-
-    try {
-      const scopedRuntime = getOrCreateScopedRuntime(
-        listener,
-        runtime.agent_id,
-        runtime.conversation_id,
-      );
-      const response = await applyModelUpdateForRuntime({
-        socket,
-        listener,
-        scopedRuntime,
-        requestId: `channel-model-update-${crypto.randomUUID()}`,
-        model: resolvedModel,
-      });
-      if (!response.success) {
-        return {
-          handled: true,
-          text: buildChannelModelUpdateFailedMessage(
-            channelId,
-            modelIdentifier,
-            response.error ?? "Failed to update model",
-          ),
-        };
-      }
-
-      settingsManager.addRecentModel(resolvedModel.handle);
-      return {
-        handled: true,
-        text: buildChannelModelUpdatedMessage(channelId, {
-          modelLabel: resolvedModel.label,
-          modelHandle: response.model_handle ?? resolvedModel.handle,
-          appliedTo: response.applied_to,
-        }),
-      };
-    } catch (error) {
-      return {
-        handled: true,
-        text: buildChannelModelUpdateFailedMessage(
-          channelId,
-          modelIdentifier,
-          error instanceof Error ? error.message : "Failed to update model",
-        ),
-      };
-    }
-  });
-
-  registry.setReloadHandler(async ({ runtime }) => {
-    const scopedRuntime = getOrCreateScopedRuntime(
-      listener,
-      runtime.agent_id,
-      runtime.conversation_id,
-    );
-    try {
-      const output = await handleReloadCommand(scopedRuntime);
-      emitDeviceStatusUpdate(socket, scopedRuntime, runtime);
-      return {
-        handled: true,
-        text: output,
-      };
-    } catch (error) {
-      return {
-        handled: true,
-        text: `Failed to reload listener settings: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-  });
-
-  registry.setReflectionHandler(async ({ runtime }) => {
-    const agentId = runtime.agent_id;
-    const conversationId = runtime.conversation_id;
-
-    const result = await launchReflectionSubagent({
-      agentId,
-      conversationId,
-      memfsEnabled: settingsManager.isMemfsEnabled(agentId),
-      triggerSource: "manual",
-      description: "Reflecting on channel conversation",
-      recompileByConversation: listener.systemPromptRecompileByConversation,
-      recompileQueuedByConversation:
-        listener.queuedSystemPromptRecompileByConversation,
-      feedbackContext: {
-        surface: getListenerTelemetrySurface(),
-      },
-      onCompletionMessage: async (completionMessage, result) => {
-        const conversationRuntime = getOrCreateConversationRuntime(
-          listener,
-          agentId,
-          conversationId,
-        );
-        const reflectionAgentIdTag = result.reflectionAgentId
-          ? `<reflection-agent-id>${escapeTaskNotificationSummary(
-              result.reflectionAgentId,
-            )}</reflection-agent-id>`
-          : "";
-        const notificationXml = `<task-notification><summary>${escapeTaskNotificationSummary(
-          completionMessage,
-        )}</summary>${reflectionAgentIdTag}</task-notification>`;
-        emitStreamDelta(
-          socket,
-          conversationRuntime,
-          {
-            type: "message",
-            id: `user-msg-${crypto.randomUUID()}`,
-            date: new Date().toISOString(),
-            message_type: "user_message",
-            content: [{ type: "text", text: notificationXml }],
-          } as import("@/types/protocol_v2").StreamDelta,
-          {
-            agent_id: agentId,
-            conversation_id: conversationId,
-          },
-        );
-      },
-    });
-
-    if (!result.launched) {
-      if (result.reason === "memfs_disabled") {
-        return {
-          handled: true,
-          text: "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead.",
-        };
-      }
-      if (result.reason === "already_active") {
-        return {
-          handled: true,
-          text: "A reflection agent is already running for this conversation.",
-        };
-      }
-      if (result.reason === "no_payload") {
-        return {
-          handled: true,
-          text: "No new transcript content to reflect on for this conversation.",
-        };
-      }
-
-      const message =
-        result.error instanceof Error
-          ? result.error.message
-          : String(result.error ?? "Unknown error");
-      return {
-        handled: true,
-        text: `Failed to start reflection: ${message}`,
-      };
-    }
-
-    return {
-      handled: true,
-      text: "Started a reflection pass for this conversation.",
-    };
-  });
-
-  registry.setReady();
 }
 
 function stampInboundUserMessageOtids(
@@ -796,51 +283,6 @@ function stampInboundUserMessageOtids(
   };
 }
 
-export function enqueueChannelTurn(
-  runtime: ConversationRuntime,
-  route: {
-    agentId: string;
-    conversationId: string;
-  },
-  messageContent: MessageCreate["content"],
-  turnSources?: ChannelTurnSource[],
-): { id: string } | null {
-  const clientMessageId = `cm-channel-${crypto.randomUUID()}`;
-  const enqueuedItem = runtime.queueRuntime.enqueue({
-    kind: "message",
-    source: "channel" as import("@/types/protocol").QueueItemSource,
-    content: messageContent,
-    clientMessageId,
-    agentId: route.agentId,
-    conversationId: route.conversationId,
-  } as Omit<
-    import("@/queue/queue-runtime").MessageQueueItem,
-    "id" | "enqueuedAt"
-  >);
-
-  if (!enqueuedItem) {
-    return null;
-  }
-
-  runtime.queuedMessagesByItemId.set(
-    enqueuedItem.id,
-    stampInboundUserMessageOtids({
-      type: "message",
-      agentId: route.agentId,
-      conversationId: route.conversationId,
-      ...(turnSources?.length ? { channelTurnSources: turnSources } : {}),
-      messages: [
-        {
-          role: "user",
-          content: messageContent,
-          client_message_id: clientMessageId,
-        } satisfies MessageCreate & { client_message_id?: string },
-      ],
-    }),
-  );
-
-  return enqueuedItem;
-}
 export function createRuntime(): ListenerRuntime {
   const bootWorkingDirectory = getCurrentWorkingDirectory();
   return {
@@ -863,6 +305,8 @@ export function createRuntime(): ListenerRuntime {
     processServicesGeneration: 0,
     processServicesReady: null,
     processServicesReadyGeneration: null,
+    serviceCommandHandler: null,
+    serviceCommandTypes: new Set(),
     eventSeqCounter: 0,
     queueEmitScheduled: false,
     pendingQueueEmitScope: undefined,
@@ -936,7 +380,6 @@ export async function startConnectedListenerRuntime(
     startCronScheduler?: boolean;
     streamTransport?: ListenerTransport | null;
     emitInitialState?: boolean;
-    wireChannelIngress?: typeof wireChannelIngress;
   } = {},
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
@@ -962,7 +405,7 @@ export async function startConnectedListenerRuntime(
   });
   runtime.hasSuccessfulConnection = true;
   runtime.everConnected = true;
-  opts.onConnected(opts.connectionId);
+  await opts.onConnected(opts.connectionId);
 
   emitInitialConnectionState(runtime, transport, opts.connectionId, options);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
@@ -1034,12 +477,6 @@ export async function startConnectedListenerRuntime(
       );
     }
 
-    await (options.wireChannelIngress ?? wireChannelIngress)(
-      runtime,
-      processTransport,
-      opts as StartListenerOptions,
-      processQueuedTurn,
-    );
     if (runtime.processServicesGeneration === processServicesGeneration) {
       runtime.processServicesStarted = true;
     }
@@ -1118,7 +555,6 @@ export async function attachOpenListenerSocket(
     safeSocketSend,
     runDetachedListenerTask,
     trackListenerError,
-    wireChannelIngress,
   });
   socket.on("message", (data: WebSocket.RawData) => {
     void (async () => {
@@ -1469,7 +905,6 @@ async function connectWithRetry(
       safeSocketSend,
       runDetachedListenerTask,
       trackListenerError,
-      wireChannelIngress,
     }),
   );
 

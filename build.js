@@ -237,6 +237,21 @@ await Bun.build({
 });
 
 await Bun.build({
+  entrypoints: ["./src/gateway-core.ts"],
+  outdir: "./dist",
+  target: "browser",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "gateway-core.js",
+  },
+  loader: {
+    ".md": "text",
+  },
+});
+
+await Bun.build({
   entrypoints: ["./src/channels-slack.ts"],
   outdir: "./dist",
   target: "browser",

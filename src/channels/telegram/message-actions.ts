@@ -3,11 +3,13 @@ import type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
   ChannelMessageActionRequest,
+  ChannelMessageActionRoute,
 } from "@/channels/plugin-types";
-import type { ChannelRoute } from "@/channels/types";
 import { isTelegramChannelAccount } from "@/channels/types";
 
-function richPrivateChatDefaultEnabled(route: ChannelRoute): boolean {
+function richPrivateChatDefaultEnabled(
+  route: ChannelMessageActionRoute,
+): boolean {
   const accountId = route.accountId?.trim();
   if (!accountId) {
     return true;
@@ -21,7 +23,7 @@ function richPrivateChatDefaultEnabled(route: ChannelRoute): boolean {
 
 function shouldSendTelegramRichMessage(params: {
   request: ChannelMessageActionRequest;
-  route: ChannelRoute;
+  route: ChannelMessageActionRoute;
 }): boolean {
   if (params.request.action === "send-rich") {
     return true;

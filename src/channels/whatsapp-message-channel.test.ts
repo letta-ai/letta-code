@@ -33,8 +33,6 @@ function makeContext(action: string, overrides: Record<string, unknown> = {}) {
       chatId: "15551234567@s.whatsapp.net",
       agentId: "agent-test",
       conversationId: "conv-test",
-      enabled: true,
-      createdAt: "2026-04-30T00:00:00.000Z",
     },
     adapter,
     formatText(text) {

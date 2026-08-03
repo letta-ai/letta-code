@@ -41,7 +41,6 @@ function makeHandler(runtime: ListenerRuntime) {
     safeSocketSend: () => false,
     runDetachedListenerTask: () => {},
     trackListenerError: () => {},
-    wireChannelIngress: async () => {},
   });
 }
 

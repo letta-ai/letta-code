@@ -11,6 +11,7 @@ import type {
   ConversationListResponseMessage,
   ExternalToolCallRequestMessage,
   ExternalToolCallResult,
+  InputAcceptedResponseMessage,
   InputCommand,
   RuntimeStartCommand,
   RuntimeStartResponseMessage,
@@ -585,6 +586,33 @@ export class AppServerClient {
    */
   input(command: Omit<InputCommand, "type">): void {
     this.send({ type: "input", ...command });
+  }
+
+  /**
+   * Submit an input and wait only until the listener accepts it into the
+   * normal dispatch/queue path. This never waits for turn completion.
+   */
+  submitInput(
+    command: Omit<InputCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<InputAcceptedResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<InputAcceptedResponseMessage> {
+    return this.request(
+      {
+        type: "input",
+        request_id: command.request_id ?? this.nextRequestId("input"),
+        ...command,
+      },
+      {
+        ...options,
+        predicate: (message): message is InputAcceptedResponseMessage =>
+          message.type === "input_accepted",
+      },
+    );
   }
 
   private handleMessage(event: unknown, channel: AppServerChannel): void {

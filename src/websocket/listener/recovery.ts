@@ -19,9 +19,6 @@ import {
   shouldRetryPostStreamRunError,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
-import { createChannelTurnProgressBuilder } from "@/channels/progress-builder";
-import { getChannelRegistry } from "@/channels/registry";
-import type { ChannelTurnSource } from "@/channels/types";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
 import { formatPermissionDenial } from "@/permissions/format-denial";
@@ -36,10 +33,6 @@ import {
   applySuggestedPermissionsForApproval,
   classifyApprovalsWithSuggestions,
 } from "./approval-suggestions";
-import {
-  finishActiveChannelTurn,
-  recoverActiveChannelTurn,
-} from "./channel-turn-session";
 import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
@@ -264,13 +257,16 @@ export function finalizeHandledRecoveryTurn(
     drainResult: Awaited<ReturnType<typeof drainStreamWithResume>>;
     agentId?: string | null;
     conversationId: string;
+    turnId: string;
   },
 ): ReturnType<typeof finishListenerTurn> {
   if (params.drainResult.stopReason === "end_turn") {
     return finishListenerTurn(runtime, turnLease, {
       stopReason: "end_turn",
+      socket,
       agentId: params.agentId,
       conversationId: params.conversationId,
+      turnId: params.turnId,
     });
   }
 
@@ -281,6 +277,7 @@ export function finalizeHandledRecoveryTurn(
       runId: runtime.activeRunId,
       agentId: params.agentId ?? undefined,
       conversationId: params.conversationId,
+      turnId: params.turnId,
     });
   }
 
@@ -289,8 +286,10 @@ export function finalizeHandledRecoveryTurn(
   const runId = runtime.activeRunId;
   const transition = finishListenerTurn(runtime, turnLease, {
     stopReason: terminalStopReason,
+    socket,
     agentId: params.agentId,
     conversationId: params.conversationId,
+    turnId: params.turnId,
   });
   if (!transition.finished) {
     return transition;
@@ -616,7 +615,6 @@ export async function resolveRecoveredApprovalResponse(
           initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
         })
       : null;
-  let shouldFinalizeRecoveredChannelTurn = false;
   let continuationFinalized = false;
 
   try {
@@ -689,29 +687,6 @@ export async function resolveRecoveredApprovalResponse(
       (decision) => decision.approval.toolCallId,
     );
 
-    const activeChannelTurn = runtime.activeChannelTurn;
-    if (
-      (!activeChannelTurn || activeChannelTurn.sources.length === 0) &&
-      recovered.agentId
-    ) {
-      const recoveredSources =
-        getChannelRegistry()?.resolveTurnSourcesForScope(
-          recovered.agentId,
-          recovered.conversationId,
-        ) ?? [];
-      if (recoveredSources.length > 0) {
-        recoverActiveChannelTurn(runtime, {
-          sources: recoveredSources,
-          batchId:
-            activeChannelTurn?.batchId ??
-            `recovered-${requestId || crypto.randomUUID()}`,
-          progress: createChannelTurnProgressBuilder(),
-        });
-      }
-    }
-    shouldFinalizeRecoveredChannelTurn =
-      runtime.activeChannelTurn?.contextRecovered === true;
-
     runtime.turnLifecycle.setExecutingToolCallIds(
       recoveryLease,
       approvedToolCallIds,
@@ -719,7 +694,6 @@ export async function resolveRecoveredApprovalResponse(
     recovered.pendingRequestIds.clear();
     emitRuntimeStateUpdates(runtime, scope);
     const executionRunId = runtime.activeRunId ?? undefined;
-    const executionChannelTurnSources = runtime.activeChannelTurn?.sources;
     emitToolExecutionStartedEvents(socket, runtime, {
       toolCalls: approvedDecisions.map((decision) => ({
         toolCallId: decision.approval.toolCallId,
@@ -787,7 +761,6 @@ export async function resolveRecoveredApprovalResponse(
                 conversationId: recovered.conversationId,
               }
             : undefined,
-        channelTurnSources: executionChannelTurnSources,
       });
     } catch (error) {
       // Execution threw before results exist, so the finished-events
@@ -847,7 +820,6 @@ export async function resolveRecoveredApprovalResponse(
       },
     ]);
     let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
-    let queuedChannelTurnSources: ChannelTurnSource[] | undefined;
     const consumedQueuedTurn = consumeQueuedTurn(runtime);
     if (consumedQueuedTurn) {
       const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
@@ -856,7 +828,6 @@ export async function resolveRecoveredApprovalResponse(
         continuationInput,
         queuedTurn,
       );
-      queuedChannelTurnSources = queuedTurn.channelTurnSources;
       emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
     }
 
@@ -870,9 +841,6 @@ export async function resolveRecoveredApprovalResponse(
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
         messages: continuationInput.messages,
-        ...(queuedChannelTurnSources?.length
-          ? { channelTurnSources: queuedChannelTurnSources }
-          : {}),
       },
       socket,
       runtime,
@@ -890,16 +858,6 @@ export async function resolveRecoveredApprovalResponse(
     }
     continuationFinalized = true;
 
-    if (shouldFinalizeRecoveredChannelTurn) {
-      await finishActiveChannelTurn(runtime, {
-        lastStopReason: runtime.lastStopReason,
-        didThrow: false,
-        error: runtime.lastTerminalLoopErrorMessage ?? undefined,
-        runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
-        retainOnApproval: true,
-      });
-    }
-
     if (runtime.recoveredApprovalState === recovered) {
       clearRecoveredApprovalState(runtime);
     }
@@ -910,14 +868,6 @@ export async function resolveRecoveredApprovalResponse(
     }
     if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
       return true;
-    }
-    if (shouldFinalizeRecoveredChannelTurn) {
-      await finishActiveChannelTurn(runtime, {
-        lastStopReason: runtime.lastStopReason,
-        didThrow: true,
-        error: error instanceof Error ? error.message : String(error),
-        runId: runtime.lastTerminalLoopErrorRunId ?? undefined,
-      });
     }
     if (runtime.recoveredApprovalState === recovered) {
       recovered.pendingRequestIds = new Set(
@@ -930,6 +880,8 @@ export async function resolveRecoveredApprovalResponse(
       socket,
       agentId: recovered.agentId,
       conversationId: recovered.conversationId,
+      turnId: `batch-recovered-${requestId}`,
+      error: error instanceof Error ? error.message : String(error),
     });
     throw error;
   }

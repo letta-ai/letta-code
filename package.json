@@ -30,6 +30,8 @@
     "dist/schedules.js.map",
     "dist/channels-public.js",
     "dist/channels-public.js.map",
+    "dist/gateway-core.js",
+    "dist/gateway-core.js.map",
     "dist/channels-slack.js",
     "dist/channels-slack.js.map",
     "dist/types",
@@ -83,6 +85,12 @@
       "browser": "./dist/channels-public.js",
       "import": "./dist/channels-public.js",
       "default": "./dist/channels-public.js"
+    },
+    "./gateway-core": {
+      "types": "./dist/types/gateway-core.d.ts",
+      "browser": "./dist/gateway-core.js",
+      "import": "./dist/gateway-core.js",
+      "default": "./dist/gateway-core.js"
     },
     "./channels/slack": {
       "types": "./dist/types/channels-slack.d.ts",
@@ -197,6 +205,9 @@
       ],
       "channels": [
         "./dist/types/channels-public.d.ts"
+      ],
+      "gateway-core": [
+        "./dist/types/gateway-core.d.ts"
       ],
       "channels/slack": [
         "./dist/types/channels-slack.d.ts"
