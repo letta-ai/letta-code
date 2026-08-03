@@ -98,6 +98,16 @@
       "reason": "Uses a top-level Bun module mock for the backend client."
     },
     {
+      "path": "src/utils/secret-backends.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Mutates the secrets runtime override and service name while exercising the real OS credential store."
+    },
+    {
+      "path": "src/utils/secrets.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Mutates the process-global secrets service name while exercising the real OS credential store."
+    },
+    {
       "path": "src/websocket/listen-client-concurrency.test.ts",
       "timeoutMs": 30000,
       "reason": "Uses several top-level Bun module mocks and exercises real concurrent listener state."

@@ -1,22 +1,25 @@
 /// <reference types="bun-types" />
 // src/utils/secrets.ts
-// Secure storage utilities for tokens using Bun's secrets API with Node.js fallback
+// Secure storage utilities for tokens and local agent secrets. Consumers stay on
+// this boundary; runtime-specific OS storage lives behind SecretBackend.
 
 import { debugWarn } from "./debug.js";
+import {
+  createExplicitNodeSecretBackend,
+  getSecretBackend,
+  __getSelectedSecretBackendKindForTests as getSelectedSecretBackendKindForTests,
+  __getWindowsCredentialScriptForTests as getWindowsCredentialScriptForTests,
+  type SecretBackend,
+  type SecretBackendKind,
+  __setSecretRuntimeOverrideForTests as setSecretRuntimeOverrideForTests,
+} from "./secret-backends.js";
 
-let secrets: typeof Bun.secrets;
-let secretsAvailable = false;
-
-// Try to import Bun's secrets API, fallback if unavailable
-try {
-  secrets = require("bun").secrets;
-  secretsAvailable = true;
-} catch {
-  // Running in Node.js or Bun secrets unavailable
-  secretsAvailable = false;
-}
-
-let SERVICE_NAME = "letta-code";
+const DEFAULT_SERVICE_NAME = "letta-code";
+const TEST_DEFAULT_SERVICE_NAME = `${DEFAULT_SERVICE_NAME}-test-${process.pid}`;
+let SERVICE_NAME =
+  process.env.NODE_ENV === "test"
+    ? TEST_DEFAULT_SERVICE_NAME
+    : DEFAULT_SERVICE_NAME;
 const API_KEY_NAME = "letta-api-key";
 const REFRESH_TOKEN_NAME = "letta-refresh-token";
 
@@ -37,12 +40,26 @@ function isDuplicateKeychainItemError(error: unknown): boolean {
   );
 }
 
-export async function getSecretValue(
+function getBackendOrThrow(): SecretBackend {
+  const backend = getSecretBackend();
+  if (!backend) {
+    throw new Error("Secrets API unavailable");
+  }
+  return backend;
+}
+
+type SecretReadResult = {
+  failed: boolean;
+  value: string | null;
+};
+
+async function readSecretValue(
   name: string,
   label: string,
-): Promise<string | null> {
-  if (!secretsAvailable && !secretGetOverrideForTests) {
-    return null;
+): Promise<SecretReadResult> {
+  const backend = getSecretBackend();
+  if (!backend && !secretGetOverrideForTests) {
+    return { failed: false, value: null };
   }
 
   try {
@@ -52,9 +69,9 @@ export async function getSecretValue(
     };
     const value = secretGetOverrideForTests
       ? await secretGetOverrideForTests(options)
-      : await secrets.get(options);
+      : await backend?.get(options);
     warnedSecretReadFailures.delete(name);
-    return value;
+    return { failed: false, value: value ?? null };
   } catch (error) {
     const message = `Failed to retrieve ${label} from secrets: ${error}`;
     if (!warnedSecretReadFailures.has(name)) {
@@ -63,34 +80,51 @@ export async function getSecretValue(
     } else {
       debugWarn("secrets", message);
     }
-    return null;
+    return { failed: true, value: null };
   }
+}
+
+export async function getSecretValue(
+  name: string,
+  label: string,
+): Promise<string | null> {
+  return (await readSecretValue(name, label)).value;
 }
 
 export async function setSecretValue(
   name: string,
   value: string,
 ): Promise<void> {
-  if (!secretsAvailable) {
-    throw new Error("Secrets API unavailable");
+  const backend = getBackendOrThrow();
+
+  // Bun.secrets treats an empty value as deletion on every platform. Keep the
+  // explicit Node backends behaviorally identical instead of storing an empty
+  // credential that only one runtime can observe.
+  if (value === "") {
+    await backend.delete({
+      service: SERVICE_NAME,
+      name,
+    });
+    return;
   }
 
   try {
-    await secrets.set({
+    await backend.set({
       service: SERVICE_NAME,
       name,
       value,
     });
     return;
   } catch (error) {
-    if (!isDuplicateKeychainItemError(error)) {
+    if (backend.kind !== "bun" || !isDuplicateKeychainItemError(error)) {
       throw error;
     }
   }
 
-  // Replace existing keychain item and retry once.
+  // Preserve Bun.secrets duplicate-item replacement behavior for existing
+  // macOS entries: delete the exact shared entry and retry once.
   try {
-    await secrets.delete({
+    await backend.delete({
       service: SERVICE_NAME,
       name,
     });
@@ -98,7 +132,7 @@ export async function setSecretValue(
     // Ignore delete errors and retry set below.
   }
 
-  await secrets.set({
+  await backend.set({
     service: SERVICE_NAME,
     name,
     value,
@@ -106,12 +140,13 @@ export async function setSecretValue(
 }
 
 export async function deleteSecretValue(name: string): Promise<boolean> {
-  if (!secretsAvailable) {
+  const backend = getSecretBackend();
+  if (!backend) {
     return false;
   }
 
   try {
-    return await secrets.delete({
+    return await backend.delete({
       service: SERVICE_NAME,
       name,
     });
@@ -125,27 +160,32 @@ export async function deleteSecretValue(name: string): Promise<boolean> {
  * Override the keychain service name (useful for tests to avoid touching real credentials)
  */
 export function setServiceName(name: string): void {
-  SERVICE_NAME = name;
+  // A mis-isolated Bun test must never fall back to the live credential
+  // namespace. Test files still use unique names for correctness; this guard
+  // prevents cleanup races from deleting a developer's real credentials.
+  SERVICE_NAME =
+    process.env.NODE_ENV === "test" && name === DEFAULT_SERVICE_NAME
+      ? TEST_DEFAULT_SERVICE_NAME
+      : name;
 }
 
-// Note: When secrets API is unavailable (Node.js), tokens will be managed
-// by the settings manager which falls back to storing in the settings file
-// This provides persistence across restarts
+// Note: On platforms without an OS secret backend, tokens are managed by the
+// settings manager fallback so authentication still persists across restarts.
 
 export interface SecureTokens {
   apiKey?: string;
   refreshToken?: string;
 }
 
+export interface SecureTokensReadResult {
+  failed: boolean;
+  tokens: SecureTokens;
+}
+
 /**
  * Store API key in system secrets
  */
 export async function setApiKey(apiKey: string): Promise<void> {
-  if (!secretsAvailable) {
-    // When secrets unavailable, let the settings manager handle fallback
-    throw new Error("Secrets API unavailable");
-  }
-
   await setSecretValue(API_KEY_NAME, apiKey);
 }
 
@@ -160,11 +200,6 @@ export async function getApiKey(): Promise<string | null> {
  * Store refresh token in system secrets
  */
 export async function setRefreshToken(refreshToken: string): Promise<void> {
-  if (!secretsAvailable) {
-    // When secrets unavailable, let the settings manager handle fallback
-    throw new Error("Secrets API unavailable");
-  }
-
   await setSecretValue(REFRESH_TOKEN_NAME, refreshToken);
 }
 
@@ -179,18 +214,21 @@ export async function getRefreshToken(): Promise<string | null> {
  * Get both tokens from secrets
  */
 export async function getSecureTokens(): Promise<SecureTokens> {
-  const [apiKey, refreshToken] = await Promise.allSettled([
-    getApiKey(),
-    getRefreshToken(),
+  return (await getSecureTokensWithStatus()).tokens;
+}
+
+export async function getSecureTokensWithStatus(): Promise<SecureTokensReadResult> {
+  const [apiKey, refreshToken] = await Promise.all([
+    readSecretValue(API_KEY_NAME, "API key"),
+    readSecretValue(REFRESH_TOKEN_NAME, "refresh token"),
   ]);
 
   return {
-    apiKey:
-      apiKey.status === "fulfilled" ? apiKey.value || undefined : undefined,
-    refreshToken:
-      refreshToken.status === "fulfilled"
-        ? refreshToken.value || undefined
-        : undefined,
+    failed: apiKey.failed || refreshToken.failed,
+    tokens: {
+      apiKey: apiKey.value || undefined,
+      refreshToken: refreshToken.value || undefined,
+    },
   };
 }
 
@@ -217,40 +255,14 @@ export async function setSecureTokens(tokens: SecureTokens): Promise<void> {
  * Remove API key from system secrets
  */
 export async function deleteApiKey(): Promise<void> {
-  if (secretsAvailable) {
-    try {
-      await secrets.delete({
-        service: SERVICE_NAME,
-        name: API_KEY_NAME,
-      });
-      return;
-    } catch (error) {
-      console.warn(`Failed to delete API key from secrets: ${error}`);
-    }
-  }
-
-  // When secrets unavailable, deletion is handled by settings manager
-  // No action needed here
+  await deleteSecretValue(API_KEY_NAME);
 }
 
 /**
  * Remove refresh token from system secrets
  */
 export async function deleteRefreshToken(): Promise<void> {
-  if (secretsAvailable) {
-    try {
-      await secrets.delete({
-        service: SERVICE_NAME,
-        name: REFRESH_TOKEN_NAME,
-      });
-      return;
-    } catch (error) {
-      console.warn(`Failed to delete refresh token from secrets: ${error}`);
-    }
-  }
-
-  // When secrets unavailable, deletion is handled by settings manager
-  // No action needed here
+  await deleteSecretValue(REFRESH_TOKEN_NAME);
 }
 
 /**
@@ -261,35 +273,23 @@ export async function deleteSecureTokens(): Promise<void> {
 }
 
 /**
- * Check if secrets API is available
- * Set LETTA_SKIP_KEYCHAIN_CHECK=1 to skip the check (useful in CI/test environments)
+ * Check if OS secure storage is available.
+ * Set LETTA_SKIP_KEYCHAIN_CHECK=1 to skip the check (useful in CI/test environments).
  */
 export async function isKeychainAvailable(): Promise<boolean> {
-  // Skip keychain check in test/CI environments to avoid error dialogs
   if (process.env.LETTA_SKIP_KEYCHAIN_CHECK === "1") {
     return false;
   }
 
-  // Headless Linux environments frequently lack a session bus, so avoid
-  // probing the keychain when Secret Service cannot work.
-  if (
-    process.platform === "linux" &&
-    !process.env.DBUS_SESSION_BUS_ADDRESS?.trim()
-  ) {
-    return false;
-  }
-
-  if (!secretsAvailable) {
+  const backend = getSecretBackend();
+  if (!backend) {
     return false;
   }
 
   try {
-    // Non-mutating probe: if this call succeeds (even with null), keychain is usable.
-    await secrets.get({
-      service: SERVICE_NAME,
-      name: API_KEY_NAME,
-    });
-    return true;
+    // Availability is structural. Reading a live credential just to probe the
+    // backend creates unnecessary Keychain access and can trigger GUI prompts.
+    return await backend.isAvailable();
   } catch {
     return false;
   }
@@ -305,4 +305,28 @@ export function __setSecretGetOverrideForTests(
     | null,
 ): void {
   secretGetOverrideForTests = override;
+}
+
+export function __getDefaultServiceNameForTests(): string {
+  return DEFAULT_SERVICE_NAME;
+}
+
+export function __setSecretRuntimeOverrideForTests(
+  override: Parameters<typeof setSecretRuntimeOverrideForTests>[0],
+): void {
+  setSecretRuntimeOverrideForTests(override);
+}
+
+export function __getSelectedSecretBackendKindForTests(): SecretBackendKind | null {
+  return getSelectedSecretBackendKindForTests();
+}
+
+export function __getWindowsCredentialScriptForTests(): string {
+  return getWindowsCredentialScriptForTests();
+}
+
+export function __getExplicitNodeSecretBackendForTests(
+  platform: NodeJS.Platform = process.platform,
+): SecretBackend | null {
+  return createExplicitNodeSecretBackend(platform);
 }
