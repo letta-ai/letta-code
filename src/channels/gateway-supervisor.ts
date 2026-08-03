@@ -31,6 +31,8 @@ export interface StartChannelGatewaySupervisorOptions {
   onServiceEvent?: (event: ServiceEvent) => void;
   /** Override the executable used to launch the gateway (embedding/tests). */
   launcher?: { command: string; args?: string[] };
+  /** Override child creation for deterministic supervisor protocol tests. */
+  spawnProcess?: typeof spawn;
 }
 
 export interface ChannelGatewaySupervisor {
@@ -101,7 +103,7 @@ export async function startChannelGatewaySupervisor(
 
   const launch = (): void => {
     if (stopping) return;
-    child = spawn(launcher.command, childArgs, {
+    child = (options.spawnProcess ?? spawn)(launcher.command, childArgs, {
       cwd,
       env: options.env ?? process.env,
       stdio: ["pipe", "pipe", "pipe"],

@@ -1,7 +1,10 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import type { ChildProcess, spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough } from "node:stream";
 import { startChannelGatewaySupervisor } from "./gateway-supervisor";
 
 const tempDirs: string[] = [];
@@ -29,31 +32,67 @@ async function writeGatewayFixture(
   return { dir, script };
 }
 
+function createGatewayFixtureProcess(): {
+  spawnProcess: typeof spawn;
+  getKillSignal: () => NodeJS.Signals | number | undefined;
+} {
+  // Bun 1.3.0 on Windows can stall when the test process writes to a spawned
+  // child's stdin pipe. Model the process boundary in memory so this protocol
+  // test remains deterministic; the unexpected-exit test below still launches
+  // a real Node child on every platform.
+  const stdin = new PassThrough();
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const child = new EventEmitter() as ChildProcess;
+  let killSignal: NodeJS.Signals | number | undefined;
+  Object.assign(child, {
+    pid: 1234,
+    stdin,
+    stdout,
+    stderr,
+    exitCode: null,
+    kill: (signal?: NodeJS.Signals | number) => {
+      killSignal = signal;
+      Object.assign(child, { exitCode: 0 });
+      child.emit("exit", 0, signal ?? null);
+      return true;
+    },
+  });
+  let inputBuffer = "";
+  stdin.on("data", (chunk: Buffer) => {
+    inputBuffer += chunk.toString("utf8");
+    const lines = inputBuffer.split("\n");
+    inputBuffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const envelope = JSON.parse(line) as {
+        requestId: string;
+        command: { args?: string };
+      };
+      stdout.write(
+        `CHANNEL_GATEWAY_RESPONSE ${JSON.stringify({
+          requestId: envelope.requestId,
+          response: {
+            kind: "text",
+            text: envelope.command.args ?? "none",
+          },
+        })}\r\n`,
+      );
+    }
+  });
+  const spawnProcess = (() => {
+    queueMicrotask(() => stdout.write("CHANNEL_GATEWAY_READY\r\n"));
+    return child;
+  }) as typeof spawn;
+  return { spawnProcess, getKillSignal: () => killSignal };
+}
+
 test("supervisor waits for readiness, carries service commands, and shuts down", async () => {
-  const { dir, script } = await writeGatewayFixture(
-    (fixtureDir) => `
-    import { appendFileSync } from "node:fs";
-    import { createInterface } from "node:readline";
-    process.stdout.write("CHANNEL_GATEWAY_READY\\r\\n");
-    createInterface({ input: process.stdin }).on("line", (line) => {
-      const envelope = JSON.parse(line);
-      process.stdout.write("CHANNEL_GATEWAY_RESPONSE " + JSON.stringify({
-        requestId: envelope.requestId,
-        response: { kind: "text", text: envelope.command.args ?? "none" },
-      }) + "\\r\\n");
-    });
-    process.on("SIGTERM", () => {
-      appendFileSync(${JSON.stringify(join(fixtureDir, "stopped"))}, "yes");
-      process.exit(0);
-    });
-  `,
-  );
+  const fixture = createGatewayFixtureProcess();
   const supervisor = await startChannelGatewaySupervisor({
     appServerUrl: "ws://127.0.0.1:1/ws",
     channelNames: ["telegram"],
-    // The distributed CLI runs this child under Node. Using Node here also
-    // avoids Bun 1.3.0's Windows child-process readline pipe bug.
-    launcher: { command: "node", args: [script] },
+    launcher: { command: "fixture" },
+    spawnProcess: fixture.spawnProcess,
   });
 
   await expect(
@@ -66,11 +105,7 @@ test("supervisor waits for readiness, carries service commands, and shuts down",
   ).resolves.toEqual({ kind: "text", text: "status" });
 
   await supervisor.close();
-  // Windows terminates child processes directly for SIGTERM, so the child
-  // cannot run a signal handler to write the graceful-shutdown marker.
-  if (process.platform !== "win32") {
-    expect(await readFile(join(dir, "stopped"), "utf8")).toBe("yes");
-  }
+  expect(fixture.getKillSignal()).toBe("SIGTERM");
 });
 
 test("supervisor reports an unexpected post-ready exit without restarting", async () => {
