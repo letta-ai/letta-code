@@ -370,6 +370,9 @@ async function runTurnViaListenerRuntime(
       // would strand the second observer (only the first OTID survives a
       // merged batch) and answer the first with both prompts.
       noCoalesce: true,
+      // This request's output is owned by the in-process HTTP bridge, so the
+      // turn must not block waiting for a relay WebSocket client to attach.
+      processOwnedTurn: true,
       // HTTP clients cannot surface Letta Code's interactive overlays. Keep
       // those tools out so the agent asks in ordinary assistant text.
       excludeInteractiveTools: true,

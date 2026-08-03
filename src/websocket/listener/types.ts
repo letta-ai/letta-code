@@ -75,6 +75,17 @@ export interface IncomingMessage {
   conversationId?: string;
   /** Queue this message as its own turn; never merge with other messages. */
   noCoalesce?: boolean;
+  /**
+   * This turn's output is owned by an in-process caller (the OpenAI-compatible
+   * HTTP bridge), not by a relay WebSocket client. Such turns are consumed by
+   * in-process stream observers and returned in the HTTP response, so they must
+   * not block on a listener connection that may never attach.
+   *
+   * Ownership varies per turn, not per runtime: one app-server runtime serves
+   * both HTTP requests and real WebSocket clients, and relay-originated turns
+   * still need the reconnect wait that preserves their output.
+   */
+  processOwnedTurn?: boolean;
   imageFailureMode?: "strict" | "drop";
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;

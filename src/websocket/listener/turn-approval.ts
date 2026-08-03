@@ -157,6 +157,8 @@ export async function handleApprovalStop(params: {
   pendingNormalizationInterruptedToolCallIds: string[];
   turnToolContextId: string | null;
   turnLease: TurnLease;
+  /** This turn's output is owned by an in-process caller, not a relay client. */
+  processOwnedTurn?: boolean;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
@@ -183,6 +185,7 @@ export async function handleApprovalStop(params: {
     turnInput,
     turnToolContextId,
     turnLease,
+    processOwnedTurn = false,
     buildSendOptions,
     providerFallback,
     dependencies,
@@ -409,7 +412,14 @@ export async function handleApprovalStop(params: {
   const executionRunId =
     runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
 
-  if (approvedDecisions.length > 0 && !isListenerTransportOpen(socket)) {
+  // A process-owned turn's results are consumed in-process, so there is no
+  // client whose reconnect is worth waiting for. Relay-originated turns still
+  // wait through transient disconnects so their output is not lost (#3522).
+  if (
+    approvedDecisions.length > 0 &&
+    !processOwnedTurn &&
+    !isListenerTransportOpen(socket)
+  ) {
     const transportOpenResult = await waitForTransportOpen(
       socket,
       shouldInterrupt,
