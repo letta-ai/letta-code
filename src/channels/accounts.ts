@@ -201,28 +201,132 @@ function prepareAccountForStorage(
   return cloned;
 }
 
+interface AccountSecretWrite {
+  fieldPath: string;
+  value: string;
+}
+
+function getAccountSecretWrites(account: ChannelAccount): AccountSecretWrite[] {
+  return getSecretFieldPaths(account).flatMap((fieldPath) => {
+    const value = getSecretValueFromAccount(account, fieldPath);
+    if (
+      typeof value !== "string" ||
+      value.trim().length === 0 ||
+      isSecretPlaceholder(value)
+    ) {
+      return [];
+    }
+    return [{ fieldPath, value }];
+  });
+}
+
+function getSecretPersistenceErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function persistAccountSecretsForKeyring(
   account: ChannelAccount,
-): Promise<void> {
+): Promise<string[]> {
   if (getCachedChannelCredentialsStoreMode() !== "keyring") {
-    return;
+    return [];
   }
 
-  await Promise.all(
-    getSecretFieldPaths(account).flatMap((fieldPath) => {
-      const value = getSecretValueFromAccount(account, fieldPath);
-      if (
-        typeof value !== "string" ||
-        value.trim().length === 0 ||
-        isSecretPlaceholder(value)
-      ) {
-        return [];
-      }
-      return [
-        setChannelSecret(account.channel, account.accountId, fieldPath, value),
-      ];
-    }),
+  const accountSecrets = getAccountSecretWrites(account);
+  const existingAccount = getStore(account.channel).accounts.find(
+    (entry) => entry.accountId === account.accountId,
   );
+  const existingRefs = existingAccount ? getSecretRefs(existingAccount) : {};
+  const writes = accountSecrets.filter(({ fieldPath, value }) => {
+    if (!existingAccount || existingRefs[fieldPath] !== true) {
+      return true;
+    }
+    return getSecretValueFromAccount(existingAccount, fieldPath) !== value;
+  });
+
+  // One field maps to one backend operation. Multi-field credentials need an
+  // application-level transaction because OS keyrings expose no shared commit.
+  if (writes.length === 1) {
+    const write = writes[0];
+    if (write) {
+      await setChannelSecret(
+        account.channel,
+        account.accountId,
+        write.fieldPath,
+        write.value,
+      );
+    }
+    return accountSecrets.map(({ fieldPath }) => fieldPath);
+  }
+
+  if (writes.length > 1) {
+    const writesWithOldValues = await Promise.all(
+      writes.map(async (write) => ({
+        ...write,
+        oldValue: await getChannelSecret(
+          account.channel,
+          account.accountId,
+          write.fieldPath,
+        ),
+      })),
+    );
+
+    try {
+      for (const { fieldPath, value } of writesWithOldValues) {
+        await setChannelSecret(
+          account.channel,
+          account.accountId,
+          fieldPath,
+          value,
+        );
+      }
+    } catch (error) {
+      const rollbackErrors: Error[] = [];
+      for (const { fieldPath, oldValue } of [
+        ...writesWithOldValues,
+      ].reverse()) {
+        try {
+          if (oldValue === null) {
+            await deleteChannelSecret(
+              account.channel,
+              account.accountId,
+              fieldPath,
+            );
+          } else {
+            await setChannelSecret(
+              account.channel,
+              account.accountId,
+              fieldPath,
+              oldValue,
+            );
+          }
+        } catch (rollbackError) {
+          rollbackErrors.push(
+            new Error(
+              `Failed to restore ${fieldPath}: ${getSecretPersistenceErrorMessage(
+                rollbackError,
+              )}`,
+            ),
+          );
+        }
+      }
+
+      if (rollbackErrors.length > 0) {
+        const originalError =
+          error instanceof Error
+            ? error
+            : new Error(getSecretPersistenceErrorMessage(error));
+        throw new AggregateError(
+          [originalError, ...rollbackErrors],
+          `Failed to persist channel credentials: ${originalError.message}. Credential rollback also failed for ${rollbackErrors
+            .map((rollbackError) => rollbackError.message)
+            .join("; ")}`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  return accountSecrets.map(({ fieldPath }) => fieldPath);
 }
 
 function cloneAccount<T extends ChannelAccount>(account: T): T {
@@ -721,8 +825,14 @@ export async function upsertChannelAccountWithSecrets(
   account: ChannelAccount,
 ): Promise<ChannelAccount> {
   await getActiveChannelCredentialsStoreMode();
-  await persistAccountSecretsForKeyring(account);
-  const next = upsertChannelAccountInternal(channelId, account, {
+  const persistedSecretFields = await persistAccountSecretsForKeyring(account);
+  const nextAccount = cloneAccount(account);
+  for (const fieldPath of persistedSecretFields) {
+    // Keep runtime credentials hydrated while carrying refs through later sync
+    // account mutations such as route binding.
+    markSecretRef(nextAccount, fieldPath);
+  }
+  const next = upsertChannelAccountInternal(channelId, nextAccount, {
     redactPersistedSecrets:
       getCachedChannelCredentialsStoreMode() === "keyring",
   });

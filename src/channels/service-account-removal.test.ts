@@ -169,6 +169,7 @@ describe("channel account removal", () => {
     expect(getApprovedUsers(channelId, accountId)).toHaveLength(1);
     expect(secrets.get(botSecretName)).toBe("xoxb-token");
     expect(secrets.get(appSecretName)).toBe("xapp-token");
+    secretReadCount = 0;
 
     await expect(
       removeChannelAccountLive(channelId, accountId),
