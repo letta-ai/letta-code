@@ -1,4 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  clearAllSubagents,
+  completeSubagent,
+  registerSubagent,
+} from "@/agent/subagent-state";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 import { getWorkingDirectoryScopeKey } from "@/websocket/listener/cwd";
 import {
@@ -10,6 +15,10 @@ import type { ListenerRuntime } from "@/websocket/listener/types";
 
 const AGENT_ID = "agent-runtime-eviction";
 const CONVERSATION_ID = "conv-runtime-eviction";
+
+afterEach(() => {
+  clearAllSubagents();
+});
 
 function seedWatcher(listener: ListenerRuntime): {
   scopeKey: string;
@@ -107,5 +116,52 @@ describe("conversation runtime eviction and worktree watcher idle stop", () => {
 
     expect(evictConversationRuntimeIfIdle(runtime)).toBe(false);
     expect(listener.conversationRuntimes.has(runtime.key)).toBe(true);
+  });
+
+  test("eviction preserves the parent scope until its background subagent completes", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = createConversationRuntime(
+      listener,
+      AGENT_ID,
+      CONVERSATION_ID,
+    );
+    registerSubagent(
+      "subagent-background",
+      "fork",
+      "Background implementation",
+      "tool-call-1",
+      true,
+      false,
+      { agentId: AGENT_ID, conversationId: CONVERSATION_ID },
+    );
+
+    expect(evictConversationRuntimeIfIdle(runtime)).toBe(false);
+    expect(listener.conversationRuntimes.has(runtime.key)).toBe(true);
+
+    completeSubagent("subagent-background", { success: true });
+
+    expect(evictConversationRuntimeIfIdle(runtime)).toBe(true);
+    expect(listener.conversationRuntimes.has(runtime.key)).toBe(false);
+  });
+
+  test("a background subagent does not retain an unrelated conversation runtime", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = createConversationRuntime(
+      listener,
+      AGENT_ID,
+      CONVERSATION_ID,
+    );
+    registerSubagent(
+      "subagent-other-conversation",
+      "fork",
+      "Unrelated background implementation",
+      "tool-call-2",
+      true,
+      false,
+      { agentId: AGENT_ID, conversationId: "conv-other" },
+    );
+
+    expect(evictConversationRuntimeIfIdle(runtime)).toBe(true);
+    expect(listener.conversationRuntimes.has(runtime.key)).toBe(false);
   });
 });

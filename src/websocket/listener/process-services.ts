@@ -8,7 +8,11 @@ import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { emitStreamDelta, emitSubagentStateIfOpen } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
-import { clearRuntimeTimers, getActiveRuntime } from "./runtime";
+import {
+  clearRuntimeTimers,
+  evictConversationRuntimeIfIdle,
+  getActiveRuntime,
+} from "./runtime";
 import type { ListenerTransport } from "./transport";
 import { isListenerTransportOpen } from "./transport";
 import type {
@@ -35,6 +39,7 @@ export function installProcessEventRouting(params: {
         agent_id: conversationRuntime.agentId,
         conversation_id: conversationRuntime.conversationId,
       });
+      evictConversationRuntimeIfIdle(conversationRuntime);
     }
   });
 

@@ -1,3 +1,4 @@
+import { hasActiveBackgroundSubagentsForParent } from "@/agent/subagent-state";
 import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
 import type { PendingControlRequest } from "@/types/protocol_v2";
@@ -157,6 +158,10 @@ export function evictConversationRuntimeIfIdle(
   runtime: ConversationRuntime,
 ): boolean {
   if (
+    hasActiveBackgroundSubagentsForParent(
+      runtime.agentId,
+      runtime.conversationId,
+    ) ||
     runtime.turnLifecycle.kind !== "idle" ||
     runtime.queuePumpActive ||
     runtime.queuePumpScheduled ||

@@ -485,6 +485,30 @@ export function hasActiveSubagents(): boolean {
 }
 
 /**
+ * Check whether a parent runtime still owns background subagent work.
+ * Listener conversation runtimes stay scoped while that work is active so
+ * status snapshots and completion events keep their agent/conversation route.
+ */
+export function hasActiveBackgroundSubagentsForParent(
+  parentAgentId: string | null,
+  parentConversationId: string,
+): boolean {
+  if (!parentAgentId) return false;
+
+  for (const agent of store.agents.values()) {
+    if (
+      agent.isBackground === true &&
+      (agent.status === "pending" || agent.status === "running") &&
+      agent.parentAgentId === parentAgentId &&
+      (agent.parentConversationId ?? "default") === parentConversationId
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Mark all running/pending subagents as interrupted
  * Called when user presses ESC to interrupt execution
  */
