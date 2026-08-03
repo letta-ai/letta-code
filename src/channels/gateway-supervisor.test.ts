@@ -20,7 +20,7 @@ async function writeGatewayFixture(
 }> {
   const dir = await mkdtemp(join(tmpdir(), "channel-gateway-supervisor-"));
   tempDirs.push(dir);
-  const script = join(dir, "fixture.ts");
+  const script = join(dir, "fixture.mjs");
   await writeFile(
     script,
     typeof source === "function" ? source(dir) : source,
@@ -34,13 +34,13 @@ test("supervisor waits for readiness, carries service commands, and shuts down",
     (fixtureDir) => `
     import { appendFileSync } from "node:fs";
     import { createInterface } from "node:readline";
-    console.log("CHANNEL_GATEWAY_READY");
+    process.stdout.write("CHANNEL_GATEWAY_READY\\r\\n");
     createInterface({ input: process.stdin }).on("line", (line) => {
       const envelope = JSON.parse(line);
-      console.log("CHANNEL_GATEWAY_RESPONSE " + JSON.stringify({
+      process.stdout.write("CHANNEL_GATEWAY_RESPONSE " + JSON.stringify({
         requestId: envelope.requestId,
         response: { kind: "text", text: envelope.command.args ?? "none" },
-      }));
+      }) + "\\r\\n");
     });
     process.on("SIGTERM", () => {
       appendFileSync(${JSON.stringify(join(fixtureDir, "stopped"))}, "yes");
@@ -51,7 +51,9 @@ test("supervisor waits for readiness, carries service commands, and shuts down",
   const supervisor = await startChannelGatewaySupervisor({
     appServerUrl: "ws://127.0.0.1:1/ws",
     channelNames: ["telegram"],
-    launcher: { command: process.execPath, args: [script] },
+    // The distributed CLI runs this child under Node. Using Node here also
+    // avoids Bun 1.3.0's Windows child-process readline pipe bug.
+    launcher: { command: "node", args: [script] },
   });
 
   await expect(
@@ -64,7 +66,11 @@ test("supervisor waits for readiness, carries service commands, and shuts down",
   ).resolves.toEqual({ kind: "text", text: "status" });
 
   await supervisor.close();
-  expect(await readFile(join(dir, "stopped"), "utf8")).toBe("yes");
+  // Windows terminates child processes directly for SIGTERM, so the child
+  // cannot run a signal handler to write the graceful-shutdown marker.
+  if (process.platform !== "win32") {
+    expect(await readFile(join(dir, "stopped"), "utf8")).toBe("yes");
+  }
 });
 
 test("supervisor reports an unexpected post-ready exit without restarting", async () => {
@@ -79,7 +85,7 @@ test("supervisor reports an unexpected post-ready exit without restarting", asyn
   const supervisor = await startChannelGatewaySupervisor({
     appServerUrl: "ws://127.0.0.1:1/ws",
     channelNames: ["telegram"],
-    launcher: { command: process.execPath, args: [script] },
+    launcher: { command: "node", args: [script] },
     onUnexpectedExit: (error) => reportUnexpectedExit?.(error),
   });
 

@@ -117,7 +117,8 @@ export async function startChannelGatewaySupervisor(
       stdoutBuffer += chunk;
       const lines = stdoutBuffer.split("\n");
       stdoutBuffer = lines.pop() ?? "";
-      for (const line of lines) {
+      for (const rawLine of lines) {
+        const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
         if (line === CHANNEL_GATEWAY_READY_SIGNAL) {
           resolveInitialReady?.();
           resolveInitialReady = null;

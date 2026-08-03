@@ -1,5 +1,5 @@
-import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
+import { listenForGatewayCommands } from "@/channels/gateway-command-input";
 import { startLocalChannelGateway } from "@/channels/gateway-local";
 import { CHANNEL_GATEWAY_READY_SIGNAL } from "@/channels/gateway-supervisor";
 import {
@@ -125,8 +125,7 @@ export async function runChannelGatewaySubcommand(
       },
     })
       .then((gateway) => {
-        const commandInput = createInterface({ input: process.stdin });
-        commandInput.on("line", (line) => {
+        const commandInput = listenForGatewayCommands((line) => {
           void (async () => {
             let envelope: unknown;
             try {
