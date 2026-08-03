@@ -4,15 +4,47 @@ import { useEffect, useRef, useState } from "react";
 import { configureBackendMode } from "@/backend";
 import { Text } from "@/cli/components/Text";
 import { settingsManager } from "@/settings-manager";
-import { pollForToken, requestDeviceCode } from "./oauth";
+import { pollForToken, requestDeviceCode, type TokenResponse } from "./oauth";
+
+interface CloudLoginSettingsWriter {
+  updateSettings: typeof settingsManager.updateSettings;
+  flush: typeof settingsManager.flush;
+}
+
+interface CompleteLettaLoginOptions {
+  activateCloudBackend: boolean;
+  settings?: CloudLoginSettingsWriter;
+  now?: () => number;
+}
+
+export async function completeLettaLogin(
+  tokens: TokenResponse,
+  options: CompleteLettaLoginOptions,
+): Promise<void> {
+  const settings = options.settings ?? settingsManager;
+  const now = options.now?.() ?? Date.now();
+  settings.updateSettings({
+    env: { LETTA_API_KEY: tokens.access_token },
+    refreshToken: tokens.refresh_token,
+    tokenExpiresAt: now + tokens.expires_in * 1000,
+    preferredBackendMode: "api",
+  });
+  await settings.flush();
+
+  if (options.activateCloudBackend) {
+    configureBackendMode("api");
+  }
+}
 
 interface LettaLoginViewProps {
+  activateCloudBackend: boolean;
   onComplete?: () => void;
   onCancel?: () => void;
   successMessage?: string;
 }
 
 export function LettaLoginView({
+  activateCloudBackend,
   onComplete,
   onCancel,
   successMessage = "Signed in with Letta. Switch agents with /agents.",
@@ -82,15 +114,7 @@ export function LettaLoginView({
           controller.signal,
         );
 
-        const now = Date.now();
-        settingsManager.updateSettings({
-          env: { LETTA_API_KEY: tokens.access_token },
-          refreshToken: tokens.refresh_token,
-          tokenExpiresAt: now + tokens.expires_in * 1000,
-          preferredBackendMode: "api",
-        });
-        await settingsManager.flush();
-        configureBackendMode("api");
+        await completeLettaLogin(tokens, { activateCloudBackend });
 
         setDoneMessage(successMessage);
         setTimeout(() => onCompleteRef.current?.(), 500);
@@ -110,7 +134,7 @@ export function LettaLoginView({
       cancelledRef.current = true;
       abortControllerRef.current?.abort();
     };
-  }, [successMessage]);
+  }, [activateCloudBackend, successMessage]);
 
   if (doneMessage) {
     return (
