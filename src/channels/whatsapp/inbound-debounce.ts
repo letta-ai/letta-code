@@ -18,6 +18,8 @@ export interface WhatsAppInboundReadReceipt<TOwner, TKey> {
 export interface WhatsAppInboundDebounceEntry<TOwner, TKey> {
   inbound: InboundChannelMessage;
   receipt?: WhatsAppInboundReadReceipt<TOwner, TKey>;
+  onDeliveryStarted?: () => void;
+  onDiscarded?: () => void;
 }
 
 interface PendingWhatsAppInboundDebounceEntry<TOwner, TKey>
@@ -89,6 +91,33 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
 ): WhatsAppInboundDebounceController<TOwner, TKey> {
   const debounceMs = resolveWhatsAppInboundDebounceMs(params.account);
   let generation = 0;
+  const pendingEntries = new Set<WhatsAppInboundDebounceEntry<TOwner, TKey>>();
+
+  const startDelivery = (
+    entries: WhatsAppInboundDebounceEntry<TOwner, TKey>[],
+  ): void => {
+    for (const entry of entries) {
+      if (!pendingEntries.delete(entry)) continue;
+      try {
+        entry.onDeliveryStarted?.();
+      } catch {
+        // Claim bookkeeping must not block inbound delivery.
+      }
+    }
+  };
+
+  const discard = (
+    entries: WhatsAppInboundDebounceEntry<TOwner, TKey>[],
+  ): void => {
+    for (const entry of entries) {
+      if (!pendingEntries.delete(entry)) continue;
+      try {
+        entry.onDiscarded?.();
+      } catch {
+        // Claim bookkeeping must not break cancellation.
+      }
+    }
+  };
 
   const reportDeliveryError = (
     error: unknown,
@@ -149,9 +178,13 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
   ): Promise<boolean> => {
     const deliverMessage = params.getDeliver();
     const first = entries[0];
-    if (!deliverMessage || !first) return false;
+    if (!deliverMessage || !first) {
+      discard(entries);
+      return false;
+    }
     const inbound =
       entries.length === 1 ? first.inbound : mergeInboundMessages(entries);
+    startDelivery(entries);
     await deliverMessage(inbound);
     return true;
   };
@@ -166,6 +199,7 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
       const activeEntries = entries.filter(
         (entry) => entry.generation === generation,
       );
+      discard(entries.filter((entry) => entry.generation !== generation));
       if (activeEntries.length === 0) return;
       const delivered = await deliver(activeEntries);
       if (
@@ -176,6 +210,7 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
       }
     },
     onError: (error, entries) => {
+      discard(entries);
       reportDeliveryError(error, entries);
     },
   });
@@ -183,12 +218,16 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
   return {
     async dispatch(entries) {
       if (entries.length === 0) return;
+      for (const entry of entries) pendingEntries.add(entry);
       const entryGeneration = generation;
       if (debounceMs === 0) {
         const deliveredEntries: WhatsAppInboundDebounceEntry<TOwner, TKey>[] =
           [];
         for (const entry of entries) {
-          if (entryGeneration !== generation) return;
+          if (entryGeneration !== generation) {
+            discard(entries);
+            return;
+          }
           try {
             if (await deliver([entry])) {
               deliveredEntries.push(entry);
@@ -213,6 +252,7 @@ export function createWhatsAppInboundDebounceController<TOwner, TKey>(
     },
     cancelPending() {
       generation += 1;
+      discard(Array.from(pendingEntries));
       debouncer.cancelAll();
     },
   };

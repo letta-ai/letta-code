@@ -28,7 +28,9 @@ function unrefTimeout(timer: ReturnType<typeof setTimeout>): void {
   if (typeof unref === "function") unref.call(timer);
 }
 
-export function createWhatsAppMessageStore(): WhatsAppMessageStore {
+export function createWhatsAppMessageStore(
+  canonicalizeChatId: (chatId: string) => string | null,
+): WhatsAppMessageStore {
   const messages = new Map<string, unknown>();
   const sentMessageIds = new Set<string>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -99,6 +101,7 @@ export function createWhatsAppMessageStore(): WhatsAppMessageStore {
   }
 
   function getStoredTargetKey(
+    targetJid: string,
     messageId: string,
   ): Record<string, unknown> | null {
     const key = asRecord(asRecord(messages.get(messageId)).key);
@@ -106,6 +109,13 @@ export function createWhatsAppMessageStore(): WhatsAppMessageStore {
     const remoteJid =
       typeof key.remoteJid === "string" ? stripDeviceSuffix(key.remoteJid) : "";
     if (!remoteJid) return null;
+    const storedChatId = canonicalizeChatId(remoteJid);
+    const requestedChatId = canonicalizeChatId(targetJid);
+    if (!storedChatId || !requestedChatId || storedChatId !== requestedChatId) {
+      throw new Error(
+        "WhatsApp reaction target belongs to a different chat in the current adapter process.",
+      );
+    }
     return { ...key, remoteJid, id: messageId };
   }
 
@@ -113,7 +123,7 @@ export function createWhatsAppMessageStore(): WhatsAppMessageStore {
     targetJid: string,
     messageId: string,
   ): Record<string, unknown> {
-    const storedKey = getStoredTargetKey(messageId);
+    const storedKey = getStoredTargetKey(targetJid, messageId);
     if (storedKey) return storedKey;
     if (isGroupJid(targetJid)) {
       throw new Error(

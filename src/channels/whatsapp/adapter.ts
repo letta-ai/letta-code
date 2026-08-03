@@ -28,6 +28,7 @@ import type {
   WhatsAppSocket,
 } from "./adapter-types";
 import { decideWhatsAppAttachmentPolicy } from "./attachment-policy";
+import { createWhatsAppDedupeClaims } from "./dedupe-claims";
 import { resolveInboundIdentity } from "./identity";
 import {
   createWhatsAppInboundDebounceController,
@@ -115,14 +116,14 @@ export function createWhatsAppAdapter(
   let downloadContentFromMessage:
     | ((message: unknown, type: string) => Promise<AsyncIterable<Uint8Array>>)
     | null = null;
-  const seenMessageIds = new Set<string>();
+  const dedupeClaims = createWhatsAppDedupeClaims(DEDUPE_MAX_SIZE);
   const lidStore =
     dependencies.lidStore ??
     createLidStore(
       join(getWhatsAppAuthDir(account.accountId), "lid-mappings.json"),
     );
   let lidStoreDirty = false;
-  const outboundMessages = createWhatsAppMessageStore();
+  const outboundMessages = createWhatsAppMessageStore(canonicalizeChatId);
   const { messages: messageStore } = outboundMessages;
   let inboundDebounce: WhatsAppInboundDebounceController<
     WhatsAppSocket,
@@ -150,16 +151,6 @@ export function createWhatsAppAdapter(
       if (result.status === "recorded") lidStoreDirty = true;
     }
     return true;
-  }
-
-  function rememberSeen(id: string): boolean {
-    if (seenMessageIds.has(id)) return true;
-    seenMessageIds.add(id);
-    if (seenMessageIds.size > DEDUPE_MAX_SIZE) {
-      const first = seenMessageIds.values().next().value;
-      if (first) seenMessageIds.delete(first);
-    }
-    return false;
   }
 
   function clearActiveSocket(closeWebSocket: boolean): void {
@@ -505,22 +496,37 @@ export function createWhatsAppAdapter(
 
         const group = isGroupJid(remoteJid);
         const chatId = identity.chatId;
-        if (rememberSeen(`${chatId}:${messageId}`)) continue;
+        const dedupeKey = `${chatId}:${messageId}`;
+        if (!dedupeClaims.tryClaim(dedupeKey, generation)) continue;
 
         const text = extractWhatsAppText(msg.message);
-        const attachmentResult = await collectWhatsAppAttachments({
-          accountId: account.accountId,
-          chatId,
-          messageId,
-          message: msg.message,
-          downloadContentFromMessage: downloadContentFromMessage ?? undefined,
-          downloadMedia: account.downloadMedia === true,
-          mediaMaxBytes: account.mediaMaxBytes,
-          transcribeVoice: account.transcribeVoice === true,
-        });
-        if (!isActiveBatch(batchSocket, generation)) return;
+        let attachmentResult: Awaited<
+          ReturnType<typeof collectWhatsAppAttachments>
+        >;
+        try {
+          attachmentResult = await collectWhatsAppAttachments({
+            accountId: account.accountId,
+            chatId,
+            messageId,
+            message: msg.message,
+            downloadContentFromMessage: downloadContentFromMessage ?? undefined,
+            downloadMedia: account.downloadMedia === true,
+            mediaMaxBytes: account.mediaMaxBytes,
+            transcribeVoice: account.transcribeVoice === true,
+          });
+        } catch (error) {
+          dedupeClaims.release(dedupeKey, generation);
+          throw error;
+        }
+        if (!isActiveBatch(batchSocket, generation)) {
+          dedupeClaims.release(dedupeKey, generation);
+          return;
+        }
         const body = attachmentResult.transcriptionText || text;
-        if (!body.trim() && attachmentResult.attachments.length === 0) continue;
+        if (!body.trim() && attachmentResult.attachments.length === 0) {
+          dedupeClaims.commit(dedupeKey, generation);
+          continue;
+        }
 
         const senderId = identity.senderId;
 
@@ -537,14 +543,20 @@ export function createWhatsAppAdapter(
               selfPhoneJid,
               selfLid,
             });
-        if (!groupAllowed) continue;
+        if (!groupAllowed) {
+          dedupeClaims.commit(dedupeKey, generation);
+          continue;
+        }
 
         const chatLabel = group
           ? await getGroupLabel(chatId, batchSocket)
           : selfChat
             ? "Self (WhatsApp)"
             : msg.pushName?.trim() || senderId;
-        if (!isActiveBatch(batchSocket, generation)) return;
+        if (!isActiveBatch(batchSocket, generation)) {
+          dedupeClaims.release(dedupeKey, generation);
+          return;
+        }
 
         const inbound: InboundChannelMessage = {
           channel: CHANNEL_ID,
@@ -578,15 +590,18 @@ export function createWhatsAppAdapter(
                   markRead: (keys) => batchSocket.readMessages?.(keys),
                 }
               : undefined,
+          onDeliveryStarted: () => dedupeClaims.commit(dedupeKey, generation),
+          onDiscarded: () => dedupeClaims.release(dedupeKey, generation),
         });
       }
     } finally {
       flushLidStoreIfDirty();
-      if (
-        acceptedEntries.length > 0 &&
-        isActiveBatch(batchSocket, generation)
-      ) {
-        await inboundDebounce?.dispatch(acceptedEntries);
+      if (acceptedEntries.length > 0) {
+        if (isActiveBatch(batchSocket, generation)) {
+          await inboundDebounce?.dispatch(acceptedEntries);
+        } else {
+          for (const entry of acceptedEntries) entry.onDiscarded?.();
+        }
       }
     }
   }
@@ -633,14 +648,14 @@ export function createWhatsAppAdapter(
       lidStore,
     );
     if (!identity || !applyObservedMappings(identity.observedMappings)) return;
-    if (
-      rememberSeen(`reaction:${identity.chatId}:${parsed.reactionMessageId}`)
-    ) {
-      return;
-    }
+    const dedupeKey = `reaction:${identity.chatId}:${parsed.reactionMessageId}`;
+    if (!dedupeClaims.tryClaim(dedupeKey, generation)) return;
 
     const selfChat = isSelfChat(parsed.chatId, selfPhoneJid, selfLid);
-    if (account.selfChatMode && !selfChat) return;
+    if (account.selfChatMode && !selfChat) {
+      dedupeClaims.commit(dedupeKey, generation);
+      return;
+    }
 
     const group = isGroupJid(identity.chatId);
     if (
@@ -652,6 +667,7 @@ export function createWhatsAppAdapter(
         targetFromMe: targetIsOurs,
       })
     ) {
+      dedupeClaims.commit(dedupeKey, generation);
       return;
     }
 
@@ -660,7 +676,10 @@ export function createWhatsAppAdapter(
       : selfChat
         ? "Self (WhatsApp)"
         : identity.senderId;
-    if (!isActiveBatch(batchSocket, generation)) return;
+    if (!isActiveBatch(batchSocket, generation)) {
+      dedupeClaims.release(dedupeKey, generation);
+      return;
+    }
     const targetSenderId = isStrictPhoneJid(selfPhoneJid)
       ? senderIdFromJid(selfPhoneJid)
       : isStrictPhoneJid(parsed.targetKey.participant)
@@ -692,6 +711,7 @@ export function createWhatsAppAdapter(
       },
     };
 
+    dedupeClaims.commit(dedupeKey, generation);
     try {
       await adapter.onMessage?.(inbound);
     } catch (error) {
@@ -880,8 +900,7 @@ export function createWhatsAppAdapter(
     },
 
     async handleControlRequestEvent(event: ChannelControlRequestEvent) {
-      // Never post approval/control prompts into groups. Direct/self-chat
-      // routes may use the normal text approval flow.
+      // Never post approval/control prompts into groups.
       if (event.source.chatType === "channel") return;
       await adapter.sendDirectReply(
         event.source.chatId,

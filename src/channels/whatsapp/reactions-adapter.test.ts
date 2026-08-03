@@ -423,6 +423,76 @@ describe("WhatsApp reaction adapter integration", () => {
     );
   });
 
+  test("rejects an outbound reaction target stored for another chat", async () => {
+    const harness = makeHarness();
+    await harness.start();
+    await harness.emitUpsert([
+      {
+        key: {
+          remoteJid: REACTOR,
+          id: "cross-chat-target",
+          fromMe: false,
+        },
+        message: { conversation: "direct message" },
+        messageTimestamp: Math.floor(Date.now() / 1000),
+      },
+    ]);
+
+    await expect(
+      harness.adapter.sendMessage({
+        channel: "whatsapp",
+        accountId: account.accountId,
+        chatId: "15550000003@s.whatsapp.net",
+        text: "",
+        reaction: "👍",
+        targetMessageId: "cross-chat-target",
+      }),
+    ).rejects.toThrow(/different chat/);
+    expect(harness.sentMessages).toHaveLength(0);
+  });
+
+  test("accepts a stored LID target for its canonical phone chat", async () => {
+    const targetLid = "210565536456917@lid";
+    const harness = makeHarness({
+      lidEntries: [{ lid: targetLid, phone: REACTOR }],
+    });
+    await harness.start();
+    await harness.emitUpsert([
+      {
+        key: {
+          remoteJid: targetLid,
+          id: "lid-chat-target",
+          fromMe: false,
+        },
+        message: { conversation: "LID direct message" },
+        messageTimestamp: Math.floor(Date.now() / 1000),
+      },
+    ]);
+
+    await harness.adapter.sendMessage({
+      channel: "whatsapp",
+      accountId: account.accountId,
+      chatId: REACTOR,
+      text: "",
+      reaction: "👍",
+      targetMessageId: "lid-chat-target",
+    });
+    expect(harness.sentMessages.at(-1)).toEqual(
+      expect.objectContaining({
+        jid: REACTOR,
+        payload: {
+          react: {
+            text: "👍",
+            key: expect.objectContaining({
+              remoteJid: targetLid,
+              id: "lid-chat-target",
+            }),
+          },
+        },
+      }),
+    );
+  });
+
   test("rejects group outbound reactions after target-key state is gone", async () => {
     const harness = makeHarness();
     await harness.start();
@@ -617,6 +687,26 @@ describe("WhatsApp reaction adapter integration", () => {
     expect(harness.delivered.map((message) => message.chatId)).toEqual([
       REACTOR,
       "15550000003@s.whatsapp.net",
+    ]);
+  });
+
+  test("replays a reaction claimed by a stale socket generation", async () => {
+    const harness = makeHarness();
+    await harness.start();
+    const reaction = reactionEntry({
+      chatId: GROUP,
+      reactionId: "replayed-reaction",
+      participant: REACTOR,
+    });
+
+    const staleDelivery = harness.emit([reaction]);
+    await harness.adapter.stop();
+    await harness.start();
+    await staleDelivery;
+    await harness.emit([reaction]);
+
+    expect(harness.delivered.map((message) => message.messageId)).toEqual([
+      "replayed-reaction",
     ]);
   });
 
