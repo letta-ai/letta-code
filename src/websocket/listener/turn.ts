@@ -798,6 +798,8 @@ async function handleIncomingMessageInner(
         pendingNormalizationInterruptedToolCallIds,
         turnToolContextId,
         turnLease,
+        allowToolExecutionWithoutListenerConnection:
+          msg.allowToolExecutionWithoutListenerConnection === true,
         buildSendOptions,
         providerFallback,
       });

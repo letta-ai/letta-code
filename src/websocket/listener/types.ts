@@ -75,6 +75,8 @@ export interface IncomingMessage {
   conversationId?: string;
   /** Queue this message as its own turn; never merge with other messages. */
   noCoalesce?: boolean;
+  /** Execute local tools even when no relay WebSocket client is attached. */
+  allowToolExecutionWithoutListenerConnection?: boolean;
   imageFailureMode?: "strict" | "drop";
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;

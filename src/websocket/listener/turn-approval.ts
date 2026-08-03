@@ -157,6 +157,8 @@ export async function handleApprovalStop(params: {
   pendingNormalizationInterruptedToolCallIds: string[];
   turnToolContextId: string | null;
   turnLease: TurnLease;
+  /** Process-owned turns can execute local tools without a relay connection. */
+  allowToolExecutionWithoutListenerConnection?: boolean;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
@@ -183,6 +185,7 @@ export async function handleApprovalStop(params: {
     turnInput,
     turnToolContextId,
     turnLease,
+    allowToolExecutionWithoutListenerConnection = false,
     buildSendOptions,
     providerFallback,
     dependencies,
@@ -409,7 +412,13 @@ export async function handleApprovalStop(params: {
   const executionRunId =
     runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
 
-  if (approvedDecisions.length > 0 && !isListenerTransportOpen(socket)) {
+  // App Server turns own local tool execution even when no WebSocket client is
+  // attached. Relay-originated turns still wait through transient disconnects.
+  if (
+    approvedDecisions.length > 0 &&
+    !allowToolExecutionWithoutListenerConnection &&
+    !isListenerTransportOpen(socket)
+  ) {
     const transportOpenResult = await waitForTransportOpen(
       socket,
       shouldInterrupt,

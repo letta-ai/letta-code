@@ -153,6 +153,68 @@ describe("listener turn lifecycle integration", () => {
     expect(runtime.isProcessing).toBe(true);
   });
 
+  test("an explicitly process-owned tool executes without a remote listener connection", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    const approval = {
+      toolCallId: "call-process",
+      toolName: "Bash",
+      toolArgs: '{"command":"pwd"}',
+    };
+    const executeApprovalBatch = mock(async () => [
+      {
+        type: "tool" as const,
+        tool_call_id: approval.toolCallId,
+        status: "success" as const,
+        tool_return: "/workspace",
+      },
+    ]);
+    const waitForApprovalTransportOpen = mock(async () => {
+      throw new Error("process transport should not wait for a remote client");
+    });
+
+    const result = await startQuestionApproval(runtime, turnLease, {
+      approvals: [approval],
+      socket: {
+        kind: "runtime",
+        bufferedAmount: 0,
+        isOpen: () => false,
+        send: () => {
+          throw new Error("process transport cannot send implicitly");
+        },
+      },
+      allowToolExecutionWithoutListenerConnection: true,
+      dependencies: {
+        classifyApprovals: async () => ({
+          autoAllowed: [
+            { approval, parsedArgs: { command: "pwd" }, context: null },
+          ],
+          autoDenied: [],
+          needsUserInput: [],
+        }),
+        executeApprovalBatch,
+        ensureSecretsHydrated: async () => {},
+        sendApprovalContinuation: async () => ({
+          kind: "terminal" as const,
+          drainResult: { stopReason: "end_turn" as const, apiDurationMs: 0 },
+        }),
+        waitForApprovalTransportOpen,
+      } as never,
+    });
+
+    expect(result.kind).toBe("terminal");
+    expect(waitForApprovalTransportOpen).toHaveBeenCalledTimes(0);
+    expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
+  });
+
   test("a stale tool execution cannot emit results under a replacement run", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
