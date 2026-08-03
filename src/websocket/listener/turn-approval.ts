@@ -157,8 +157,8 @@ export async function handleApprovalStop(params: {
   pendingNormalizationInterruptedToolCallIds: string[];
   turnToolContextId: string | null;
   turnLease: TurnLease;
-  /** Process-owned turns can execute local tools without a relay connection. */
-  allowToolExecutionWithoutListenerConnection?: boolean;
+  /** This turn's output is owned by an in-process caller, not a relay client. */
+  processOwnedTurn?: boolean;
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
@@ -185,7 +185,7 @@ export async function handleApprovalStop(params: {
     turnInput,
     turnToolContextId,
     turnLease,
-    allowToolExecutionWithoutListenerConnection = false,
+    processOwnedTurn = false,
     buildSendOptions,
     providerFallback,
     dependencies,
@@ -412,11 +412,12 @@ export async function handleApprovalStop(params: {
   const executionRunId =
     runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
 
-  // App Server turns own local tool execution even when no WebSocket client is
-  // attached. Relay-originated turns still wait through transient disconnects.
+  // A process-owned turn's results are consumed in-process, so there is no
+  // client whose reconnect is worth waiting for. Relay-originated turns still
+  // wait through transient disconnects so their output is not lost (#3522).
   if (
     approvedDecisions.length > 0 &&
-    !allowToolExecutionWithoutListenerConnection &&
+    !processOwnedTurn &&
     !isListenerTransportOpen(socket)
   ) {
     const transportOpenResult = await waitForTransportOpen(

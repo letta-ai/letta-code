@@ -191,7 +191,7 @@ describe("listener turn lifecycle integration", () => {
           throw new Error("process transport cannot send implicitly");
         },
       },
-      allowToolExecutionWithoutListenerConnection: true,
+      processOwnedTurn: true,
       dependencies: {
         classifyApprovals: async () => ({
           autoAllowed: [
@@ -212,6 +212,75 @@ describe("listener turn lifecycle integration", () => {
 
     expect(result.kind).toBe("terminal");
     expect(waitForApprovalTransportOpen).toHaveBeenCalledTimes(0);
+    expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
+  });
+
+  // Guards the gate's polarity and its default. A relay turn's results must
+  // reach the client that asked for them, so a closed transport still waits for
+  // reconnect (#3522) — only an explicitly process-owned turn may skip it.
+  test("a relay-owned turn still waits for reconnect before executing tools", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    const approval = {
+      toolCallId: "call-relay",
+      toolName: "Bash",
+      toolArgs: '{"command":"pwd"}',
+    };
+    const executeApprovalBatch = mock(async () => [
+      {
+        type: "tool" as const,
+        tool_call_id: approval.toolCallId,
+        status: "success" as const,
+        tool_return: "/workspace",
+      },
+    ]);
+    let waitedBeforeExecuting = false;
+    const waitForApprovalTransportOpen = mock(async () => {
+      waitedBeforeExecuting = executeApprovalBatch.mock.calls.length === 0;
+      return "open" as const;
+    });
+
+    // processOwnedTurn is intentionally omitted: the default must preserve the
+    // relay wait rather than opting every caller into the bypass.
+    const result = await startQuestionApproval(runtime, turnLease, {
+      approvals: [approval],
+      socket: {
+        kind: "runtime",
+        bufferedAmount: 0,
+        isOpen: () => false,
+        send: () => {
+          throw new Error("process transport cannot send implicitly");
+        },
+      },
+      dependencies: {
+        classifyApprovals: async () => ({
+          autoAllowed: [
+            { approval, parsedArgs: { command: "pwd" }, context: null },
+          ],
+          autoDenied: [],
+          needsUserInput: [],
+        }),
+        executeApprovalBatch,
+        ensureSecretsHydrated: async () => {},
+        sendApprovalContinuation: async () => ({
+          kind: "terminal" as const,
+          drainResult: { stopReason: "end_turn" as const, apiDurationMs: 0 },
+        }),
+        waitForApprovalTransportOpen,
+      } as never,
+    });
+
+    expect(result.kind).toBe("terminal");
+    expect(waitForApprovalTransportOpen).toHaveBeenCalledTimes(1);
+    expect(waitedBeforeExecuting).toBe(true);
     expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
   });
 
