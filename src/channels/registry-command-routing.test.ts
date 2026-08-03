@@ -335,6 +335,8 @@ describe("ChannelRegistry command routing", () => {
     }> = [];
     const registry = new ChannelRegistry();
     const delivered: unknown[] = [];
+    const events: string[] = [];
+    registry.setEventHandler((event) => events.push(event.type));
     registry.setMessageHandler((delivery) => delivered.push(delivery));
     registry.setReady();
     registry.registerAdapter({
@@ -379,6 +381,7 @@ describe("ChannelRegistry command routing", () => {
     });
     expect(replies.at(-1)?.text).toContain("paused agent routing");
     expect(getRoute("telegram", "123", "acct-telegram")).toBeNull();
+    expect(events).toContain("routes_updated");
 
     await adapter?.onMessage?.({
       channel: "telegram",
@@ -402,6 +405,9 @@ describe("ChannelRegistry command routing", () => {
     expect(replies.at(-1)?.text).toContain("resumed agent routing");
     expect(getRoute("telegram", "123", "acct-telegram")?.conversationId).toBe(
       "conv-1",
+    );
+    expect(events.filter((event) => event === "routes_updated")).toHaveLength(
+      2,
     );
 
     await adapter?.onMessage?.({

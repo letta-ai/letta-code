@@ -33,7 +33,11 @@ import {
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
 } from "./protocol-command-handler";
-import { getChannelRegistry, initializeChannels } from "./registry";
+import {
+  type ChannelRegistry,
+  getChannelRegistry,
+  initializeChannels,
+} from "./registry";
 import type { ChannelRestoreAgentScope } from "./restore-scope";
 import { handleChannelsSlashCommand } from "./slash-command";
 import type {
@@ -50,6 +54,64 @@ export interface StartLocalChannelGatewayOptions {
   logger?: ChannelStartupLogger;
   onDisconnect?: (error: Error) => void;
   onServiceEvent?: (event: ServiceEvent) => void;
+}
+
+type RoutedRuntimeRegistrar = Pick<
+  ChannelGateway,
+  "getKnownRuntimes" | "registerRuntime"
+>;
+
+async function refreshRoutedRuntimeRegistrations(
+  registry: ChannelRegistry,
+  gateway: RoutedRuntimeRegistrar,
+  logger?: ChannelStartupLogger,
+): Promise<void> {
+  const routedByRuntime = new Map(
+    registry
+      .resolveRoutedRuntimeSources()
+      .map((routed) => [`${routed.agentId}:${routed.conversationId}`, routed]),
+  );
+  for (const runtime of gateway.getKnownRuntimes()) {
+    const key = `${runtime.agent_id}:${runtime.conversation_id}`;
+    if (!routedByRuntime.has(key)) {
+      routedByRuntime.set(key, {
+        agentId: runtime.agent_id,
+        conversationId: runtime.conversation_id,
+        sources: [],
+      });
+    }
+  }
+  for (const routed of routedByRuntime.values()) {
+    try {
+      await gateway.registerRuntime(
+        {
+          agent_id: routed.agentId,
+          conversation_id: routed.conversationId,
+        },
+        routed.sources,
+      );
+    } catch (error) {
+      logger?.(
+        `[ChannelGateway] Failed to refresh routed runtime ${routed.agentId}/${routed.conversationId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+}
+
+export function createRoutedRuntimeRegistrationRefresher(
+  registry: ChannelRegistry,
+  gateway: RoutedRuntimeRegistrar,
+  logger?: ChannelStartupLogger,
+): { refresh: () => Promise<void> } {
+  let pending = Promise.resolve();
+  return {
+    refresh: () => {
+      pending = pending.then(() =>
+        refreshRoutedRuntimeRegistrations(registry, gateway, logger),
+      );
+      return pending;
+    },
+  };
 }
 
 export interface LocalChannelGatewayHandle {
@@ -214,14 +276,16 @@ export async function startLocalChannelGateway(
           }
         : null;
     },
-    buildExternalTool: async (runtime, deliverySources) => {
+    buildExternalTool: async (runtime) => {
       const routeSources = registry.resolveTurnSourcesForScope(
         runtime.agent_id,
         runtime.conversation_id,
       );
-      const sources = [...routeSources, ...deliverySources];
+      if (routeSources.length === 0) {
+        return null;
+      }
       const seen = new Set<string>();
-      const channels = sources
+      const channels = routeSources
         .map((source) => ({
           channelId: source.channel,
           accountId: source.accountId ?? null,
@@ -267,6 +331,9 @@ export async function startLocalChannelGateway(
     onProgress: (event) => registry.dispatchTurnProgressEvent(event),
     onControlRequest: (event) => registry.registerPendingControlRequest(event),
   });
+
+  const routedRuntimeRegistrationRefresher =
+    createRoutedRuntimeRegistrationRefresher(registry, gateway, options.logger);
 
   registry.setMessageHandler((delivery) => {
     const sources = delivery.turnSources ?? [];
@@ -348,6 +415,18 @@ export async function startLocalChannelGateway(
       });
       return;
     }
+    if (event.type === "routes_updated") {
+      options.onServiceEvent?.({
+        kind: "protocol",
+        message: {
+          type: "channels_updated",
+          timestamp: Date.now(),
+          channel_id: event.channelId,
+        },
+      });
+      void routedRuntimeRegistrationRefresher.refresh();
+      return;
+    }
     if (event.type === "channel_account_state_updated") {
       options.onServiceEvent?.({
         kind: "protocol",
@@ -366,6 +445,7 @@ export async function startLocalChannelGateway(
           channel_id: event.channelId,
         },
       });
+      void routedRuntimeRegistrationRefresher.refresh();
       return;
     }
     void gateway
@@ -425,6 +505,7 @@ export async function startLocalChannelGateway(
       }
     }
   }
+  await routedRuntimeRegistrationRefresher.refresh();
 
   registry.setCancelHandler(async ({ runtime }) => {
     const response = await client.abort({ runtime, run_id: null });

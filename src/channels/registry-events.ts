@@ -10,6 +10,10 @@ export type ChannelRegistryEvent =
       channelId: string;
     }
   | {
+      type: "routes_updated";
+      channelId: string;
+    }
+  | {
       type: "channel_account_state_updated";
       channelId: string;
       accountId: string;

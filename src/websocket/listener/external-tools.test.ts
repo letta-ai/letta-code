@@ -110,6 +110,78 @@ describe("app-server runtime_start external tool bridge", () => {
     });
   });
 
+  test("delegates a selected runtime scope to a process-owned cron turn", async () => {
+    const { runtime, sent } = createMockRuntime();
+    installExternalToolBridge(runtime);
+    registerRuntimeExternalTools(
+      runtime,
+      "client-1",
+      { agent_id: "agent-1", conversation_id: "conv-1" },
+      [
+        {
+          scope_id: "channel-gateway",
+          tools: [
+            {
+              name: "MessageChannel",
+              description: "Send through an eligible routed channel",
+              parameters: {
+                type: "object",
+                properties: { id: { type: "string" } },
+              },
+            },
+          ],
+        },
+      ],
+    );
+
+    const withoutDelegation = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        runtimeContext: {
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    expect(withoutDelegation.clientTools).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "MessageChannel" }),
+      ]),
+    );
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        externalToolScopeIds: ["channel-gateway"],
+        runtimeContext: {
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    expect(prepared.clientTools).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "MessageChannel",
+          description: "Send through an eligible routed channel",
+        }),
+      ]),
+    );
+
+    const result = await executeTool(
+      "MessageChannel",
+      { id: "scheduled" },
+      { toolContextId: prepared.contextId, toolCallId: "call-cron" },
+    );
+    expect(result.status).toBe("success");
+    expect(result.toolReturn).toBe("lookup:scheduled");
+    expect(sent[0]).toMatchObject({
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      scope_id: "channel-gateway",
+      tool_name: "MessageChannel",
+    });
+  });
+
   test("keeps same tool name and scope id isolated across runtimes", async () => {
     const { runtime } = createMockRuntime();
     registerRuntimeExternalTools(
@@ -260,6 +332,41 @@ describe("app-server runtime_start external tool bridge", () => {
     expect(preparedAfterDisconnect.clientTools).toEqual([
       expect.objectContaining({ description: "Lookup from client A" }),
     ]);
+  });
+
+  test("empty runtime_start registration removes tools for that runtime", async () => {
+    const { runtime } = createMockRuntime();
+    const runtimeScope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    registerRuntimeExternalTools(runtime, "client-1", runtimeScope, [
+      {
+        scope_id: "channel-gateway",
+        tools: [
+          {
+            name: "MessageChannel",
+            description: "Send through a routed channel",
+            parameters: { type: "object", properties: {} },
+          },
+        ],
+      },
+    ]);
+    registerRuntimeExternalTools(runtime, "client-1", runtimeScope, []);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        externalToolScopeIds: ["channel-gateway"],
+        runtimeContext: {
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+
+    expect(prepared.clientTools).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "MessageChannel" }),
+      ]),
+    );
   });
 
   test("repeated runtime_start registration replaces tools for that runtime", async () => {

@@ -1,4 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import { CHANNEL_GATEWAY_TOOL_SCOPE_ID } from "@/channels/gateway-core";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -159,11 +160,15 @@ function buildQueuedTurnMessage(
 
     // Determine scope from the batch items (they all share the same scope)
     const scopeItem = batch.items[0];
+    const isCronTurn = batch.items.some((item) => item.kind === "cron_prompt");
     return {
       type: "message",
       agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
       conversationId: scopeItem?.conversationId ?? runtime.conversationId,
       ...(actingUserId ? { actingUserId } : {}),
+      ...(isCronTurn
+        ? { externalToolScopeIds: [CHANNEL_GATEWAY_TOOL_SCOPE_ID] }
+        : {}),
       messages: [
         {
           role: "user",

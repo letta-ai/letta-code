@@ -393,22 +393,22 @@ function filterToolRegistryByClientAllowlist(
 function filterExternalToolsByRuntimeContext(
   externalTools: Map<string, ExternalToolDefinition>,
   runtimeContext: RuntimeContextSnapshot,
+  externalToolScopeIds?: string[],
 ): Map<string, ExternalToolDefinition> {
   return new Map(
-    Array.from(externalTools.entries()).filter(([, tool]) => {
-      const matchesConnection =
-        tool.connectionId === undefined ||
-        tool.connectionId === runtimeContext.connectionId;
-      return (
-        matchesConnection &&
+    Array.from(externalTools.entries()).filter(
+      ([, tool]) =>
+        (tool.connectionId === undefined ||
+          tool.connectionId === runtimeContext.connectionId ||
+          (runtimeContext.connectionId === undefined &&
+            tool.scopeId !== undefined &&
+            externalToolScopeIds?.includes(tool.scopeId) === true)) &&
         (!tool.runtime ||
           (tool.runtime.agentId === runtimeContext.agentId &&
-            tool.runtime.conversationId === runtimeContext.conversationId))
-      );
-    }),
+            tool.runtime.conversationId === runtimeContext.conversationId)),
+    ),
   );
 }
-
 function filterExternalToolsByScopeIds(
   externalTools: Map<string, ExternalToolDefinition>,
   externalToolScopeIds?: string[],
@@ -423,7 +423,6 @@ function filterExternalToolsByScopeIds(
     }),
   );
 }
-
 function toModelFacingExternalToolMap(
   externalTools: Map<string, ExternalToolDefinition>,
 ): Map<string, ExternalToolDefinition> {
@@ -1140,6 +1139,7 @@ function capturePreparedToolExecutionContext(
           filterExternalToolsByRuntimeContext(
             snapshot.externalTools,
             runtimeContext,
+            options?.externalToolScopeIds,
           ),
           options?.externalToolScopeIds,
         ),

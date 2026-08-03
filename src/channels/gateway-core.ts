@@ -58,7 +58,7 @@ export interface ChannelGatewayHooks {
   buildExternalTool(
     runtime: RuntimeScope,
     sources: ChannelTurnSource[],
-  ): Promise<ExternalToolDefinitionPayload>;
+  ): Promise<ExternalToolDefinitionPayload | null>;
   executeExternalTool(
     request: ExternalToolCallRequestMessage,
     sources: ChannelTurnSource[],
@@ -328,6 +328,10 @@ export class ChannelGateway {
     return result.accepted;
   }
 
+  getKnownRuntimes(): RuntimeScope[] {
+    return [...this.states.values()].map((state) => state.runtime);
+  }
+
   getModelStatus(runtime: RuntimeScope): ChannelGatewayModelStatus | null {
     return this.states.get(runtimeKey(runtime))?.modelStatus ?? null;
   }
@@ -414,12 +418,14 @@ export class ChannelGateway {
         force_device_status: false,
         wait_for_replay: true,
         client_info: { name: "channel-gateway", title: "Channel Gateway" },
-        external_tools: [
-          {
-            scope_id: CHANNEL_GATEWAY_TOOL_SCOPE_ID,
-            tools: [tool],
-          },
-        ],
+        external_tools: tool
+          ? [
+              {
+                scope_id: CHANNEL_GATEWAY_TOOL_SCOPE_ID,
+                tools: [tool],
+              },
+            ]
+          : [],
       })
       .then((response) => {
         if (!response.success) {

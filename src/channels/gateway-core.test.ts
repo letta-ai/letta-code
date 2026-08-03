@@ -583,6 +583,35 @@ test("runtime registration happens before input submission", async () => {
   gateway.close();
 });
 
+test("runtime registration removes the gateway tool when routes become ineligible", async () => {
+  const client = new FakeClient();
+  let eligible = true;
+  const { hooks } = makeHooks({
+    buildExternalTool: async () =>
+      eligible
+        ? {
+            name: "MessageChannel",
+            description: "Send a message through a channel",
+            parameters: {},
+          }
+        : null,
+  });
+  const gateway = new ChannelGateway(client, hooks);
+
+  await gateway.registerRuntime(TEST_RUNTIME, [makeSource()]);
+  eligible = false;
+  await gateway.registerRuntime(TEST_RUNTIME, []);
+
+  expect(client.startedRuntimes).toHaveLength(2);
+  expect(client.startedRuntimes[0]?.external_tools).toEqual([
+    expect.objectContaining({ scope_id: "channel-gateway" }),
+  ]);
+  expect(client.startedRuntimes[1]?.external_tools).toEqual([]);
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+
+  gateway.close();
+});
+
 test("runtime registration is skipped when signature matches", async () => {
   const client = new FakeClient();
   const { hooks } = makeHooks();
