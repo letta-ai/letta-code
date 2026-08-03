@@ -1,151 +1,54 @@
-import { execFile } from "node:child_process";
-import {
-  existsSync,
-  lstatSync,
-  readFileSync,
-  realpathSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
-import { promisify } from "node:util";
 import {
   assertMemoryRepoCleanForWrite,
-  buildNonInteractiveGitEnv,
+  commitMemoryWrite,
 } from "@/agent/memory-git";
-import {
-  installPostCommitHook,
-  installPreCommitHook,
-} from "@/agent/memory-git-hooks";
+import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 
-const execFileAsync = promisify(execFile);
-
-export interface ReadOnlyFrontmatterUpdate {
-  content: string;
-  changed: boolean;
-  previous: boolean | null;
-}
-
-/** Update only the protected read_only key while preserving the rest verbatim. */
 export function updateReadOnlyFrontmatter(
   content: string,
-  readOnly: boolean,
-): ReadOnlyFrontmatterUpdate {
-  const match = content.match(/^(---(\r?\n))([\s\S]*?)(\r?\n)---(?=\r?\n|$)/);
-  if (!match) {
-    throw new Error("Memory file is missing required frontmatter.");
+  value: boolean,
+): string | null {
+  const frontmatter = /^---\r?\n[\s\S]*?\r?\n---/.exec(content);
+  if (!frontmatter) throw new Error("Memory file is missing frontmatter.");
+
+  const field = /^read_only\s*:\s*(.*?)\s*$/m.exec(frontmatter[0]);
+  if (field && field[1] !== "true" && field[1] !== "false") {
+    throw new Error("Memory file read_only must be true or false.");
+  }
+  if (field?.[1] === String(value)) return null;
+  if (field) {
+    return content.replace(
+      /^read_only\s*:\s*(?:true|false)\s*$/m,
+      `read_only: ${value}`,
+    );
   }
 
-  const newline = match[2] ?? "\n";
-  const frontmatter = match[3] ?? "";
-  if (/^description\s*:/m.exec(frontmatter) === null) {
-    throw new Error("Memory file frontmatter is missing 'description'.");
-  }
-
-  const readOnlyLines = [
-    ...frontmatter.matchAll(/^read_only\s*:\s*(.*?)\s*$/gm),
-  ];
-  if (readOnlyLines.length > 1) {
-    throw new Error("Memory file has duplicate read_only fields.");
-  }
-
-  let previous: boolean | null = null;
-  if (readOnlyLines.length === 1) {
-    const value = readOnlyLines[0]?.[1]?.trim();
-    if (value !== "true" && value !== "false") {
-      throw new Error("Memory file read_only field must be true or false.");
-    }
-    previous = value === "true";
-    if (previous === readOnly) {
-      return { content, changed: false, previous };
-    }
-  }
-
-  const updatedFrontmatter =
-    previous === null
-      ? `${frontmatter}${newline}read_only: ${readOnly}`
-      : frontmatter.replace(
-          /^read_only\s*:\s*(.*?)\s*$/m,
-          `read_only: ${readOnly}`,
-        );
-  const updated = `${match[1]}${updatedFrontmatter}${match[4]}---${content.slice(match[0].length)}`;
-  return { content: updated, changed: true, previous };
+  const newline = frontmatter[0].includes("\r\n") ? "\r\n" : "\n";
+  const closing = frontmatter.index + frontmatter[0].length - 3;
+  return `${content.slice(0, closing)}read_only: ${value}${newline}${content.slice(closing)}`;
 }
 
-function resolveMemoryFile(
-  memoryDir: string,
-  inputPath: string,
-): {
-  absolutePath: string;
-  relativePath: string;
-} {
-  if (!inputPath || isAbsolute(inputPath)) {
-    throw new Error(
-      "Memory file path must be relative to the memory directory.",
-    );
-  }
-
-  const absolutePath = resolve(memoryDir, inputPath);
+function resolveMemoryFile(memoryDir: string, input: string) {
+  if (isAbsolute(input)) throw new Error("Memory path must be relative.");
+  const absolutePath = resolve(memoryDir, input);
   const relativePath = relative(memoryDir, absolutePath).replace(/\\/g, "/");
-  if (
-    !relativePath ||
-    relativePath.startsWith("../") ||
-    /^(system|reference)\/.+\.md$/.exec(relativePath) === null
-  ) {
+  if (!/^(system|reference)\/.+\.md$/.test(relativePath)) {
     throw new Error(
-      "Memory file must be a .md file under system/ or reference/.",
+      "Memory path must be a .md file under system/ or reference/.",
     );
   }
-  if (!existsSync(absolutePath) || !lstatSync(absolutePath).isFile()) {
-    throw new Error(`Memory file not found: ${relativePath}`);
-  }
-
-  const realRoot = realpathSync(memoryDir);
-  const realFile = realpathSync(absolutePath);
-  const realRelative = relative(realRoot, realFile);
-  if (realRelative.startsWith("..") || isAbsolute(realRelative)) {
+  if (!existsSync(absolutePath))
+    throw new Error(`Memory file not found: ${input}`);
+  if (
+    relative(realpathSync(memoryDir), realpathSync(absolutePath)).startsWith(
+      "..",
+    )
+  ) {
     throw new Error("Memory file resolves outside the memory directory.");
   }
-
   return { absolutePath, relativePath };
-}
-
-async function commitReadOnlyToggle(args: {
-  memoryDir: string;
-  relativePath: string;
-  agentId: string;
-  reason: string;
-}): Promise<string> {
-  installPreCommitHook(args.memoryDir);
-  installPostCommitHook(args.memoryDir);
-  const runGit = (gitArgs: string[], env = process.env) =>
-    execFileAsync("git", gitArgs, {
-      cwd: args.memoryDir,
-      env: buildNonInteractiveGitEnv(env),
-      maxBuffer: 10 * 1024 * 1024,
-    });
-
-  await runGit(["add", "--", args.relativePath]);
-  try {
-    await runGit(
-      [
-        "-c",
-        "commit.gpgsign=false",
-        "-c",
-        `user.name=${args.agentId}`,
-        "-c",
-        `user.email=${args.agentId}@letta.com`,
-        "commit",
-        "-m",
-        args.reason,
-      ],
-      { ...process.env, LETTA_APPROVED_READ_ONLY_CHANGE: "1" },
-    );
-  } catch (error) {
-    await runGit(["reset", "HEAD", "--", args.relativePath]).catch(() => {});
-    throw error;
-  }
-  const { stdout } = await runGit(["rev-parse", "HEAD"]);
-  return stdout.toString().trim();
 }
 
 export async function runMemoryReadOnlyAction(args: {
@@ -155,10 +58,8 @@ export async function runMemoryReadOnlyAction(args: {
   value?: string;
   extraPositionals: string[];
 }): Promise<number> {
-  if (!args.path || !args.value || args.extraPositionals.length > 0) {
-    console.error(
-      "Usage: letta memory read-only <system/or/reference/file.md> <true|false> --agent <id>",
-    );
+  if (!args.path || !args.value || args.extraPositionals.length) {
+    console.error("Usage: letta memory read-only <path> <true|false>");
     return 1;
   }
   if (args.value !== "true" && args.value !== "false") {
@@ -167,53 +68,41 @@ export async function runMemoryReadOnlyAction(args: {
   }
 
   await assertMemoryRepoCleanForWrite(args.memoryDir);
-  const { absolutePath, relativePath } = resolveMemoryFile(
-    args.memoryDir,
-    args.path,
-  );
-  const original = readFileSync(absolutePath, "utf8");
+  const file = resolveMemoryFile(args.memoryDir, args.path);
+  const original = readFileSync(file.absolutePath, "utf8");
   const desired = args.value === "true";
-  const update = updateReadOnlyFrontmatter(original, desired);
-  if (!update.changed) {
-    console.log(
-      JSON.stringify(
-        {
-          agentId: args.agentId,
-          path: relativePath,
-          readOnly: desired,
-          changed: false,
-        },
-        null,
-        2,
-      ),
-    );
-    return 0;
-  }
+  const updated = updateReadOnlyFrontmatter(original, desired);
+  if (updated === null) return 0;
 
-  writeFileSync(absolutePath, update.content, "utf8");
+  writeFileSync(file.absolutePath, updated, "utf8");
+  const previousApproval = process.env.LETTA_APPROVED_READ_ONLY_CHANGE;
+  process.env.LETTA_APPROVED_READ_ONLY_CHANGE = "1";
   try {
-    const sha = await commitReadOnlyToggle({
+    const result = await commitMemoryWrite({
       memoryDir: args.memoryDir,
-      relativePath,
-      agentId: args.agentId,
-      reason: `${desired ? "Mark" : "Unmark"} ${relativePath} as read-only`,
+      pathspecs: [file.relativePath],
+      reason: `${desired ? "Mark" : "Unmark"} ${file.relativePath} as read-only`,
+      author: {
+        agentId: args.agentId,
+        authorName: args.agentId,
+        authorEmail: `${args.agentId}@letta.com`,
+      },
+      syncMode: isLocalBackendEnvEnabled() ? "local" : "remote",
     });
+    if (!result.committed) {
+      writeFileSync(file.absolutePath, original, "utf8");
+      return 1;
+    }
     console.log(
-      JSON.stringify(
-        {
-          agentId: args.agentId,
-          path: relativePath,
-          readOnly: desired,
-          changed: true,
-          commit: sha,
-        },
-        null,
-        2,
-      ),
+      JSON.stringify({ ...result, path: file.relativePath, readOnly: desired }),
     );
     return 0;
   } catch (error) {
-    writeFileSync(absolutePath, original, "utf8");
+    writeFileSync(file.absolutePath, original, "utf8");
     throw error;
+  } finally {
+    if (previousApproval === undefined)
+      delete process.env.LETTA_APPROVED_READ_ONLY_CHANGE;
+    else process.env.LETTA_APPROVED_READ_ONLY_CHANGE = previousApproval;
   }
 }
