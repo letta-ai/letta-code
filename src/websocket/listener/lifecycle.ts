@@ -906,8 +906,8 @@ export function stopRuntime(
     );
     clearConversationRuntimeState(conversationRuntime);
     if (conversationRuntime.queueRuntime) {
-      conversationRuntime.queuedMessagesByItemId.clear();
       conversationRuntime.queueRuntime.clear("shutdown");
+      conversationRuntime.queuedMessagesByItemId.clear();
     }
   }
   runtime.conversationRuntimes.clear();

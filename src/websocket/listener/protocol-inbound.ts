@@ -33,7 +33,6 @@ import type {
   ChannelTargetsListCommand,
   ChatGPTUsageReadCommand,
   CheckoutBranchCommand,
-  ClientToolsetConfig,
   ConnectProviderCommand,
   ConversationCompactCommand,
   ConversationCreateCommand,
@@ -63,8 +62,6 @@ import type {
   GetReflectionSettingsCommand,
   GetTreeCommand,
   GrepInFilesCommand,
-  InputCommand,
-  InputCreateMessagePayload,
   ListConnectProvidersCommand,
   ListInDirectoryCommand,
   ListMemoryCommand,
@@ -109,7 +106,11 @@ function isExperimentId(value: unknown): value is ExperimentId {
   return typeof value === "string" && EXPERIMENT_IDS.has(value as ExperimentId);
 }
 
-import { isValidApprovalResponseBody } from "./approval";
+import {
+  getInvalidInputReason,
+  isInputCommand,
+  legacyEnvironmentMessageToInputCommand,
+} from "./input-protocol-inbound";
 import {
   isAppServerInfoCommand,
   isConversationForkCommand,
@@ -125,26 +126,6 @@ function isStringArray(value: unknown): value is string[] {
     Array.isArray(value) && value.every((item) => typeof item === "string")
   );
 }
-const TOOLSET_PREFERENCES = new Set([
-  "auto",
-  "codex",
-  "codex_snake",
-  "default",
-  "gemini",
-  "gemini_snake",
-  "none",
-]);
-
-function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
-  if (!isObjectRecord(value)) return false;
-  return (
-    (value.base === undefined ||
-      (typeof value.base === "string" &&
-        TOOLSET_PREFERENCES.has(value.base))) &&
-    (value.include === undefined || isStringArray(value.include))
-  );
-}
-
 function isStringRecord(value: unknown): value is Record<string, string> {
   return (
     !!value &&
@@ -169,202 +150,6 @@ function isRuntimeScope(value: unknown): value is RuntimeScope {
     typeof candidate.conversation_id === "string" &&
     candidate.conversation_id.length > 0
   );
-}
-
-function isInputCommand(value: unknown): value is InputCommand {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const candidate = value as {
-    type?: unknown;
-    runtime?: unknown;
-    payload?: unknown;
-  };
-  if (candidate.type !== "input" || !isRuntimeScope(candidate.runtime)) {
-    return false;
-  }
-  if (!candidate.payload || typeof candidate.payload !== "object") {
-    return false;
-  }
-
-  const payload = candidate.payload as {
-    kind?: unknown;
-    messages?: unknown;
-    client_tool_allowlist?: unknown;
-    client_toolset?: unknown;
-    external_tool_scope_ids?: unknown;
-    exclude_interactive_tools?: unknown;
-    request_id?: unknown;
-    decision?: unknown;
-    error?: unknown;
-  };
-  if (payload.kind === "create_message") {
-    return (
-      Array.isArray(payload.messages) &&
-      (payload.client_tool_allowlist === undefined ||
-        isStringArray(payload.client_tool_allowlist)) &&
-      (payload.client_toolset === undefined ||
-        isClientToolsetConfig(payload.client_toolset)) &&
-      (payload.external_tool_scope_ids === undefined ||
-        isStringArray(payload.external_tool_scope_ids)) &&
-      (payload.exclude_interactive_tools === undefined ||
-        typeof payload.exclude_interactive_tools === "boolean")
-    );
-  }
-  if (payload.kind === "approval_response") {
-    return isValidApprovalResponseBody(payload);
-  }
-  return false;
-}
-
-function legacyEnvironmentMessageToInputCommand(
-  value: unknown,
-): InputCommand | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const candidate = value as {
-    type?: unknown;
-    agentId?: unknown;
-    conversationId?: unknown;
-    conversation_id?: unknown;
-    messages?: unknown;
-    clientToolAllowlist?: unknown;
-    clientToolset?: unknown;
-    externalToolScopeIds?: unknown;
-  };
-  if (
-    candidate.type !== "message" ||
-    typeof candidate.agentId !== "string" ||
-    candidate.agentId.length === 0 ||
-    !Array.isArray(candidate.messages)
-  ) {
-    return null;
-  }
-  const conversationId =
-    typeof candidate.conversationId === "string"
-      ? candidate.conversationId
-      : typeof candidate.conversation_id === "string"
-        ? candidate.conversation_id
-        : "default";
-  return {
-    type: "input",
-    runtime: {
-      agent_id: candidate.agentId,
-      conversation_id: conversationId,
-    },
-    payload: {
-      kind: "create_message",
-      messages: candidate.messages as InputCreateMessagePayload["messages"],
-      client_tool_allowlist: isStringArray(candidate.clientToolAllowlist)
-        ? candidate.clientToolAllowlist
-        : undefined,
-      client_toolset: isClientToolsetConfig(candidate.clientToolset)
-        ? candidate.clientToolset
-        : undefined,
-      external_tool_scope_ids: isStringArray(candidate.externalToolScopeIds)
-        ? candidate.externalToolScopeIds
-        : undefined,
-    },
-  };
-}
-
-function getInvalidInputReason(value: unknown): {
-  runtime: RuntimeScope;
-  reason: string;
-} | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const candidate = value as {
-    type?: unknown;
-    runtime?: unknown;
-    payload?: unknown;
-  };
-  if (candidate.type !== "input" || !isRuntimeScope(candidate.runtime)) {
-    return null;
-  }
-  if (!candidate.payload || typeof candidate.payload !== "object") {
-    return {
-      runtime: candidate.runtime,
-      reason: "Protocol violation: input.payload must be an object",
-    };
-  }
-  const payload = candidate.payload as {
-    kind?: unknown;
-    messages?: unknown;
-    client_tool_allowlist?: unknown;
-    client_toolset?: unknown;
-    external_tool_scope_ids?: unknown;
-    exclude_interactive_tools?: unknown;
-    request_id?: unknown;
-    decision?: unknown;
-    error?: unknown;
-  };
-  if (payload.kind === "create_message") {
-    if (!Array.isArray(payload.messages)) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.kind=create_message requires payload.messages[]",
-      };
-    }
-    if (
-      payload.client_tool_allowlist !== undefined &&
-      !isStringArray(payload.client_tool_allowlist)
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.client_tool_allowlist must be string[]",
-      };
-    }
-    if (
-      payload.client_toolset !== undefined &&
-      !isClientToolsetConfig(payload.client_toolset)
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.client_toolset must contain an optional valid base and string[] include",
-      };
-    }
-    if (
-      payload.exclude_interactive_tools !== undefined &&
-      typeof payload.exclude_interactive_tools !== "boolean"
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.exclude_interactive_tools must be boolean",
-      };
-    }
-    if (
-      payload.external_tool_scope_ids !== undefined &&
-      !isStringArray(payload.external_tool_scope_ids)
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.external_tool_scope_ids must be string[]",
-      };
-    }
-    return null;
-  }
-  if (payload.kind === "approval_response") {
-    if (!isValidApprovalResponseBody(payload)) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.kind=approval_response requires payload.request_id and either payload.decision or payload.error",
-      };
-    }
-    return null;
-  }
-  return {
-    runtime: candidate.runtime,
-    reason: `Unsupported input payload kind: ${String(payload.kind)}`,
-  };
 }
 
 function isChangeDeviceStateCommand(

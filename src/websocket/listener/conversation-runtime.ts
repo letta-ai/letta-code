@@ -1,12 +1,34 @@
-import { QueueRuntime } from "@/queue/queue-runtime";
+import { type QueueItem, QueueRuntime } from "@/queue/queue-runtime";
 import { markRuntimeInputsDropped } from "./input-state";
 import { scheduleQueueEmit } from "./protocol-outbound";
-import { getQueueItemScope, getQueueItemsScope } from "./queue";
+import {
+  getQueueItemClientMessageIds,
+  getQueueItemScope,
+  getQueueItemsScope,
+} from "./queue";
 import {
   evictConversationRuntimeIfIdle,
   getOrCreateConversationRuntime,
 } from "./runtime";
 import type { ConversationRuntime, ListenerRuntime } from "./types";
+
+function settleDiscardedQueueItem(
+  listener: ListenerRuntime,
+  runtime: ConversationRuntime,
+  item: QueueItem,
+  reason: string,
+  queueLen: number,
+): void {
+  runtime.pendingTurns = queueLen;
+  markRuntimeInputsDropped(
+    runtime,
+    getQueueItemClientMessageIds(runtime, item),
+    reason,
+  );
+  runtime.queuedMessagesByItemId.delete(item.id);
+  scheduleQueueEmit(listener, getQueueItemScope(item));
+  evictConversationRuntimeIfIdle(runtime);
+}
 
 export function ensureConversationQueueRuntime(
   listener: ListenerRuntime,
@@ -35,24 +57,20 @@ export function ensureConversationQueueRuntime(
         runtime.pendingTurns = 0;
         markRuntimeInputsDropped(
           runtime,
-          items.flatMap((item) =>
-            item.kind === "message" && item.clientMessageId
-              ? [item.clientMessageId]
-              : [],
-          ),
+          items.flatMap((item) => getQueueItemClientMessageIds(runtime, item)),
           `Listener queue cleared: ${reason}`,
         );
+        for (const item of items) {
+          runtime.queuedMessagesByItemId.delete(item.id);
+        }
         scheduleQueueEmit(listener, getQueueItemsScope(items));
         evictConversationRuntimeIfIdle(runtime);
       },
       onDropped: (item, reason, queueLen) => {
-        runtime.pendingTurns = queueLen;
-        if (item.kind === "message" && item.clientMessageId) {
-          markRuntimeInputsDropped(runtime, [item.clientMessageId], reason);
-        }
-        runtime.queuedMessagesByItemId.delete(item.id);
-        scheduleQueueEmit(listener, getQueueItemScope(item));
-        evictConversationRuntimeIfIdle(runtime);
+        settleDiscardedQueueItem(listener, runtime, item, reason, queueLen);
+      },
+      onRemoved: (item, queueLen) => {
+        settleDiscardedQueueItem(listener, runtime, item, "removed", queueLen);
       },
     },
   });

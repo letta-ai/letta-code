@@ -57,7 +57,7 @@ function setup() {
   return { runtime, events, processIncomingMessage, handleMessage };
 }
 
-function command(content = "hello") {
+function command(content = "hello", clientMessageIds = ["cm-1"]) {
   return Buffer.from(
     JSON.stringify({
       type: "input",
@@ -65,13 +65,11 @@ function command(content = "hello") {
       runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
       payload: {
         kind: "create_message",
-        messages: [
-          {
-            role: "user",
-            content,
-            client_message_id: "cm-1",
-          },
-        ],
+        messages: clientMessageIds.map((clientMessageId, index) => ({
+          role: "user",
+          content: index === 0 ? content : `${content} ${index + 1}`,
+          client_message_id: clientMessageId,
+        })),
       },
     }),
   );
@@ -106,24 +104,82 @@ describe("listener input admission state", () => {
       workingDirectory: process.cwd(),
     });
 
-    await handleMessage(command());
+    await handleMessage(command("queued", ["cm-a", "cm-b"]));
     expect(processIncomingMessage).not.toHaveBeenCalled();
     expect(runtime.queueRuntime.length).toBe(1);
     expect(
-      events.filter((event) => event.type === "runtime_input_state").at(-1),
-    ).toMatchObject({
-      client_message_id: "cm-1",
-      status: "admitted",
-      admission: "queued",
-    });
+      events
+        .filter(
+          (event) =>
+            event.type === "runtime_input_state" && event.status === "admitted",
+        )
+        .map((event) => event.client_message_id),
+    ).toEqual(["cm-a", "cm-b"]);
 
     runtime.queueRuntime.clear("error");
+    expect(
+      events
+        .filter(
+          (event) =>
+            event.type === "runtime_input_state" && event.status === "dropped",
+        )
+        .map((event) => event.client_message_id),
+    ).toEqual(["cm-a", "cm-b"]);
+    runtime.turnLifecycle.finish(lease, "end_turn");
+  });
+
+  test("explicit queue removal reports a correlated drop", async () => {
+    const { runtime, events, handleMessage } = setup();
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    await handleMessage(command());
+
+    const queued = runtime.queueRuntime.items[0];
+    expect(queued).toBeDefined();
+    runtime.queueRuntime.removeItem(queued?.id ?? "");
+
     expect(
       events.filter((event) => event.type === "runtime_input_state").at(-1),
     ).toMatchObject({
       client_message_id: "cm-1",
       status: "dropped",
+      error: "removed",
     });
+    runtime.turnLifecycle.finish(lease, "end_turn");
+  });
+
+  test("hard-limit rejection drops every identity exactly once", async () => {
+    const { runtime, events, handleMessage } = setup();
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    for (let index = 0; index < 300; index += 1) {
+      expect(
+        runtime.queueRuntime.enqueue({
+          kind: "approval_result",
+          source: "system",
+          text: `barrier-${index}`,
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        } as Parameters<typeof runtime.queueRuntime.enqueue>[0]),
+      ).not.toBeNull();
+    }
+
+    await handleMessage(command("overflow", ["cm-a", "cm-b"]));
+
+    const inputEvents = events.filter(
+      (event) => event.type === "runtime_input_state",
+    );
+    expect(inputEvents).toHaveLength(2);
+    expect(inputEvents.map((event) => event.client_message_id)).toEqual([
+      "cm-a",
+      "cm-b",
+    ]);
+    expect(inputEvents.every((event) => event.status === "dropped")).toBe(true);
+    runtime.queueRuntime.clear("shutdown");
     runtime.turnLifecycle.finish(lease, "end_turn");
   });
 });

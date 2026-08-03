@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   InputCreateMessagePayload,
   RuntimeInputStateMessage,
@@ -6,38 +7,42 @@ import type {
 import { TO_SUBSCRIBERS } from "./connection";
 import { emitProtocolV2Message } from "./protocol-outbound";
 import { isListenerTransportOpen } from "./transport";
-import type { ConversationRuntime, IncomingMessage } from "./types";
+import type { TurnLease } from "./turn-lifecycle";
+import type {
+  ConversationRuntime,
+  IncomingMessage,
+  RuntimeInputStateRecord,
+} from "./types";
 
 const MAX_RUNTIME_INPUT_STATES = 4096;
 
-type InputState = {
-  requestId: string;
-  payloadFingerprint: string;
-  status: "pending" | RuntimeInputStatus;
-  admission?: "direct" | "queued";
-  runId?: string;
-  error?: string;
-};
-
-const inputStateMaps = new WeakMap<object, Map<string, InputState>>();
+export function getRuntimeInputRunId(
+  chunk: unknown,
+  errorInfo?: unknown,
+): string | undefined {
+  const chunkRunId = (chunk as { run_id?: unknown } | null)?.run_id;
+  if (typeof chunkRunId === "string") return chunkRunId;
+  const errorRunId = (errorInfo as { run_id?: unknown } | null)?.run_id;
+  return typeof errorRunId === "string" ? errorRunId : undefined;
+}
 
 function stateKey(runtime: ConversationRuntime, clientMessageId: string) {
   return `${runtime.key}::${clientMessageId}`;
 }
 
-function stateMap(runtime: ConversationRuntime): Map<string, InputState> {
-  let states = inputStateMaps.get(runtime.listener);
-  if (!states) {
-    states = new Map();
-    inputStateMaps.set(runtime.listener, states);
+function stateMap(
+  runtime: ConversationRuntime,
+): Map<string, RuntimeInputStateRecord> {
+  if (!runtime.listener.runtimeInputStates) {
+    runtime.listener.runtimeInputStates = new Map();
   }
-  return states;
+  return runtime.listener.runtimeInputStates;
 }
 
 function emitState(
   runtime: ConversationRuntime,
   clientMessageId: string,
-  state: InputState,
+  state: RuntimeInputStateRecord,
 ): void {
   if (state.status === "pending") return;
   const transport = runtime.listener.transport ?? runtime.listener.socket;
@@ -67,12 +72,21 @@ function transition(
   runtime: ConversationRuntime,
   clientMessageIds: string[],
   status: RuntimeInputStatus,
-  details: Partial<InputState> = {},
+  details: Partial<RuntimeInputStateRecord> = {},
 ): void {
-  const states = stateMap(runtime);
+  const states = runtime.listener.runtimeInputStates;
+  if (!states) return;
   for (const clientMessageId of clientMessageIds) {
     const state = states.get(stateKey(runtime, clientMessageId));
     if (!state || state.status === "core_owned") continue;
+    if (
+      state.status === status &&
+      state.admission === details.admission &&
+      state.runId === details.runId &&
+      state.error === details.error
+    ) {
+      continue;
+    }
     Object.assign(state, details, { status });
     emitState(runtime, clientMessageId, state);
   }
@@ -108,6 +122,27 @@ function clientMessageIds(payload: InputCreateMessagePayload): string[] {
   ];
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .filter((key) => record[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function payloadFingerprint(payload: InputCreateMessagePayload): string {
+  return createHash("sha256")
+    .update(canonicalJson(payload))
+    .digest("base64url");
+}
+
 export function prepareRuntimeInputCommand(
   runtime: ConversationRuntime,
   payload: InputCreateMessagePayload,
@@ -120,7 +155,7 @@ export function prepareRuntimeInputCommand(
   if (ids.length === 0) return null;
 
   const states = stateMap(runtime);
-  const fingerprint = JSON.stringify(payload);
+  const fingerprint = payloadFingerprint(payload);
   const existing = ids.map((id) => states.get(stateKey(runtime, id)));
   if (
     existing.some((state) => state && state.payloadFingerprint !== fingerprint)
@@ -133,14 +168,12 @@ export function prepareRuntimeInputCommand(
     return null;
   }
   if (existing.every(Boolean)) {
-    if (
-      !existing.every(
-        (state) => state?.status === "dropped" || state?.status === "rejected",
-      )
-    ) {
+    if (!existing.every((state) => state?.status === "dropped")) {
       for (const [index, id] of ids.entries()) {
-        const state = existing[index] as InputState;
+        const state = existing[index] as RuntimeInputStateRecord;
         state.requestId = requestId;
+        states.delete(stateKey(runtime, id));
+        states.set(stateKey(runtime, id), state);
         emitState(runtime, id, state);
       }
       return null;
@@ -148,10 +181,15 @@ export function prepareRuntimeInputCommand(
     for (const id of ids) states.delete(stateKey(runtime, id));
   }
 
-  while (states.size + ids.length > MAX_RUNTIME_INPUT_STATES) {
-    const oldest = states.keys().next().value;
-    if (typeof oldest !== "string") break;
-    states.delete(oldest);
+  for (const [key, state] of states) {
+    if (states.size + ids.length <= MAX_RUNTIME_INPUT_STATES) break;
+    if (state.status === "core_owned" || state.status === "dropped") {
+      states.delete(key);
+    }
+  }
+  if (states.size + ids.length > MAX_RUNTIME_INPUT_STATES) {
+    reject(runtime, requestId, ids, "Listener input dedupe capacity reached");
+    return null;
   }
   for (const id of ids) {
     states.set(stateKey(runtime, id), {
@@ -186,4 +224,28 @@ export function markRuntimeInputsDropped(
   error: string,
 ): void {
   transition(runtime, clientMessageIds, "dropped", { error });
+}
+
+export function createTurnInputOwnership(
+  runtime: ConversationRuntime,
+  incoming: IncomingMessage,
+  turnLease: TurnLease,
+) {
+  const clientMessageIds = new Set(incoming.clientMessageIds ?? []);
+  return {
+    track(ids: string[]): void {
+      for (const id of ids) clientMessageIds.add(id);
+    },
+    recordRunId(runId: string, coreOwnsInput: boolean): void {
+      runtime.turnLifecycle.setRunId(turnLease, runId);
+      if (coreOwnsInput) markCoreOwned(runtime, [...clientMessageIds], runId);
+    },
+    dropUnowned(): void {
+      markRuntimeInputsDropped(
+        runtime,
+        [...clientMessageIds],
+        "Listener turn ended before Core ownership",
+      );
+    },
+  };
 }

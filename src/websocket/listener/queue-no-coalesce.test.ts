@@ -135,6 +135,34 @@ describe("queue noCoalesce batching", () => {
     expect(consumeQueuedTurn(runtime)).toBeNull();
   });
 
+  test("preserves every identity represented by one queued command", () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    expect(
+      enqueueInboundUserMessage(runtime, {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        clientMessageIds: ["cm-a", "cm-b"],
+        messages: [
+          {
+            role: "user",
+            content: "combined input",
+            client_message_id: "cm-a",
+          },
+        ],
+      }),
+    ).toBe(true);
+
+    expect(consumeQueuedTurn(runtime)?.queuedTurn.clientMessageIds).toEqual([
+      "cm-a",
+      "cm-b",
+    ]);
+  });
+
   test("messages from different connections never coalesce", () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),

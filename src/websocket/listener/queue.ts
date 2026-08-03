@@ -185,6 +185,18 @@ function getPrimaryQueueMessageItem(items: QueueItem[]): QueueItem | null {
   return null;
 }
 
+export function getQueueItemClientMessageIds(
+  runtime: ConversationRuntime,
+  item: QueueItem,
+): string[] {
+  if (item.kind !== "message") return [];
+  const templateIds = runtime.queuedMessagesByItemId.get(
+    item.id,
+  )?.clientMessageIds;
+  if (templateIds?.length) return templateIds;
+  return item.clientMessageId ? [item.clientMessageId] : [];
+}
+
 /**
  * Picks an acting cloud user id to attribute the outbound
  * createMessage to. When a batch coalesces messages from multiple
@@ -209,11 +221,13 @@ function buildQueuedTurnMessage(
 ): IncomingMessage | null {
   const channelTurnSources = collectBatchChannelTurnSources(runtime, batch);
   const actingUserId = pickBatchActingUserId(batch.items);
-  const clientMessageIds = batch.items.flatMap((item) =>
-    item.kind === "message" && item.clientMessageId
-      ? [item.clientMessageId]
-      : [],
-  );
+  const clientMessageIds = [
+    ...new Set(
+      batch.items.flatMap((item) =>
+        getQueueItemClientMessageIds(runtime, item),
+      ),
+    ),
+  ];
   const primaryItem = getPrimaryQueueMessageItem(batch.items);
   if (!primaryItem) {
     // No user message in the batch — this is a notification-only batch.

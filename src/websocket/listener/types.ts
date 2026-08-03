@@ -25,6 +25,7 @@ import type {
   ControlRequest,
   ExternalToolCallResult,
   LoopStatus,
+  RuntimeInputStatus,
   RuntimeScope,
   StopReasonType,
   WsProtocolCommand,
@@ -94,6 +95,15 @@ export interface IncomingMessage {
    */
   actingUserId?: string;
 }
+
+export type RuntimeInputStateRecord = {
+  requestId: string;
+  payloadFingerprint: string;
+  status: "pending" | RuntimeInputStatus;
+  admission?: "direct" | "queued";
+  runId?: string;
+  error?: string;
+};
 
 export type ProcessQueuedTurn = (
   queuedTurn: IncomingMessage,
@@ -327,6 +337,8 @@ export type ListenerRuntime = {
   connectionId: string | null;
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
+  /** Bounded input dedupe state that survives idle ConversationRuntime eviction. */
+  runtimeInputStates?: Map<string, RuntimeInputStateRecord>;
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */
   worktreeWatcherByConversation: Map<
     string,

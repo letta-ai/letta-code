@@ -43,7 +43,11 @@ import {
 import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
-import { markCoreOwned } from "./input-state";
+import {
+  getRuntimeInputRunId,
+  markCoreOwned,
+  markRuntimeInputsDropped,
+} from "./input-state";
 import {
   createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
@@ -206,7 +210,7 @@ export async function drainRecoveryStreamWithEmission(
     params.turnLease.signal,
     undefined,
     ({ chunk, shouldOutput, errorInfo }) => {
-      const maybeRunId = (chunk as { run_id?: unknown }).run_id;
+      const maybeRunId = getRuntimeInputRunId(chunk, errorInfo);
       if (typeof maybeRunId === "string") {
         runtime.turnLifecycle.setRunId(params.turnLease, maybeRunId);
         if (!recoveryRunIdSent) {
@@ -256,7 +260,13 @@ export async function drainRecoveryStreamWithEmission(
 
       return undefined;
     },
-  );
+  ).finally(() => {
+    markRuntimeInputsDropped(
+      runtime,
+      params.clientMessageIds ?? [],
+      "Listener recovery ended before Core ownership",
+    );
+  });
 }
 
 export function finalizeHandledRecoveryTurn(

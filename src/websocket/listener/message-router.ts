@@ -624,7 +624,7 @@ export function createListenerMessageHandler(
             processIncomingMessage,
             actingUserId: parsed.runtime.acting_user_id,
             onAdmitted: inputState.onAdmitted,
-            onRejected: inputState.onDropped,
+            onDropped: inputState.onDropped,
             trackListenerError,
           });
         };
@@ -647,7 +647,7 @@ export function createListenerMessageHandler(
             inputState.onAdmitted("queued");
             scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
           } else {
-            inputState.onDropped("Listener queue rejected the input");
+            inputState.onDropped("buffer_limit");
           }
           return;
         }

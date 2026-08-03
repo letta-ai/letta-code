@@ -32,7 +32,7 @@ import {
   PROVIDER_FALLBACK_NOTICE,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import { markCoreOwned } from "./input-state";
+import { createTurnInputOwnership, getRuntimeInputRunId } from "./input-state";
 import {
   emitInterruptToolReturnMessage,
   emitToolExecutionFinishedEvents,
@@ -168,20 +168,17 @@ async function handleIncomingMessageInner(
       origin: "message",
       workingDirectory: turnWorkingDirectory,
     });
-  if (connectionId) {
-    runtime.activeConnectionId = connectionId;
-  }
+  if (connectionId) runtime.activeConnectionId = connectionId;
   if (!runtime.turnLifecycle.isCurrent(turnLease)) {
     throw new Error("Cannot continue a turn with a stale lifecycle lease");
   }
   const turnAbortSignal = turnLease.signal;
+  const inputOwnership = createTurnInputOwnership(runtime, msg, turnLease);
   let finalizedByThisInvocation = false;
   const noteFinalization = (
     transition: ReturnType<typeof finishListenerTurn>,
   ) => {
-    if (transition.finished) {
-      finalizedByThisInvocation = true;
-    }
+    if (transition.finished) finalizedByThisInvocation = true;
     return transition;
   };
   const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) =>
@@ -272,6 +269,7 @@ async function handleIncomingMessageInner(
       return;
     }
     let turnInput = setup.turnInput;
+    inputOwnership.track(turnInput.clientMessageIds);
     const inboundUserTranscriptLines = setup.inboundUserTranscriptLines;
     const providerFallback = createProviderFallbackState(
       setup.getCachedAgent(),
@@ -364,22 +362,19 @@ async function handleIncomingMessageInner(
         turnAbortSignal,
         undefined,
         ({ chunk, shouldOutput, errorInfo }) => {
-          if (turnAbortSignal.aborted) {
-            return undefined;
-          }
-          const maybeRunId = (chunk as { run_id?: unknown }).run_id;
+          const maybeRunId = getRuntimeInputRunId(chunk, errorInfo);
           if (typeof maybeRunId === "string") {
             runId = maybeRunId;
-            runtime.turnLifecycle.setRunId(turnLease, maybeRunId);
-            if (!runIdSent) {
-              runIdSent = true;
-              msgRunIds.push(maybeRunId);
-              markCoreOwned(runtime, turnInput.clientMessageIds, maybeRunId);
-              emitLoopStatusUpdate(socket, runtime, {
-                agent_id: agentId,
-                conversation_id: conversationId,
-              });
-            }
+            inputOwnership.recordRunId(maybeRunId, !runIdSent);
+          }
+          if (turnAbortSignal.aborted) return undefined;
+          if (typeof maybeRunId === "string" && !runIdSent) {
+            runIdSent = true;
+            msgRunIds.push(maybeRunId);
+            emitLoopStatusUpdate(socket, runtime, {
+              agent_id: agentId,
+              conversation_id: conversationId,
+            });
           }
 
           if (errorInfo) {
@@ -834,6 +829,7 @@ async function handleIncomingMessageInner(
       }
 
       turnInput = approvalResult.turnInput;
+      inputOwnership.track(turnInput.clientMessageIds);
       activeDequeuedBatchId = approvalResult.dequeuedBatchId;
       pendingNormalizationInterruptedToolCallIds =
         approvalResult.pendingNormalizationInterruptedToolCallIds;
@@ -959,6 +955,7 @@ async function handleIncomingMessageInner(
       console.error("[Listen] Error handling message:", error);
     }
   } finally {
+    inputOwnership.dropUnowned();
     if (runtime.turnLifecycle.isCurrent(turnLease)) {
       trackBoundaryError({
         errorType: "listener_turn_unfinalized_exit",

@@ -25,7 +25,7 @@ export function dispatchInboundMessageWhenReady(params: {
   processIncomingMessage: typeof handleIncomingMessage;
   actingUserId?: string;
   onAdmitted?: (admission: "direct" | "queued") => void;
-  onRejected?: (error: string) => void;
+  onDropped?: (error: string) => void;
   trackListenerError: (
     errorType: string,
     error: unknown,
@@ -42,7 +42,7 @@ export function dispatchInboundMessageWhenReady(params: {
     processIncomingMessage,
     actingUserId,
     onAdmitted,
-    onRejected,
+    onDropped,
     trackListenerError,
   } = params;
 
@@ -64,7 +64,7 @@ export function dispatchInboundMessageWhenReady(params: {
           onAdmitted?.("queued");
           scheduleQueuePump(runtime, socket, options, processQueuedTurn);
         } else {
-          onRejected?.("Listener queue rejected the input");
+          onDropped?.("buffer_limit");
         }
         return;
       }
@@ -101,7 +101,7 @@ export function dispatchInboundMessageWhenReady(params: {
         error,
         "listener_message_queue",
       );
-      onRejected?.(error instanceof Error ? error.message : String(error));
+      onDropped?.(error instanceof Error ? error.message : String(error));
       if (process.env.DEBUG) {
         console.error("[Listen] Error handling queued input:", error);
       }
