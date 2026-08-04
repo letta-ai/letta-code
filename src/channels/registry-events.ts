@@ -37,4 +37,10 @@ export type ChannelRegistryEvent =
       agentId: string;
       conversationId: string;
       defaultPermissionMode?: ChannelDefaultPermissionMode;
+    }
+  | {
+      type: "channel_runtime_routes_updated";
+      agentId: string;
+      conversationId: string;
+      defaultPermissionMode?: ChannelDefaultPermissionMode;
     };

@@ -15,6 +15,25 @@ import type { ChannelRoute, InboundChannelMessage } from "./types";
 /** Key: "channel:chatId" */
 const routesByKey = new Map<string, ChannelRoute>();
 
+export interface ChannelRouteChange {
+  channelId: string;
+  previous: ChannelRoute | null;
+  current: ChannelRoute | null;
+}
+
+const routeChangeListeners = new Set<(change: ChannelRouteChange) => void>();
+
+export function subscribeChannelRouteChanges(
+  listener: (change: ChannelRouteChange) => void,
+): () => void {
+  routeChangeListeners.add(listener);
+  return () => routeChangeListeners.delete(listener);
+}
+
+function emitRouteChange(change: ChannelRouteChange): void {
+  for (const listener of routeChangeListeners) listener(change);
+}
+
 let loadRoutesOverride: ((channelId: string) => ChannelRoute[] | null) | null =
   null;
 
@@ -264,16 +283,22 @@ export function getAllRoutes(): ChannelRoute[] {
  * Add or update a route. Automatically saves to disk.
  */
 export function addRoute(channelId: string, route: ChannelRoute): void {
-  routesByKey.set(
-    routeKey(channelId, route.chatId, route.accountId, route.threadId),
-    {
-      ...route,
-      accountId: normalizeAccountId(route.accountId),
-      threadId: route.threadId ?? null,
-      outboundEnabled: route.outboundEnabled !== false,
-    },
+  const key = routeKey(
+    channelId,
+    route.chatId,
+    route.accountId,
+    route.threadId,
   );
+  const previous = routesByKey.get(key) ?? null;
+  const current = {
+    ...route,
+    accountId: normalizeAccountId(route.accountId),
+    threadId: route.threadId ?? null,
+    outboundEnabled: route.outboundEnabled !== false,
+  };
+  routesByKey.set(key, current);
   saveRoutes(channelId);
+  emitRouteChange({ channelId, previous, current });
 }
 
 /**
@@ -286,9 +311,11 @@ export function removeRoute(
   threadId?: string | null,
 ): boolean {
   const key = routeKey(channelId, chatId, accountId, threadId);
+  const previous = routesByKey.get(key) ?? null;
   const existed = routesByKey.delete(key);
   if (existed) {
     saveRoutes(channelId);
+    emitRouteChange({ channelId, previous, current: null });
   }
   return existed;
 }
@@ -332,7 +359,7 @@ export function removeRoutesForScope(
   conversationId: string,
   accountId?: string,
 ): number {
-  let removed = 0;
+  const removedRoutes: ChannelRoute[] = [];
   const prefix =
     accountId === undefined
       ? `${channelId}:`
@@ -344,31 +371,37 @@ export function removeRoutesForScope(
       route.conversationId === conversationId
     ) {
       routesByKey.delete(key);
-      removed++;
+      removedRoutes.push(route);
     }
   }
-  if (removed > 0) {
+  if (removedRoutes.length > 0) {
     saveRoutes(channelId);
+    for (const previous of removedRoutes) {
+      emitRouteChange({ channelId, previous, current: null });
+    }
   }
-  return removed;
+  return removedRoutes.length;
 }
 
 export function removeRoutesForAccount(
   channelId: string,
   accountId: string,
 ): number {
-  let removed = 0;
+  const removedRoutes: ChannelRoute[] = [];
   const prefix = `${channelId}:${normalizeAccountId(accountId)}:`;
-  for (const [key] of routesByKey) {
+  for (const [key, route] of routesByKey) {
     if (key.startsWith(prefix)) {
       routesByKey.delete(key);
-      removed++;
+      removedRoutes.push(route);
     }
   }
-  if (removed > 0) {
+  if (removedRoutes.length > 0) {
     saveRoutes(channelId);
+    for (const previous of removedRoutes) {
+      emitRouteChange({ channelId, previous, current: null });
+    }
   }
-  return removed;
+  return removedRoutes.length;
 }
 
 /**

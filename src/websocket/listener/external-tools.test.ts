@@ -303,6 +303,39 @@ describe("app-server runtime_start external tool bridge", () => {
     expect(prepared.clientTools.map((tool) => tool.name)).toEqual(["new_tool"]);
   });
 
+  test("empty runtime registration removes previously registered tools", async () => {
+    const { runtime } = createMockRuntime();
+    const runtimeScope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    registerRuntimeExternalTools(runtime, "client-1", runtimeScope, [
+      {
+        scope_id: "channel-gateway",
+        tools: [
+          {
+            name: "MessageChannel",
+            description: "Send through a channel",
+            parameters: { type: "object", properties: {} },
+          },
+        ],
+      },
+    ]);
+    registerRuntimeExternalTools(runtime, "client-1", runtimeScope, []);
+
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["MessageChannel"],
+        externalToolScopeIds: ["channel-gateway"],
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+
+    expect(prepared.clientTools).toEqual([]);
+  });
+
   test("runtime-owned external tools unregister when listener runtime stops", async () => {
     const { runtime } = createMockRuntime();
     registerRuntimeExternalTools(

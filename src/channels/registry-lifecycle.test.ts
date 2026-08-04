@@ -25,6 +25,7 @@ import {
   __testOverrideSaveRoutes,
   addRoute,
   clearAllRoutes,
+  removeRoute,
 } from "@/channels/routing";
 import type { SignalChannelAccount } from "@/channels/types";
 
@@ -91,8 +92,29 @@ describe("ChannelRegistry lifecycle", () => {
     expect(getChannelRegistry()).toBeNull();
   });
 
-  test("route-derived recovery sources do not invent an originating message", () => {
+  test("stopAll destroys the singleton after adapter stop failures", async () => {
     const registry = new ChannelRegistry();
+    registry.registerAdapter({
+      id: "telegram:default",
+      channelId: "telegram",
+      accountId: "default",
+      name: "Telegram",
+      start: async () => {},
+      stop: async () => {
+        throw new Error("stop failed");
+      },
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+    });
+
+    await expect(registry.stopAll()).rejects.toThrow("stop failed");
+    expect(getChannelRegistry()).toBeNull();
+  });
+
+  test("route-derived recovery sources require a running adapter", () => {
+    const registry = new ChannelRegistry();
+    let running = true;
     registry.registerAdapter({
       id: "slack:acct-slack",
       channelId: "slack",
@@ -100,7 +122,7 @@ describe("ChannelRegistry lifecycle", () => {
       name: "Slack",
       start: async () => {},
       stop: async () => {},
-      isRunning: () => true,
+      isRunning: () => running,
       sendMessage: async () => ({ messageId: "msg-1" }),
       sendDirectReply: async () => {},
     });
@@ -126,6 +148,133 @@ describe("ChannelRegistry lifecycle", () => {
         conversationId: "conv-1",
       },
     ]);
+
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      chatType: "channel",
+      threadId: "1712790000.000050",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      outboundEnabled: false,
+      createdAt: "2026-07-09T00:00:00.000Z",
+    });
+    expect(registry.resolveTurnSourcesForScope("agent-1", "conv-1")).toEqual(
+      [],
+    );
+
+    running = false;
+    expect(registry.resolveTurnSourcesForScope("agent-1", "conv-1")).toEqual(
+      [],
+    );
+  });
+
+  test("route changes request runtime surface refreshes", () => {
+    const registry = new ChannelRegistry();
+    const refreshed: string[] = [];
+    registry.setEventHandler((event) => {
+      if (event.type === "channel_runtime_routes_updated") {
+        refreshed.push(`${event.agentId}:${event.conversationId}`);
+      }
+    });
+    const route = {
+      chatId: "chat-1",
+      agentId: "agent-a",
+      conversationId: "conv-a",
+      enabled: true,
+      createdAt: "2026-07-09T00:00:00.000Z",
+    };
+
+    addRoute("telegram", route);
+    addRoute("telegram", {
+      ...route,
+      agentId: "agent-b",
+      conversationId: "conv-b",
+    });
+    removeRoute("telegram", "chat-1");
+
+    expect(refreshed).toEqual([
+      "agent-a:conv-a",
+      "agent-a:conv-a",
+      "agent-b:conv-b",
+      "agent-b:conv-b",
+    ]);
+  });
+
+  test("stopping an adapter requests runtime surface refresh", async () => {
+    const registry = new ChannelRegistry();
+    const refreshed: string[] = [];
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {},
+      isRunning: () => true,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-07-09T00:00:00.000Z",
+    });
+    registry.setEventHandler((event) => {
+      if (event.type === "channel_runtime_routes_updated") {
+        refreshed.push(`${event.agentId}:${event.conversationId}`);
+      }
+    });
+
+    await registry.stopChannelAccount("slack", "acct-slack");
+
+    expect(refreshed).toEqual(["agent-1:conv-1"]);
+  });
+
+  test("failed adapter stops still refresh runtime eligibility", async () => {
+    const registry = new ChannelRegistry();
+    const refreshed: string[] = [];
+    let running = true;
+    registry.registerAdapter({
+      id: "slack:acct-slack",
+      channelId: "slack",
+      accountId: "acct-slack",
+      name: "Slack",
+      start: async () => {},
+      stop: async () => {
+        running = false;
+        throw new Error("stop failed after shutdown");
+      },
+      isRunning: () => running,
+      sendMessage: async () => ({ messageId: "msg-1" }),
+      sendDirectReply: async () => {},
+    });
+    addRoute("slack", {
+      accountId: "acct-slack",
+      chatId: "C123",
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: "2026-07-09T00:00:00.000Z",
+    });
+    registry.setEventHandler((event) => {
+      if (event.type === "channel_runtime_routes_updated") {
+        refreshed.push(`${event.agentId}:${event.conversationId}`);
+      }
+    });
+
+    await expect(
+      registry.stopChannelAccount("slack", "acct-slack"),
+    ).rejects.toThrow("stop failed after shutdown");
+
+    expect(refreshed).toEqual(["agent-1:conv-1"]);
+    expect(registry.resolveTurnSourcesForScope("agent-1", "conv-1")).toEqual(
+      [],
+    );
   });
 
   test("initializeChannels throws when requested channel startup fails", async () => {

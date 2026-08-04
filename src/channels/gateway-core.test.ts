@@ -183,12 +183,13 @@ function makeHooks(
   const externalToolResults: ExternalToolCallResult[] = [];
 
   const hooks: ChannelGatewayHooks = {
-    buildExternalTool: async () =>
-      ({
+    buildExternalTools: async () => [
+      {
         name: "MessageChannel",
         description: "Send a message through a channel",
         parameters: {},
-      }) satisfies ExternalToolDefinitionPayload,
+      } satisfies ExternalToolDefinitionPayload,
+    ],
     executeExternalTool: async (_request) => {
       const result: ExternalToolCallResult = {
         content: [{ type: "text", text: "ok" }],
@@ -580,6 +581,78 @@ test("runtime registration happens before input submission", async () => {
   expect(startOpts?.conversation_id).toBe("conv-1");
   expect(startOpts?.external_tools).toBeDefined();
 
+  gateway.close();
+});
+
+test("runtime registration clears gateway tools when none remain eligible", async () => {
+  const client = new FakeClient();
+  let eligible = true;
+  const { hooks } = makeHooks({
+    buildExternalTools: async () =>
+      eligible
+        ? [
+            {
+              name: "MessageChannel",
+              description: "Send a message through a channel",
+              parameters: {},
+            },
+          ]
+        : [],
+  });
+  const gateway = new ChannelGateway(client, hooks);
+
+  await gateway.registerRuntime(TEST_RUNTIME, [makeSource()]);
+  eligible = false;
+  await gateway.registerRuntime(TEST_RUNTIME, []);
+
+  expect(client.startedRuntimes).toHaveLength(2);
+  expect(client.startedRuntimes[0]?.external_tools).toEqual([
+    expect.objectContaining({ scope_id: "channel-gateway" }),
+  ]);
+  expect(client.startedRuntimes[1]?.external_tools).toEqual([]);
+  gateway.close();
+});
+
+test("runtime registration serializes capability refreshes in call order", async () => {
+  const client = new FakeClient();
+  let releaseFirst!: () => void;
+  let markFirstStarted!: () => void;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const firstStarted = new Promise<void>((resolve) => {
+    markFirstStarted = resolve;
+  });
+  let callCount = 0;
+  const { hooks } = makeHooks({
+    buildExternalTools: async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        markFirstStarted();
+        await firstGate;
+        return [
+          {
+            name: "MessageChannel",
+            description: "Send a message through a channel",
+            parameters: {},
+          },
+        ];
+      }
+      return [];
+    },
+  });
+  const gateway = new ChannelGateway(client, hooks);
+
+  const first = gateway.registerRuntime(TEST_RUNTIME, [makeSource()]);
+  await firstStarted;
+  const second = gateway.registerRuntime(TEST_RUNTIME, []);
+  releaseFirst();
+  await Promise.all([first, second]);
+
+  expect(client.startedRuntimes.map((entry) => entry.external_tools)).toEqual([
+    [expect.objectContaining({ scope_id: "channel-gateway" })],
+    [],
+  ]);
   gateway.close();
 });
 

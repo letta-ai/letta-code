@@ -28,6 +28,15 @@ import type {
 export const CHANNEL_GATEWAY_TOOL_SCOPE_ID = "channel-gateway";
 const MAX_ACCEPTED_CLIENT_MESSAGE_IDS = 2048;
 
+type RuntimeExternalTools = NonNullable<RuntimeStartCommand["external_tools"]>;
+
+function groupGatewayExternalTools(
+  tools: ExternalToolDefinitionPayload[],
+): RuntimeExternalTools {
+  if (tools.length === 0) return [];
+  return [{ scope_id: CHANNEL_GATEWAY_TOOL_SCOPE_ID, tools }];
+}
+
 export interface ChannelGatewayClient {
   close(): void;
   onMessage(listener: (message: WsProtocolMessage) => void): () => void;
@@ -55,10 +64,9 @@ export interface ChannelGatewayDelivery {
 }
 
 export interface ChannelGatewayHooks {
-  buildExternalTool(
+  buildExternalTools(
     runtime: RuntimeScope,
-    sources: ChannelTurnSource[],
-  ): Promise<ExternalToolDefinitionPayload>;
+  ): Promise<ExternalToolDefinitionPayload[]>;
   executeExternalTool(
     request: ExternalToolCallRequestMessage,
     sources: ChannelTurnSource[],
@@ -106,6 +114,7 @@ type GatewayRuntimeState = {
   active: ActiveGatewayTurn | null;
   registrationSignature: string | null;
   registration: Promise<void> | null;
+  registrationQueue: Promise<void>;
   replayedControlRequestIds: Set<string>;
   submissionQueue: Promise<void>;
   hookQueue: Promise<void> | null;
@@ -351,6 +360,7 @@ export class ChannelGateway {
         active: null,
         registrationSignature: null,
         registration: null,
+        registrationQueue: Promise.resolve(),
         replayedControlRequestIds: new Set(),
         submissionQueue: Promise.resolve(),
         hookQueue: null,
@@ -387,17 +397,26 @@ export class ChannelGateway {
     return pending;
   }
 
-  private async ensureRuntimeRegistration(
+  private ensureRuntimeRegistration(
     state: GatewayRuntimeState,
     delivery: ChannelGatewayDelivery,
   ): Promise<void> {
-    const tool = await this.hooks.buildExternalTool(
-      delivery.runtime,
-      delivery.sources,
+    const registration = state.registrationQueue.then(() =>
+      this.performRuntimeRegistration(state, delivery),
     );
+    state.registrationQueue = registration.catch(() => undefined);
+    return registration;
+  }
+
+  private async performRuntimeRegistration(
+    state: GatewayRuntimeState,
+    delivery: ChannelGatewayDelivery,
+  ): Promise<void> {
+    const tools = await this.hooks.buildExternalTools(delivery.runtime);
+    const externalTools = groupGatewayExternalTools(tools);
     const signature = JSON.stringify({
       mode: delivery.defaultPermissionMode ?? null,
-      tool,
+      externalTools,
     });
     if (state.registrationSignature === signature && state.registration) {
       return state.registration;
@@ -414,12 +433,7 @@ export class ChannelGateway {
         force_device_status: false,
         wait_for_replay: true,
         client_info: { name: "channel-gateway", title: "Channel Gateway" },
-        external_tools: [
-          {
-            scope_id: CHANNEL_GATEWAY_TOOL_SCOPE_ID,
-            tools: [tool],
-          },
-        ],
+        external_tools: externalTools,
       })
       .then((response) => {
         if (!response.success) {
