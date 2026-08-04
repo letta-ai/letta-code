@@ -21,7 +21,15 @@
  * API client) is imported lazily inside the token resolver. Keep it that way.
  */
 
-const RESOLVE_DEADLINE_MS = 10_000;
+// Last-resort backstop, deliberately larger than the sum of every internal
+// bound (lock acquisition 20s + keychain soft-timeouts 5s + refresh fetch
+// abort 15s): in normal operation those bounds guarantee completion long
+// before this fires, so expiry means a truly wedged primitive. It matters
+// that this stays a backstop — a deadline that fires while getClient()
+// holds the refresh lock abandons the operation without cancelling it, and
+// the standalone entry's process.exit() would orphan the lock until the
+// 30s stale reap.
+const RESOLVE_DEADLINE_MS = 60_000;
 
 type GitCredentialDeps = {
   /** Resolve the current harness API token ("" when unauthenticated). */

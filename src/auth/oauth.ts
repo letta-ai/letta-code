@@ -480,6 +480,13 @@ export async function pollForToken(
 /**
  * Refresh an access token using a refresh token
  */
+
+// Refresh runs while the cross-process OAuth refresh lock is held (see
+// refreshTokensUnderCrossProcessLock); an unbounded fetch would hold that
+// lock past its stale-reap window and stall every other letta process's
+// auth, so abort rather than hang.
+const REFRESH_FETCH_TIMEOUT_MS = 15_000;
+
 export async function refreshAccessToken(
   refreshToken: string,
   deviceId: string,
@@ -492,6 +499,7 @@ export async function refreshAccessToken(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(REFRESH_FETCH_TIMEOUT_MS),
         body: JSON.stringify({
           grant_type: "refresh_token",
           client_id: OAUTH_CONFIG.clientId,

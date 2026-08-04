@@ -1,8 +1,9 @@
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import Letta from "@letta-ai/letta-client";
-import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { LETTA_CLOUD_API_URL, type TokenResponse } from "@/auth/oauth";
 import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
+import { readPersistedAuthTokens } from "@/auth/persisted-tokens";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { isDebugEnabled } from "@/utils/debug";
@@ -174,7 +175,36 @@ export function getClientDefaultHeaders(): Record<string, string> {
 }
 
 const TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
-const OAUTH_REFRESH_LOCK_TIMEOUT_MS = 30_000;
+// Every operation under the lock is individually bounded (keychain reads
+// soft-cap at 5s in readPersistedAuthTokens, the refresh fetch aborts at
+// 15s in refreshAccessToken), so a legitimate holder finishes well inside
+// the stale window and an orphaned lock (crashed/killed holder) is reaped
+// quickly instead of blocking every git operation for 90s.
+const OAUTH_REFRESH_LOCK_TIMEOUT_MS = 20_000;
+const OAUTH_REFRESH_LOCK_STALE_MS = 30_000;
+
+type RefreshLockDeps = {
+  readTokens?: typeof readPersistedAuthTokens;
+  refresh?: (refreshToken: string) => Promise<TokenResponse>;
+  /** Persist rotated tokens; defaults to settingsManager update + flush. */
+  persist?: (updates: Partial<Settings>) => Promise<void>;
+  lockPath?: string;
+};
+
+function defaultRefresh(refreshToken: string): Promise<TokenResponse> {
+  return refreshAccessTokenSingleFlight(
+    refreshToken,
+    settingsManager.getOrCreateDeviceId(),
+    hostname(),
+  );
+}
+
+async function defaultPersistRefreshedTokens(
+  updates: Partial<Settings>,
+): Promise<void> {
+  settingsManager.updateSettings(updates);
+  await settingsManager.flush();
+}
 
 /**
  * Refresh OAuth tokens under a cross-process file lock.
@@ -185,56 +215,72 @@ const OAUTH_REFRESH_LOCK_TIMEOUT_MS = 30_000;
  * "new"). Two concurrent refreshes therefore both burn the same refresh
  * token and race their keychain writes; the loser can durably persist an
  * already-invalidated token and log the user out. The in-process
- * single-flight cannot see other processes, so a file lock serializes them:
- * after acquiring it, re-read the stored tokens and reuse the winner's
- * result instead of refreshing again.
+ * single-flight cannot see other processes, so a file lock serializes them.
+ *
+ * Waiter-reuses-winner: after acquiring the lock, the PERSISTED snapshot is
+ * read (settings file + direct keychain, bypassing this process's caches —
+ * see readPersistedAuthTokens). A fresh persisted expiry means another
+ * process already refreshed: reuse its token instead of burning the rotated
+ * refresh token again. Exported for tests.
  */
-async function refreshTokensUnderCrossProcessLock(
+export async function refreshTokensUnderCrossProcessLock(
   fallbackRefreshToken: string,
+  deps: RefreshLockDeps = {},
 ): Promise<string> {
-  const lockPath = join(homedir(), ".letta", "oauth-refresh.lock");
+  const readTokens = deps.readTokens ?? readPersistedAuthTokens;
+  const refresh = deps.refresh ?? defaultRefresh;
+  const persist = deps.persist ?? defaultPersistRefreshedTokens;
+  const lockPath =
+    deps.lockPath ?? join(homedir(), ".letta", "oauth-refresh.lock");
   return await withFileLock(
     lockPath,
     async () => {
-      // Another process may have completed the refresh while we waited.
-      const latest = await settingsManager.getSettingsWithSecureTokens();
-      const latestKey = latest.env?.LETTA_API_KEY;
+      const before = await readTokens();
       if (
-        latestKey &&
-        latest.tokenExpiresAt &&
-        latest.tokenExpiresAt - Date.now() >= TOKEN_REFRESH_WINDOW_MS
+        before.apiKey &&
+        before.tokenExpiresAt &&
+        before.tokenExpiresAt - Date.now() >= TOKEN_REFRESH_WINDOW_MS
       ) {
-        return latestKey;
+        // Another process refreshed while we waited on the lock.
+        return before.apiKey;
       }
 
       const now = Date.now();
-      const tokens = await refreshAccessTokenSingleFlight(
-        latest.refreshToken ?? fallbackRefreshToken,
-        settingsManager.getOrCreateDeviceId(),
-        hostname(),
-      );
-      settingsManager.updateSettings({
+      // Prefer the persisted refresh token: with rotation, a long-running
+      // process's in-memory copy may already be invalidated by a refresh
+      // another process performed.
+      const refreshTokenToUse = before.refreshToken ?? fallbackRefreshToken;
+      const tokens = await refresh(refreshTokenToUse);
+      const rotatedRefreshToken = tokens.refresh_token || refreshTokenToUse;
+      await persist({
         env: { LETTA_API_KEY: tokens.access_token },
-        refreshToken:
-          tokens.refresh_token || latest.refreshToken || fallbackRefreshToken,
+        refreshToken: rotatedRefreshToken,
         tokenExpiresAt: now + tokens.expires_in * 1000,
       });
       // The rotated refresh token must be durably persisted before the lock
-      // releases — the pre-rotation token is already dead server-side.
-      // flush() awaits the write but swallows its errors, so read the stored
-      // key back where possible; an empty read-back means no keychain is
-      // available (file-fallback storage) and cannot be verified here.
-      await settingsManager.flush();
-      const persisted = await settingsManager.getSettingsWithSecureTokens();
-      const persistedKey = persisted.env?.LETTA_API_KEY;
-      if (persistedKey && persistedKey !== tokens.access_token) {
+      // releases — the pre-rotation token is already dead server-side, and
+      // the persistence path swallows write errors (flush() awaits but never
+      // rejects). Verify with a strict, cache-bypassing read of BOTH tokens:
+      // a partial keychain write (new access token, old refresh token) would
+      // pass an access-only check and strand auth on the next refresh. A
+      // non-strict read-back (no keychain / runtime scope) cannot verify and
+      // is accepted as-is.
+      const after = await readTokens();
+      if (
+        after.strict &&
+        (after.apiKey !== tokens.access_token ||
+          after.refreshToken !== rotatedRefreshToken)
+      ) {
         throw new Error(
-          "OAuth refresh succeeded but the rotated token failed to persist; if this recurs, re-run `letta` to re-authenticate",
+          "OAuth refresh succeeded but the rotated tokens failed to persist; if this recurs, re-run `letta` to re-authenticate",
         );
       }
       return tokens.access_token;
     },
-    { timeoutMs: OAUTH_REFRESH_LOCK_TIMEOUT_MS },
+    {
+      timeoutMs: OAUTH_REFRESH_LOCK_TIMEOUT_MS,
+      staleMs: OAUTH_REFRESH_LOCK_STALE_MS,
+    },
   );
 }
 
