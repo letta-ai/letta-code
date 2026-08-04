@@ -710,13 +710,10 @@ async function main(): Promise<void> {
   if (values.help) {
     printHelp();
 
-    // Test-only hook to keep process alive briefly so startup auto-update can run.
-    const helpDelayMs = Number.parseInt(
-      process.env.LETTA_TEST_HELP_EXIT_DELAY_MS ?? "",
-      10,
-    );
-    if (Number.isFinite(helpDelayMs) && helpDelayMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, helpDelayMs));
+    // Test-only hook for the end-to-end startup update smoke. Normal startup
+    // keeps the update check non-blocking.
+    if (process.env.LETTA_TEST_WAIT_FOR_STARTUP_AUTO_UPDATE === "1") {
+      await autoUpdatePromise;
     }
 
     process.exit(0);
