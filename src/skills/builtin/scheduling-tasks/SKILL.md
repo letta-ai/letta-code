@@ -1,11 +1,11 @@
 ---
 name: scheduling-tasks
-description: Schedules reminders and recurring tasks via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic messages, or needs to manage scheduled tasks.
+description: Schedules reminders and recurring tasks via the letta cron CLI. Use when the user asks to be reminded of something, wants periodic work or check-ins, or needs to list, inspect, replace, or cancel scheduled tasks.
 ---
 
 # Scheduling Tasks
 
-This skill lets you create, list, and manage scheduled tasks using the `letta cron` CLI. Scheduled tasks send a prompt to the agent on a timer — useful for reminders, periodic check-ins, and deferred follow-ups.
+This skill lets you create, list, and manage scheduled messages using the `letta cron` CLI. Scheduled messages send a prompt to the agent on a timer — useful for reminders, periodic check-ins, and deferred follow-ups.
 
 ## When to Use This Skill
 
@@ -14,28 +14,26 @@ This skill lets you create, list, and manage scheduled tasks using the `letta cr
 - User wants a one-shot delayed message ("in 30 minutes, check on X")
 - User wants to see or cancel existing scheduled tasks
 
-## Where Schedules Run (`--runner`)
+## Clock Location and Execution Target
 
-There are two schedule runners, selected with the optional `--runner local|cloud` flag:
+The `--runner` flag selects where the schedule is stored and its cron clock runs. The execution target selects which computer handles the scheduled message.
 
-- **`cloud`** (default for cloud agents): a durable Cloud schedule stored by the Letta API. With no runner or computer flag, it keeps executing where it was created: a registered external listener becomes the schedule's target, and a managed cloud sandbox gets an untargeted schedule that fires in the agent's cloud sandbox. Either way the schedule survives process restarts.
-- **`local`**: a task local to the current computer (`~/.letta/crons.json`), executed by the Letta session running there. It only fires while a session is running on that computer, and it dies with that computer's local state.
+- **`cloud`** (default for Cloud agents): the schedule and clock live in Cloud, so they survive local shutdown.
+- **`local`**: the schedule and clock live on the current computer in `~/.letta/crons.json`. They only fire while a Letta session runs there.
 
-You normally don't need the flag. Use explicit `--runner cloud` to run in the agent's Cloud sandbox instead of the current listener. Local-backend agents (`agent-local-*`) and self-hosted servers use the local runner.
+For a Cloud schedule created from a registered external listener:
 
-If the scheduled work must run on a **specific computer** (it needs that computer's filesystem, local services, or credentials — e.g. a bring-your-own machine like a Railway/VPS box or a home workstation), prefer a Cloud schedule that executes on that computer:
+- With no `--runner` or `--computer`, execution targets the computer that invoked the command.
+- `--computer <deviceId>` targets another registered computer.
+- Explicit `--runner cloud` targets the agent's Cloud sandbox.
 
-```bash
-letta cron add ... --computer <deviceId>
-```
+Get a device ID from `letta environments list`. Managed sandboxes and Desktop-local proxy connections are not valid `--computer` targets.
 
-The deviceId comes from `letta environments list`. The computer must be a registered external environment, such as a manual `letta server`, VPS, or Railway listener. Managed sandboxes and Desktop-local proxy connections are not currently valid targets. The schedule stays durable in the cloud; if the computer is offline when it fires, execution falls back to the agent's Cloud sandbox. Use `--runner local` on the target computer only when that fallback is unacceptable.
+If a target computer is offline when the clock fires, execution currently falls back to the Cloud sandbox. This fallback cannot be disabled. Do not use `--runner local` only to target the current computer; that also moves the cron clock out of Cloud.
 
-Notes for the cloud runner:
+Local-backend agents (`agent-local-*`) and servers without Cloud schedule routes use the local runner.
 
-- The implicit default infers the current runtime: a registered external listener is targeted, a managed sandbox falls through to an untargeted schedule. `--computer` overrides it. Explicit `--runner cloud` always creates an untargeted Cloud-sandbox schedule.
-- Recurring `--cron` expressions are currently interpreted in UTC (the CLI output includes a note about this). `--at` and `--every` are unaffected.
-- If creating a Cloud schedule fails, no schedule is created — there is no silent fallback to local storage. Retry, or pass `--runner local` deliberately.
+If Cloud schedule creation fails, no schedule is created. There is no silent fallback to local clock storage.
 
 ## CLI Usage
 
@@ -59,7 +57,7 @@ letta cron add --name <short-name> --description <text> --prompt <text> <schedul
 
 | Flag | Type | Example |
 |------|------|---------|
-| `--every <interval>` | Recurring | `5m`, `2h`, `1d` |
+| `--every <interval>` | Recurring cron shorthand | `5m`, `2h`, `1d` |
 | `--at <time>` | One-shot | `"3:00pm"`, `"in 45m"` |
 | `--cron <expr>` | Raw cron (recurring) | `"0 9 * * 1-5"` |
 
@@ -69,8 +67,9 @@ letta cron add --name <short-name> --description <text> --prompt <text> <schedul
 |------|-------------|
 | `--agent <id>` | Agent ID (defaults to `LETTA_AGENT_ID` from the current shell/session) |
 | `--conversation <id>` | Conversation ID (defaults to `LETTA_CONVERSATION_ID` from the current shell/session, otherwise `"default"`) |
-| `--runner <runner>` | `cloud` or `local` — see "Where Schedules Run" above (defaults to `cloud` for cloud agents) |
-| `--computer <id>` | (cloud runner only) Override execution with a registered external environment; falls back to the Cloud sandbox if it is offline |
+| `--runner <runner>` | `cloud` or `local`; selects where the cron clock lives |
+| `--computer <id>` | For a Cloud clock, select a registered execution computer |
+| `--once` | Mark `--at` as one-shot; this is already the default |
 
 ### Listing Tasks
 
@@ -78,13 +77,23 @@ letta cron add --name <short-name> --description <text> --prompt <text> <schedul
 letta cron list
 ```
 
-Optional filters: `--agent <id>`, `--conversation <id>`
+Optional filters: `--agent <id>`, `--conversation <id>`, `--runner local|cloud`
 
 ### Getting a Single Task
 
+`get` accepts an ID or name:
+
 ```bash
-letta cron get <task-id>
+letta cron get <id-or-name> [--runner local|cloud] [--agent <id>]
 ```
+
+### Reading Run History
+
+```bash
+letta cron runs --id <task-id> [--limit <n>] [--runner local|cloud] [--agent <id>]
+```
+
+For local history, `--run-id <id>` selects one run. Cloud history ignores that flag.
 
 ### Binding a Task to the Right Conversation
 
@@ -110,34 +119,28 @@ Then verify the binding explicitly:
 letta cron list --agent "$AGENT_ID" --conversation "$CONVERSATION_ID"
 ```
 
-### Deleting Tasks
+### Deleting or Replacing Tasks
+
+`delete` accepts an ID or name. `remove` is an alias.
 
 ```bash
 # Delete a specific task
-letta cron delete <task-id>
+letta cron delete <id-or-name> [--runner local|cloud] [--agent <id>]
 
-# Delete all tasks for the current agent
-letta cron delete --all
+# Delete all Cloud tasks for one agent
+letta cron delete --all --agent "$AGENT_ID" --runner cloud
 ```
+
+In-place editing is not available. To change a schedule, create and verify its replacement before deleting the old schedule.
 
 ## Examples
 
-### "Remind me every morning at 9am to walk the dog"
+### "Remind me every morning at 9am UTC to walk the dog"
 
 ```bash
 letta cron add \
   --name "dog-walk-reminder" \
-  --description "Daily morning reminder to walk the dog" \
-  --prompt "Hey! It's 9am — time to walk the dog." \
-  --every 1d
-```
-
-Note: `--every 1d` fires once daily at midnight. For a specific time like 9am, use a raw cron expression:
-
-```bash
-letta cron add \
-  --name "dog-walk-reminder" \
-  --description "Daily 9am reminder to walk the dog" \
+  --description "Daily 9am UTC reminder to walk the dog" \
   --prompt "Hey! It's 9am — time to walk the dog." \
   --cron "0 9 * * *"
 ```
@@ -148,16 +151,16 @@ letta cron add \
 letta cron add \
   --name "deploy-check" \
   --description "One-time check on deployment status" \
-  --prompt "The user asked you to check on the deploy — ask them how it went." \
+  --prompt "Check the deployment status and report the result here." \
   --at "in 30m"
 ```
 
-### "Every weekday at 5pm, remind me to submit my timesheet"
+### "Every weekday at 5pm UTC, remind me to submit my timesheet"
 
 ```bash
 letta cron add \
   --name "timesheet-reminder" \
-  --description "Weekday 5pm timesheet reminder" \
+  --description "Weekday 5pm UTC timesheet reminder" \
   --prompt "Friendly reminder: don't forget to submit your timesheet before EOD!" \
   --cron "0 17 * * 1-5"
 ```
@@ -198,15 +201,15 @@ Include context about what the user originally asked for, so you can give a help
 - **Minimum granularity**: 1 minute. Intervals under 60 seconds are rounded up.
 - **Recurring tasks**: No longer auto-expire. They remain active until explicitly cancelled.
 - **One-shot cleanup (local runner)**: One-shot local tasks are garbage-collected 24 hours after firing.
-- **Timezone**: Local-runner tasks use the user's local timezone. Cloud-runner recurring `--cron` expressions are currently interpreted in UTC.
+- **Timezone**: Local clocks use the local scheduler timezone. Cloud clocks interpret all recurring expressions in UTC, including expressions produced by `--every`. `--at` stores one absolute time after parsing the current process timezone.
 - **Default binding precedence**: `letta cron add` uses `--agent` / `--conversation` first, then falls back to `LETTA_AGENT_ID` / `LETTA_CONVERSATION_ID`, then finally uses `"default"` for the conversation if no env var is present.
-- **Local scheduler requirement**: Local-runner tasks only fire while a Letta session is running on that computer (a WS listener must be active). If no session is running, tasks will be marked as missed. Cloud-runner schedules fire from the cloud regardless.
+- **Local scheduler requirement**: Local-runner tasks only fire while a Letta session is running on that computer (a WS listener must be active). If no session is running, tasks will be marked as missed. Cloud-runner schedules fire from Cloud regardless.
 - **`--at` for specific times**: `--at "3:00pm"` schedules a one-shot. If the time has already passed today, it schedules for tomorrow.
-- **`--every` for daily**: `--every 1d` fires daily at midnight. For a specific time of day, use `--cron` instead (e.g. `--cron "0 9 * * *"` for 9am daily).
+- **`--every` is cron shorthand**: Values can be rounded or clamped. `--every 1d` becomes midnight in the clock's timezone.
 
 ## Cron Expression Reference
 
-For `--cron`, use standard 5-field cron syntax:
+For `--cron`, use numeric 5-field cron syntax. Named days or months, seconds, `?`, `L`, and `#` are not supported.
 
 ```
 ┌───────────── minute (0-59)
@@ -218,9 +221,9 @@ For `--cron`, use standard 5-field cron syntax:
 * * * * *
 ```
 
-Common patterns:
+For a Cloud clock:
 - `*/5 * * * *` — every 5 minutes
 - `0 */2 * * *` — every 2 hours
-- `0 9 * * *` — daily at 9am
-- `0 9 * * 1-5` — weekdays at 9am
-- `30 8 1 * *` — 8:30am on the 1st of each month
+- `0 9 * * *` — daily at 9am UTC
+- `0 9 * * 1-5` — weekdays at 9am UTC
+- `30 8 1 * *` — 8:30am UTC on the 1st of each month
