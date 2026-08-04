@@ -350,9 +350,9 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
         const isOpenAICompatibleProxy =
           modelUpdateArgs?.[OPENAI_COMPATIBLE_PROXY_UPDATE_ARG] === true &&
           providerType === "openai";
-        const usesDistinctXHighLabel = /Fable 5|Opus 4\.[78]|GPT-5\.6/.test(
-          model.label,
-        );
+        // Keep picker labels aligned with models that preserve xhigh separately from max.
+        const usesDistinctXHighLabel =
+          /Fable 5|Opus 4\.[78]|Opus 5|Sonnet 5|GPT-5\.6/.test(model.label);
         const reasoningLevel =
           isOpenAICompatibleProxy && rawReasoningEffort === null
             ? "default"

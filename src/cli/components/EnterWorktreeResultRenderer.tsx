@@ -7,6 +7,7 @@ const PREFIX_WIDTH = 5; // `  └  ` or `     `
 const LABEL_WIDTH = 8;
 
 export interface EnterWorktreeDisplayResult {
+  action: "created" | "switched";
   path?: string;
   branch?: string;
   base?: string;
@@ -18,7 +19,13 @@ export function parseEnterWorktreeResult(
 ): EnterWorktreeDisplayResult | null {
   const normalized = text.replace(/\r\n/g, "\n");
   const firstLine = normalized.split("\n").find((line) => line.trim());
-  if (firstLine?.trim() !== "Created worktree.") {
+  const action =
+    firstLine?.trim() === "Created worktree."
+      ? "created"
+      : firstLine?.trim() === "Switched to existing worktree."
+        ? "switched"
+        : null;
+  if (!action) {
     return null;
   }
 
@@ -28,6 +35,7 @@ export function parseEnterWorktreeResult(
   };
 
   const result: EnterWorktreeDisplayResult = {
+    action,
     path: field("Path"),
     branch: field("Branch"),
     base: field("Base"),
@@ -36,6 +44,9 @@ export function parseEnterWorktreeResult(
   if (
     normalized.includes(
       "This conversation's working directory is now the new worktree.",
+    ) ||
+    normalized.includes(
+      "This conversation's working directory is now this worktree.",
     )
   ) {
     result.switchedCwd = true;
@@ -103,7 +114,11 @@ export function EnterWorktreeResultRenderer({
           <Text>{`  ${CLI_GLYPHS.result}  `}</Text>
         </Box>
         <Box flexGrow={1} width={contentWidth}>
-          <Text>Created worktree</Text>
+          <Text>
+            {parsed.action === "created"
+              ? "Created worktree"
+              : "Switched to existing worktree"}
+          </Text>
         </Box>
       </Box>
       {parsed.path ? <DetailRow label="Path" value={parsed.path} /> : null}

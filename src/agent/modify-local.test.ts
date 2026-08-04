@@ -72,6 +72,20 @@ describe("local model updates", () => {
     });
   });
 
+  test.each(["anthropic/claude-opus-5", "anthropic/claude-sonnet-5"])(
+    "preserves distinct xhigh for %s",
+    (modelHandle) => {
+      expect(
+        __modifyTestUtils.buildModelSettings(modelHandle, {
+          reasoning_effort: "xhigh",
+        }),
+      ).toMatchObject({
+        provider_type: "anthropic",
+        effort: "xhigh",
+      });
+    },
+  );
+
   test("stores provider-default reasoning explicitly for custom OpenAI providers", () => {
     expect(
       __modifyTestUtils.buildModelSettings("custom/claude-opus-4-6", {
