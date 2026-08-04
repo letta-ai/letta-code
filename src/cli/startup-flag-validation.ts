@@ -28,14 +28,18 @@ export function validateConversationDefaultRequiresAgent(options: {
   }
 }
 
-export function validateStatelessStartupOptions(options: {
+interface StatelessStartupOptions {
   stateless: boolean | null | undefined;
   isHeadless: boolean;
   memfs: boolean | null | undefined;
   memfsStartup: string | null | undefined;
   forceNewAgent: boolean | null | undefined;
   hasExistingAgentSelector: boolean;
-}): void {
+}
+
+function validateStatelessStartupOptions(
+  options: StatelessStartupOptions,
+): void {
   if (!options.stateless) {
     return;
   }
@@ -58,7 +62,7 @@ export function validateStatelessStartupOptions(options: {
   }
 }
 
-export function validatePrimaryStartupFlagConflicts(options: {
+interface PrimaryStartupFlagOptions {
   specifiedConversationId: string | null | undefined;
   specifiedAgentId: string | null | undefined;
   specifiedAgentName: string | null | undefined;
@@ -70,7 +74,11 @@ export function validatePrimaryStartupFlagConflicts(options: {
   isHeadless: boolean;
   memfs: boolean | null | undefined;
   memfsStartup: string | null | undefined;
-}): void {
+}
+
+export function validatePrimaryStartupFlagConflicts(
+  options: PrimaryStartupFlagOptions,
+): void {
   validateStatelessStartupOptions({
     stateless: options.stateless,
     isHeadless: options.isHeadless,

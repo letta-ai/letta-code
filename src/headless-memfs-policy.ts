@@ -1,10 +1,10 @@
-export interface HeadlessMemfsPolicyOptions {
+interface HeadlessMemfsPolicyOptions {
   statelessRequested: boolean;
   isSubagentRole: boolean;
   newAgentRequested: boolean;
 }
 
-export interface HeadlessMemfsPolicy {
+interface HeadlessMemfsPolicy {
   /** A newly created subagent whose prompt and blocks must be stateless. */
   isFreshStatelessSubagent: boolean;
   /** This process must not enable, clone, or sync MemFS for its selected agent. */

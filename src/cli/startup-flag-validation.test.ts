@@ -4,7 +4,6 @@ import {
   validateFlagConflicts,
   validatePrimaryStartupFlagConflicts,
   validateRegistryHandleOrThrow,
-  validateStatelessStartupOptions,
 } from "@/cli/startup-flag-validation";
 
 describe("startup flag validation helpers", () => {
@@ -62,40 +61,46 @@ describe("startup flag validation helpers", () => {
 
   test("stateless startup requires an existing agent in headless mode", () => {
     const baseOptions = {
+      specifiedConversationId: null,
+      specifiedAgentId: "agent-123",
+      specifiedAgentName: null,
+      forceNewConversation: false,
+      importFile: null,
       stateless: true,
       isHeadless: true,
       memfs: false,
       memfsStartup: undefined,
       forceNewAgent: false,
-      hasExistingAgentSelector: true,
     };
 
-    expect(() => validateStatelessStartupOptions(baseOptions)).not.toThrow();
     expect(() =>
-      validateStatelessStartupOptions({
+      validatePrimaryStartupFlagConflicts(baseOptions),
+    ).not.toThrow();
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({
         ...baseOptions,
         isHeadless: false,
       }),
     ).toThrow("--stateless is only supported in headless mode");
     expect(() =>
-      validateStatelessStartupOptions({ ...baseOptions, memfs: true }),
+      validatePrimaryStartupFlagConflicts({ ...baseOptions, memfs: true }),
     ).toThrow("--stateless cannot be used with --memfs");
     expect(() =>
-      validateStatelessStartupOptions({
+      validatePrimaryStartupFlagConflicts({
         ...baseOptions,
         memfsStartup: "skip",
       }),
     ).toThrow("--stateless cannot be used with --memfs-startup");
     expect(() =>
-      validateStatelessStartupOptions({
+      validatePrimaryStartupFlagConflicts({
         ...baseOptions,
         forceNewAgent: true,
       }),
     ).toThrow("--stateless is for existing agents");
     expect(() =>
-      validateStatelessStartupOptions({
+      validatePrimaryStartupFlagConflicts({
         ...baseOptions,
-        hasExistingAgentSelector: false,
+        specifiedAgentId: null,
       }),
     ).toThrow("--stateless requires --agent");
   });
