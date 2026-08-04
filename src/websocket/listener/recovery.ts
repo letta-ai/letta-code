@@ -45,6 +45,7 @@ import {
   normalizeToolReturnWireMessage,
 } from "./interrupts";
 import {
+  createListenerAgentModContext,
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
@@ -739,6 +740,7 @@ export async function resolveRecoveredApprovalResponse(
           recovered.agentId,
           recovered.conversationId,
         ),
+        modContext: createListenerAgentModContext(recovered.agentId),
         modAdapters,
         modEvents: createListenerModEvents(modAdapters),
       });
