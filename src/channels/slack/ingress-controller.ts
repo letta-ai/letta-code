@@ -454,6 +454,14 @@ export function createSlackIngressController(params: {
         return;
       }
       const chatType = resolveSlackChatType(chatId);
+      // Reactions are ambient thread events, not explicit addresses. Letting them
+      // through would wake every mention-only bot attached to the same thread.
+      if (
+        chatType === "channel" &&
+        isSlackMentionOnlyChannel(chatId, config.mentionOnlyChannels)
+      ) {
+        return;
+      }
       const threadId =
         chatType === "channel"
           ? (knownThreadIdsByMessageId.get(targetMessageId) ?? targetMessageId)

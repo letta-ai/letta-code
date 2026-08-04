@@ -239,6 +239,12 @@ function cloneAccount<T extends ChannelAccount>(account: T): T {
     (cloned as TelegramChannelAccount).binding = { ...account.binding };
   }
 
+  if (isSlackChannelAccount(account)) {
+    (cloned as SlackChannelAccount).mentionOnlyChannels = [
+      ...(account.mentionOnlyChannels ?? []),
+    ];
+  }
+
   if (isDiscordChannelAccount(account) && account.allowedChannels) {
     (cloned as DiscordChannelAccount).allowedChannels = Array.isArray(
       account.allowedChannels,

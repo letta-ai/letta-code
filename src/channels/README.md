@@ -287,11 +287,16 @@ account's `mention_only_channels` list in
 ```
 
 This policy is account-specific and applies even to threads where that bot has
-already participated. Direct messages, native Slack slash commands, reactions,
-and channels not listed here retain their existing behavior. Keep both
-`app_mention` and the broad `message.channels` / `message.groups` subscriptions
-when only selected channels should be mention-only; removing the broad message
-events makes mention-only delivery apply to the whole Slack app instead.
+already participated. Add the channel ID to every bot account that should require
+an explicit mention. In listed channels, unmentioned messages and reaction
+events do not start agent turns. Direct messages, native Slack slash commands,
+and channels not listed here retain their existing behavior.
+
+Keep both `app_mention` and the broad `message.channels` / `message.groups`
+subscriptions when only selected channels should be mention-only. Removing the
+broad message events makes mention-only delivery apply to the whole Slack app
+instead. Restart the listener after editing `accounts.json` so the running Slack
+adapter loads the new policy.
 
 
 ## First-party vs user plugins

@@ -144,7 +144,7 @@ test("slack adapter normalizes mentioned DM text", async () => {
   );
 });
 
-test("slack adapter forwards app mentions as channel input", async () => {
+test("slack adapter forwards app mentions in mention-only channels", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -154,6 +154,7 @@ test("slack adapter forwards app mentions as channel input", async () => {
     appToken: "xapp-test-token-1234567890",
     dmPolicy: "pairing",
     allowedUsers: [],
+    mentionOnlyChannels: ["C123"],
   });
 
   const onMessage = mock(async () => {});
@@ -415,7 +416,7 @@ test("slack adapter leaves DMs unaffected by mention-only channel config", async
   );
 });
 
-test("slack adapter scopes agent-thread auto-routing by channel", async () => {
+test("slack adapter leaves unlisted channels outside the mention-only policy", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -425,6 +426,7 @@ test("slack adapter scopes agent-thread auto-routing by channel", async () => {
     appToken: "xapp-test-token-1234567890",
     dmPolicy: "pairing",
     allowedUsers: [],
+    mentionOnlyChannels: ["C123"],
   });
 
   const onMessage = mock(async () => {});
