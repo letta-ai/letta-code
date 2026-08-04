@@ -5,123 +5,89 @@ description: Create and manage shared memory — git-tracked repositories hosted
 
 # Managing Shared Memory
 
-Shared memory is memory created independently of any single agent, designed to be dynamically attached to or detached from multiple agents. Each unit of shared memory is a **shared memory repository**: a git-tracked filesystem hosted on Letta Cloud, owned by your organization rather than by one agent, reachable from any environment (sandboxes, remote machines, sessions).
+Shared memory is memory created independently of any single agent, designed to be dynamically attached to or detached from multiple agents. Each unit of shared memory is a **shared memory repository**: a git repository hosted on Letta Cloud, owned by your organization rather than by one agent, reachable from any environment (sandboxes, remote machines, sessions).
 
-Like the rest of your external memory, shared memory lives outside your system prompt — it is not in-context. Unlike the rest of your external memory, it is not scoped to *you* specifically, so each attached repository has its own local projection root and its own remote git origin, separate from your MemFS.
+Shared memory works exactly like your MemFS: attached repositories are real git checkouts on disk, and you read, edit, commit, and push them with ordinary git. The only differences are that each repository has its own projection root (next to your memory directory, not inside it) and its own remote origin, and other agents may be writing to it too.
 
 Create a shared memory repository when:
 - You have context an agent should be able to access that doesn't belong in its own MemFS (input files, datasets, docs, working artifacts)
 - Multiple agents need to read or write the same context
 - You want a versioned file store that survives across environments and sessions
 
-Every file change is a git commit, so history is always available.
+## Working with Files (the normal path)
 
-## Accessing Attached Shared Memory
-
-When shared memory is attached to you and you're running in a cloud sandbox/environment, it is projected on disk next to your memory directory — each repository at its own projection root:
+Attached shared memory is mounted next to your memory directory, one git checkout per repository:
 
 ```bash
-ls "$MEMORY_DIR/../"           # attached shared memory appears here by name
-cat "$MEMORY_DIR/../<repo-name>/<path>"
+ls "$MEMORY_DIR/../"                      # attached repositories appear here by name
+cat "$MEMORY_DIR/../<repo-name>/<path>"   # read like any file
 ```
 
-If you don't see an expected repository on disk, fall back to the API (below) — it always works regardless of environment.
-
-## API Operations
-
-Shared memory repositories are the `repositories` resource in the Letta API. All operations go through the API using `$LETTA_API_KEY` via the Bash tool. Use `https://api.letta.com` (or `$LETTA_BASE_URL` if set — e.g. when running under Letta Desktop, which proxies auth). Responses are JSON.
+Edit files with your normal file tools, then commit and push with git — the mount's origin and credentials are already configured:
 
 ```bash
-BASE="${LETTA_BASE_URL:-https://api.letta.com}"
-AUTH="Authorization: Bearer $LETTA_API_KEY"
+cd "$MEMORY_DIR/../<repo-name>"
+git add <files>
+git commit -m "describe the change"
+git push
 ```
 
-### Repositories
+Unlike MemFS, the harness does not auto-push shared memory after turns — a commit you don't push is not visible to other agents or environments. Always push after committing.
+
+To pick up other agents' changes:
 
 ```bash
-# Create
-curl -sS -X POST "$BASE/v1/repositories" -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"name": "shared-inputs"}'
-# → {"id": "repo-...", "name": "shared-inputs", "created_at": ..., "updated_at": ...}
-
-# List (paginated)
-curl -sS "$BASE/v1/repositories?limit=50&offset=0" -H "$AUTH"
-# → {"repositories": [...], "has_next_page": false}
-
-# Get one
-curl -sS "$BASE/v1/repositories/{repository_id}" -H "$AUTH"
-
-# Delete (soft-delete)
-curl -sS -X DELETE "$BASE/v1/repositories/{repository_id}" -H "$AUTH"
+git -C "$MEMORY_DIR/../<repo-name>" pull --rebase
 ```
 
-### Files
+If a push is rejected (another agent pushed first), `git pull --rebase` then push again.
 
-Files are text content addressed by path. Every mutation returns a `commit_sha` and the file's `content_sha256`.
+History is ordinary git history:
 
 ```bash
-# List files (optional: path_prefix, depth, ref)
-curl -sS "$BASE/v1/repositories/{repository_id}/files?path_prefix=docs/&depth=2" -H "$AUTH"
-# → {"files": [{"path": "docs/a.md", "type": "file"}, ...], "ref": "<sha>"}
-
-# Create
-curl -sS -X POST "$BASE/v1/repositories/{repository_id}/files" -H "$AUTH" \
-  -H "Content-Type: application/json" \
-  -d '{"path": "docs/a.md", "content": "hello"}'
-
-# Read (optional: ref for a historical version)
-curl -sS "$BASE/v1/repositories/{repository_id}/files/content?path=docs/a.md" -H "$AUTH"
-# → {"path": "docs/a.md", "content": "hello", "content_sha256": "...", "ref": "..."}
-
-# Update content and/or rename. The optional precondition fails the write
-# if the file changed since you last read it (use when multiple agents write).
-curl -sS -X POST "$BASE/v1/repositories/{repository_id}/files/content" -H "$AUTH" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "path": "docs/a.md",
-    "content": "updated",
-    "new_path": "docs/b.md",
-    "precondition": {"type": "content_sha256", "content_sha256": "<sha from last read>"}
-  }'
-
-# Delete
-curl -sS -X DELETE "$BASE/v1/repositories/{repository_id}/files/content" -H "$AUTH" \
-  -H "Content-Type: application/json" -d '{"path": "docs/b.md"}'
-# → {"success": true, "commit_sha": "..."}
+git -C "$MEMORY_DIR/../<repo-name>" log --oneline -- <path>
 ```
 
-### Version History
+## Managing Repositories (create / attach / detach)
+
+Use the `letta shared-memory` subcommand. It uses your harness auth (works even when `LETTA_API_KEY` is not in the shell env) and inherits the agent id from `AGENT_ID`, so `--agent` is only needed when targeting another agent.
 
 ```bash
-# List commits (optionally scoped to one path)
-curl -sS "$BASE/v1/repositories/{repository_id}/versions?path=docs/a.md&limit=20" -H "$AUTH"
-# → {"commits": [{"sha": "...", "message": "...", "timestamp": "...", "author_name": ...}]}
+# List org repositories (marks which are attached to you)
+letta shared-memory list
 
-# Read a file as of a specific commit
-curl -sS "$BASE/v1/repositories/{repository_id}/versions/{sha}?path=docs/a.md" -H "$AUTH"
+# Create a repository
+letta shared-memory create --name shared-notes
+
+# Attach to yourself: attaches via the API, clones the local mount at
+# $MEMORY_DIR/../shared-notes, and recompiles the system prompt projection
+letta shared-memory attach shared-notes
+
+# Attach to another agent (its mount materializes in that agent's environments)
+letta shared-memory attach shared-notes --agent agent-...
+
+# Detach (leaves the local mount directory in place)
+letta shared-memory detach shared-notes
+
+# Repair/refresh mounts: clone or pull every attached repository. Use this when
+# the system prompt references a repository that is missing on disk (e.g. after
+# it was attached from another surface while this session was running).
+letta shared-memory sync
+
+# Commit history via the API (works even without a local mount)
+letta shared-memory history shared-notes --path docs/plan.md
 ```
 
-### Attaching Shared Memory to Agents
+## Troubleshooting
 
-Attaching projects the repository into the agent's environments; detaching removes it. Neither changes the agent's own MemFS.
-
-```bash
-# List shared memory attached to an agent
-curl -sS "$BASE/v1/agents/{agent_id}/repositories" -H "$AUTH"
-
-# Attach
-curl -sS -X POST "$BASE/v1/agents/{agent_id}/repositories" -H "$AUTH" \
-  -H "Content-Type: application/json" -d '{"repository_id": "repo-..."}'
-
-# Detach
-curl -sS -X DELETE "$BASE/v1/agents/{agent_id}/repositories/{repository_id}" -H "$AUTH"
-```
-
-Attaching is asynchronous — after a POST, poll the list endpoint until the repository appears before relying on it. You can attach shared memory to yourself (`$AGENT_ID`) or to another agent to share context with it.
+- **Prompt lists a repository but `$MEMORY_DIR/../<name>` is missing** — the repository was attached without materializing the mount. Run `letta shared-memory sync`.
+- **`sync` reports "mount path already exists and is not a git repository"** — a plain directory (usually created by hand before the mount existed) is occupying the mount path. Inspect it, salvage anything worth keeping, move or delete it, then re-run `letta shared-memory sync`.
+- **Never hand-clone the repository to another location (e.g. /tmp) to work around a broken mount** — fix the mount with `letta shared-memory sync` so every session and other agents see the same checkout.
+- **Permission denied under another agent's directory** — shared repositories mount per-agent. Only your own mount (under your agent directory) is accessible; another agent's mount of the same repository is walled off by the cross-agent guard. Run `letta shared-memory sync` to get your own mount.
+- **Push rejected (non-fast-forward)** — another agent pushed first: `git pull --rebase`, resolve any conflicts, push again.
 
 ## Notes and Limits
 
-- Shared memory files are **text** content; binary files are not supported via the files API.
-- Attached shared memory is not scoped to you — another agent may edit the same files at any time. Use the `content_sha256` precondition on updates when multiple agents may write the same file; on failure, re-read and retry.
 - Shared memory is not part of your system prompt. Writing to it does not change your in-context memory — for that, edit your memory blocks or MemFS files.
-- SDK equivalent: `@letta-ai/letta-agent-sdk` exposes these operations as `client.repositories` (with `files` and `versions` helpers) and supports attaching shared memory for a session's lifetime via `resources: [{ type: "repository", repositoryId }]` on cloud sessions.
+- Attaching is asynchronous on the server; `letta shared-memory attach` waits for the attachment to be visible before cloning.
+- SDK/API equivalent for programmatic callers: `@letta-ai/letta-agent-sdk` exposes these operations as `client.repositories` (with `files` and `versions` helpers), and shared memory can be attached for a session's lifetime via `resources: [{ type: "repository", repositoryId }]` on cloud sessions. The REST resource is `/v1/repositories`.
