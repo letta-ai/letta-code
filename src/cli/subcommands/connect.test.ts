@@ -286,6 +286,45 @@ describe("connect subcommand", () => {
     );
   });
 
+  test("requires a base URL for the local OpenAI-compatible provider", async () => {
+    const { stderr, deps } = createIoDeps();
+    setProviderTarget("local");
+
+    const exitCode = await runConnectSubcommand(["openai-compatible"], deps);
+
+    expect(exitCode).toBe(1);
+    expect(stderr.join("\n")).toContain("Missing base URL");
+    expect(deps.promptSecret).not.toHaveBeenCalled();
+    expect(deps.checkProviderApiKey).not.toHaveBeenCalled();
+    expect(deps.createOrUpdateProvider).not.toHaveBeenCalled();
+  });
+
+  test("connects a keyless local OpenAI-compatible provider", async () => {
+    const { deps } = createIoDeps();
+    setProviderTarget("local");
+
+    const exitCode = await runConnectSubcommand(
+      ["openai-compatible", "--base-url", "http://127.0.0.1:8000/v1/"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(deps.promptSecret).not.toHaveBeenCalled();
+    expect(deps.checkProviderApiKey).toHaveBeenCalledWith(
+      "openai-compatible",
+      "not-needed",
+    );
+    expect(deps.createOrUpdateProvider).toHaveBeenCalledWith(
+      "openai-compatible",
+      "openai-compatible",
+      "not-needed",
+      undefined,
+      undefined,
+      undefined,
+      { baseURL: "http://127.0.0.1:8000/v1/" },
+    );
+  });
+
   test("connects llama.cpp local provider alias", async () => {
     const { deps } = createIoDeps();
     setProviderTarget("local");

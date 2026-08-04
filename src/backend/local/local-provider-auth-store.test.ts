@@ -19,6 +19,50 @@ describe("local OAuth provider storage", () => {
     );
   });
 
+  test("persists keyed and keyless OpenAI-compatible connections with their base URL", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-openai-compatible-routing-"),
+    );
+    storageDirs.push(storageDir);
+
+    await expect(
+      createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "openai-compatible",
+        providerName: "openai-compatible",
+        apiKey: "not-needed",
+      }),
+    ).rejects.toThrow("requires a base URL");
+
+    await createOrUpdateLocalProvider({
+      storageDir,
+      providerType: "openai-compatible",
+      providerName: "openai-compatible",
+      apiKey: "not-needed",
+      baseURL: "http://localhost:8000/v1",
+    });
+    expect(
+      getLocalProviderRecordByName("openai-compatible", storageDir),
+    ).toMatchObject({
+      provider_type: "openai-compatible",
+      base_url: "http://localhost:8000/v1",
+      auth: { type: "api", key: "not-needed" },
+    });
+
+    await createOrUpdateLocalProvider({
+      storageDir,
+      providerType: "openai-compatible",
+      providerName: "openai-compatible",
+      apiKey: "secret-key",
+    });
+    expect(
+      getLocalProviderRecordByName("openai-compatible", storageDir),
+    ).toMatchObject({
+      base_url: "http://localhost:8000/v1",
+      auth: { type: "api", key: "secret-key" },
+    });
+  });
+
   test("preserves proxy routing when OAuth credentials refresh", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-oauth-routing-"));
     storageDirs.push(storageDir);

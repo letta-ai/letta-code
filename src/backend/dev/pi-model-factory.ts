@@ -3,6 +3,7 @@ import type { OAuthCredentials } from "@earendil-works/pi-ai/oauth";
 import { localNamesForProviderId } from "@/backend/local/local-pi-credential-store";
 import {
   getLocalProviderRecordByName,
+  LOCAL_PROVIDER_NO_API_KEY,
   type LocalProviderRecord,
   localProviderApiKeyFromRecord,
 } from "@/backend/local/local-provider-auth-store";
@@ -492,7 +493,13 @@ export async function resolvePiModelForAgent(
   // The runtime is the sole credential source (stored records, ambient env
   // via the runtime's AuthContext aliases, per-credential OAuth request
   // auth). The one named exception is zai's dual-record endpoint selection.
-  connection = { ...connection, apiKey: authResult?.auth.apiKey };
+  connection = {
+    ...connection,
+    apiKey:
+      authResult?.auth.apiKey === LOCAL_PROVIDER_NO_API_KEY
+        ? undefined
+        : authResult?.auth.apiKey,
+  };
   if (authResult?.auth.baseUrl) baseURL = authResult.auth.baseUrl;
   if (authResult?.auth.headers) {
     headers = mergeHeaders(headers, nonNullHeaders(authResult.auth.headers));

@@ -12,6 +12,7 @@ import { getProviderOAuthAuth } from "@/backend/dev/pi-oauth";
 import { getRegisteredPiProvider } from "@/backend/dev/pi-provider-mod-registry";
 import {
   LOCAL_CHATGPT_PROVIDER_NAME,
+  OPENAI_COMPATIBLE_PI_PROVIDER_ID,
   SUPPORTED_LOCAL_PROVIDER_TYPES,
 } from "@/backend/dev/pi-provider-registry";
 import type { LocalProviderTimeout } from "./local-provider-timeout";
@@ -29,6 +30,7 @@ export {
   LOCAL_MOONSHOT_PROVIDER_NAME,
   LOCAL_OLLAMA_CLOUD_PROVIDER_NAME,
   LOCAL_OLLAMA_PROVIDER_NAME,
+  LOCAL_OPENAI_COMPATIBLE_PROVIDER_NAME,
   LOCAL_OPENAI_PROVIDER_NAME,
   LOCAL_OPENROUTER_PROVIDER_NAME,
   LOCAL_ZAI_CODING_PROVIDER_NAME,
@@ -202,6 +204,13 @@ export async function createOrUpdateLocalProvider(input: {
 
   const file = readAuthFile(input.storageDir);
   const existing = file.providers[input.providerName];
+  const baseURL = input.baseURL ?? existing?.base_url;
+  if (
+    input.providerType === OPENAI_COMPATIBLE_PI_PROVIDER_ID &&
+    !baseURL?.trim()
+  ) {
+    throw new Error("OpenAI-compatible API requires a base URL.");
+  }
   const now = new Date().toISOString();
   const auth: LocalProviderAuth =
     input.providerType === "chatgpt_oauth"
@@ -216,9 +225,7 @@ export async function createOrUpdateLocalProvider(input: {
     ...(input.accessKey ? { access_key: input.accessKey } : {}),
     ...(input.region ? { region: input.region } : {}),
     ...(input.profile ? { profile: input.profile } : {}),
-    ...((input.baseURL ?? existing?.base_url)
-      ? { base_url: input.baseURL ?? existing?.base_url }
-      : {}),
+    ...(baseURL ? { base_url: baseURL } : {}),
     ...(input.timeout !== undefined
       ? { timeout: input.timeout }
       : existing?.timeout !== undefined
