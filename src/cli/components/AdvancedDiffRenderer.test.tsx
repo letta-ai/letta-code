@@ -128,6 +128,8 @@ test("advanced diff renderer expands tabs before writing terminal rows", async (
   });
 
   expect(output).not.toContain("\t");
+  expect(output).not.toContain("Updated");
+  expect(output).not.toContain("Showing ~");
   expect(output).toContain("-     const before = true;");
   expect(output).toContain("+     const after = true;");
 });

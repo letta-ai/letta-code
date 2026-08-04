@@ -134,9 +134,14 @@ function DiffLine({
 interface WriteRendererProps {
   filePath: string;
   content: string;
+  showHeader?: boolean;
 }
 
-export function WriteRenderer({ filePath, content }: WriteRendererProps) {
+export function WriteRenderer({
+  filePath,
+  content,
+  showHeader = true,
+}: WriteRendererProps) {
   const columns = useTerminalWidth();
   const relativePath = formatDisplayPath(filePath);
   const lines = content.split("\n");
@@ -147,20 +152,22 @@ export function WriteRenderer({ filePath, content }: WriteRendererProps) {
 
   return (
     <Box flexDirection="column">
-      <Box flexDirection="row">
-        <Box width={gutterWidth} flexShrink={0}>
-          <Text>
-            {"  "}
-            <Text dimColor>{CLI_GLYPHS.result}</Text>
-          </Text>
+      {showHeader ? (
+        <Box flexDirection="row">
+          <Box width={gutterWidth} flexShrink={0}>
+            <Text>
+              {"  "}
+              <Text dimColor>{CLI_GLYPHS.result}</Text>
+            </Text>
+          </Box>
+          <Box flexGrow={1} width={contentWidth}>
+            <Text wrap="wrap">
+              Wrote <Text bold>{lineCount}</Text> line
+              {lineCount !== 1 ? "s" : ""} to <Text bold>{relativePath}</Text>
+            </Text>
+          </Box>
         </Box>
-        <Box flexGrow={1} width={contentWidth}>
-          <Text wrap="wrap">
-            Wrote <Text bold>{lineCount}</Text> line
-            {lineCount !== 1 ? "s" : ""} to <Text bold>{relativePath}</Text>
-          </Text>
-        </Box>
-      </Box>
+      ) : null}
       {lines.map((line, i) => (
         <Box key={`line-${i}-${line.substring(0, 20)}`} flexDirection="row">
           <Box width={gutterWidth} flexShrink={0}>
@@ -179,6 +186,7 @@ interface EditRendererProps {
   filePath: string;
   oldString: string;
   newString: string;
+  showHeader?: boolean;
   showLineNumbers?: boolean; // Whether to show line numbers (default true)
 }
 
@@ -186,6 +194,7 @@ export function EditRenderer({
   filePath,
   oldString,
   newString,
+  showHeader = true,
   showLineNumbers = true,
 }: EditRendererProps) {
   const columns = useTerminalWidth();
@@ -206,23 +215,25 @@ export function EditRenderer({
 
   return (
     <Box flexDirection="column">
-      <Box flexDirection="row">
-        <Box width={gutterWidth} flexShrink={0}>
-          <Text>
-            {"  "}
-            <Text dimColor>{CLI_GLYPHS.result}</Text>
-          </Text>
+      {showHeader ? (
+        <Box flexDirection="row">
+          <Box width={gutterWidth} flexShrink={0}>
+            <Text>
+              {"  "}
+              <Text dimColor>{CLI_GLYPHS.result}</Text>
+            </Text>
+          </Box>
+          <Box flexGrow={1} width={contentWidth}>
+            <Text wrap="wrap">
+              Updated <Text bold>{relativePath}</Text> with{" "}
+              <Text bold>{additions}</Text> addition
+              {additions !== 1 ? "s" : ""} and <Text bold>{removals}</Text>{" "}
+              removal
+              {removals !== 1 ? "s" : ""}
+            </Text>
+          </Box>
         </Box>
-        <Box flexGrow={1} width={contentWidth}>
-          <Text wrap="wrap">
-            Updated <Text bold>{relativePath}</Text> with{" "}
-            <Text bold>{additions}</Text> addition
-            {additions !== 1 ? "s" : ""} and <Text bold>{removals}</Text>{" "}
-            removal
-            {removals !== 1 ? "s" : ""}
-          </Text>
-        </Box>
-      </Box>
+      ) : null}
 
       {oldLines.map((line, i) => (
         <DiffLine
@@ -257,12 +268,14 @@ interface MultiEditRendererProps {
     old_string: string;
     new_string: string;
   }>;
+  showHeader?: boolean;
   showLineNumbers?: boolean; // Whether to show line numbers (default true)
 }
 
 export function MultiEditRenderer({
   filePath,
   edits,
+  showHeader = true,
   showLineNumbers = true,
 }: MultiEditRendererProps) {
   const columns = useTerminalWidth();
@@ -282,23 +295,25 @@ export function MultiEditRenderer({
 
   return (
     <Box flexDirection="column">
-      <Box flexDirection="row">
-        <Box width={gutterWidth} flexShrink={0}>
-          <Text>
-            {"  "}
-            <Text dimColor>{CLI_GLYPHS.result}</Text>
-          </Text>
+      {showHeader ? (
+        <Box flexDirection="row">
+          <Box width={gutterWidth} flexShrink={0}>
+            <Text>
+              {"  "}
+              <Text dimColor>{CLI_GLYPHS.result}</Text>
+            </Text>
+          </Box>
+          <Box flexGrow={1} width={contentWidth}>
+            <Text wrap="wrap">
+              Updated <Text bold>{relativePath}</Text> with{" "}
+              <Text bold>{totalAdditions}</Text> addition
+              {totalAdditions !== 1 ? "s" : ""} and{" "}
+              <Text bold>{totalRemovals}</Text> removal
+              {totalRemovals !== 1 ? "s" : ""}
+            </Text>
+          </Box>
         </Box>
-        <Box flexGrow={1} width={contentWidth}>
-          <Text wrap="wrap">
-            Updated <Text bold>{relativePath}</Text> with{" "}
-            <Text bold>{totalAdditions}</Text> addition
-            {totalAdditions !== 1 ? "s" : ""} and{" "}
-            <Text bold>{totalRemovals}</Text> removal
-            {totalRemovals !== 1 ? "s" : ""}
-          </Text>
-        </Box>
-      </Box>
+      ) : null}
 
       {edits.map((edit, index) => {
         const oldLines = edit.old_string.split("\n");

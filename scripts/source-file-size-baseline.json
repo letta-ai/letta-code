@@ -15,7 +15,7 @@
   "src/cli/components/InputRich.tsx": 2225,
   "src/cli/components/ModelSelector.tsx": 1259,
   "src/cli/components/ProviderSelector.tsx": 1692,
-  "src/cli/components/ToolCallMessageRich.tsx": 1109,
+  "src/cli/components/ToolCallMessageRich.tsx": 1124,
   "src/cli/helpers/accumulator.ts": 1596,
   "src/cli/helpers/reflection-transcript.ts": 1956,
   "src/cli/helpers/stream.ts": 1046,

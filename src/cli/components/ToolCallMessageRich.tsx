@@ -628,6 +628,7 @@ export const ToolCallMessage = memo(
                     kind="multi_edit"
                     filePath={filePath}
                     edits={edits}
+                    showHeader={false}
                   />
                 );
               }
@@ -640,6 +641,7 @@ export const ToolCallMessage = memo(
                   oldString={parsedArgs.old_string || ""}
                   newString={parsedArgs.new_string || ""}
                   replaceAll={parsedArgs.replace_all}
+                  showHeader={false}
                 />
               );
             }
@@ -657,6 +659,7 @@ export const ToolCallMessage = memo(
                 <MultiEditRenderer
                   filePath={filePath}
                   edits={edits}
+                  showHeader={false}
                   showLineNumbers={false}
                 />
               );
@@ -669,6 +672,7 @@ export const ToolCallMessage = memo(
                   filePath={filePath}
                   oldString={parsedArgs.old_string || ""}
                   newString={parsedArgs.new_string || ""}
+                  showHeader={false}
                   showLineNumbers={false}
                 />
               );
@@ -701,10 +705,17 @@ export const ToolCallMessage = memo(
                     kind="write"
                     filePath={filePath}
                     content={content}
+                    showHeader={false}
                   />
                 );
               }
-              return <WriteRenderer filePath={filePath} content={content} />;
+              return (
+                <WriteRenderer
+                  filePath={filePath}
+                  content={content}
+                  showHeader={false}
+                />
+              );
             }
           } catch {
             // If parsing fails, fall through to regular handling
@@ -734,12 +745,14 @@ export const ToolCallMessage = memo(
                             kind="write"
                             filePath={op.path}
                             content={op.content}
+                            showHeader={false}
                           />
                         ) : (
                           <WriteRenderer
                             key={`patch-add-${op.path}`}
                             filePath={op.path}
                             content={op.content}
+                            showHeader={false}
                           />
                         );
                       }
@@ -752,6 +765,7 @@ export const ToolCallMessage = memo(
                             filePath={op.path}
                             oldString={op.oldString}
                             newString={op.newString}
+                            showHeader={false}
                           />
                         ) : (
                           <EditRenderer
@@ -759,6 +773,7 @@ export const ToolCallMessage = memo(
                             filePath={op.path}
                             oldString={op.oldString}
                             newString={op.newString}
+                            showHeader={false}
                             showLineNumbers={false}
                           />
                         );
