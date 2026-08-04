@@ -23,7 +23,7 @@ import { detectShellContext } from "@/utils/shell-context";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
 import {
-  createListenerModContext,
+  createListenerAgentModContext,
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
@@ -272,12 +272,7 @@ export async function prepareListenerTurn(params: {
     permissionModeState,
     skillSources: runtime.skillSources,
     cachedAgent,
-    modContext: createListenerModContext({
-      sessionId: conversationId,
-      workingDirectory,
-      permissionMode: permissionModeState.mode,
-      agent: cachedAgent ?? { id: agentId },
-    }),
+    modContext: createListenerAgentModContext(agentId),
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
   });

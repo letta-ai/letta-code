@@ -36,7 +36,7 @@ import type {
 } from "@/types/protocol_v2";
 import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import {
-  createListenerModContext,
+  createListenerAgentModContext,
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "@/websocket/listener/mod-adapter";
@@ -537,10 +537,7 @@ export async function applyModelUpdateForRuntime(params: {
         providerTypeFromModelSettings(modelSettings) ??
         inferProviderTypeFromRegistryHandle(model.handle) ??
         null,
-      modContext: createListenerModContext({
-        sessionId: conversationId,
-        agent: { id: agentId },
-      }),
+      modContext: createListenerAgentModContext(agentId),
       modAdapters,
       modEvents: createListenerModEvents(modAdapters),
     });
@@ -636,10 +633,7 @@ export async function applyToolsetUpdateForRuntime(params: {
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
-      modContext: createListenerModContext({
-        sessionId: conversationId,
-        agent: { id: agentId },
-      }),
+      modContext: createListenerAgentModContext(agentId),
       modAdapters,
       modEvents: createListenerModEvents(modAdapters),
     });

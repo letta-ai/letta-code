@@ -111,6 +111,10 @@ export function createListenerModContext(
   };
 }
 
+export function createListenerAgentModContext(agentId: string): ModContext {
+  return createListenerModContext({ agent: { id: agentId } });
+}
+
 export function createListenerModAdapter(
   options: CreateListenerModAdapterOptions = {},
 ): ModAdapter {
