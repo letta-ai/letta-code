@@ -145,7 +145,7 @@ function getNodeRoutingHeader(): Record<string, string> {
   return { "x-letta-node": enabled ? "1" : "0" };
 }
 
-function getRuntimeEnvironmentDeviceId(): string {
+export function getRuntimeEnvironmentDeviceId(): string {
   // A managed runtime may have an orchestrator-assigned execution identity
   // distinct from this installation's persisted device id. Keep the override
   // scoped to runtime attribution; registration and auth still use settings.
