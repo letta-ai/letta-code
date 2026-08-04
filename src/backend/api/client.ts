@@ -1,7 +1,9 @@
-import { hostname } from "node:os";
 import Letta from "@letta-ai/letta-client";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
-import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
+import {
+  refreshTokensCoordinated,
+  TOKEN_REFRESH_WINDOW_MS,
+} from "@/auth/oauth-refresh";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { isDebugEnabled } from "@/utils/debug";
@@ -216,30 +218,13 @@ export async function getClient() {
     const now = Date.now();
     const expiresAt = settings.tokenExpiresAt;
 
-    // Refresh if token expires within 5 minutes, or if the access token is
-    // missing entirely (e.g. transient keychain read failure during the
-    // delete-then-set window of a concurrent refresh).
-    if (!apiKey || expiresAt - now < 5 * 60 * 1000) {
+    // Refresh if token expires within the refresh window, or if the access
+    // token is missing entirely (e.g. transient keychain read failure during
+    // the delete-then-set window of a concurrent refresh).
+    if (!apiKey || expiresAt - now < TOKEN_REFRESH_WINDOW_MS) {
       try {
-        // Get or generate device ID (should always exist, but fallback just in case)
-        const deviceId = settingsManager.getOrCreateDeviceId();
-        const deviceName = hostname();
-
-        const tokens = await refreshAccessTokenSingleFlight(
-          settings.refreshToken,
-          deviceId,
-          deviceName,
-        );
-
-        // Update settings with new token (secrets handles secure storage automatically)
-        settingsManager.updateSettings({
-          env: { LETTA_API_KEY: tokens.access_token },
-          refreshToken: tokens.refresh_token || settings.refreshToken,
-          tokenExpiresAt: now + tokens.expires_in * 1000,
-        });
-
-        apiKey = tokens.access_token;
-        _cachedApiKey = tokens.access_token;
+        apiKey = await refreshTokensCoordinated(settings.refreshToken);
+        _cachedApiKey = apiKey;
       } catch (error) {
         trackBoundaryError({
           errorType: "auth_token_refresh_failed",

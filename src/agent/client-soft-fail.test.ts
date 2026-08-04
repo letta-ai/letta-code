@@ -43,6 +43,12 @@ async function runIsolatedClientScript(
     HOME: homeDir,
     USERPROFILE: homeDir,
     LETTA_CODE_AGENT_ROLE: "subagent",
+    // Force readPersistedAuthTokens (the coordinated refresh's durable
+    // snapshot) onto its file-backed path: these scenarios stub keychain
+    // behavior at the settingsManager level, and the machine keychain must
+    // never be consulted or written. Also makes the scenarios deterministic
+    // across platforms (Linux CI has no keychain; macOS runners do).
+    LETTA_SKIP_KEYCHAIN_CHECK: "1",
   };
   delete env.LETTA_API_KEY;
   delete env.LETTA_BASE_URL;
@@ -238,7 +244,21 @@ describe("getClient soft failures", () => {
         });
         await settingsManager.flush();
 
-        settingsManager.updateSettings = () => {};
+        // Persist refreshed tokens into the temp-HOME settings file instead
+        // of the real store: the coordinated refresh verifies persistence
+        // with a durable read-back (file-backed here via
+        // LETTA_SKIP_KEYCHAIN_CHECK), so a swallowing no-op would correctly
+        // be rejected as a failed persist.
+        const { writeFileSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const settingsPath = join(process.env.HOME, ".letta", "settings.json");
+        settingsManager.updateSettings = (updates) => {
+          writeFileSync(settingsPath, JSON.stringify({
+            env: { LETTA_API_KEY: updates.env?.LETTA_API_KEY },
+            refreshToken: updates.refreshToken,
+            tokenExpiresAt: updates.tokenExpiresAt,
+          }), "utf-8");
+        };
 
         let refreshReadCount = 0;
         let fetchCalls = 0;

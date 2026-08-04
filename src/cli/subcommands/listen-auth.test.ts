@@ -16,6 +16,30 @@ const requestDeviceCodeMock = mock(async (): Promise<DeviceCodeResponse> => {
 const pollForTokenMock = mock(async (): Promise<TokenResponse> => {
   throw new Error("pollForToken not mocked");
 });
+// Durable-snapshot fake for the coordinated refresh. Before a refresh it
+// reports a stale stored refresh token; once the (stubbed)
+// settingsManager.updateSettings has run it reflects that write, so the
+// coordinator's persistence read-back verifies against this fake store
+// instead of the developer's real settings file and keychain.
+let persistedUpdates: {
+  env: { LETTA_API_KEY: string };
+  refreshToken: string;
+  tokenExpiresAt: number;
+} | null = null;
+const readPersistedTokensFake = async () =>
+  persistedUpdates
+    ? {
+        apiKey: persistedUpdates.env.LETTA_API_KEY,
+        refreshToken: persistedUpdates.refreshToken,
+        tokenExpiresAt: persistedUpdates.tokenExpiresAt,
+        source: "file" as const,
+      }
+    : {
+        apiKey: null,
+        refreshToken: "refresh-token",
+        tokenExpiresAt: Date.now() - 1000,
+        source: "file" as const,
+      };
 
 const { __listenSubcommandTestUtils } = await import(
   "@/cli/subcommands/listen"
@@ -37,11 +61,13 @@ describe("listen subcommand auth resolution", () => {
     refreshAccessTokenMock.mockReset();
     requestDeviceCodeMock.mockReset();
     pollForTokenMock.mockReset();
+    persistedUpdates = null;
     __listenerAuthTestUtils.setOAuthDepsForTests({
       LETTA_CLOUD_API_URL: "https://api.letta.com",
       refreshAccessToken: refreshAccessTokenMock,
       requestDeviceCode: requestDeviceCodeMock,
       pollForToken: pollForTokenMock,
+      readPersistedTokens: readPersistedTokensFake,
     });
 
     delete process.env.LETTA_API_KEY;
@@ -125,7 +151,11 @@ describe("listen subcommand auth resolution", () => {
   });
 
   test("refreshes saved Letta Cloud tokens when they are expired", async () => {
-    const updateSettingsMock = mock(() => {});
+    const updateSettingsMock = mock(
+      (updates: NonNullable<typeof persistedUpdates>) => {
+        persistedUpdates = updates;
+      },
+    );
     const flushMock = mock(async () => {});
 
     settingsManager.getSettingsWithSecureTokens = mock(async () => ({

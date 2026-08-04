@@ -5,7 +5,11 @@ import {
   refreshAccessToken,
   requestDeviceCode,
 } from "@/auth/oauth";
-import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
+import {
+  refreshAccessTokenSingleFlight,
+  refreshTokensCoordinated,
+} from "@/auth/oauth-refresh";
+import { readPersistedAuthTokens } from "@/auth/persisted-tokens";
 import { settingsManager } from "@/settings-manager";
 import {
   deriveListenerInstanceId,
@@ -25,6 +29,8 @@ type ListenerOAuthDeps = {
   pollForToken: typeof pollForToken;
   refreshAccessToken: typeof refreshAccessToken;
   requestDeviceCode: typeof requestDeviceCode;
+  /** Durable-snapshot reader for the coordinated refresh (tests inject). */
+  readPersistedTokens: typeof readPersistedAuthTokens;
 };
 
 type ListenerAuthOptions = {
@@ -40,6 +46,7 @@ const defaultListenerOAuthDeps: ListenerOAuthDeps = {
   pollForToken,
   refreshAccessToken,
   requestDeviceCode,
+  readPersistedTokens: readPersistedAuthTokens,
 };
 
 let listenerOAuthDepsOverride: ListenerOAuthDeps | null = null;
@@ -135,25 +142,25 @@ async function refreshListenerAccessToken(
     throw new MissingListenerApiKeyError();
   }
 
-  const now = Date.now();
   console.log("Access token expired, refreshing...");
 
-  const tokens = await refreshAccessTokenSingleFlight(
-    settings.refreshToken,
-    deviceId,
-    connectionName,
-    getListenerOAuthDeps().refreshAccessToken,
-  );
-
-  settingsManager.updateSettings({
-    env: { LETTA_API_KEY: tokens.access_token },
-    refreshToken: tokens.refresh_token ?? settings.refreshToken,
-    tokenExpiresAt: now + tokens.expires_in * 1000,
+  // Coordinated: serializes with every other rotating-token path (CLI
+  // sessions, git-credential helpers) and persists under the same lock.
+  // The injected refresh fn (test override) is threaded through the
+  // in-process single-flight, matching the previous behavior.
+  const accessToken = await refreshTokensCoordinated(settings.refreshToken, {
+    readTokens: getListenerOAuthDeps().readPersistedTokens,
+    refresh: (refreshToken) =>
+      refreshAccessTokenSingleFlight(
+        refreshToken,
+        deviceId,
+        connectionName,
+        getListenerOAuthDeps().refreshAccessToken,
+      ),
   });
-  await settingsManager.flush();
 
   console.log("Token refreshed successfully.");
-  return tokens.access_token;
+  return accessToken;
 }
 
 async function runListenerOAuthLogin(

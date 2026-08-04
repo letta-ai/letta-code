@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { hostname } from "node:os";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
@@ -29,7 +28,8 @@ import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
 import { resolvePersonalityId } from "./agent/personality-presets";
 import type { MemoryPromptMode } from "./agent/prompt-assets";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
-import { LETTA_CLOUD_API_URL, refreshAccessToken } from "./auth/oauth";
+import { LETTA_CLOUD_API_URL } from "./auth/oauth";
+import { refreshTokensCoordinated } from "./auth/oauth-refresh";
 import {
   type Backend,
   type BackendMode,
@@ -130,23 +130,10 @@ async function refreshStartupOAuthToken(
   }
 
   try {
-    const now = Date.now();
-    const deviceId = settingsManager.getOrCreateDeviceId();
-    const deviceName = hostname();
-    const tokens = await refreshAccessToken(
-      settings.refreshToken,
-      deviceId,
-      deviceName,
-    );
-
-    settingsManager.updateSettings({
-      env: { LETTA_API_KEY: tokens.access_token },
-      refreshToken: tokens.refresh_token || settings.refreshToken,
-      tokenExpiresAt: now + tokens.expires_in * 1000,
-    });
-    await settingsManager.flush();
-
-    return tokens.access_token;
+    // Coordinated: serializes with every other rotating-token path (other
+    // sessions, listeners, git-credential helpers) so the startup refresh
+    // cannot spend a refresh token a peer just rotated.
+    return await refreshTokensCoordinated(settings.refreshToken);
   } catch (error) {
     trackCliBoundaryError(
       "startup_auth_token_refresh_failed",

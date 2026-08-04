@@ -1,9 +1,6 @@
 import { hostname } from "node:os";
-import {
-  LETTA_CLOUD_API_URL,
-  refreshAccessToken as refreshLettaAccessToken,
-  type TokenResponse,
-} from "@/auth/oauth";
+import { LETTA_CLOUD_API_URL, type TokenResponse } from "@/auth/oauth";
+import { refreshTokensCoordinated } from "@/auth/oauth-refresh";
 import { getLettaCodeHeaders } from "@/backend/api/http-headers";
 import {
   getLocalOAuthApiKey,
@@ -708,17 +705,20 @@ async function cloudApiKey(input: {
         settings.tokenExpiresAt - input.now < TOKEN_REFRESH_BUFFER_MS))
   ) {
     try {
-      const refresh = input.refreshAccessToken ?? refreshLettaAccessToken;
-      const tokens = await refresh(
-        settings.refreshToken,
-        settingsManager.getOrCreateDeviceId(),
-        hostname(),
-      );
-      apiKey = tokens.access_token;
-      settingsManager.updateSettings({
-        env: { LETTA_API_KEY: tokens.access_token },
-        refreshToken: tokens.refresh_token || settings.refreshToken,
-        tokenExpiresAt: input.now + tokens.expires_in * 1000,
+      // Coordinated: serializes with every other rotating-token path and
+      // persists under the same lock; injected refresh replaces the network call.
+      const injectedRefresh = input.refreshAccessToken;
+      apiKey = await refreshTokensCoordinated(settings.refreshToken, {
+        ...(injectedRefresh
+          ? {
+              refresh: (refreshToken: string) =>
+                injectedRefresh(
+                  refreshToken,
+                  settingsManager.getOrCreateDeviceId(),
+                  hostname(),
+                ),
+            }
+          : {}),
       });
     } catch (error) {
       return {

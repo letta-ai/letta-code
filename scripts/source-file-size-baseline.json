@@ -1,6 +1,6 @@
 {
   "src/agent/client-skills.test.ts": 1196,
-  "src/agent/memory-git.ts": 2128,
+  "src/agent/memory-git.ts": 2123,
   "src/backend/local-backend.test.ts": 2532,
   "src/backend/local/local-backend.ts": 1014,
   "src/backend/local/local-store.ts": 3594,
@@ -24,7 +24,7 @@
   "src/cli/subcommands/skills.ts": 1264,
   "src/headless.ts": 5242,
   "src/hooks/integration.test.ts": 1147,
-  "src/index.ts": 2776,
+  "src/index.ts": 2763,
   "src/mods/learning-harness.ts": 2434,
   "src/mods/mod-engine.test.ts": 2153,
   "src/mods/mod-engine.ts": 1847,

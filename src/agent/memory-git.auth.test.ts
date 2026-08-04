@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -7,14 +7,14 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { platform, tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import {
   assertMemoryRepoCleanForWrite,
   buildGitAuthArgs,
   buildMemfsGitProxyArgs,
   buildNonInteractiveGitEnv,
-  formatGitCredentialHelperPath,
+  cloneRepositoryMount,
   getAgentRootDir,
   getGitRemoteUrl,
   getMemoryRepoDir,
@@ -306,18 +306,6 @@ describe("normalizeCredentialBaseUrl", () => {
   test("falls back to trimmed value when URL parsing fails", () => {
     expect(normalizeCredentialBaseUrl("not-a-valid-url///")).toBe(
       "not-a-valid-url",
-    );
-  });
-});
-
-describe("formatGitCredentialHelperPath", () => {
-  test("normalizes slashes and escapes whitespace for helper command parsing", () => {
-    expect(
-      formatGitCredentialHelperPath(
-        String.raw`C:\Users\Jane Doe\.letta\agents\agent-1\memory\.git\letta-credential-helper.cmd`,
-      ),
-    ).toBe(
-      "C:/Users/Jane\\ Doe/.letta/agents/agent-1/memory/.git/letta-credential-helper.cmd",
     );
   });
 });
@@ -705,5 +693,251 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
 
     expect(result.status).toBe("skipped");
     expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("1");
+  });
+});
+
+describe("cloneRepositoryMount", () => {
+  function makeRemoteWithContent(): string {
+    const remote = makeBareGitRepo();
+    const source = cloneRepo(remote);
+    commitFile(source, "shared.md", "shared content");
+    git(source, "push -u origin main");
+    return remote;
+  }
+
+  test("clones a fresh mount and configures credential reset + helper", async () => {
+    process.env.LETTA_BASE_URL = "https://api.letta.com";
+    // The persistent credential helper is deliberately skipped in Desktop
+    // proxy transport sessions; this test covers the normal CLI path.
+    delete process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL;
+    const remote = makeRemoteWithContent();
+    const mountParent = mkdtempSync(join(tmpdir(), "repo-mount-"));
+    tempDirs.push(mountParent);
+    const directory = join(mountParent, "shared-notes");
+
+    await cloneRepositoryMount({
+      agentId: "agent-123",
+      repositoryName: "shared-notes",
+      directory,
+      remoteUrl: remote,
+      token: "test-token",
+    });
+
+    expect(existsSync(join(directory, ".git"))).toBe(true);
+    expect(existsSync(join(directory, "shared.md"))).toBe(true);
+    // Credential helper list is reset (empty entry) before the dynamic
+    // helper, so inherited system/global helpers (e.g. osxkeychain) cannot
+    // answer first with a stale credential for the Letta host. The helper
+    // itself is dynamic — no token is persisted in the config.
+    const helpers = git(
+      directory,
+      "config --local --get-all credential.https://api.letta.com.helper",
+    ).split("\n");
+    expect(helpers[0]).toBe("");
+    expect(helpers[1]).toBe("!letta git-credential");
+    expect(helpers.join("\n")).not.toContain("password=");
+  });
+
+  test("fails with an actionable error when a non-git directory occupies the mount path", async () => {
+    process.env.LETTA_BASE_URL = "https://api.letta.com";
+    const remote = makeRemoteWithContent();
+    const mountParent = mkdtempSync(join(tmpdir(), "repo-mount-"));
+    tempDirs.push(mountParent);
+    const directory = join(mountParent, "shared-notes");
+
+    // Simulate the stale plain-directory state agents created by hand.
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "stranded.md"), "un-synced work", "utf-8");
+
+    await expect(
+      cloneRepositoryMount({
+        agentId: "agent-123",
+        repositoryName: "shared-notes",
+        directory,
+        remoteUrl: remote,
+        token: "test-token",
+      }),
+    ).rejects.toThrow(/not a git repository.*Move or delete/s);
+
+    // The directory is left untouched for the agent to inspect and resolve.
+    expect(existsSync(join(directory, "stranded.md"))).toBe(true);
+    expect(existsSync(join(directory, ".git"))).toBe(false);
+  });
+
+  test("pulls an existing git mount", async () => {
+    process.env.LETTA_BASE_URL = "https://api.letta.com";
+    const remote = makeRemoteWithContent();
+    const mountParent = mkdtempSync(join(tmpdir(), "repo-mount-"));
+    tempDirs.push(mountParent);
+    const directory = join(mountParent, "shared-notes");
+
+    await cloneRepositoryMount({
+      agentId: "agent-123",
+      repositoryName: "shared-notes",
+      directory,
+      remoteUrl: remote,
+      token: "test-token",
+    });
+
+    // Push a new commit from another clone, then re-sync. Also plant a
+    // legacy static-token helper script: re-configuring must remove it.
+    const other = cloneRepo(remote);
+    commitFile(other, "update.md", "second agent write");
+    git(other, "push origin main");
+    const legacyHelper = join(directory, ".git", "letta-credential-helper.cmd");
+    writeFileSync(legacyHelper, "@echo off\necho password=stale\n", "utf-8");
+
+    await cloneRepositoryMount({
+      agentId: "agent-123",
+      repositoryName: "shared-notes",
+      directory,
+      remoteUrl: remote,
+      token: "test-token",
+    });
+
+    expect(existsSync(join(directory, "update.md"))).toBe(true);
+    expect(existsSync(legacyHelper)).toBe(false);
+  });
+
+  test("real git executes the dynamic helper from PATH and ignores inherited helpers", async () => {
+    // End-to-end through actual `git credential fill` in a mount configured
+    // by cloneRepositoryMount: proves the two-line config (reset + dynamic
+    // helper) makes git (a) skip a hostile inherited helper and (b) resolve
+    // `letta` from PATH and use its answer. The fake `letta` is an
+    // extensionless sh script — git runs `!` helpers under its bundled sh on
+    // every platform, including Git-for-Windows.
+    process.env.LETTA_BASE_URL = "https://api.letta.com";
+    delete process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL;
+    const remote = makeRemoteWithContent();
+    const mountParent = mkdtempSync(join(tmpdir(), "repo-mount-"));
+    tempDirs.push(mountParent);
+    const directory = join(mountParent, "shared-notes");
+    await cloneRepositoryMount({
+      agentId: "agent-123",
+      repositoryName: "shared-notes",
+      directory,
+      remoteUrl: remote,
+      token: "test-token",
+    });
+
+    const binDir = join(mountParent, "bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      join(binDir, "letta"),
+      '#!/bin/sh\n[ "$1" = "git-credential" ] || exit 1\n[ "$2" = "get" ] || exit 0\ncat >/dev/null\necho username=letta\necho password=dynamic-token\n',
+      { mode: 0o755 },
+    );
+
+    const globalConfig = join(mountParent, "globalconfig");
+    writeFileSync(
+      globalConfig,
+      `[credential]\n\thelper = "!f() { echo username=stale; echo password=stale-keychain-token; }; f"\n`,
+      "utf-8",
+    );
+
+    const filled = execFileSync("git", ["credential", "fill"], {
+      cwd: directory,
+      encoding: "utf-8",
+      input: "protocol=https\nhost=api.letta.com\n\n",
+      env: {
+        ...process.env,
+        PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
+        GIT_CONFIG_GLOBAL: globalConfig,
+        GIT_CONFIG_SYSTEM: platform() === "win32" ? "NUL" : "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    });
+
+    expect(filled).toContain("username=letta");
+    expect(filled).toContain("password=dynamic-token");
+    expect(filled).not.toContain("stale-keychain-token");
+  });
+});
+
+describe("credential helper reset behavior", () => {
+  test("repo-local reset entry prevents inherited helpers from answering for the Letta host", () => {
+    const repo = makeGitRepo();
+    // Everything below is platform-agnostic: `!` helpers always run under
+    // git's bundled sh (also on Windows), config writes use argv arrays (no
+    // outer shell quoting), and no chmod'd script files are involved.
+    const helperCalledMarker = join(repo, "global-helper-called").replace(
+      /\\/g,
+      "/",
+    );
+    const globalConfig = join(repo, "globalconfig");
+    writeFileSync(
+      globalConfig,
+      `[credential]\n\thelper = "!f() { touch ${helperCalledMarker}; echo username=stale; echo password=stale-keychain-token; }; f"\n`,
+      "utf-8",
+    );
+
+    // Mirror configureLocalCredentialHelper's write pattern: reset entry,
+    // then the dynamic helper (faked here so `fill` needs no letta on PATH).
+    const key = "credential.https://api.letta.com.helper";
+    execFileSync("git", ["config", "--replace-all", key, ""], { cwd: repo });
+    execFileSync(
+      "git",
+      [
+        "config",
+        "--add",
+        key,
+        "!f() { echo username=letta; echo password=fresh-token; }; f",
+      ],
+      { cwd: repo },
+    );
+
+    const filled = execFileSync("git", ["credential", "fill"], {
+      cwd: repo,
+      encoding: "utf-8",
+      input: "protocol=https\nhost=api.letta.com\n\n",
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: globalConfig,
+        GIT_CONFIG_SYSTEM: platform() === "win32" ? "NUL" : "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    });
+
+    expect(filled).toContain("username=letta");
+    expect(filled).toContain("password=fresh-token");
+    expect(existsSync(helperCalledMarker)).toBe(false);
+  });
+
+  test("without the reset entry the inherited helper answers first (regression control)", () => {
+    const repo = makeGitRepo();
+    const globalConfig = join(repo, "globalconfig");
+    writeFileSync(
+      globalConfig,
+      `[credential]\n\thelper = "!f() { echo username=stale; echo password=stale-keychain-token; }; f"\n`,
+      "utf-8",
+    );
+
+    const key = "credential.https://api.letta.com.helper";
+    execFileSync(
+      "git",
+      [
+        "config",
+        "--add",
+        key,
+        "!f() { echo username=letta; echo password=fresh-token; }; f",
+      ],
+      { cwd: repo },
+    );
+
+    const filled = execFileSync("git", ["credential", "fill"], {
+      cwd: repo,
+      encoding: "utf-8",
+      input: "protocol=https\nhost=api.letta.com\n\n",
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: globalConfig,
+        GIT_CONFIG_SYSTEM: platform() === "win32" ? "NUL" : "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    });
+
+    // Git returns the FIRST helper's answer — this documents the poisoning
+    // mechanism the reset entry exists to prevent.
+    expect(filled).toContain("password=stale-keychain-token");
   });
 });

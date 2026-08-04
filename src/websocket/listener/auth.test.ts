@@ -42,21 +42,51 @@ describe("listener auth", () => {
   const originalListenerInstanceId = process.env[LISTENER_INSTANCE_ID_ENV];
 
   let settings: ListenerSettings;
-  const updateSettingsMock = mock(() => {});
+  // Durable-snapshot fake for the coordinated refresh: reflects what
+  // updateSettingsMock captured so the coordinator's persistence read-back
+  // verifies against the fake store instead of the developer's real
+  // settings file and keychain. Before any persist, it reports the
+  // scenario's stored refresh token as stale.
+  let persistedUpdates: {
+    env: { LETTA_API_KEY: string };
+    refreshToken: string;
+    tokenExpiresAt: number;
+  } | null = null;
+  const readPersistedTokensFake = async () =>
+    persistedUpdates
+      ? {
+          apiKey: persistedUpdates.env.LETTA_API_KEY,
+          refreshToken: persistedUpdates.refreshToken,
+          tokenExpiresAt: persistedUpdates.tokenExpiresAt,
+          source: "file" as const,
+        }
+      : {
+          apiKey: null,
+          refreshToken: settings.refreshToken ?? null,
+          tokenExpiresAt: Date.now() - 1000,
+          source: "file" as const,
+        };
+  const updateSettingsMock = mock(
+    (updates: NonNullable<typeof persistedUpdates>) => {
+      persistedUpdates = updates;
+    },
+  );
   const flushMock = mock(async () => {});
 
   beforeEach(() => {
     settings = { env: {} } as ListenerSettings;
+    persistedUpdates = null;
     refreshAccessTokenMock.mockReset();
     requestDeviceCodeMock.mockReset();
     pollForTokenMock.mockReset();
-    updateSettingsMock.mockReset();
+    updateSettingsMock.mockClear();
     flushMock.mockReset();
     __listenerAuthTestUtils.setOAuthDepsForTests({
       LETTA_CLOUD_API_URL: "https://api.letta.com",
       refreshAccessToken: refreshAccessTokenMock,
       requestDeviceCode: requestDeviceCodeMock,
       pollForToken: pollForTokenMock,
+      readPersistedTokens: readPersistedTokensFake,
     });
     settingsManager.getSettingsWithSecureTokens = mock(
       async () => settings,
