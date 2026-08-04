@@ -45,6 +45,7 @@ import {
   normalizeToolReturnWireMessage,
 } from "./interrupts";
 import {
+  createListenerModContext,
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
@@ -730,15 +731,22 @@ export async function resolveRecoveredApprovalResponse(
       if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
         return true;
       }
+      const permissionModeState = getOrCreateConversationPermissionModeStateRef(
+        runtime.listener,
+        recovered.agentId,
+        recovered.conversationId,
+      );
       const preparedToolContext = await prepareToolExecutionContext({
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
         workingDirectory,
-        permissionModeState: getOrCreateConversationPermissionModeStateRef(
-          runtime.listener,
-          recovered.agentId,
-          recovered.conversationId,
-        ),
+        permissionModeState,
+        modContext: createListenerModContext({
+          sessionId: recovered.conversationId,
+          workingDirectory,
+          agent: { id: recovered.agentId },
+          permissionMode: permissionModeState.mode,
+        }),
         modAdapters,
         modEvents: createListenerModEvents(modAdapters),
       });

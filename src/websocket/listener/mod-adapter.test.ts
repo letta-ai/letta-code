@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { __testSetBackend } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import {
@@ -19,10 +20,13 @@ import {
 } from "@/tools/manager";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import {
+  __listenerModAdapterTestUtils,
   createListenerModAdapter,
   createListenerModContext,
   LISTENER_MOD_CAPABILITIES,
 } from "@/websocket/listener/mod-adapter";
+import { emitListenerTurnStart } from "@/websocket/listener/turn-events";
+import type { ListenerRuntime } from "@/websocket/listener/types";
 
 const tempRoots: string[] = [];
 
@@ -33,6 +37,7 @@ function createTempDir(): string {
 }
 
 afterEach(() => {
+  __listenerModAdapterTestUtils.resetForTests();
   clearModTools();
   clearRegisteredPiProviders();
   clearCapturedToolExecutionContexts();
@@ -111,6 +116,101 @@ describe("listener mod adapter", () => {
     });
     expect(context.permissionMode).toBe("standard");
     expect(context.toolset).toBe("default");
+  });
+
+  test("passes isolated agent MemFS roots through listener callbacks", async () => {
+    const root = createTempDir();
+    const modsDir = join(root, "mods");
+    const cacheDir = join(root, "cache");
+    const agentARoot = getScopedMemoryFilesystemRoot("agent-a");
+    const agentBRoot = getScopedMemoryFilesystemRoot("agent-b");
+    mkdirSync(modsDir, { recursive: true });
+    writeFileSync(
+      join(modsDir, "memfs-context.ts"),
+      `export default function activate(letta) {
+        letta.events.on("turn_start", (event, ctx) => {
+          globalThis.__listenerMemfsContexts ??= [];
+          globalThis.__listenerMemfsContexts.push({
+            agentId: event.agentId,
+            contextAgentId: ctx.agent.id,
+            memfs: ctx.memfs,
+          });
+        });
+      }`,
+    );
+    const syncedAgents = new Set<string>();
+    __listenerModAdapterTestUtils.setEnsureMemfsSyncedForAgentForTests(
+      async (_runtime, agentId) => {
+        syncedAgents.add(agentId);
+        return true;
+      },
+    );
+    __listenerModAdapterTestUtils.setAgentModsDirectoryResolverForTests(
+      () => null,
+    );
+    __listenerModAdapterTestUtils.setIsMemfsEnabledForTests((agentId) => {
+      expect(syncedAgents.has(agentId)).toBe(true);
+      return agentId === "agent-a" || agentId === "agent-b";
+    });
+
+    const adapter = createListenerModAdapter({
+      cacheDirectory: cacheDir,
+      globalModsDirectory: modsDir,
+    });
+    await adapter.reload();
+    const runtime = {
+      modAdapter: adapter,
+      agentModAdapters: new Map(),
+      agentModAdapterLoads: new Map(),
+      bootWorkingDirectory: root,
+      sessionId: "listener-memfs-context-test",
+    } as unknown as ListenerRuntime;
+    const emitForAgent = (agentId: string) =>
+      emitListenerTurnStart({
+        agentId,
+        conversationId: `conversation-${agentId}`,
+        input: [],
+        runtime,
+        workingDirectory: root,
+      });
+
+    await Promise.all([
+      emitForAgent("agent-a"),
+      emitForAgent("agent-b"),
+      emitForAgent("agent-disabled"),
+    ]);
+    expect(createListenerModContext().memfs).toEqual({
+      enabled: false,
+      memoryDir: null,
+    });
+
+    expect(
+      (globalThis as { __listenerMemfsContexts?: unknown[] })
+        .__listenerMemfsContexts,
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          agentId: "agent-a",
+          contextAgentId: "agent-a",
+          memfs: { enabled: true, memoryDir: agentARoot },
+        },
+        {
+          agentId: "agent-b",
+          contextAgentId: "agent-b",
+          memfs: { enabled: true, memoryDir: agentBRoot },
+        },
+        {
+          agentId: "agent-disabled",
+          contextAgentId: "agent-disabled",
+          memfs: { enabled: false, memoryDir: null },
+        },
+      ]),
+    );
+    expect(agentARoot).not.toBe(agentBRoot);
+
+    delete (globalThis as { __listenerMemfsContexts?: unknown[] })
+      .__listenerMemfsContexts;
+    adapter.dispose();
   });
 
   test("loads provider, tool, and command registrations without exposing events or panels", async () => {

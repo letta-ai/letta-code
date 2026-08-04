@@ -33,6 +33,7 @@ import {
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
+  createListenerModContext,
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
@@ -356,15 +357,22 @@ export async function resolveStaleApprovals(
     runtime.listener,
     runtime.agentId,
   );
+  const permissionModeState = getOrCreateConversationPermissionModeStateRef(
+    runtime.listener,
+    runtime.agentId,
+    runtime.conversationId,
+  );
   const preparedToolContext = await prepareToolExecutionContext({
     agentId: runtime.agentId,
     conversationId: recoveryConversationId,
     workingDirectory: recoveryWorkingDirectory,
-    permissionModeState: getOrCreateConversationPermissionModeStateRef(
-      runtime.listener,
-      runtime.agentId,
-      runtime.conversationId,
-    ),
+    permissionModeState,
+    modContext: createListenerModContext({
+      sessionId: recoveryConversationId,
+      workingDirectory: recoveryWorkingDirectory,
+      agent: { id: runtime.agentId },
+      permissionMode: permissionModeState.mode,
+    }),
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
   });

@@ -60,6 +60,25 @@ async function getUnavailableListenerClient(): Promise<Letta> {
   throw new Error("letta.client is not available in listener mods");
 }
 
+let isAgentMemfsEnabled = (agentId: string): boolean =>
+  settingsManager.isMemfsEnabled(agentId);
+
+function resolveListenerAgentMemfsContext(
+  agentId: string | null,
+): ModContext["memfs"] {
+  if (!agentId) return { enabled: false, memoryDir: null };
+  try {
+    return isAgentMemfsEnabled(agentId)
+      ? {
+          enabled: true,
+          memoryDir: getScopedMemoryFilesystemRoot(agentId),
+        }
+      : { enabled: false, memoryDir: null };
+  } catch {
+    return { enabled: false, memoryDir: null };
+  }
+}
+
 export function createListenerModContext(
   options: Pick<
     CreateListenerModAdapterOptions,
@@ -81,7 +100,7 @@ export function createListenerModContext(
   } = {},
 ): ModContext {
   const cwd = options.workingDirectory ?? getCurrentWorkingDirectory();
-  return buildModInvocationContext({
+  const context = buildModInvocationContext({
     agent: options.agent ?? null,
     conversationId: options.sessionId ?? null,
     modelIdentifier: options.modelIdentifier ?? null,
@@ -89,6 +108,10 @@ export function createListenerModContext(
     toolset: options.toolset ?? null,
     workingDirectory: cwd,
   });
+  return {
+    ...context,
+    memfs: resolveListenerAgentMemfsContext(context.agent.id),
+  };
 }
 
 export function createListenerModAdapter(
@@ -290,9 +313,13 @@ export const __listenerModAdapterTestUtils = {
   ): void {
     ensureAgentMemfsSynced = ensureSynced;
   },
+  setIsMemfsEnabledForTests(isEnabled: (agentId: string) => boolean): void {
+    isAgentMemfsEnabled = isEnabled;
+  },
   resetForTests(): void {
     resolveAgentModsDirectory = resolveListenerAgentModsDirectory;
     resolveAgentModCacheDirectory = resolveListenerAgentModCacheDirectory;
+    isAgentMemfsEnabled = (agentId) => settingsManager.isMemfsEnabled(agentId);
     ensureAgentMemfsSynced = ensureMemfsSyncedForAgent;
   },
 };
