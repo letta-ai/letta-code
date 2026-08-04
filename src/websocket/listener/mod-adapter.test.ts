@@ -14,6 +14,7 @@ import {
   getModToolDefinition,
   registerModTool,
 } from "@/mods/tool-registry";
+import { settingsManager } from "@/settings-manager";
 import {
   clearCapturedToolExecutionContexts,
   executeTool,
@@ -29,6 +30,8 @@ import { emitListenerTurnStart } from "@/websocket/listener/turn-events";
 import type { ListenerRuntime } from "@/websocket/listener/types";
 
 const tempRoots: string[] = [];
+const originalIsMemfsEnabled =
+  settingsManager.isMemfsEnabled.bind(settingsManager);
 
 function createTempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "letta-listener-mod-"));
@@ -38,6 +41,7 @@ function createTempDir(): string {
 
 afterEach(() => {
   __listenerModAdapterTestUtils.resetForTests();
+  settingsManager.isMemfsEnabled = originalIsMemfsEnabled;
   clearModTools();
   clearRegisteredPiProviders();
   clearCapturedToolExecutionContexts();
@@ -148,10 +152,14 @@ describe("listener mod adapter", () => {
     __listenerModAdapterTestUtils.setAgentModsDirectoryResolverForTests(
       () => null,
     );
-    __listenerModAdapterTestUtils.setIsMemfsEnabledForTests((agentId) => {
+    (
+      settingsManager as unknown as {
+        isMemfsEnabled: (agentId: string) => boolean;
+      }
+    ).isMemfsEnabled = (agentId) => {
       expect(syncedAgents.has(agentId)).toBe(true);
       return agentId === "agent-a" || agentId === "agent-b";
-    });
+    };
 
     const adapter = createListenerModAdapter({
       cacheDirectory: cacheDir,
