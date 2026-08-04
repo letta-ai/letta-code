@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { getRepositoryMountDir } from "@/agent/memory-git";
 import {
   resolveRepositoryReference,
   resolveSharedMemoryAgentId,
@@ -9,6 +12,15 @@ const REPOSITORIES = [
   { id: "repo-1", name: "shared-notes" },
   { id: "repo-2", name: "agent-forum" },
 ];
+
+/** Agent id used by tests that touch the real mount path under ~/.letta. */
+const MOUNT_AGENT_ID = "agent-shared-memory-subcommand-test";
+
+function createMountFor(repositoryName: string): string {
+  const mountDir = getRepositoryMountDir(MOUNT_AGENT_ID, repositoryName);
+  mkdirSync(join(mountDir, ".git"), { recursive: true });
+  return mountDir;
+}
 
 function makeRequest(
   overrides: Partial<
@@ -118,6 +130,12 @@ describe("runSharedMemorySubcommand", () => {
     }
     console.log = originalLog;
     console.error = originalError;
+    for (const repository of REPOSITORIES) {
+      rmSync(getRepositoryMountDir(MOUNT_AGENT_ID, repository.name), {
+        recursive: true,
+        force: true,
+      });
+    }
   });
 
   test("help prints usage and succeeds", async () => {
@@ -176,15 +194,16 @@ describe("runSharedMemorySubcommand", () => {
 
   test("attach resolves by name, polls, syncs mounts, and recompiles", async () => {
     const { request, calls } = makeRequest();
+    const mountDir = createMountFor("agent-forum");
     const syncRepositories = mock(async () => ({
       mounted: 1,
       skipped: 0,
       failed: 0,
-      summaries: ["agent-forum: /tmp/mount"],
+      summaries: [`agent-forum: ${mountDir}`],
     }));
     const recompileAgent = mock(async () => {});
     const code = await runSharedMemorySubcommand(
-      ["attach", "agent-forum", "--agent", "agent-xyz"],
+      ["attach", "agent-forum", "--agent", MOUNT_AGENT_ID],
       {
         initializeSettings: async () => {},
         request: request as never,
@@ -197,15 +216,67 @@ describe("runSharedMemorySubcommand", () => {
       calls.some(
         (call) =>
           call.method === "POST" &&
-          call.path === "/v1/agents/agent-xyz/repositories" &&
+          call.path === `/v1/agents/${MOUNT_AGENT_ID}/repositories` &&
           (call.body as { repository_id: string }).repository_id === "repo-2",
       ),
     ).toBe(true);
-    expect(syncRepositories).toHaveBeenCalledWith("agent-xyz");
-    expect(recompileAgent).toHaveBeenCalledWith("agent-xyz");
+    expect(syncRepositories).toHaveBeenCalledWith(MOUNT_AGENT_ID);
+    expect(recompileAgent).toHaveBeenCalledWith(MOUNT_AGENT_ID);
     const output = JSON.parse(logs.join("\n"));
     expect(output.attached).toBe(true);
     expect(output.repository).toEqual({ id: "repo-2", name: "agent-forum" });
+    expect(output.mount).toBe(mountDir);
+    expect(output.recompile_failed).toBeUndefined();
+  });
+
+  test("attach fails when the mount was not created", async () => {
+    const { request } = makeRequest();
+    // No mount on disk: sync claims success but the checkout is not there.
+    const syncRepositories = mock(async () => ({
+      mounted: 0,
+      skipped: 0,
+      failed: 1,
+      summaries: ["agent-forum: failed: network"],
+    }));
+    const code = await runSharedMemorySubcommand(
+      ["attach", "agent-forum", "--agent", MOUNT_AGENT_ID],
+      {
+        initializeSettings: async () => {},
+        request: request as never,
+        syncRepositories: syncRepositories as never,
+        recompileAgent: async () => {},
+      },
+    );
+    expect(code).toBe(1);
+    const output = JSON.parse(logs.join("\n"));
+    expect(output.mount).toBeNull();
+    expect(output.sync).toEqual(["agent-forum: failed: network"]);
+    expect(output.note).toContain("letta shared-memory sync");
+  });
+
+  test("attach reports a failed recompile instead of hiding it", async () => {
+    const { request } = makeRequest();
+    const mountDir = createMountFor("agent-forum");
+    const syncRepositories = mock(async () => ({
+      mounted: 1,
+      skipped: 0,
+      failed: 0,
+      summaries: [`agent-forum: ${mountDir}`],
+    }));
+    const code = await runSharedMemorySubcommand(
+      ["attach", "agent-forum", "--agent", MOUNT_AGENT_ID],
+      {
+        initializeSettings: async () => {},
+        request: request as never,
+        syncRepositories: syncRepositories as never,
+        recompileAgent: async () => {
+          throw new Error("recompile boom");
+        },
+      },
+    );
+    // The attach itself succeeded, so this stays a success exit.
+    expect(code).toBe(0);
+    expect(JSON.parse(logs.join("\n")).recompile_failed).toBe("recompile boom");
   });
 
   test("attach fails cleanly when the repository never becomes visible", async () => {
@@ -264,6 +335,25 @@ describe("runSharedMemorySubcommand", () => {
     ).toBe(true);
     expect(recompileAgent).toHaveBeenCalledWith("agent-xyz");
     expect(JSON.parse(logs.join("\n")).detached).toBe(true);
+  });
+
+  test("detach reports a failed recompile instead of hiding it", async () => {
+    const { request } = makeRequest();
+    const code = await runSharedMemorySubcommand(
+      ["detach", "repo-2", "--agent", "agent-xyz"],
+      {
+        initializeSettings: async () => {},
+        request: request as never,
+        recompileAgent: async () => {
+          throw new Error("recompile boom");
+        },
+      },
+    );
+    // The detach itself succeeded, so this stays a success exit.
+    expect(code).toBe(0);
+    const output = JSON.parse(logs.join("\n"));
+    expect(output.detached).toBe(true);
+    expect(output.recompile_failed).toBe("recompile boom");
   });
 
   test("sync reports the underlying result and fails on failures", async () => {

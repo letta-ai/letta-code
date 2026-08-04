@@ -187,6 +187,25 @@ async function defaultRecompileAgent(agentId: string): Promise<void> {
   await client.agents.recompile(agentId, { update_timestamp: false });
 }
 
+/**
+ * Recompile, returning the failure message instead of throwing.
+ *
+ * A failed recompile does not undo the attach/detach, so it must not fail the
+ * command — but it does mean the system prompt projection disagrees with disk
+ * until the next natural recompile, which the caller reports rather than hides.
+ */
+async function recompileAndReportFailure(
+  recompileAgent: (agentId: string) => Promise<void>,
+  agentId: string,
+): Promise<string | null> {
+  try {
+    await recompileAgent(agentId);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
 function requireAgentId(parsed: {
   values: { agent?: string; "agent-id"?: string };
 }): string | null {
@@ -329,26 +348,32 @@ export async function runSharedMemorySubcommand(
           return 1;
         }
         const sync = await syncRepositories(agentId);
-        try {
-          await recompileAgent(agentId);
-        } catch {
-          // Non-fatal: the projection updates on the next natural recompile.
-        }
+        const recompileError = await recompileAndReportFailure(
+          recompileAgent,
+          agentId,
+        );
         const mountDir = getRepositoryMountDir(agentId, repository.name);
+        const mounted = existsSync(join(mountDir, ".git"));
         console.log(
           JSON.stringify(
             {
               attached: true,
               repository: { id: repository.id, name: repository.name },
-              mount: existsSync(join(mountDir, ".git")) ? mountDir : null,
+              mount: mounted ? mountDir : null,
               sync: sync.summaries,
-              note: "Edit files under the mount and commit/push with git, like MemFS.",
+              ...(recompileError ? { recompile_failed: recompileError } : {}),
+              note: mounted
+                ? "Edit files under the mount and commit/push with git, like MemFS."
+                : "The repository is attached but its local mount was not created — see `sync` above. Resolve the reported error, then re-run `letta shared-memory sync`.",
             },
             null,
             2,
           ),
         );
-        return 0;
+        // The attach itself succeeded; a stale projection self-heals on the
+        // next recompile. A missing mount does not: it breaks the documented
+        // git workflow, so it must not be reported as success.
+        return mounted ? 0 : 1;
       }
 
       // detach
@@ -356,16 +381,18 @@ export async function runSharedMemorySubcommand(
         "DELETE",
         `/v1/agents/${encodeURIComponent(agentId)}/repositories/${encodeURIComponent(repository.id)}`,
       );
-      try {
-        await recompileAgent(agentId);
-      } catch {
-        // Non-fatal: the projection updates on the next natural recompile.
-      }
+      const detachRecompileError = await recompileAndReportFailure(
+        recompileAgent,
+        agentId,
+      );
       console.log(
         JSON.stringify(
           {
             detached: true,
             repository: { id: repository.id, name: repository.name },
+            ...(detachRecompileError
+              ? { recompile_failed: detachRecompileError }
+              : {}),
             note: "The local mount was left in place; delete it manually if no longer needed.",
           },
           null,
