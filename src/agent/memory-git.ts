@@ -324,20 +324,13 @@ async function prepareAttachedRepositoryForGitOps(args: {
   await ensureLocalMemfsGitConfig(args.directory, args.agentId);
 }
 
-export async function cloneRepositoryMount(args: {
+async function cloneRepositoryMount(args: {
   agentId: string;
   repositoryName: string;
   directory: string;
   remoteUrl: string;
   token: string;
 }): Promise<void> {
-  if (existsSync(args.directory) && !existsSync(join(args.directory, ".git"))) {
-    throw new Error(
-      `repository mount path already exists and is not a git repository: ${args.directory}. ` +
-        `Move or delete that directory, then re-run the sync to clone the mount.`,
-    );
-  }
-
   if (!existsSync(args.directory)) {
     mkdirSync(args.directory, { recursive: true });
     try {
@@ -354,6 +347,10 @@ export async function cloneRepositoryMount(args: {
       rmSync(args.directory, { recursive: true, force: true });
       throw err;
     }
+  } else if (!existsSync(join(args.directory, ".git"))) {
+    throw new Error(
+      `repository mount path already exists and is not a git repository: ${args.directory}`,
+    );
   } else {
     await prepareAttachedRepositoryForGitOps(args);
     await runGitWithRetry(args.directory, ["pull", "--ff-only"], args.token, {
@@ -753,25 +750,16 @@ echo password=${token}
     helper = `!f() { echo "username=letta"; echo "password=${token}"; }; f`;
   }
 
-  // Git accumulates credential helpers across config scopes (system → global
-  // → local) and asks each in order; a system/global helper like macOS
-  // osxkeychain can hold a stale credential for the Letta host and answer
-  // before our repo-local helper, sending the wrong identity (observed as
-  // HTTP 500s on plain `git pull` in shared memory mounts, LET-10545). An
-  // empty helper entry resets the accumulated list, so write "" then our
-  // helper — scoped to the Letta remote URL only, leaving the user's helpers
-  // intact for every other host (e.g. /memory-repository GitHub mirrors).
-  const writeHelperWithReset = async (key: string) => {
-    await gitConfig(dir, ["config", "--replace-all", key, ""]);
-    await gitConfig(dir, ["config", "--add", key, helper]);
-  };
-
   // Primary config: normalized origin key (most robust for git's credential lookup)
-  await writeHelperWithReset(`credential.${normalizedBaseUrl}.helper`);
+  await gitConfig(dir, [
+    "config",
+    `credential.${normalizedBaseUrl}.helper`,
+    helper,
+  ]);
 
   // Backcompat: also set raw configured URL key if it differs (older repos/configs)
   if (rawBaseUrl !== normalizedBaseUrl) {
-    await writeHelperWithReset(`credential.${rawBaseUrl}.helper`);
+    await gitConfig(dir, ["config", `credential.${rawBaseUrl}.helper`, helper]);
   }
 
   debugLog(
