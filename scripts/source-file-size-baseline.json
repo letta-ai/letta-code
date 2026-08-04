@@ -38,7 +38,7 @@
   "src/settings-manager.test.ts": 1669,
   "src/settings-manager.ts": 2112,
   "src/tools/impl/enter-worktree.ts": 1260,
-  "src/tools/manager.ts": 3243,
+  "src/tools/manager.ts": 3261,
   "src/tools/tool-execution-context.test.ts": 1422,
   "src/types/protocol_v2.ts": 2958,
   "src/websocket/listen-client-concurrency.test.ts": 2686,

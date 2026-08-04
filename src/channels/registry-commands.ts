@@ -57,6 +57,9 @@ export function createChannelCommandRouter(deps: {
   getReloadHandler: () => ChannelReloadHandler | null;
   getModelHandler: () => ChannelModelHandler | null;
 }) {
+  const emitRoutesUpdated = (channelId: string): void =>
+    deps.emitEvent({ type: "routes_updated", channelId });
+
   function loadAndFindRawRouteForMessage(
     msg: InboundChannelMessage,
   ): ChannelRoute | null {
@@ -90,6 +93,7 @@ export function createChannelCommandRouter(deps: {
         updatedAt: new Date().toISOString(),
       };
       addRoute(msg.channel, updatedRoute);
+      emitRoutesUpdated(msg.channel);
       return {
         handled: true,
         text: buildChannelPausedMessage(msg.channel, updatedRoute),
@@ -108,6 +112,7 @@ export function createChannelCommandRouter(deps: {
       updatedAt: new Date().toISOString(),
     };
     addRoute(msg.channel, updatedRoute);
+    emitRoutesUpdated(msg.channel);
     return {
       handled: true,
       text: buildChannelResumedMessage(msg.channel, updatedRoute),
@@ -205,6 +210,7 @@ export function createChannelCommandRouter(deps: {
         updatedAt: now,
       };
       addRoute(msg.channel, updatedRoute);
+      emitRoutesUpdated(msg.channel);
       return {
         handled: true,
         text: buildChannelDetachedMessage(msg.channel),
@@ -224,6 +230,7 @@ export function createChannelCommandRouter(deps: {
       outboundEnabled: false,
       detached: true,
     });
+    emitRoutesUpdated(msg.channel);
     return {
       handled: true,
       text: buildChannelDetachedMessage(msg.channel),
@@ -282,6 +289,7 @@ export function createChannelCommandRouter(deps: {
       conversationId,
       defaultPermissionMode: config.defaultPermissionMode,
     });
+    emitRoutesUpdated(msg.channel);
 
     return {
       handled: true,

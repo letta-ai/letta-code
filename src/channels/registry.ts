@@ -59,7 +59,6 @@ import {
   loadRoutes,
   removeRouteInMemory,
   setRouteInMemory,
-  subscribeRouteChanges,
 } from "./routing";
 import {
   buildSignalBaseUrlConflictError,
@@ -173,7 +172,6 @@ export class ChannelRegistry {
   private readonly routes: ChannelRouteProvisioner;
   private readonly commands: ChannelCommandRouter;
   private readonly inbound: ChannelInboundRouter;
-  private readonly unsubscribeRouteChanges: () => void;
   private readonly unsubscribeWhatsAppState: () => void;
 
   constructor() {
@@ -211,9 +209,6 @@ export class ChannelRegistry {
         this.dispatchTurnLifecycleEvent(event),
       deliver: (delivery) => this.deliverOrBuffer(delivery),
       emitEvent: (event) => this.eventHandler?.(event),
-    });
-    this.unsubscribeRouteChanges = subscribeRouteChanges((channelId) => {
-      this.eventHandler?.({ type: "routes_updated", channelId });
     });
     this.unsubscribeWhatsAppState = subscribeWhatsAppConnectionState(
       (accountId) => {
@@ -262,74 +257,40 @@ export class ChannelRegistry {
       .map((adapter) => adapter.channelId ?? adapter.id);
   }
 
-  resolveRoutedRuntimeSources(): Array<{
-    agentId: string;
-    conversationId: string;
-    sources: ChannelTurnSource[];
-  }> {
-    const routed = new Map<
-      string,
-      {
-        agentId: string;
-        conversationId: string;
-        sources: ChannelTurnSource[];
-        sourceKeys: Set<string>;
-      }
-    >();
+  resolveTurnSourcesForScope(
+    agentId: string,
+    conversationId: string,
+  ): ChannelTurnSource[] {
+    const sources: ChannelTurnSource[] = [];
+    const seen = new Set<string>();
     for (const adapter of this.adapters.values()) {
-      if (!adapter.isRunning()) {
-        continue;
-      }
       const channel = adapter.channelId ?? adapter.id;
       const accountId = adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
-      loadRoutes(channel);
       for (const route of getRoutesForChannel(channel, accountId)) {
-        if (route.enabled === false || route.outboundEnabled === false) {
+        if (
+          route.enabled === false ||
+          route.agentId !== agentId ||
+          route.conversationId !== conversationId
+        ) {
           continue;
         }
-        const runtimeKey = `${route.agentId}:${route.conversationId}`;
-        let runtime = routed.get(runtimeKey);
-        if (!runtime) {
-          runtime = {
-            agentId: route.agentId,
-            conversationId: route.conversationId,
-            sources: [],
-            sourceKeys: new Set(),
-          };
-          routed.set(runtimeKey, runtime);
-        }
-        const sourceKey = `${channel}:${accountId}:${route.chatId}:${route.threadId ?? ""}`;
-        if (runtime.sourceKeys.has(sourceKey)) {
+        const key = `${channel}:${accountId}:${route.chatId}:${route.threadId ?? ""}`;
+        if (seen.has(key)) {
           continue;
         }
-        runtime.sourceKeys.add(sourceKey);
-        runtime.sources.push({
+        seen.add(key);
+        sources.push({
           channel,
           accountId,
           chatId: route.chatId,
           chatType: route.chatType,
           threadId: route.threadId ?? null,
-          agentId: route.agentId,
-          conversationId: route.conversationId,
+          agentId,
+          conversationId,
         });
       }
     }
-    return [...routed.values()].map(
-      ({ sourceKeys: _sourceKeys, ...runtime }) => runtime,
-    );
-  }
-
-  resolveTurnSourcesForScope(
-    agentId: string,
-    conversationId: string,
-  ): ChannelTurnSource[] {
-    return (
-      this.resolveRoutedRuntimeSources().find(
-        (runtime) =>
-          runtime.agentId === agentId &&
-          runtime.conversationId === conversationId,
-      )?.sources ?? []
-    );
+    return sources;
   }
 
   async dispatchTurnLifecycleEvent(
@@ -631,45 +592,37 @@ export class ChannelRegistry {
     loadPairingStore(channelId);
     loadTargetStore(channelId);
 
-    try {
-      const existing = this.getAdapter(channelId, accountId);
-      if (existing?.isRunning()) {
-        logChannelStartup(
-          options?.logger,
-          `stopping existing adapter for ${channelId}/${accountId}`,
-        );
-        await existing.stop();
-      }
-      this.adapters.delete(this.getAdapterKey(channelId, accountId));
-
+    const existing = this.getAdapter(channelId, accountId);
+    if (existing?.isRunning()) {
       logChannelStartup(
         options?.logger,
-        `loading plugin for ${account.channel}/${accountId}`,
+        `stopping existing adapter for ${channelId}/${accountId}`,
       );
-      const plugin = await loadChannelPlugin(account.channel);
-      logChannelStartup(
-        options?.logger,
-        `creating adapter for ${account.channel}/${accountId}`,
-      );
-      const adapter = await plugin.createAdapter(account);
-      this.registerAdapter(adapter);
-      logChannelStartup(
-        options?.logger,
-        `starting adapter for ${account.channel}/${accountId}`,
-      );
-      await adapter.start({ logger: options?.logger });
-      logChannelStartup(
-        options?.logger,
-        `started adapter for ${account.channel}/${accountId}`,
-      );
-      return true;
-    } finally {
-      this.eventHandler?.({
-        type: "channel_account_state_updated",
-        channelId,
-        accountId,
-      });
+      await existing.stop();
     }
+    this.adapters.delete(this.getAdapterKey(channelId, accountId));
+
+    logChannelStartup(
+      options?.logger,
+      `loading plugin for ${account.channel}/${accountId}`,
+    );
+    const plugin = await loadChannelPlugin(account.channel);
+    logChannelStartup(
+      options?.logger,
+      `creating adapter for ${account.channel}/${accountId}`,
+    );
+    const adapter = await plugin.createAdapter(account);
+    this.registerAdapter(adapter);
+    logChannelStartup(
+      options?.logger,
+      `starting adapter for ${account.channel}/${accountId}`,
+    );
+    await adapter.start({ logger: options?.logger });
+    logChannelStartup(
+      options?.logger,
+      `started adapter for ${account.channel}/${accountId}`,
+    );
+    return true;
   }
 
   async stopChannel(channelId: string): Promise<boolean> {
@@ -681,21 +634,15 @@ export class ChannelRegistry {
     }
 
     for (const adapter of adapters) {
-      const accountId = adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
-      try {
-        if (adapter.isRunning()) {
-          await adapter.stop();
-        }
-        this.adapters.delete(
-          this.getAdapterKey(adapter.channelId ?? adapter.id, accountId),
-        );
-      } finally {
-        this.eventHandler?.({
-          type: "channel_account_state_updated",
-          channelId,
-          accountId,
-        });
+      if (adapter.isRunning()) {
+        await adapter.stop();
       }
+      this.adapters.delete(
+        this.getAdapterKey(
+          adapter.channelId ?? adapter.id,
+          adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+        ),
+      );
     }
 
     return true;
@@ -709,19 +656,11 @@ export class ChannelRegistry {
     if (!adapter) {
       return false;
     }
-    try {
-      if (adapter.isRunning()) {
-        await adapter.stop();
-      }
-      this.adapters.delete(this.getAdapterKey(channelId, accountId));
-      return true;
-    } finally {
-      this.eventHandler?.({
-        type: "channel_account_state_updated",
-        channelId,
-        accountId,
-      });
+    if (adapter.isRunning()) {
+      await adapter.stop();
     }
+    this.adapters.delete(this.getAdapterKey(channelId, accountId));
+    return true;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────
@@ -729,17 +668,7 @@ export class ChannelRegistry {
   async startAll(): Promise<void> {
     for (const adapter of Array.from(this.adapters.values())) {
       if (!adapter.isRunning()) {
-        const channelId = adapter.channelId ?? adapter.id;
-        const accountId = adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
-        try {
-          await adapter.start();
-        } finally {
-          this.eventHandler?.({
-            type: "channel_account_state_updated",
-            channelId,
-            accountId,
-          });
-        }
+        await adapter.start();
       }
     }
   }
@@ -779,7 +708,6 @@ export class ChannelRegistry {
     this.modelHandler = null;
     this.reloadHandler = null;
     this.controls.clearAll();
-    this.unsubscribeRouteChanges();
     this.unsubscribeWhatsAppState();
     instance = null;
   }

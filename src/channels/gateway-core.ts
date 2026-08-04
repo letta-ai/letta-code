@@ -106,6 +106,7 @@ type GatewayRuntimeState = {
   active: ActiveGatewayTurn | null;
   registrationSignature: string | null;
   registration: Promise<void> | null;
+  routedSources: ChannelTurnSource[] | null;
   replayedControlRequestIds: Set<string>;
   submissionQueue: Promise<void>;
   hookQueue: Promise<void> | null;
@@ -179,10 +180,10 @@ export class ChannelGateway {
     this.disposers.push(
       client.onMessage((message) => this.handleMessage(message)),
       client.onExternalToolCall((request) => {
-        const sources = request.runtime
-          ? (this.states.get(runtimeKey(request.runtime))?.active?.sources ??
-            [])
-          : [];
+        const state = request.runtime
+          ? this.states.get(runtimeKey(request.runtime))
+          : undefined;
+        const sources = state?.active?.sources ?? state?.routedSources ?? [];
         return hooks.executeExternalTool(request, sources);
       }),
     );
@@ -221,7 +222,10 @@ export class ChannelGateway {
     });
 
     try {
-      await this.ensureRuntimeRegistration(state, delivery);
+      await this.ensureRuntimeRegistration(state, {
+        ...delivery,
+        sources: state.routedSources ?? delivery.sources,
+      });
       const response = await this.client.submitInput({
         runtime: delivery.runtime,
         payload: {
@@ -308,6 +312,7 @@ export class ChannelGateway {
     defaultPermissionMode?: ChannelDefaultPermissionMode,
   ): Promise<void> {
     const state = this.getState(runtime);
+    state.routedSources = uniqueSources(sources);
     await this.ensureRuntimeRegistration(state, {
       runtime,
       content: "",
@@ -355,6 +360,7 @@ export class ChannelGateway {
         active: null,
         registrationSignature: null,
         registration: null,
+        routedSources: null,
         replayedControlRequestIds: new Set(),
         submissionQueue: Promise.resolve(),
         hookQueue: null,

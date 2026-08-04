@@ -68,7 +68,6 @@ import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
 import { serializeClientTools } from "./client-tool-serialization";
-import { filterExternalToolsByRuntimeContext } from "./external-tool-runtime-filter";
 import { toolFilter } from "./filter";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import {
@@ -391,18 +390,40 @@ function filterToolRegistryByClientAllowlist(
   );
 }
 
-function filterExternalToolsByScopeIds(
-  externalTools: Map<string, ExternalToolDefinition>,
-  externalToolScopeIds?: string[],
+function filterExternalToolsByRuntimeContext(
+  tools: Map<string, ExternalToolDefinition>,
+  context: RuntimeContextSnapshot,
+  scopeIds?: string[],
 ): Map<string, ExternalToolDefinition> {
-  const selectedScopes = new Set(externalToolScopeIds ?? []);
+  // Scope IDs filter tools; only trusted in-process context can delegate them.
+  // Exact runtime match remains mandatory, and a direct owner wins duplicates.
+  const matchesRuntime = (tool: ExternalToolDefinition) =>
+    !tool.runtime ||
+    (tool.runtime.agentId === context.agentId &&
+      tool.runtime.conversationId === context.conversationId);
+  const matchesScope = (tool: ExternalToolDefinition) =>
+    !tool.scopeId || scopeIds?.includes(tool.scopeId) === true;
+  const directNames = new Set(
+    [...tools.values()]
+      .filter(
+        (tool) =>
+          matchesScope(tool) &&
+          matchesRuntime(tool) &&
+          tool.connectionId === context.connectionId,
+      )
+      .map((tool) => tool.name),
+  );
   return new Map(
-    Array.from(externalTools.entries()).filter(([, tool]) => {
-      if (tool.scopeId === undefined) {
-        return true;
-      }
-      return selectedScopes.has(tool.scopeId);
-    }),
+    [...tools].filter(
+      ([, tool]) =>
+        matchesScope(tool) &&
+        matchesRuntime(tool) &&
+        (tool.connectionId === undefined ||
+          tool.connectionId === context.connectionId ||
+          (context.allowExternalToolScopeDelegation === true &&
+            !!tool.scopeId &&
+            !directNames.has(tool.name))),
+    ),
   );
 }
 function toModelFacingExternalToolMap(
@@ -411,7 +432,7 @@ function toModelFacingExternalToolMap(
   const modelFacingTools = new Map<string, ExternalToolDefinition>();
   for (const tool of externalTools.values()) {
     // MVP: if one runtime exposes duplicate model-facing names, the later
-    // registration wins. We keep cross-runtime registrations isolated by using
+    // registration wins. Cross-runtime registrations remain isolated by their
     // namespaced internal keys before this final model-facing collapse.
     modelFacingTools.set(tool.name, tool);
   }
@@ -1117,12 +1138,9 @@ function capturePreparedToolExecutionContext(
     toolRegistry: toolRegistrySnapshot,
     externalTools: toModelFacingExternalToolMap(
       filterExternalToolsByClientAllowlist(
-        filterExternalToolsByScopeIds(
-          filterExternalToolsByRuntimeContext(
-            snapshot.externalTools,
-            runtimeContext,
-            options?.externalToolScopeIds,
-          ),
+        filterExternalToolsByRuntimeContext(
+          snapshot.externalTools,
+          runtimeContext,
           options?.externalToolScopeIds,
         ),
         clientToolAllowlist,

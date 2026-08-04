@@ -215,11 +215,7 @@ export async function startLocalChannelGateway(
           }
         : null;
     },
-    buildExternalTool: async (runtime) => {
-      const routeSources = registry.resolveTurnSourcesForScope(
-        runtime.agent_id,
-        runtime.conversation_id,
-      );
+    buildExternalTool: async (_runtime, routeSources) => {
       if (routeSources.length === 0) {
         return null;
       }
@@ -272,7 +268,21 @@ export async function startLocalChannelGateway(
   });
 
   const routedRuntimeRegistrationRefresher =
-    createRoutedRuntimeRegistrationRefresher(registry, gateway, options.logger);
+    createRoutedRuntimeRegistrationRefresher(
+      registry,
+      gateway,
+      options.channelNames,
+      options.logger,
+    );
+  const refreshRoutedRuntimeRegistrations = async (): Promise<void> => {
+    try {
+      await routedRuntimeRegistrationRefresher.refresh();
+    } catch (error) {
+      options.logger?.(
+        `[ChannelGateway] Failed to refresh routed runtimes: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
 
   registry.setMessageHandler((delivery) => {
     const sources = delivery.turnSources ?? [];
@@ -363,7 +373,7 @@ export async function startLocalChannelGateway(
           channel_id: event.channelId,
         },
       });
-      void routedRuntimeRegistrationRefresher.refresh();
+      void refreshRoutedRuntimeRegistrations();
       return;
     }
     if (event.type === "channel_account_state_updated") {
@@ -384,7 +394,6 @@ export async function startLocalChannelGateway(
           channel_id: event.channelId,
         },
       });
-      void routedRuntimeRegistrationRefresher.refresh();
       return;
     }
     void gateway
@@ -444,7 +453,7 @@ export async function startLocalChannelGateway(
       }
     }
   }
-  await routedRuntimeRegistrationRefresher.refresh();
+  await refreshRoutedRuntimeRegistrations();
 
   registry.setCancelHandler(async ({ runtime }) => {
     const response = await client.abort({ runtime, run_id: null });
@@ -591,7 +600,13 @@ export async function startLocalChannelGateway(
 
   registry.setReady();
   return {
-    executeCommand: executeGatewayServiceCommand,
+    executeCommand: async (command) => {
+      try {
+        return await executeGatewayServiceCommand(command);
+      } finally {
+        await refreshRoutedRuntimeRegistrations();
+      }
+    },
     close: async () => {
       try {
         await registry.stopAll();

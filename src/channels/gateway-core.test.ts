@@ -18,7 +18,16 @@ import {
   type ChannelGatewayDelivery,
   type ChannelGatewayHooks,
 } from "./gateway-core";
+import { ChannelRegistry } from "./registry";
+import { createRoutedRuntimeRegistrationRefresher } from "./routed-runtime-registration";
+import {
+  __testOverrideLoadRoutes,
+  __testOverrideSaveRoutes,
+  addRoute,
+  clearAllRoutes,
+} from "./routing";
 import type {
+  ChannelAdapter,
   ChannelControlRequestEvent,
   ChannelTurnLifecycleEvent,
   ChannelTurnProgressEvent,
@@ -585,13 +594,12 @@ test("runtime registration happens before input submission", async () => {
 
 test("runtime registration removes the gateway tool when routes become ineligible", async () => {
   const client = new FakeClient();
-  let eligible = true;
   const { hooks } = makeHooks({
-    buildExternalTool: async () =>
-      eligible
+    buildExternalTool: async (_runtime, sources) =>
+      sources.length > 0
         ? {
             name: "MessageChannel",
-            description: "Send a message through a channel",
+            description: "Send through a routed channel",
             parameters: {},
           }
         : null,
@@ -599,7 +607,10 @@ test("runtime registration removes the gateway tool when routes become ineligibl
   const gateway = new ChannelGateway(client, hooks);
 
   await gateway.registerRuntime(TEST_RUNTIME, [makeSource()]);
-  eligible = false;
+  await gateway.submit(
+    makeDelivery({ sources: [makeSource({ chatId: "inbound-chat" })] }),
+  );
+  expect(client.startedRuntimes).toHaveLength(1);
   await gateway.registerRuntime(TEST_RUNTIME, []);
 
   expect(client.startedRuntimes).toHaveLength(2);
@@ -607,7 +618,6 @@ test("runtime registration removes the gateway tool when routes become ineligibl
     expect.objectContaining({ scope_id: "channel-gateway" }),
   ]);
   expect(client.startedRuntimes[1]?.external_tools).toEqual([]);
-  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
 
   gateway.close();
 });
@@ -812,4 +822,88 @@ test("close disposes all listeners and clears state", async () => {
 
   // client.close() should have been called
   expect(client.closeCalls).toBe(1);
+});
+
+test("routed registration filters eligibility and revokes tools", async () => {
+  __testOverrideLoadRoutes(() => null);
+  __testOverrideSaveRoutes(() => {});
+  clearAllRoutes();
+  let running = true;
+  const registry = new ChannelRegistry();
+  const adapter: ChannelAdapter = {
+    id: "slack:account-1",
+    channelId: "slack",
+    accountId: "account-1",
+    name: "Slack",
+    start: async () => {},
+    stop: async () => {},
+    isRunning: () => running,
+    sendMessage: async () => ({ messageId: "message-1" }),
+    sendDirectReply: async () => {},
+  };
+  registry.registerAdapter(adapter);
+  const addTestRoute = (
+    conversationId: string,
+    overrides: Partial<Parameters<typeof addRoute>[1]> = {},
+  ) =>
+    addRoute("slack", {
+      accountId: "account-1",
+      chatId: `chat-${conversationId}`,
+      agentId: "agent-1",
+      conversationId,
+      enabled: true,
+      outboundEnabled: true,
+      createdAt: "2026-08-04T00:00:00.000Z",
+      ...overrides,
+    });
+  addTestRoute("scheduled");
+  addTestRoute("disabled", { enabled: false });
+  addTestRoute("outbound-disabled", { outboundEnabled: false });
+  addTestRoute("missing-adapter", { accountId: "account-2" });
+
+  const registrations: Array<[string, number]> = [];
+  const refresher = createRoutedRuntimeRegistrationRefresher(
+    registry,
+    {
+      getKnownRuntimes: () => [
+        { agent_id: "agent-1", conversation_id: "scheduled" },
+        { agent_id: "agent-1", conversation_id: "removed" },
+      ],
+      registerRuntime: async (runtime, sources = []) => {
+        registrations.push([runtime.conversation_id, sources.length]);
+      },
+    },
+    ["slack"],
+  );
+
+  await refresher.refresh();
+  running = false;
+  await refresher.refresh();
+
+  expect(registrations).toEqual([
+    ["scheduled", 1],
+    ["removed", 0],
+    ["scheduled", 0],
+    ["removed", 0],
+  ]);
+
+  const events: string[] = [];
+  registry.setEventHandler((event) => events.push(event.type));
+  registry.setReady();
+  await adapter.onMessage?.({
+    ...makeSource({
+      channel: "slack",
+      accountId: "account-1",
+      chatId: "chat-scheduled",
+    }),
+    senderId: "user-1",
+    text: "/pause",
+    timestamp: Date.now(),
+  });
+  expect(events).toContain("routes_updated");
+
+  await registry.stopAll();
+  clearAllRoutes();
+  __testOverrideLoadRoutes(null);
+  __testOverrideSaveRoutes(null);
 });

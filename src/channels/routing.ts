@@ -14,7 +14,6 @@ import type { ChannelRoute, InboundChannelMessage } from "./types";
 
 /** Key: "channel:chatId" */
 const routesByKey = new Map<string, ChannelRoute>();
-const routeChangeListeners = new Set<(channelId: string) => void>();
 
 let loadRoutesOverride: ((channelId: string) => ChannelRoute[] | null) | null =
   null;
@@ -261,19 +260,6 @@ export function getAllRoutes(): ChannelRoute[] {
 
 // ── Mutations ─────────────────────────────────────────────────────
 
-export function subscribeRouteChanges(
-  listener: (channelId: string) => void,
-): () => void {
-  routeChangeListeners.add(listener);
-  return () => routeChangeListeners.delete(listener);
-}
-
-function notifyRouteChanged(channelId: string): void {
-  for (const listener of routeChangeListeners) {
-    listener(channelId);
-  }
-}
-
 /**
  * Add or update a route. Automatically saves to disk.
  */
@@ -288,7 +274,6 @@ export function addRoute(channelId: string, route: ChannelRoute): void {
     },
   );
   saveRoutes(channelId);
-  notifyRouteChanged(channelId);
 }
 
 /**
@@ -304,7 +289,6 @@ export function removeRoute(
   const existed = routesByKey.delete(key);
   if (existed) {
     saveRoutes(channelId);
-    notifyRouteChanged(channelId);
   }
   return existed;
 }
@@ -365,7 +349,6 @@ export function removeRoutesForScope(
   }
   if (removed > 0) {
     saveRoutes(channelId);
-    notifyRouteChanged(channelId);
   }
   return removed;
 }
@@ -384,7 +367,6 @@ export function removeRoutesForAccount(
   }
   if (removed > 0) {
     saveRoutes(channelId);
-    notifyRouteChanged(channelId);
   }
   return removed;
 }

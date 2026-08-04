@@ -131,33 +131,6 @@ describe("queue noCoalesce batching", () => {
     expect(consumeQueuedTurn(runtime)).toBeNull();
   });
 
-  test("cron-only turns select the channel gateway scope without claiming its connection", () => {
-    const runtime = getOrCreateScopedRuntime(
-      createRuntime(),
-      "agent-1",
-      "conv-1",
-    );
-    runtime.queueRuntime.enqueue({
-      kind: "cron_prompt",
-      source: "cron",
-      text: "scheduled prompt",
-      cronTaskId: "cron-1",
-      agentId: "agent-1",
-      conversationId: "conv-1",
-    } as Omit<
-      import("@/queue/queue-runtime").CronPromptQueueItem,
-      "id" | "enqueuedAt"
-    >);
-
-    const consumed = consumeQueuedTurn(runtime);
-
-    expect(consumed?.queuedTurn.connectionId).toBeUndefined();
-    expect(consumed?.queuedTurn.externalToolScopeIds).toEqual([
-      "channel-gateway",
-    ]);
-    expect(consumed?.queuedTurn.allowExternalToolScopeDelegation).toBe(true);
-  });
-
   test("messages from different connections never coalesce", () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
