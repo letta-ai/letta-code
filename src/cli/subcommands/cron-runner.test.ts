@@ -4,7 +4,7 @@ import {
   CLOUD_CRON_UTC_NOTE,
   CLOUD_DEVICE_FALLBACK_NOTE,
   resolveCronRunner,
-  validateInferredTargetDevice,
+  resolveInferredTargetDevice,
   validateTargetDevice,
 } from "./cron-runner";
 
@@ -247,7 +247,7 @@ describe("validateTargetDevice", () => {
   });
 });
 
-describe("validateInferredTargetDevice", () => {
+describe("resolveInferredTargetDevice", () => {
   const onlineEnvironment = {
     id: "environment-1",
     connectionId: "connection-1",
@@ -261,13 +261,24 @@ describe("validateInferredTargetDevice", () => {
     firstSeenAt: Date.now(),
   };
 
-  test("accepts a registered online external listener", () => {
+  test("accepts a registered online external listener", async () => {
     expect(
-      validateInferredTargetDevice(
+      await resolveInferredTargetDevice(
         onlineEnvironment.deviceId,
-        onlineEnvironment,
+        async () => onlineEnvironment,
       ),
-    ).toEqual({ ok: true });
+    ).toEqual({ kind: "device" });
+  });
+
+  test("resolves a managed sandbox runtime to the untargeted Cloud sandbox without a registry lookup", async () => {
+    // Sandbox rows can be registered/online in the environments registry, but
+    // individual sandboxes get retired and recreated, so one must never be
+    // pinned as a device target. The lookup must not even run.
+    expect(
+      await resolveInferredTargetDevice("sandbox-agent-example", async () => {
+        throw new Error("registry lookup should not run for sandbox ids");
+      }),
+    ).toEqual({ kind: "cloud-sandbox" });
   });
 
   test.each([
@@ -292,13 +303,15 @@ describe("validateInferredTargetDevice", () => {
     ],
     ["synthetic local", "local", null],
     ["synthetic Cloud", "__letta_cloud__", null],
-    ["managed sandbox", "sandbox-agent-example", null],
   ])(
     "rejects %s identities with runner guidance",
-    (_label, deviceId, environment) => {
-      const result = validateInferredTargetDevice(deviceId, environment);
-      expect(result.ok).toBe(false);
-      if (!result.ok) {
+    async (_label, deviceId, environment) => {
+      const result = await resolveInferredTargetDevice(
+        deviceId,
+        async () => environment,
+      );
+      expect(result.kind).toBe("error");
+      if (result.kind === "error") {
         expect(result.error).toContain("--runner cloud");
         expect(result.error).toContain("--computer <deviceId>");
         expect(result.error).toContain("--runner local");

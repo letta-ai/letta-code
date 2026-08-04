@@ -8,10 +8,11 @@
  *   cloud worker into a target listener or the agent's managed Cloud sandbox.
  *
  * Default policy: cloud agents get the cloud runner everywhere. When no runner
- * or computer is explicit, creation targets the active external listener to
- * preserve execution locality. `--runner cloud` deliberately selects the
- * managed Cloud sandbox; `--runner local` selects process-local storage.
- * Local-backend agents
+ * or computer is explicit, creation preserves execution locality: an external
+ * listener becomes the schedule's target, and a managed sandbox runtime keeps
+ * the untargeted schedule (which already fires in the agent's Cloud sandbox).
+ * `--runner cloud` deliberately selects the managed Cloud sandbox;
+ * `--runner local` selects process-local storage. Local-backend agents
  * (`agent-local-*`) always use the local runner, and servers that don't serve
  * the Cloud schedule routes (self-hosted OSS core) fall back to it.
  *
@@ -161,45 +162,64 @@ const INFERRED_TARGET_GUIDANCE =
   "Pass --runner cloud to use the Cloud sandbox, --computer <deviceId> to choose a connected computer, or --runner local to use this process.";
 
 /**
+ * How a default (no --runner/--computer) Cloud schedule should execute:
+ * - "device": target the current runtime's device so the schedule keeps
+ *   executing where it was created.
+ * - "cloud-sandbox": leave the schedule untargeted; it fires in the agent's
+ *   managed Cloud sandbox.
+ * - "error": the current runtime is neither — refuse with guidance.
+ */
+export type InferredTargetResolution =
+  | { kind: "device" }
+  | { kind: "cloud-sandbox" }
+  | { kind: "error"; error: string };
+
+/**
  * A default Cloud schedule preserves the current turn's execution locality.
- * Unlike an explicit --computer, an inferred target must be proven to be a
- * live external listener because there is no user-supplied target for the
+ *
+ * A managed-sandbox runtime (`sandbox-*` device id) resolves to
+ * "cloud-sandbox": an untargeted schedule already executes in the agent's
+ * managed sandbox, so the old untargeted default IS locality-preserving
+ * there. The sandbox check must come first — sandbox rows are registered
+ * and online in the environments registry, but individual sandboxes get
+ * retired and recreated, so pinning one as a device target would be wrong.
+ *
+ * Any other runtime must be proven to be a live external listener because,
+ * unlike an explicit --computer, there is no user-supplied target for the
  * Cloud API to validate or correct.
  */
-export function validateInferredTargetDevice(
+export async function resolveInferredTargetDevice(
   deviceId: string,
-  environment: EnvironmentConnection | null,
-): TargetDeviceValidity {
+  lookupEnvironment: () => Promise<EnvironmentConnection | null>,
+): Promise<InferredTargetResolution> {
+  if (deviceId.startsWith("sandbox-")) {
+    return { kind: "cloud-sandbox" };
+  }
+
+  const environment = await lookupEnvironment();
   const basicValidity = validateTargetDevice(deviceId, environment);
   if (!basicValidity.ok) {
     return {
-      ok: false,
+      kind: "error",
       error: `Cannot target the current runtime (${basicValidity.error}) ${INFERRED_TARGET_GUIDANCE}`,
-    };
-  }
-
-  if (deviceId.startsWith("sandbox-")) {
-    return {
-      ok: false,
-      error: `The current runtime is a managed sandbox, which is not a targetable external environment. ${INFERRED_TARGET_GUIDANCE}`,
     };
   }
 
   if (!environment) {
     return {
-      ok: false,
+      kind: "error",
       error: `The current runtime (${deviceId}) is not registered as a Cloud environment. ${INFERRED_TARGET_GUIDANCE}`,
     };
   }
 
   if (!isEnvironmentOnline(environment)) {
     return {
-      ok: false,
+      kind: "error",
       error: `The current runtime (${deviceId}) is not online in the Cloud environments registry. ${INFERRED_TARGET_GUIDANCE}`,
     };
   }
 
-  return { ok: true };
+  return { kind: "device" };
 }
 
 // ── Cloud payload mapping ───────────────────────────────────────────

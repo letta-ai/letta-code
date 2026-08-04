@@ -190,6 +190,29 @@ describe("cron add execution targeting", () => {
     ).toMatchObject({ target_device_id: "device-runtime" });
   });
 
+  test("default Cloud creation from a managed sandbox falls through to an untargeted schedule", async () => {
+    process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "sandbox-agent-example";
+    const requests = installScheduleApi({});
+
+    expect(await runCronSubcommand(addArgs)).toBe(0);
+
+    // No environments lookup: the sandbox check resolves before registry validation.
+    expect(
+      requests.some((request) =>
+        request.pathname.startsWith("/v1/environments/"),
+      ),
+    ).toBe(false);
+    const body = requests.find((request) => request.method === "POST")?.body;
+    expect(body).toEqual({
+      name: "boundary-test",
+      description: "exercise schedule creation",
+      conversation_id: "conversation-test",
+      messages: [{ role: "user", content: "do the scheduled work" }],
+      schedule: { type: "recurring", cron_expression: "*/5 * * * *" },
+      use_sandbox: true,
+    });
+  });
+
   test("explicit --runner cloud deliberately omits inferred targeting", async () => {
     process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "sandbox-agent-example";
     const requests = installScheduleApi({});

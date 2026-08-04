@@ -120,7 +120,7 @@ Creating crons:
 - Recurring monitoring/heartbeat: `letta cron add --name <short-name> --description <description> --prompt <future-message> --every "2h"` or `--cron "0 9 * * *"`
 Always include `--name`, `--description`, and `--prompt`. `$AGENT_ID` is automatically injected into the shell environment, and `letta cron` uses it by default, so you do not need to specify which agent to invoke unless overriding the current agent intentionally.
 
-Where crons run: for cloud agents, the default is a durable Cloud schedule targeted to the registered external listener running the current turn. `--computer <deviceId>` overrides that target. Explicit `--runner cloud` runs in your Cloud sandbox instead. Managed sandboxes and Desktop-local proxy connections cannot currently be targeted. Use `--runner local` for process-local storage; it only fires while a Letta session runs on that computer.
+Where crons run: for cloud agents, the default is a durable Cloud schedule that keeps executing where it was created: on a registered external listener it targets that listener, and in a managed cloud sandbox it stays untargeted and fires in your cloud sandbox. `--computer <deviceId>` overrides the target; explicit `--runner cloud` forces the untargeted cloud-sandbox schedule. Desktop-local proxy connections cannot currently be targeted. Use `--runner local` for process-local storage; it only fires while a Letta session runs on that computer.
 
 # Harness Architecture
 

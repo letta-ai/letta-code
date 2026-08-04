@@ -13,8 +13,9 @@
  *
  * Runners (LET-9692):
  * - "cloud" (default for cloud agents): durable Cloud schedules stored by the
- *   Letta API. The implicit default targets the active external listener;
- *   explicit --runner cloud executes in the agent's managed Cloud sandbox.
+ *   Letta API. The implicit default keeps executing where it was created
+ *   (external listener target, or untargeted from a managed sandbox);
+ *   explicit --runner cloud always executes in the agent's Cloud sandbox.
  * - "local": runtime-local tasks in ~/.letta/crons.json, executed by the WS
  *   listener on this device. Default for local-backend agents and self-hosted
  *   servers; explicit opt-in (--runner local) for schedules that must run on
@@ -51,7 +52,7 @@ import {
   CLOUD_EXECUTION_TARGET,
   type CronRunner,
   resolveCronRunner,
-  validateInferredTargetDevice,
+  resolveInferredTargetDevice,
   validateTargetDevice,
 } from "./cron-runner";
 import {
@@ -85,9 +86,10 @@ Add options:
   --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID or "default")
   --runner <runner>      Where the schedule lives and fires:
                            cloud - durable Cloud schedule (default for cloud
-                                   agents); the implicit default targets this
-                                   active external listener. Explicit
-                                   --runner cloud uses the Cloud sandbox
+                                   agents); the implicit default keeps running
+                                   where it was created (external listener or
+                                   the agent's Cloud sandbox). Explicit
+                                   --runner cloud always uses the Cloud sandbox
                            local - this device's scheduler (~/.letta/crons.json);
                                    only fires while a session runs here (default
                                    for local-backend agents / self-hosted)
@@ -380,16 +382,19 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     // The durable default preserves the locality of the current agent turn.
     // Infer only at create time: old targetless schedules deliberately remain
     // Cloud-sandbox schedules, and dispatch must never guess a target later.
+    // Managed-sandbox runtimes resolve to an untargeted schedule (the
+    // sandbox IS the untargeted execution environment).
     const inferredDeviceId = getRuntimeEnvironmentDeviceId();
-    const validity = validateInferredTargetDevice(
-      inferredDeviceId,
-      await lookupEnvironmentForTarget(inferredDeviceId),
+    const resolution = await resolveInferredTargetDevice(inferredDeviceId, () =>
+      lookupEnvironmentForTarget(inferredDeviceId),
     );
-    if (!validity.ok) {
-      console.error(`Error: ${validity.error}`);
+    if (resolution.kind === "error") {
+      console.error(`Error: ${resolution.error}`);
       return 1;
     }
-    targetDeviceId = inferredDeviceId;
+    if (resolution.kind === "device") {
+      targetDeviceId = inferredDeviceId;
+    }
   }
 
   if (resolved.runner === "cloud") {

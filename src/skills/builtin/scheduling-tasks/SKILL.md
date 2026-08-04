@@ -18,7 +18,7 @@ This skill lets you create, list, and manage scheduled tasks using the `letta cr
 
 There are two schedule runners, selected with the optional `--runner local|cloud` flag:
 
-- **`cloud`** (default for cloud agents): a durable Cloud schedule stored by the Letta API. With no runner or computer flag, it targets the registered external listener running the current turn, preserving execution locality while surviving process restarts.
+- **`cloud`** (default for cloud agents): a durable Cloud schedule stored by the Letta API. With no runner or computer flag, it keeps executing where it was created: a registered external listener becomes the schedule's target, and a managed cloud sandbox gets an untargeted schedule that fires in the agent's cloud sandbox. Either way the schedule survives process restarts.
 - **`local`**: a task local to the current computer (`~/.letta/crons.json`), executed by the Letta session running there. It only fires while a session is running on that computer, and it dies with that computer's local state.
 
 You normally don't need the flag. Use explicit `--runner cloud` to run in the agent's Cloud sandbox instead of the current listener. Local-backend agents (`agent-local-*`) and self-hosted servers use the local runner.
@@ -33,7 +33,7 @@ The deviceId comes from `letta environments list`. The computer must be a regist
 
 Notes for the cloud runner:
 
-- The implicit default infers the current registered external listener. `--computer` overrides it. Explicit `--runner cloud` creates an untargeted Cloud-sandbox schedule.
+- The implicit default infers the current runtime: a registered external listener is targeted, a managed sandbox falls through to an untargeted schedule. `--computer` overrides it. Explicit `--runner cloud` always creates an untargeted Cloud-sandbox schedule.
 - Recurring `--cron` expressions are currently interpreted in UTC (the CLI output includes a note about this). `--at` and `--every` are unaffected.
 - If creating a Cloud schedule fails, no schedule is created — there is no silent fallback to local storage. Retry, or pass `--runner local` deliberately.
 
