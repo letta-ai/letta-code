@@ -232,6 +232,39 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).not.toContain("Unknown option '--memfs-startup'");
   });
 
+  test("--stateless accepts an existing agent in headless mode", async () => {
+    const result = await runCli(
+      ["--agent", "agent-123", "--new", "--stateless", "-p", "Say OK"],
+      { expectExit: 1 },
+    );
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).not.toContain("Unknown option '--stateless'");
+    expect(result.stderr).not.toContain("--stateless requires");
+  });
+
+  test("--stateless rejects MemFS and new-agent combinations", async () => {
+    const withMemfs = await runCli(
+      ["--agent", "agent-123", "--stateless", "--memfs", "-p", "Say OK"],
+      { expectExit: 1 },
+    );
+    expect(withMemfs.stderr).toContain(
+      "--stateless cannot be used with --memfs",
+    );
+
+    const withNewAgent = await runCli(
+      ["--new-agent", "--stateless", "-p", "Say OK"],
+      { expectExit: 1 },
+    );
+    expect(withNewAgent.stderr).toContain("--stateless is for existing agents");
+  });
+
+  test("--stateless requires an explicit existing-agent selector", async () => {
+    const result = await runCli(["--stateless", "-p", "Say OK"], {
+      expectExit: 1,
+    });
+    expect(result.stderr).toContain("--stateless requires --agent");
+  });
+
   test("-C alias for --conversation is accepted", async () => {
     const result = await runCli(["-p", "Say OK", "-C", "conv-123"], {
       expectExit: 1,

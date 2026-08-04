@@ -107,9 +107,11 @@ import { installLocalBackendModEventHooks } from "./cli/mods/local-backend-mod-e
 import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
+  validatePrimaryStartupFlagConflicts,
   validateRegistryHandleOrThrow,
 } from "./cli/startup-flag-validation";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "./constants";
+import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
 import {
   createHeadlessModAdapter,
   createHeadlessModContext,
@@ -1044,15 +1046,18 @@ export async function handleHeadlessCommand(
   const noBundledSkillsFlag = values["no-bundled-skills"];
   const skillSourcesRaw = values["skill-sources"];
   const memfsFlag = values.memfs;
-  // Newly created subagents are ephemeral and deliberately stateless: they
-  // never get memfs (no repo clone per spawn). This role-based carve-out is
-  // the only supported non-memfs path — there is no user-facing opt-out.
-  // Fork/recall subagents deploy an EXISTING (memfs-tagged) agent instead of
-  // creating one (`--agent`/`--conv`, not `--new-agent`), so they keep their
-  // memory: the tag-driven sync below handles them like any other agent.
+  const statelessFlag = values.stateless;
   const isSubagentRole = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-  const isStatelessSubagent = isSubagentRole && Boolean(values["new-agent"]);
-  if (isStatelessSubagent && backend.capabilities.localMemfs) {
+  // Fresh subagents are stateless by role. --stateless extends only the
+  // MemFS-less session behavior to an existing --agent/--conversation launch;
+  // it does not change that agent's model, prompt, tools, or sampling config.
+  const { isFreshStatelessSubagent, isStatelessSession } =
+    resolveHeadlessMemfsPolicy({
+      statelessRequested: Boolean(statelessFlag),
+      isSubagentRole,
+      newAgentRequested: Boolean(forceNew),
+    });
+  if (isStatelessSession && backend.capabilities.localMemfs) {
     const { disableLocalBackendMemfsForProcess } = await import(
       "@/backend/local/paths"
     );
@@ -1079,7 +1084,7 @@ export async function handleHeadlessCommand(
     console.error("Error: --memfs is not supported by this backend yet");
     process.exit(1);
   }
-  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !isStatelessSubagent;
+  const shouldAutoEnableMemfsForNewAgent = !memfsFlag && !isStatelessSession;
   const fromAfFile = resolveImportFlagAlias({
     importFlagValue: values.import,
     fromAfFlagValue: values["from-af"],
@@ -1220,36 +1225,17 @@ export async function handleHeadlessCommand(
 
   // Validate shared mutual-exclusion rules for startup flags.
   try {
-    validateFlagConflicts({
-      guard: specifiedConversationId && specifiedConversationId !== "default",
-      checks: [
-        {
-          when: specifiedAgentId,
-          message: "--conversation cannot be used with --agent",
-        },
-        {
-          when: specifiedAgentName,
-          message: "--conversation cannot be used with --name",
-        },
-        {
-          when: forceNew,
-          message: "--conversation cannot be used with --new-agent",
-        },
-        {
-          when: fromAfFile,
-          message: "--conversation cannot be used with --import",
-        },
-      ],
-    });
-
-    validateFlagConflicts({
-      guard: forceNewConversation,
-      checks: [
-        {
-          when: specifiedConversationId,
-          message: "--new cannot be used with --conversation",
-        },
-      ],
+    validatePrimaryStartupFlagConflicts({
+      specifiedConversationId,
+      specifiedAgentId,
+      specifiedAgentName,
+      forceNewAgent: forceNew,
+      forceNewConversation,
+      importFile: fromAfFile,
+      stateless: statelessFlag,
+      isHeadless: true,
+      memfs: memfsFlag,
+      memfsStartup: values["memfs-startup"],
     });
   } catch (error) {
     return reportAndExitHeadless(
@@ -1456,7 +1442,7 @@ export async function handleHeadlessCommand(
       (await isLettaCloud());
     const effectiveMemoryMode: MemoryPromptMode | undefined = backend
       .capabilities.localMemfs
-      ? isStatelessSubagent
+      ? isFreshStatelessSubagent
         ? "standard"
         : "local-memfs"
       : (requestedMemoryPromptMode ??
@@ -1627,12 +1613,16 @@ export async function handleHeadlessCommand(
     ? true
     : memfsFlag;
 
-  if (backend.capabilities.remoteMemfs && !autoEnableMemfsForFreshAgent) {
+  if (
+    !isStatelessSession &&
+    backend.capabilities.remoteMemfs &&
+    !autoEnableMemfsForFreshAgent
+  ) {
     const { hydrateMemfsSettingFromAgent, isLettaCloud } = await import(
       "@/agent/memory-filesystem"
     );
     const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
-    if (!memfsEnabled && !isStatelessSubagent && (await isLettaCloud())) {
+    if (!memfsEnabled && (await isLettaCloud())) {
       // Auto-enable memfs for existing agents that don't have it yet.
       // Matches interactive mode behavior where memfs defaults to enabled.
       startupMemfsFlag = true;
@@ -1655,9 +1645,15 @@ export async function handleHeadlessCommand(
   //   "blocking"  (default) – await the pull; exit on conflict.
   //   "background"           – fire pull async; session init proceeds immediately.
   //   "skip"                 – skip the pull this session.
-  if (!backend.capabilities.remoteMemfs) {
+  if (isStatelessSession) {
+    // This is a session launch policy: do not hydrate tags, auto-enable,
+    // clone, or pull MemFS. Recording false also keeps downstream client tools,
+    // skills, reflection, and init metadata aligned without mutating the
+    // server-side agent configuration.
+    settingsManager.setMemfsEnabled(agent.id, false);
+  } else if (!backend.capabilities.remoteMemfs) {
     if (backend.capabilities.localMemfs) {
-      settingsManager.setMemfsEnabled(agent.id, !isStatelessSubagent);
+      settingsManager.setMemfsEnabled(agent.id, true);
     }
   } else if (memfsStartupPolicy === "skip") {
     // Run enable logic but skip the git pull.
@@ -1814,10 +1810,13 @@ export async function handleHeadlessCommand(
     });
 
   try {
-    effectiveReflectionSettings = await applyReflectionOverrides(
+    const resolvedReflectionSettings = await applyReflectionOverrides(
       agent.id,
       reflectionOverrides,
     );
+    effectiveReflectionSettings = isStatelessSession
+      ? { ...resolvedReflectionSettings, trigger: "off" }
+      : resolvedReflectionSettings;
   } catch (error) {
     console.error(
       `Failed to apply sleeptime settings: ${error instanceof Error ? error.message : String(error)}`,

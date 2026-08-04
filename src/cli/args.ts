@@ -230,6 +230,13 @@ export const CLI_FLAG_CATALOG = {
     mode: "both",
     help: { description: "Enable memory filesystem for this agent" },
   },
+  stateless: {
+    parser: { type: "boolean" },
+    mode: "headless",
+    help: {
+      description: "Run an existing agent without MemFS enablement or sync",
+    },
+  },
   // DEPRECATED no-op, intentionally hidden from help. Accepted for backward
   // compatibility: older parent processes (pre-mandatory-memfs) spawn
   // subagents with --no-memfs, and after an auto-update the child binary on
