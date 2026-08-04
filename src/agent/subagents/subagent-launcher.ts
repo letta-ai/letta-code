@@ -8,6 +8,7 @@
 
 import { type BackendMode, getLocalBackendStorageDir } from "@/backend";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
+import { LETTA_DISABLE_MODS_ENV } from "@/mods/disable";
 import {
   getCurrentWorkingDirectory,
   type InheritedChannelContextPayload,
@@ -132,6 +133,8 @@ export interface ComposeSubagentChildEnvOptions {
   /** Parent agent ID. When present, sets LETTA_PARENT_AGENT_ID so prompts,
    * scripts, and the cross-agent guard can identify the immediate parent. */
   parentAgentId: string | undefined;
+  /** Subagent config type, used for type-specific child process isolation. */
+  subagentType?: string;
   /** The subagent config's declared launch profile. Subagents with the memory-subagent profile
    * operate on the parent's memory filesystem. */
   launchProfile: SubagentLaunchProfile | undefined;
@@ -197,6 +200,7 @@ export function composeSubagentChildEnv(
     backendMode,
     localBackendStorageDir,
     parentAgentId,
+    subagentType,
     launchProfile,
     inheritedPrimaryRoot,
     memoryScope,
@@ -211,6 +215,7 @@ export function composeSubagentChildEnv(
     ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     LETTA_CODE_AGENT_ROLE: "subagent",
+    ...(subagentType === "reflection" && { [LETTA_DISABLE_MODS_ENV]: "1" }),
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
     ...(inheritedChannelContext && {
