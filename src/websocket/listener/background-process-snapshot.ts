@@ -54,7 +54,7 @@ export function buildBackgroundProcessSnapshot(
     .map(([processId, task]) => ({
       process_id: processId,
       kind: "agent_task",
-      task_type: task.subagentType,
+      task_type: task.displayType ?? task.subagentType,
       description: task.description,
       started_at_ms: task.startTime.getTime(),
       status: task.status,

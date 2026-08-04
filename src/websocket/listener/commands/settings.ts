@@ -44,12 +44,16 @@ function toReflectionSettingsResponse(
   agent_id: string;
   trigger: "off" | "step-count" | "compaction-event";
   step_count: number;
+  merge: "auto" | "explicit";
+  merge_instructions: string;
 } {
   const settings = getReflectionSettings(agentId, workingDirectory);
   return {
     agent_id: agentId,
     trigger: settings.trigger,
     step_count: settings.stepCount,
+    merge: settings.merge,
+    merge_instructions: settings.mergeInstructions,
   };
 }
 
@@ -191,11 +195,16 @@ export async function handleReflectionSettingsCommand(
     resolveReflectionSettingsScope(parsed.scope);
 
   try {
+    const currentSettings = getReflectionSettings(agentId, workingDirectory);
     await persistReflectionSettingsForAgent(
       agentId,
       {
         trigger: parsed.settings.trigger,
         stepCount: parsed.settings.step_count,
+        merge: parsed.settings.merge ?? currentSettings.merge,
+        mergeInstructions:
+          parsed.settings.merge_instructions ??
+          currentSettings.mergeInstructions,
       },
       {
         workingDirectory,

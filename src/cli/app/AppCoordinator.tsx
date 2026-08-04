@@ -108,7 +108,6 @@ import {
 import {
   AUTO_REFLECTION_DESCRIPTION,
   launchReflectionSubagent,
-  queuePendingReflectionWorktreeReminders,
 } from "@/cli/helpers/reflection-launcher";
 import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import { getStartupModelDisplayOverride } from "@/cli/helpers/startup-model-display";
@@ -3696,11 +3695,6 @@ export function App({
         reflectionSettings,
         reminderState: sharedReminderStateRef.current,
         contextTracker: contextTrackerRef.current,
-        onCompaction: () =>
-          queuePendingReflectionWorktreeReminders({
-            agentId: reflectionAgentId,
-            conversationId: conversationIdRef.current ?? "default",
-          }),
         launch: async (triggerSource) => {
           if (experimentManager.isEnabled("reflection_arena")) {
             const arenaResult = await launchReflectionArena({
@@ -3715,7 +3709,6 @@ export function App({
                 parentAgentName: agentName,
                 parentAgentDescription: agentDescription,
                 surface: "letta_code_tui",
-                model: currentModelId,
               },
               onReady: (message, readyRun) => {
                 appendTaskNotificationEvents([message]);
@@ -3735,8 +3728,6 @@ export function App({
             conversationId: conversationIdRef.current ?? "default",
             memfsEnabled: isActiveMemfsEnabled(reflectionAgentId),
             triggerSource,
-            skipPendingWorktreeReminderScan:
-              triggerSource === "compaction-event",
             reflectionSettings,
             description: AUTO_REFLECTION_DESCRIPTION,
             completionConversationId: () => conversationIdRef.current,
@@ -3751,7 +3742,6 @@ export function App({
               parentAgentName: agentName,
               parentAgentDescription: agentDescription,
               surface: "letta_code_tui",
-              model: currentModelId,
             },
           });
           return result.launched;
@@ -3765,12 +3755,7 @@ export function App({
         }`,
       );
     }
-  }, [
-    agentName,
-    agentDescription,
-    currentModelId,
-    appendTaskNotificationEvents,
-  ]);
+  }, [agentName, agentDescription, appendTaskNotificationEvents]);
 
   const processConversation = useConversationLoop({
     abortControllerRef,

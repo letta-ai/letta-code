@@ -422,10 +422,10 @@ async function applyReflectionOverrides(
 ): Promise<ReflectionSettings> {
   const current = getReflectionSettings(agentId);
   const merged: ReflectionSettings = {
+    ...current,
     trigger: overrides.trigger ?? current.trigger,
     stepCount: overrides.stepCount ?? current.stepCount,
   };
-
   if (!hasReflectionOverrides(overrides)) {
     return merged;
   }

@@ -357,14 +357,17 @@ async function executeSubagent(
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
 ): Promise<SubagentResult> {
+  const withModel = (result: SubagentResult): SubagentResult =>
+    model ? { ...result, model } : result;
+
   // Check if already aborted before starting
   if (signal?.aborted) {
-    return {
+    return withModel({
       agentId: "",
       report: "",
       success: false,
       error: INTERRUPTED_BY_USER,
-    };
+    });
   }
 
   // Update the state with the model being used (may differ on retry/fallback)
@@ -423,6 +426,9 @@ async function executeSubagent(
     const inheritedMemoryRoots = resolveAllowedMemoryRoots({
       currentAgentId: parentAgentId ?? null,
     });
+    const effectiveLaunchProfile = memoryScope
+      ? "memory-subagent"
+      : config.launchProfile;
     const localBackendStorageDir =
       backendMode === "local" ? getLocalBackendStorageDir() : null;
     const inheritedPrimaryRoot = resolveSubagentInheritedPrimaryRoot({
@@ -436,7 +442,7 @@ async function executeSubagent(
       getCurrentWorkingDirectory(),
       {
         subagentType: type,
-        launchProfile: config.launchProfile,
+        launchProfile: effectiveLaunchProfile,
         inheritedPrimaryRoot,
         memoryScope,
       },
@@ -449,7 +455,7 @@ async function executeSubagent(
       backendMode,
       localBackendStorageDir,
       parentAgentId,
-      launchProfile: config.launchProfile,
+      launchProfile: effectiveLaunchProfile,
       inheritedPrimaryRoot,
       memoryScope,
       inheritedApiKey,
@@ -463,7 +469,7 @@ async function executeSubagent(
     // backend is available on this host.
     const sandbox = wrapSubagentLauncher({
       launcher,
-      launchProfile: config.launchProfile,
+      launchProfile: effectiveLaunchProfile,
       backendMode,
       memoryRoots: inheritedMemoryRoots.roots,
       inheritedPrimaryRoot,
@@ -555,13 +561,13 @@ async function executeSubagent(
 
     // Check if process was aborted by user
     if (wasAborted) {
-      return {
+      return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: "",
         success: false,
         error: INTERRUPTED_BY_USER,
-      };
+      });
     }
 
     const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
@@ -621,18 +627,18 @@ async function executeSubagent(
       const propagatedError = state.finalError?.trim();
       const fallbackError = stderr || `Subagent exited with code ${exitCode}`;
 
-      return {
+      return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: "",
         success: false,
         error: propagatedError || fallbackError,
-      };
+      });
     }
 
     // Return captured result if available
     if (state.finalResult !== null) {
-      return {
+      return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: state.finalResult,
@@ -641,7 +647,7 @@ async function executeSubagent(
         totalTokens: state.resultStats?.totalTokens,
         stepCount: state.resultStats?.stepCount,
         durationMs: state.resultStats?.durationMs,
-      };
+      });
     }
 
     // Return error if captured
@@ -651,7 +657,7 @@ async function executeSubagent(
         `Subagent ${subagentId} (agentId=${state.agentId}) exited with captured error: ${state.finalError}. ` +
           `exitCode=${exitCode}, stderr=${stderr.length} bytes`,
       );
-      return {
+      return withModel({
         agentId: state.agentId || "",
         conversationId: state.conversationId || undefined,
         report: "",
@@ -660,7 +666,7 @@ async function executeSubagent(
         totalTokens: state.resultStats?.totalTokens,
         stepCount: state.resultStats?.stepCount,
         durationMs: state.resultStats?.durationMs,
-      };
+      });
     }
 
     // No result or error captured during streaming — this is unusual
@@ -714,14 +720,14 @@ async function executeSubagent(
         );
       }
     }
-    return result;
+    return withModel(result);
   } catch (error) {
-    return {
+    return withModel({
       agentId: "",
       report: "",
       success: false,
       error: getErrorMessage(error),
-    };
+    });
   }
 }
 
@@ -739,6 +745,13 @@ Your final message will be returned to the caller.
 ${SYSTEM_REMINDER_CLOSE}
 
 `;
+}
+
+export function shouldPrependDeploySystemReminder(
+  existingAgentId: string | undefined,
+  parentAgentId: string,
+): boolean {
+  return !existingAgentId || existingAgentId !== parentAgentId;
 }
 
 export function recallPromptForBackend(backendMode?: BackendMode): string {
@@ -881,7 +894,12 @@ export async function spawnSubagent(
       if (forkedContext) {
         const systemReminder = buildForkSystemReminder(type, backendMode);
         finalPrompt = systemReminder + prompt;
-      } else {
+      } else if (
+        shouldPrependDeploySystemReminder(
+          existingAgentId,
+          resolvedParentAgentId,
+        )
+      ) {
         const systemReminder = buildDeploySystemReminder(
           cachedParent.name ?? "",
           resolvedParentAgentId,

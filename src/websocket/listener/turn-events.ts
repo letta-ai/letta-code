@@ -151,7 +151,6 @@ export function buildMaybeLaunchReflectionSubagent(params: {
       conversationId,
       memfsEnabled: settingsManager.isMemfsEnabled(agentId),
       triggerSource,
-      skipPendingWorktreeReminderScan: triggerSource === "compaction-event",
       reflectionSettings,
       description: AUTO_REFLECTION_DESCRIPTION,
       recompileByConversation:

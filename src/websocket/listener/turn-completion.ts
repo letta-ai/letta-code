@@ -3,7 +3,6 @@ import { regenerateConversationDescription } from "@/agent/conversation-descript
 import type { Line } from "@/cli/helpers/accumulator";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { maybeLaunchPostTurnReflection } from "@/cli/helpers/post-turn-reflection";
-import { queuePendingReflectionWorktreeReminders } from "@/cli/helpers/reflection-launcher";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
 import { settingsManager } from "@/settings-manager";
 import { debugWarn } from "@/utils/debug";
@@ -87,11 +86,6 @@ export async function completeSuccessfulListenerTurn(params: {
       reflectionSettings,
       reminderState: params.runtime.reminderState,
       contextTracker: params.runtime.contextTracker,
-      onCompaction: () =>
-        queuePendingReflectionWorktreeReminders({
-          agentId: params.agentId,
-          conversationId: params.conversationId,
-        }),
       launch: buildMaybeLaunchReflectionSubagent({
         runtime: params.runtime,
         socket: params.socket,

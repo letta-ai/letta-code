@@ -266,7 +266,6 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
     },
     feedbackContext: {
       surface: "letta_code_cli",
-      model: parsed.values.model,
     },
   });
 
@@ -289,6 +288,11 @@ export async function runDreamSubcommand(argv: string[]): Promise<number> {
         return 1;
       case "memfs_disabled":
         console.error(`Memory filesystem is not enabled for ${agentId}.`);
+        return 1;
+      case "parent_dirty":
+        console.error(
+          "Parent memory has uncommitted changes; commit or discard them before reflecting.",
+        );
         return 1;
       default: {
         const message =
