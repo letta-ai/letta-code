@@ -68,6 +68,7 @@ import { debugLog } from "@/utils/debug";
 import { refreshAndListSecrets } from "@/utils/secrets-store";
 import { isRecord } from "@/utils/type-guards";
 import { serializeClientTools } from "./client-tool-serialization";
+import { filterExternalToolsByRuntimeContext } from "./external-tool-runtime-filter";
 import { toolFilter } from "./filter";
 import { clampToolReturnContent } from "./impl/tool-return-clamp";
 import {
@@ -390,25 +391,6 @@ function filterToolRegistryByClientAllowlist(
   );
 }
 
-function filterExternalToolsByRuntimeContext(
-  externalTools: Map<string, ExternalToolDefinition>,
-  runtimeContext: RuntimeContextSnapshot,
-  externalToolScopeIds?: string[],
-): Map<string, ExternalToolDefinition> {
-  return new Map(
-    Array.from(externalTools.entries()).filter(
-      ([, tool]) =>
-        (tool.connectionId === undefined ||
-          tool.connectionId === runtimeContext.connectionId ||
-          (runtimeContext.connectionId === undefined &&
-            tool.scopeId !== undefined &&
-            externalToolScopeIds?.includes(tool.scopeId) === true)) &&
-        (!tool.runtime ||
-          (tool.runtime.agentId === runtimeContext.agentId &&
-            tool.runtime.conversationId === runtimeContext.conversationId)),
-    ),
-  );
-}
 function filterExternalToolsByScopeIds(
   externalTools: Map<string, ExternalToolDefinition>,
   externalToolScopeIds?: string[],

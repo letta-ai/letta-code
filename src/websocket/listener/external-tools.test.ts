@@ -110,7 +110,7 @@ describe("app-server runtime_start external tool bridge", () => {
     });
   });
 
-  test("delegates a selected runtime scope to a process-owned cron turn", async () => {
+  test("delegates a selected runtime scope across connections for a cron turn", async () => {
     const { runtime, sent } = createMockRuntime();
     installExternalToolBridge(runtime);
     registerRuntimeExternalTools(
@@ -138,6 +138,7 @@ describe("app-server runtime_start external tool bridge", () => {
       "anthropic/claude-sonnet-4",
       {
         runtimeContext: {
+          connectionId: "scheduler-client",
           agentId: "agent-1",
           conversationId: "conv-1",
         },
@@ -154,6 +155,7 @@ describe("app-server runtime_start external tool bridge", () => {
       {
         externalToolScopeIds: ["channel-gateway"],
         runtimeContext: {
+          connectionId: "scheduler-client",
           agentId: "agent-1",
           conversationId: "conv-1",
         },
@@ -165,6 +167,23 @@ describe("app-server runtime_start external tool bridge", () => {
           name: "MessageChannel",
           description: "Send through an eligible routed channel",
         }),
+      ]),
+    );
+
+    const wrongRuntime = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        externalToolScopeIds: ["channel-gateway"],
+        runtimeContext: {
+          connectionId: "scheduler-client",
+          agentId: "agent-1",
+          conversationId: "conv-2",
+        },
+      },
+    );
+    expect(wrongRuntime.clientTools).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "MessageChannel" }),
       ]),
     );
 
@@ -180,6 +199,28 @@ describe("app-server runtime_start external tool bridge", () => {
       scope_id: "channel-gateway",
       tool_name: "MessageChannel",
     });
+
+    rejectPendingExternalToolCallsForConnection(
+      runtime,
+      "client-1",
+      "gateway disconnected",
+    );
+    const afterGatewayDisconnect = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        externalToolScopeIds: ["channel-gateway"],
+        runtimeContext: {
+          connectionId: "scheduler-client",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    expect(afterGatewayDisconnect.clientTools).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "MessageChannel" }),
+      ]),
+    );
   });
 
   test("keeps same tool name and scope id isolated across runtimes", async () => {
