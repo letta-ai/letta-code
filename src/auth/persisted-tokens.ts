@@ -25,20 +25,33 @@ export interface PersistedAuthTokens {
   refreshToken: string | null;
   tokenExpiresAt: number | null;
   /**
-   * True when the keychain was actually consulted. False inside runtime
-   * scopes (Bun 1.3.0 can crash on keychain reads there — same guard as
-   * settingsManager.getSettingsWithSecureTokens), when the keychain is
-   * unavailable (file-fallback installs), or when the read timed out.
-   * Non-strict values come from the settings file and may be incomplete;
-   * callers must not use them to verify persistence.
+   * Where the token values came from:
+   * - "keychain" — direct keychain read succeeded; values are authoritative
+   *   and a post-persist read-back can verify against them.
+   * - "file" — the keychain is genuinely unavailable on this install, so the
+   *   settings file IS durable token storage (persistSettingsAndTokens falls
+   *   back to it); values are authoritative and verifiable.
+   * - "runtime-scope" — keychain reads are skipped inside runtime scopes
+   *   (Bun 1.3.0 can crash there — same guard as
+   *   settingsManager.getSettingsWithSecureTokens), so on keychain installs
+   *   the file carries only the expiry. Values may be incomplete; callers
+   *   must not use them to verify persistence.
+   *
+   * A keychain that is available but errors or times out mid-read does NOT
+   * degrade to "file" — readPersistedAuthTokens throws KeychainReadError
+   * instead, so callers fail closed rather than rotate a refresh token based
+   * on possibly-stale data.
    */
-  strict: boolean;
+  source: "keychain" | "file" | "runtime-scope";
 }
+
+/** A confirmed-available keychain failed or timed out mid-read. */
+export class KeychainReadError extends Error {}
 
 /**
  * Keychain reads run while the refresh lock is held; a wedged keychain must
- * not hold the lock past its stale-reap window, so cap the read and degrade
- * to the file-backed (non-strict) snapshot.
+ * not hold the lock indefinitely, so cap the read. Expiry fails closed (see
+ * KeychainReadError) — it never silently degrades to the file snapshot.
  */
 const KEYCHAIN_READ_TIMEOUT_MS = 5_000;
 
@@ -48,20 +61,24 @@ function defaultSettingsFilePath(): string {
   return join(home, ".letta", "settings.json");
 }
 
-function withSoftTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-): Promise<T | null> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), ms);
+function withReadDeadline<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new KeychainReadError(`keychain read timed out (${ms}ms)`)),
+      ms,
+    );
     promise.then(
       (value) => {
         clearTimeout(timer);
         resolve(value);
       },
-      () => {
+      (error) => {
         clearTimeout(timer);
-        resolve(null);
+        reject(
+          new KeychainReadError(
+            `keychain read failed: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
       },
     );
   });
@@ -92,38 +109,39 @@ export async function readPersistedAuthTokens(
     // Missing or unreadable settings file — every field stays null.
   }
 
-  const fileOnly: PersistedAuthTokens = {
+  const fileValues = {
     apiKey: fileApiKey,
     refreshToken: fileRefreshToken,
     tokenExpiresAt: fileTokenExpiresAt,
-    strict: false,
   };
 
   if (getRuntimeContext()) {
-    return fileOnly;
+    return { ...fileValues, source: "runtime-scope" };
   }
 
-  const keychain = await withSoftTimeout(
-    (async () => {
-      if (!(await isKeychainAvailable())) return null;
-      const [apiKey, refreshToken] = await Promise.all([
-        getApiKey(),
-        getRefreshToken(),
-      ]);
-      return { apiKey, refreshToken };
-    })(),
+  // isKeychainAvailable() reports genuine unavailability (no Bun secrets,
+  // headless Linux without a session bus, LETTA_SKIP_KEYCHAIN_CHECK) as
+  // false — that is the file-fallback install, where the settings file is
+  // the durable store. Errors past that point are a different animal.
+  const available = await withReadDeadline(
+    isKeychainAvailable(),
     KEYCHAIN_READ_TIMEOUT_MS,
   );
-  if (!keychain) {
-    return fileOnly;
+  if (!available) {
+    return { ...fileValues, source: "file" };
   }
+
+  const [apiKey, refreshToken] = await withReadDeadline(
+    Promise.all([getApiKey(), getRefreshToken()]),
+    KEYCHAIN_READ_TIMEOUT_MS,
+  );
 
   return {
     // Keychain owns the tokens when populated; the file values only matter
     // for installs that never migrated into the keychain.
-    apiKey: keychain.apiKey ?? fileApiKey,
-    refreshToken: keychain.refreshToken ?? fileRefreshToken,
+    apiKey: apiKey ?? fileApiKey,
+    refreshToken: refreshToken ?? fileRefreshToken,
     tokenExpiresAt: fileTokenExpiresAt,
-    strict: true,
+    source: "keychain",
   };
 }

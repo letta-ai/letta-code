@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { platform, tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import {
   assertMemoryRepoCleanForWrite,
   buildGitAuthArgs,
@@ -797,6 +797,60 @@ describe("cloneRepositoryMount", () => {
 
     expect(existsSync(join(directory, "update.md"))).toBe(true);
     expect(existsSync(legacyHelper)).toBe(false);
+  });
+
+  test("real git executes the dynamic helper from PATH and ignores inherited helpers", async () => {
+    // End-to-end through actual `git credential fill` in a mount configured
+    // by cloneRepositoryMount: proves the two-line config (reset + dynamic
+    // helper) makes git (a) skip a hostile inherited helper and (b) resolve
+    // `letta` from PATH and use its answer. The fake `letta` is an
+    // extensionless sh script — git runs `!` helpers under its bundled sh on
+    // every platform, including Git-for-Windows.
+    process.env.LETTA_BASE_URL = "https://api.letta.com";
+    delete process.env.LETTA_MEMFS_GIT_PROXY_BASE_URL;
+    const remote = makeRemoteWithContent();
+    const mountParent = mkdtempSync(join(tmpdir(), "repo-mount-"));
+    tempDirs.push(mountParent);
+    const directory = join(mountParent, "shared-notes");
+    await cloneRepositoryMount({
+      agentId: "agent-123",
+      repositoryName: "shared-notes",
+      directory,
+      remoteUrl: remote,
+      token: "test-token",
+    });
+
+    const binDir = join(mountParent, "bin");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      join(binDir, "letta"),
+      '#!/bin/sh\n[ "$1" = "git-credential" ] || exit 1\n[ "$2" = "get" ] || exit 0\ncat >/dev/null\necho username=letta\necho password=dynamic-token\n',
+      { mode: 0o755 },
+    );
+
+    const globalConfig = join(mountParent, "globalconfig");
+    writeFileSync(
+      globalConfig,
+      `[credential]\n\thelper = "!f() { echo username=stale; echo password=stale-keychain-token; }; f"\n`,
+      "utf-8",
+    );
+
+    const filled = execFileSync("git", ["credential", "fill"], {
+      cwd: directory,
+      encoding: "utf-8",
+      input: "protocol=https\nhost=api.letta.com\n\n",
+      env: {
+        ...process.env,
+        PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`,
+        GIT_CONFIG_GLOBAL: globalConfig,
+        GIT_CONFIG_SYSTEM: platform() === "win32" ? "NUL" : "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    });
+
+    expect(filled).toContain("username=letta");
+    expect(filled).toContain("password=dynamic-token");
+    expect(filled).not.toContain("stale-keychain-token");
   });
 });
 

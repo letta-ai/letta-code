@@ -34,7 +34,7 @@ describe("readPersistedAuthTokens (file-backed path)", () => {
       apiKey: "file-key",
       refreshToken: "file-refresh",
       tokenExpiresAt: 1_800_000_000_000,
-      strict: false,
+      source: "file",
     });
   });
 
@@ -46,7 +46,7 @@ describe("readPersistedAuthTokens (file-backed path)", () => {
       apiKey: null,
       refreshToken: null,
       tokenExpiresAt: null,
-      strict: false,
+      source: "file",
     });
 
     const dir = mkdtempSync(join(tmpdir(), "persisted-tokens-"));
@@ -56,7 +56,7 @@ describe("readPersistedAuthTokens (file-backed path)", () => {
       apiKey: null,
       refreshToken: null,
       tokenExpiresAt: null,
-      strict: false,
+      source: "file",
     });
   });
 
@@ -70,7 +70,7 @@ describe("readPersistedAuthTokens (file-backed path)", () => {
       apiKey: null,
       refreshToken: null,
       tokenExpiresAt: null,
-      strict: false,
+      source: "file",
     });
   });
 });
