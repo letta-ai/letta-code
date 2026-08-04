@@ -182,9 +182,6 @@ function buildModelSettings(
         thinking_budget: updateArgs.thinking_budget as number,
       };
     }
-    if (typeof updateArgs?.temperature === "number") {
-      googleSettings.temperature = updateArgs.temperature as number;
-    }
     settings = googleSettings;
   } else if (isGoogleVertex) {
     // Vertex AI uses the same Google provider on the backend; only the handle differs.
@@ -196,10 +193,6 @@ function buildModelSettings(
       (googleVertexSettings as Record<string, unknown>).thinking_config = {
         thinking_budget: updateArgs.thinking_budget as number,
       };
-    }
-    if (typeof updateArgs?.temperature === "number") {
-      (googleVertexSettings as Record<string, unknown>).temperature =
-        updateArgs.temperature as number;
     }
     settings = googleVertexSettings;
   } else if (isBedrock) {
@@ -265,6 +258,17 @@ function buildModelSettings(
       updateArgs.max_output_tokens;
   }
 
+  // Temperature is portable across the provider settings schemas supported by
+  // Letta. Apply it after provider-specific construction so existing-agent
+  // model switches can retain an explicit sampling override without carrying
+  // incompatible reasoning/thinking fields from the old provider.
+  if (
+    typeof updateArgs?.temperature === "number" &&
+    "provider_type" in settings
+  ) {
+    (settings as Record<string, unknown>).temperature = updateArgs.temperature;
+  }
+
   // Preserve OpenCode-style modality metadata when present so local-model
   // transforms can decide whether file/image parts are safe to send.
   if (isRecord(updateArgs?.modalities)) {
@@ -299,8 +303,14 @@ function updateArgsForModelSettings(
 
 function maxTokensForUpdatePayload(
   updateArgs: Record<string, unknown> | undefined,
-  options: { useBackendModelCatalog: boolean },
+  options: {
+    useBackendModelCatalog: boolean;
+    maxTokensOverride?: number | null;
+  },
 ): number | null | undefined {
+  if (options.maxTokensOverride !== undefined) {
+    return options.maxTokensOverride;
+  }
   if (options.useBackendModelCatalog) return undefined;
   const maxTokens = updateArgs?.max_output_tokens;
   return typeof maxTokens === "number" || maxTokens === null
@@ -323,11 +333,16 @@ export interface UpdateLLMConfigOptions {
    * Context window to send explicitly. Wins over updateArgs.context_window
    * and catalog derivation on EVERY backend — including local backends, where
    * updateArgs.context_window is otherwise ignored in favor of the pi model
-   * catalog. Preserve paths (reasoning cycles, resume refresh, conversation
-   * carryover, same-variant /model changes) use this to re-send the current
-   * window (LET-9786).
+   * catalog. Preserve paths (reasoning cycles, existing-agent CLI selection,
+   * conversation carryover, same-variant /model changes) use this to re-send
+   * the current window (LET-9786).
    */
   contextWindowOverride?: number;
+  /**
+   * Output-token limit to send explicitly. Existing-agent model switches use
+   * this to keep the configured cap on both API and local backends.
+   */
+  maxTokensOverride?: number | null;
 }
 
 /**
@@ -419,6 +434,7 @@ export async function updateAgentLLMConfig(
   const hasModelSettings = Object.keys(modelSettings).length > 0;
   const maxTokens = maxTokensForUpdatePayload(updateArgs, {
     useBackendModelCatalog,
+    maxTokensOverride: options?.maxTokensOverride,
   });
 
   await backend.updateAgent(agentId, {

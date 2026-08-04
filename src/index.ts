@@ -15,16 +15,14 @@ import {
   setConversationId as setContextConversationId,
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
+import { updateExistingAgentLLMConfig } from "./agent/existing-agent-model-update";
 import {
-  getModelPresetUpdateForAgent,
   getModelUpdateArgs,
-  getResumeRefreshArgs,
   type ModelReasoningSelection,
-  preservableContextWindow,
   resolveModel,
   withReasoningEffortUpdateArg,
 } from "./agent/model";
-import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
+import { updateAgentSystemPrompt } from "./agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
 import { resolvePersonalityId } from "./agent/personality-presets";
 import type { MemoryPromptMode } from "./agent/prompt-assets";
@@ -2344,9 +2342,9 @@ async function main(): Promise<void> {
         );
         setIsResumingSession(resuming);
 
-        // If resuming, always refresh model settings from presets to keep
-        // preset-derived fields in sync, then apply optional command-line
-        // overrides (model/system prompt).
+        // Existing agents keep their persisted generation configuration as the
+        // baseline. An explicit --model changes model/provider/reasoning
+        // selection without resetting safe context/output/sampling settings.
         if (resuming) {
           if (model) {
             const modelHandle = resolveModel(model);
@@ -2358,36 +2356,14 @@ async function main(): Promise<void> {
             // Always apply model update - different model IDs can share the same
             // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
             const updateArgs = getModelUpdateArgs(model);
-            agent = await updateAgentLLMConfig(
-              agent.id,
+            const modelUpdate = await updateExistingAgentLLMConfig(
+              agent,
               modelHandle,
               updateArgs,
             );
-          } else {
-            const presetRefresh = getModelPresetUpdateForAgent(agent);
-            if (presetRefresh) {
-              const { updateArgs: resumeRefreshUpdateArgs, needsUpdate } =
-                getResumeRefreshArgs(presetRefresh.updateArgs, agent);
-
-              if (needsUpdate) {
-                // Resume refresh must not reset the context window; preserve
-                // it by re-sending the agent's current value explicitly
-                // (omitting it makes the server re-derive + clamp to a legacy
-                // 128k default — LET-9786). A current value that looks like
-                // that clamp is not preserved, letting the agent heal.
-                const preservedContextWindow = preservableContextWindow(
-                  agent.llm_config?.context_window,
-                  presetRefresh.modelHandle,
-                );
-                agent = await updateAgentLLMConfig(
-                  agent.id,
-                  presetRefresh.modelHandle,
-                  resumeRefreshUpdateArgs,
-                  preservedContextWindow !== undefined
-                    ? { contextWindowOverride: preservedContextWindow }
-                    : undefined,
-                );
-              }
+            agent = modelUpdate.agent;
+            for (const warning of modelUpdate.warnings) {
+              console.warn(`Warning: ${warning}`);
             }
           }
 

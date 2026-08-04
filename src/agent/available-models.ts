@@ -320,6 +320,25 @@ export async function getModelContextWindow(
 }
 
 /**
+ * Get backend catalog metadata for a model handle.
+ *
+ * Unlike the curated preset values in models.json, these values describe the
+ * active backend's model inventory. Existing-agent model switches use its
+ * provider identity and limits to rebuild compatible settings, keeping
+ * configured generation limits when safe and clamping only at a lower
+ * supported maximum.
+ */
+export async function getModelCatalogEntry(
+  handle: string,
+): Promise<AvailableModel | undefined> {
+  if (!cache) {
+    await getAvailableModelHandles();
+  }
+  const model = cache?.models.find((candidate) => candidate.handle === handle);
+  return model ? { ...model } : undefined;
+}
+
+/**
  * Get provider_type metadata for a model handle from the cached API model list.
  * Ensures the shared cache is populated before reading.
  */
