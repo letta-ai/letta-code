@@ -255,8 +255,12 @@ export async function prepareListenerTurn(params: {
     runtime.listener,
     agentId,
   );
+  const environmentDeviceId = connectionId
+    ? runtime.listener.connections.get(connectionId)?.options.deviceId
+    : undefined;
   const preparedToolContext = await prepareToolExecutionContextForScope({
     connectionId,
+    environmentDeviceId,
     agentId,
     conversationId,
     clientToolset: msg.clientToolset,

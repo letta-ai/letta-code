@@ -20,7 +20,10 @@ import {
 } from "@/agent/memory-filesystem";
 import { getServerUrl } from "@/backend/api/client";
 import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
 
@@ -331,6 +334,13 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   }
 
   env.USER_CWD = getCurrentWorkingDirectory();
+
+  // Commands started by a listener turn must inherit that listener's registered
+  // device identity, not a stale installation id from the child CLI settings.
+  const environmentDeviceId = getRuntimeContext()?.environmentDeviceId?.trim();
+  if (environmentDeviceId) {
+    env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = environmentDeviceId;
+  }
 
   // Add Letta context for skill scripts.
   // Prefer explicit agent context, but fall back to inherited env values.
