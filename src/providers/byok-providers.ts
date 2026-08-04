@@ -285,6 +285,20 @@ const LOCAL_EXTRA_PROVIDER_CONFIGS: readonly ByokProvider[] = [
     providerNames: ["ollama-cloud", "lc-ollama-cloud"],
   },
   {
+    id: "openai-compatible",
+    displayName: "OpenAI-compatible API",
+    description: "Connect an OpenAI-compatible Chat Completions endpoint",
+    providerType: "openai-compatible",
+    providerName: "openai-compatible",
+    providerNames: ["openai-compatible", "lc-openai-compatible"],
+    requiresApiKey: false,
+    defaultApiKey: LOCAL_PROVIDER_NO_API_KEY,
+    fields: [
+      { key: "apiKey", label: "API Key", secret: true, required: false },
+      { key: "baseUrl", label: "Base URL" },
+    ],
+  },
+  {
     id: "lmstudio",
     displayName: "LM Studio (local)",
     description:

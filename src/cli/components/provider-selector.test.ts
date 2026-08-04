@@ -67,6 +67,18 @@ describe("ProviderSelector local provider API keys", () => {
     expect(isChatGPTUsageProvider(openai)).toBe(false);
   });
 
+  test("keeps OpenAI-compatible endpoints distinct from named local engines", () => {
+    const provider = providerById("openai-compatible");
+
+    expect(provider).toMatchObject({
+      providerType: "openai-compatible",
+      providerName: "openai-compatible",
+      requiresApiKey: false,
+      fields: [{ key: "apiKey", required: false }, { key: "baseUrl" }],
+    });
+    expect(defaultProviderApiKey(provider)).toBe("not-needed");
+  });
+
   test("keeps LM Studio UI identity while using server provider type", () => {
     const lmstudio = providerById("lmstudio");
 
@@ -108,6 +120,9 @@ describe("ProviderSelector local provider API keys", () => {
         expect(providerApiKeyFromInput(providerById("ollama"), "   ")).toBe(
           "not-needed",
         );
+        expect(
+          providerApiKeyFromInput(providerById("openai-compatible"), ""),
+        ).toBe("not-needed");
         expect(providerApiKeyFromInput(providerById("openai"), "")).toBe(
           undefined,
         );
