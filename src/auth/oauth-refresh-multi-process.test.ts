@@ -70,7 +70,9 @@ const workerCount = Number(process.env.WORKER_COUNT);
  */
 function waitForBarrier(label) {
   appendFileSync(readyPath, ".");
-  const deadline = Date.now() + 10000;
+  // Generous: under a loaded full-suite run, sibling workers' bun cold
+  // starts can take seconds each before they reach the barrier.
+  const deadline = Date.now() + 30000;
   for (;;) {
     let ready = 0;
     try { ready = statSync(readyPath).size; } catch {}
@@ -177,11 +179,20 @@ async function spawnWorkers(options: {
   const scriptPath = join(options.shareDir, "worker.mjs");
   writeFileSync(scriptPath, WORKER_SCRIPT, "utf8");
 
+  // Hermetic env: inheriting the suite's process.env lets earlier test
+  // files' env mutations leak into the workers (this whole suite runs in one
+  // process). Workers only need to resolve bun/the module and write to the
+  // share dir.
+  const workerEnv = {
+    PATH: process.env.PATH ?? "",
+    HOME: process.env.HOME ?? "",
+    USERPROFILE: process.env.USERPROFILE ?? "",
+  };
   const running = Array.from({ length: options.count }, (_unused, id) =>
     Bun.spawn(["bun", scriptPath], {
       cwd: REPO_ROOT,
       env: {
-        ...process.env,
+        ...workerEnv,
         REFRESH_MODULE: REFRESH_MODULE,
         SHARE_DIR: options.shareDir,
         LOCK_PATH: options.lockPathFor(id),
@@ -226,7 +237,10 @@ describe("refreshTokensCoordinated across processes", () => {
     });
 
     for (const worker of workers) {
-      expect(worker.stdout.startsWith("ok:"), worker.stderr).toBe(true);
+      expect(
+        worker.stdout.startsWith("ok:"),
+        `stdout=${worker.stdout} stderr=${worker.stderr}`,
+      ).toBe(true);
       expect(worker.exitCode).toBe(0);
     }
     expect(refreshCount(shareDir)).toBe(1);
@@ -251,8 +265,17 @@ describe("refreshTokensCoordinated across processes", () => {
       loadBarrier: true,
     });
 
+    // Individual worker outcomes are timing-dependent here BY DESIGN: every
+    // worker persists its own rotation to the same store, so the read-back
+    // verification correctly rejects whoever gets overwritten before
+    // verifying ("failed to persist"). Both terminal states are evidence of
+    // the unsynchronized world; the oracle is the refresh count.
     for (const worker of workers) {
-      expect(worker.stdout.startsWith("ok:"), worker.stderr).toBe(true);
+      const outcome = worker.stdout;
+      expect(
+        outcome.startsWith("ok:") || outcome.includes("failed to persist"),
+        `stdout=${worker.stdout} stderr=${worker.stderr}`,
+      ).toBe(true);
     }
     expect(refreshCount(shareDir)).toBeGreaterThan(1);
   }, 60_000);

@@ -16,7 +16,19 @@ test("standalone bundle resolves statically embedded OAuth flows", async () => {
   const tempDir = await mkdtemp(join(projectRoot, ".standalone-oauth-test-"));
   tempDirs.push(tempDir);
   const probePath = join(tempDir, "oauth-probe.ts");
+  const gitCredentialStubPath = join(tempDir, "git-credential-stub.ts");
   const outputPath = join(tempDir, "oauth-probe.js");
+
+  // Stub the git-credential fast path the same way ./index is stubbed: this
+  // test only verifies that pi-ai's OAuth flows are statically embedded.
+  // Without the stub, Bun.build traverses the subcommand's entire lazy graph
+  // (settings, auth, telemetry) IN-PROCESS, and on low-ulimit runners (Linux
+  // CI) the file-descriptor pressure breaks module resolution for every test
+  // file loaded after this one.
+  await writeFile(
+    gitCredentialStubPath,
+    "export async function runGitCredentialSubcommand() {\n  return 1;\n}\n",
+  );
 
   await writeFile(
     probePath,
@@ -51,6 +63,15 @@ console.log(auth.apiKey);
             }
             return undefined;
           });
+          build.onResolve(
+            { filter: /^\.\/cli\/subcommands\/git-credential$/ },
+            ({ importer }) => {
+              if (importer.endsWith("standalone-entry.ts")) {
+                return { path: gitCredentialStubPath };
+              }
+              return undefined;
+            },
+          );
         },
       },
     ],
