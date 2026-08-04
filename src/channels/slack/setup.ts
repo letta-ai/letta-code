@@ -7,6 +7,12 @@ import {
   type SlackChannelAccount,
 } from "@/channels/types";
 import { resolveSlackAccountDisplayName } from "./account-display";
+import {
+  listSlackNativeSlashCommands,
+  SLACK_APP_MANIFEST_BOT_EVENTS,
+  SLACK_APP_MANIFEST_BOT_SCOPES,
+  SLACK_APP_MANIFEST_SOURCE_PATH,
+} from "./manifest";
 import { ensureSlackRuntimeInstalled } from "./runtime";
 
 function isValidBotToken(token: string): boolean {
@@ -24,6 +30,12 @@ export async function runSlackSetup(): Promise<boolean> {
   });
 
   try {
+    const eventList = SLACK_APP_MANIFEST_BOT_EVENTS.join(", ");
+    const scopeList = SLACK_APP_MANIFEST_BOT_SCOPES.join(", ");
+    const slashCommandList = listSlackNativeSlashCommands()
+      .map((definition) => definition.command)
+      .join(", ");
+
     console.log("\n💬 Slack App Setup\n");
     console.log("You'll need a Slack app configured for Socket Mode.");
     console.log("Recommended setup:");
@@ -33,16 +45,17 @@ export async function runSlackSetup(): Promise<boolean> {
       "  3. Install the app to the workspace to get a bot token (xoxb-...)",
     );
     console.log(
-      "  4. Enable App Home messages and subscribe to app_mention + message.channels + message.groups + message.im + reaction_added + reaction_removed\n",
+      `  4. Use the Slack app manifest in ${SLACK_APP_MANIFEST_SOURCE_PATH}`,
+    );
+    console.log(`     It enables App Home messages and events: ${eventList}`);
+    console.log(
+      "     Slash command URLs may stay as the Socket Mode placeholder.",
     );
     console.log(
-      "  5. Add the /cancel slash command if you want Slack-native cancellation\n",
+      `  5. Include native Slack slash commands: ${slashCommandList}\n`,
     );
     console.log("Recommended bot token scopes:");
-    console.log(
-      "  app_mentions:read, channels:history, chat:write, commands, groups:history, im:history, users:read",
-    );
-    console.log("  reactions:read, reactions:write, files:read, files:write\n");
+    console.log(`  ${scopeList}\n`);
 
     await ensureSlackRuntimeInstalled();
 
