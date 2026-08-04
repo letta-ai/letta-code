@@ -90,6 +90,11 @@ export interface IncomingMessage {
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;
   externalToolScopeIds?: string[];
+  /**
+   * Internal authorization for selected external-tool scopes to cross
+   * connection ownership. Client protocol input must never set this field.
+   */
+  allowExternalToolScopeDelegation?: boolean;
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
   messages: Array<

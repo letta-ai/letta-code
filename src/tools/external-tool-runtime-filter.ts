@@ -41,6 +41,7 @@ export function filterExternalToolsByRuntimeContext<
         return true;
       }
       return (
+        runtimeContext.allowExternalToolScopeDelegation === true &&
         tool.scopeId !== undefined &&
         externalToolScopeIds?.includes(tool.scopeId) === true &&
         !directlyOwnedToolNames.has(tool.name)

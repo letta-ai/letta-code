@@ -167,7 +167,10 @@ function buildQueuedTurnMessage(
       conversationId: scopeItem?.conversationId ?? runtime.conversationId,
       ...(actingUserId ? { actingUserId } : {}),
       ...(isCronTurn
-        ? { externalToolScopeIds: [CHANNEL_GATEWAY_TOOL_SCOPE_ID] }
+        ? {
+            externalToolScopeIds: [CHANNEL_GATEWAY_TOOL_SCOPE_ID],
+            allowExternalToolScopeDelegation: true,
+          }
         : {}),
       messages: [
         {

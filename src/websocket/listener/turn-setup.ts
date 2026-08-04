@@ -267,6 +267,8 @@ export async function prepareListenerTurn(params: {
       ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
       : {}),
     externalToolScopeIds: msg.externalToolScopeIds,
+    allowExternalToolScopeDelegation:
+      msg.allowExternalToolScopeDelegation === true,
     workingDirectory,
     permissionModeState,
     skillSources: runtime.skillSources,

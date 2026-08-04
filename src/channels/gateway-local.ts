@@ -33,12 +33,9 @@ import {
   handleChannelsProtocolCommand,
   isDetachedChannelsCommand,
 } from "./protocol-command-handler";
-import {
-  type ChannelRegistry,
-  getChannelRegistry,
-  initializeChannels,
-} from "./registry";
+import { getChannelRegistry, initializeChannels } from "./registry";
 import type { ChannelRestoreAgentScope } from "./restore-scope";
+import { createRoutedRuntimeRegistrationRefresher } from "./routed-runtime-registration";
 import { handleChannelsSlashCommand } from "./slash-command";
 import type {
   ChannelModelPickerData,
@@ -54,64 +51,6 @@ export interface StartLocalChannelGatewayOptions {
   logger?: ChannelStartupLogger;
   onDisconnect?: (error: Error) => void;
   onServiceEvent?: (event: ServiceEvent) => void;
-}
-
-type RoutedRuntimeRegistrar = Pick<
-  ChannelGateway,
-  "getKnownRuntimes" | "registerRuntime"
->;
-
-async function refreshRoutedRuntimeRegistrations(
-  registry: ChannelRegistry,
-  gateway: RoutedRuntimeRegistrar,
-  logger?: ChannelStartupLogger,
-): Promise<void> {
-  const routedByRuntime = new Map(
-    registry
-      .resolveRoutedRuntimeSources()
-      .map((routed) => [`${routed.agentId}:${routed.conversationId}`, routed]),
-  );
-  for (const runtime of gateway.getKnownRuntimes()) {
-    const key = `${runtime.agent_id}:${runtime.conversation_id}`;
-    if (!routedByRuntime.has(key)) {
-      routedByRuntime.set(key, {
-        agentId: runtime.agent_id,
-        conversationId: runtime.conversation_id,
-        sources: [],
-      });
-    }
-  }
-  for (const routed of routedByRuntime.values()) {
-    try {
-      await gateway.registerRuntime(
-        {
-          agent_id: routed.agentId,
-          conversation_id: routed.conversationId,
-        },
-        routed.sources,
-      );
-    } catch (error) {
-      logger?.(
-        `[ChannelGateway] Failed to refresh routed runtime ${routed.agentId}/${routed.conversationId}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-}
-
-export function createRoutedRuntimeRegistrationRefresher(
-  registry: ChannelRegistry,
-  gateway: RoutedRuntimeRegistrar,
-  logger?: ChannelStartupLogger,
-): { refresh: () => Promise<void> } {
-  let pending = Promise.resolve();
-  return {
-    refresh: () => {
-      pending = pending.then(() =>
-        refreshRoutedRuntimeRegistrations(registry, gateway, logger),
-      );
-      return pending;
-    },
-  };
 }
 
 export interface LocalChannelGatewayHandle {

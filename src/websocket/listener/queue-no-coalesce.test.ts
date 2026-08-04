@@ -155,6 +155,7 @@ describe("queue noCoalesce batching", () => {
     expect(consumed?.queuedTurn.externalToolScopeIds).toEqual([
       "channel-gateway",
     ]);
+    expect(consumed?.queuedTurn.allowExternalToolScopeDelegation).toBe(true);
   });
 
   test("messages from different connections never coalesce", () => {

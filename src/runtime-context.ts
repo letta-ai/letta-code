@@ -14,6 +14,11 @@ export type RuntimePermissionMode =
 export interface RuntimeContextSnapshot {
   /** Listener transport connection that owns the current turn, when present. */
   connectionId?: string | null;
+  /**
+   * Trusted in-process authorization for selected external-tool scopes to use a
+   * controller owned by another connection. Never populate from client input.
+   */
+  allowExternalToolScopeDelegation?: boolean;
   agentId?: string | null;
   agentName?: string | null;
   conversationId?: string | null;

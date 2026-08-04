@@ -4,7 +4,6 @@ import {
   __testOverrideSaveChannelAccounts,
   clearChannelAccountStores,
 } from "@/channels/accounts";
-import { createRoutedRuntimeRegistrationRefresher } from "@/channels/gateway-local";
 import {
   __testOverrideLoadPairingStore,
   __testOverrideSavePairingStore,
@@ -21,6 +20,7 @@ import {
   getChannelRegistry,
   initializeChannels,
 } from "@/channels/registry";
+import { createRoutedRuntimeRegistrationRefresher } from "@/channels/routed-runtime-registration";
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,

@@ -508,6 +508,7 @@ export async function prepareToolExecutionContextForScope(params: {
   clientToolset?: ClientToolsetConfig;
   clientToolAllowlist?: string[];
   externalToolScopeIds?: string[];
+  allowExternalToolScopeDelegation?: boolean;
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   skillSources?: SkillSource[];
@@ -528,6 +529,7 @@ export async function prepareToolExecutionContextForScope(params: {
     clientToolset,
     clientToolAllowlist,
     externalToolScopeIds,
+    allowExternalToolScopeDelegation,
     workingDirectory,
     permissionModeState,
     skillSources,
@@ -614,6 +616,8 @@ export async function prepareToolExecutionContextForScope(params: {
     agent: agent as AgentState,
     runtimeContext: {
       connectionId,
+      allowExternalToolScopeDelegation:
+        allowExternalToolScopeDelegation === true,
       agentId,
       agentName: (agent as AgentState).name ?? null,
       conversationId: scopedConversationId,
