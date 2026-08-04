@@ -1017,22 +1017,22 @@ describe("listen-client multi-worker concurrency", () => {
     );
 
     await runtime.messageQueue;
-
     expect(processed[0]).toEqual(
       expect.objectContaining({
         type: "message",
         agentId: "agent-1",
         conversationId: "conv-task",
         messages: [
-          {
+          expect.objectContaining({
             role: "user",
+            otid: expect.any(String),
             content: [
               {
                 type: "text",
                 text: "<task-notification>done</task-notification>",
               },
             ],
-          },
+          }),
         ],
       }),
     );
@@ -1141,15 +1141,15 @@ describe("listen-client multi-worker concurrency", () => {
     expect(
       consumed?.dequeuedBatch.items.map((item: { id: string }) => item.id),
     ).toEqual([continueItem.id]);
-    // No template registration needed — the continue is synthesized as a
-    // plain user turn (renders via the backend, suppressed optimistically).
+    // Synthesized as a plain user turn, suppressed optimistically.
     expect(consumed?.queuedTurn.messages).toEqual([
-      {
+      expect.objectContaining({
         role: "user",
+        otid: expect.any(String),
         content: [
           { type: "text", text: "double-check your work before finishing" },
         ],
-      },
+      }),
     ]);
     expect(runtime.queueRuntime.length).toBe(0);
   });

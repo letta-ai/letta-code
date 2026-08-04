@@ -119,6 +119,7 @@ export function SetupUI({
         <Text bold>{AUTH_LOGIN_LABEL}</Text>
         <Text> </Text>
         <LettaLoginView
+          activateCloudBackend
           onComplete={() => onComplete({ kind: "cloud-login" })}
           onCancel={() => setMode("menu")}
           successMessage="Signed in with Letta. Starting Letta Code..."
