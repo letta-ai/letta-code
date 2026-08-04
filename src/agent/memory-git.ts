@@ -20,7 +20,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, platform } from "node:os";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { promisify } from "node:util";
 import { getClient } from "@/backend/api/client";
@@ -113,16 +113,6 @@ export function normalizeCredentialBaseUrl(serverUrl: string): string {
     // Fall back to a conservative slash-trimmed value if URL parsing fails.
     return trimmed;
   }
-}
-
-/**
- * Format an executable helper path for git config values.
- *
- * Git splits helper commands on whitespace, so we must escape any
- * spaces/tabs in absolute paths (common on Windows profile paths).
- */
-export function formatGitCredentialHelperPath(path: string): string {
-  return path.replace(/\\/g, "/").replace(/\s/g, "\\$&");
 }
 
 function normalizeRemoteUrl(url: string): string {
@@ -320,7 +310,7 @@ async function prepareAttachedRepositoryForGitOps(args: {
   token: string;
 }): Promise<void> {
   await maybeUpdateRepositoryRemoteOrigin(args);
-  await configureLocalCredentialHelper(args.directory, args.token);
+  await configureLocalCredentialHelper(args.directory);
   await ensureLocalMemfsGitConfig(args.directory, args.agentId);
 }
 
@@ -710,19 +700,24 @@ async function runGitWithRetry(
 }
 
 /**
+ * The credential helper written into memory repos' .git/config. Dynamic:
+ * `letta git-credential` (src/cli/subcommands/git-credential.ts) resolves the
+ * current harness token on every git network operation, so no secret is
+ * persisted and OAuth rotation cannot strand a stale credential. Relies on
+ * `letta` being resolvable from PATH when git runs — true in agent shells
+ * (shell shim) and normal installs. Git executes `!` helpers through its
+ * bundled sh on every platform, including Windows.
+ */
+const DYNAMIC_CREDENTIAL_HELPER = "!letta git-credential";
+
+/**
  * Configure a local credential helper in the repo's .git/config
  * so plain `git push` / `git pull` work without auth prefixes.
- * Skipped in Desktop proxy transport mode because the listener only has a
- * local session token; persisting that token under api.letta.com would break
- * normal CLI/TUI sessions that share the same memory repo.
- *
- * On Windows, we write a batch script because the bash-style inline
- * helper (`!f() { ... }; f`) doesn't work in PowerShell/cmd.
+ * Skipped in Desktop proxy transport mode because the proxy owns auth there;
+ * agent-run git is URL-rewritten to the localhost proxy and never needs a
+ * credential for the canonical host.
  */
-async function configureLocalCredentialHelper(
-  dir: string,
-  token: string,
-): Promise<void> {
+async function configureLocalCredentialHelper(dir: string): Promise<void> {
   const rawBaseUrl = getMemfsServerUrl();
   const normalizedBaseUrl = normalizeCredentialBaseUrl(rawBaseUrl);
 
@@ -735,22 +730,16 @@ async function configureLocalCredentialHelper(
     return;
   }
 
-  let helper: string;
+  const helper = DYNAMIC_CREDENTIAL_HELPER;
 
-  if (platform() === "win32") {
-    // Windows: write a batch script to .git/ and reference it
-    const helperScriptPath = join(dir, ".git", "letta-credential-helper.cmd");
-    const batchScript = `@echo off
-echo username=letta
-echo password=${token}
-`;
-    writeFileSync(helperScriptPath, batchScript, "utf-8");
-    // Use a normalized path and escape whitespace for profiles like "Jane Doe".
-    helper = formatGitCredentialHelperPath(helperScriptPath);
-    debugLog("memfs-git", `Wrote Windows credential helper script`);
-  } else {
-    // Unix/macOS: use inline bash helper
-    helper = `!f() { echo "username=letta"; echo "password=${token}"; }; f`;
+  // Remove the legacy Windows batch helper, which embedded a static token.
+  const legacyHelperScriptPath = join(
+    dir,
+    ".git",
+    "letta-credential-helper.cmd",
+  );
+  if (existsSync(legacyHelperScriptPath)) {
+    rmSync(legacyHelperScriptPath, { force: true });
   }
 
   // Git accumulates credential helpers across config scopes (system → global
@@ -1106,10 +1095,9 @@ function isRecoverableMemoryPullHistoryError(error: unknown): boolean {
 async function prepareMemoryRepoForGitOps(
   memoryDir: string,
   agentId: string,
-  token: string,
 ): Promise<void> {
   await maybeUpdateMemoryRemoteOrigin(memoryDir, agentId);
-  await configureLocalCredentialHelper(memoryDir, token);
+  await configureLocalCredentialHelper(memoryDir);
   installPreCommitHook(memoryDir);
   installPostCommitHook(memoryDir);
   await ensureLocalMemfsGitConfig(memoryDir, agentId);
@@ -1375,12 +1363,7 @@ export async function commitMemoryWrite(
     );
   }
 
-  const token = await getAuthToken();
-  await prepareMemoryRepoForGitOps(
-    params.memoryDir,
-    params.author.agentId,
-    token,
-  );
+  await prepareMemoryRepoForGitOps(params.memoryDir, params.author.agentId);
 
   const commitResult = await commitMemoryPaths(
     params.memoryDir,
@@ -1689,7 +1672,7 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
 
   // Configure local credential helper so the agent can do plain
   // `git push` / `git pull` without auth prefixes.
-  await configureLocalCredentialHelper(dir, token);
+  await configureLocalCredentialHelper(dir);
 
   // Install commit hooks (pre-commit validates frontmatter; post-commit mirrors)
   installPreCommitHook(dir);
@@ -1719,7 +1702,7 @@ export async function pullMemory(
   await maybeUpdateMemoryRemoteOrigin(dir, agentId);
 
   // Self-healing: ensure credential helper, hooks, and identity config are current
-  await configureLocalCredentialHelper(dir, token);
+  await configureLocalCredentialHelper(dir);
   installPreCommitHook(dir);
   installPostCommitHook(dir);
   await ensureLocalMemfsGitConfig(dir, agentId);
@@ -1815,7 +1798,7 @@ export async function pushMemory(agentId: string): Promise<void> {
   const token = await getAuthToken();
   const dir = getMemoryRepoDir(agentId);
 
-  await prepareMemoryRepoForGitOps(dir, agentId, token);
+  await prepareMemoryRepoForGitOps(dir, agentId);
   await runGit(dir, ["push", "-u", "origin", "main"], token);
 }
 
@@ -2023,7 +2006,7 @@ export async function syncPendingMemoryCommitsAfterTurn(
   }
 
   const token = await getAuthToken();
-  await prepareMemoryRepoForGitOps(memoryDir, agentId, token);
+  await prepareMemoryRepoForGitOps(memoryDir, agentId);
   const divergence = await getMemoryAheadBehind(memoryDir);
   if (!divergence || divergence.ahead <= 0) {
     return {

@@ -111,6 +111,13 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       const { runChannelGatewaySubcommand } = await import("./channel-gateway");
       return runChannelGatewaySubcommand(rest);
     }
+    // The built binary dispatches git-credential in standalone-entry.ts
+    // before this router loads; this case covers the dev path
+    // (`bun src/index.ts git-credential`).
+    case "git-credential": {
+      const { runGitCredentialSubcommand } = await import("./git-credential");
+      return runGitCredentialSubcommand(rest);
+    }
     case "local-backend":
       return runLocalBackendSubcommand(rest);
     case "trajectories":
