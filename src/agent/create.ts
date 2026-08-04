@@ -352,7 +352,6 @@ export async function createAgent(
     isSubagent,
     baseTools: toolNames,
     embedding: embeddingModelVal || undefined,
-    hidden: isSubagent || undefined,
     parallelToolCalls: parallelToolCallsVal,
   });
 
@@ -361,7 +360,6 @@ export async function createAgent(
       ...createAgentRequestBase,
       ...(contextWindow && { context_window_limit: contextWindow }),
       tools,
-      agent_type: createAgentRequestBase.agent_type,
     });
 
   const agent = await createAgentWithBaseToolsRecovery(
