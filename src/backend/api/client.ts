@@ -1,10 +1,12 @@
-import { hostname } from "node:os";
+import { homedir, hostname } from "node:os";
+import { join } from "node:path";
 import Letta from "@letta-ai/letta-client";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { isDebugEnabled } from "@/utils/debug";
+import { withFileLock } from "@/utils/file-lock";
 import { createTimingFetch, isTimingsEnabled } from "@/utils/timing";
 import packageJson from "../../../package.json";
 
@@ -171,6 +173,71 @@ export function getClientDefaultHeaders(): Record<string, string> {
   };
 }
 
+const TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+const OAUTH_REFRESH_LOCK_TIMEOUT_MS = 30_000;
+
+/**
+ * Refresh OAuth tokens under a cross-process file lock.
+ *
+ * Every letta process refreshes through this path — CLI sessions, listeners,
+ * and each `letta git-credential` helper invocation spawned by git — and the
+ * server rotates the refresh token on every refresh (refresh_token_mode:
+ * "new"). Two concurrent refreshes therefore both burn the same refresh
+ * token and race their keychain writes; the loser can durably persist an
+ * already-invalidated token and log the user out. The in-process
+ * single-flight cannot see other processes, so a file lock serializes them:
+ * after acquiring it, re-read the stored tokens and reuse the winner's
+ * result instead of refreshing again.
+ */
+async function refreshTokensUnderCrossProcessLock(
+  fallbackRefreshToken: string,
+): Promise<string> {
+  const lockPath = join(homedir(), ".letta", "oauth-refresh.lock");
+  return await withFileLock(
+    lockPath,
+    async () => {
+      // Another process may have completed the refresh while we waited.
+      const latest = await settingsManager.getSettingsWithSecureTokens();
+      const latestKey = latest.env?.LETTA_API_KEY;
+      if (
+        latestKey &&
+        latest.tokenExpiresAt &&
+        latest.tokenExpiresAt - Date.now() >= TOKEN_REFRESH_WINDOW_MS
+      ) {
+        return latestKey;
+      }
+
+      const now = Date.now();
+      const tokens = await refreshAccessTokenSingleFlight(
+        latest.refreshToken ?? fallbackRefreshToken,
+        settingsManager.getOrCreateDeviceId(),
+        hostname(),
+      );
+      settingsManager.updateSettings({
+        env: { LETTA_API_KEY: tokens.access_token },
+        refreshToken:
+          tokens.refresh_token || latest.refreshToken || fallbackRefreshToken,
+        tokenExpiresAt: now + tokens.expires_in * 1000,
+      });
+      // The rotated refresh token must be durably persisted before the lock
+      // releases — the pre-rotation token is already dead server-side.
+      // flush() awaits the write but swallows its errors, so read the stored
+      // key back where possible; an empty read-back means no keychain is
+      // available (file-fallback storage) and cannot be verified here.
+      await settingsManager.flush();
+      const persisted = await settingsManager.getSettingsWithSecureTokens();
+      const persistedKey = persisted.env?.LETTA_API_KEY;
+      if (persistedKey && persistedKey !== tokens.access_token) {
+        throw new Error(
+          "OAuth refresh succeeded but the rotated token failed to persist; if this recurs, re-run `letta` to re-authenticate",
+        );
+      }
+      return tokens.access_token;
+    },
+    { timeoutMs: OAUTH_REFRESH_LOCK_TIMEOUT_MS },
+  );
+}
+
 export async function getClient() {
   if (_testClientOverride) {
     return (await _testClientOverride()) as Letta;
@@ -216,30 +283,15 @@ export async function getClient() {
     const now = Date.now();
     const expiresAt = settings.tokenExpiresAt;
 
-    // Refresh if token expires within 5 minutes, or if the access token is
-    // missing entirely (e.g. transient keychain read failure during the
-    // delete-then-set window of a concurrent refresh).
-    if (!apiKey || expiresAt - now < 5 * 60 * 1000) {
+    // Refresh if token expires within the refresh window, or if the access
+    // token is missing entirely (e.g. transient keychain read failure during
+    // the delete-then-set window of a concurrent refresh).
+    if (!apiKey || expiresAt - now < TOKEN_REFRESH_WINDOW_MS) {
       try {
-        // Get or generate device ID (should always exist, but fallback just in case)
-        const deviceId = settingsManager.getOrCreateDeviceId();
-        const deviceName = hostname();
-
-        const tokens = await refreshAccessTokenSingleFlight(
+        apiKey = await refreshTokensUnderCrossProcessLock(
           settings.refreshToken,
-          deviceId,
-          deviceName,
         );
-
-        // Update settings with new token (secrets handles secure storage automatically)
-        settingsManager.updateSettings({
-          env: { LETTA_API_KEY: tokens.access_token },
-          refreshToken: tokens.refresh_token || settings.refreshToken,
-          tokenExpiresAt: now + tokens.expires_in * 1000,
-        });
-
-        apiKey = tokens.access_token;
-        _cachedApiKey = tokens.access_token;
+        _cachedApiKey = apiKey;
       } catch (error) {
         trackBoundaryError({
           errorType: "auth_token_refresh_failed",

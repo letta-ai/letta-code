@@ -30,27 +30,60 @@ describe("parseGitCredentialInput", () => {
 });
 
 describe("requestMatchesLettaHost", () => {
-  test("matches the configured host, with and without port", () => {
+  test("matches exact protocol + host, with and without port", () => {
     expect(
       requestMatchesLettaHost(
-        { host: "api.letta.com" },
+        { protocol: "https", host: "api.letta.com" },
         "https://api.letta.com",
       ),
     ).toBe(true);
     expect(
       requestMatchesLettaHost(
-        { host: "localhost:8283" },
+        { protocol: "http", host: "localhost:8283" },
         "http://localhost:8283",
       ),
     ).toBe(true);
   });
 
-  test("rejects other hosts, missing hosts, and bad base URLs", () => {
+  test("rejects protocol downgrades and port mismatches", () => {
+    // A plaintext-http remote at the Letta hostname must not get the token.
     expect(
-      requestMatchesLettaHost({ host: "github.com" }, "https://api.letta.com"),
+      requestMatchesLettaHost(
+        { protocol: "http", host: "api.letta.com" },
+        "https://api.letta.com",
+      ),
+    ).toBe(false);
+    expect(
+      requestMatchesLettaHost(
+        { protocol: "https", host: "api.letta.com:8443" },
+        "https://api.letta.com",
+      ),
+    ).toBe(false);
+    expect(
+      requestMatchesLettaHost(
+        { protocol: "https", host: "api.letta.com" },
+        "https://api.letta.com:8443",
+      ),
+    ).toBe(false);
+  });
+
+  test("rejects other hosts, missing fields, and bad base URLs", () => {
+    expect(
+      requestMatchesLettaHost(
+        { protocol: "https", host: "github.com" },
+        "https://api.letta.com",
+      ),
     ).toBe(false);
     expect(requestMatchesLettaHost({}, "https://api.letta.com")).toBe(false);
-    expect(requestMatchesLettaHost({ host: "api.letta.com" }, "")).toBe(false);
+    expect(
+      requestMatchesLettaHost(
+        { host: "api.letta.com" },
+        "https://api.letta.com",
+      ),
+    ).toBe(false);
+    expect(
+      requestMatchesLettaHost({ protocol: "https", host: "api.letta.com" }, ""),
+    ).toBe(false);
   });
 });
 
@@ -63,8 +96,19 @@ describe("runGitCredentialSubcommand", () => {
   beforeEach(() => {
     stdout = [];
     stderr = [];
-    process.stdout.write = ((chunk: string) => {
+    process.stdout.write = ((
+      chunk: string,
+      encodingOrCallback?: unknown,
+      maybeCallback?: unknown,
+    ) => {
       stdout.push(String(chunk));
+      const callback =
+        typeof encodingOrCallback === "function"
+          ? encodingOrCallback
+          : maybeCallback;
+      if (typeof callback === "function") {
+        (callback as () => void)();
+      }
       return true;
     }) as typeof process.stdout.write;
     console.error = (...args: unknown[]) => {

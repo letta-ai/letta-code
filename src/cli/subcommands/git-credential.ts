@@ -46,19 +46,26 @@ export function parseGitCredentialInput(input: string): Record<string, string> {
 }
 
 /**
- * Match git's requested host (`host[:port]`) against the configured Letta
- * base URL. Anything else gets no answer — this helper only ever speaks for
- * the Letta remote it was configured for.
+ * Match git's requested protocol + host (`host[:port]`) exactly against the
+ * configured Letta base URL. Anything else gets no answer — this helper only
+ * ever speaks for the Letta remote it was configured for. Protocol is
+ * checked so a plaintext-http remote pointed at the Letta hostname cannot
+ * coax the token out over an unencrypted transport.
  */
 export function requestMatchesLettaHost(
   request: Record<string, string>,
   baseUrl: string,
 ): boolean {
   const requestHost = request.host?.trim();
-  if (!requestHost) return false;
+  const requestProtocol = request.protocol?.trim();
+  if (!requestHost || !requestProtocol) return false;
   try {
     const parsed = new URL(baseUrl.trim());
-    return requestHost === parsed.host || requestHost === parsed.hostname;
+    // URL#host omits the protocol's default port, matching how git reports
+    // the host for default-port remotes.
+    return (
+      `${requestProtocol}:` === parsed.protocol && requestHost === parsed.host
+    );
   } catch {
     return false;
   }
@@ -145,7 +152,14 @@ export async function runGitCredentialSubcommand(
     );
     if (!token) return 0;
 
-    process.stdout.write(`username=letta\npassword=${token}\n`);
+    // Await the write: the standalone entry calls process.exit() right after
+    // this returns, and an unflushed pipe write would truncate the credential
+    // git receives.
+    await new Promise<void>((resolve, reject) => {
+      process.stdout.write(`username=letta\npassword=${token}\n`, (error) =>
+        error ? reject(error) : resolve(),
+      );
+    });
     return 0;
   } catch (error) {
     // Fail fast (git surfaces "credential helper exited") rather than hang a
