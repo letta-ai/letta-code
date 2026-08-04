@@ -10,6 +10,7 @@ import type { AgentThreadTracker } from "./agent-thread-tracker";
 import { shouldAcceptSlackInboundBotMessage } from "./bot-policy";
 import type { SlackInboundDebounceController } from "./inbound-debounce";
 import {
+  isSlackMentionOnlyChannel,
   resolveSlackAppMentionIngressPolicy,
   resolveSlackMessageIngressPolicy,
 } from "./ingress-policy";
@@ -185,6 +186,13 @@ export function createSlackIngressController(params: {
           message: rawMessage,
           wasMentioned: basePolicy.wasMentioned,
         })
+      ) {
+        return;
+      }
+      if (
+        basePolicy.chatType === "channel" &&
+        !basePolicy.wasMentioned &&
+        isSlackMentionOnlyChannel(channelId, config.mentionOnlyChannels)
       ) {
         return;
       }
@@ -446,6 +454,14 @@ export function createSlackIngressController(params: {
         return;
       }
       const chatType = resolveSlackChatType(chatId);
+      // Reactions are ambient thread events, not explicit addresses. Letting them
+      // through would wake every mention-only bot attached to the same thread.
+      if (
+        chatType === "channel" &&
+        isSlackMentionOnlyChannel(chatId, config.mentionOnlyChannels)
+      ) {
+        return;
+      }
       const threadId =
         chatType === "channel"
           ? (knownThreadIdsByMessageId.get(targetMessageId) ?? targetMessageId)

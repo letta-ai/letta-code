@@ -180,6 +180,11 @@ const slackConfigCodec: ChannelConfigCodec<SlackChannelConfig> = {
       allowedUsers: (parsed.allowed_users as string[]) ?? [],
       transcribeVoice: parsed.transcribe_voice === true,
       listenMode: parsed.listen_mode === true,
+      mentionOnlyChannels: Array.isArray(parsed.mention_only_channels)
+        ? parsed.mention_only_channels.filter(
+            (channelId): channelId is string => typeof channelId === "string",
+          )
+        : [],
       allowBots: normalizeSlackAllowBotsMode(parsed.allow_bots),
     };
   },

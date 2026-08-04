@@ -58,6 +58,52 @@ describe("slackAccountConfigAdapter allow_bots", () => {
   });
 });
 
+describe("slackAccountConfigAdapter mention_only_channels", () => {
+  test("accepts and maps Slack channel ID lists", () => {
+    expect(
+      slackAccountConfigAdapter.isValidConfig({
+        mention_only_channels: ["C123", "C456"],
+      }),
+    ).toBe(true);
+    expect(
+      slackAccountConfigAdapter.toAccountPatch({
+        mention_only_channels: ["C123", "C456"],
+      }),
+    ).toMatchObject({ mentionOnlyChannels: ["C123", "C456"] });
+  });
+
+  test("rejects invalid channel ID lists", () => {
+    expect(
+      slackAccountConfigAdapter.isValidConfig({
+        mention_only_channels: "C123",
+      }),
+    ).toBe(false);
+    expect(
+      slackAccountConfigAdapter.isValidConfig({
+        mention_only_channels: ["C123", 42],
+      }),
+    ).toBe(false);
+  });
+
+  test("surfaces channel IDs in redacted config snapshots", () => {
+    const account = {
+      ...baseAccount,
+      mentionOnlyChannels: ["C123"],
+    };
+    expect(
+      slackAccountConfigAdapter.toAccountConfig(account).mention_only_channels,
+    ).toEqual(["C123"]);
+    expect(
+      slackAccountConfigAdapter.toConfigSnapshotConfig(account)
+        .mention_only_channels,
+    ).toEqual(["C123"]);
+    expect(
+      slackAccountConfigAdapter.toAccountConfig(baseAccount)
+        .mention_only_channels,
+    ).toEqual([]);
+  });
+});
+
 describe("slackAccountConfigAdapter removed settings", () => {
   test("rejects the removed progress_ui setting", () => {
     expect(
