@@ -165,6 +165,10 @@ async function resolveListenerStartupMode(
     return { kind: "local-channels", serverUrl, backend: "self-hosted" };
   }
 
+  if (process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR === "1") {
+    return { kind: "remote", serverUrl };
+  }
+
   return { kind: "unsupported-self-hosted", serverUrl };
 }
 
@@ -435,10 +439,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       channelNames.length > 0 || restoreEnabledChannels,
     );
 
-    if (
-      startupMode.kind === "unsupported-self-hosted" &&
-      process.env.IGNORE_SELF_HOSTED_LISTENER_ERROR !== "1"
-    ) {
+    if (startupMode.kind === "unsupported-self-hosted") {
       console.error(
         `Self-hosted listener registration is not available for ${startupMode.serverUrl}.`,
       );
