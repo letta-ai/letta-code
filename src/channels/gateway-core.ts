@@ -93,7 +93,6 @@ type ActiveGatewayTurn = {
   progress: ReturnType<typeof createChannelTurnProgressBuilder>;
   richDraft: ChannelGatewayRichDraft | null;
   runId?: string;
-  error?: string;
 };
 
 type GatewayRuntimeState = {
@@ -161,12 +160,6 @@ function lifecycleOutcome(
     return "completed";
   }
   return "error";
-}
-
-function errorFromDelta(message: StreamDeltaMessage): string | undefined {
-  const delta = message.delta;
-  if (delta.message_type !== "loop_error") return undefined;
-  return delta.message;
 }
 
 /**
@@ -613,8 +606,6 @@ export class ChannelGateway {
 
     const runId = runIdFromDelta(message);
     if (runId) active.runId = runId;
-    const deltaError = errorFromDelta(message);
-    if (deltaError) active.error = deltaError;
     for (const update of active.progress.buildUpdates(message.delta)) {
       void this.enqueueHook(state, () =>
         this.hooks.onProgress({
@@ -643,7 +634,7 @@ export class ChannelGateway {
   ): void {
     const state = this.getState(runtime);
     const active = state.active;
-    if (!active || terminal.stopReason === "requires_approval") return;
+    if (!active) return;
     state.active = null;
     active.richDraft?.dispose();
     void this.enqueueHook(state, () =>
@@ -656,9 +647,7 @@ export class ChannelGateway {
         ...((terminal.runId ?? active.runId)
           ? { runId: terminal.runId ?? active.runId }
           : {}),
-        ...((terminal.error ?? active.error)
-          ? { error: terminal.error ?? active.error }
-          : {}),
+        ...(terminal.error ? { error: terminal.error } : {}),
       }),
     );
   }
