@@ -43,6 +43,41 @@ describe("request-scoped client toolsets", () => {
     expect(prepared.preparedToolContext.loadedToolNames).toEqual(["Read"]);
   });
 
+  test("builds codex tools for custom OpenAI provider handles", async () => {
+    for (const providerType of ["chatgpt_oauth", "openai-codex"]) {
+      const prepared = await prepareToolExecutionContextForResolvedTarget({
+        modelIdentifier: "custom/gpt-5.6-sol",
+        providerType,
+        toolsetPreference: "auto",
+      });
+
+      expect(prepared.toolset).toBe("codex");
+      expect(prepared.preparedToolContext.loadedToolNames).toContain(
+        "ApplyPatch",
+      );
+      expect(prepared.preparedToolContext.loadedToolNames).toContain(
+        "exec_command",
+      );
+      expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
+        "Edit",
+      );
+    }
+  });
+
+  test("keeps custom non-OpenAI provider handles on default tools", async () => {
+    const prepared = await prepareToolExecutionContextForResolvedTarget({
+      modelIdentifier: "custom/claude-sonnet-5",
+      providerType: "anthropic",
+      toolsetPreference: "auto",
+    });
+
+    expect(prepared.toolset).toBe("default");
+    expect(prepared.preparedToolContext.loadedToolNames).toContain("Edit");
+    expect(prepared.preparedToolContext.loadedToolNames).not.toContain(
+      "ApplyPatch",
+    );
+  });
+
   test("rejects unknown bundled tool names", async () => {
     expect(
       prepareToolExecutionContextForResolvedTarget({
