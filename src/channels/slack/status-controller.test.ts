@@ -30,7 +30,32 @@ test("slack status event table: flat mention queues a pinned thinking status", a
   expect(client.chat.postMessage).not.toHaveBeenCalled();
 });
 
-test("slack status event table: established turns stay quiet and clear a stale ghost once", async () => {
+test("slack status event table: established turns queue a generic thinking status", async () => {
+  const adapter = await createStartedSlackAdapter();
+  const source = createSlackTurnSource();
+
+  await adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+
+  const client = getSlackWriteClient();
+  expect(client.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
+  expect(client.assistant.threads.setStatus).toHaveBeenLastCalledWith({
+    channel_id: "C123",
+    thread_ts: "1712800000.000100",
+    status: "is thinking...",
+    loading_messages: ["is thinking..."],
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({
+    type: "processing",
+    batchId: "batch-1",
+    sources: [source],
+  });
+
+  expect(client.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
+  expect(client.chat.postMessage).not.toHaveBeenCalled();
+});
+
+test("slack status event table: processing clears a stale ghost once when idle", async () => {
   const adapter = await createStartedSlackAdapter();
   const source = createSlackTurnSource();
 
@@ -209,7 +234,7 @@ test("slack status event table: concurrent title swaps are sent in event order",
   expect(sentTitles).toEqual(["Reading the adapter", "Running the tests"]);
 });
 
-test("slack status event table: queued mid-turn input does not clear live status", async () => {
+test("slack status event table: queued mid-turn input does not overwrite live status", async () => {
   const adapter = await createStartedSlackAdapter();
   const source = createSlackTurnSource();
   await adapter.handleTurnProgressEvent?.({
@@ -229,7 +254,37 @@ test("slack status event table: queued mid-turn input does not clear live status
   });
 
   expect(client.assistant.threads.setStatus).toHaveBeenCalledTimes(1);
+  expect(client.assistant.threads.setStatus).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      status: "is working...",
+      loading_messages: ["Working through the turn"],
+    }),
+  );
   expect(client.chat.postMessage).not.toHaveBeenCalled();
+});
+
+test("slack status event table: known root-shaped queued events after a reply stay quiet", async () => {
+  const adapter = await createStartedSlackAdapter();
+  const source = createSlackTurnSource({
+    messageId: "1712800000.000100",
+    threadId: "1712800000.000100",
+  });
+
+  await adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+  const client = getSlackWriteClient();
+  await adapter.sendMessage({
+    channel: "slack",
+    chatId: "C123",
+    text: "A durable reply",
+    threadId: "1712800000.000100",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+  });
+
+  client.assistant.threads.setStatus.mockClear();
+  await adapter.handleTurnLifecycleEvent?.({ type: "queued", source });
+
+  expect(client.assistant.threads.setStatus).not.toHaveBeenCalled();
 });
 
 test("slack status event table: flat-channel activity remains status-only", async () => {
