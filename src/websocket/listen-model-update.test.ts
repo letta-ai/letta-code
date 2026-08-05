@@ -17,6 +17,7 @@ import {
 } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { LocalBackend } from "@/backend/local";
+import { buildChannelReasoningOptions } from "@/channels/model-reasoning-options";
 import { settingsManager } from "@/settings-manager";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 
@@ -277,6 +278,25 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     expect(resolved?.updateArgs?.reasoning_effort).toBe("medium");
   });
 
+  test("applies a channel reasoning selection through the model update resolver", () => {
+    const selected = buildChannelReasoningOptions(
+      "chatgpt-jin/gpt-5.5",
+      [],
+      undefined,
+      "chatgpt_oauth",
+    ).find((option) => option.effort === "high");
+    expect(selected).toBeDefined();
+
+    const resolved = __listenClientTestUtils.resolveModelForUpdate({
+      model_id: selected?.modelId,
+      model_handle: "chatgpt-jin/gpt-5.5",
+      reasoning_effort: selected?.effort,
+    });
+
+    expect(resolved?.handle).toBe("chatgpt-jin/gpt-5.5");
+    expect(resolved?.updateArgs?.reasoning_effort).toBe("high");
+  });
+
   test("reports the current scoped model for channel /model without args", async () => {
     const storageDir = await mkdtemp(join(os.tmpdir(), "ws-current-model-"));
     const previousHome = process.env.HOME;
@@ -315,6 +335,38 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
       ).resolves.toMatchObject({
         modelHandle: "anthropic/claude-sonnet-4-6",
         scope: "conversation",
+      });
+
+      await backend.updateConversation(conversation.id, {
+        model: "openai/gpt-5.4",
+        context_window_limit: 272000,
+        model_settings: { provider_type: "openai" },
+      } as Parameters<typeof backend.updateConversation>[1]);
+      await expect(
+        __listenClientTestUtils.getCurrentModelStatusForRuntime({
+          agentId: agent.id,
+          conversationId: conversation.id,
+        }),
+      ).resolves.toMatchObject({
+        modelHandle: "openai/gpt-5.4",
+        scope: "conversation",
+        contextWindow: 272000,
+        providerType: "openai",
+      });
+      const listResponse =
+        await __listenClientTestUtils.buildListModelsResponseWithStatus(
+          "models-current",
+          {
+            runtime: {
+              agent_id: agent.id,
+              conversation_id: conversation.id,
+            },
+          },
+        );
+      expect(listResponse.current_model).toMatchObject({
+        modelHandle: "openai/gpt-5.4",
+        contextWindow: 272000,
+        providerType: "openai",
       });
     } finally {
       if (previousHome === undefined) {
@@ -626,7 +678,8 @@ describe("local channel gateway model command wiring", () => {
     const source = readLocalChannelGatewaySource();
 
     expect(source).toContain("registry.setModelHandler");
-    expect(source).toContain("gateway.getModelStatus(runtime)");
+    expect(source).not.toContain("gateway.getModelStatus(runtime)");
+    expect(source).toContain("requireCurrentModelStatus(listResponse)");
     expect(source).toContain(
       "buildChannelCurrentModelMessage(channelId, status)",
     );
@@ -638,6 +691,11 @@ describe("local channel gateway model command wiring", () => {
       "settingsManager.addRecentModel(response.model_handle ?? modelIdentifier)",
     );
     expect(source).toContain("gateway.updateModelStatus(");
+    expect(source).toContain("buildChannelReasoningOptions(");
+    expect(source).toContain(
+      'client.nextRequestId("channel-reasoning-update")',
+    );
+    expect(source).toContain("payload: updatePayload");
   });
 });
 
@@ -652,11 +710,11 @@ describe("listen-client list_models response wiring", () => {
     expect(source).toContain("buildByokProviderAliases(providers)");
   });
 
-  test("handler uses async pattern with buildListModelsResponse", () => {
+  test("handler includes authoritative status in scoped model lists", () => {
     const source = readModelToolsetCommandSource();
 
-    // Handler should be wrapped in void (async () => { ... })() pattern
-    expect(source).toContain("buildListModelsResponse(parsed.request_id, {");
+    expect(source).toContain("buildListModelsResponseWithStatus(");
+    expect(source).toContain("current_model: currentModel");
   });
 
   test("user-initiated force refresh bypasses the availability cache", () => {

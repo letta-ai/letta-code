@@ -471,7 +471,6 @@ describe("ChannelRegistry command routing", () => {
       enabled: true,
       createdAt: "2026-05-19T00:00:00.000Z",
     });
-
     const adapter = registry.getAdapter("slack", "acct-slack");
     await adapter?.onMessage?.({
       channel: "slack",
@@ -700,9 +699,12 @@ describe("ChannelRegistry command routing", () => {
       modelCalls.push(params);
       return {
         handled: true,
-        text: params.modelIdentifier
-          ? `Switched to ${params.modelIdentifier}`
-          : "Model selector text",
+        text:
+          params.reasoningEffort !== undefined
+            ? `Reasoning ${params.reasoningEffort}`
+            : params.modelIdentifier
+              ? `Switched to ${params.modelIdentifier}`
+              : "Model selector text",
       };
     });
     registry.setReady();
@@ -736,31 +738,23 @@ describe("ChannelRegistry command routing", () => {
     });
 
     const adapter = registry.getAdapter("slack", "acct-slack");
-    await adapter?.onMessage?.({
+    const modelMessage = {
       channel: "slack",
       accountId: "acct-slack",
       chatId: "C123",
       senderId: "U123",
       senderName: "Charles",
-      text: "/model",
       timestamp: Date.now(),
-      messageId: "1712800000.000200",
       threadId: "1712790000.000050",
-      chatType: "channel",
-    });
-    await adapter?.onMessage?.({
-      channel: "slack",
-      accountId: "acct-slack",
-      chatId: "C123",
-      senderId: "U123",
-      senderName: "Charles",
-      text: "/model openai/gpt-5",
-      timestamp: Date.now(),
-      messageId: "1712800000.000201",
-      threadId: "1712790000.000050",
-      chatType: "channel",
-    });
-
+      chatType: "channel" as const,
+    };
+    for (const [text, messageId] of [
+      ["/model", "1712800000.000200"],
+      ["/model openai/gpt-5", "1712800000.000201"],
+      ["/model reasoning high", "1712800000.000202"],
+    ] as const) {
+      await adapter?.onMessage?.({ ...modelMessage, text, messageId });
+    }
     expect(delivered).toHaveLength(0);
     expect(modelCalls).toEqual([
       {
@@ -779,6 +773,14 @@ describe("ChannelRegistry command routing", () => {
         },
         modelIdentifier: "openai/gpt-5",
       },
+      {
+        channelId: "slack",
+        runtime: {
+          agent_id: "agent-1",
+          conversation_id: "conv-1",
+        },
+        reasoningEffort: "high",
+      },
     ]);
     expect(replies).toEqual([
       {
@@ -791,9 +793,13 @@ describe("ChannelRegistry command routing", () => {
         text: "Switched to openai/gpt-5",
         replyToMessageId: "1712800000.000201",
       },
+      {
+        chatId: "C123",
+        text: "Reasoning high",
+        replyToMessageId: "1712800000.000202",
+      },
     ]);
   });
-
   test("/model reports no route without invoking the model handler", async () => {
     const replies: Array<{
       chatId: string;

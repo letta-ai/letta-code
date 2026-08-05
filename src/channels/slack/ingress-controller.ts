@@ -1,6 +1,9 @@
 import type SlackApp from "@slack/bolt";
 import { listChannelSlashCommands } from "@/channels/commands";
-import { SLACK_MODEL_SELECT_ACTION_ID } from "@/channels/slack/model-picker-blocks";
+import {
+  SLACK_MODEL_SELECT_ACTION_ID,
+  SLACK_REASONING_SELECT_ACTION_ID,
+} from "@/channels/slack/model-picker-blocks";
 import type {
   ChannelAdapter,
   InboundChannelMessage,
@@ -396,15 +399,17 @@ export function createSlackIngressController(params: {
         }) => Promise<void>,
       ) => void;
     };
-    actionRegistrar.action?.(
-      SLACK_MODEL_SELECT_ACTION_ID,
-      async ({ body, action, ack }) => {
+    const registerModelCommandAction = (
+      actionId: string,
+      commandForSelection: (selection: string) => string,
+    ): void => {
+      actionRegistrar.action?.(actionId, async ({ body, action, ack }) => {
         await ack();
         const adapter = params.getAdapter();
-        const selectedModel = resolveSlackSelectedModel(action, body);
+        const selection = resolveSlackSelectedModel(action, body);
         const channelId = resolveSlackActionChannelId(body);
         const user = resolveSlackActionUser(body);
-        if (!adapter.onMessage || !selectedModel || !channelId || !user.id) {
+        if (!adapter.onMessage || !selection || !channelId || !user.id) {
           return;
         }
         const actionRecord = getSlackActionRecord(action, body);
@@ -417,7 +422,7 @@ export function createSlackIngressController(params: {
             senderTeamId: user.teamId,
             senderName: user.name,
             chatLabel: channelId,
-            text: `/model ${selectedModel}`,
+            text: commandForSelection(selection),
             timestamp: Date.now(),
             messageId: firstNonEmptyString(
               actionRecord?.action_ts,
@@ -429,9 +434,17 @@ export function createSlackIngressController(params: {
             raw: body,
           });
         } catch (error) {
-          console.error("[Slack] Error handling model select action:", error);
+          console.error("[Slack] Error handling model command action:", error);
         }
-      },
+      });
+    };
+    registerModelCommandAction(
+      SLACK_MODEL_SELECT_ACTION_ID,
+      (selection) => `/model ${selection}`,
+    );
+    registerModelCommandAction(
+      SLACK_REASONING_SELECT_ACTION_ID,
+      (selection) => `/model reasoning ${selection}`,
     );
 
     const handleReaction = async (

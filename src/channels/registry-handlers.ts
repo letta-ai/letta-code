@@ -1,7 +1,10 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
-  ChannelDefaultPermissionMode,
   ChannelModelPickerData,
+  ChannelReasoningSelection,
+} from "./model-picker-types";
+import type {
+  ChannelDefaultPermissionMode,
   ChannelRoute,
   ChannelTurnSource,
 } from "./types";
@@ -27,6 +30,7 @@ export type ChannelModelHandler = (params: {
   channelId: string;
   runtime: { agent_id: string; conversation_id: string };
   modelIdentifier?: string;
+  reasoningEffort?: ChannelReasoningSelection;
 }) => Promise<{
   handled: boolean;
   text?: string;

@@ -38,6 +38,25 @@ describe("listener model catalog", () => {
     });
   });
 
+  test("preserves native reasoning capabilities for channel selectors", () => {
+    const nativeModel: AvailableModel = {
+      handle: "custom/reasoning-model",
+      label: "Reasoning Model",
+      openAICompatibleProxy: true,
+      reasoningCapabilities: {
+        supported_efforts: ["low", "high"],
+        mandatory: true,
+      },
+    };
+
+    const entry = buildListModelsEntries([nativeModel]).at(-1);
+
+    expect(entry?.reasoningCapabilities).toEqual({
+      supported_efforts: ["low", "high"],
+      mandatory: true,
+    });
+  });
+
   test("keeps curated variants instead of adding a duplicate native row", () => {
     const variantsByHandle = new Map<string, (typeof models)[number][]>();
     for (const model of models) {

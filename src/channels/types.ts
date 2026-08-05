@@ -9,11 +9,8 @@
 
 import type { WhatsAppMessagePrefixConfig } from "@/channels/whatsapp/message-prefix-config-types";
 import type { PermissionMode } from "@/permissions/mode";
-import type {
-  ApprovalResponseBody,
-  ListModelsResponseModelEntry,
-  StopReasonType,
-} from "@/types/protocol_v2";
+import type { ApprovalResponseBody, StopReasonType } from "@/types/protocol_v2";
+import type { ChannelModelPickerData } from "./model-picker-types";
 import type { WhatsAppAttachmentPolicyConfig } from "./whatsapp/attachment-policy-types";
 import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config-types";
 
@@ -21,17 +18,6 @@ import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config
  * Vendor-neutral model-picker payload produced by the generic channel
  * `/model` handler. Adapters decide how (or whether) to render it.
  */
-export type ChannelModelPickerData = {
-  current: {
-    modelLabel: string;
-    modelHandle: string | null;
-    scope?: "agent" | "conversation";
-  };
-  entries: ListModelsResponseModelEntry[];
-  availableHandles?: string[] | null;
-  recentHandles?: string[];
-};
-
 /**
  * Default channel id used for wire compatibility when WS clients omit
  * `channel_id` on channel commands. Early protocol versions predate

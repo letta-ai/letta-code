@@ -20,6 +20,7 @@ import { buildListModelsEntries } from "./commands/model-catalog";
 import {
   applyModelUpdateForRuntime,
   buildListModelsResponse,
+  buildListModelsResponseWithStatus,
   buildModelUpdateStatusMessage,
   getCurrentModelStatusForRuntime,
   resolveModelForUpdate,
@@ -515,6 +516,7 @@ export const __listenClientTestUtils = {
   getOrCreateScopedRuntime,
   buildListModelsEntries,
   buildListModelsResponse,
+  buildListModelsResponseWithStatus,
   buildModelUpdateStatusMessage,
   getCurrentModelStatusForRuntime,
   resolveModelForUpdate,

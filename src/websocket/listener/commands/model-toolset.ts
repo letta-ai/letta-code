@@ -28,6 +28,7 @@ import {
   type ToolsetPreference,
 } from "@/tools/toolset";
 import { formatToolsetName } from "@/tools/toolset-labels";
+import type { ModelRuntimeStatus } from "@/types/model-reasoning";
 import type {
   ListModelsResponseMessage,
   UpdateModelPayload,
@@ -81,6 +82,7 @@ type ModelToolsetCommandContext = {
 
 type ModelScopeSnapshot = {
   modelHandle: string | null;
+  providerType?: string;
   llmConfig: {
     model?: string | null;
     model_endpoint_type?: string | null;
@@ -88,11 +90,7 @@ type ModelScopeSnapshot = {
   } | null;
 };
 
-export type CurrentModelStatus = {
-  modelHandle: string | null;
-  modelLabel: string;
-  scope: "agent" | "conversation";
-};
+export type CurrentModelStatus = ModelRuntimeStatus;
 
 function inferProviderTypeFromRegistryHandle(
   modelHandle: string,
@@ -184,10 +182,20 @@ async function getCurrentModelScopeSnapshot(params: {
       : typeof agent.llm_config?.context_window === "number"
         ? agent.llm_config.context_window
         : undefined;
+  const agentModelSettings =
+    agentRecord.model_settings && typeof agentRecord.model_settings === "object"
+      ? (agentRecord.model_settings as Record<string, unknown>)
+      : null;
+  const agentProviderType =
+    providerTypeFromModelSettings(agentModelSettings) ??
+    (typeof agent.llm_config?.model_endpoint_type === "string"
+      ? agent.llm_config.model_endpoint_type
+      : undefined);
 
   if (params.conversationId === "default") {
     return {
       modelHandle: agentModelHandle,
+      ...(agentProviderType ? { providerType: agentProviderType } : {}),
       llmConfig: withContextWindow(
         agent.llm_config as ModelScopeSnapshot["llmConfig"],
         agentContextWindow,
@@ -207,9 +215,20 @@ async function getCurrentModelScopeSnapshot(params: {
     typeof conversationRecord.context_window_limit === "number"
       ? conversationRecord.context_window_limit
       : undefined;
+  const conversationModelSettings =
+    conversationRecord.model_settings &&
+    typeof conversationRecord.model_settings === "object"
+      ? (conversationRecord.model_settings as Record<string, unknown>)
+      : null;
+  const conversationProviderType = providerTypeFromModelSettings(
+    conversationModelSettings,
+  );
 
   return {
     modelHandle: conversationModel ?? agentModelHandle,
+    ...((conversationProviderType ?? agentProviderType)
+      ? { providerType: conversationProviderType ?? agentProviderType }
+      : {}),
     llmConfig: withContextWindow(
       agent.llm_config as ModelScopeSnapshot["llmConfig"],
       conversationContextWindow ?? agentContextWindow,
@@ -229,6 +248,10 @@ export async function getCurrentModelStatusForRuntime(params: {
     modelHandle: snapshot.modelHandle,
     modelLabel: modelInfo?.label ?? snapshot.modelHandle ?? "unknown",
     scope: params.conversationId === "default" ? "agent" : "conversation",
+    ...(typeof snapshot.llmConfig?.context_window === "number"
+      ? { contextWindow: snapshot.llmConfig.context_window }
+      : {}),
+    ...(snapshot.providerType ? { providerType: snapshot.providerType } : {}),
   };
 }
 
@@ -745,6 +768,30 @@ export async function buildListModelsResponse(
   };
 }
 
+export async function buildListModelsResponseWithStatus(
+  requestId: string,
+  options?: {
+    forceRefresh?: boolean;
+    runtime?: { agent_id: string; conversation_id: string };
+  },
+): Promise<ListModelsResponseMessage> {
+  const [response, currentModel] = await Promise.all([
+    buildListModelsResponse(requestId, {
+      forceRefresh: options?.forceRefresh,
+    }),
+    options?.runtime
+      ? getCurrentModelStatusForRuntime({
+          agentId: options.runtime.agent_id,
+          conversationId: options.runtime.conversation_id,
+        })
+      : Promise.resolve(undefined),
+  ]);
+  return {
+    ...response,
+    ...(currentModel ? { current_model: currentModel } : {}),
+  };
+}
+
 export function handleModelToolsetCommand(
   parsed: unknown,
   context: ModelToolsetCommandContext,
@@ -760,9 +807,13 @@ export function handleModelToolsetCommand(
   if (isListModelsCommand(parsed)) {
     runDetachedListenerTask("list_models", async () => {
       try {
-        const response = await buildListModelsResponse(parsed.request_id, {
-          forceRefresh: parsed.force === true,
-        });
+        const response = await buildListModelsResponseWithStatus(
+          parsed.request_id,
+          {
+            forceRefresh: parsed.force === true,
+            ...(parsed.runtime ? { runtime: parsed.runtime } : {}),
+          },
+        );
         safeSocketSend(
           socket,
           response,

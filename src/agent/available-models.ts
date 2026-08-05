@@ -1,7 +1,10 @@
 import { getBackend } from "@/backend";
 import { refreshByokProviders } from "@/backend/api/providers";
+import type {
+  ModelReasoningCapabilities,
+  ModelReasoningEffort,
+} from "@/types/model-reasoning";
 import { isOpenAICompatibleProxyEndpoint } from "@/utils/openai-endpoint";
-import type { ModelReasoningEffort } from "./model";
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -14,12 +17,10 @@ export type AvailableModel = {
   providerCategory?: string;
   modelEndpoint?: string;
   openAICompatibleProxy?: boolean;
+  reasoningCapabilities?: ReasoningCapabilities;
 };
 
-export type ReasoningCapabilities = {
-  supported_efforts?: ModelReasoningEffort[] | null;
-  mandatory?: boolean;
-};
+export type ReasoningCapabilities = ModelReasoningCapabilities;
 
 type CacheEntry = {
   handles: Set<string>;
@@ -112,7 +113,25 @@ export function getCachedOpenAICompatibleProxyHandles(): Set<string> | null {
 }
 
 export function getCachedAvailableModels(): AvailableModel[] | null {
-  return cache?.models.map((model) => ({ ...model })) ?? null;
+  return (
+    cache?.models.map((model) => ({
+      ...model,
+      ...(model.reasoningCapabilities
+        ? {
+            reasoningCapabilities: {
+              ...model.reasoningCapabilities,
+              ...(Array.isArray(model.reasoningCapabilities.supported_efforts)
+                ? {
+                    supported_efforts: [
+                      ...model.reasoningCapabilities.supported_efforts,
+                    ],
+                  }
+                : {}),
+            },
+          }
+        : {}),
+    })) ?? null
+  );
 }
 
 async function fetchFromNetwork(): Promise<CacheEntry> {
@@ -180,6 +199,7 @@ async function fetchFromNetwork(): Promise<CacheEntry> {
         ...(providerCategory ? { providerCategory } : {}),
         ...(modelEndpoint ? { modelEndpoint } : {}),
         ...(isOpenAICompatibleProxy ? { openAICompatibleProxy: true } : {}),
+        ...(capabilities ? { reasoningCapabilities: capabilities } : {}),
       };
       if (!modelsByHandle.has(model.handle)) {
         modelsByHandle.set(model.handle, availableModel);

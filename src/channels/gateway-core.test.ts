@@ -670,7 +670,11 @@ test("runtime registration exposes and updates model status without backend acce
     startResponse: {
       agent: {
         id: "agent-1",
-        llm_config: { model: "anthropic/claude-sonnet-4-6" },
+        llm_config: {
+          model: "anthropic/claude-sonnet-4-6",
+          context_window: 950_000,
+        },
+        model_settings: { provider_type: "anthropic" },
       } as RuntimeStartResponseMessage["agent"],
     },
   });
@@ -681,7 +685,13 @@ test("runtime registration exposes and updates model status without backend acce
   expect(gateway.getModelStatus(TEST_RUNTIME)).toEqual({
     modelHandle: "anthropic/claude-sonnet-4-6",
     scope: "conversation",
+    contextWindow: 950_000,
+    providerType: "anthropic",
   });
+
+  gateway.updateModelStatus(TEST_RUNTIME, "anthropic/claude-sonnet-4-6");
+  expect(gateway.getModelStatus(TEST_RUNTIME)?.contextWindow).toBe(950_000);
+  expect(gateway.getModelStatus(TEST_RUNTIME)?.providerType).toBe("anthropic");
 
   gateway.updateModelStatus(TEST_RUNTIME, "openai/gpt-5");
   expect(gateway.getModelStatus(TEST_RUNTIME)).toEqual({

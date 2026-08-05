@@ -80,6 +80,8 @@ export interface ChannelGatewayRichDraft {
 export interface ChannelGatewayModelStatus {
   modelHandle: string | null;
   scope: "agent" | "conversation";
+  contextWindow?: number;
+  providerType?: string;
 }
 
 type ActiveGatewayTurn = {
@@ -116,6 +118,24 @@ type GatewayRuntimeState = {
 
 function runtimeKey(runtime: RuntimeScope): string {
   return `${runtime.agent_id}:${runtime.conversation_id}`;
+}
+
+function modelProviderType(
+  record: Record<string, unknown> | null,
+): string | undefined {
+  const modelSettings = record?.model_settings;
+  if (modelSettings && typeof modelSettings === "object") {
+    const providerType = (modelSettings as Record<string, unknown>)
+      .provider_type;
+    if (typeof providerType === "string") return providerType;
+  }
+  const llmConfig = record?.llm_config;
+  if (llmConfig && typeof llmConfig === "object") {
+    const endpointType = (llmConfig as Record<string, unknown>)
+      .model_endpoint_type;
+    if (typeof endpointType === "string") return endpointType;
+  }
+  return undefined;
 }
 
 function sourceKey(source: ChannelTurnSource): string {
@@ -341,11 +361,31 @@ export class ChannelGateway {
     return this.states.get(runtimeKey(runtime))?.modelStatus ?? null;
   }
 
-  updateModelStatus(runtime: RuntimeScope, modelHandle: string | null): void {
+  updateModelStatus(
+    runtime: RuntimeScope,
+    modelHandle: string | null,
+    options?: { contextWindow?: number; providerType?: string },
+  ): void {
     const state = this.getState(runtime);
+    const effectiveContextWindow =
+      options?.contextWindow ??
+      (state.modelStatus?.modelHandle === modelHandle
+        ? state.modelStatus.contextWindow
+        : undefined);
+    const effectiveProviderType =
+      options?.providerType ??
+      (state.modelStatus?.modelHandle === modelHandle
+        ? state.modelStatus.providerType
+        : undefined);
     state.modelStatus = {
       modelHandle,
       scope: runtime.conversation_id === "default" ? "agent" : "conversation",
+      ...(effectiveContextWindow !== undefined
+        ? { contextWindow: effectiveContextWindow }
+        : {}),
+      ...(effectiveProviderType !== undefined
+        ? { providerType: effectiveProviderType }
+        : {}),
     };
   }
 
@@ -461,6 +501,26 @@ export class ChannelGateway {
           typeof conversationRecord?.model === "string"
             ? conversationRecord.model
             : null;
+        const agentContextWindow =
+          typeof agentRecord?.context_window_limit === "number"
+            ? agentRecord.context_window_limit
+            : typeof response.agent?.llm_config?.context_window === "number"
+              ? response.agent.llm_config.context_window
+              : undefined;
+        const conversationContextWindow =
+          typeof conversationRecord?.context_window_limit === "number"
+            ? conversationRecord.context_window_limit
+            : undefined;
+        const contextWindow =
+          delivery.runtime.conversation_id === "default"
+            ? agentContextWindow
+            : (conversationContextWindow ?? agentContextWindow);
+        const agentProviderType = modelProviderType(agentRecord);
+        const conversationProviderType = modelProviderType(conversationRecord);
+        const providerType =
+          delivery.runtime.conversation_id === "default"
+            ? agentProviderType
+            : (conversationProviderType ?? agentProviderType);
         state.modelStatus = {
           modelHandle:
             delivery.runtime.conversation_id === "default"
@@ -470,6 +530,8 @@ export class ChannelGateway {
             delivery.runtime.conversation_id === "default"
               ? "agent"
               : "conversation",
+          ...(contextWindow !== undefined ? { contextWindow } : {}),
+          ...(providerType !== undefined ? { providerType } : {}),
         };
       });
     state.registrationSignature = signature;

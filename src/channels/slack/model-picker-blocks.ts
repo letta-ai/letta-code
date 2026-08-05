@@ -4,13 +4,19 @@ import {
   getFallbackModelEntries,
   resolveModelHandles,
 } from "@/channels/commands";
-import type { ChannelModelPickerData } from "@/channels/types";
+import type {
+  ChannelModelPickerData,
+  ChannelReasoningSelection,
+} from "@/channels/model-picker-types";
+import { formatChannelReasoningSelection } from "@/channels/model-reasoning-command";
 
 const SLACK_MODEL_PICKER_OPTION_LIMIT = 100;
 const SLACK_MODEL_OPTION_TEXT_LIMIT = 75;
 const SLACK_MODEL_OPTION_VALUE_LIMIT = 75;
 
 export const SLACK_MODEL_SELECT_ACTION_ID = "letta_channel_model_select";
+export const SLACK_REASONING_SELECT_ACTION_ID =
+  "letta_channel_reasoning_select";
 
 type SlackModelOption = {
   text: { type: "plain_text"; text: string; emoji?: boolean };
@@ -76,6 +82,19 @@ function buildSlackModelOption(
   return option;
 }
 
+function buildSlackReasoningOption(
+  effort: ChannelReasoningSelection,
+): SlackModelOption {
+  return {
+    text: {
+      type: "plain_text",
+      text: formatChannelReasoningSelection(effort),
+      emoji: true,
+    },
+    value: effort ?? "default",
+  };
+}
+
 /**
  * Renders generic channel model-picker data as Slack Block Kit blocks.
  * Slack-specific rendering lives here so the shared channel/listener layers
@@ -134,6 +153,39 @@ export function buildSlackModelPickerBlocks(
       ? entry?.handle === currentHandle || option.value === currentHandle
       : false;
   });
+  const reasoningOptions: SlackModelOption[] = [];
+  const seenReasoningValues = new Set<string>();
+  for (const option of params.reasoningOptions ?? []) {
+    const slackOption = buildSlackReasoningOption(option.effort);
+    if (seenReasoningValues.has(slackOption.value)) continue;
+    seenReasoningValues.add(slackOption.value);
+    reasoningOptions.push(slackOption);
+  }
+  const actionElements: unknown[] = [
+    {
+      type: "static_select",
+      action_id: SLACK_MODEL_SELECT_ACTION_ID,
+      placeholder: {
+        type: "plain_text",
+        text: "Select a model",
+        emoji: true,
+      },
+      options,
+      ...(initialOption ? { initial_option: initialOption } : {}),
+    },
+  ];
+  if (reasoningOptions.length > 0) {
+    actionElements.push({
+      type: "static_select",
+      action_id: SLACK_REASONING_SELECT_ACTION_ID,
+      placeholder: {
+        type: "plain_text",
+        text: "Select reasoning",
+        emoji: true,
+      },
+      options: reasoningOptions,
+    });
+  }
 
   return [
     {
@@ -147,24 +199,15 @@ export function buildSlackModelPickerBlocks(
       type: "section",
       text: {
         type: "mrkdwn",
-        text: "Choose a model for this routed conversation:",
+        text:
+          reasoningOptions.length > 0
+            ? "Choose a model or reasoning level for this routed conversation:"
+            : "Choose a model for this routed conversation:",
       },
     },
     {
       type: "actions",
-      elements: [
-        {
-          type: "static_select",
-          action_id: SLACK_MODEL_SELECT_ACTION_ID,
-          placeholder: {
-            type: "plain_text",
-            text: "Select a model",
-            emoji: true,
-          },
-          options,
-          ...(initialOption ? { initial_option: initialOption } : {}),
-        },
-      ],
+      elements: actionElements,
     },
     {
       type: "context",
