@@ -363,6 +363,46 @@ describe("listener turn lifecycle integration", () => {
     expect(sentPayloads).toEqual([]);
   });
 
+  test("recovery errors finish with safe detail before loop diagnostics", () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    const lease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+    });
+    const sentPayloads: string[] = [];
+
+    const transition = finalizeHandledRecoveryTurn(
+      runtime,
+      createOpenTransport(sentPayloads),
+      lease,
+      {
+        drainResult: { stopReason: "error" } as never,
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        turnId: "test-turn-1",
+      },
+    );
+    const payloads = sentPayloads.map((payload) => JSON.parse(payload));
+
+    expect(transition.finished).toBe(true);
+    expect(payloads.map(({ type }) => type)).toEqual([
+      "turn_finished",
+      "stream_delta",
+    ]);
+    expect(payloads[0]).toMatchObject({
+      type: "turn_finished",
+      stop_reason: "error",
+      error: "The request failed. Please try again.",
+    });
+    expect(JSON.stringify(payloads[0])).not.toContain(
+      "Recovery continuation ended unexpectedly",
+    );
+  });
+
   test("a stale recovery owner cannot finish or report errors for its replacement", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");

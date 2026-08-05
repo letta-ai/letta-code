@@ -57,7 +57,10 @@ import {
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
 import { consumeQueuedTurn } from "./queue";
-import { emitLoopErrorNotice } from "./recoverable-notices";
+import {
+  emitLoopErrorNotice,
+  getTranscriptLoopErrorMessage,
+} from "./recoverable-notices";
 import {
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
@@ -285,23 +288,27 @@ export function finalizeHandledRecoveryTurn(
   const terminalStopReason =
     (params.drainResult.stopReason as StopReasonType) || "error";
   const runId = runtime.activeRunId;
+  const noticeParams = {
+    message: `Recovery continuation ended unexpectedly: ${terminalStopReason}`,
+    agentId: params.agentId,
+    conversationId: params.conversationId,
+  };
   const transition = finishListenerTurn(runtime, turnLease, {
     stopReason: terminalStopReason,
     socket,
     agentId: params.agentId,
     conversationId: params.conversationId,
     turnId: params.turnId,
+    error: getTranscriptLoopErrorMessage(noticeParams),
   });
   if (!transition.finished) {
     return transition;
   }
   emitLoopErrorNotice(socket, runtime, {
-    message: `Recovery continuation ended unexpectedly: ${terminalStopReason}`,
+    ...noticeParams,
     stopReason: terminalStopReason,
     isTerminal: true,
     runId: runId || undefined,
-    agentId: params.agentId ?? undefined,
-    conversationId: params.conversationId,
   });
   return transition;
 }
@@ -877,13 +884,17 @@ export async function resolveRecoveredApprovalResponse(
       );
       recovered.responsesByRequestId.clear();
     }
+    const stopReason = recoveryLease.signal.aborted ? "cancelled" : "error";
     finishListenerTurn(runtime, recoveryLease, {
-      stopReason: recoveryLease.signal.aborted ? "cancelled" : "error",
+      stopReason,
       socket,
       agentId: recovered.agentId,
       conversationId: recovered.conversationId,
       turnId: `batch-recovered-${requestId}`,
-      error: error instanceof Error ? error.message : String(error),
+      error:
+        stopReason === "error"
+          ? getTranscriptLoopErrorMessage({ error, message: String(error) })
+          : undefined,
     });
     throw error;
   }
