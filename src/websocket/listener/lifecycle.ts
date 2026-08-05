@@ -385,7 +385,7 @@ export async function startConnectedListenerRuntime(
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
     return;
   }
-
+  installExternalToolBridge(runtime);
   const shouldStartHeartbeat = options.startHeartbeat !== false;
   // LETTA_DISABLE_CRON_SCHEDULER=1 lets users opt out entirely. Useful when
   // running multiple letta-code instances against the same agent dir, since
