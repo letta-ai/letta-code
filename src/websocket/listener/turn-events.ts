@@ -62,7 +62,7 @@ export async function emitListenerTurnStart(options: {
       sessionId: options.conversationId,
       workingDirectory: options.workingDirectory,
       permissionMode: options.permissionMode ?? null,
-      agent: options.cachedAgent ?? null,
+      agent: options.cachedAgent ?? { id: options.agentId },
     });
     const event = {
       agentId: options.agentId,
@@ -107,7 +107,7 @@ export async function emitListenerTurnEnd(options: {
       sessionId: options.conversationId,
       workingDirectory: options.workingDirectory,
       permissionMode: options.permissionMode ?? null,
-      agent: options.cachedAgent ?? null,
+      agent: options.cachedAgent ?? { id: options.agentId },
     });
     const event: {
       agentId: string;

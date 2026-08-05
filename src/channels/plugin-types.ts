@@ -170,6 +170,7 @@ export interface ChannelPluginAccountPatch {
   threadPolicyByChannel?: Record<string, boolean>;
   acknowledgeMessageReaction?: boolean;
   listenMode?: boolean;
+  mentionOnlyChannels?: string[];
   allowBots?: ChannelAllowBotsMode;
   removeStaleRoutes?: boolean;
   inboundDebounceMs?: number;

@@ -23,6 +23,7 @@ import { detectShellContext } from "@/utils/shell-context";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
 import {
+  createListenerAgentModContext,
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
@@ -255,8 +256,12 @@ export async function prepareListenerTurn(params: {
     runtime.listener,
     agentId,
   );
+  const environmentDeviceId = connectionId
+    ? runtime.listener.connections.get(connectionId)?.options.deviceId
+    : undefined;
   const preparedToolContext = await prepareToolExecutionContextForScope({
     connectionId,
+    environmentDeviceId,
     agentId,
     conversationId,
     clientToolset: msg.clientToolset,
@@ -271,6 +276,7 @@ export async function prepareListenerTurn(params: {
     permissionModeState,
     skillSources: runtime.skillSources,
     cachedAgent,
+    modContext: createListenerAgentModContext(agentId),
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
   });

@@ -36,12 +36,17 @@ import {
   OLLAMA_CLOUD_PI_PROVIDER_ID,
   OLLAMA_PI_PROVIDER_ID,
 } from "./pi-ollama-provider";
+import { createOpenAICompatiblePiProvider } from "./pi-openai-compatible-provider";
 import {
   getRegisteredPiProvider,
   getRegisteredPiProviderRevision,
   listRegisteredPiProviders,
 } from "./pi-provider-mod-registry";
-import { getPiProviderSpec, type PiProvider } from "./pi-provider-registry";
+import {
+  getPiProviderSpec,
+  OPENAI_COMPATIBLE_PI_PROVIDER_ID,
+  type PiProvider,
+} from "./pi-provider-registry";
 import { resolveRegisteredPiProviderRuntimeConnection } from "./registered-pi-provider-runtime";
 
 const CONFIGURED_DISCOVERY_TIMEOUT_MS = 2_000;
@@ -115,6 +120,10 @@ const MANAGED_ENDPOINT_PROVIDERS: ReadonlyMap<
   ],
   [LLAMA_CPP_PI_PROVIDER_ID, (input) => createLlamaCppPiProvider(input)],
   [LMSTUDIO_PI_PROVIDER_ID, (input) => createLmStudioPiProvider(input)],
+  [
+    OPENAI_COMPATIBLE_PI_PROVIDER_ID,
+    (input) => createOpenAICompatiblePiProvider(input),
+  ],
 ]);
 
 function resolveLocalEndpointConnection(
@@ -132,7 +141,9 @@ function resolveLocalEndpointConnection(
   const apiKey =
     localProviderApiKeyFromRecord(record) ??
     spec.apiKeyEnv?.() ??
-    spec.fallbackApiKey;
+    (record !== null || spec.autoDetectLocalEndpoint === true
+      ? spec.fallbackApiKey
+      : undefined);
   return {
     baseURL,
     apiKey,

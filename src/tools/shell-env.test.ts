@@ -283,6 +283,7 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
         agentId: "agent-runtime-scope",
         agentName: "Runtime Scope Agent",
         conversationId: "conv-runtime-scope",
+        environmentDeviceId: "device-runtime-scope",
         workingDirectory: runtimeCwd,
       },
       () => getShellEnv(),
@@ -293,10 +294,29 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
     expect(env.AGENT_NAME).toBe("Runtime Scope Agent");
     expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
     expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
+    expect(env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID).toBe(
+      "device-runtime-scope",
+    );
     expect(env.USER_CWD).toBe(runtimeCwd);
   } finally {
     rmSync(runtimeCwd, { recursive: true, force: true });
   }
+});
+
+test("getShellEnv prefers the active listener device over inherited process state", () => {
+  withTemporaryEnv(
+    { LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID: "device-stale-installation" },
+    () => {
+      const env = runWithRuntimeContext(
+        { environmentDeviceId: "device-active-listener" },
+        () => getShellEnv(),
+      );
+
+      expect(env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID).toBe(
+        "device-active-listener",
+      );
+    },
+  );
 });
 
 test("getShellEnv isolates overlapping runtime scopes", async () => {

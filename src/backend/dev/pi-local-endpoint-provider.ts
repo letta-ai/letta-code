@@ -221,7 +221,13 @@ export function createLocalEndpointPiProvider(
         resolve: async ({ credential }) => {
           const apiKey = credential?.key ?? options.apiKey;
           return apiKey
-            ? { auth: { apiKey }, source: "local provider record" }
+            ? {
+                auth:
+                  apiKey === "not-needed"
+                    ? { apiKey, headers: { Authorization: null } }
+                    : { apiKey },
+                source: "local provider record",
+              }
             : undefined;
         },
       },

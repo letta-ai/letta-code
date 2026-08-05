@@ -5,12 +5,14 @@
  * - "local": the runtime-local scheduler (~/.letta/crons.json), executed by
  *   the WS listener process on this device. Dies with the device/sandbox.
  * - "cloud": durable Cloud schedules (`/v1/agents/:id/schedule`), fired by a
- *   cloud worker into the agent's managed cloud sandbox.
+ *   cloud worker into a target listener or the agent's managed Cloud sandbox.
  *
- * Default policy: cloud agents get the cloud runner everywhere (laptop, VPS,
- * managed sandbox) — durability is the default. `--runner local` is the
- * explicit opt-in for schedules that must execute on a specific machine
- * (e.g. they need that device's filesystem). Local-backend agents
+ * Default policy: cloud agents get the cloud runner everywhere. When no runner
+ * or computer is explicit, creation preserves execution locality: an external
+ * listener becomes the schedule's target, and a managed sandbox runtime keeps
+ * the untargeted schedule (which already fires in the agent's Cloud sandbox).
+ * `--runner cloud` deliberately selects the managed Cloud sandbox;
+ * `--runner local` selects process-local storage. Local-backend agents
  * (`agent-local-*`) always use the local runner, and servers that don't serve
  * the Cloud schedule routes (self-hosted OSS core) fall back to it.
  *
@@ -19,6 +21,11 @@
  * LETTA_BASE_URL at a localhost proxy that forwards to the Letta API, so URL
  * shape says nothing about capability.
  */
+
+import {
+  type EnvironmentConnection,
+  isEnvironmentOnline,
+} from "@/backend/api/environments";
 
 export type CronRunner = "local" | "cloud";
 
@@ -99,7 +106,7 @@ export function resolveCronRunner(
 /**
  * Synthetic ids the Desktop environment proxy injects into
  * `letta environments list` responses. Neither is a targetable device:
- * - "__letta_cloud__": the synthetic "Cloud" row (the default sandbox target)
+ * - "__letta_cloud__": the synthetic "Cloud" row (the sandbox target)
  * - "local": the synthetic offline placeholder when no local device is registered
  * Values mirror CLOUD_DEVICE_ID / LOCAL_CONNECTION_ID in the desktop app.
  */
@@ -129,7 +136,7 @@ export function validateTargetDevice(
     return {
       ok: false,
       error:
-        '"Cloud" is the default execution target, not a computer. Omit --computer to run in the agent\'s cloud sandbox.',
+        '"Cloud" is not a computer. Pass --runner cloud to run in the agent\'s Cloud sandbox.',
     };
   }
 
@@ -149,6 +156,70 @@ export function validateTargetDevice(
   }
 
   return { ok: true };
+}
+
+const INFERRED_TARGET_GUIDANCE =
+  "Pass --runner cloud to use the Cloud sandbox, --computer <deviceId> to choose a connected computer, or --runner local to use this process.";
+
+/**
+ * How a default (no --runner/--computer) Cloud schedule should execute:
+ * - "device": target the current runtime's device so the schedule keeps
+ *   executing where it was created.
+ * - "cloud-sandbox": leave the schedule untargeted; it fires in the agent's
+ *   managed Cloud sandbox.
+ * - "error": the current runtime is neither — refuse with guidance.
+ */
+export type InferredTargetResolution =
+  | { kind: "device" }
+  | { kind: "cloud-sandbox" }
+  | { kind: "error"; error: string };
+
+/**
+ * A default Cloud schedule preserves the current turn's execution locality.
+ *
+ * A managed-sandbox runtime (`sandbox-*` device id) resolves to
+ * "cloud-sandbox": an untargeted schedule already executes in the agent's
+ * managed sandbox, so the old untargeted default IS locality-preserving
+ * there. The sandbox check must come first — sandbox rows are registered
+ * and online in the environments registry, but individual sandboxes get
+ * retired and recreated, so pinning one as a device target would be wrong.
+ *
+ * Any other runtime must be proven to be a live external listener because,
+ * unlike an explicit --computer, there is no user-supplied target for the
+ * Cloud API to validate or correct.
+ */
+export async function resolveInferredTargetDevice(
+  deviceId: string,
+  lookupEnvironment: () => Promise<EnvironmentConnection | null>,
+): Promise<InferredTargetResolution> {
+  if (deviceId.startsWith("sandbox-")) {
+    return { kind: "cloud-sandbox" };
+  }
+
+  const environment = await lookupEnvironment();
+  const basicValidity = validateTargetDevice(deviceId, environment);
+  if (!basicValidity.ok) {
+    return {
+      kind: "error",
+      error: `Cannot target the current runtime (${basicValidity.error}) ${INFERRED_TARGET_GUIDANCE}`,
+    };
+  }
+
+  if (!environment) {
+    return {
+      kind: "error",
+      error: `The current runtime (${deviceId}) is not registered as a Cloud environment. ${INFERRED_TARGET_GUIDANCE}`,
+    };
+  }
+
+  if (!isEnvironmentOnline(environment)) {
+    return {
+      kind: "error",
+      error: `The current runtime (${deviceId}) is not online in the Cloud environments registry. ${INFERRED_TARGET_GUIDANCE}`,
+    };
+  }
+
+  return { kind: "device" };
 }
 
 // ── Cloud payload mapping ───────────────────────────────────────────

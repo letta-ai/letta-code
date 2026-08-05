@@ -9,6 +9,7 @@ import {
 import {
   defaultConnectApiKey,
   isConnectApiKeyProvider,
+  isConnectBaseURLRequired,
   isConnectBedrockProvider,
   isConnectOAuthProvider,
   isConnectZaiBaseProvider,
@@ -124,6 +125,7 @@ function formatUsage(): string {
     "  letta connect codex --method device-code",
     "  letta connect anthropic <api_key>",
     "  letta connect openai --api-key <api_key>",
+    "  letta connect openai-compatible --base-url http://localhost:8000/v1 [--api-key <api_key>]",
     "  letta connect ollama --base-url http://192.168.1.50:11434/v1",
     "  letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s",
     "  letta connect llama-cpp --base-url http://localhost:8080/v1",
@@ -422,6 +424,15 @@ export async function runConnectSubcommand(
       connectionOptions = connectionOptionsFromArgs(parsed.values);
     } catch (error) {
       io.stderr(getErrorMessage(error));
+      return 1;
+    }
+    if (
+      isConnectBaseURLRequired(provider) &&
+      !connectionOptions.baseURL?.trim()
+    ) {
+      io.stderr(
+        `Missing base URL for ${provider.canonical}. Pass --base-url <url>.`,
+      );
       return 1;
     }
     apiKey ||= defaultConnectApiKey(provider) ?? "";

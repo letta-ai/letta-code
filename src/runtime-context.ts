@@ -14,6 +14,8 @@ export type RuntimePermissionMode =
 export interface RuntimeContextSnapshot {
   /** Listener transport connection that owns the current turn, when present. */
   connectionId?: string | null;
+  /** Registered listener device that owns the current turn, when present. */
+  environmentDeviceId?: string | null;
   agentId?: string | null;
   agentName?: string | null;
   conversationId?: string | null;

@@ -33,6 +33,7 @@ import {
 import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
 import {
+  createListenerAgentModContext,
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
@@ -365,6 +366,7 @@ export async function resolveStaleApprovals(
       runtime.agentId,
       runtime.conversationId,
     ),
+    modContext: createListenerAgentModContext(runtime.agentId),
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
   });

@@ -125,6 +125,21 @@ describe("connect provider normalization", () => {
         expect(lmstudio.byokProvider.providerType).toBe("lmstudio_openai");
         expect(defaultConnectApiKey(llamaCpp)).toBe("not-needed");
         expect(llamaCpp.canonical).toBe("llama-cpp");
+
+        const openAICompatible = resolveConnectProvider(
+          "openai-compatible",
+          "local",
+        );
+        if (!openAICompatible) {
+          throw new Error(
+            "Expected local openai-compatible provider to resolve",
+          );
+        }
+        expect(openAICompatible.canonical).toBe("openai-compatible");
+        expect(openAICompatible.byokProvider.providerType).toBe(
+          "openai-compatible",
+        );
+        expect(defaultConnectApiKey(openAICompatible)).toBe("not-needed");
       },
     );
   });

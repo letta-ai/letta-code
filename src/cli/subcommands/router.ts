@@ -12,6 +12,7 @@ import { runMessagesSubcommand } from "./messages";
 import { runModsSubcommand } from "./mods";
 import { asLegacyAppServerCommand, runServerSubcommand } from "./server";
 import { runSetupSubcommand } from "./setup";
+import { runSharedMemorySubcommand } from "./shared-memory";
 import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
 import { runTrajectoriesSubcommand } from "./trajectories";
 
@@ -46,6 +47,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "mods":
     case "remote":
     case "server":
+    case "shared-memory":
     case "skills":
       return true;
     default:
@@ -95,6 +97,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runSetupSubcommand(rest);
     case "install":
       return runInstallSubcommand(rest);
+    case "shared-memory":
+      return runSharedMemorySubcommand(rest);
     case "skills":
       return runSkillsSubcommand(rest);
     case "cron":

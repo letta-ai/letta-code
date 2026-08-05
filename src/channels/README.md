@@ -272,6 +272,32 @@ unambiguous.
 The slash command `url` is present because Slack manifests require one; the
 Socket Mode listener receives the command over the app-level WebSocket.
 
+### Per-channel mention-only Slack bots
+
+By default, once a Slack bot participates in a thread, subsequent human replies
+in that thread route to the agent without another mention. To require an
+explicit `@mention` in selected channels, add their Slack channel IDs to the
+account's `mention_only_channels` list in
+`~/.letta/channels/slack/accounts.json`:
+
+```json
+{
+  "mention_only_channels": ["C0123456789"]
+}
+```
+
+This policy is account-specific and applies even to threads where that bot has
+already participated. Add the channel ID to every bot account that should require
+an explicit mention. In listed channels, unmentioned messages and reaction
+events do not start agent turns. Direct messages, native Slack slash commands,
+and channels not listed here retain their existing behavior.
+
+Keep both `app_mention` and the broad `message.channels` / `message.groups`
+subscriptions when only selected channels should be mention-only. Removing the
+broad message events makes mention-only delivery apply to the whole Slack app
+instead. Restart the listener after editing `accounts.json` so the running Slack
+adapter loads the new policy.
+
 
 ## First-party vs user plugins
 

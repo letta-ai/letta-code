@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { __testSetBackend } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import {
@@ -13,6 +14,7 @@ import {
   getModToolDefinition,
   registerModTool,
 } from "@/mods/tool-registry";
+import { settingsManager } from "@/settings-manager";
 import {
   clearCapturedToolExecutionContexts,
   executeTool,
@@ -25,6 +27,8 @@ import {
 } from "@/websocket/listener/mod-adapter";
 
 const tempRoots: string[] = [];
+const originalIsMemfsEnabled =
+  settingsManager.isMemfsEnabled.bind(settingsManager);
 
 function createTempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "letta-listener-mod-"));
@@ -33,6 +37,7 @@ function createTempDir(): string {
 }
 
 afterEach(() => {
+  settingsManager.isMemfsEnabled = originalIsMemfsEnabled;
   clearModTools();
   clearRegisteredPiProviders();
   clearCapturedToolExecutionContexts();
@@ -111,6 +116,36 @@ describe("listener mod adapter", () => {
     });
     expect(context.permissionMode).toBe("standard");
     expect(context.toolset).toBe("default");
+  });
+
+  test("builds isolated agent MemFS roots", () => {
+    settingsManager.isMemfsEnabled = (agentId) => agentId !== "agent-disabled";
+
+    const agentAContext = createListenerModContext({
+      agent: { id: "agent-a" },
+    });
+    const agentBContext = createListenerModContext({
+      agent: { id: "agent-b" },
+    });
+
+    expect(agentAContext.memfs).toEqual({
+      enabled: true,
+      memoryDir: getScopedMemoryFilesystemRoot("agent-a"),
+    });
+    expect(agentBContext.memfs).toEqual({
+      enabled: true,
+      memoryDir: getScopedMemoryFilesystemRoot("agent-b"),
+    });
+    expect(agentAContext.memfs.memoryDir).not.toBe(
+      agentBContext.memfs.memoryDir,
+    );
+    expect(
+      createListenerModContext({ agent: { id: "agent-disabled" } }).memfs,
+    ).toEqual({ enabled: false, memoryDir: null });
+    expect(createListenerModContext().memfs).toEqual({
+      enabled: false,
+      memoryDir: null,
+    });
   });
 
   test("loads provider, tool, and command registrations without exposing events or panels", async () => {
