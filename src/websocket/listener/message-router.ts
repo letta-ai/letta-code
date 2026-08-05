@@ -33,7 +33,10 @@ import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
 import { subscribeListenerConnection } from "./connection";
 import { getBootWorkingDirectory, getExportedCwdMap } from "./cwd";
-import { handleExternalToolCallResponseCommand } from "./external-tools";
+import {
+  handleExternalToolCallResponseCommand,
+  updateRuntimeExternalTools,
+} from "./external-tools";
 import {
   dispatchInboundMessageWhenReady,
   getAcceptedInputDisposition,
@@ -268,6 +271,29 @@ export function createListenerMessageHandler(
 
       if (parsed.type === "external_tool_call_response") {
         handleExternalToolCallResponseCommand(runtime, connectionId, parsed);
+        return;
+      }
+
+      if (parsed.type === "runtime_external_tools_update") {
+        const respond = (success: boolean, error?: string): void => {
+          safeSocketSend(
+            socket,
+            {
+              type: "runtime_external_tools_update_response",
+              request_id: parsed.request_id,
+              success,
+              ...(error ? { error } : {}),
+            },
+            "runtime_external_tools_update_response",
+            "runtime_external_tools_update",
+          );
+        };
+        if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
+          respond(false, "Runtime is no longer active");
+          return;
+        }
+        updateRuntimeExternalTools(runtime, connectionId, parsed.updates);
+        respond(true);
         return;
       }
 

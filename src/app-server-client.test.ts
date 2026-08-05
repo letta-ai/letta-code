@@ -131,6 +131,7 @@ describe("app-server client", () => {
         conversation_management: true,
         memory_management: true,
         runtime_start: true,
+        runtime_external_tools_update: true,
         split_channels: false,
       },
     });
@@ -159,6 +160,18 @@ describe("app-server client", () => {
     };
 
     expect(isAppServerInfoResponseMessage(response)).toBe(true);
+    expect(
+      isAppServerInfoResponseMessage({
+        ...response,
+        capabilities: {
+          agent_management: true,
+          conversation_management: true,
+          memory_management: true,
+          runtime_start: true,
+          split_channels: false,
+        },
+      }),
+    ).toBe(true);
     expect(
       isAppServerInfoResponseMessage({
         ...response,
@@ -282,15 +295,45 @@ describe("app-server client", () => {
     });
     expect((await syncPromise).success).toBe(true);
 
-    const abortPromise = client.abort({ runtime });
+    const toolUpdatePromise = client.runtimeExternalToolsUpdate({
+      updates: [
+        {
+          runtimes: [runtime],
+          external_tools: [
+            {
+              tools: [
+                {
+                  name: "MessageChannel",
+                  description: "Deliver a channel message",
+                  parameters: { type: "object", properties: {} },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
     expect(JSON.parse(control.sent[1] ?? "{}")).toMatchObject({
+      type: "runtime_external_tools_update",
+      request_id: "runtime-external-tools-2",
+      updates: [{ runtimes: [runtime] }],
+    });
+    control.receive({
+      type: "runtime_external_tools_update_response",
+      request_id: "runtime-external-tools-2",
+      success: true,
+    });
+    expect((await toolUpdatePromise).success).toBe(true);
+
+    const abortPromise = client.abort({ runtime });
+    expect(JSON.parse(control.sent[2] ?? "{}")).toMatchObject({
       type: "abort_message",
-      request_id: "abort-2",
+      request_id: "abort-3",
       runtime,
     });
     control.receive({
       type: "abort_message_response",
-      request_id: "abort-2",
+      request_id: "abort-3",
       runtime,
       aborted: false,
       success: true,
@@ -304,12 +347,17 @@ describe("app-server client", () => {
         messages: [{ role: "user", content: "hello" }],
       },
     });
-    expect(JSON.parse(control.sent[2] ?? "{}")).toMatchObject({
+    expect(JSON.parse(control.sent[3] ?? "{}")).toMatchObject({
       type: "input",
       runtime,
       payload: { kind: "create_message" },
     });
-    expect(sent).toEqual(["sync", "abort_message", "input"]);
+    expect(sent).toEqual([
+      "sync",
+      "runtime_external_tools_update",
+      "abort_message",
+      "input",
+    ]);
   });
 
   test("wraps conversation list requests", async () => {

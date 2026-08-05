@@ -177,6 +177,19 @@ export async function startLocalChannelGateway(
     WebSocket: WebSocket as never,
   });
   await client.connect();
+  let serverInfo: Awaited<ReturnType<typeof client.info>>;
+  try {
+    serverInfo = await client.info();
+  } catch (error) {
+    client.close();
+    throw error;
+  }
+  if (serverInfo.capabilities.runtime_external_tools_update !== true) {
+    client.close();
+    throw new Error(
+      "ChannelGateway requires App Server runtime external-tool updates",
+    );
+  }
   client.onDisconnect(() => {
     options.onDisconnect?.(
       new Error("Channel gateway lost App Server connection"),
@@ -247,12 +260,17 @@ export async function startLocalChannelGateway(
   });
 
   const routedRuntimeRegistrationRefresher =
-    createRoutedRuntimeRegistrationRefresher(
+    createRoutedRuntimeRegistrationRefresher({
       registry,
-      gateway,
-      options.channelNames,
-      options.logger,
-    );
+      channelNames: options.channelNames,
+      buildTool: buildGatewayMessageChannelTool,
+      publisher: {
+        getKnownRuntimes: () => gateway.getKnownRuntimes(),
+        publish: (updates, routedSources) =>
+          gateway.updateRoutedRuntimeTools(updates, routedSources),
+      },
+      logger: options.logger,
+    });
   registry.setMessageHandler((delivery) => {
     const sources = delivery.turnSources ?? [];
     const gatewayDelivery: ChannelGatewayDelivery = {

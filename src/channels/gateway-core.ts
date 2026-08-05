@@ -9,6 +9,8 @@ import type {
   InputAcceptedResponseMessage,
   InputCommand,
   QueueUpdateMessage,
+  RuntimeExternalToolsUpdateGroup,
+  RuntimeExternalToolsUpdateResponseMessage,
   RuntimeScope,
   RuntimeStartCommand,
   RuntimeStartResponseMessage,
@@ -43,6 +45,9 @@ export interface ChannelGatewayClient {
       request_id?: string;
     },
   ): Promise<RuntimeStartResponseMessage>;
+  runtimeExternalToolsUpdate(options: {
+    updates: readonly RuntimeExternalToolsUpdateGroup[];
+  }): Promise<RuntimeExternalToolsUpdateResponseMessage>;
 }
 
 export interface ChannelGatewayDelivery {
@@ -105,7 +110,6 @@ type GatewayRuntimeState = {
   active: ActiveGatewayTurn | null;
   registrationSignature: string | null;
   registration: Promise<void> | null;
-  registrationQueue: Promise<void>;
   routedSources: ChannelTurnSource[];
   replayedControlRequestIds: Set<string>;
   submissionQueue: Promise<void>;
@@ -172,6 +176,10 @@ function errorFromDelta(message: StreamDeltaMessage): string | undefined {
 export class ChannelGateway {
   private readonly states = new Map<string, GatewayRuntimeState>();
   private readonly disposers: Array<() => void> = [];
+  // Tool publication and runtime_start both replace the same connection-owned
+  // registration. Keep them ordered so a late runtime_start cannot resurrect a
+  // route that an overlapping route-removal update just revoked.
+  private registrationQueue = Promise.resolve();
 
   constructor(
     private readonly client: ChannelGatewayClient,
@@ -220,13 +228,14 @@ export class ChannelGateway {
       sources: uniqueSources(delivery.sources),
       disposition: "submitting",
     });
-    state.routedSources = uniqueSources([
-      ...state.routedSources,
-      ...delivery.sources,
-    ]);
-
     try {
-      await this.ensureRuntimeRegistration(state, delivery);
+      await this.enqueueRegistration(async () => {
+        state.routedSources = uniqueSources([
+          ...state.routedSources,
+          ...delivery.sources,
+        ]);
+        await this.performRuntimeRegistration(state, delivery);
+      });
       const response = await this.client.submitInput({
         runtime: delivery.runtime,
         payload: {
@@ -312,13 +321,15 @@ export class ChannelGateway {
     defaultPermissionMode?: ChannelDefaultPermissionMode,
   ): Promise<void> {
     const state = this.getState(runtime);
-    state.routedSources = uniqueSources(sources);
-    await this.ensureRuntimeRegistration(state, {
-      runtime,
-      content: "",
-      sources,
-      clientMessageId: "recovered",
-      ...(defaultPermissionMode ? { defaultPermissionMode } : {}),
+    await this.enqueueRegistration(async () => {
+      this.setRoutedSources(runtime, sources);
+      await this.performRuntimeRegistration(state, {
+        runtime,
+        content: "",
+        sources,
+        clientMessageId: "recovered",
+        ...(defaultPermissionMode ? { defaultPermissionMode } : {}),
+      });
     });
   }
 
@@ -333,8 +344,36 @@ export class ChannelGateway {
     return result.accepted;
   }
 
+  setRoutedSources(runtime: RuntimeScope, sources: ChannelTurnSource[]): void {
+    this.getState(runtime).routedSources = uniqueSources(sources);
+  }
+
   getKnownRuntimes(): RuntimeScope[] {
     return [...this.states.values()].map((state) => state.runtime);
+  }
+
+  updateRoutedRuntimeTools(
+    updates: readonly RuntimeExternalToolsUpdateGroup[],
+    routedSources: Array<{
+      runtime: RuntimeScope;
+      sources: ChannelTurnSource[];
+    }>,
+  ): Promise<void> {
+    return this.enqueueRegistration(async () => {
+      if (updates.length > 0) {
+        const response = await this.client.runtimeExternalToolsUpdate({
+          updates,
+        });
+        if (!response.success) {
+          throw new Error(
+            response.error ?? "Failed to update routed runtime tools",
+          );
+        }
+      }
+      for (const update of routedSources) {
+        this.setRoutedSources(update.runtime, update.sources);
+      }
+    });
   }
 
   getModelStatus(runtime: RuntimeScope): ChannelGatewayModelStatus | null {
@@ -360,7 +399,6 @@ export class ChannelGateway {
         active: null,
         registrationSignature: null,
         registration: null,
-        registrationQueue: Promise.resolve(),
         routedSources: [],
         replayedControlRequestIds: new Set(),
         submissionQueue: Promise.resolve(),
@@ -398,15 +436,13 @@ export class ChannelGateway {
     return pending;
   }
 
-  private ensureRuntimeRegistration(
-    state: GatewayRuntimeState,
-    delivery: ChannelGatewayDelivery,
-  ): Promise<void> {
-    const registration = state.registrationQueue.then(() =>
-      this.performRuntimeRegistration(state, delivery),
+  private enqueueRegistration<T>(task: () => Promise<T>): Promise<T> {
+    const result = this.registrationQueue.then(task, task);
+    this.registrationQueue = result.then(
+      () => undefined,
+      () => undefined,
     );
-    state.registrationQueue = registration.catch(() => undefined);
-    return registration;
+    return result;
   }
 
   private async performRuntimeRegistration(

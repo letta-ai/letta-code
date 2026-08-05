@@ -130,6 +130,29 @@ describe("agent/conversation management protocol-inbound validators", () => {
       result: { content: [{ type: "text", text: "ok" }] },
     },
     {
+      type: "runtime_external_tools_update",
+      request_id: "tools-1",
+      updates: [
+        {
+          runtimes: [
+            { agent_id: "agent-1", conversation_id: "conv-1" },
+            { agent_id: "agent-1", conversation_id: "conv-2" },
+          ],
+          external_tools: [
+            {
+              tools: [
+                {
+                  name: "MessageChannel",
+                  description: "Deliver a channel message",
+                  parameters: { type: "object", properties: {} },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    {
       type: "create_agent",
       request_id: "create-1",
       personality: "tutorial",
@@ -237,6 +260,35 @@ describe("agent/conversation management protocol-inbound validators", () => {
       type: "external_tool_call_response",
       request_id: "ext-1",
       result: { content: "not-array" },
+    },
+    {
+      type: "runtime_external_tools_update",
+      request_id: "tools-empty-runtime-list",
+      updates: [{ runtimes: [], external_tools: [] }],
+    },
+    {
+      type: "runtime_external_tools_update",
+      request_id: "tools-duplicate-runtime",
+      updates: [
+        {
+          runtimes: [{ agent_id: "agent-1", conversation_id: "conv-1" }],
+          external_tools: [],
+        },
+        {
+          runtimes: [{ agent_id: "agent-1", conversation_id: "conv-1" }],
+          external_tools: [],
+        },
+      ],
+    },
+    {
+      type: "runtime_external_tools_update",
+      request_id: "tools-invalid-definition",
+      updates: [
+        {
+          runtimes: [{ agent_id: "agent-1", conversation_id: "conv-1" }],
+          external_tools: [{ tools: [{ name: "missing schema" }] }],
+        },
+      ],
     },
     {
       type: "create_agent",
