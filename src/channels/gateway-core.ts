@@ -25,7 +25,6 @@ import type {
   ChannelTurnSource,
 } from "./types";
 
-export const CHANNEL_GATEWAY_TOOL_SCOPE_ID = "channel-gateway";
 const MAX_ACCEPTED_CLIENT_MESSAGE_IDS = 2048;
 
 export interface ChannelGatewayClient {
@@ -58,7 +57,7 @@ export interface ChannelGatewayHooks {
   buildExternalTool(
     runtime: RuntimeScope,
     sources: ChannelTurnSource[],
-  ): Promise<ExternalToolDefinitionPayload>;
+  ): Promise<ExternalToolDefinitionPayload | null>;
   executeExternalTool(
     request: ExternalToolCallRequestMessage,
     sources: ChannelTurnSource[],
@@ -108,6 +107,8 @@ type GatewayRuntimeState = {
   active: ActiveGatewayTurn | null;
   registrationSignature: string | null;
   registration: Promise<void> | null;
+  registrationQueue: Promise<void>;
+  routedSources: ChannelTurnSource[];
   replayedControlRequestIds: Set<string>;
   submissionQueue: Promise<void>;
   hookQueue: Promise<void> | null;
@@ -199,10 +200,10 @@ export class ChannelGateway {
     this.disposers.push(
       client.onMessage((message) => this.handleMessage(message)),
       client.onExternalToolCall((request) => {
-        const sources = request.runtime
-          ? (this.states.get(runtimeKey(request.runtime))?.active?.sources ??
-            [])
-          : [];
+        const state = request.runtime
+          ? this.states.get(runtimeKey(request.runtime))
+          : undefined;
+        const sources = state?.active?.sources ?? state?.routedSources ?? [];
         return hooks.executeExternalTool(request, sources);
       }),
     );
@@ -239,6 +240,10 @@ export class ChannelGateway {
       sources: uniqueSources(delivery.sources),
       disposition: "submitting",
     });
+    state.routedSources = uniqueSources([
+      ...state.routedSources,
+      ...delivery.sources,
+    ]);
 
     try {
       await this.ensureRuntimeRegistration(state, delivery);
@@ -253,7 +258,6 @@ export class ChannelGateway {
               client_message_id: delivery.clientMessageId,
             },
           ],
-          external_tool_scope_ids: [CHANNEL_GATEWAY_TOOL_SCOPE_ID],
           image_failure_mode: "drop",
         },
       });
@@ -328,6 +332,7 @@ export class ChannelGateway {
     defaultPermissionMode?: ChannelDefaultPermissionMode,
   ): Promise<void> {
     const state = this.getState(runtime);
+    state.routedSources = uniqueSources(sources);
     await this.ensureRuntimeRegistration(state, {
       runtime,
       content: "",
@@ -346,6 +351,10 @@ export class ChannelGateway {
       payload: { kind: "approval_response", ...response },
     });
     return result.accepted;
+  }
+
+  getKnownRuntimes(): RuntimeScope[] {
+    return [...this.states.values()].map((state) => state.runtime);
   }
 
   getModelStatus(runtime: RuntimeScope): ChannelGatewayModelStatus | null {
@@ -391,6 +400,8 @@ export class ChannelGateway {
         active: null,
         registrationSignature: null,
         registration: null,
+        registrationQueue: Promise.resolve(),
+        routedSources: [],
         replayedControlRequestIds: new Set(),
         submissionQueue: Promise.resolve(),
         hookQueue: null,
@@ -427,7 +438,18 @@ export class ChannelGateway {
     return pending;
   }
 
-  private async ensureRuntimeRegistration(
+  private ensureRuntimeRegistration(
+    state: GatewayRuntimeState,
+    delivery: ChannelGatewayDelivery,
+  ): Promise<void> {
+    const registration = state.registrationQueue.then(() =>
+      this.performRuntimeRegistration(state, delivery),
+    );
+    state.registrationQueue = registration.catch(() => undefined);
+    return registration;
+  }
+
+  private async performRuntimeRegistration(
     state: GatewayRuntimeState,
     delivery: ChannelGatewayDelivery,
   ): Promise<void> {
@@ -453,13 +475,9 @@ export class ChannelGateway {
         recover_approvals: true,
         force_device_status: false,
         wait_for_replay: true,
+        preserve_skill_sources: true,
         client_info: { name: "channel-gateway", title: "Channel Gateway" },
-        external_tools: [
-          {
-            scope_id: CHANNEL_GATEWAY_TOOL_SCOPE_ID,
-            tools: [tool],
-          },
-        ],
+        external_tools: tool ? [{ tools: [tool] }] : [],
       })
       .then((response) => {
         if (!response.success) {

@@ -812,7 +812,6 @@ export interface ExternalToolDefinitionPayload {
   description: string;
   parameters: Record<string, unknown>;
 }
-
 export interface RuntimeStartExternalToolsGroup {
   /** Hidden controller-defined scope used to select these tools on input turns. */
   scope_id?: string;
@@ -835,6 +834,7 @@ export interface RuntimeStartCommand {
   /** Initial permission mode for this runtime scope. */
   mode?: DevicePermissionMode;
   skill_sources?: readonly ("bundled" | "global" | "agent" | "project")[];
+  /** Preserve the current override when skill_sources is omitted. */ preserve_skill_sources?: boolean;
   /** Optional client metadata for diagnostics/future protocol negotiation. */
   client_info?: RuntimeStartClientInfo;
   /** Whether to probe backend state for stale pending approvals before replaying state. Defaults to true. */

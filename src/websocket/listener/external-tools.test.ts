@@ -69,7 +69,7 @@ describe("listener runtime_start external tool bridge", () => {
     setActiveRuntime(null);
   });
 
-  test("connected listener startup installs the executor for runtime-scoped tools", async () => {
+  test("process-owned turns execute unscoped runtime tools through their controller", async () => {
     const runtime = createRuntime();
     const sent: ExternalToolCallRequestMessage[] = [];
     const transport: LocalTransport = {
@@ -137,7 +137,6 @@ describe("listener runtime_start external tool bridge", () => {
         {
           clientToolAllowlist: ["MessageChannel"],
           runtimeContext: {
-            connectionId: options.connectionId,
             agentId: "agent-1",
             conversationId: "conv-1",
           },

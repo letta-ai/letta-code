@@ -127,6 +127,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
       cwd: "/tmp/project",
       mode: "acceptEdits",
       skill_sources: [],
+      preserve_skill_sources: true,
       client_info: { name: "test", title: "Test", version: "1.0.0" },
       external_tools: [
         {
@@ -231,6 +232,12 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r0",
       agent_id: "agent-1",
       skill_sources: ["bundled", "invalid"],
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      preserve_skill_sources: "yes",
     },
     {
       type: "runtime_start",

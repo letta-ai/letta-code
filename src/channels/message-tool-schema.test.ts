@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   buildDynamicMessageChannelSchema,
   buildDynamicMessageChannelToolDefinition,
-  clearDynamicMessageChannelToolCache,
+  clearMessageChannelDiscoveryErrors,
 } from "@/channels/message-tool";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
 import type { ChannelAdapter } from "@/channels/types";
@@ -34,7 +34,7 @@ describe("buildDynamicMessageChannelSchema", () => {
     if (registry) {
       await registry.stopAll();
     }
-    clearDynamicMessageChannelToolCache();
+    clearMessageChannelDiscoveryErrors();
   });
 
   test("injects active channel enum and plugin-owned actions", async () => {
