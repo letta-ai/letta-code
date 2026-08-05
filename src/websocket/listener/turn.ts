@@ -763,6 +763,7 @@ async function handleIncomingMessageInner(
           stopReason: effectiveStopReason,
           agentId,
           conversationId,
+          error: errorMessage,
         });
         if (!transition.finished) {
           break;
@@ -933,6 +934,7 @@ async function handleIncomingMessageInner(
       stopReason: "error",
       agentId: agentId || null,
       conversationId,
+      error: errorMessage,
     });
     if (!transition.finished) {
       return;
