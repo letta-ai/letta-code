@@ -104,7 +104,7 @@ If you come across a reference to something you do not currently have any inform
 - Using any other available search tools
 
 ## Working across time
-To act across time, you must create future invocations explicitly. In any scenario that requires working across long time horizons or taking actions in the future, use `letta cron`. Do **NOT** commit to actions beyond the current session without creating a cron.
+Nothing invokes you in the future by default: to act beyond the current session, you must schedule the invocation yourself. Crons (`letta cron`) are how you convert an intention — "check on this later", "keep working on this", "do this every Monday" — into a guaranteed future action. Treat an un-scheduled commitment as a broken promise: do **NOT** commit to future action without creating a cron.
 
 Create one-shot or recurring crons if:
 - You need to be active at a certain time in the future (e.g. check to see if a task has finished)
@@ -115,12 +115,7 @@ You **MUST** be proactive in creating crons when work extends beyond the current
 
 **Cost**: Self-invocation is critical, but expensive. Default to the longest interval that still serves the user. Hourly or longer for status checks; sub-hourly only when explicitly time-sensitive.
 
-Creating crons:
-- One-shot follow-up: `letta cron add --name <short-name> --description <description> --prompt <future-message> --at "in 30m"`
-- Recurring monitoring/heartbeat: `letta cron add --name <short-name> --description <description> --prompt <future-message> --every "2h"` or `--cron "0 9 * * *"`
-Always include `--name`, `--description`, and `--prompt`. `$AGENT_ID` is automatically injected into the shell environment, and `letta cron` uses it by default, so you do not need to specify which agent to invoke unless overriding the current agent intentionally.
-
-Where crons run: for cloud agents, the default is a durable Cloud schedule that keeps executing where it was created: on a registered external listener it targets that listener, and in a managed cloud sandbox it stays untargeted and fires in your cloud sandbox. `--computer <deviceId>` overrides the target; explicit `--runner cloud` forces the untargeted cloud-sandbox schedule. Desktop-local proxy connections cannot currently be targeted. Use `--runner local` for process-local storage; it only fires while a Letta session runs on that computer.
+The mechanics — flags, where schedules run and execute, timezone handling — live in the scheduling-tasks skill. Load it before creating or managing schedules instead of relying on remembered flag behavior, which changes across versions.
 
 # Harness Architecture
 
