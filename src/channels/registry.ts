@@ -9,6 +9,7 @@
  * 4. Buffered messages flush through the registered onMessage handler
  */
 
+import { ChannelAccountLifecycle } from "./account-lifecycle";
 import {
   getChannelAccountWithSecrets,
   hydrateChannelAccountSecrets,
@@ -100,6 +101,7 @@ export function getActiveChannelIds(): string[] {
 
 type ChannelStartupOptions = {
   logger?: ChannelStartupLogger;
+  signal?: AbortSignal;
 };
 
 export interface ChannelStartupFailure {
@@ -159,6 +161,9 @@ export function formatChannelStartupFailures(
 
 export class ChannelRegistry {
   private readonly adapters = new Map<string, ChannelAdapter>();
+  private readonly accountLifecycle = new ChannelAccountLifecycle(
+    (key, adapter) => this.unregisterAdapterIfCurrent(key, adapter),
+  );
   private ready = false;
   private messageHandler: ChannelMessageHandler | null = null;
   private eventHandler: ((event: ChannelRegistryEvent) => void) | null = null;
@@ -249,6 +254,15 @@ export class ChannelRegistry {
     accountId = LEGACY_CHANNEL_ACCOUNT_ID,
   ): ChannelAdapter | null {
     return this.adapters.get(this.getAdapterKey(channelId, accountId)) ?? null;
+  }
+
+  private unregisterAdapterIfCurrent(
+    key: string,
+    adapter: ChannelAdapter,
+  ): void {
+    if (this.adapters.get(key) === adapter) {
+      this.adapters.delete(key);
+    }
   }
 
   getActiveChannelIds(): string[] {
@@ -560,8 +574,26 @@ export class ChannelRegistry {
     accountId: string,
     options?: ChannelStartupOptions,
   ): Promise<boolean> {
+    const key = this.getAdapterKey(channelId, accountId);
+    const identity = { key, channelId, accountId };
+    const generation = this.accountLifecycle.begin(key);
+    const awaitStep = <T>(promise: Promise<T>): Promise<T> =>
+      this.accountLifecycle.awaitStep(promise, options?.signal, identity);
+    const assertCurrent = (): void => {
+      this.accountLifecycle.assertCurrent({
+        ...identity,
+        generation,
+        signal: options?.signal,
+      });
+    };
+    let adapter: ChannelAdapter | undefined;
+    let startPromise: Promise<void> | undefined;
+
     logChannelStartup(options?.logger, `starting ${channelId}/${accountId}`);
-    const account = await getChannelAccountWithSecrets(channelId, accountId);
+    const account = await awaitStep(
+      getChannelAccountWithSecrets(channelId, accountId),
+    );
+    assertCurrent();
     if (!account) {
       logChannelStartup(
         options?.logger,
@@ -572,11 +604,12 @@ export class ChannelRegistry {
 
     if (isSignalChannelAccount(account)) {
       const conflict = findSignalBaseUrlConflictForStart(
-        (await listChannelAccountsWithSecrets("signal")).filter(
+        (await awaitStep(listChannelAccountsWithSecrets("signal"))).filter(
           isSignalChannelAccount,
         ),
         account,
       );
+      assertCurrent();
       if (conflict) {
         const error = buildSignalBaseUrlConflictError(conflict);
         logChannelStartup(options?.logger, error);
@@ -593,31 +626,46 @@ export class ChannelRegistry {
     loadTargetStore(channelId);
 
     const existing = this.getAdapter(channelId, accountId);
-    if (existing?.isRunning()) {
+    if (existing) {
       logChannelStartup(
         options?.logger,
         `stopping existing adapter for ${channelId}/${accountId}`,
       );
-      await existing.stop();
+      this.unregisterAdapterIfCurrent(key, existing);
+      try {
+        await awaitStep(existing.stop());
+      } catch (error) {
+        this.accountLifecycle.retire(key, existing, undefined);
+        throw error;
+      }
     }
-    this.adapters.delete(this.getAdapterKey(channelId, accountId));
+    assertCurrent();
 
     logChannelStartup(
       options?.logger,
       `loading plugin for ${account.channel}/${accountId}`,
     );
-    const plugin = await loadChannelPlugin(account.channel);
+    const plugin = await awaitStep(loadChannelPlugin(account.channel));
+    assertCurrent();
     logChannelStartup(
       options?.logger,
       `creating adapter for ${account.channel}/${accountId}`,
     );
-    const adapter = await plugin.createAdapter(account);
-    this.registerAdapter(adapter);
-    logChannelStartup(
-      options?.logger,
-      `starting adapter for ${account.channel}/${accountId}`,
-    );
-    await adapter.start({ logger: options?.logger });
+    adapter = await awaitStep(Promise.resolve(plugin.createAdapter(account)));
+    try {
+      assertCurrent();
+      this.registerAdapter(adapter);
+      logChannelStartup(
+        options?.logger,
+        `starting adapter for ${account.channel}/${accountId}`,
+      );
+      startPromise = adapter.start({ logger: options?.logger });
+      await awaitStep(startPromise);
+      assertCurrent();
+    } catch (error) {
+      this.accountLifecycle.retire(key, adapter, startPromise);
+      throw error;
+    }
     logChannelStartup(
       options?.logger,
       `started adapter for ${account.channel}/${accountId}`,
@@ -634,15 +682,13 @@ export class ChannelRegistry {
     }
 
     for (const adapter of adapters) {
-      if (adapter.isRunning()) {
-        await adapter.stop();
-      }
-      this.adapters.delete(
-        this.getAdapterKey(
-          adapter.channelId ?? adapter.id,
-          adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
-        ),
+      const key = this.getAdapterKey(
+        adapter.channelId ?? adapter.id,
+        adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
       );
+      this.accountLifecycle.begin(key);
+      this.unregisterAdapterIfCurrent(key, adapter);
+      await adapter.stop();
     }
 
     return true;
@@ -652,14 +698,14 @@ export class ChannelRegistry {
     channelId: string,
     accountId: string,
   ): Promise<boolean> {
+    const key = this.getAdapterKey(channelId, accountId);
+    this.accountLifecycle.begin(key);
     const adapter = this.getAdapter(channelId, accountId);
     if (!adapter) {
       return false;
     }
-    if (adapter.isRunning()) {
-      await adapter.stop();
-    }
-    this.adapters.delete(this.getAdapterKey(channelId, accountId));
+    this.unregisterAdapterIfCurrent(key, adapter);
+    await adapter.stop();
     return true;
   }
 
@@ -694,11 +740,16 @@ export class ChannelRegistry {
    * Only called on actual process shutdown, NOT on WS disconnect.
    */
   async stopAll(): Promise<void> {
+    this.accountLifecycle.shutdown();
     for (const adapter of Array.from(this.adapters.values())) {
-      if (adapter.isRunning()) {
-        await adapter.stop();
-      }
+      const key = this.getAdapterKey(
+        adapter.channelId ?? adapter.id,
+        adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID,
+      );
+      this.accountLifecycle.begin(key);
+      await adapter.stop();
     }
+    this.adapters.clear();
     this.ready = false;
     this.messageHandler = null;
     this.eventHandler = null;
