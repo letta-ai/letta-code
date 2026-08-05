@@ -1,11 +1,10 @@
 import type {
   ChannelRoute,
-  ChannelThreadContext,
-  ChannelThreadContextEntry,
   ChannelTurnSource,
   InboundChannelMessage,
   OutboundChannelMessage,
 } from "./types";
+import { buildChannelNotificationXml } from "./xml";
 
 export interface BuildChannelTurnSourceParams {
   message: InboundChannelMessage;
@@ -33,48 +32,6 @@ export interface BuildOutboundChannelMessageFromTurnSourceParams {
   text: string;
 }
 
-function formatSenderLabel(entry: ChannelThreadContextEntry): string {
-  const senderName = entry.senderName?.trim();
-  const senderId = entry.senderId?.trim();
-  if (senderName && senderId && senderName !== senderId) {
-    return `${senderName}:${senderId}`;
-  }
-  if (senderName) {
-    return senderName;
-  }
-  if (senderId) {
-    return senderId;
-  }
-  return "unknown";
-}
-
-function formatThreadContextEntry(entry: ChannelThreadContextEntry): string {
-  const messageId = entry.messageId ? `<${entry.messageId}>` : "";
-  return `[${formatSenderLabel(entry)}]${messageId}:${entry.text}`;
-}
-
-function formatThreadContext(context: ChannelThreadContext): string {
-  const lines: string[] = [];
-  const label = context.label?.trim();
-  lines.push(label ? `--- ${label} ---` : "--- Thread Context ---");
-  if (context.starter) {
-    lines.push(`starter: ${formatThreadContextEntry(context.starter)}`);
-  }
-  for (const entry of context.history ?? []) {
-    lines.push(formatThreadContextEntry(entry));
-  }
-  lines.push("--- End Thread Context ---");
-  return `${lines.join("\n")}\n\n`;
-}
-
-function formatInboundSender(message: InboundChannelMessage): string {
-  const senderName = message.senderName?.trim();
-  if (senderName && senderName !== message.senderId) {
-    return `${senderName}:${message.senderId}`;
-  }
-  return message.senderId;
-}
-
 export function buildChannelTurnSource(
   params: BuildChannelTurnSourceParams,
 ): ChannelTurnSource {
@@ -96,16 +53,7 @@ export function buildChannelTurnSource(
 export function formatInboundChannelMessageForAgent(
   params: FormatInboundChannelMessageParams,
 ): string {
-  const { message } = params;
-  const context = message.threadContext
-    ? formatThreadContext(message.threadContext)
-    : "";
-  const chatLabel = message.chatLabel?.trim() || message.chatId;
-  const timestamp = new Date(message.timestamp).toISOString();
-  const prefix = `[${message.channel}:${chatLabel}][${formatInboundSender(
-    message,
-  )}]<${timestamp}>:`;
-  return `${context}${prefix}${message.text}`;
+  return buildChannelNotificationXml(params.message);
 }
 
 function formatLegacyBatchedSender(message: ChannelBatchMessage): string {
