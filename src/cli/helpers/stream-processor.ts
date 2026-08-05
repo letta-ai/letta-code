@@ -11,9 +11,8 @@ export interface ApprovalRequest {
   toolArgs: string;
   /**
    * Server-assigned id of the approval_request_message this tool call arrived
-   * on. Downstream emissions about this tool call (client_tool_start/end,
-   * synthesized interrupt tool returns) must reuse this id instead of minting
-   * one (LET-10608).
+   * on. Client tool lifecycle emissions reuse this id instead of minting one
+   * (LET-10608).
    */
   messageId?: string;
 }

@@ -353,9 +353,10 @@ export function emitInterruptToolReturnMessage(
       {
         type: "message",
         message_type: "tool_return_message",
-        id:
-          runtime.approvalMessageIdByToolCallId.get(toolReturn.tool_call_id) ??
-          `synthetic-${uuidPrefix}-${crypto.randomUUID()}`,
+        // No persisted tool_return_message exists yet. Use a synthetic id
+        // outside Core's `message-*` namespace; the real approval message id
+        // identifies the request, not this return row (LET-10608).
+        id: `synthetic-${uuidPrefix}-${crypto.randomUUID()}`,
         date: new Date().toISOString(),
         run_id: resolvedRunId,
         status: toolReturn.status,
@@ -551,9 +552,9 @@ export function createToolExecutionOutputEmitter(
 
     const existing = outputByToolCallId.get(toolCallId);
     const outputState = existing ?? {
-      messageId:
-        runtime.approvalMessageIdByToolCallId.get(toolCallId) ??
-        `synthetic-tool-return-stream-${toolCallId}`,
+      // Stable across snapshots for this tool call, but outside Core's
+      // `message-*` namespace because no persisted return row exists yet.
+      messageId: `synthetic-tool-return-stream-${toolCallId}`,
       stdout: "",
       stderr: "",
       dirty: false,
