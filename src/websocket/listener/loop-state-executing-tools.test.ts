@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
+  createToolExecutionOutputEmitter,
+  emitInterruptToolReturnMessage,
   emitToolExecutionAbortedEvents,
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
@@ -187,5 +189,31 @@ describe("emitToolExecutionAbortedEvents", () => {
     });
 
     expect(socket.sentPayloads).toHaveLength(0);
+  });
+
+  test("keeps synthesized return rows out of the persisted message namespace", () => {
+    const runtime = createScopedRuntime();
+    const socket = new MockSocket();
+
+    emitInterruptToolReturnMessage(socket, runtime, [
+      {
+        type: "tool",
+        tool_call_id: "tool-call-1",
+        status: "error",
+        tool_return: "interrupted",
+      },
+    ]);
+    const output = createToolExecutionOutputEmitter(socket, runtime, {});
+    output("tool-call-2", "streamed output");
+    output.flush();
+
+    const ids = socket.sentPayloads
+      .map((payload) => JSON.parse(payload))
+      .filter((frame) => frame.type === "stream_delta")
+      .map((frame) => frame.delta.id);
+    expect(ids).toHaveLength(2);
+    expect(ids.every((id) => !id.startsWith("message-"))).toBe(true);
+    expect(ids[0]).toStartWith("synthetic-interrupt-tool-return-");
+    expect(ids[1]).toBe("synthetic-tool-return-stream-tool-call-2");
   });
 });
