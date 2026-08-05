@@ -43,6 +43,7 @@ describe("test process env helpers", () => {
     expect(env.LETTA_MEMORY_DIR).toBeUndefined();
     expect(env.MEMORY_DIR).toBeUndefined();
     expect(env.LETTA_DISABLE_SESSION_PERSIST).toBe("1");
+    expect(env.LETTA_SKIP_KEYCHAIN_CHECK).toBe("1");
     expect(env.DISABLE_AUTOUPDATER).toBe("1");
   });
 

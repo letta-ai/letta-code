@@ -43,6 +43,8 @@ async function runIsolatedClientScript(
     HOME: homeDir,
     USERPROFILE: homeDir,
     LETTA_CODE_AGENT_ROLE: "subagent",
+    // This test mocks secure-token reads; do not let startup probe the real macOS keychain.
+    LETTA_SKIP_KEYCHAIN_CHECK: "1",
   };
   delete env.LETTA_API_KEY;
   delete env.LETTA_BASE_URL;
