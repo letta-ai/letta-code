@@ -3,6 +3,7 @@ import {
   isChannelAccountCreateCommand,
   isChannelAccountUpdateCommand,
   isChannelSetConfigCommand,
+  isListModelsCommand,
   isUpdateModelCommand,
   parseServerMessage,
 } from "@/websocket/listener/protocol-inbound";
@@ -22,6 +23,23 @@ describe("app-server protocol hard cut", () => {
 });
 
 describe("input protocol-inbound validators", () => {
+  test("accepts list_models with an optional runtime scope", () => {
+    expect(
+      isListModelsCommand({
+        type: "list_models",
+        request_id: "models-1",
+        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      }),
+    ).toBe(true);
+    expect(
+      isListModelsCommand({
+        type: "list_models",
+        request_id: "models-2",
+        runtime: { agent_id: "agent-1" },
+      }),
+    ).toBe(false);
+  });
+
   test("accepts create_message with interactive tools excluded", () => {
     const parsed = parseServerMessage(
       Buffer.from(

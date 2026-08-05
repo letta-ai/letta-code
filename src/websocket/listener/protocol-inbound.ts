@@ -976,15 +976,12 @@ export function isListModelsCommand(
   value: unknown,
 ): value is ListModelsCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    force?: unknown;
-  };
+  const c = value as Record<string, unknown>;
   return (
     c.type === "list_models" &&
     typeof c.request_id === "string" &&
-    (c.force === undefined || typeof c.force === "boolean")
+    (c.force === undefined || typeof c.force === "boolean") &&
+    (c.runtime === undefined || isRuntimeScope(c.runtime))
   );
 }
 

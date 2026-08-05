@@ -38,6 +38,7 @@ import type { ConversationForkBody } from "./conversation-fork-protocol";
 import type {
   ModelReasoningCapabilities,
   ModelReasoningEffort,
+  ModelRuntimeStatus,
 } from "./model-reasoning";
 import type { CronRunLogPage, CronTask } from "./schedule-protocol";
 
@@ -1399,12 +1400,9 @@ export interface ListModelsCommand {
   type: "list_models";
   /** Echoed back in the response for request correlation. */
   request_id: string;
-  /**
-   * Bypass the listener's availability cache and refetch from the backend.
-   * Sent by user-initiated refreshes so they can never be answered with a
-   * stale-but-within-TTL snapshot.
-   */
+  /** Bypass the listener's availability cache and refetch from the backend. */
   force?: boolean;
+  runtime?: RuntimeScope;
 }
 
 export type ConnectProviderStorageTarget = "local";
@@ -1627,6 +1625,7 @@ export interface ListModelsResponseMessage {
   available_handles?: string[] | null;
   /** BYOK provider name → base provider (e.g. "lc-anthropic" → "anthropic") */
   byok_provider_aliases?: Record<string, string>;
+  current_model?: ModelRuntimeStatus;
   error?: string;
 }
 

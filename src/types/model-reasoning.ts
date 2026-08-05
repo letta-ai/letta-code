@@ -14,3 +14,11 @@ export type ModelReasoningCapabilities = {
   supported_efforts?: ModelReasoningEffort[] | null;
   mandatory?: boolean;
 };
+
+export type ModelRuntimeStatus = {
+  modelHandle: string | null;
+  modelLabel: string;
+  scope: "agent" | "conversation";
+  contextWindow?: number;
+  providerType?: string;
+};

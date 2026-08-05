@@ -3,9 +3,15 @@ import {
   getReasoningTierOptionsForHandle,
   resolveReasoningTierLookupHandle,
 } from "@/agent/model";
-import type { ListModelsResponseModelEntry } from "@/types/protocol_v2";
+import type {
+  ListModelsResponseModelEntry,
+  UpdateModelPayload,
+} from "@/types/protocol_v2";
 import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
-import type { ChannelModelPickerData } from "./model-picker-types";
+import type {
+  ChannelModelPickerData,
+  ChannelReasoningSelection,
+} from "./model-picker-types";
 
 export function buildChannelReasoningOptions(
   modelHandle: string,
@@ -30,4 +36,19 @@ export function buildChannelReasoningOptions(
     });
   }
   return getReasoningTierOptionsForHandle(canonicalHandle, contextWindow);
+}
+
+export function buildChannelReasoningUpdatePayload(
+  modelHandle: string,
+  reasoningEffort: ChannelReasoningSelection,
+  options: NonNullable<ChannelModelPickerData["reasoningOptions"]>,
+): UpdateModelPayload | null {
+  const selected = options.find((option) => option.effort === reasoningEffort);
+  return selected
+    ? {
+        model_id: selected.modelId,
+        model_handle: modelHandle,
+        reasoning_effort: reasoningEffort,
+      }
+    : null;
 }

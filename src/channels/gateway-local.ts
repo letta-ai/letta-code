@@ -34,7 +34,10 @@ import {
   buildChannelModelReasoningUpdatedMessage,
   buildChannelModelReasoningUpdateFailedMessage,
 } from "./model-reasoning-command";
-import { buildChannelReasoningOptions } from "./model-reasoning-options";
+import {
+  buildChannelReasoningOptions,
+  buildChannelReasoningUpdatePayload,
+} from "./model-reasoning-options";
 import {
   type ChannelsCommand,
   handleChannelsProtocolCommand,
@@ -67,6 +70,18 @@ function providerTypeFromModelSettings(
 ): string | undefined {
   const providerType = modelSettings?.provider_type;
   return typeof providerType === "string" ? providerType : undefined;
+}
+
+function requireCurrentModelStatus(
+  response: ListModelsResponseMessage,
+): NonNullable<ListModelsResponseMessage["current_model"]> {
+  if (!response.success) {
+    throw new Error(response.error ?? "Failed to load model status");
+  }
+  if (!response.current_model) {
+    throw new Error("Listener did not return current model status");
+  }
+  return response.current_model;
 }
 
 async function executeChannelServiceCommand(
@@ -441,63 +456,42 @@ export async function startLocalChannelGateway(
     return response.success && response.aborted;
   });
 
-  const resolveCurrentChannelModelStatus = async (runtime: RuntimeScope) => {
-    let current = gateway.getModelStatus(runtime);
-    if (!current) {
-      await gateway.registerRuntime(
-        runtime,
-        registry.resolveTurnSourcesForScope(
-          runtime.agent_id,
-          runtime.conversation_id,
-        ),
-      );
-      current = gateway.getModelStatus(runtime);
-    }
-    if (!current) throw new Error("Runtime model status is unavailable");
-    return {
-      ...current,
-      modelLabel:
-        (current.modelHandle && getModelInfo(current.modelHandle)?.label) ||
-        current.modelHandle ||
-        "unknown",
-    };
-  };
-
   registry.setModelHandler(
     async ({ channelId, runtime, modelIdentifier, reasoningEffort }) => {
       if (!modelIdentifier && reasoningEffort === undefined) {
         try {
-          const status = await resolveCurrentChannelModelStatus(runtime);
           const listResponse = await client.request<ListModelsResponseMessage>(
             {
               type: "list_models",
               request_id: client.nextRequestId("channel-models"),
+              runtime,
             },
             { predicate: isListModelsResponse },
           );
-          const reasoningOptions =
-            listResponse.success && status.modelHandle
-              ? buildChannelReasoningOptions(
-                  status.modelHandle,
-                  listResponse.entries,
-                  status.contextWindow,
-                  status.providerType,
-                )
-              : [];
-          const modelPicker: ChannelModelPickerData | undefined =
-            listResponse.success
-              ? {
-                  current: status,
-                  entries: listResponse.entries,
-                  availableHandles: listResponse.available_handles,
-                  recentHandles: settingsManager.getRecentModels(),
-                  ...(reasoningOptions.length > 0 ? { reasoningOptions } : {}),
-                }
-              : undefined;
+          const status = requireCurrentModelStatus(listResponse);
+          gateway.updateModelStatus(runtime, status.modelHandle, {
+            contextWindow: status.contextWindow,
+            providerType: status.providerType,
+          });
+          const reasoningOptions = status.modelHandle
+            ? buildChannelReasoningOptions(
+                status.modelHandle,
+                listResponse.entries,
+                status.contextWindow,
+                status.providerType,
+              )
+            : [];
+          const modelPicker: ChannelModelPickerData = {
+            current: status,
+            entries: listResponse.entries,
+            availableHandles: listResponse.available_handles,
+            recentHandles: settingsManager.getRecentModels(),
+            ...(reasoningOptions.length > 0 ? { reasoningOptions } : {}),
+          };
           return {
             handled: true,
             text: buildChannelCurrentModelMessage(channelId, status),
-            ...(modelPicker ? { modelPicker } : {}),
+            modelPicker,
           };
         } catch (error) {
           return {
@@ -513,42 +507,35 @@ export async function startLocalChannelGateway(
       if (reasoningEffort !== undefined) {
         let modelLabel = "current model";
         try {
-          const status = await resolveCurrentChannelModelStatus(runtime);
+          const listResponse = await client.request<ListModelsResponseMessage>(
+            {
+              type: "list_models",
+              request_id: client.nextRequestId("channel-model-reasoning"),
+              runtime,
+            },
+            { predicate: isListModelsResponse },
+          );
+          const status = requireCurrentModelStatus(listResponse);
           modelLabel = status.modelLabel;
+          gateway.updateModelStatus(runtime, status.modelHandle, {
+            contextWindow: status.contextWindow,
+            providerType: status.providerType,
+          });
           if (!status.modelHandle) {
             throw new Error("Runtime model handle is unavailable");
           }
-          let reasoningOptions = buildChannelReasoningOptions(
+          const reasoningOptions = buildChannelReasoningOptions(
             status.modelHandle,
-            [],
+            listResponse.entries,
             status.contextWindow,
             status.providerType,
           );
-          if (reasoningOptions.length === 0) {
-            const listResponse =
-              await client.request<ListModelsResponseMessage>(
-                {
-                  type: "list_models",
-                  request_id: client.nextRequestId("channel-model-reasoning"),
-                },
-                { predicate: isListModelsResponse },
-              );
-            if (!listResponse.success) {
-              throw new Error(
-                listResponse.error ?? "Failed to load reasoning options",
-              );
-            }
-            reasoningOptions = buildChannelReasoningOptions(
-              status.modelHandle,
-              listResponse.entries,
-              status.contextWindow,
-              status.providerType,
-            );
-          }
-          const selectedOption = reasoningOptions.find(
-            (option) => option.effort === reasoningEffort,
+          const updatePayload = buildChannelReasoningUpdatePayload(
+            status.modelHandle,
+            reasoningEffort,
+            reasoningOptions,
           );
-          if (!selectedOption) {
+          if (!updatePayload) {
             return {
               handled: true,
               text: buildChannelModelReasoningUnsupportedMessage(channelId, {
@@ -564,11 +551,7 @@ export async function startLocalChannelGateway(
               type: "update_model",
               request_id: client.nextRequestId("channel-reasoning-update"),
               runtime,
-              payload: {
-                model_id: selectedOption.modelId,
-                model_handle: status.modelHandle,
-                reasoning_effort: reasoningEffort,
-              },
+              payload: updatePayload,
             },
             { predicate: isUpdateModelResponse },
           );
