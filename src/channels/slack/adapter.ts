@@ -156,9 +156,10 @@ export function createSlackAdapter(
   async function sendLifecycleErrorReply(
     source: ChannelTurnSource,
     errorText: string,
+    runId?: string | null,
   ): Promise<void> {
     const threadTs = resolveSlackSourceThreadTs(source);
-    const text = formatSlackLifecycleErrorMessage(errorText);
+    const text = formatSlackLifecycleErrorMessage(errorText, runId);
     const footnote = buildSlackChatFootnote(source);
     const blocks = footnote
       ? buildSlackReplyBlocksWithFootnote(text, footnote)
@@ -219,7 +220,7 @@ export function createSlackAdapter(
     await Promise.all(
       Array.from(uniqueReplySources.values()).map(async (source) => {
         try {
-          await sendLifecycleErrorReply(source, errorText);
+          await sendLifecycleErrorReply(source, errorText, event.runId);
         } catch (error) {
           console.warn(
             `[Slack] Failed to post lifecycle error for ${source.chatId}:`,

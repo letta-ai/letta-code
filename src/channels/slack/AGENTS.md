@@ -33,7 +33,7 @@ state render only through `assistant.threads.setStatus`.
 - Reactions do not deactivate status.
 - `end_turn` and `cancelled` clear status and post nothing.
 - `requires_approval` is a continuation boundary, not a terminal event.
-- `tool_rule` is quiet completion. Fatal stop reasons get one plain error line.
+- `tool_rule` is quiet completion. Fatal stop reasons get one code-block error.
 - Do not use `chat.startStream`, `chat.appendStream`, or `chat.stopStream` for
   progress. Do not add fallback progress transports.
 
