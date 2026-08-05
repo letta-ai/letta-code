@@ -5,12 +5,45 @@ import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
 } from "@/agent/subagents/subagent-launcher";
+import { LETTA_DISABLE_MODS_ENV } from "@/mods/disable";
 import { LETTA_INHERITED_CHANNEL_CONTEXT_ENV } from "@/runtime-context";
 
 const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;
 
 describe("composeSubagentChildEnv", () => {
+  test("reflection subagents disable mods in the child process only", () => {
+    const parentProcessEnv: NodeJS.ProcessEnv = {
+      HOME: "/home/user",
+      [LETTA_DISABLE_MODS_ENV]: "0",
+    };
+    const originalProcessValue = process.env[LETTA_DISABLE_MODS_ENV];
+
+    const env = composeSubagentChildEnv({
+      parentProcessEnv,
+      parentAgentId: PARENT_ID,
+      subagentType: "reflection",
+      launchProfile: "memory-subagent",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+
+    expect(env[LETTA_DISABLE_MODS_ENV]).toBe("1");
+    expect(parentProcessEnv[LETTA_DISABLE_MODS_ENV]).toBe("0");
+    expect(process.env[LETTA_DISABLE_MODS_ENV]).toBe(originalProcessValue);
+  });
+
+  test("non-reflection subagents do not disable mods by default", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: { HOME: "/home/user" },
+      parentAgentId: PARENT_ID,
+      subagentType: "general-purpose",
+      launchProfile: "default",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+
+    expect(env[LETTA_DISABLE_MODS_ENV]).toBeUndefined();
+  });
+
   test("normal subagent records parent identity without overriding memory dir", () => {
     const env = composeSubagentChildEnv({
       parentProcessEnv: { HOME: "/home/user" },

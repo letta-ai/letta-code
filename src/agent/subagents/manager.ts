@@ -455,6 +455,7 @@ async function executeSubagent(
       backendMode,
       localBackendStorageDir,
       parentAgentId,
+      subagentType: type,
       launchProfile: effectiveLaunchProfile,
       inheritedPrimaryRoot,
       memoryScope,
