@@ -53,7 +53,8 @@ import {
   emitLoopErrorNotice,
   emitRecoverableRetryNotice,
   emitRecoverableStatusNotice,
-  getConsumerLoopErrorMessage as getSafeTerminalError,
+  getConsumerLoopErrorMessage,
+  getTranscriptLoopErrorMessage as getSafeTerminalError,
 } from "./recoverable-notices";
 import {
   finalizeHandledRecoveryTurn,
@@ -762,7 +763,7 @@ async function handleIncomingMessageInner(
           cancelRequested: turnAbortSignal.aborted,
           abortSignal: turnAbortSignal,
         };
-        const terminalError = getSafeTerminalError(noticeParams);
+        const terminalError = getConsumerLoopErrorMessage(noticeParams);
         const transition = finishTurn({
           stopReason: effectiveStopReason,
           agentId,
@@ -804,14 +805,11 @@ async function handleIncomingMessageInner(
       });
       if (approvalResult.kind === "error") {
         const terminalRunId = runId || runtime.activeRunId;
-        const terminalError = getSafeTerminalError({
-          message: approvalResult.message,
-        });
         const transition = finishTurn({
           stopReason: "error",
           agentId,
           conversationId,
-          error: terminalError,
+          error: getSafeTerminalError({ message: approvalResult.message }),
         });
         if (!transition.finished) {
           return;
@@ -938,7 +936,7 @@ async function handleIncomingMessageInner(
       cancelRequested: turnAbortSignal.aborted,
       abortSignal: turnAbortSignal,
     };
-    const terminalError = getSafeTerminalError(noticeParams);
+    const terminalError = getConsumerLoopErrorMessage(noticeParams);
     const transition = finishTurn({
       stopReason: "error",
       agentId: agentId || null,
