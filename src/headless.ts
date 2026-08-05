@@ -119,6 +119,10 @@ import {
   emitHeadlessConversationOpen,
 } from "./headless-mod-adapter";
 import {
+  finalizeHeadlessStreamRecovery,
+  HEADLESS_STREAM_RECOVERY_POLICY,
+} from "./headless-stream-recovery";
+import {
   emitLocalToolCalls,
   emitLocalToolReturns,
 } from "./headless-tool-events";
@@ -2789,23 +2793,11 @@ ${SYSTEM_REMINDER_CLOSE}
         throw preStreamError;
       }
 
-      // For stream-json, output each chunk as it arrives
-      let stopReason: StopReasonType | null = null;
-      let approvals: Array<{
-        toolCallId: string;
-        toolName: string;
-        toolArgs: string;
-      }> = [];
-      let apiDurationMs: number;
-      let lastRunId: string | null = null;
       let approvalPendingRecovery = false;
 
+      let streamJsonHook: DrainStreamHook | undefined;
       if (outputFormat === "stream-json") {
-        const streamJsonHook: DrainStreamHook = ({
-          chunk,
-          shouldOutput,
-          errorInfo,
-        }) => {
+        streamJsonHook = ({ chunk, shouldOutput, errorInfo }) => {
           let shouldOutputChunk = shouldOutput;
 
           if (errorInfo && shouldOutput) {
@@ -2892,56 +2884,51 @@ ${SYSTEM_REMINDER_CLOSE}
 
           return { shouldOutput: shouldOutputChunk, shouldAccumulate: true };
         };
-
-        const result = await drainStreamWithResume(
-          stream,
-          buffers,
-          () => {},
-          sigintSignal,
-          undefined,
-          streamJsonHook,
-          reminderContextTracker,
-        );
-        stopReason = result.stopReason;
-        approvals = result.approvals || [];
-        apiDurationMs = result.apiDurationMs;
-        lastRunId = result.lastRunId || null;
-        if (lastRunId) lastKnownRunId = lastRunId;
-      } else {
-        // Normal mode: use drainStreamWithResume
-        const result = await drainStreamWithResume(
-          stream,
-          buffers,
-          () => {}, // No UI refresh needed in headless mode
-          sigintSignal,
-          undefined,
-          undefined,
-          reminderContextTracker,
-        );
-        stopReason = result.stopReason;
-        approvals = result.approvals || [];
-        apiDurationMs = result.apiDurationMs;
-        lastRunId = result.lastRunId || null;
-        if (lastRunId) lastKnownRunId = lastRunId;
       }
 
-      // Track API duration for this stream
+      const result = await drainStreamWithResume(
+        stream,
+        buffers,
+        () => {},
+        sigintSignal,
+        undefined,
+        streamJsonHook,
+        reminderContextTracker,
+        undefined,
+        HEADLESS_STREAM_RECOVERY_POLICY,
+      );
+      const { apiDurationMs, recoveryFailure, stopReason } = result;
+      const approvals = result.approvals || [];
+      const lastRunId = result.lastRunId || null;
+      const fallbackError = result.fallbackError ?? null;
+      if (lastRunId) lastKnownRunId = lastRunId;
+
       sessionStats.endTurn(apiDurationMs);
 
-      // Exit before dispatching tool calls produced after an interrupt.
       if (stopReason === "cancelled" || sigintSignal.aborted) {
         await exitInterrupted();
       }
 
-      // Check max turns after each turn (server may have taken multiple steps),
-      // but defer the limit when we're still resolving pending approvals.
+      const recoveryOutcome = recoveryFailure
+        ? await finalizeHeadlessStreamRecovery({
+            agentId: agent.id,
+            backend,
+            failure: recoveryFailure,
+          })
+        : null;
+
+      // Defer max turns while resolving approvals or stream recovery.
       // Otherwise we can exit while the backend is waiting for approval input,
       // leaving the run stuck in requires_approval.
-      if (stopReason !== "requires_approval" && !approvalPendingRecovery) {
+      if (
+        stopReason !== "requires_approval" &&
+        !approvalPendingRecovery &&
+        !recoveryFailure
+      ) {
         await checkMaxTurns();
       }
 
-      if (approvalPendingRecovery) {
+      if (approvalPendingRecovery && !recoveryFailure) {
         await resolveAllPendingApprovals();
         continue;
       }
@@ -3181,8 +3168,9 @@ ${SYSTEM_REMINDER_CLOSE}
       }
 
       const invalidIdsDetected =
-        isInvalidToolCallIdsError(detailFromRun) ||
-        isInvalidToolCallIdsError(latestErrorText);
+        !recoveryFailure &&
+        (isInvalidToolCallIdsError(detailFromRun) ||
+          isInvalidToolCallIdsError(latestErrorText));
       if (invalidIdsDetected) {
         if (outputFormat === "stream-json") {
           const recoveryMsg: RecoveryMessage = {
@@ -3229,8 +3217,7 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Unexpected stop reason (error, llm_api_error, etc.)
       // Before failing, check run metadata to see if this is a retriable error
-      // This handles cases where the backend sends a generic error stop_reason but the
-      // underlying cause is a transient LLM/network issue that should be retried
+      // for transient LLM/network failures.
 
       // Early exit for stop reasons that should never be retried
       const nonRetriableReasons: StopReasonType[] = [
@@ -3245,7 +3232,10 @@ ${SYSTEM_REMINDER_CLOSE}
       ];
       if (nonRetriableReasons.includes(stopReason)) {
         // Fall through to error display
-      } else if (llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES) {
+      } else if (
+        !recoveryFailure &&
+        llmApiErrorRetries < LLM_API_ERROR_MAX_RETRIES
+      ) {
         try {
           let errorType: string | undefined;
           let detail = detailFromRun ?? latestErrorText ?? "";
@@ -3423,13 +3413,14 @@ ${SYSTEM_REMINDER_CLOSE}
         .map((line) => ("text" in line ? line.text : ""))
         .filter(Boolean);
 
-      let errorMessage =
-        errorMessages.length > 0
+      let errorMessage = recoveryOutcome
+        ? recoveryOutcome.message
+        : errorMessages.length > 0
           ? errorMessages.join("; ")
-          : `Unexpected stop reason: ${stopReason}`;
+          : fallbackError || `Unexpected stop reason: ${stopReason}`;
 
       // Fetch detailed error from run metadata if available (same as TUI mode)
-      if (lastRunId && errorMessages.length === 0) {
+      if (lastRunId && errorMessages.length === 0 && !recoveryFailure) {
         try {
           const run = await getBackend().retrieveRun(lastRunId);
           if (run.metadata?.error) {
@@ -3465,6 +3456,9 @@ ${SYSTEM_REMINDER_CLOSE}
           message: errorMessage,
           stop_reason: stopReason,
           run_id: lastRunId ?? undefined,
+          ...(recoveryOutcome && {
+            stream_recovery: recoveryOutcome.details,
+          }),
           session_id: sessionId,
           uuid: `error-${lastRunId || randomUUID()}`,
         };

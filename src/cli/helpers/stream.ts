@@ -8,7 +8,6 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import {
   getStreamRequestContext,
   getStreamRequestStartTime,
-  type StreamRequestContext,
 } from "@/agent/message";
 import {
   type ConversationMessageStreamBody,
@@ -18,7 +17,6 @@ import {
 import {
   clearLastSDKDiagnostic,
   consumeLastSDKDiagnostic,
-  getClient,
 } from "@/backend/api/client";
 import { telemetry } from "@/telemetry";
 import { debugLog, debugWarn } from "@/utils/debug";
@@ -40,6 +38,16 @@ import { chunkLog } from "./chunk-log";
 import type { ContextTracker } from "./context-tracker";
 import type { ErrorInfo } from "./stream-processor";
 import { StreamProcessor } from "./stream-processor";
+import {
+  createStreamRecoveryAttemptAbort,
+  discoverFallbackRunIdWithTimeout,
+  nextStreamRecoveryDelayMs,
+  type StreamRecoveryFailure,
+  type StreamRecoveryPolicy,
+  shouldReplayRunForRecovery,
+  waitForStreamRecoveryDelay,
+  withStreamRecoveryTimeout,
+} from "./stream-recovery";
 
 export type ApprovalRequest = {
   toolCallId: string;
@@ -77,27 +85,27 @@ export type DrainResult = {
   approvals?: ApprovalRequest[]; // NEW: supports parallel approvals
   apiDurationMs: number; // time spent in API call
   fallbackError?: string | null; // Error message for when we can't fetch details from server (no run_id)
+  recoveryFailure?: StreamRecoveryFailure;
 };
 
-type RunsListResponse =
-  | Run[]
-  | {
-      getPaginatedItems?: () => Run[];
-    };
-
-type RunsListClient = {
-  runs: {
-    list: (query: {
-      conversation_id?: string | null;
-      agent_id?: string | null;
-      statuses?: string[] | null;
-      order?: string | null;
-      limit?: number | null;
-    }) => Promise<RunsListResponse>;
-  };
-};
-
-const FALLBACK_RUN_DISCOVERY_TIMEOUT_MS = 5000;
+function mergeApprovalRequests(
+  previous: ApprovalRequest[],
+  next: ApprovalRequest[],
+): ApprovalRequest[] {
+  const merged = previous.map((approval) => ({ ...approval }));
+  for (const approval of next) {
+    const existing = merged.find(
+      (candidate) => candidate.toolCallId === approval.toolCallId,
+    );
+    if (!existing) {
+      merged.push({ ...approval });
+      continue;
+    }
+    existing.toolName = approval.toolName || existing.toolName;
+    existing.toolArgs += approval.toolArgs || "";
+  }
+  return merged;
+}
 
 function summarizeStreamForDebug(stream: unknown): string {
   if (!stream || typeof stream !== "object") {
@@ -180,123 +188,6 @@ function abortStreamController(
   }
 
   controllerRecord.abort();
-}
-
-function hasPaginatedItems(
-  response: RunsListResponse,
-): response is { getPaginatedItems: () => Run[] } {
-  return (
-    !Array.isArray(response) && typeof response.getPaginatedItems === "function"
-  );
-}
-
-function parseRunCreatedAtMs(run: Run): number {
-  if (!run.created_at) return 0;
-  const parsed = Date.parse(run.created_at);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-export async function discoverFallbackRunIdWithTimeout(
-  client: RunsListClient,
-  ctx: StreamRequestContext,
-): Promise<string | null> {
-  return withTimeout(
-    discoverFallbackRunIdForResume(client, ctx),
-    FALLBACK_RUN_DISCOVERY_TIMEOUT_MS,
-    `Fallback run discovery timed out after ${FALLBACK_RUN_DISCOVERY_TIMEOUT_MS}ms`,
-  );
-}
-
-function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  timeoutMessage: string,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(timeoutMessage)),
-      timeoutMs,
-    );
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
-function toRunsArray(listResponse: RunsListResponse): Run[] {
-  if (Array.isArray(listResponse)) return listResponse;
-  if (hasPaginatedItems(listResponse)) {
-    return listResponse.getPaginatedItems() ?? [];
-  }
-  return [];
-}
-
-/**
- * Attempt to discover a run ID to resume when the initial stream failed before
- * any run_id-bearing chunk arrived.
- */
-export async function discoverFallbackRunIdForResume(
-  client: RunsListClient,
-  ctx: StreamRequestContext,
-): Promise<string | null> {
-  const statuses = ["running"];
-  const requestStartedAtMs = ctx.requestStartedAtMs;
-
-  const listCandidates = async (query: {
-    conversation_id?: string | null;
-    agent_id?: string | null;
-  }): Promise<Run[]> => {
-    const response = await client.runs.list({
-      ...query,
-      statuses,
-      order: "desc",
-      limit: 1,
-    });
-    return toRunsArray(response).filter((run) => {
-      if (!run.id) return false;
-      if (run.status !== "running") return false;
-      // Best-effort temporal filter: only consider runs created after
-      // this send request started. In rare concurrent-send races within
-      // the same conversation, this heuristic can still pick a neighbor run.
-      return parseRunCreatedAtMs(run) >= requestStartedAtMs;
-    });
-  };
-
-  const lookupQueries: Array<{
-    conversation_id?: string | null;
-    agent_id?: string | null;
-  }> = [];
-
-  if (ctx.conversationId === "default") {
-    // Default conversation lookup by conversation id first.
-    lookupQueries.push({ conversation_id: ctx.resolvedConversationId });
-  } else {
-    // Named conversation: first use the explicit conversation id.
-    lookupQueries.push({ conversation_id: ctx.conversationId });
-
-    // Keep resolved route as backup only when it differs.
-    if (ctx.resolvedConversationId !== ctx.conversationId) {
-      lookupQueries.push({ conversation_id: ctx.resolvedConversationId });
-    }
-  }
-
-  if (ctx.agentId) {
-    lookupQueries.push({ agent_id: ctx.agentId });
-  }
-
-  for (const query of lookupQueries) {
-    const candidates = await listCandidates(query);
-    if (candidates[0]?.id) return candidates[0].id;
-  }
-
-  return null;
 }
 
 export async function drainStream(
@@ -682,6 +573,7 @@ export async function drainStreamWithResume(
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
   seenSeqIdThreshold?: number | null,
+  recoveryPolicy?: StreamRecoveryPolicy,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
   recordTuiPerf("stream_lifecycle:start");
@@ -690,14 +582,6 @@ export async function drainStreamWithResume(
   // This is the real UUID OTID — distinct from the tool execution context ID
   // returned by getStreamToolContextId (which is ctx-{ts}-N, not meaningful for resume).
   const streamOtid = streamRequestContext?.otid ?? null;
-
-  let _client: Awaited<ReturnType<typeof getClient>> | undefined;
-  const lazyClient = async () => {
-    if (!_client) {
-      _client = await getClient();
-    }
-    return _client;
-  };
 
   // Attempt initial drain.
   // skipCancelToolsOnError=true: don't cancel tool calls on stream error here —
@@ -749,11 +633,8 @@ export async function drainStreamWithResume(
           streamRequestContext.conversationId,
           streamRequestContext.agentId,
         );
-        const client = await lazyClient();
-        runIdToResume = await discoverFallbackRunIdWithTimeout(
-          client,
-          streamRequestContext,
-        );
+        runIdToResume =
+          await discoverFallbackRunIdWithTimeout(streamRequestContext);
         debugLog(
           "stream",
           "Mid-stream resume: run discovery result: %s",
@@ -782,7 +663,9 @@ export async function drainStreamWithResume(
     }
   }
 
-  // If stream ended without proper stop_reason and we have resume info, try once to reconnect.
+  // If the stream ended without a proper stop_reason, reconnect immediately.
+  // Headless may opt into bounded retries and may also recover a generic error
+  // stop chunk when the run API confirms that the run is still recoverable.
   // Only resume if we have an abortSignal AND it's not aborted (explicit check prevents
   // undefined abortSignal from accidentally allowing resume after user cancellation).
   // Approval-pending conflicts are not resumable disconnects — let App's approval
@@ -792,44 +675,79 @@ export async function drainStreamWithResume(
   const isApprovalPendingConflict =
     result.fallbackError?.includes("waiting for approval on a tool call") ??
     false;
+  let lastObservedRun: Run | null = null;
+  let recoverGenericErrorStop = false;
+  const recoveryStartedAt = performance.now();
+  if (
+    recoveryPolicy &&
+    result.stopReason === "error" &&
+    result.sawStopReasonChunk &&
+    runIdToResume &&
+    abortSignal &&
+    !abortSignal.aborted
+  ) {
+    try {
+      const runId = runIdToResume;
+      lastObservedRun = await withStreamRecoveryTimeout(
+        () => getBackend().retrieveRun(runId),
+        recoveryPolicy.deadlineMs,
+        abortSignal,
+      );
+      recoverGenericErrorStop = shouldReplayRunForRecovery(lastObservedRun);
+    } catch (retrieveError) {
+      debugWarn(
+        "stream",
+        "Unable to verify generic error run before recovery: %s",
+        retrieveError instanceof Error
+          ? retrieveError.message
+          : String(retrieveError),
+      );
+    }
+  }
   const canResume =
     result.stopReason === "error" &&
-    !result.sawStopReasonChunk &&
+    (!result.sawStopReasonChunk || recoverGenericErrorStop) &&
     !isApprovalPendingConflict &&
     (runIdToResume || runIdSource === "otid") &&
     abortSignal &&
     !abortSignal.aborted;
 
+  let attemptedResume = false;
   if (canResume) {
     // Resume path: markCurrentLineAsFinished was skipped in the catch block.
     // If resume fails below, we call it in the catch. If no resume condition is
     // met (else branch), we call it there instead.
     // Preserve original state in case resume needs to merge or fails
     const originalFallbackError = result.fallbackError;
-    const originalApprovals = result.approvals;
-    const originalApproval = result.approval;
+    let carriedApprovals = result.approvals ?? [];
+    let attempts = 0;
+    let lastRecoveryError = originalFallbackError;
+    const maxAttempts = recoveryPolicy?.maxAttempts ?? 1;
+    const deadlineMs = recoveryPolicy?.deadlineMs ?? Number.POSITIVE_INFINITY;
+    const backend = getBackend();
 
-    // Log that we're attempting a stream resume
-    telemetry.trackError(
-      "stream_resume_attempt",
-      originalFallbackError || "Stream error (no client-side detail)",
-      "stream_resume",
-      {
-        runId: result.lastRunId ?? undefined,
-      },
-    );
-
-    debugWarn(
-      "stream",
-      "[MID-STREAM RESUME] Attempting (runId=%s, lastSeqId=%s, source=%s, otid=%s)",
-      runIdToResume ?? "none",
-      result.lastSeqId ?? 0,
-      runIdSource ?? "unknown",
-      streamOtid ?? "none",
-    );
-
-    try {
-      const backend = getBackend();
+    while (
+      attempts < maxAttempts &&
+      performance.now() - recoveryStartedAt < deadlineMs &&
+      !abortSignal.aborted
+    ) {
+      attemptedResume = true;
+      attempts += 1;
+      telemetry.trackError(
+        "stream_resume_attempt",
+        originalFallbackError || "Stream error (no client-side detail)",
+        "stream_resume",
+        { runId: result.lastRunId ?? undefined },
+      );
+      debugWarn(
+        "stream",
+        "[MID-STREAM RESUME] Attempt %d (runId=%s, lastSeqId=%s, source=%s, otid=%s)",
+        attempts,
+        runIdToResume ?? "none",
+        result.lastSeqId ?? 0,
+        runIdSource ?? "unknown",
+        streamOtid ?? "none",
+      );
 
       // Reset interrupted flag so resumed chunks can be processed by onChunk.
       // Without this, tool_return_message for server-side tools (web_search, fetch_webpage)
@@ -839,171 +757,190 @@ export async function drainStreamWithResume(
       buffers.commitGeneration = (buffers.commitGeneration || 0) + 1;
       buffers.interrupted = false;
 
-      // Create the resume stream: use OTID-based conversations endpoint only when
-      // run_id is unavailable (server resolves the exact run, safe for multi-client).
-      // When we already have run_id from stream chunks, use the run stream directly.
-      const resumeAbortRelay = createStreamAbortRelay(abortSignal);
-      let resumeStream: Stream<LettaStreamingResponse>;
       try {
-        resumeStream =
-          runIdSource === "otid" && streamOtid && streamRequestContext
-            ? await backend.streamConversationMessages(
-                streamRequestContext.resolvedConversationId,
-                {
-                  agent_id:
-                    streamRequestContext.conversationId === "default"
-                      ? (streamRequestContext.agentId ?? undefined)
+        const attemptAbort = recoveryPolicy
+          ? createStreamRecoveryAttemptAbort(
+              abortSignal,
+              deadlineMs - (performance.now() - recoveryStartedAt),
+            )
+          : null;
+        try {
+          const resumeAbortRelay = createStreamAbortRelay(
+            attemptAbort?.signal ?? abortSignal,
+          );
+          let resumeStream: Stream<LettaStreamingResponse>;
+          try {
+            resumeStream =
+              runIdSource === "otid" && streamOtid && streamRequestContext
+                ? await backend.streamConversationMessages(
+                    streamRequestContext.resolvedConversationId,
+                    {
+                      agent_id:
+                        streamRequestContext.conversationId === "default"
+                          ? (streamRequestContext.agentId ?? undefined)
+                          : undefined,
+                      otid: streamOtid,
+                      starting_after: result.lastSeqId ?? 0,
+                      batch_size: 1000,
+                    } as unknown as ConversationMessageStreamBody,
+                    resumeAbortRelay
+                      ? { signal: resumeAbortRelay.signal }
                       : undefined,
-                  otid: streamOtid,
-                  starting_after: result.lastSeqId ?? 0,
-                  batch_size: 1000,
-                } as unknown as ConversationMessageStreamBody,
-                resumeAbortRelay
-                  ? { signal: resumeAbortRelay.signal }
-                  : undefined,
-              )
-            : await backend.streamRunMessages(
-                runIdToResume as string,
-                {
-                  // If lastSeqId is null the stream failed before any seq_id-bearing
-                  // chunk arrived; use 0 to replay the run from the beginning.
-                  starting_after: result.lastSeqId ?? 0,
-                  batch_size: 1000,
-                } as unknown as RunMessageStreamBody,
-                resumeAbortRelay
-                  ? { signal: resumeAbortRelay.signal }
-                  : undefined,
-              );
-      } catch (resumeError) {
-        resumeAbortRelay?.cleanup();
-        throw resumeError;
-      }
-      resumeAbortRelay?.attach(resumeStream as object);
+                  )
+                : await backend.streamRunMessages(
+                    runIdToResume as string,
+                    {
+                      starting_after: result.lastSeqId ?? 0,
+                      batch_size: 1000,
+                    } as unknown as RunMessageStreamBody,
+                    resumeAbortRelay
+                      ? { signal: resumeAbortRelay.signal }
+                      : undefined,
+                  );
+          } catch (resumeError) {
+            resumeAbortRelay?.cleanup();
+            throw resumeError;
+          }
+          resumeAbortRelay?.attach(resumeStream as object);
 
-      // Continue draining from where we left off
-      // Note: Don't pass onFirstMessage again - already called in initial drain
-      const resumeResult = await drainStream(
-        resumeStream,
-        buffers,
-        refresh,
-        abortSignal,
-        undefined,
-        onChunkProcessed,
-        contextTracker,
-        seenSeqIdThreshold,
-        true, // isResumeStream
-      );
-
-      // Use the resume result (should have proper stop_reason now)
-      // Clear the original stream error since we recovered
-      if (resumeResult.stopReason !== "error") {
-        debugWarn(
-          "stream",
-          "[MID-STREAM RESUME] ✅ Success (runId=%s, stopReason=%s)",
-          runIdToResume,
-          resumeResult.stopReason,
-        );
-      } else {
-        debugWarn(
-          "stream",
-          "[MID-STREAM RESUME] ⚠️ Resumed but terminal error persisted (runId=%s)",
-          runIdToResume,
-        );
-      }
-      result = resumeResult;
-
-      // The resumed stream uses a fresh streamProcessor that won't have
-      // approval_request_message chunks from before the disconnect (they
-      // had seq_id <= lastSeqId).
-      //
-      // Two cases:
-      // 1. All approval chunks were before the drop (resume has no approvals):
-      //    carry over the originals unchanged.
-      // 2. Approval args were split across the drop (original has prefix,
-      //    resume has suffix): merge them so the full args string is intact.
-      if (
-        result.stopReason === "requires_approval" &&
-        (originalApprovals?.length ?? 0) > 0
-      ) {
-        if ((result.approvals?.length ?? 0) === 0) {
-          // Case 1: full carry-over
-          result.approvals = originalApprovals;
-          result.approval = originalApproval;
-        } else {
-          // Case 2: merge prefix args from original with suffix args from resume
-          result.approvals = (result.approvals ?? []).map((resumeApproval) => {
-            const orig = originalApprovals?.find(
-              (a) => a.toolCallId === resumeApproval.toolCallId,
-            );
-            if (!orig) return resumeApproval;
-            return {
-              ...resumeApproval,
-              toolName: resumeApproval.toolName || orig.toolName,
-              toolArgs: (orig.toolArgs || "") + (resumeApproval.toolArgs || ""),
-            };
-          });
-          result.approval = result.approvals[0] ?? null;
+          const previousRunId = result.lastRunId ?? runIdToResume;
+          const previousSeqId = result.lastSeqId ?? null;
+          const resumeResult = await drainStream(
+            resumeStream,
+            buffers,
+            refresh,
+            abortSignal,
+            undefined,
+            onChunkProcessed,
+            contextTracker,
+            seenSeqIdThreshold,
+            true,
+            true,
+          );
+          resumeResult.lastRunId ??= previousRunId;
+          resumeResult.lastSeqId ??= previousSeqId;
+          runIdToResume = resumeResult.lastRunId ?? runIdToResume;
+          carriedApprovals = mergeApprovalRequests(
+            carriedApprovals,
+            resumeResult.approvals ?? [],
+          );
+          result = resumeResult;
+        } finally {
+          attemptAbort?.cleanup();
         }
-      } else if (
-        result.stopReason === "end_turn" &&
-        (originalApprovals?.length ?? 0) > 0
-      ) {
+
+        if (result.stopReason === "requires_approval") {
+          result.approvals = carriedApprovals;
+          result.approval = carriedApprovals[0] ?? null;
+        } else if (
+          result.stopReason === "end_turn" &&
+          carriedApprovals.length > 0
+        ) {
+          telemetry.trackError(
+            "stream_resume_end_turn_with_original_approvals",
+            "Resumed stream ended with end_turn after earlier approval chunks",
+            "stream_resume",
+            { runId: result.lastRunId ?? undefined },
+          );
+          result.stopReason = "requires_approval";
+          result.approvals = carriedApprovals;
+          result.approval = carriedApprovals[0] ?? null;
+        }
+
+        if (result.stopReason !== "error") {
+          debugWarn(
+            "stream",
+            "[MID-STREAM RESUME] Success (runId=%s, stopReason=%s)",
+            runIdToResume,
+            result.stopReason,
+          );
+          break;
+        }
+        lastRecoveryError = result.fallbackError ?? lastRecoveryError;
         debugWarn(
           "stream",
-          "[MID-STREAM RESUME] Coercing resumed end_turn to requires_approval because the original stream had approval chunks",
+          "[MID-STREAM RESUME] Resumed stream still errored (runId=%s)",
+          runIdToResume,
         );
+      } catch (resumeError) {
+        lastRecoveryError =
+          resumeError instanceof Error
+            ? resumeError.message
+            : String(resumeError);
         telemetry.trackError(
-          "stream_resume_end_turn_with_original_approvals",
-          "Resumed stream ended with end_turn after original stream emitted approval_request_message chunks",
+          "stream_resume_failed",
+          lastRecoveryError,
           "stream_resume",
-          {
-            runId: result.lastRunId ?? undefined,
-          },
+          { runId: result.lastRunId ?? undefined },
         );
-        result.stopReason = "requires_approval";
-        result.approvals = originalApprovals;
-        result.approval = originalApproval;
       }
-    } catch (resumeError) {
-      // Resume failed - cancel tools and finalize the streaming line now
-      // (both were skipped in the initial drain's catch block above)
+
+      if (result.stopReason !== "error" || abortSignal.aborted) break;
+
+      let shouldContinue = true;
+      if (recoveryPolicy && runIdToResume) {
+        try {
+          lastObservedRun = await withStreamRecoveryTimeout(
+            () => backend.retrieveRun(runIdToResume as string),
+            deadlineMs - (performance.now() - recoveryStartedAt),
+            abortSignal,
+          );
+          shouldContinue = shouldReplayRunForRecovery(lastObservedRun);
+        } catch (retrieveError) {
+          debugWarn(
+            "stream",
+            "Run status unavailable between resume attempts: %s",
+            retrieveError instanceof Error
+              ? retrieveError.message
+              : String(retrieveError),
+          );
+        }
+      }
+      if (!recoveryPolicy || !shouldContinue || attempts >= maxAttempts) break;
+
+      const elapsedMs = performance.now() - recoveryStartedAt;
+      const remainingMs = deadlineMs - elapsedMs;
+      if (remainingMs <= 0) break;
+      const delayMs = Math.min(
+        nextStreamRecoveryDelayMs(recoveryPolicy, attempts),
+        remainingMs,
+      );
+      if (!(await waitForStreamRecoveryDelay(delayMs, abortSignal))) break;
+    }
+
+    if (result.stopReason === "error") {
+      result.fallbackError = originalFallbackError ?? lastRecoveryError;
+      if (recoveryPolicy && !abortSignal.aborted) {
+        result.recoveryFailure = {
+          attempts,
+          finalRunStatus: lastObservedRun?.status ?? null,
+          finalStopReason: lastObservedRun?.stop_reason ?? null,
+          lastSeqId: result.lastSeqId ?? null,
+          runId: runIdToResume,
+          underlyingError:
+            originalFallbackError ??
+            lastRecoveryError ??
+            "Stream ended with a generic error",
+        };
+      }
       markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);
       markCurrentLineAsFinished(buffers);
-      // Stick with the error stop_reason and restore the original stream error for display
-      result.fallbackError = originalFallbackError;
-
-      const resumeErrorMsg =
-        resumeError instanceof Error
-          ? resumeError.message
-          : String(resumeError);
-      debugWarn(
-        "stream",
-        "[MID-STREAM RESUME] ❌ Failed (runId=%s): %s",
-        runIdToResume,
-        resumeErrorMsg,
-      );
-      telemetry.trackError(
-        "stream_resume_failed",
-        resumeErrorMsg,
-        "stream_resume",
-        {
-          runId: result.lastRunId ?? undefined,
-        },
-      );
     }
   }
 
   // Log when stream errored but resume was NOT attempted, with reasons why
   if (result.stopReason === "error") {
     const skipReasons: string[] = [];
-    if (result.sawStopReasonChunk) skipReasons.push("terminal_stop_reason");
+    if (result.sawStopReasonChunk && !recoverGenericErrorStop)
+      skipReasons.push("terminal_stop_reason");
+    if (isApprovalPendingConflict) skipReasons.push("approval_pending");
     if (!result.lastRunId && runIdSource !== "otid")
       skipReasons.push("no_run_id");
     if (!abortSignal) skipReasons.push("no_abort_signal");
     if (abortSignal?.aborted) skipReasons.push("user_aborted");
 
     // Only log if we actually skipped for a reason (i.e., we didn't enter the resume branch above)
-    if (skipReasons.length > 0) {
+    if (skipReasons.length > 0 && !attemptedResume) {
       // No resume — cancel tools and finalize the streaming line now
       // (both were skipped in the initial drain's catch block above)
       markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);

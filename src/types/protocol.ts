@@ -264,6 +264,21 @@ export interface ErrorMessage extends MessageEnvelope {
   run_id?: string;
   /** Nested API error when the error originated from Letta API */
   api_error?: LettaStreamingResponse.LettaErrorMessage;
+  /** Same-run stream recovery diagnostics when bounded reconnects fail. */
+  stream_recovery?: StreamRecoveryErrorDetails;
+}
+
+export interface StreamRecoveryErrorDetails {
+  code: "stream_recovery_failed";
+  attempts: number;
+  run_id: string | null;
+  last_sequence_id: number | null;
+  underlying_error: string;
+  final_run_status: string | null;
+  final_stop_reason: StopReasonType | null;
+  cancel_attempted: boolean;
+  cancel_succeeded: boolean;
+  cancel_error?: string;
 }
 
 export interface RetryMessage extends MessageEnvelope {
