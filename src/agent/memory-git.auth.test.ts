@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -648,9 +648,18 @@ describe("credential helper reset", () => {
     const { repo } = makeSyncedRepo();
     const key = "credential.https://api.letta.com.helper";
     git(repo, `config --local --add ${key} ""`);
-    git(
-      repo,
-      `config --local --add ${key} '!f() { echo username=stale; echo password=stale; }; f'`,
+    // Argv array instead of a shell string: cmd.exe on Windows does not strip
+    // single quotes, so a quoted helper value would split into extra args.
+    execFileSync(
+      "git",
+      [
+        "config",
+        "--local",
+        "--add",
+        key,
+        "!f() { echo username=stale; echo password=stale; }; f",
+      ],
+      { cwd: repo },
     );
 
     await refreshCredentialConfig(repo, { proxy: true });

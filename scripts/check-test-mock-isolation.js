@@ -91,7 +91,11 @@ function moduleMatches(moduleSpecifier, suffixes) {
 }
 
 function isRelativeInternalModule(moduleSpecifier) {
-  return moduleSpecifier.startsWith("../") || moduleSpecifier.startsWith("./");
+  return (
+    moduleSpecifier.startsWith("../") ||
+    moduleSpecifier.startsWith("./") ||
+    moduleSpecifier.startsWith("@/")
+  );
 }
 
 function lineAndColumn(sourceText, index) {
