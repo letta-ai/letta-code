@@ -101,6 +101,21 @@ export function summarizeV2Command(parsed: unknown): string {
     pushField(fields, "conversation_id", parsed.payload.conversation_id);
   } else if (parsed.type === "runtime_start") {
     fields.push(...summarizeRuntimeStartCommand(parsed));
+  } else if (
+    parsed.type === "runtime_external_tools_update" &&
+    Array.isArray(parsed.updates)
+  ) {
+    fields.push(`updates=${parsed.updates.length}`);
+    fields.push(
+      `runtimes=${parsed.updates.reduce((count, update) => {
+        return (
+          count +
+          (isRecord(update) && Array.isArray(update.runtimes)
+            ? update.runtimes.length
+            : 0)
+        );
+      }, 0)}`,
+    );
   } else {
     for (const key of [
       "agent_id",

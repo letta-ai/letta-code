@@ -62,7 +62,6 @@ import type {
   EditFileCommand,
   EnableMemfsCommand,
   ExecuteCommandCommand,
-  ExternalToolCallResponseCommand,
   FileOpsCommand,
   GetCwdMapCommand,
   GetExperimentsCommand,
@@ -116,6 +115,11 @@ function isExperimentId(value: unknown): value is ExperimentId {
 }
 
 import { isValidApprovalResponseBody } from "./approval";
+import {
+  isExternalToolCallResponseCommand,
+  isRuntimeExternalToolsUpdateCommand,
+  isRuntimeStartExternalToolsGroup,
+} from "./external-tool-protocol";
 import {
   isAppServerInfoCommand,
   isConversationForkCommand,
@@ -519,24 +523,6 @@ function isRuntimeStartClientInfo(value: unknown): boolean {
   );
 }
 
-function isExternalToolDefinitionPayload(value: unknown): boolean {
-  if (!isObjectRecord(value)) return false;
-  return (
-    typeof value.name === "string" &&
-    (value.label === undefined || typeof value.label === "string") &&
-    typeof value.description === "string" &&
-    isObjectRecord(value.parameters)
-  );
-}
-
-function isRuntimeStartExternalToolsGroup(value: unknown): boolean {
-  if (!isObjectRecord(value)) return false;
-  return (
-    (value.scope_id === undefined || typeof value.scope_id === "string") &&
-    Array.isArray(value.tools) &&
-    value.tools.every(isExternalToolDefinitionPayload)
-  );
-}
 export function isRuntimeStartCommand(
   value: unknown,
 ): value is RuntimeStartCommand {
@@ -567,33 +553,6 @@ export function isRuntimeStartCommand(
     (c.external_tools === undefined ||
       (Array.isArray(c.external_tools) &&
         c.external_tools.every(isRuntimeStartExternalToolsGroup)))
-  );
-}
-
-export function isExternalToolCallResponseCommand(
-  value: unknown,
-): value is ExternalToolCallResponseCommand {
-  if (!isObjectRecord(value)) return false;
-  if (
-    value.type !== "external_tool_call_response" ||
-    typeof value.request_id !== "string"
-  ) {
-    return false;
-  }
-  if (value.error !== undefined && typeof value.error !== "string") {
-    return false;
-  }
-  if (value.result === undefined) {
-    return typeof value.error === "string";
-  }
-  if (!isObjectRecord(value.result)) {
-    return false;
-  }
-  return (
-    Array.isArray(value.result.content) &&
-    value.result.content.every(isObjectRecord) &&
-    (value.result.is_error === undefined ||
-      typeof value.result.is_error === "boolean")
   );
 }
 
@@ -2197,6 +2156,7 @@ export function parseServerMessage(
       isAbortMessageCommand(parsed) ||
       isSyncCommand(parsed) ||
       isRuntimeStartCommand(parsed) ||
+      isRuntimeExternalToolsUpdateCommand(parsed) ||
       isExternalToolCallResponseCommand(parsed) ||
       isTerminalSpawnCommand(parsed) ||
       isTerminalInputCommand(parsed) ||

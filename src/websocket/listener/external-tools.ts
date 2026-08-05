@@ -8,6 +8,7 @@ import type {
   ExternalToolCallRequestMessage,
   ExternalToolCallResponseCommand,
   ExternalToolDefinitionPayload,
+  RuntimeExternalToolsUpdateGroup,
   RuntimeScope,
   RuntimeStartExternalToolsGroup,
 } from "@/types/protocol_v2";
@@ -216,6 +217,23 @@ export function registerRuntimeExternalTools(
     registeredTools.set(runtimeKey, tools);
   } else {
     registeredTools.delete(runtimeKey);
+  }
+}
+
+export function updateRuntimeExternalTools(
+  runtime: ListenerRuntime,
+  connectionId: ListenerConnectionId,
+  updates: readonly RuntimeExternalToolsUpdateGroup[],
+): void {
+  for (const update of updates) {
+    for (const runtimeScope of update.runtimes) {
+      registerRuntimeExternalTools(
+        runtime,
+        connectionId,
+        runtimeScope,
+        update.external_tools,
+      );
+    }
   }
 }
 

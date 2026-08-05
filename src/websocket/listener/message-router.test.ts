@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
+import {
+  clearExternalTools,
+  prepareToolExecutionContextForModel,
+} from "@/tools/manager";
 import { CHANNEL_SERVICE_COMMAND_TYPES } from "@/types/service-protocol";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
@@ -40,7 +44,85 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 describe("listener message router ownership handoff", () => {
-  afterEach(() => setActiveRuntime(null));
+  afterEach(() => {
+    clearExternalTools();
+    setActiveRuntime(null);
+  });
+
+  test("acknowledges batched external-tool registration without runtime startup", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socket = new MockSocket();
+    const sent: unknown[] = [];
+    setActiveRuntime(listener);
+    const handleMessage = createListenerMessageHandler({
+      runtime: listener,
+      socket: socket as unknown as WebSocket,
+      opts: makeListenerOptions(),
+      processQueuedTurn: async () => {},
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => null,
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime: () => runtime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend: (_target, payload) => {
+        sent.push(payload);
+        return true;
+      },
+      runDetachedListenerTask: () => {},
+      trackListenerError: () => {},
+      processIncomingMessage: async () => {},
+    });
+
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "runtime_external_tools_update",
+          request_id: "tools-1",
+          updates: [
+            {
+              runtimes: [{ agent_id: "agent-1", conversation_id: "conv-1" }],
+              external_tools: [
+                {
+                  tools: [
+                    {
+                      name: "MessageChannel",
+                      description: "Deliver a channel message",
+                      parameters: { type: "object", properties: {} },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(sent).toEqual([
+      {
+        type: "runtime_external_tools_update_response",
+        request_id: "tools-1",
+        success: true,
+      },
+    ]);
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["MessageChannel"],
+        runtimeContext: {
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    expect(prepared.clientTools.map((tool) => tool.name)).toEqual([
+      "MessageChannel",
+    ]);
+  });
 
   test("a direct message that loses the idle race is queued and later drained", async () => {
     const listener = createRuntime();

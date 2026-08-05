@@ -13,6 +13,7 @@ import {
   registerRuntimeExternalTools,
   rejectPendingExternalToolCalls,
   rejectPendingExternalToolCallsForConnection,
+  updateRuntimeExternalTools,
 } from "@/websocket/listener/external-tools";
 import {
   createRuntime,
@@ -289,6 +290,101 @@ describe("listener runtime_start external tool bridge", () => {
         description: "Lookup ticket for conversation B",
       }),
     ]);
+  });
+
+  test("applies batched runtime tool registrations without starting runtimes", async () => {
+    const { runtime, sent } = createMockRuntime();
+    installExternalToolBridge(runtime);
+    const runtimes = Array.from({ length: 350 }, (_, index) => ({
+      agent_id: "agent-1",
+      conversation_id: `conv-${index}`,
+    }));
+    updateRuntimeExternalTools(runtime, "client-1", [
+      {
+        runtimes,
+        external_tools: [
+          {
+            tools: [
+              {
+                name: "MessageChannel",
+                description: "Deliver through the channel gateway",
+                parameters: { type: "object", properties: {} },
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+
+    const routed = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["MessageChannel"],
+        runtimeContext: {
+          agentId: "agent-1",
+          conversationId: "conv-349",
+        },
+      },
+    );
+    const unrouted = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["MessageChannel"],
+        runtimeContext: {
+          agentId: "agent-1",
+          conversationId: "conv-missing",
+        },
+      },
+    );
+
+    expect(routed.clientTools.map((tool) => tool.name)).toEqual([
+      "MessageChannel",
+    ]);
+    expect(unrouted.clientTools).toEqual([]);
+    const delivered = await executeTool(
+      "MessageChannel",
+      {},
+      { toolContextId: routed.contextId, toolCallId: "call-batched" },
+    );
+    expect(delivered.status).toBe("success");
+    expect(sent[0]).toMatchObject({
+      runtime: { agent_id: "agent-1", conversation_id: "conv-349" },
+      tool_name: "MessageChannel",
+    });
+
+    const removedRuntime = runtimes.at(-1);
+    if (!removedRuntime) throw new Error("expected a routed runtime");
+    updateRuntimeExternalTools(runtime, "client-1", [
+      { runtimes: [removedRuntime], external_tools: [] },
+    ]);
+    const removed = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["MessageChannel"],
+        runtimeContext: {
+          agentId: "agent-1",
+          conversationId: "conv-349",
+        },
+      },
+    );
+    expect(removed.clientTools).toEqual([]);
+
+    rejectPendingExternalToolCallsForConnection(
+      runtime,
+      "client-1",
+      "gateway disconnected",
+    );
+    const afterDisconnect = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["MessageChannel"],
+        runtimeContext: {
+          agentId: "agent-1",
+          conversationId: "conv-348",
+        },
+      },
+    );
+    expect(afterDisconnect.clientTools).toEqual([]);
   });
 
   test("keeps same runtime tool registrations isolated by connection", async () => {

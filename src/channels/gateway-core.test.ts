@@ -30,6 +30,7 @@ import type {
 interface FakeClientOptions {
   startResponse?: Partial<RuntimeStartResponseMessage>;
   inputResponse?: Partial<InputAcceptedResponseMessage>;
+  toolUpdateWait?: Promise<void>;
 }
 
 class FakeClient implements ChannelGatewayClient {
@@ -48,6 +49,9 @@ class FakeClient implements ChannelGatewayClient {
     preserve_skill_sources?: boolean;
     external_tools?: unknown;
   }> = [];
+  readonly runtimeToolUpdates: Array<
+    import("@/types/app-server-protocol").RuntimeExternalToolsUpdateGroup
+  > = [];
   closeCalls = 0;
   // Mutable input response for per-test control
   inputResponse: { accepted: boolean; disposition: "started" | "queued" };
@@ -119,6 +123,20 @@ class FakeClient implements ChannelGatewayClient {
       ...(this.options.startResponse?.error
         ? { error: this.options.startResponse.error }
         : {}),
+    };
+  }
+
+  async runtimeExternalToolsUpdate(options: {
+    updates: readonly import("@/types/app-server-protocol").RuntimeExternalToolsUpdateGroup[];
+  }): Promise<
+    import("@/types/app-server-protocol").RuntimeExternalToolsUpdateResponseMessage
+  > {
+    this.runtimeToolUpdates.push(...options.updates);
+    await this.options.toolUpdateWait;
+    return {
+      type: "runtime_external_tools_update_response",
+      request_id: "runtime-external-tools-test",
+      success: true,
     };
   }
 
@@ -618,6 +636,89 @@ test("runtime registration happens before input submission", async () => {
     },
   ]);
 
+  gateway.close();
+});
+
+test("serializes routed tool publication with runtime registration", async () => {
+  let releaseToolUpdate!: () => void;
+  const toolUpdateWait = new Promise<void>((resolve) => {
+    releaseToolUpdate = resolve;
+  });
+  const client = new FakeClient({ toolUpdateWait });
+  const { hooks } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const source = makeSource();
+
+  const publication = gateway.updateRoutedRuntimeTools(
+    [
+      {
+        runtimes: [TEST_RUNTIME],
+        external_tools: [
+          {
+            tools: [
+              {
+                name: "MessageChannel",
+                description: "Send a message through a channel",
+                parameters: {},
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    [{ runtime: TEST_RUNTIME, sources: [source] }],
+  );
+  const registration = gateway.registerRuntime(TEST_RUNTIME, [source]);
+
+  await Bun.sleep(0);
+  expect(client.runtimeToolUpdates).toHaveLength(1);
+  expect(client.startedRuntimes).toHaveLength(0);
+
+  releaseToolUpdate();
+  await Promise.all([publication, registration]);
+  expect(client.startedRuntimes).toHaveLength(1);
+  gateway.close();
+});
+
+test("publishes hundreds of routed runtime tools without runtime_start", async () => {
+  const client = new FakeClient();
+  const { hooks } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const runtimes = Array.from({ length: 350 }, (_, index) => ({
+    agent_id: "agent-1",
+    conversation_id: `conv-${index}`,
+  }));
+
+  await gateway.updateRoutedRuntimeTools(
+    [
+      {
+        runtimes,
+        external_tools: [
+          {
+            tools: [
+              {
+                name: "MessageChannel",
+                description: "Send a message through a channel",
+                parameters: {},
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    runtimes.map((runtime) => ({
+      runtime,
+      sources: [
+        makeSource({
+          agentId: runtime.agent_id,
+          conversationId: runtime.conversation_id,
+        }),
+      ],
+    })),
+  );
+
+  expect(client.runtimeToolUpdates[0]?.runtimes).toHaveLength(350);
+  expect(client.startedRuntimes).toHaveLength(0);
   gateway.close();
 });
 

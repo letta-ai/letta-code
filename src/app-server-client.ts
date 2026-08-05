@@ -13,6 +13,8 @@ import type {
   ExternalToolCallResult,
   InputAcceptedResponseMessage,
   InputCommand,
+  RuntimeExternalToolsUpdateCommand,
+  RuntimeExternalToolsUpdateResponseMessage,
   RuntimeStartCommand,
   RuntimeStartResponseMessage,
   SyncCommand,
@@ -481,6 +483,32 @@ export class AppServerClient {
         ...options,
         predicate: (message): message is RuntimeStartResponseMessage =>
           message.type === "runtime_start_response",
+      },
+    );
+  }
+
+  runtimeExternalToolsUpdate(
+    command: Omit<RuntimeExternalToolsUpdateCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<RuntimeExternalToolsUpdateResponseMessage>,
+      "predicate"
+    > = {},
+  ): Promise<RuntimeExternalToolsUpdateResponseMessage> {
+    return this.request(
+      {
+        type: "runtime_external_tools_update",
+        request_id:
+          command.request_id ?? this.nextRequestId("runtime-external-tools"),
+        ...command,
+      },
+      {
+        ...options,
+        predicate: (
+          message,
+        ): message is RuntimeExternalToolsUpdateResponseMessage =>
+          message.type === "runtime_external_tools_update_response",
       },
     );
   }
