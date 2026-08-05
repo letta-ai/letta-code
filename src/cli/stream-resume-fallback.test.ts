@@ -2,17 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { Run } from "@letta-ai/letta-client/resources/agents/messages";
 import { discoverFallbackRunIdForResume } from "@/cli/helpers/stream-recovery";
 
-type RunsListClient = {
-  runs: {
-    list: (query: {
-      conversation_id?: string | null;
-      agent_id?: string | null;
-      statuses?: string[] | null;
-      order?: string | null;
-      limit?: number | null;
-    }) => Promise<Run[] | { getPaginatedItems?: () => Run[] }>;
-  };
-};
+type RunsListClient = Parameters<typeof discoverFallbackRunIdForResume>[0];
 
 function makeRunsListClient(
   runsList: RunsListClient["runs"]["list"],

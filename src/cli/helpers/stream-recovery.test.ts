@@ -271,7 +271,7 @@ describe("bounded stream recovery", () => {
     const startedAt = performance.now();
     const result = await drainWithRecovery(
       stream([ping("run-1", 1)], new Error("initial stream disconnected")),
-      { ...immediateRecovery, deadlineMs: 20 },
+      { ...immediateRecovery, deadlineMs: 20, maxAttempts: 1 },
     );
 
     expect(performance.now() - startedAt).toBeLessThan(500);

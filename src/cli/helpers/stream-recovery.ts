@@ -26,7 +26,7 @@ type RunsListResponse =
       getPaginatedItems?: () => Run[];
     };
 
-export type RunsListClient = {
+type RunsListClient = {
   runs: {
     list: (query: {
       agent_id?: string | null;

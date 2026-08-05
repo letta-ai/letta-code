@@ -13,6 +13,7 @@ import type {
   AssistantMessage as LettaAssistantMessage,
   Message as LettaMessage,
   ReasoningMessage as LettaReasoningMessage,
+  Run as LettaRun,
   LettaStreamingResponse,
   ToolCallMessage as LettaToolCallMessage,
   ToolCall,
@@ -274,7 +275,7 @@ export interface StreamRecoveryErrorDetails {
   run_id: string | null;
   last_sequence_id: number | null;
   underlying_error: string;
-  final_run_status: string | null;
+  final_run_status: NonNullable<LettaRun["status"]> | null;
   final_stop_reason: StopReasonType | null;
   cancel_attempted: boolean;
   cancel_succeeded: boolean;

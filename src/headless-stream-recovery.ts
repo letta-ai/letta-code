@@ -13,7 +13,7 @@ export const HEADLESS_STREAM_RECOVERY_POLICY: StreamRecoveryPolicy = {
   maxDelayMs: 2_000,
 };
 
-export type HeadlessStreamRecoveryCancellation = {
+type HeadlessStreamRecoveryCancellation = {
   attempted: boolean;
   error?: string;
   observedRunStatus?: StreamRecoveryFailure["finalRunStatus"];
@@ -21,12 +21,12 @@ export type HeadlessStreamRecoveryCancellation = {
   succeeded: boolean;
 };
 
-export type HeadlessStreamRecoveryOutcome = {
+type HeadlessStreamRecoveryOutcome = {
   details: StreamRecoveryErrorDetails;
   message: string;
 };
 
-export async function cancelAbandonedActiveRun(params: {
+async function cancelAbandonedActiveRun(params: {
   agentId: string;
   backend: Backend;
   failure: StreamRecoveryFailure;
@@ -83,18 +83,16 @@ export async function cancelAbandonedActiveRun(params: {
   }
 }
 
-export function formatStreamRecoveryFailure(
-  failure: StreamRecoveryFailure,
+function formatStreamRecoveryFailure(
+  details: StreamRecoveryErrorDetails,
 ): string {
-  return [
-    `Stream recovery failed after ${failure.attempts} attempt${failure.attempts === 1 ? "" : "s"}`,
-    failure.runId ? `for run ${failure.runId}` : "before a run ID was observed",
-    `(last sequence: ${failure.lastSeqId ?? "unknown"}, final status: ${failure.finalRunStatus ?? "unknown"}, final stop reason: ${failure.finalStopReason ?? "none"})`,
-    failure.underlyingError,
-  ].join(": ");
+  const target = details.run_id
+    ? `for run ${details.run_id}`
+    : "before a run ID was observed";
+  return `Stream recovery failed after ${details.attempts} attempt${details.attempts === 1 ? "" : "s"} ${target} (last sequence: ${details.last_sequence_id ?? "unknown"}, final status: ${details.final_run_status ?? "unknown"}, final stop reason: ${details.final_stop_reason ?? "none"}): ${details.underlying_error}`;
 }
 
-export function toStreamRecoveryErrorDetails(
+function toStreamRecoveryErrorDetails(
   failure: StreamRecoveryFailure,
   cancellation: HeadlessStreamRecoveryCancellation,
 ): StreamRecoveryErrorDetails {
@@ -120,8 +118,9 @@ export async function finalizeHeadlessStreamRecovery(params: {
   failure: StreamRecoveryFailure;
 }): Promise<HeadlessStreamRecoveryOutcome> {
   const cancellation = await cancelAbandonedActiveRun(params);
+  const details = toStreamRecoveryErrorDetails(params.failure, cancellation);
   return {
-    details: toStreamRecoveryErrorDetails(params.failure, cancellation),
-    message: formatStreamRecoveryFailure(params.failure),
+    details,
+    message: formatStreamRecoveryFailure(details),
   };
 }

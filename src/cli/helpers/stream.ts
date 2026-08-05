@@ -779,7 +779,7 @@ export async function drainStreamWithResume(
                       otid: streamOtid,
                       starting_after: result.lastSeqId ?? 0,
                       batch_size: 1000,
-                    } as unknown as ConversationMessageStreamBody,
+                    } satisfies ConversationMessageStreamBody,
                     resumeAbortRelay
                       ? { signal: resumeAbortRelay.signal }
                       : undefined,
@@ -789,7 +789,7 @@ export async function drainStreamWithResume(
                     {
                       starting_after: result.lastSeqId ?? 0,
                       batch_size: 1000,
-                    } as unknown as RunMessageStreamBody,
+                    } satisfies RunMessageStreamBody,
                     resumeAbortRelay
                       ? { signal: resumeAbortRelay.signal }
                       : undefined,
