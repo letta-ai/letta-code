@@ -126,8 +126,8 @@ routing flow:
 2. Letta Code enforces `dmPolicy` / `allowedUsers`.
 3. Letta Code resolves a route from `routing.yaml` or creates a pairing code.
 4. The routed message is delivered to the bound agent/conversation.
-5. `MessageChannel` becomes available when the conversation has an active route
-   for at least one running channel adapter.
+5. ChannelGateway registers `MessageChannel` for the conversation when it has an
+   active route on at least one running channel adapter.
 
 Plugins that need Slack/Discord-style auto-routing or rich Desktop management
 remain first-party/bundled work for now. Custom plugins can still expose custom

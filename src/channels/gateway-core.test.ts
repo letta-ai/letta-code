@@ -45,6 +45,7 @@ class FakeClient implements ChannelGatewayClient {
     agent_id?: string;
     conversation_id?: string;
     mode?: string;
+    preserve_skill_sources?: boolean;
     external_tools?: unknown;
   }> = [];
   closeCalls = 0;
@@ -497,7 +498,6 @@ test("MessageChannel external tool execution routes to hooks.executeExternalTool
     type: "external_tool_call_request",
     request_id: "ext-1",
     runtime: TEST_RUNTIME,
-    scope_id: "channel-gateway",
     tool_call_id: "call-1",
     tool_name: "MessageChannel",
     input: { channel: "telegram", action: "send", text: "Hi" },
@@ -511,6 +511,33 @@ test("MessageChannel external tool execution routes to hooks.executeExternalTool
   expect(collector.externalToolResults).toHaveLength(1);
   expect(collector.externalToolResults[0]?.content[0]?.text).toBe("ok");
 
+  gateway.close();
+});
+
+test("process-owned turns execute MessageChannel with the runtime's routed sources", async () => {
+  const client = new FakeClient();
+  let executedSources: ChannelTurnSource[] = [];
+  const { hooks } = makeHooks({
+    executeExternalTool: async (_request, sources) => {
+      executedSources = sources;
+      return { content: [{ type: "text", text: "ok" }] };
+    },
+  });
+  const gateway = new ChannelGateway(client, hooks);
+  const source = makeSource({ channel: "slack", chatId: "C123" });
+
+  await gateway.registerRuntime(TEST_RUNTIME, [source]);
+  client.emitExternalToolCall({
+    type: "external_tool_call_request",
+    request_id: "ext-cron",
+    runtime: TEST_RUNTIME,
+    tool_call_id: "call-cron",
+    tool_name: "MessageChannel",
+    input: { channel: "slack", action: "send", chat_id: "C123" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  expect(executedSources).toEqual([source]);
   gateway.close();
 });
 
@@ -578,7 +605,30 @@ test("runtime registration happens before input submission", async () => {
   const startOpts = client.startedRuntimes[0];
   expect(startOpts?.agent_id).toBe("agent-1");
   expect(startOpts?.conversation_id).toBe("conv-1");
-  expect(startOpts?.external_tools).toBeDefined();
+  expect(startOpts?.preserve_skill_sources).toBe(true);
+  expect(startOpts?.external_tools).toEqual([
+    {
+      tools: [
+        {
+          name: "MessageChannel",
+          description: "Send a message through a channel",
+          parameters: {},
+        },
+      ],
+    },
+  ]);
+
+  gateway.close();
+});
+
+test("runtime registration removes MessageChannel when no route remains", async () => {
+  const client = new FakeClient();
+  const { hooks } = makeHooks({ buildExternalTool: async () => null });
+  const gateway = new ChannelGateway(client, hooks);
+
+  await gateway.registerRuntime(TEST_RUNTIME, []);
+
+  expect(client.startedRuntimes[0]?.external_tools).toEqual([]);
 
   gateway.close();
 });

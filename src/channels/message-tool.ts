@@ -20,8 +20,6 @@ export type MessageChannelToolDiscoveryScope = {
 };
 
 const loggedDiscoveryErrors = new Set<string>();
-let cachedDynamicMessageChannelTool: ResolvedMessageChannelToolDefinition | null =
-  null;
 
 function logDiscoveryError(
   channelId: SupportedChannelId,
@@ -36,7 +34,7 @@ function logDiscoveryError(
   );
 }
 
-async function resolveLocalToolChannels(
+export async function resolveLocalMessageChannelToolChannels(
   scope?: MessageChannelToolDiscoveryScope | null,
 ): Promise<MessageChannelToolChannel[]> {
   const scopedChannels = scope?.channels ?? [];
@@ -72,7 +70,7 @@ export async function resolveMessageChannelToolDiscovery(
   scope?: MessageChannelToolDiscoveryScope | null,
 ): Promise<MessageChannelToolDiscoveryResult> {
   return resolveMessageChannelToolChannels(
-    await resolveLocalToolChannels(scope),
+    await resolveLocalMessageChannelToolChannels(scope),
   );
 }
 
@@ -91,30 +89,14 @@ export async function buildDynamicMessageChannelToolDefinition(
   baseSchema: Record<string, unknown>,
   scope?: MessageChannelToolDiscoveryScope | null,
 ): Promise<ResolvedMessageChannelToolDefinition> {
-  const resolved = buildMessageChannelToolFromDiscovery({
+  return buildMessageChannelToolFromDiscovery({
     baseDescription,
     baseSchema,
     discovery: await resolveMessageChannelToolDiscovery(scope),
     scoped: Boolean(scope?.channels.length),
   });
-  if (!scope || scope.channels.length === 0) {
-    cachedDynamicMessageChannelTool = {
-      description: resolved.description,
-      schema: structuredClone(resolved.schema),
-    };
-  }
-  return resolved;
 }
 
-export function getCachedDynamicMessageChannelToolDefinition(): ResolvedMessageChannelToolDefinition | null {
-  if (!cachedDynamicMessageChannelTool) return null;
-  return {
-    description: cachedDynamicMessageChannelTool.description,
-    schema: structuredClone(cachedDynamicMessageChannelTool.schema),
-  };
-}
-
-export function clearDynamicMessageChannelToolCache(): void {
-  cachedDynamicMessageChannelTool = null;
+export function clearMessageChannelDiscoveryErrors(): void {
   loggedDiscoveryErrors.clear();
 }

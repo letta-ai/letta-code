@@ -62,6 +62,64 @@ describe("runtime_start skill sources", () => {
     }
   });
 
+  test("preserves skill sources when a secondary controller updates runtime tools", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "runtime-skills-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Shared runtime worker",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const listener = createRuntime();
+      const context = {
+        socket: {} as WebSocket,
+        connectionId: "test-connection",
+        runtime: listener,
+        safeSocketSend: () => true,
+        runDetachedListenerTask: () => {},
+        getOrCreateScopedRuntime,
+        replaySyncStateForRuntime: async () => {},
+      };
+
+      await handleRuntimeStartCommand(
+        {
+          type: "runtime_start",
+          request_id: "runtime-with-skills",
+          agent_id: agent.id,
+          conversation_id: "default",
+          skill_sources: ["global", "project"],
+          recover_approvals: false,
+        },
+        context,
+      );
+      await handleRuntimeStartCommand(
+        {
+          type: "runtime_start",
+          request_id: "runtime-external-tools",
+          agent_id: agent.id,
+          conversation_id: "default",
+          preserve_skill_sources: true,
+          external_tools: [],
+          recover_approvals: false,
+        },
+        context,
+      );
+
+      const scoped = getOrCreateScopedRuntime(listener, agent.id, "default");
+      expect(scoped.skillSources).toEqual(["global", "project"]);
+      expect(listener.skillSourcesByConversation.get(scoped.key)).toEqual([
+        "global",
+        "project",
+      ]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("wait_for_replay delays the response until recovery replay completes", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "runtime-replay-"));
     try {

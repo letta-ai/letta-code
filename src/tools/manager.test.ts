@@ -10,18 +10,17 @@ import {
 afterEach(() => clearExternalTools());
 
 describe("MessageChannel architecture", () => {
-  test("exposes one shared channel tool instead of provider-specific tools", () => {
+  test("does not register any channel delivery tool as a built-in", () => {
     const toolNames = new Set(getAllLettaToolNames());
 
-    expect(toolNames.has("MessageChannel")).toBe(true);
-
+    expect(toolNames.has("MessageChannel")).toBe(false);
     expect(toolNames.has("MessageSlackChannel")).toBe(false);
     expect(toolNames.has("MessageTelegramChannel")).toBe(false);
     expect(toolNames.has("slack")).toBe(false);
     expect(toolNames.has("telegram")).toBe(false);
   });
 
-  test("an external MessageChannel definition shadows the built-in payload", () => {
+  test("exposes the gateway-owned MessageChannel definition", () => {
     registerExternalTools([
       {
         name: "MessageChannel",

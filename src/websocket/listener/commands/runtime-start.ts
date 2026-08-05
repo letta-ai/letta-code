@@ -239,10 +239,13 @@ async function applyRuntimeStartState(
   scope: RuntimeScope,
   scopedRuntime: ConversationRuntime,
 ): Promise<void> {
-  if (parsed.skill_sources === undefined) {
+  if (
+    parsed.skill_sources === undefined &&
+    parsed.preserve_skill_sources !== true
+  ) {
     scopedRuntime.skillSources = undefined;
     context.runtime.skillSourcesByConversation.delete(scopedRuntime.key);
-  } else {
+  } else if (parsed.skill_sources !== undefined) {
     const skillSources = [...new Set(parsed.skill_sources)];
     scopedRuntime.skillSources = skillSources;
     context.runtime.skillSourcesByConversation.set(

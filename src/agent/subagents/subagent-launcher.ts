@@ -1,6 +1,6 @@
 // How a subagent child process is launched: the command/args to spawn, the
 // working directory it runs in, and the environment it inherits (including the
-// memory-subagent MEMORY_DIR wiring and channel-context propagation).
+// memory-subagent MEMORY_DIR wiring).
 //
 // Extracted from `manager.ts`. Pure resolution helpers — they depend only on
 // lower-level backend/runtime/shell helpers and shared subagent types, never
@@ -9,12 +9,7 @@
 import { type BackendMode, getLocalBackendStorageDir } from "@/backend";
 import { getLocalBackendMemoryFilesystemRoot } from "@/backend/local/paths";
 import { LETTA_DISABLE_MODS_ENV } from "@/mods/disable";
-import {
-  getCurrentWorkingDirectory,
-  type InheritedChannelContextPayload,
-  LETTA_INHERITED_CHANNEL_CONTEXT_ENV,
-  type RuntimeContextSnapshot,
-} from "@/runtime-context";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
@@ -153,26 +148,6 @@ export interface ComposeSubagentChildEnvOptions {
    * can reference `$TRANSCRIPT_PATH` (resolved via Bash) instead of
    * interpolating the absolute path. Unset → no TRANSCRIPT_PATH in child. */
   transcriptPath?: string | null;
-  /** Serializable channel scope for child processes. Execution-context IDs are
-   * process-local, so channel scope must be copied explicitly across spawn. */
-  inheritedChannelContext?: InheritedChannelContextPayload | null;
-}
-
-export function buildInheritedChannelContextPayload(
-  runtimeContext: RuntimeContextSnapshot | undefined,
-): InheritedChannelContextPayload | null {
-  const channelToolScope = runtimeContext?.channelToolScope;
-  const channelTurnSources = runtimeContext?.channelTurnSources ?? [];
-  if (!channelToolScope?.channels.length && channelTurnSources.length === 0) {
-    return null;
-  }
-
-  return {
-    ...(channelToolScope?.channels.length ? { channelToolScope } : {}),
-    ...(channelTurnSources.length
-      ? { channelTurnSources: [...channelTurnSources] }
-      : {}),
-  };
 }
 
 /**
@@ -207,7 +182,6 @@ export function composeSubagentChildEnv(
     inheritedApiKey,
     inheritedBaseUrl,
     transcriptPath,
-    inheritedChannelContext,
   } = options;
 
   const childEnv: NodeJS.ProcessEnv = {
@@ -218,11 +192,6 @@ export function composeSubagentChildEnv(
     ...(subagentType === "reflection" && { [LETTA_DISABLE_MODS_ENV]: "1" }),
     ...(parentAgentId && { LETTA_PARENT_AGENT_ID: parentAgentId }),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
-    ...(inheritedChannelContext && {
-      [LETTA_INHERITED_CHANNEL_CONTEXT_ENV]: JSON.stringify(
-        inheritedChannelContext,
-      ),
-    }),
   };
 
   if (backendMode === "local") {
