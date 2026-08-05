@@ -53,7 +53,7 @@ import {
   emitLoopErrorNotice,
   emitRecoverableRetryNotice,
   emitRecoverableStatusNotice,
-  getTranscriptLoopErrorMessage,
+  getTranscriptLoopErrorMessage as getSafeTerminalError,
 } from "./recoverable-notices";
 import {
   finalizeHandledRecoveryTurn,
@@ -203,7 +203,6 @@ async function handleIncomingMessageInner(
     });
     return true;
   };
-
   try {
     runtime.lastTerminalLoopErrorMessage = null;
     runtime.lastTerminalLoopErrorRunId = null;
@@ -220,15 +219,14 @@ async function handleIncomingMessageInner(
       conversation_id: conversationId,
     });
     telemetry.setCurrentAgentId(agentId ?? null);
-
     if (!agentId) {
       finishTurn({
         stopReason: "error",
         conversationId,
+        error: getSafeTerminalError({ message: "Missing agent ID" }),
       });
       return;
     }
-
     let turnToolContextId: string | null = null;
     const setup = await prepareListenerTurn({
       msg,
@@ -478,10 +476,8 @@ async function handleIncomingMessageInner(
           agentId,
           conversationId,
         });
-
         break;
       }
-
       if (stopReason === "cancelled") {
         finishTurn({
           stopReason: "cancelled",
@@ -766,7 +762,7 @@ async function handleIncomingMessageInner(
           cancelRequested: turnAbortSignal.aborted,
           abortSignal: turnAbortSignal,
         };
-        const terminalError = getTranscriptLoopErrorMessage(noticeParams);
+        const terminalError = getSafeTerminalError(noticeParams);
         const transition = finishTurn({
           stopReason: effectiveStopReason,
           agentId,
@@ -806,13 +802,16 @@ async function handleIncomingMessageInner(
         buildSendOptions,
         providerFallback,
       });
-
       if (approvalResult.kind === "error") {
         const terminalRunId = runId || runtime.activeRunId;
+        const terminalError = getSafeTerminalError({
+          message: approvalResult.message,
+        });
         const transition = finishTurn({
           stopReason: "error",
           agentId,
           conversationId,
+          error: terminalError,
         });
         if (!transition.finished) {
           return;
@@ -939,7 +938,7 @@ async function handleIncomingMessageInner(
       cancelRequested: turnAbortSignal.aborted,
       abortSignal: turnAbortSignal,
     };
-    const terminalError = getTranscriptLoopErrorMessage(noticeParams);
+    const terminalError = getSafeTerminalError(noticeParams);
     const transition = finishTurn({
       stopReason: "error",
       agentId: agentId || null,
@@ -974,9 +973,11 @@ async function handleIncomingMessageInner(
         runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
         agentId: agentId || null,
         conversationId,
+        error: turnAbortSignal.aborted
+          ? undefined
+          : getSafeTerminalError({ message: "Unexpected turn failure" }),
       });
     }
-
     if (runtime.activeConnectionId === connectionId) {
       runtime.activeConnectionId = null;
     }

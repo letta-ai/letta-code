@@ -2053,12 +2053,9 @@ describe("listen-client multi-worker concurrency", () => {
       ),
     ).toBe(true);
   });
-
-  test("pre-stream failures expose only transcript-safe terminal errors", async () => {
-    const agentId = "agent-402-terminal-error";
-    const conversationId = "conv-402-terminal-error";
-    const { runtime } = createRuntime(agentId, conversationId);
-    const socket = new MockSocket();
+  test("pre-stream and approval failures expose safe terminal errors", async () => {
+    const credit = createRuntime("agent-402", "conv-402");
+    const creditSocket = new MockSocket();
     sendMessageStreamMock.mockRejectedValueOnce(
       new APIError(
         402,
@@ -2070,34 +2067,38 @@ describe("listen-client multi-worker concurrency", () => {
         new Headers(),
       ),
     );
-
     await __listenClientTestUtils.handleIncomingMessage(
-      makeIncomingMessage(agentId, conversationId, "hello"),
-      socket as unknown as WebSocket,
-      runtime,
+      makeIncomingMessage("agent-402", "conv-402", "hello"),
+      creditSocket as unknown as WebSocket,
+      credit.runtime,
     );
-
-    const terminalEvents = socket.sentPayloads
-      .map((payload) => JSON.parse(payload) as Record<string, unknown>)
-      .filter((payload) => payload.type === "turn_finished");
-    expect(terminalEvents).toHaveLength(1);
-    expect(terminalEvents[0]).toMatchObject({
-      type: "turn_finished",
-      runtime: { agent_id: agentId, conversation_id: conversationId },
-      stop_reason: "error",
-      error:
-        "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
-    });
-    expect(JSON.stringify(terminalEvents[0])).not.toContain("Rate limited");
-    expect(JSON.stringify(terminalEvents[0])).not.toContain(
-      "not-enough-credits",
+    const creditTerminal = JSON.parse(creditSocket.sentPayloads[0] as string);
+    expect(creditTerminal.error).toBe(
+      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
     );
+    expect(JSON.stringify(creditTerminal)).not.toContain("Rate limited");
+    const approval = createRuntime("agent-approval", "conv-approval");
+    const approvalSocket = new MockSocket();
+    drainHandlers.set("conv-approval", async () => ({
+      stopReason: "requires_approval",
+      approvals: [],
+      apiDurationMs: 0,
+    }));
+    await __listenClientTestUtils.handleIncomingMessage(
+      makeIncomingMessage("agent-approval", "conv-approval", "hello"),
+      approvalSocket as unknown as WebSocket,
+      approval.runtime,
+    );
+    const [approvalPayload] = approvalSocket.sentPayloads;
+    const approvalTerminal = JSON.parse(approvalPayload as string);
+    expect(approvalTerminal.error).toBe(
+      "The request failed. Please try again.",
+    );
+    expect(JSON.stringify(approvalTerminal)).not.toContain("requires_approval");
   });
-
   test("pre-stream 409 resumes via conversations stream with message otid", async () => {
     const { runtime } = createRuntime("agent-409-otid", "conv-409-otid");
     const socket = new MockSocket();
-
     sendMessageStreamMock.mockRejectedValueOnce(
       new APIError(
         409,
@@ -2111,7 +2112,6 @@ describe("listen-client multi-worker concurrency", () => {
         new Headers(),
       ),
     );
-
     const turnPromise = __listenClientTestUtils.handleIncomingMessage(
       {
         type: "message",
