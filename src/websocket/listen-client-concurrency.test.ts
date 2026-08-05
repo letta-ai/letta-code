@@ -359,6 +359,20 @@ function makeIncomingMessage(
   };
 }
 
+// Keep listener/runtime setup consistent across tests without repeating the
+// full construction sequence at every handleIncomingMessage boundary.
+function createRuntime(
+  agentId: string,
+  conversationId: string,
+  scoped = false,
+) {
+  const listener = __listenClientTestUtils.createListenerRuntime();
+  const getRuntime = scoped
+    ? __listenClientTestUtils.getOrCreateScopedRuntime
+    : __listenClientTestUtils.getOrCreateConversationRuntime;
+  return { listener, runtime: getRuntime(listener, agentId, conversationId) };
+}
+
 function makeRecoveredApprovalState(params: {
   agentId: string;
   conversationId: string;
@@ -534,12 +548,7 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   test("processes simultaneous turns for two named conversations under one agent", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      "agent-1",
-      "conv-a",
-    );
+    const { listener, runtime: runtimeA } = createRuntime("agent-1", "conv-a");
     const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
       listener,
       "agent-1",
@@ -596,7 +605,10 @@ describe("listen-client multi-worker concurrency", () => {
           }));
         }`,
       );
-      const listener = __listenClientTestUtils.createListenerRuntime();
+      const { listener, runtime } = createRuntime(
+        "agent-cancel",
+        "conv-cancel",
+      );
       listener.modAdapter = createListenerModAdapter({
         cacheDirectory: cacheDir,
         globalModsDirectory: modsDir,
@@ -604,11 +616,6 @@ describe("listen-client multi-worker concurrency", () => {
         workingDirectory: modsDir,
       });
       await listener.modAdapter.reload();
-      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
-        listener,
-        "agent-cancel",
-        "conv-cancel",
-      );
       const socket = new MockSocket();
 
       await __listenClientTestUtils.handleIncomingMessage(
@@ -628,12 +635,7 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   test("listener turns do not bypass send-boundary image normalization", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      "agent-1",
-      "conv-image",
-    );
+    const { runtime } = createRuntime("agent-1", "conv-image");
     const socket = new MockSocket();
     const drain = createDeferredDrain();
     drainHandlers.set("conv-image", () => drain.promise);
@@ -675,12 +677,7 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   test("keeps default conversations separate for different agents during concurrent turns", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      "agent-a",
-      "default",
-    );
+    const { listener, runtime: runtimeA } = createRuntime("agent-a", "default");
     const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
       listener,
       "agent-b",
@@ -727,13 +724,10 @@ describe("listen-client multi-worker concurrency", () => {
     agentModelById.set("agent-openai", "openai/gpt-5.3-codex");
     agentModelById.set("agent-anthropic", "anthropic/claude-sonnet-4");
 
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtimeOpenAI =
-      __listenClientTestUtils.getOrCreateConversationRuntime(
-        listener,
-        "agent-openai",
-        "conv-openai",
-      );
+    const { listener, runtime: runtimeOpenAI } = createRuntime(
+      "agent-openai",
+      "conv-openai",
+    );
     const runtimeAnthropic =
       __listenClientTestUtils.getOrCreateConversationRuntime(
         listener,
@@ -798,12 +792,7 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   test("cancelling one conversation runtime does not cancel another", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      "agent-1",
-      "conv-a",
-    );
+    const { listener, runtime: runtimeA } = createRuntime("agent-1", "conv-a");
     const runtimeB = __listenClientTestUtils.getOrCreateConversationRuntime(
       listener,
       "agent-1",
@@ -820,12 +809,7 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   test("recovered approval state does not leak across conversation scopes", () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtimeA = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      "agent-1",
-      "conv-a",
-    );
+    const { listener, runtime: runtimeA } = createRuntime("agent-1", "conv-a");
     __listenClientTestUtils.getOrCreateConversationRuntime(
       listener,
       "agent-1",
@@ -1417,13 +1401,12 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   test("sync replay queues stale denials instead of restoring approval UI", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    __listenClientTestUtils.setActiveRuntime(listener);
-    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
-      listener,
+    const { listener, runtime } = createRuntime(
       "agent-1",
       "conv-mixed-sync",
+      true,
     );
+    __listenClientTestUtils.setActiveRuntime(listener);
 
     const autoAllowedApproval = {
       toolCallId: "tool-auto-allow",
@@ -1509,13 +1492,12 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   test("recovered approval continuation executes hidden auto decisions together with manual responses", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    __listenClientTestUtils.setActiveRuntime(listener);
-    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
-      listener,
+    const { listener, runtime } = createRuntime(
       "agent-1",
       "conv-mixed-recovered",
+      true,
     );
+    __listenClientTestUtils.setActiveRuntime(listener);
     const socket = new MockSocket();
 
     const autoAllowedApproval = {
@@ -2072,13 +2054,48 @@ describe("listen-client multi-worker concurrency", () => {
     ).toBe(true);
   });
 
-  test("pre-stream 409 resumes via conversations stream with message otid", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      "agent-409-otid",
-      "conv-409-otid",
+  test("pre-stream failures expose only transcript-safe terminal errors", async () => {
+    const agentId = "agent-402-terminal-error";
+    const conversationId = "conv-402-terminal-error";
+    const { runtime } = createRuntime(agentId, conversationId);
+    const socket = new MockSocket();
+    sendMessageStreamMock.mockRejectedValueOnce(
+      new APIError(
+        402,
+        {
+          error: "Rate limited",
+          reasons: ["not-enough-credits", "requests", "tokens"],
+        },
+        undefined,
+        new Headers(),
+      ),
     );
+
+    await __listenClientTestUtils.handleIncomingMessage(
+      makeIncomingMessage(agentId, conversationId, "hello"),
+      socket as unknown as WebSocket,
+      runtime,
+    );
+
+    const terminalEvents = socket.sentPayloads
+      .map((payload) => JSON.parse(payload) as Record<string, unknown>)
+      .filter((payload) => payload.type === "turn_finished");
+    expect(terminalEvents).toHaveLength(1);
+    expect(terminalEvents[0]).toMatchObject({
+      type: "turn_finished",
+      runtime: { agent_id: agentId, conversation_id: conversationId },
+      stop_reason: "error",
+      error:
+        "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+    });
+    expect(JSON.stringify(terminalEvents[0])).not.toContain("Rate limited");
+    expect(JSON.stringify(terminalEvents[0])).not.toContain(
+      "not-enough-credits",
+    );
+  });
+
+  test("pre-stream 409 resumes via conversations stream with message otid", async () => {
+    const { runtime } = createRuntime("agent-409-otid", "conv-409-otid");
     const socket = new MockSocket();
 
     sendMessageStreamMock.mockRejectedValueOnce(
@@ -2126,9 +2143,7 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   test("handleIncomingMessage reuses client_message_id as the message otid", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
+    const { runtime } = createRuntime(
       "agent-client-message-id",
       "conv-client-message-id",
     );
@@ -2164,12 +2179,7 @@ describe("listen-client multi-worker concurrency", () => {
   test("secret_apply refreshes the next user payload for the same conversation", async () => {
     const agentId = "agent-secret-payload";
     const conversationId = "conv-secret-payload";
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      agentId,
-      conversationId,
-    );
+    const { listener, runtime } = createRuntime(agentId, conversationId);
     const socket = new MockSocket();
     let serverSecrets: Record<string, string> = {};
     __testOverrideSecretsBackend({
@@ -2235,12 +2245,7 @@ describe("listen-client multi-worker concurrency", () => {
   test("handleIncomingMessage records direct websocket user turns in the reflection transcript", async () => {
     const agentId = "agent-websocket-transcript";
     const conversationId = "conv-websocket-transcript";
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      agentId,
-      conversationId,
-    );
+    const { runtime } = createRuntime(agentId, conversationId);
     const socket = new MockSocket();
 
     await __listenClientTestUtils.handleIncomingMessage(
@@ -2279,12 +2284,7 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   test("pre-stream 409 resume on default conversation includes agent_id", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      "agent-409-default",
-      "default",
-    );
+    const { runtime } = createRuntime("agent-409-default", "default");
     const socket = new MockSocket();
 
     sendMessageStreamMock.mockRejectedValueOnce(
