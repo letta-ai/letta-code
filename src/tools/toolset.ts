@@ -259,6 +259,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     const preparedToolContext = await prepareToolExecutionContextForModel(
       effectiveModel ?? undefined,
       {
+        resolvedToolset: derivedToolset,
         exclude,
         include: includedToolNames,
         clientToolAllowlist,

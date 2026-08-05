@@ -1166,12 +1166,16 @@ export async function prepareToolExecutionContextForSpecificTools(
   );
 }
 
+type ModelToolsetOptions = {
+  resolvedToolset?: "codex" | "default";
+  exclude?: ToolName[];
+  include?: ToolName[];
+  clientToolAllowlist?: string[];
+};
+
 export async function prepareToolExecutionContextForModel(
   modelIdentifier?: string,
-  options?: {
-    exclude?: ToolName[];
-    include?: ToolName[];
-    clientToolAllowlist?: string[];
+  options?: ModelToolsetOptions & {
     externalToolScopeIds?: string[];
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
@@ -1480,18 +1484,18 @@ async function buildSpecificToolRegistry(
 
 async function resolveBaseToolNamesForModel(
   modelIdentifier?: string,
-  options?: {
-    exclude?: ToolName[];
-    include?: ToolName[];
-    clientToolAllowlist?: string[];
-  },
+  options?: ModelToolsetOptions,
 ): Promise<ToolName[]> {
   const { toolFilter } = await import("@/tools/filter");
   let baseToolNames: ToolName[];
+  // Provider aliases can be classified by a caller that also has provider
+  // metadata. Prefer that result over re-inferring from the model handle.
   if (
     !toolFilter.isActive() &&
-    modelIdentifier &&
-    isOpenAIModel(modelIdentifier)
+    (options?.resolvedToolset === "codex" ||
+      (options?.resolvedToolset === undefined &&
+        modelIdentifier &&
+        isOpenAIModel(modelIdentifier)))
   ) {
     baseToolNames = OPENAI_PASCAL_TOOLS;
   } else if (!toolFilter.isActive()) {
@@ -1531,11 +1535,7 @@ async function resolveBaseToolNamesForModel(
 
 async function buildRegistryForModel(
   modelIdentifier?: string,
-  options?: {
-    exclude?: ToolName[];
-    include?: ToolName[];
-    clientToolAllowlist?: string[];
-  },
+  options?: ModelToolsetOptions,
 ): Promise<ToolRegistry> {
   const { toolFilter } = await import("@/tools/filter");
   const allSubagentConfigs = await getAllSubagentConfigs();

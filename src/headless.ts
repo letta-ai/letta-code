@@ -7,6 +7,7 @@ import type {
 import type {
   ApprovalCreate,
   Message as LettaMessage,
+  Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
@@ -193,6 +194,12 @@ const LLM_API_ERROR_MAX_RETRIES = 3;
 // Retry config for empty response errors (Opus 4.6 SADs)
 // Retry 1: same input. Retry 2: with system reminder nudge.
 const EMPTY_RESPONSE_MAX_RETRIES = 2;
+
+const HEADLESS_STREAM_RESUME_POLICY = {
+  initialDelayMs: 250,
+  maxAttempts: 20,
+  maxDelayMs: 2_000,
+};
 
 // Provider fallback: Anthropic model ID → Bedrock model ID.
 // After 1 failed retry against Anthropic, automatically retry via Bedrock.
@@ -2789,23 +2796,11 @@ ${SYSTEM_REMINDER_CLOSE}
         throw preStreamError;
       }
 
-      // For stream-json, output each chunk as it arrives
-      let stopReason: StopReasonType | null = null;
-      let approvals: Array<{
-        toolCallId: string;
-        toolName: string;
-        toolArgs: string;
-      }> = [];
-      let apiDurationMs: number;
-      let lastRunId: string | null = null;
       let approvalPendingRecovery = false;
 
+      let streamJsonHook: DrainStreamHook | undefined;
       if (outputFormat === "stream-json") {
-        const streamJsonHook: DrainStreamHook = ({
-          chunk,
-          shouldOutput,
-          errorInfo,
-        }) => {
+        streamJsonHook = ({ chunk, shouldOutput, errorInfo }) => {
           let shouldOutputChunk = shouldOutput;
 
           if (errorInfo && shouldOutput) {
@@ -2892,38 +2887,24 @@ ${SYSTEM_REMINDER_CLOSE}
 
           return { shouldOutput: shouldOutputChunk, shouldAccumulate: true };
         };
-
-        const result = await drainStreamWithResume(
-          stream,
-          buffers,
-          () => {},
-          sigintSignal,
-          undefined,
-          streamJsonHook,
-          reminderContextTracker,
-        );
-        stopReason = result.stopReason;
-        approvals = result.approvals || [];
-        apiDurationMs = result.apiDurationMs;
-        lastRunId = result.lastRunId || null;
-        if (lastRunId) lastKnownRunId = lastRunId;
-      } else {
-        // Normal mode: use drainStreamWithResume
-        const result = await drainStreamWithResume(
-          stream,
-          buffers,
-          () => {}, // No UI refresh needed in headless mode
-          sigintSignal,
-          undefined,
-          undefined,
-          reminderContextTracker,
-        );
-        stopReason = result.stopReason;
-        approvals = result.approvals || [];
-        apiDurationMs = result.apiDurationMs;
-        lastRunId = result.lastRunId || null;
-        if (lastRunId) lastKnownRunId = lastRunId;
       }
+
+      const result = await drainStreamWithResume(
+        stream,
+        buffers,
+        () => {},
+        sigintSignal,
+        undefined,
+        streamJsonHook,
+        reminderContextTracker,
+        undefined,
+        HEADLESS_STREAM_RESUME_POLICY,
+      );
+      const { apiDurationMs, stopReason } = result;
+      const approvals = result.approvals || [];
+      const lastRunId = result.lastRunId || null;
+      const fallbackError = result.fallbackError ?? null;
+      if (lastRunId) lastKnownRunId = lastRunId;
 
       // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
@@ -2933,11 +2914,11 @@ ${SYSTEM_REMINDER_CLOSE}
         await exitInterrupted();
       }
 
-      // Check max turns after each turn (server may have taken multiple steps),
-      // but defer the limit when we're still resolving pending approvals.
-      // Otherwise we can exit while the backend is waiting for approval input,
-      // leaving the run stuck in requires_approval.
-      if (stopReason !== "requires_approval" && !approvalPendingRecovery) {
+      if (
+        stopReason !== "requires_approval" &&
+        !approvalPendingRecovery &&
+        !(stopReason === "error" && fallbackError)
+      ) {
         await checkMaxTurns();
       }
 
@@ -3426,14 +3407,15 @@ ${SYSTEM_REMINDER_CLOSE}
       let errorMessage =
         errorMessages.length > 0
           ? errorMessages.join("; ")
-          : `Unexpected stop reason: ${stopReason}`;
+          : fallbackError || `Unexpected stop reason: ${stopReason}`;
 
       // Fetch detailed error from run metadata if available (same as TUI mode)
-      if (lastRunId && errorMessages.length === 0) {
+      let finalRun: Run | null = null;
+      if (lastRunId) {
         try {
-          const run = await getBackend().retrieveRun(lastRunId);
-          if (run.metadata?.error) {
-            const errorData = run.metadata.error as {
+          finalRun = await getBackend().retrieveRun(lastRunId);
+          if (finalRun.metadata?.error && errorMessages.length === 0) {
+            const errorData = finalRun.metadata.error as {
               type?: string;
               message?: string;
               detail?: string;
@@ -3450,6 +3432,19 @@ ${SYSTEM_REMINDER_CLOSE}
         } catch (_e) {
           // If we can't fetch error details, append note to error message
           errorMessage = `${errorMessage}\n(Unable to fetch additional error details from server)`;
+        }
+      }
+
+      if (
+        lastRunId &&
+        finalRun &&
+        !finalRun.metadata?.error &&
+        (finalRun.status === "created" || finalRun.status === "running")
+      ) {
+        try {
+          await backend.cancelRun(finalRun.agent_id || agent.id, lastRunId);
+        } catch {
+          // Best effort: preserve the stream error when cancellation also fails.
         }
       }
 
