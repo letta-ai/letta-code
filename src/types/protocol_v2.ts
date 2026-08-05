@@ -35,6 +35,10 @@ import type {
   AppServerInfoResponseMessage,
 } from "./app-server-info";
 import type { ConversationForkBody } from "./conversation-fork-protocol";
+import type {
+  ModelReasoningCapabilities,
+  ModelReasoningEffort,
+} from "./model-reasoning";
 import type { CronRunLogPage, CronTask } from "./schedule-protocol";
 
 export type * from "./schedule-protocol";
@@ -1590,15 +1594,7 @@ export interface UpdateModelPayload {
   /** Optional direct handle override (e.g. "anthropic/claude-sonnet-4-6") */
   model_handle?: string;
   /** Explicit effort for an OpenAI-compatible proxy; null restores provider Default. */
-  reasoning_effort?:
-    | "none"
-    | "minimal"
-    | "low"
-    | "medium"
-    | "high"
-    | "xhigh"
-    | "max"
-    | null;
+  reasoning_effort?: ModelReasoningEffort | null;
 }
 
 export interface UpdateModelCommand {
@@ -1619,6 +1615,7 @@ export interface ListModelsResponseModelEntry {
   isFeatured?: boolean;
   free?: boolean;
   updateArgs?: Record<string, unknown>;
+  reasoningCapabilities?: ModelReasoningCapabilities;
 }
 
 export interface ListModelsResponseMessage {

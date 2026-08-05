@@ -35,21 +35,38 @@ function availableModelUpdateArgs(
   };
 }
 
+function availableModelReasoningCapabilities(
+  model: AvailableModel,
+): ListModelsResponseModelEntry["reasoningCapabilities"] {
+  const capabilities = model.reasoningCapabilities;
+  return capabilities
+    ? {
+        ...capabilities,
+        ...(Array.isArray(capabilities.supported_efforts)
+          ? { supported_efforts: [...capabilities.supported_efforts] }
+          : {}),
+      }
+    : undefined;
+}
+
 function withAvailableModelMetadata(
   entry: ListModelsResponseModelEntry,
   model: AvailableModel,
 ): ListModelsResponseModelEntry {
   const availableUpdateArgs = availableModelUpdateArgs(model);
+  const reasoningCapabilities = availableModelReasoningCapabilities(model);
   return {
     ...entry,
     handle: model.handle,
     ...(availableUpdateArgs
       ? { updateArgs: { ...(entry.updateArgs ?? {}), ...availableUpdateArgs } }
       : {}),
+    ...(reasoningCapabilities ? { reasoningCapabilities } : {}),
   };
 }
 
 function buildNativeEntry(model: AvailableModel): ListModelsResponseModelEntry {
+  const reasoningCapabilities = availableModelReasoningCapabilities(model);
   return {
     id: model.handle,
     handle: model.handle,
@@ -58,6 +75,7 @@ function buildNativeEntry(model: AvailableModel): ListModelsResponseModelEntry {
     ...(availableModelUpdateArgs(model)
       ? { updateArgs: availableModelUpdateArgs(model) }
       : {}),
+    ...(reasoningCapabilities ? { reasoningCapabilities } : {}),
   };
 }
 

@@ -17,6 +17,7 @@ import {
 } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { LocalBackend } from "@/backend/local";
+import { buildChannelReasoningOptions } from "@/channels/model-reasoning-options";
 import { settingsManager } from "@/settings-manager";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
 
@@ -275,6 +276,25 @@ describe("listen-client applyModelUpdateForRuntime wiring", () => {
     expect(resolved?.handle).toBe("lc-anthropic/claude-opus-4-8");
     expect(resolved?.updateArgs?.provider_type).toBe("anthropic");
     expect(resolved?.updateArgs?.reasoning_effort).toBe("medium");
+  });
+
+  test("applies a channel reasoning selection through the model update resolver", () => {
+    const selected = buildChannelReasoningOptions(
+      "chatgpt-jin/gpt-5.5",
+      [],
+      undefined,
+      "chatgpt_oauth",
+    ).find((option) => option.effort === "high");
+    expect(selected).toBeDefined();
+
+    const resolved = __listenClientTestUtils.resolveModelForUpdate({
+      model_id: selected?.modelId,
+      model_handle: "chatgpt-jin/gpt-5.5",
+      reasoning_effort: selected?.effort,
+    });
+
+    expect(resolved?.handle).toBe("chatgpt-jin/gpt-5.5");
+    expect(resolved?.updateArgs?.reasoning_effort).toBe("high");
   });
 
   test("reports the current scoped model for channel /model without args", async () => {
@@ -638,6 +658,12 @@ describe("local channel gateway model command wiring", () => {
       "settingsManager.addRecentModel(response.model_handle ?? modelIdentifier)",
     );
     expect(source).toContain("gateway.updateModelStatus(");
+    expect(source).toContain("buildChannelReasoningOptions(");
+    expect(source).toContain(
+      'client.nextRequestId("channel-reasoning-update")',
+    );
+    expect(source).toContain("model_id: selectedOption.modelId");
+    expect(source).toContain("reasoning_effort: reasoningEffort");
   });
 });
 

@@ -7,11 +7,12 @@ import {
   canRunChannelCommand,
 } from "./access-control";
 import { handleChannelFeedbackCommand } from "./feedback";
+import type { ChannelModelPickerData } from "./model-picker-types";
+import { channelModelCommandPrefix } from "./model-reasoning-command";
 import { getChannelDisplayName } from "./plugin-registry";
 import { buildDirectReplyOptions } from "./registry-presentation";
 import type {
   ChannelAdapter,
-  ChannelModelPickerData,
   ChannelRoute,
   InboundChannelMessage,
 } from "./types";
@@ -281,6 +282,7 @@ const SLACK_MENTION_SLASH_COMMAND_EXAMPLES = [
   "@agent /model",
   "@agent /model list",
   "@agent /model <handle-or-id>",
+  "@agent /model reasoning <level>",
   "@agent /cancel",
   "@agent /chat",
   "@agent /feedback <message>",
@@ -335,6 +337,7 @@ export function buildChannelHelpMessage(channelId: string): string {
       "@agent /model - show this thread's current model",
       "@agent /model list - show available models",
       "@agent /model <handle-or-id> - switch this thread's model",
+      "@agent /model reasoning <level> - change reasoning for the current model",
       "@agent /status - show route and listener status",
       "@agent /cancel - cancel the current turn",
       "@agent /chat - show the web chat link",
@@ -619,12 +622,8 @@ export function getFallbackModelEntries(
   return preferred.length > 0 ? preferred : Array.from(byHandle.values());
 }
 
-function modelCommandPrefix(channelId: string): "/model" | "@agent /model" {
-  return channelId === "slack" ? "@agent /model" : "/model";
-}
-
 export function buildChannelModelNotFoundText(channelId: string): string {
-  return `Model not found. Use ${modelCommandPrefix(channelId)} list to see available models.`;
+  return `Model not found. Use ${channelModelCommandPrefix(channelId)} list to see available models.`;
 }
 
 export function buildChannelCurrentModelMessage(
@@ -641,7 +640,7 @@ export function buildChannelCurrentModelMessage(
     params.modelHandle && params.modelHandle !== params.modelLabel
       ? ` (${params.modelHandle})`
       : "";
-  const switchCommand = modelCommandPrefix(channelId);
+  const switchCommand = channelModelCommandPrefix(channelId);
   return [
     `${displayName} current ${scope} model: ${params.modelLabel}${handleText}.`,
     `Use ${switchCommand} list to see available models, or ${switchCommand} <handle-or-id> to switch.`,
@@ -654,7 +653,7 @@ function formatChannelModelEntry(
 ): string {
   const selector = entry.id || entry.handle;
   const handleText = entry.handle === entry.label ? "" : ` — ${entry.handle}`;
-  return `• ${entry.label}${handleText} (${modelCommandPrefix(channelId)} ${selector})`;
+  return `• ${entry.label}${handleText} (${channelModelCommandPrefix(channelId)} ${selector})`;
 }
 
 function appendModelEntrySection(

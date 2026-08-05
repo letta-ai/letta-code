@@ -1,11 +1,11 @@
 import type SlackApp from "@slack/bolt";
 import { formatChannelControlRequestPrompt } from "@/channels/interactive";
+import type { ChannelModelPickerData } from "@/channels/model-picker-types";
 import { buildSlackModelPickerBlocks } from "@/channels/slack/model-picker-blocks";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
   ChannelMessageAttachment,
-  ChannelModelPickerData,
   ChannelTurnLifecycleEvent,
   ChannelTurnProgressEvent,
   ChannelTurnSource,

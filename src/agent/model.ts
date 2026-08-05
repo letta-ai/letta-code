@@ -2,6 +2,11 @@
  * Model resolution and handling utilities
  */
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-constants";
+import type {
+  ModelReasoningCapabilities,
+  ModelReasoningEffort,
+  ModelReasoningSelection,
+} from "@/types/model-reasoning";
 import { getDefaultModel, models, resolveModel } from "./model-catalog";
 import {
   CHATGPT_OAUTH_LLM_CONFIG_PROVIDER,
@@ -16,29 +21,17 @@ import {
 // agent-presets package export); re-exported here so CLI code keeps a single
 // import surface for model utilities.
 export { getDefaultModel, models, resolveModel };
+
+export type {
+  ModelReasoningEffort,
+  ModelReasoningSelection,
+} from "@/types/model-reasoning";
 export {
   mapModelHandleToLlmConfigPatch,
   normalizeKnownModelHandle,
   normalizeModelHandleForRegistry,
   resolveModelHandleFromLlmConfig,
 } from "./model-handles";
-
-export type ModelReasoningEffort =
-  | "none"
-  | "minimal"
-  | "low"
-  | "medium"
-  | "high"
-  | "xhigh"
-  | "max";
-
-/** Null means use the upstream provider's default and omit reasoning_effort. */
-export type ModelReasoningSelection = ModelReasoningEffort | null;
-
-type ReasoningCapabilities = {
-  supported_efforts?: ModelReasoningEffort[] | null;
-  mandatory?: boolean;
-};
 
 const REASONING_EFFORT_ORDER: ModelReasoningEffort[] = [
   "none",
@@ -63,6 +56,37 @@ export function isLocalModelHandle(modelHandle: string): boolean {
   return LOCAL_MODEL_HANDLE_PREFIXES.some((prefix) =>
     modelHandle.startsWith(prefix),
   );
+}
+
+export function resolveReasoningTierLookupHandle(
+  modelHandle: string,
+  providerType?: string | null,
+): string {
+  const normalizedHandle = normalizeModelHandleForRegistry(modelHandle);
+  if (normalizedHandle && normalizedHandle !== modelHandle) {
+    return normalizedHandle;
+  }
+  if (isLocalModelHandle(modelHandle)) {
+    return modelHandle;
+  }
+
+  const slashIndex = modelHandle.indexOf("/");
+  const modelName =
+    slashIndex >= 0 && slashIndex < modelHandle.length - 1
+      ? modelHandle.slice(slashIndex + 1)
+      : null;
+  if (!providerType || !modelName) {
+    return normalizedHandle ?? modelHandle;
+  }
+
+  const registryProvider =
+    providerType === "chatgpt_oauth"
+      ? OPENAI_CODEX_PROVIDER_NAME
+      : providerType;
+  const provider = modelHandle.slice(0, slashIndex);
+  return provider === registryProvider
+    ? (normalizedHandle ?? modelHandle)
+    : `${registryProvider}/${modelName}`;
 }
 
 export function getLocalModelLabel(modelHandle: string): string {
@@ -121,7 +145,7 @@ function displayRegistryHandleForServiceTier(
 export function getReasoningTierOptionsForHandle(
   modelHandle: string,
   contextWindow?: number,
-  reasoningCapabilities?: ReasoningCapabilities | null,
+  reasoningCapabilities?: ModelReasoningCapabilities | null,
 ): Array<{
   effort: ModelReasoningEffort;
   modelId: string;
@@ -182,7 +206,7 @@ export function getReasoningTierOptionsForHandle(
 
 export function getReasoningTierOptionsFromCapabilities(
   modelHandle: string,
-  capabilities?: ReasoningCapabilities | null,
+  capabilities?: ModelReasoningCapabilities | null,
 ): Array<{
   effort: ModelReasoningEffort;
   modelId: string;
@@ -216,7 +240,7 @@ export function getByokOpenAIReasoningTierOptions(
   options?: {
     registryHandle?: string;
     contextWindow?: number;
-    reasoningCapabilities?: ReasoningCapabilities | null;
+    reasoningCapabilities?: ModelReasoningCapabilities | null;
   },
 ): Array<{
   effort: ModelReasoningSelection;

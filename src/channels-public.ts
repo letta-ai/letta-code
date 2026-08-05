@@ -12,6 +12,11 @@ export {
   LettaStreamNoAssistantMessageError,
 } from "./channels/core-stream";
 export type {
+  ChannelModelPickerData,
+  ChannelReasoningEffort,
+  ChannelReasoningSelection,
+} from "./channels/model-picker-types";
+export type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
   ChannelMessageActionRequest,
@@ -40,7 +45,6 @@ export type {
   ChannelAdapter,
   ChannelChatType,
   ChannelControlRequestEvent,
-  ChannelModelPickerData,
   ChannelRoute,
   ChannelThreadContext,
   ChannelThreadContextEntry,

@@ -753,6 +753,10 @@ describe("channel slash commands", () => {
       ],
       availableHandles: ["openai/gpt-5", "anthropic/claude-sonnet-4-6"],
       recentHandles: ["anthropic/claude-sonnet-4-6"],
+      reasoningOptions: [
+        { effort: "low", modelId: "gpt-low" },
+        { effort: "high", modelId: "gpt-high" },
+      ],
     });
 
     expect(blocks).toBeDefined();
@@ -777,17 +781,22 @@ describe("channel slash commands", () => {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: "Choose a model for this routed conversation:",
+        text: "Choose a model or reasoning level for this routed conversation:",
       },
     });
     expect(explanatoryBlock).not.toHaveProperty("accessory");
     expect(actionsBlock?.type).toBe("actions");
-    expect(elements).toHaveLength(1);
+    expect(elements).toHaveLength(2);
     expect(selectElement?.type).toBe("static_select");
     expect(selectElement?.action_id).toBe("letta_channel_model_select");
     expect(selectElement?.options?.map((option) => option.value)).toEqual([
       "sonnet",
       "gpt",
+    ]);
+    expect(elements?.[1]?.action_id).toBe("letta_channel_reasoning_select");
+    expect(elements?.[1]?.options?.map((option) => option.value)).toEqual([
+      "low",
+      "high",
     ]);
     expect(contextBlock?.type).toBe("context");
     expect(JSON.stringify(blocks)).toContain("Claude Sonnet 4.6");

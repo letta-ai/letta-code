@@ -172,6 +172,12 @@ test("slack adapter forwards model picker selections as /model commands", async 
   if (!handler) {
     throw new Error("Expected model select action handler");
   }
+  const reasoningHandler = app?.actionHandlers.get(
+    "letta_channel_reasoning_select",
+  );
+  if (!reasoningHandler) {
+    throw new Error("Expected reasoning select action handler");
+  }
 
   const ack = mock(async () => {});
   await handler({
@@ -194,9 +200,32 @@ test("slack adapter forwards model picker selections as /model commands", async 
     },
     ack,
   });
+  await reasoningHandler({
+    body: {
+      user: { id: "U123", name: "Alice", team_id: "T123" },
+      channel: { id: "C123", name: "eng" },
+      container: {
+        channel_id: "C123",
+        message_ts: "1712800000.000100",
+        thread_ts: "1712800000.000200",
+      },
+      message: {
+        ts: "1712800000.000100",
+        thread_ts: "1712800000.000200",
+      },
+    },
+    action: {
+      action_id: "letta_channel_reasoning_select",
+      action_ts: "1712800002.000300",
+      selected_option: {
+        value: "high",
+      },
+    },
+    ack,
+  });
 
-  expect(ack).toHaveBeenCalledTimes(1);
-  expect(messages).toHaveLength(1);
+  expect(ack).toHaveBeenCalledTimes(2);
+  expect(messages).toHaveLength(2);
   expect(messages[0]).toMatchObject({
     channel: "slack",
     accountId: "slack-test-account",
@@ -205,6 +234,17 @@ test("slack adapter forwards model picker selections as /model commands", async 
     senderName: "Alice",
     senderTeamId: "T123",
     text: "/model openai/gpt-5",
+    threadId: "1712800000.000200",
+    chatType: "channel",
+  });
+  expect(messages[1]).toMatchObject({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "C123",
+    senderId: "U123",
+    senderName: "Alice",
+    senderTeamId: "T123",
+    text: "/model reasoning high",
     threadId: "1712800000.000200",
     chatType: "channel",
   });

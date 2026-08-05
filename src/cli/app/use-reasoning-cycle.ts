@@ -20,8 +20,8 @@ import {
   getReasoningTierOptionsForHandle,
   isLocalModelHandle,
   type ModelReasoningSelection,
-  normalizeModelHandleForRegistry,
   preservableContextWindow,
+  resolveReasoningTierLookupHandle,
 } from "@/agent/model";
 import { formatErrorDetails } from "@/cli/helpers/error-formatter";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
@@ -109,18 +109,6 @@ function isProviderQualifiedModelHandle(
   return slashIndex > 0 && slashIndex < modelHandle.length - 1;
 }
 
-function modelNameFromHandle(modelHandle: string): string | null {
-  const slashIndex = modelHandle.indexOf("/");
-  if (slashIndex === -1 || slashIndex === modelHandle.length - 1) return null;
-  return modelHandle.slice(slashIndex + 1);
-}
-
-function registryProviderForProviderType(providerType: string): string {
-  return providerType === "chatgpt_oauth"
-    ? OPENAI_CODEX_PROVIDER_NAME
-    : providerType;
-}
-
 export function resolveReasoningCycleModelHandle(
   llmConfig: LlmConfig | null | undefined,
   agentModel: string | null | undefined,
@@ -156,28 +144,10 @@ export function resolveReasoningCycleTierLookupHandle(
   modelHandle: string,
   modelSettings: AgentState["model_settings"] | null | undefined,
 ): string {
-  const normalizedHandle = normalizeModelHandleForRegistry(modelHandle);
-  if (normalizedHandle && normalizedHandle !== modelHandle) {
-    return normalizedHandle;
-  }
-
-  if (isLocalModelHandle(modelHandle)) {
-    return modelHandle;
-  }
-
-  const providerType = providerTypeFromModelSettings(modelSettings);
-  const modelName = modelNameFromHandle(modelHandle);
-  if (!providerType || !modelName) {
-    return normalizedHandle ?? modelHandle;
-  }
-
-  const registryProvider = registryProviderForProviderType(providerType);
-  const provider = modelHandle.split("/")[0];
-  if (provider === registryProvider) {
-    return normalizedHandle ?? modelHandle;
-  }
-
-  return `${registryProvider}/${modelName}`;
+  return resolveReasoningTierLookupHandle(
+    modelHandle,
+    providerTypeFromModelSettings(modelSettings),
+  );
 }
 
 export function getReasoningCycleTierOptions(params: {

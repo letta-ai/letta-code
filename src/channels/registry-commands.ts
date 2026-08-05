@@ -19,6 +19,11 @@ import {
   buildChannelReloadUnavailableMessage,
   buildChannelResumedMessage,
 } from "./commands";
+import type { ChannelModelPickerData } from "./model-picker-types";
+import {
+  buildChannelModelReasoningUsageMessage,
+  parseChannelModelArgs,
+} from "./model-reasoning-command";
 import type { ChannelRegistryEvent } from "./registry-events";
 import type {
   ChannelCancelHandler,
@@ -37,7 +42,6 @@ import {
 } from "./routing";
 import type {
   ChannelAccount,
-  ChannelModelPickerData,
   ChannelRoute,
   InboundChannelMessage,
 } from "./types";
@@ -367,13 +371,23 @@ export function createChannelCommandRouter(deps: {
       };
     }
 
+    const modelArgs = parseChannelModelArgs(command.args);
+    if (modelArgs.kind === "invalid-reasoning") {
+      return {
+        handled: true,
+        text: buildChannelModelReasoningUsageMessage(msg.channel),
+      };
+    }
+
     return modelHandler({
       channelId: msg.channel,
       runtime: {
         agent_id: route.agentId,
         conversation_id: route.conversationId,
       },
-      modelIdentifier: command.args || undefined,
+      ...(modelArgs.kind === "model"
+        ? { modelIdentifier: modelArgs.modelIdentifier }
+        : { reasoningEffort: modelArgs.reasoningEffort }),
     });
   }
 
