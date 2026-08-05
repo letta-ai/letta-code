@@ -216,6 +216,14 @@ export type ConversationRuntime = {
   currentToolsetPreference: ToolsetPreference;
   currentLoadedTools: string[];
   pendingApprovalBatchByToolCallId: Map<string, string>;
+  /**
+   * tool_call_id -> server-assigned id of the approval_request_message that
+   * carried the tool call. Lifecycle emissions about a tool call
+   * (client_tool_start/end, synthesized interrupt tool returns) reuse this id
+   * instead of minting a phantom `message-*` id (LET-10608). Populated and
+   * cleared alongside pendingApprovalBatchByToolCallId.
+   */
+  approvalMessageIdByToolCallId: Map<string, string>;
   pendingInterruptedResults: Array<ApprovalResult> | null;
   pendingInterruptedContext: {
     agentId: string;

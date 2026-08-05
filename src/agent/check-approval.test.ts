@@ -241,6 +241,7 @@ describe("extractApprovals", () => {
     expect(result.pendingApprovals).toHaveLength(1);
     expect(result.pendingApprovals[0]?.toolCallId).toBe("call-1");
     expect(result.pendingApprovals[0]?.toolName).toBe("Bash");
+    expect(result.pendingApprovals[0]?.messageId).toBe("test-msg-id");
     expect(result.pendingApproval?.toolCallId).toBe("call-1");
   });
 
@@ -268,6 +269,9 @@ describe("extractApprovals", () => {
     const result = extractApprovals(msg);
 
     expect(result.pendingApprovals).toHaveLength(3);
+    expect(
+      result.pendingApprovals.map((approval) => approval.messageId),
+    ).toEqual(["test-msg-id", "test-msg-id", "test-msg-id"]);
     expect(result.pendingApprovals[0]?.toolCallId).toBe("call-1");
     expect(result.pendingApprovals[0]?.toolName).toBe("Bash");
     expect(result.pendingApprovals[1]?.toolCallId).toBe("call-2");

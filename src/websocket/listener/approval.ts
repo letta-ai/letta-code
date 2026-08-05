@@ -85,7 +85,7 @@ export function getPendingApprovalRequestIds(
 
 export function rememberPendingApprovalBatchIds(
   runtime: ConversationRuntime,
-  pendingApprovals: Array<{ toolCallId: string }>,
+  pendingApprovals: Array<{ toolCallId: string; messageId?: string }>,
   batchId: string,
 ): void {
   for (const approval of pendingApprovals) {
@@ -94,6 +94,12 @@ export function rememberPendingApprovalBatchIds(
         approval.toolCallId,
         batchId,
       );
+      if (approval.messageId) {
+        runtime.approvalMessageIdByToolCallId.set(
+          approval.toolCallId,
+          approval.messageId,
+        );
+      }
     }
   }
 }
@@ -134,6 +140,7 @@ export function clearPendingApprovalBatchIds(
 ): void {
   for (const approval of approvals) {
     runtime.pendingApprovalBatchByToolCallId.delete(approval.toolCallId);
+    runtime.approvalMessageIdByToolCallId.delete(approval.toolCallId);
   }
 }
 
