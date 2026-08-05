@@ -78,13 +78,26 @@ describe("channel processor primitives", () => {
       },
     };
 
-    expect(formatInboundChannelMessageForAgent({ message })).toBe(
-      "--- Slack thread ---\n" +
-        "starter: [Alice:U456]<1>:starter\n" +
-        "[Bob:U789]<1.5>:history\n" +
-        "--- End Thread Context ---\n\n" +
-        "[slack:#eng][Shub:U123]<2026-01-01T00:00:00.000Z>:current message",
+    const formatted = formatInboundChannelMessageForAgent({ message });
+
+    expect(formatted).toStartWith(
+      '<channel-notification source="slack" chat_id="C123" sender_id="U123"',
     );
+    expect(formatted).toContain('account_id="integration-1"');
+    expect(formatted).toContain('sender_name="Shub"');
+    expect(formatted).toContain('message_id="2"');
+    expect(formatted).toContain('thread_id="1"');
+    expect(formatted).toContain('<thread-context label="Slack thread">');
+    expect(formatted).toContain(
+      '<thread-starter sender_id="U456" sender_name="Alice" message_id="1">',
+    );
+    expect(formatted).toContain(
+      '<thread-message sender_id="U789" sender_name="Bob" message_id="1.5">',
+    );
+    expect(formatted).toContain("current message");
+    expect(formatted).toEndWith("</channel-notification>");
+    expect(formatted).not.toContain("--- Slack thread ---");
+    expect(formatted).not.toContain("[slack:#eng]");
   });
 
   test("formats batched channel messages without adding duplicate sender wrappers", () => {
