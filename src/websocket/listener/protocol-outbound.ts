@@ -946,7 +946,7 @@ export function createLifecycleMessageBase<TMessageType extends string>(
   run_id?: string;
 } {
   return {
-    id: `message-${crypto.randomUUID()}`,
+    id: `lifecycle-${crypto.randomUUID()}`,
     date: new Date().toISOString(),
     message_type: messageType,
     ...(runId ? { run_id: runId } : {}),

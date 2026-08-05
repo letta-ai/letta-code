@@ -290,6 +290,7 @@ export function createConversationRuntime(
     currentToolsetPreference: "auto",
     currentLoadedTools: [],
     pendingApprovalBatchByToolCallId: new Map(),
+    approvalMessageIdByToolCallId: new Map(),
     pendingInterruptedResults: null,
     pendingInterruptedContext: null,
     continuationEpoch: 0,
@@ -356,6 +357,7 @@ export function clearConversationRuntimeState(
     conversationId: runtime.conversationId,
   });
   runtime.pendingApprovalBatchByToolCallId.clear();
+  runtime.approvalMessageIdByToolCallId.clear();
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
