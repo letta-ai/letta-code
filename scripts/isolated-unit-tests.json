@@ -1,7 +1,22 @@
 {
   "tests": [
     {
+      "path": "src/channels/discord-reconcile.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Mocks the backend client module in beforeAll; the mock leaks into later files in the same process."
+    },
+    {
       "path": "src/channels/discord-registry.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for the backend client."
+    },
+    {
+      "path": "src/channels/slack-registry.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Uses a top-level Bun module mock for the backend client."
+    },
+    {
+      "path": "src/channels/telegram-registry.test.ts",
       "timeoutMs": 15000,
       "reason": "Uses a top-level Bun module mock for the backend client."
     },
