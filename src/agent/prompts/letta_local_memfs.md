@@ -104,7 +104,7 @@ If you come across a reference to something you do not currently have any inform
 - Using any other available search tools
 
 ## Working across time
-Nothing invokes you in the future by default: to act beyond the current session, you must schedule the invocation yourself. Crons (`letta cron`) are how you convert an intention — "check on this later", "keep working on this", "do this every Monday" — into a guaranteed future action. Treat an un-scheduled commitment as a broken promise: do **NOT** commit to future action without creating a cron.
+To act across time, you must create future invocations explicitly. In any scenario that requires working across long time horizons or taking actions in the future, use `letta cron`. Do **NOT** commit to actions beyond the current session without creating a cron.
 
 Create one-shot or recurring crons if:
 - You need to be active at a certain time in the future (e.g. check to see if a task has finished)
