@@ -53,6 +53,7 @@ import {
   emitLoopErrorNotice,
   emitRecoverableRetryNotice,
   emitRecoverableStatusNotice,
+  getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
 import {
   finalizeHandledRecoveryTurn,
@@ -753,31 +754,33 @@ async function handleIncomingMessageInner(
           });
           break;
         }
-
         const errorMessage =
           errorDetail || `Unexpected stop reason: ${stopReason}`;
-
         const terminalRunId =
           runId || runtime.activeRunId || runErrorInfo?.run_id;
-        const transition = finishTurn({
-          stopReason: effectiveStopReason,
-          agentId,
-          conversationId,
-          error: errorMessage,
-        });
-        if (!transition.finished) {
-          break;
-        }
-        const formattedError = emitLoopErrorNotice(socket, runtime, {
+        const noticeParams = {
           message: errorMessage,
-          stopReason: effectiveStopReason,
-          isTerminal: true,
-          runId: terminalRunId,
           agentId,
           conversationId,
           runErrorInfo: runErrorInfo ?? undefined,
           cancelRequested: turnAbortSignal.aborted,
           abortSignal: turnAbortSignal,
+        };
+        const terminalError = getTranscriptLoopErrorMessage(noticeParams);
+        const transition = finishTurn({
+          stopReason: effectiveStopReason,
+          agentId,
+          conversationId,
+          error: terminalError,
+        });
+        if (!transition.finished) {
+          break;
+        }
+        const formattedError = emitLoopErrorNotice(socket, runtime, {
+          ...noticeParams,
+          stopReason: effectiveStopReason,
+          isTerminal: true,
+          runId: terminalRunId,
         });
         runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
         runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;
@@ -924,31 +927,33 @@ async function handleIncomingMessageInner(
         agentId: agentId || null,
         conversationId,
       });
-
       return;
     }
-
     const errorMessage = error instanceof Error ? error.message : String(error);
     const terminalRunId = runtime.activeRunId;
+    const noticeParams = {
+      message: errorMessage,
+      agentId,
+      conversationId,
+      error,
+      cancelRequested: turnAbortSignal.aborted,
+      abortSignal: turnAbortSignal,
+    };
+    const terminalError = getTranscriptLoopErrorMessage(noticeParams);
     const transition = finishTurn({
       stopReason: "error",
       agentId: agentId || null,
       conversationId,
-      error: errorMessage,
+      error: terminalError,
     });
     if (!transition.finished) {
       return;
     }
     const formattedError = emitLoopErrorNotice(socket, runtime, {
-      message: errorMessage,
+      ...noticeParams,
       stopReason: "error",
       isTerminal: true,
       runId: terminalRunId,
-      agentId: agentId || undefined,
-      conversationId,
-      error,
-      cancelRequested: turnAbortSignal.aborted,
-      abortSignal: turnAbortSignal,
     });
     runtime.lastTerminalLoopErrorMessage = formattedError ?? errorMessage;
     runtime.lastTerminalLoopErrorRunId = terminalRunId ?? null;

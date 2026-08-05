@@ -361,16 +361,16 @@ function makeIncomingMessage(
 
 // Keep listener/runtime setup consistent across tests without repeating the
 // full construction sequence at every handleIncomingMessage boundary.
-function createRuntime(agentId: string, conversationId: string) {
+function createRuntime(
+  agentId: string,
+  conversationId: string,
+  scoped = false,
+) {
   const listener = __listenClientTestUtils.createListenerRuntime();
-  return {
-    listener,
-    runtime: __listenClientTestUtils.getOrCreateConversationRuntime(
-      listener,
-      agentId,
-      conversationId,
-    ),
-  };
+  const getRuntime = scoped
+    ? __listenClientTestUtils.getOrCreateScopedRuntime
+    : __listenClientTestUtils.getOrCreateConversationRuntime;
+  return { listener, runtime: getRuntime(listener, agentId, conversationId) };
 }
 
 function makeRecoveredApprovalState(params: {
@@ -1401,13 +1401,12 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   test("sync replay queues stale denials instead of restoring approval UI", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    __listenClientTestUtils.setActiveRuntime(listener);
-    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
-      listener,
+    const { listener, runtime } = createRuntime(
       "agent-1",
       "conv-mixed-sync",
+      true,
     );
+    __listenClientTestUtils.setActiveRuntime(listener);
 
     const autoAllowedApproval = {
       toolCallId: "tool-auto-allow",
@@ -1493,13 +1492,12 @@ describe("listen-client multi-worker concurrency", () => {
   });
 
   test("recovered approval continuation executes hidden auto decisions together with manual responses", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    __listenClientTestUtils.setActiveRuntime(listener);
-    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
-      listener,
+    const { listener, runtime } = createRuntime(
       "agent-1",
       "conv-mixed-recovered",
+      true,
     );
+    __listenClientTestUtils.setActiveRuntime(listener);
     const socket = new MockSocket();
 
     const autoAllowedApproval = {
@@ -2056,10 +2054,7 @@ describe("listen-client multi-worker concurrency", () => {
     ).toBe(true);
   });
 
-  // Channel consumers finalize immediately on turn_finished, so the terminal
-  // event itself must carry the failure detail. A later loop_error is too late.
-  // Exercise the send boundary rather than the terminal serializer in isolation.
-  test("pre-stream 402 includes API error detail in turn_finished", async () => {
+  test("pre-stream failures expose only transcript-safe terminal errors", async () => {
     const agentId = "agent-402-terminal-error";
     const conversationId = "conv-402-terminal-error";
     const { runtime } = createRuntime(agentId, conversationId);
@@ -2090,8 +2085,13 @@ describe("listen-client multi-worker concurrency", () => {
       type: "turn_finished",
       runtime: { agent_id: agentId, conversation_id: conversationId },
       stop_reason: "error",
-      error: expect.stringContaining("not-enough-credits"),
+      error:
+        "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
     });
+    expect(JSON.stringify(terminalEvents[0])).not.toContain("Rate limited");
+    expect(JSON.stringify(terminalEvents[0])).not.toContain(
+      "not-enough-credits",
+    );
   });
 
   test("pre-stream 409 resumes via conversations stream with message otid", async () => {

@@ -4,6 +4,7 @@ import type { RunErrorInfo } from "@/agent/approval-recovery";
 import { extractConflictDetail } from "@/agent/turn-recovery-policy";
 import {
   checkCloudflareEdgeError,
+  type ErrorDisplaySurface,
   formatErrorDetails,
 } from "@/cli/helpers/error-formatter";
 import type { ErrorInfo } from "@/cli/helpers/stream-processor";
@@ -184,6 +185,7 @@ export function getLoopErrorNoticeDecision(params: {
   conversationId?: string | null;
   cancelRequested?: boolean;
   abortSignal?: AbortSignal;
+  surface?: ErrorDisplaySurface;
 }): LoopErrorNoticeDecision {
   const apiError =
     params.apiError ??
@@ -234,6 +236,7 @@ export function getLoopErrorNoticeDecision(params: {
       : (params.error ?? params.message),
     params.agentId ?? undefined,
     params.conversationId ?? undefined,
+    { surface: params.surface },
   );
 
   return {
@@ -241,6 +244,13 @@ export function getLoopErrorNoticeDecision(params: {
     message: formattedMessage,
     apiError,
   };
+}
+
+export function getTranscriptLoopErrorMessage(
+  params: Parameters<typeof getLoopErrorNoticeDecision>[0],
+): string | undefined {
+  const decision = getLoopErrorNoticeDecision({ ...params, surface: "plain" });
+  return decision.visibility === "transcript" ? decision.message : undefined;
 }
 
 export function emitLoopErrorNotice(
