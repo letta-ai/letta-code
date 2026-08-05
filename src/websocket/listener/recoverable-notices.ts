@@ -262,6 +262,17 @@ export function getTranscriptLoopErrorMessage(
   return decision.visibility === "transcript" ? decision.message : undefined;
 }
 
+/** Match the plain error that interactive consumers receive from loop_error. */
+export function getConsumerLoopErrorMessage(
+  params: Parameters<typeof getLoopErrorNoticeDecision>[0],
+): string | undefined {
+  const decision = getLoopErrorNoticeDecision({
+    ...params,
+    surface: "plain",
+  });
+  return decision.visibility === "transcript" ? decision.message : undefined;
+}
+
 export function emitLoopErrorNotice(
   socket: ListenerTransport,
   runtime: ListenerRuntime | ConversationRuntime,

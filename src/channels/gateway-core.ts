@@ -626,17 +626,12 @@ export class ChannelGateway {
     active.richDraft?.handleDelta(message.delta);
 
     const stopReason = stopReasonFromDelta(message);
-    if (!stopReason) return;
-    if (stopReason === "requires_approval") {
+    if (stopReason === "requires_approval" || stopReason === "end_turn") {
       void active.richDraft?.flushPending();
-      return;
     }
-    if (stopReason === "end_turn") void active.richDraft?.flushPending();
-    this.handleTurnFinished(message.runtime, {
-      stopReason,
-      runId: active.runId,
-      error: errorFromDelta(message),
-    });
+    // The listener sends a canonical turn_finished event after it classifies
+    // terminal failures. Finalizing from this earlier delta would discard that
+    // user-safe error detail.
   }
 
   private handleTurnFinished(

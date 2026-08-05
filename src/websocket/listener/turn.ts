@@ -53,7 +53,7 @@ import {
   emitLoopErrorNotice,
   emitRecoverableRetryNotice,
   emitRecoverableStatusNotice,
-  getTranscriptLoopErrorMessage as getSafeTerminalError,
+  getConsumerLoopErrorMessage as getSafeTerminalError,
 } from "./recoverable-notices";
 import {
   finalizeHandledRecoveryTurn,

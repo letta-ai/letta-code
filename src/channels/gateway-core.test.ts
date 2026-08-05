@@ -857,41 +857,50 @@ test("control request with multiple sources does not dispatch", async () => {
   gateway.close();
 });
 
-test("stream delta with stop_reason triggers turn_finished", async () => {
+test("stream stop reason waits for turn_finished error detail", async () => {
   const client = new FakeClient();
   const { hooks, lifecycleEvents, progressEvents } = makeHooks();
   const gateway = new ChannelGateway(client, hooks);
 
   await gateway.submit(makeDelivery({ clientMessageId: "cm-stream" }));
 
-  // Emit a reasoning delta
   client.emit(
     makeStreamDelta({
       message_type: "reasoning_message",
       run_id: "run-1",
     }),
   );
-
-  // Should have progress events
   expect(progressEvents.length).toBeGreaterThan(0);
 
-  // Emit a stop_reason delta
   client.emit(
     makeStreamDelta({
       message_type: "stop_reason",
-      stop_reason: "end_turn",
+      stop_reason: "insufficient_credits",
       run_id: "run-1",
     }),
   );
   await Bun.sleep(0);
+  expect(
+    lifecycleEvents.filter((event) => event.type === "finished"),
+  ).toHaveLength(0);
 
-  // Should trigger finished lifecycle
-  const finishedEvents = lifecycleEvents.filter((e) => e.type === "finished");
+  client.emit(
+    makeTurnFinished("insufficient_credits", TEST_RUNTIME, {
+      runId: "run-1",
+      error: "The usage limit has been reached.",
+    }),
+  );
+
+  const finishedEvents = lifecycleEvents.filter(
+    (event) => event.type === "finished",
+  );
   expect(finishedEvents).toHaveLength(1);
-  if (finishedEvents[0] && finishedEvents[0].type === "finished") {
-    expect(finishedEvents[0].outcome).toBe("completed");
-    expect(finishedEvents[0].runId).toBe("run-1");
-  }
+  expect(finishedEvents[0]).toMatchObject({
+    outcome: "error",
+    stopReason: "insufficient_credits",
+    runId: "run-1",
+    error: "The usage limit has been reached.",
+  });
 
   gateway.close();
 });
