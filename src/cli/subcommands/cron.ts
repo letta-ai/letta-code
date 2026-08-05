@@ -16,6 +16,10 @@
  *   Letta API. The implicit default keeps executing where it was created
  *   (external listener target, or untargeted from a managed sandbox);
  *   explicit --runner cloud always executes in the agent's Cloud sandbox.
+ *   When the current runtime is unreachable by Cloud scheduling
+ *   (desktop-local, unregistered), the implicit default falls back to the
+ *   local runner with a warning — that is the only placement that preserves
+ *   execution locality there.
  * - "local": runtime-local tasks in ~/.letta/crons.json, executed by the WS
  *   listener on this device. Default for local-backend agents and self-hosted
  *   servers; explicit opt-in (--runner local) for schedules that must run on
@@ -84,15 +88,19 @@ Add options:
   --cron <expr>          Raw 5-field cron expression
   --agent <id>           Agent ID (defaults to LETTA_AGENT_ID)
   --conversation <id>    Conversation ID (defaults to LETTA_CONVERSATION_ID or "default")
-  --runner <runner>      Where the schedule lives and fires:
+  --runner <runner>      Where the schedule lives and fires (normally omit:
+                         the default keeps the schedule running where it was
+                         created):
                            cloud - durable Cloud schedule (default for cloud
-                                   agents); the implicit default keeps running
-                                   where it was created (external listener or
-                                   the agent's Cloud sandbox). Explicit
+                                   agents on Cloud-reachable runtimes:
+                                   external listeners are targeted, managed
+                                   sandboxes stay untargeted). Explicit
                                    --runner cloud always uses the Cloud sandbox
                            local - this device's scheduler (~/.letta/crons.json);
                                    only fires while a session runs here (default
-                                   for local-backend agents / self-hosted)
+                                   for local-backend agents / self-hosted, and
+                                   the fallback when Cloud scheduling cannot
+                                   reach this computer)
   --computer <id>        (cloud runner only) Override execution with a
                          connected external environment (deviceId from
                          \`letta environments list\`). Falls back to the Cloud
@@ -355,12 +363,14 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     console.error(`Error: ${resolved.error}`);
     return 1;
   }
+  let runner = resolved.runner;
+  let localFallbackNote: string | undefined;
 
   // Device targets are a Cloud-schedule feature: the cloud worker delivers
   // to the named device's listener (sandbox fallback when offline). A local
   // task already runs on the device that owns it, so the flag is meaningless
   // (and likely a mistake) for the local runner.
-  if (targetDeviceId && resolved.runner !== "cloud") {
+  if (targetDeviceId && runner !== "cloud") {
     console.error(
       "Error: --computer requires the cloud runner. Run `letta cron add` on the target computer itself (with --runner local) to schedule there locally.",
     );
@@ -378,26 +388,27 @@ async function handleAdd(values: CronArgValues): Promise<number> {
       console.error(`Error: ${validity.error}`);
       return 1;
     }
-  } else if (resolved.runner === "cloud" && values.runner !== "cloud") {
+  } else if (runner === "cloud" && values.runner !== "cloud") {
     // The durable default preserves the locality of the current agent turn.
     // Infer only at create time: old targetless schedules deliberately remain
     // Cloud-sandbox schedules, and dispatch must never guess a target later.
     // Managed-sandbox runtimes resolve to an untargeted schedule (the
-    // sandbox IS the untargeted execution environment).
+    // sandbox IS the untargeted execution environment). Runtimes the Cloud
+    // scheduler cannot reach (desktop-local, unregistered) fall back to the
+    // local runner so the schedule still executes here.
     const inferredDeviceId = getRuntimeEnvironmentDeviceId();
     const resolution = await resolveInferredTargetDevice(inferredDeviceId, () =>
       lookupEnvironmentForTarget(inferredDeviceId),
     );
-    if (resolution.kind === "error") {
-      console.error(`Error: ${resolution.error}`);
-      return 1;
-    }
     if (resolution.kind === "device") {
       targetDeviceId = inferredDeviceId;
+    } else if (resolution.kind === "local-fallback") {
+      runner = "local";
+      localFallbackNote = `Cloud scheduling cannot reach this computer (${resolution.reason}), so this schedule was stored locally: it only fires while a Letta session is running here. For a durable schedule, pass --runner cloud (agent's Cloud sandbox) or --computer <deviceId> (a registered computer from \`letta environments list\`).`;
     }
   }
 
-  if (resolved.runner === "cloud") {
+  if (runner === "cloud") {
     return handleCloudAdd({
       agentId,
       conversationId,
@@ -444,8 +455,16 @@ async function handleAdd(values: CronArgValues): Promise<number> {
     if (note) {
       output.note = note;
     }
-    if (result.warning) {
-      output.warning = result.warning;
+    // Recurring jobs pinned to an unregistered computer are usually a
+    // mistake (the user expects "every Monday" to survive this session);
+    // one-shot follow-ups usually aren't (a dead session obviates them).
+    const fallbackWarning =
+      localFallbackNote && recurring
+        ? `${localFallbackNote} Recurring schedules on an unregistered computer stop firing whenever no session is running — strongly consider a durable alternative.`
+        : localFallbackNote;
+    const warnings = [fallbackWarning, result.warning].filter(Boolean);
+    if (warnings.length > 0) {
+      output.warning = warnings.join(" ");
     }
 
     console.log(JSON.stringify(output, null, 2));

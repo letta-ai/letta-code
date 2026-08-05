@@ -276,10 +276,60 @@ describe("cron add execution targeting", () => {
     }
   });
 
-  test("default Cloud creation fails when the current listener is unregistered", async () => {
+  test("default creation on an unregistered runtime falls back to a local schedule with a warning", async () => {
+    const home = mkdtempSync(join(tmpdir(), "letta-cron-fallback-test-"));
+    process.env.LETTA_HOME = home;
     const requests = installScheduleApi({});
+    const logs: string[] = [];
+    console.log = mock((line: string) => {
+      logs.push(String(line));
+    });
 
-    expect(await runCronSubcommand(addArgs)).toBe(1);
-    expect(requests.some((request) => request.method === "POST")).toBe(false);
+    try {
+      expect(await runCronSubcommand(addArgs)).toBe(0);
+
+      // No Cloud schedule was created.
+      expect(requests.some((request) => request.method === "POST")).toBe(false);
+
+      const output = JSON.parse(logs.join("")) as Record<string, unknown>;
+      expect(output.runner).toBe("local");
+      // addArgs uses --every (recurring), so the warning carries both the
+      // fallback reason and the louder recurring durability caution.
+      expect(String(output.warning)).toContain(
+        "Cloud scheduling cannot reach this computer",
+      );
+      expect(String(output.warning)).toContain("Recurring schedules");
+      expect(String(output.warning)).toContain("--runner cloud");
+      expect(String(output.warning)).toContain("--computer <deviceId>");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("one-shot fallback warning omits the recurring caution", async () => {
+    const home = mkdtempSync(join(tmpdir(), "letta-cron-fallback-once-"));
+    process.env.LETTA_HOME = home;
+    installScheduleApi({});
+    const logs: string[] = [];
+    console.log = mock((line: string) => {
+      logs.push(String(line));
+    });
+
+    const everyIndex = addArgs.indexOf("--every");
+    const oneShotArgs = [...addArgs];
+    oneShotArgs.splice(everyIndex, 2, "--at", "in 30m");
+
+    try {
+      expect(await runCronSubcommand(oneShotArgs)).toBe(0);
+
+      const output = JSON.parse(logs.join("")) as Record<string, unknown>;
+      expect(output.runner).toBe("local");
+      expect(String(output.warning)).toContain(
+        "Cloud scheduling cannot reach this computer",
+      );
+      expect(String(output.warning)).not.toContain("Recurring schedules");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
