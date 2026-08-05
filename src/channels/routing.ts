@@ -14,12 +14,24 @@ import type { ChannelRoute, InboundChannelMessage } from "./types";
 
 /** Key: "channel:chatId" */
 const routesByKey = new Map<string, ChannelRoute>();
+const routeChangeListeners = new Set<(channelId: string) => void>();
 
 let loadRoutesOverride: ((channelId: string) => ChannelRoute[] | null) | null =
   null;
 
 function normalizeAccountId(accountId?: string): string {
   return accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+}
+
+export function subscribeChannelRoutesChanged(
+  listener: (channelId: string) => void,
+): () => void {
+  routeChangeListeners.add(listener);
+  return () => routeChangeListeners.delete(listener);
+}
+
+function notifyChannelRoutesChanged(channelId: string): void {
+  for (const listener of routeChangeListeners) listener(channelId);
 }
 
 function normalizeThreadId(threadId?: string | null): string {
@@ -274,6 +286,7 @@ export function addRoute(channelId: string, route: ChannelRoute): void {
     },
   );
   saveRoutes(channelId);
+  notifyChannelRoutesChanged(channelId);
 }
 
 /**
@@ -289,6 +302,7 @@ export function removeRoute(
   const existed = routesByKey.delete(key);
   if (existed) {
     saveRoutes(channelId);
+    notifyChannelRoutesChanged(channelId);
   }
   return existed;
 }
@@ -349,6 +363,7 @@ export function removeRoutesForScope(
   }
   if (removed > 0) {
     saveRoutes(channelId);
+    notifyChannelRoutesChanged(channelId);
   }
   return removed;
 }
@@ -367,6 +382,7 @@ export function removeRoutesForAccount(
   }
   if (removed > 0) {
     saveRoutes(channelId);
+    notifyChannelRoutesChanged(channelId);
   }
   return removed;
 }

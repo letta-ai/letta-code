@@ -59,6 +59,7 @@ import {
   getLoopErrorNoticeDecision,
   getRecoverableRetryNoticeVisibility,
   getRecoverableStatusNoticeVisibility,
+  getTranscriptLoopErrorMessage as getTerminalError,
 } from "@/websocket/listener/recoverable-notices";
 import type { ConversationRuntime } from "@/websocket/listener/types";
 
@@ -4899,6 +4900,7 @@ describe("listen-client loop error notices", () => {
       visibility: "debug_only",
       message: "terminated",
     });
+    expect(getTerminalError({ message: "terminated" })).toBeUndefined();
   });
 
   test("normalizes Cloudflare HTML errors to match TUI formatting", () => {
@@ -4914,7 +4916,6 @@ describe("listen-client loop error notices", () => {
         "Cloudflare 520: Web server is returning an unknown error for api.letta.com (Ray ID: abc123). This is usually a temporary edge/origin outage. Please retry in a moment.",
     });
   });
-
   test("normalizes proxy transport errors into a friendly transcript message", () => {
     const error = new APIError(
       504,
@@ -4937,7 +4938,6 @@ describe("listen-client loop error notices", () => {
       message: "Connection to Letta service failed. Please retry.",
     });
   });
-
   test("reuses TUI formatter for structured run errors", () => {
     const apiError = {
       message_type: "error_message" as const,

@@ -28,10 +28,7 @@ import {
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { sessionPermissions } from "@/permissions/session";
-import {
-  getCurrentWorkingDirectory,
-  getRuntimeContext,
-} from "@/runtime-context";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
@@ -48,7 +45,6 @@ import {
   REFLECTION_STARTUP_CONTEXT_TOKEN_LIMIT,
 } from "./context-budget";
 import {
-  buildInheritedChannelContextPayload,
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
   resolveSubagentLauncher,
@@ -380,9 +376,6 @@ async function executeSubagent(
     const backendMode: BackendMode = activeBackend.capabilities.localMemfs
       ? "local"
       : "api";
-    const runtimeContext = getRuntimeContext();
-    const inheritedChannelContext =
-      buildInheritedChannelContextPayload(runtimeContext);
     const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
 
     let parentAgentId = parentAgentIdOverride;
@@ -406,10 +399,6 @@ async function executeSubagent(
         backendMode,
         promptTransport: "stdin",
         parentAgentId,
-        extraTools:
-          config.fork && inheritedChannelContext
-            ? ["MessageChannel"]
-            : undefined,
         systemPromptOverride,
       },
     );
@@ -455,13 +444,13 @@ async function executeSubagent(
       backendMode,
       localBackendStorageDir,
       parentAgentId,
+      subagentType: type,
       launchProfile: effectiveLaunchProfile,
       inheritedPrimaryRoot,
       memoryScope,
       inheritedApiKey,
       inheritedBaseUrl,
       transcriptPath,
-      inheritedChannelContext,
     });
 
     // Optionally confine subagents with the memory-subagent profile to an OS filesystem sandbox.

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type WebSocket from "ws";
 import {
   clearExternalTools,
@@ -6,6 +6,7 @@ import {
   prepareToolExecutionContextForModel,
 } from "@/tools/manager";
 import type { ExternalToolCallRequestMessage } from "@/types/protocol_v2";
+import { openListenerConnection } from "@/websocket/listener/connection";
 import {
   handleExternalToolCallResponseCommand,
   installExternalToolBridge,
@@ -13,7 +14,17 @@ import {
   rejectPendingExternalToolCalls,
   rejectPendingExternalToolCallsForConnection,
 } from "@/websocket/listener/external-tools";
-import type { ListenerRuntime } from "@/websocket/listener/types";
+import {
+  createRuntime,
+  startConnectedListenerRuntime,
+  stopRuntime,
+} from "@/websocket/listener/lifecycle";
+import { setActiveRuntime } from "@/websocket/listener/runtime";
+import type { LocalTransport } from "@/websocket/listener/transport";
+import type {
+  ListenerRuntime,
+  StartListenerOptions,
+} from "@/websocket/listener/types";
 
 function createMockRuntime(): {
   runtime: ListenerRuntime;
@@ -48,9 +59,103 @@ function createMockRuntime(): {
   return { runtime, sent };
 }
 
-describe("app-server runtime_start external tool bridge", () => {
+describe("listener runtime_start external tool bridge", () => {
+  beforeEach(() => {
+    clearExternalTools();
+  });
+
   afterEach(() => {
     clearExternalTools();
+    setActiveRuntime(null);
+  });
+
+  test("process-owned turns execute unscoped runtime tools through their controller", async () => {
+    const runtime = createRuntime();
+    const sent: ExternalToolCallRequestMessage[] = [];
+    const transport: LocalTransport = {
+      kind: "local",
+      bufferedAmount: 0,
+      isOpen: () => true,
+      send(data: string) {
+        const request = JSON.parse(data) as ExternalToolCallRequestMessage;
+        sent.push(request);
+        queueMicrotask(() => {
+          handleExternalToolCallResponseCommand(runtime, "remote-client", {
+            type: "external_tool_call_response",
+            request_id: request.request_id,
+            result: {
+              content: [{ type: "text", text: "delivered" }],
+            },
+          });
+        });
+      },
+    };
+    const options: StartListenerOptions = {
+      connectionId: "remote-client",
+      wsUrl: "wss://example.test/listener",
+      deviceId: "test-device",
+      connectionName: "remote-client",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    };
+    openListenerConnection({
+      runtime,
+      connectionId: options.connectionId,
+      writer: transport,
+      options,
+    });
+    runtime.processServicesStarted = true;
+    setActiveRuntime(runtime);
+
+    try {
+      await startConnectedListenerRuntime(
+        runtime,
+        transport,
+        options,
+        async () => {},
+        { startHeartbeat: false, startCronScheduler: false },
+      );
+      registerRuntimeExternalTools(
+        runtime,
+        options.connectionId,
+        { agent_id: "agent-1", conversation_id: "conv-1" },
+        [
+          {
+            tools: [
+              {
+                name: "MessageChannel",
+                description: "Deliver a channel message",
+                parameters: { type: "object", properties: {} },
+              },
+            ],
+          },
+        ],
+      );
+      const prepared = await prepareToolExecutionContextForModel(
+        "anthropic/claude-sonnet-4",
+        {
+          clientToolAllowlist: ["MessageChannel"],
+          runtimeContext: {
+            agentId: "agent-1",
+            conversationId: "conv-1",
+          },
+        },
+      );
+
+      const result = await executeTool(
+        "MessageChannel",
+        {},
+        { toolContextId: prepared.contextId, toolCallId: "call-1" },
+      );
+
+      expect(result.status).toBe("success");
+      expect(result.toolReturn).toBe("delivered");
+      expect(sent).toHaveLength(1);
+    } finally {
+      stopRuntime(runtime, true);
+      setActiveRuntime(null);
+    }
   });
 
   test("registers runtime-scoped tools and executes calls over the control socket", async () => {

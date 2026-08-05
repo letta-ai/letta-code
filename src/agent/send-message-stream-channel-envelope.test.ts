@@ -3,46 +3,26 @@ import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { Backend } from "@/backend";
-import { clearDynamicMessageChannelToolCache } from "@/channels/message-tool";
-import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
-import type { ChannelAdapter, InboundChannelMessage } from "@/channels/types";
+import { buildGatewayMessageChannelTool } from "@/channels/message-channel-gateway-tool";
+import type { InboundChannelMessage } from "@/channels/types";
 import { formatChannelNotification } from "@/channels/xml";
 import {
   clearCapturedToolExecutionContexts,
+  clearExternalTools,
   clearTools,
   prepareToolExecutionContextForModel,
+  registerExternalTools,
 } from "@/tools/manager";
 import { sendMessageStreamWithBackend } from "./message";
 
-function createRunningSlackAdapter(): ChannelAdapter {
-  return {
-    id: "slack:acct-slack",
-    channelId: "slack",
-    accountId: "acct-slack",
-    name: "Slack",
-    start: async () => {},
-    stop: async () => {},
-    isRunning: () => true,
-    sendMessage: async () => ({ messageId: "msg-1" }),
-    sendDirectReply: async () => {},
-  };
-}
-
 describe("channel request envelope", () => {
-  afterEach(async () => {
-    const registry = getChannelRegistry();
-    if (registry) {
-      await registry.stopAll();
-    }
-    clearDynamicMessageChannelToolCache();
+  afterEach(() => {
     clearCapturedToolExecutionContexts();
+    clearExternalTools();
     clearTools();
   });
 
   test("sends a compact Slack reminder with reply guidance in MessageChannel", async () => {
-    const registry = new ChannelRegistry();
-    registry.registerAdapter(createRunningSlackAdapter());
-
     const inboundMessage: InboundChannelMessage = {
       channel: "slack",
       accountId: "acct-slack",
@@ -55,12 +35,34 @@ describe("channel request envelope", () => {
       text: "Can you investigate this?",
       timestamp: Date.now(),
     };
+    const messageChannelTool = await buildGatewayMessageChannelTool([
+      {
+        channel: "slack",
+        accountId: inboundMessage.accountId,
+        chatId: inboundMessage.chatId,
+        chatType: inboundMessage.chatType,
+        messageId: inboundMessage.messageId,
+        threadId: inboundMessage.threadId,
+        agentId: "agent-1",
+        conversationId: "conv-slack",
+      },
+    ]);
+    if (!messageChannelTool) {
+      throw new Error("Gateway did not build MessageChannel");
+    }
+    registerExternalTools([
+      {
+        ...messageChannelTool,
+        runtime: { agentId: "agent-1", conversationId: "conv-slack" },
+      },
+    ]);
     const preparedToolContext = await prepareToolExecutionContextForModel(
       "anthropic/claude-opus-4-1-20250805",
       {
         clientToolAllowlist: ["MessageChannel"],
-        channelToolScope: {
-          channels: [{ channelId: "slack", accountId: "acct-slack" }],
+        runtimeContext: {
+          agentId: "agent-1",
+          conversationId: "conv-slack",
         },
       },
     );
@@ -114,5 +116,9 @@ describe("channel request envelope", () => {
     expect(messageChannel.description).toContain(
       "For Slack requests that require nontrivial work or several tool calls",
     );
+    const properties = messageChannel.parameters?.properties as
+      | Record<string, unknown>
+      | undefined;
+    expect(properties?.target).toBeDefined();
   });
 });

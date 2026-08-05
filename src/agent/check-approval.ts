@@ -101,6 +101,13 @@ function approvalRequestsFromMessage(
     name?: string;
     arguments?: string;
   };
+  // The approval_request_message's server-assigned id rides along so
+  // downstream emissions about these tool calls reuse it (LET-10608).
+  const messageId =
+    "id" in messageToCheck && typeof messageToCheck.id === "string"
+      ? messageToCheck.id
+      : undefined;
+
   return toolCalls
     .filter(
       (tc: ToolCallEntry): tc is ToolCallEntry & { tool_call_id: string } =>
@@ -110,6 +117,7 @@ function approvalRequestsFromMessage(
       toolCallId: tc.tool_call_id,
       toolName: tc.name || "",
       toolArgs: tc.arguments || "",
+      ...(messageId ? { messageId } : {}),
     }));
 }
 

@@ -36,7 +36,7 @@ import {
 } from "./accumulator";
 import { chunkLog } from "./chunk-log";
 import type { ContextTracker } from "./context-tracker";
-import type { ErrorInfo } from "./stream-processor";
+import type { ApprovalRequest, ErrorInfo } from "./stream-processor";
 import { StreamProcessor } from "./stream-processor";
 import {
   createStreamRecoveryAttemptAbort,
@@ -49,11 +49,7 @@ import {
   withStreamRecoveryTimeout,
 } from "./stream-recovery";
 
-export type ApprovalRequest = {
-  toolCallId: string;
-  toolName: string;
-  toolArgs: string;
-};
+export type { ApprovalRequest } from "./stream-processor";
 
 export type DrainStreamHookContext = {
   chunk: LettaStreamingResponse;
@@ -467,6 +463,7 @@ export async function drainStream(
     toolCallId: a.toolCallId,
     toolName: a.toolName || "",
     toolArgs: a.toolArgs || "",
+    ...(a.messageId ? { messageId: a.messageId } : {}),
   }));
   const approval: ApprovalRequest | null = approvals[0] || null;
   streamProcessor.pendingApprovals.clear();

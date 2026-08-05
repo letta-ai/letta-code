@@ -378,23 +378,20 @@ export async function startConnectedListenerRuntime(
   options: {
     startHeartbeat?: boolean;
     startCronScheduler?: boolean;
+    startProcessServices?: boolean;
     streamTransport?: ListenerTransport | null;
     emitInitialState?: boolean;
   } = {},
 ): Promise<void> {
-  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-    return;
-  }
-
-  const shouldStartHeartbeat = options.startHeartbeat !== false;
+  if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) return;
+  installExternalToolBridge(runtime);
   // LETTA_DISABLE_CRON_SCHEDULER=1 lets users opt out entirely. Useful when
   // running multiple letta-code instances against the same agent dir, since
   // only one process can hold the lease and the others would otherwise log
   // "scheduler lease held by PID ..." on every connect.
-  const cronSchedulerDisabledByEnv =
-    process.env.LETTA_DISABLE_CRON_SCHEDULER === "1";
   const shouldStartCronScheduler =
-    options.startCronScheduler !== false && !cronSchedulerDisabledByEnv;
+    options.startCronScheduler !== false &&
+    process.env.LETTA_DISABLE_CRON_SCHEDULER !== "1";
 
   markListenerConnectionInitialized(runtime, opts.connectionId);
   safeEmitWsEvent("recv", "lifecycle", {
@@ -415,7 +412,7 @@ export async function startConnectedListenerRuntime(
     );
   }
 
-  if (shouldStartHeartbeat) {
+  if (options.startHeartbeat !== false) {
     startConnectionHeartbeat(
       runtime,
       transport,
@@ -440,6 +437,8 @@ export async function startConnectedListenerRuntime(
     );
   }
 
+  if (options.startProcessServices === false) return;
+
   const processTransport = getOrCreateProcessTransport(runtime);
   for (const conversationRuntime of runtime.conversationRuntimes.values()) {
     if (conversationRuntime.queueRuntime?.isEmpty === false) {
@@ -452,9 +451,7 @@ export async function startConnectedListenerRuntime(
     }
   }
 
-  if (runtime.processServicesStarted) {
-    return;
-  }
+  if (runtime.processServicesStarted) return;
   if (!(await waitForProcessServicesSlot(runtime, opts.connectionId))) return;
 
   const processServicesGeneration = runtime.processServicesGeneration + 1;
@@ -513,6 +510,7 @@ export async function attachOpenListenerSocket(
     streamSocket?: WebSocket | null;
     startHeartbeat?: boolean;
     startCronScheduler?: boolean;
+    startProcessServices?: boolean;
     startupReady?: Promise<void>;
   } = {},
 ): Promise<void> {
@@ -647,6 +645,7 @@ export async function attachOpenListenerSocket(
     {
       startHeartbeat: options.startHeartbeat ?? false,
       startCronScheduler: options.startCronScheduler ?? true,
+      startProcessServices: options.startProcessServices ?? true,
       streamTransport,
       emitInitialState: false,
     },

@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
+import { APIError } from "@letta-ai/letta-client/error";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
+import {
+  getLoopErrorNoticeDecision,
+  getTranscriptLoopErrorMessage,
+} from "./recoverable-notices";
 import type { ListenerTransport } from "./transport";
 import { finishListenerTurn } from "./turn-terminal";
 
@@ -52,4 +57,37 @@ test("finishListenerTurn emits exactly one correlated terminal event", () => {
       stop_reason: "end_turn",
     }),
   ]);
+});
+
+test("terminal error formatting preserves classifications and rejects raw fallbacks", () => {
+  const unknownApiError = new APIError(
+    500,
+    { detail: "upstream credential leaked" },
+    undefined,
+    new Headers(),
+  );
+  const safeMessages = [
+    getTranscriptLoopErrorMessage({
+      message: unknownApiError.message,
+      error: unknownApiError,
+    }),
+    getTranscriptLoopErrorMessage({
+      message: "unknown object",
+      error: { detail: "private object detail", token: "secret-value" },
+    }),
+  ];
+
+  expect(safeMessages).toEqual([
+    "The request failed. Please try again.",
+    "The request failed. Please try again.",
+  ]);
+  expect(JSON.stringify(safeMessages)).not.toContain("credential leaked");
+  expect(JSON.stringify(safeMessages)).not.toContain("private object detail");
+  expect(JSON.stringify(safeMessages)).not.toContain("secret-value");
+  expect(
+    getTranscriptLoopErrorMessage({ message: "terminated" }),
+  ).toBeUndefined();
+  expect(getLoopErrorNoticeDecision({ message: "terminated" }).visibility).toBe(
+    "debug_only",
+  );
 });

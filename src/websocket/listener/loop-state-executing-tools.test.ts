@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
-import { emitToolExecutionAbortedEvents } from "./interrupts";
+import {
+  createToolExecutionOutputEmitter,
+  emitInterruptToolReturnMessage,
+  emitToolExecutionAbortedEvents,
+  emitToolExecutionFinishedEvents,
+  emitToolExecutionStartedEvents,
+} from "./interrupts";
 import { createRuntime } from "./lifecycle";
 import { buildLoopStatus } from "./protocol-outbound";
 import type { ConversationRuntime } from "./types";
@@ -109,6 +115,40 @@ describe("loop state executing tool call ids", () => {
 });
 
 describe("emitToolExecutionAbortedEvents", () => {
+  test("reuses the approval request message id for tool lifecycle rows", () => {
+    const runtime = createScopedRuntime();
+    const socket = new MockSocket();
+    runtime.approvalMessageIdByToolCallId.set(
+      "tool-call-1",
+      "message-approval-1",
+    );
+
+    emitToolExecutionStartedEvents(socket, runtime, {
+      toolCallIds: ["tool-call-1"],
+      runId: "run-1",
+    });
+    emitToolExecutionFinishedEvents(socket, runtime, {
+      approvals: [
+        {
+          type: "tool",
+          tool_call_id: "tool-call-1",
+          status: "success",
+          tool_return: "done",
+        },
+      ],
+      runId: "run-1",
+    });
+
+    const deltas = socket.sentPayloads
+      .map((payload) => JSON.parse(payload))
+      .filter((frame) => frame.type === "stream_delta")
+      .map((frame) => frame.delta);
+    expect(deltas.map((delta) => delta.id)).toEqual([
+      "message-approval-1",
+      "message-approval-1",
+    ]);
+  });
+
   test("emits error-status client_tool_end events for every tool call id", () => {
     const runtime = createScopedRuntime();
     const socket = new MockSocket();
@@ -127,6 +167,7 @@ describe("emitToolExecutionAbortedEvents", () => {
     expect(deltas).toHaveLength(2);
     for (const delta of deltas) {
       expect(delta.message_type).toBe("client_tool_end");
+      expect(delta.id).toStartWith("lifecycle-");
       expect(delta.status).toBe("error");
       expect(delta.run_id).toBe("run-1");
     }
@@ -148,5 +189,31 @@ describe("emitToolExecutionAbortedEvents", () => {
     });
 
     expect(socket.sentPayloads).toHaveLength(0);
+  });
+
+  test("keeps synthesized return rows out of the persisted message namespace", () => {
+    const runtime = createScopedRuntime();
+    const socket = new MockSocket();
+
+    emitInterruptToolReturnMessage(socket, runtime, [
+      {
+        type: "tool",
+        tool_call_id: "tool-call-1",
+        status: "error",
+        tool_return: "interrupted",
+      },
+    ]);
+    const output = createToolExecutionOutputEmitter(socket, runtime, {});
+    output("tool-call-2", "streamed output");
+    output.flush();
+
+    const ids = socket.sentPayloads
+      .map((payload) => JSON.parse(payload))
+      .filter((frame) => frame.type === "stream_delta")
+      .map((frame) => frame.delta.id);
+    expect(ids).toHaveLength(2);
+    expect(ids.every((id) => !id.startsWith("message-"))).toBe(true);
+    expect(ids[0]).toStartWith("synthetic-interrupt-tool-return-");
+    expect(ids[1]).toBe("synthetic-tool-return-stream-tool-call-2");
   });
 });

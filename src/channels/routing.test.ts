@@ -9,6 +9,7 @@ import {
   getRoutesForChannel,
   removeRoute,
   removeRoutesForScope,
+  subscribeChannelRoutesChanged,
 } from "@/channels/routing";
 
 describe("routing", () => {
@@ -36,6 +37,28 @@ describe("routing", () => {
     expect(route).not.toBeNull();
     expect(route?.agentId).toBe("agent-a");
     expect(route?.conversationId).toBe("conv-1");
+  });
+
+  test("notifies subscribers after persisted route changes", () => {
+    const changedChannels: string[] = [];
+    const unsubscribe = subscribeChannelRoutesChanged((channelId) => {
+      changedChannels.push(channelId);
+    });
+
+    try {
+      addRoute("telegram", {
+        chatId: "chat-1",
+        agentId: "agent-a",
+        conversationId: "conv-1",
+        enabled: true,
+        createdAt: new Date().toISOString(),
+      });
+      removeRoute("telegram", "chat-1");
+    } finally {
+      unsubscribe();
+    }
+
+    expect(changedChannels).toEqual(["telegram", "telegram"]);
   });
 
   test("returns null for non-existent route", () => {

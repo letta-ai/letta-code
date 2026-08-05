@@ -750,18 +750,18 @@ echo password=${token}
     helper = `!f() { echo "username=letta"; echo "password=${token}"; }; f`;
   }
 
+  // Reset inherited helpers (for example, a stale macOS osxkeychain entry)
+  // for this host before installing Letta's repo-local helper.
+  const writeHelperWithReset = async (key: string) => {
+    await gitConfig(dir, ["config", "--local", "--replace-all", key, ""]);
+    await gitConfig(dir, ["config", "--local", "--add", key, helper]);
+  };
   // Primary config: normalized origin key (most robust for git's credential lookup)
-  await gitConfig(dir, [
-    "config",
-    `credential.${normalizedBaseUrl}.helper`,
-    helper,
-  ]);
-
+  await writeHelperWithReset(`credential.${normalizedBaseUrl}.helper`);
   // Backcompat: also set raw configured URL key if it differs (older repos/configs)
   if (rawBaseUrl !== normalizedBaseUrl) {
-    await gitConfig(dir, ["config", `credential.${rawBaseUrl}.helper`, helper]);
+    await writeHelperWithReset(`credential.${rawBaseUrl}.helper`);
   }
-
   debugLog(
     "memfs-git",
     `Configured local credential helper for ${normalizedBaseUrl}${rawBaseUrl !== normalizedBaseUrl ? ` (and raw ${rawBaseUrl})` : ""}`,

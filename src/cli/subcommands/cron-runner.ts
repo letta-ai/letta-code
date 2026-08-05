@@ -158,35 +158,39 @@ export function validateTargetDevice(
   return { ok: true };
 }
 
-const INFERRED_TARGET_GUIDANCE =
-  "Pass --runner cloud to use the Cloud sandbox, --computer <deviceId> to choose a connected computer, or --runner local to use this process.";
-
 /**
- * How a default (no --runner/--computer) Cloud schedule should execute:
- * - "device": target the current runtime's device so the schedule keeps
- *   executing where it was created.
- * - "cloud-sandbox": leave the schedule untargeted; it fires in the agent's
+ * How a default (no --runner/--computer) schedule should execute:
+ * - "device": Cloud schedule targeting the current runtime's device so it
+ *   keeps executing where it was created.
+ * - "cloud-sandbox": untargeted Cloud schedule; it fires in the agent's
  *   managed Cloud sandbox.
- * - "error": the current runtime is neither — refuse with guidance.
+ * - "local-fallback": the current runtime is not reachable by Cloud
+ *   scheduling, so the schedule should be stored locally instead — that is
+ *   the only way it can keep executing here.
  */
 export type InferredTargetResolution =
   | { kind: "device" }
   | { kind: "cloud-sandbox" }
-  | { kind: "error"; error: string };
+  | { kind: "local-fallback"; reason: string };
 
 /**
- * A default Cloud schedule preserves the current turn's execution locality.
+ * A default schedule preserves the current turn's execution locality: work
+ * scheduled from a runtime should keep running in that runtime, so a
+ * follow-up never races the active conversation from a second execution
+ * environment (the two don't share a turn queue).
  *
  * A managed-sandbox runtime (`sandbox-*` device id) resolves to
  * "cloud-sandbox": an untargeted schedule already executes in the agent's
- * managed sandbox, so the old untargeted default IS locality-preserving
- * there. The sandbox check must come first — sandbox rows are registered
- * and online in the environments registry, but individual sandboxes get
+ * managed sandbox, so the untargeted default IS locality-preserving there.
+ * The sandbox check must come first — sandbox rows are registered and
+ * online in the environments registry, but individual sandboxes get
  * retired and recreated, so pinning one as a device target would be wrong.
  *
- * Any other runtime must be proven to be a live external listener because,
- * unlike an explicit --computer, there is no user-supplied target for the
- * Cloud API to validate or correct.
+ * A runtime that is not a live registered external listener (desktop-local
+ * proxy connections, unregistered installations, offline rows) cannot be
+ * reached by the Cloud scheduler at all, so the locality-preserving answer
+ * is "local-fallback": store the schedule in this computer's local
+ * scheduler. The caller surfaces the durability tradeoff to the user.
  */
 export async function resolveInferredTargetDevice(
   deviceId: string,
@@ -200,22 +204,22 @@ export async function resolveInferredTargetDevice(
   const basicValidity = validateTargetDevice(deviceId, environment);
   if (!basicValidity.ok) {
     return {
-      kind: "error",
-      error: `Cannot target the current runtime (${basicValidity.error}) ${INFERRED_TARGET_GUIDANCE}`,
+      kind: "local-fallback",
+      reason: "this computer is not connected to your Letta account",
     };
   }
 
   if (!environment) {
     return {
-      kind: "error",
-      error: `The current runtime (${deviceId}) is not registered as a Cloud environment. ${INFERRED_TARGET_GUIDANCE}`,
+      kind: "local-fallback",
+      reason: "this computer is not connected to your Letta account",
     };
   }
 
   if (!isEnvironmentOnline(environment)) {
     return {
-      kind: "error",
-      error: `The current runtime (${deviceId}) is not online in the Cloud environments registry. ${INFERRED_TARGET_GUIDANCE}`,
+      kind: "local-fallback",
+      reason: "this computer's connection to Letta is not currently online",
     };
   }
 
