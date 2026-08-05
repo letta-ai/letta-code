@@ -205,22 +205,21 @@ export async function resolveInferredTargetDevice(
   if (!basicValidity.ok) {
     return {
       kind: "local-fallback",
-      reason: "this computer is not a registered Cloud environment",
+      reason: "this computer is not connected to your Letta account",
     };
   }
 
   if (!environment) {
     return {
       kind: "local-fallback",
-      reason: "this computer is not registered with Cloud scheduling",
+      reason: "this computer is not connected to your Letta account",
     };
   }
 
   if (!isEnvironmentOnline(environment)) {
     return {
       kind: "local-fallback",
-      reason:
-        "this computer's Cloud environment registration is not currently online",
+      reason: "this computer's connection to Letta is not currently online",
     };
   }
 

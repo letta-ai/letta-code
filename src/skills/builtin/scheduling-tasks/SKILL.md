@@ -16,27 +16,22 @@ This skill lets you create, list, and manage scheduled tasks using the `letta cr
 
 ## Where Schedules Run — Omit the Flags
 
-**Default guidance: omit `--runner` and `--computer`.** The CLI picks where the schedule is stored and where it executes based on the runtime you're running in, and its default preserves execution locality: the scheduled work keeps running in the same environment as the conversation that created it. That matters because two execution environments don't share a turn queue — a follow-up that fires into a different environment can race the active conversation (busy/409 errors) while the user is still chatting.
+**Default guidance: omit `--runner` and `--computer`.** The CLI places the schedule so the work keeps running on the computer where it was created. Don't move scheduled work to a different computer than the active conversation without a reason: two computers working the same conversation can conflict.
 
-What the default resolves to:
+Pass a flag only when you have a requirement the default can't infer:
 
-- **Registered external listener** (a `letta server` on a VPS/Railway box, or a computer with remote access enabled): durable Cloud schedule targeted to this computer. Survives restarts; falls back to the agent's Cloud sandbox if this computer is offline at fire time.
-- **Managed cloud sandbox**: durable Cloud schedule that fires in the agent's Cloud sandbox. That is the same environment you're running in, so locality is preserved.
-- **This computer, not registered with Cloud** (e.g. a desktop-local session): local schedule in `~/.letta/crons.json`. Cloud scheduling has no way to reach this computer, so a local schedule is the only way the work can keep executing here. The CLI prints a warning with the durability tradeoff: local schedules only fire while a Letta session runs on this computer.
-- **Local-backend agents** (`agent-local-*`) and self-hosted servers always use the local scheduler.
+- **`--runner cloud`** — the schedule must fire no matter which computers are online; execute in the agent's cloud sandbox.
+- **`--computer <deviceId>`** — the work needs a specific connected computer (its filesystem, services, or credentials). Get the deviceId from `letta environments list`. If that computer is offline at fire time, execution falls back to the cloud sandbox.
+- **`--runner local`** — the work must only ever run on the current computer, even if that means missing fires while no session is running here.
 
-Pass a flag only when you have a constraint the default can't infer:
-
-- **`--runner cloud`** — the schedule must survive this computer/session no matter what; execute in the agent's Cloud sandbox. Use this for recurring jobs created from an unregistered computer (see below).
-- **`--computer <deviceId>`** — the work needs a specific always-on computer's filesystem, services, or credentials. The deviceId comes from `letta environments list`; the computer must be a registered external environment (managed sandboxes and desktop-local connections are not valid targets). Falls back to the Cloud sandbox if it's offline at fire time; that fallback cannot be disabled.
-- **`--runner local`** — the work must only ever run on this computer, even if that means missing fires while no session is running.
+The CLI reports its placement in the command output. If it warns that the schedule is local (this happens when the cloud scheduler cannot reach the current computer), the schedule only fires while a Letta session is running here — read the warning and decide whether that's acceptable.
 
 ### Fast Follow-ups vs Recurring Jobs
 
-Two patterns cover most schedules; they want different placement:
+Two patterns cover most schedules:
 
-- **Fast follow-ups** ("check on the PR in 5m", "poke the deploy in 30m"): the default is right. Same execution environment as the active conversation, no queue races. If the session dies before it fires, the follow-up usually died with the task anyway.
-- **Recurring jobs** ("every Monday 11am, start the lunch order"): prefer durability. If you're on a registered listener or in a sandbox, the default is already durable. If the CLI warns that it created a *local* schedule for a recurring job, that's usually wrong for the user's intent — recreate it with `--runner cloud` (or `--computer` for an always-on box), and consider whether the job should post into a dedicated conversation rather than this one (continuity in one thread vs a fresh context per topic).
+- **Fast follow-ups** ("check on the PR in 5m"): the default is right — same computer as the active conversation. If the session dies before it fires, the follow-up usually died with the task anyway.
+- **Recurring jobs** ("every Monday 11am, start the lunch order"): prefer durability. If the CLI warned that a recurring schedule is local, that's usually wrong for the user's intent — recreate it with `--runner cloud`, or `--computer` if the job needs a specific always-on computer. Also consider whether the job should post into a dedicated conversation rather than this one (continuity in one thread vs a fresh context per run).
 
 ## CLI Usage
 
@@ -71,7 +66,7 @@ letta cron add --name <short-name> --description <text> --prompt <text> <schedul
 | `--agent <id>` | Agent ID (defaults to `LETTA_AGENT_ID` from the current shell/session) |
 | `--conversation <id>` | Conversation ID (defaults to `LETTA_CONVERSATION_ID` from the current shell/session, otherwise `"default"`) |
 | `--runner <runner>` | `cloud` or `local` — normally omit; see "Where Schedules Run" above |
-| `--computer <id>` | Execute on a specific registered computer — normally omit |
+| `--computer <id>` | Execute on a specific connected computer — normally omit |
 | `--once` | Mark `--at` as one-shot (already the default for `--at`) |
 
 ### Listing Tasks
@@ -209,9 +204,9 @@ Include context about what the user originally asked for, so you can give a help
 - **Recurring tasks**: No longer auto-expire. They remain active until explicitly cancelled.
 - **One-shot cleanup (local runner)**: One-shot local tasks are garbage-collected 24 hours after firing.
 - **Default binding precedence**: `letta cron add` uses `--agent` / `--conversation` first, then falls back to `LETTA_AGENT_ID` / `LETTA_CONVERSATION_ID`, then finally uses `"default"` for the conversation if no env var is present.
-- **Local scheduler requirement**: Local-runner tasks only fire while a Letta session is running on that computer (a WS listener must be active). If no session is running, tasks will be marked as missed. Cloud schedules fire from the cloud regardless.
+- **Local scheduler requirement**: Local schedules only fire while a Letta session is running on their computer; fires while no session runs are marked as missed. Cloud schedules fire from the cloud regardless.
 - **`--at` for specific times**: `--at "3:00pm"` schedules a one-shot. If the time has already passed today, it schedules for tomorrow.
-- **Cloud schedule creation failures are loud**: if creating a Cloud schedule fails, no schedule is created — there is no silent fallback to local storage on error. (The local fallback for unregistered computers happens *before* creation and is reported in the output.)
+- **Cloud schedule creation failures are loud**: if creating a cloud schedule fails, no schedule is created — a failed create never silently becomes a local schedule. (The local placement for computers the cloud scheduler can't reach is decided before creation and reported in the output.)
 
 ## Cron Expression Reference
 

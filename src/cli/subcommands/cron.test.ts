@@ -296,7 +296,7 @@ describe("cron add execution targeting", () => {
       // addArgs uses --every (recurring), so the warning carries both the
       // fallback reason and the louder recurring durability caution.
       expect(String(output.warning)).toContain(
-        "Cloud scheduling cannot reach this computer",
+        "This schedule is local to this computer",
       );
       expect(String(output.warning)).toContain("Recurring schedules");
       expect(String(output.warning)).toContain("--runner cloud");
@@ -325,7 +325,7 @@ describe("cron add execution targeting", () => {
       const output = JSON.parse(logs.join("")) as Record<string, unknown>;
       expect(output.runner).toBe("local");
       expect(String(output.warning)).toContain(
-        "Cloud scheduling cannot reach this computer",
+        "This schedule is local to this computer",
       );
       expect(String(output.warning)).not.toContain("Recurring schedules");
     } finally {

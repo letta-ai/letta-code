@@ -404,7 +404,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
       targetDeviceId = inferredDeviceId;
     } else if (resolution.kind === "local-fallback") {
       runner = "local";
-      localFallbackNote = `Cloud scheduling cannot reach this computer (${resolution.reason}), so this schedule was stored locally: it only fires while a Letta session is running here. For a durable schedule, pass --runner cloud (agent's Cloud sandbox) or --computer <deviceId> (a registered computer from \`letta environments list\`).`;
+      localFallbackNote = `This schedule is local to this computer (${resolution.reason}): it only fires while a Letta session is running here. For a schedule that fires regardless, pass --runner cloud (runs in the agent's cloud sandbox) or --computer <deviceId> (runs on a connected computer, from \`letta environments list\`).`;
     }
   }
 
