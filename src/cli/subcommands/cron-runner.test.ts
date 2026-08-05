@@ -304,17 +304,15 @@ describe("resolveInferredTargetDevice", () => {
     ["synthetic local", "local", null],
     ["synthetic Cloud", "__letta_cloud__", null],
   ])(
-    "rejects %s identities with runner guidance",
+    "resolves %s identities to the local-runner fallback",
     async (_label, deviceId, environment) => {
       const result = await resolveInferredTargetDevice(
         deviceId,
         async () => environment,
       );
-      expect(result.kind).toBe("error");
-      if (result.kind === "error") {
-        expect(result.error).toContain("--runner cloud");
-        expect(result.error).toContain("--computer <deviceId>");
-        expect(result.error).toContain("--runner local");
+      expect(result.kind).toBe("local-fallback");
+      if (result.kind === "local-fallback") {
+        expect(result.reason.length).toBeGreaterThan(0);
       }
     },
   );
