@@ -15,7 +15,7 @@ export const DEFAULT_SUMMARIZATION_MODEL = "letta/auto";
 /**
  * Default model handle for lightweight conversation title generation.
  */
-export const DEFAULT_TITLE_SUMMARIZATION_MODEL = "letta/auto-fast";
+export const DEFAULT_TITLE_SUMMARIZATION_MODEL = "openai/gpt-5.6-luna";
 
 /**
  * Default agent name when creating a new agent
