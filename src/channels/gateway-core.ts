@@ -605,6 +605,8 @@ export class ChannelGateway {
   }
 
   private handleStreamDelta(message: StreamDeltaMessage): void {
+    if (message.subagent_id) return;
+
     const state = this.getState(message.runtime);
     const active = state.active;
     if (!active) return;
@@ -626,17 +628,9 @@ export class ChannelGateway {
     active.richDraft?.handleDelta(message.delta);
 
     const stopReason = stopReasonFromDelta(message);
-    if (!stopReason) return;
-    if (stopReason === "requires_approval") {
+    if (stopReason === "requires_approval" || stopReason === "end_turn") {
       void active.richDraft?.flushPending();
-      return;
     }
-    if (stopReason === "end_turn") void active.richDraft?.flushPending();
-    this.handleTurnFinished(message.runtime, {
-      stopReason,
-      runId: active.runId,
-      error: errorFromDelta(message),
-    });
   }
 
   private handleTurnFinished(

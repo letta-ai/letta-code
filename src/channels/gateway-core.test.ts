@@ -857,41 +857,91 @@ test("control request with multiple sources does not dispatch", async () => {
   gateway.close();
 });
 
-test("stream delta with stop_reason triggers turn_finished", async () => {
+test("run-level error stop waits for the final turn_finished event", async () => {
   const client = new FakeClient();
   const { hooks, lifecycleEvents, progressEvents } = makeHooks();
   const gateway = new ChannelGateway(client, hooks);
 
-  await gateway.submit(makeDelivery({ clientMessageId: "cm-stream" }));
-
-  // Emit a reasoning delta
-  client.emit(
-    makeStreamDelta({
-      message_type: "reasoning_message",
-      run_id: "run-1",
-    }),
-  );
-
-  // Should have progress events
-  expect(progressEvents.length).toBeGreaterThan(0);
-
-  // Emit a stop_reason delta
+  await gateway.submit(makeDelivery({ clientMessageId: "cm-retry" }));
   client.emit(
     makeStreamDelta({
       message_type: "stop_reason",
-      stop_reason: "end_turn",
-      run_id: "run-1",
+      stop_reason: "llm_api_error",
+      run_id: "run-failed",
     }),
   );
   await Bun.sleep(0);
 
-  // Should trigger finished lifecycle
-  const finishedEvents = lifecycleEvents.filter((e) => e.type === "finished");
+  expect(lifecycleEvents.filter((event) => event.type === "finished")).toEqual(
+    [],
+  );
+
+  client.emit(
+    makeStreamDelta({
+      message_type: "reasoning_message",
+      run_id: "run-retry",
+    }),
+  );
+  client.emit(
+    makeTurnFinished("end_turn", TEST_RUNTIME, { runId: "run-retry" }),
+  );
+  await Bun.sleep(0);
+
+  expect(progressEvents.length).toBeGreaterThan(0);
+  const finishedEvents = lifecycleEvents.filter(
+    (event) => event.type === "finished",
+  );
   expect(finishedEvents).toHaveLength(1);
-  if (finishedEvents[0] && finishedEvents[0].type === "finished") {
-    expect(finishedEvents[0].outcome).toBe("completed");
-    expect(finishedEvents[0].runId).toBe("run-1");
-  }
+  expect(finishedEvents[0]).toMatchObject({
+    outcome: "completed",
+    runId: "run-retry",
+    stopReason: "end_turn",
+  });
+
+  gateway.close();
+});
+
+test("subagent stop does not finish or overwrite the parent turn", async () => {
+  const client = new FakeClient();
+  const { hooks, lifecycleEvents, progressEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+
+  await gateway.submit(makeDelivery({ clientMessageId: "cm-subagent" }));
+  client.emit({
+    ...makeStreamDelta({
+      message_type: "stop_reason",
+      stop_reason: "insufficient_credits",
+      run_id: "run-subagent",
+    }),
+    subagent_id: "subagent-1",
+  });
+  await Bun.sleep(0);
+
+  expect(lifecycleEvents.filter((event) => event.type === "finished")).toEqual(
+    [],
+  );
+  expect(progressEvents).toEqual([]);
+
+  client.emit(
+    makeStreamDelta({
+      message_type: "reasoning_message",
+      run_id: "run-parent",
+    }),
+  );
+  client.emit(
+    makeTurnFinished("end_turn", TEST_RUNTIME, { runId: "run-parent" }),
+  );
+  await Bun.sleep(0);
+
+  const finishedEvents = lifecycleEvents.filter(
+    (event) => event.type === "finished",
+  );
+  expect(finishedEvents).toHaveLength(1);
+  expect(finishedEvents[0]).toMatchObject({
+    outcome: "completed",
+    runId: "run-parent",
+    stopReason: "end_turn",
+  });
 
   gateway.close();
 });
