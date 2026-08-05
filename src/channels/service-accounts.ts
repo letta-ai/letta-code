@@ -14,11 +14,7 @@ import {
   createAccountFromPatch,
   mergeAccountPatch,
 } from "./service-account-model";
-import {
-  assertSupportedChannelId,
-  getErrorMessage,
-  refreshLoadedMessageChannelTool,
-} from "./service-shared";
+import { assertSupportedChannelId, getErrorMessage } from "./service-shared";
 import {
   isAccountConfigured,
   resolveChannelAccountDisplayName,
@@ -379,7 +375,6 @@ export async function startChannelAccountLive(
       force: channelId === "slack" || channelId === "discord",
     },
   );
-  await refreshLoadedMessageChannelTool();
   return snapshot;
 }
 
@@ -404,7 +399,6 @@ export async function stopChannelAccountLive(
     : existing;
 
   await getChannelRegistry()?.stopChannelAccount(channelId, accountId);
-  await refreshLoadedMessageChannelTool();
   return toAccountSnapshot(next);
 }
 
@@ -426,6 +420,5 @@ export async function removeChannelAccountLive(
   removeChannelTargetsForAccount(channelId, accountId);
   removePairingStateForAccount(channelId, accountId);
   const removed = removeChannelAccount(channelId, accountId);
-  await refreshLoadedMessageChannelTool();
   return removed;
 }

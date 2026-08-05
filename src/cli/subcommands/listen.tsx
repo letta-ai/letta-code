@@ -532,6 +532,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         channelAppServer = await startAppServer({
           runtime,
           connectionName,
+          startProcessServices: false,
           onLog: (message) => sessionLog.log(`[ChannelGateway] ${message}`),
         });
         const { startChannelGatewaySupervisor } = await import(
@@ -622,7 +623,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             console.log(`[${formatTimestamp()}] status: ${status}`);
           }
         },
-        onConnected: () => {
+        onConnected: async () => {
+          await startChannelGateway();
           sessionLog.log("Local channel listener ready.");
           if (debugMode) {
             console.log(`[${formatTimestamp()}] Local channel listener ready.`);
@@ -635,8 +637,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           void exitWithTelemetry(1, "listener_error");
         },
       });
-
-      await startChannelGateway();
 
       return createListenerProcessAnchorPromise();
     }

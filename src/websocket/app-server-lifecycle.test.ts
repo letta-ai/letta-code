@@ -155,6 +155,32 @@ describe("app-server startup lifecycle", () => {
     expect(runtime.intentionallyClosed).toBe(false);
   });
 
+  test("an attached controller can leave process services to the primary listener", async () => {
+    const runtime = createRuntime();
+    runtime.connectionId = "outbound-listener";
+    runtime.connectionName = "primary listener";
+    setActiveRuntime(runtime);
+    const handle = await startAppServer({
+      listen: "ws://127.0.0.1:0",
+      runtime,
+      connectionName: "channel loopback",
+      startProcessServices: false,
+    });
+    const client = new WebSocket(handle.controlUrl);
+
+    try {
+      await waitForOpen(client);
+      await waitFor(
+        () => runtime.connections.size === 1,
+        "controller connection was not attached to listener runtime",
+      );
+      expect(runtime.processServicesStarted).toBe(false);
+    } finally {
+      closeClient(client);
+      await handle.close();
+    }
+  });
+
   test("a bind failure preserves the active runtime and a later start succeeds", async () => {
     const occupied = createServer();
     await new Promise<void>((resolve) =>

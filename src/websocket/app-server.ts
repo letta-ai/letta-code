@@ -65,6 +65,8 @@ export interface StartAppServerOptions {
   shouldRecordPong?: (connectionId: string) => boolean;
   /** @internal Test override for listener runtime initialization. */
   initializeRuntime?: (runtime: ListenerRuntime) => Promise<void>;
+  /** Whether attached clients may start process-owned services. Defaults true. */
+  startProcessServices?: boolean;
 }
 
 export interface AppServerListeningInfo {
@@ -239,6 +241,7 @@ export async function startAppServer(
       {
         startHeartbeat: false,
         startCronScheduler: true,
+        startProcessServices: options.startProcessServices ?? true,
         startupReady: getStartupReady(),
       },
     ).catch((error) => {

@@ -1,5 +1,5 @@
 /**
- * Local MessageChannel tool binding.
+ * ChannelGateway's local MessageChannel execution binding.
  *
  * The canonical contract lives in channels/message-channel-executor. This file
  * only resolves local persisted routes, running adapters, and proactive Slack

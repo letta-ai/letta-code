@@ -541,22 +541,7 @@ export function isRuntimeStartCommand(
   value: unknown,
 ): value is RuntimeStartCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    agent_id?: unknown;
-    create_agent?: unknown;
-    conversation_id?: unknown;
-    create_conversation?: unknown;
-    cwd?: unknown;
-    mode?: unknown;
-    skill_sources?: unknown;
-    client_info?: unknown;
-    recover_approvals?: unknown;
-    force_device_status?: unknown;
-    wait_for_replay?: unknown;
-    external_tools?: unknown;
-  };
+  const c = value as Record<string, unknown>;
   return (
     c.type === "runtime_start" &&
     typeof c.request_id === "string" &&
@@ -570,6 +555,8 @@ export function isRuntimeStartCommand(
     (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
     (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
     (c.skill_sources === undefined || isSkillSourceArray(c.skill_sources)) &&
+    (c.preserve_skill_sources === undefined ||
+      typeof c.preserve_skill_sources === "boolean") &&
     (c.client_info === undefined || isRuntimeStartClientInfo(c.client_info)) &&
     (c.recover_approvals === undefined ||
       typeof c.recover_approvals === "boolean") &&
