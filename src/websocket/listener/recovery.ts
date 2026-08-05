@@ -893,7 +893,10 @@ export async function resolveRecoveredApprovalResponse(
       turnId: `batch-recovered-${requestId}`,
       error:
         stopReason === "error"
-          ? getTranscriptLoopErrorMessage({ error, message: String(error) })
+          ? getTranscriptLoopErrorMessage({
+              error,
+              message: error instanceof Error ? error.message : String(error),
+            })
           : undefined,
     });
     throw error;
