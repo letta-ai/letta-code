@@ -27,7 +27,7 @@ import {
   buildChannelModelUpdateFailedMessage,
 } from "./commands";
 import { ChannelGateway, type ChannelGatewayDelivery } from "./gateway-core";
-import { buildDynamicMessageChannelToolDefinition } from "./message-tool";
+import { buildChannelGatewayExternalTools } from "./gateway-tools";
 import {
   type ChannelsCommand,
   handleChannelsProtocolCommand,
@@ -214,37 +214,12 @@ export async function startLocalChannelGateway(
           }
         : null;
     },
-    buildExternalTool: async (runtime, deliverySources) => {
-      const routeSources = registry.resolveTurnSourcesForScope(
-        runtime.agent_id,
-        runtime.conversation_id,
-      );
-      const sources = [...routeSources, ...deliverySources];
-      const seen = new Set<string>();
-      const channels = sources
-        .map((source) => ({
-          channelId: source.channel,
-          accountId: source.accountId ?? null,
-        }))
-        .filter(({ channelId, accountId }) => {
-          const key = `${channelId}:${accountId ?? ""}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-      const base = TOOL_DEFINITIONS.MessageChannel;
-      const resolved = await buildDynamicMessageChannelToolDefinition(
-        base.description,
-        base.schema,
-        { channels },
-      );
-      return {
-        name: "MessageChannel",
-        label: "Message Channel",
-        description: resolved.description,
-        parameters: resolved.schema,
-      };
-    },
+    buildExternalTools: (runtime) =>
+      buildChannelGatewayExternalTools(
+        registry,
+        runtime,
+        TOOL_DEFINITIONS.MessageChannel,
+      ),
     executeExternalTool: async (request, sources) => {
       if (request.tool_name !== "MessageChannel" || !request.runtime) {
         throw new Error(`Unsupported gateway tool: ${request.tool_name}`);

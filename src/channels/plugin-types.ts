@@ -20,7 +20,7 @@ export interface ChannelPluginMetadata {
   displayName: string;
   runtimePackages: string[];
   runtimeModules: string[];
-  source?: "first-party" | "user";
+  source?: "first-party" | "bundled" | "user";
   firstParty?: boolean;
   /**
    * Optional declarative description of the plugin's account-config fields.

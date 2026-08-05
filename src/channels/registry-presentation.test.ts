@@ -7,6 +7,7 @@ import {
 import {
   buildDirectReplyOptions,
   buildSlackConversationSummary,
+  getConfiguredAgentId,
 } from "@/channels/registry-presentation";
 
 beforeEach(() => {
@@ -19,6 +20,23 @@ afterEach(() => {
   __testOverrideLoadPendingControlRequestStore(null);
   __testOverrideSavePendingControlRequestStore(null);
   clearPendingControlRequestStore();
+});
+
+describe("getConfiguredAgentId", () => {
+  test("reads generic plugin agent bindings", () => {
+    expect(
+      getConfiguredAgentId({ config: { agent_id: " agent-linear " } }),
+    ).toBe("agent-linear");
+  });
+
+  test("prefers first-party account bindings", () => {
+    expect(
+      getConfiguredAgentId({
+        agentId: "agent-first-party",
+        config: { agent_id: "agent-plugin" },
+      }),
+    ).toBe("agent-first-party");
+  });
 });
 
 describe("buildDirectReplyOptions", () => {

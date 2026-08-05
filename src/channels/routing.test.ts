@@ -9,6 +9,7 @@ import {
   getRoutesForChannel,
   removeRoute,
   removeRoutesForScope,
+  subscribeChannelRouteChanges,
 } from "@/channels/routing";
 
 describe("routing", () => {
@@ -65,6 +66,39 @@ describe("routing", () => {
 
     expect(removeRoute("telegram", "chat-1")).toBe(true);
     expect(getRoute("telegram", "chat-1")).toBeNull();
+  });
+
+  test("emits durable route additions, updates, and removals", () => {
+    const changes: Array<{
+      previousAgentId: string | null;
+      currentAgentId: string | null;
+    }> = [];
+    const unsubscribe = subscribeChannelRouteChanges(
+      ({ previous, current }) => {
+        changes.push({
+          previousAgentId: previous?.agentId ?? null,
+          currentAgentId: current?.agentId ?? null,
+        });
+      },
+    );
+    const route = {
+      chatId: "chat-1",
+      agentId: "agent-a",
+      conversationId: "conv-1",
+      enabled: true,
+      createdAt: new Date().toISOString(),
+    };
+
+    addRoute("telegram", route);
+    addRoute("telegram", { ...route, agentId: "agent-b" });
+    removeRoute("telegram", "chat-1");
+    unsubscribe();
+
+    expect(changes).toEqual([
+      { previousAgentId: null, currentAgentId: "agent-a" },
+      { previousAgentId: "agent-a", currentAgentId: "agent-b" },
+      { previousAgentId: "agent-b", currentAgentId: null },
+    ]);
   });
 
   test("removeRoutesForScope removes matching routes", () => {

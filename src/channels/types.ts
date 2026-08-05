@@ -1,11 +1,4 @@
-/**
- * Channel system types.
- *
- * A "channel" connects Letta Code agents to external messaging platforms
- * (Telegram, Slack, etc.). Each channel has an adapter that handles
- * platform-specific communication, and a routing table that maps
- * platform chat IDs to agent+conversation pairs.
- */
+/** Types for external messaging channel adapters and routes. */
 
 import type { WhatsAppMessagePrefixConfig } from "@/channels/whatsapp/message-prefix-config-types";
 import type { PermissionMode } from "@/permissions/mode";
@@ -325,6 +318,11 @@ export interface ChannelAdapter {
       applyMessagePrefix?: boolean;
     },
   ): Promise<void>;
+
+  /** Select an agent for central conversation and route provisioning. */
+  resolveAutoRoute?(
+    msg: InboundChannelMessage,
+  ): Promise<{ agentId: string; conversationSummary?: string } | null>;
 
   /**
    * Optionally enrich an inbound message with additional context before it is

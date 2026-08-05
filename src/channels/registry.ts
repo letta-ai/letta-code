@@ -59,6 +59,7 @@ import {
   loadRoutes,
   removeRouteInMemory,
   setRouteInMemory,
+  subscribeChannelRouteChanges,
 } from "./routing";
 import {
   buildSignalBaseUrlConflictError,
@@ -173,6 +174,7 @@ export class ChannelRegistry {
   private readonly commands: ChannelCommandRouter;
   private readonly inbound: ChannelInboundRouter;
   private readonly unsubscribeWhatsAppState: () => void;
+  private readonly unsubscribeRouteChanges: () => void;
 
   constructor() {
     if (instance) {
@@ -181,6 +183,22 @@ export class ChannelRegistry {
       );
     }
     instance = this;
+    this.unsubscribeRouteChanges = subscribeChannelRouteChanges(
+      ({ previous, current }) => {
+        const notified = new Set<string>();
+        for (const route of [previous, current]) {
+          if (!route) continue;
+          const key = `${route.agentId}:${route.conversationId}`;
+          if (notified.has(key)) continue;
+          notified.add(key);
+          this.eventHandler?.({
+            type: "channel_runtime_routes_updated",
+            agentId: route.agentId,
+            conversationId: route.conversationId,
+          });
+        }
+      },
+    );
     this.controls = new ChannelControlRequests({
       getAdapter: (channelId, accountId) =>
         this.getAdapter(channelId, accountId),
@@ -257,6 +275,24 @@ export class ChannelRegistry {
       .map((adapter) => adapter.channelId ?? adapter.id);
   }
 
+  private notifyAdapterRouteScopes(adapters: ChannelAdapter[]): void {
+    const notified = new Set<string>();
+    for (const adapter of adapters) {
+      const channelId = adapter.channelId ?? adapter.id;
+      const accountId = adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
+      for (const route of getRoutesForChannel(channelId, accountId)) {
+        const key = `${route.agentId}:${route.conversationId}`;
+        if (notified.has(key)) continue;
+        notified.add(key);
+        this.eventHandler?.({
+          type: "channel_runtime_routes_updated",
+          agentId: route.agentId,
+          conversationId: route.conversationId,
+        });
+      }
+    }
+  }
+
   resolveTurnSourcesForScope(
     agentId: string,
     conversationId: string,
@@ -264,11 +300,13 @@ export class ChannelRegistry {
     const sources: ChannelTurnSource[] = [];
     const seen = new Set<string>();
     for (const adapter of this.adapters.values()) {
+      if (!adapter.isRunning()) continue;
       const channel = adapter.channelId ?? adapter.id;
       const accountId = adapter.accountId ?? LEGACY_CHANNEL_ACCOUNT_ID;
       for (const route of getRoutesForChannel(channel, accountId)) {
         if (
           route.enabled === false ||
+          route.outboundEnabled === false ||
           route.agentId !== agentId ||
           route.conversationId !== conversationId
         ) {
@@ -593,12 +631,18 @@ export class ChannelRegistry {
     loadTargetStore(channelId);
 
     const existing = this.getAdapter(channelId, accountId);
-    if (existing?.isRunning()) {
-      logChannelStartup(
-        options?.logger,
-        `stopping existing adapter for ${channelId}/${accountId}`,
-      );
-      await existing.stop();
+    if (existing) {
+      try {
+        if (existing.isRunning()) {
+          logChannelStartup(
+            options?.logger,
+            `stopping existing adapter for ${channelId}/${accountId}`,
+          );
+          await existing.stop();
+        }
+      } finally {
+        this.notifyAdapterRouteScopes([existing]);
+      }
     }
     this.adapters.delete(this.getAdapterKey(channelId, accountId));
 
@@ -617,12 +661,16 @@ export class ChannelRegistry {
       options?.logger,
       `starting adapter for ${account.channel}/${accountId}`,
     );
-    await adapter.start({ logger: options?.logger });
-    logChannelStartup(
-      options?.logger,
-      `started adapter for ${account.channel}/${accountId}`,
-    );
-    return true;
+    try {
+      await adapter.start({ logger: options?.logger });
+      logChannelStartup(
+        options?.logger,
+        `started adapter for ${account.channel}/${accountId}`,
+      );
+      return true;
+    } finally {
+      this.notifyAdapterRouteScopes([adapter]);
+    }
   }
 
   async stopChannel(channelId: string): Promise<boolean> {
@@ -634,8 +682,12 @@ export class ChannelRegistry {
     }
 
     for (const adapter of adapters) {
-      if (adapter.isRunning()) {
-        await adapter.stop();
+      try {
+        if (adapter.isRunning()) {
+          await adapter.stop();
+        }
+      } finally {
+        this.notifyAdapterRouteScopes([adapter]);
       }
       this.adapters.delete(
         this.getAdapterKey(
@@ -656,8 +708,12 @@ export class ChannelRegistry {
     if (!adapter) {
       return false;
     }
-    if (adapter.isRunning()) {
-      await adapter.stop();
+    try {
+      if (adapter.isRunning()) {
+        await adapter.stop();
+      }
+    } finally {
+      this.notifyAdapterRouteScopes([adapter]);
     }
     this.adapters.delete(this.getAdapterKey(channelId, accountId));
     return true;
@@ -668,7 +724,11 @@ export class ChannelRegistry {
   async startAll(): Promise<void> {
     for (const adapter of Array.from(this.adapters.values())) {
       if (!adapter.isRunning()) {
-        await adapter.start();
+        try {
+          await adapter.start();
+        } finally {
+          this.notifyAdapterRouteScopes([adapter]);
+        }
       }
     }
   }
@@ -694,9 +754,14 @@ export class ChannelRegistry {
    * Only called on actual process shutdown, NOT on WS disconnect.
    */
   async stopAll(): Promise<void> {
+    let stopError: unknown = null;
     for (const adapter of Array.from(this.adapters.values())) {
-      if (adapter.isRunning()) {
-        await adapter.stop();
+      try {
+        if (adapter.isRunning()) {
+          await adapter.stop();
+        }
+      } catch (error) {
+        stopError ??= error;
       }
     }
     this.ready = false;
@@ -709,7 +774,9 @@ export class ChannelRegistry {
     this.reloadHandler = null;
     this.controls.clearAll();
     this.unsubscribeWhatsAppState();
+    this.unsubscribeRouteChanges();
     instance = null;
+    if (stopError !== null) throw stopError;
   }
 
   // ── Inbound message pipeline ──────────────────────────────────

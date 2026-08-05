@@ -1,10 +1,12 @@
 # Channel plugins
 
-Letta Code channels connect agents to external chat systems. Telegram, Slack,
-and Discord are first-party bundled plugins with custom Desktop UI. User-defined
-plugins are loaded from `~/.letta/channels/<channel-id>/` and run headlessly:
-they can receive inbound messages, participate in pairing/routing, and extend
-the shared `MessageChannel` tool, but they do not get custom Desktop screens.
+Letta Code channels connect agents to external chat systems. First-party
+channels may have bespoke account models and Desktop UI. Experimental bundled
+channels use the generic plugin account model but ship with Letta Code.
+User-defined plugins are loaded from `~/.letta/channels/<channel-id>/` and run
+headlessly: they can receive inbound messages, participate in pairing/routing,
+and extend the shared `MessageChannel` tool, but they do not get custom Desktop
+screens.
 
 ## Directory layout
 
@@ -119,19 +121,20 @@ fields internally, but user plugins should only rely on `account.config`.
 
 ## Runtime behavior
 
-The MVP runtime path supports custom plugins that fit the generic pairing and
-routing flow:
+The plugin runtime follows one central access and routing path:
 
 1. The adapter receives an inbound message and calls `adapter.onMessage(msg)`.
 2. Letta Code enforces `dmPolicy` / `allowedUsers`.
-3. Letta Code resolves a route from `routing.yaml` or creates a pairing code.
-4. The routed message is delivered to the bound agent/conversation.
-5. `MessageChannel` becomes available when the conversation has an active route
-   for at least one running channel adapter.
+3. Letta Code resolves an existing route. An adapter may implement
+   `resolveAutoRoute(msg)` to select an agent when no route exists; Letta Code
+   then creates the conversation and persists the route centrally.
+4. Messages without an existing or automatic route use the pairing flow.
+5. The routed message is delivered to the bound agent/conversation.
+6. `MessageChannel` becomes available while that route has a running adapter.
 
-Plugins that need Slack/Discord-style auto-routing or rich Desktop management
-remain first-party/bundled work for now. Custom plugins can still expose custom
-`MessageChannel` actions and schema fragments via `messageActions`.
+Custom plugins can expose channel-specific `MessageChannel` actions and schema
+fragments via `messageActions`. Bespoke rich Desktop management remains
+first-party work.
 
 > Note: inbound channel delivery and user-visible replies are separate steps.
 > A channel message can successfully reach the agent, but the agent still has to
@@ -141,6 +144,24 @@ remain first-party/bundled work for now. Custom plugins can still expose custom
 > check whether the notification reached the conversation, whether the agent
 > called `MessageChannel`, whether the tool result says the message was sent,
 > and whether the route/account IDs match the original chat.
+
+## Linear (experimental)
+
+The bundled Linear channel polls one Linear account's notification inbox and
+maps each issue to one persistent Letta conversation. It posts agent replies as
+Linear comments and ignores its own comments to prevent reply loops.
+
+```bash
+letta channels configure linear
+letta server --channels linear
+```
+
+Setup asks for a Linear personal API key and the Letta agent that should own new
+issue conversations. The key uses the normal channel credential store; with
+Keychain enabled it is not retained in plaintext in `accounts.json`.
+
+This initial channel uses polling and personal API keys. Linear OAuth, webhooks,
+and bespoke Desktop UI are outside the experimental surface.
 
 ## Local backend channels
 

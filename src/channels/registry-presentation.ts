@@ -17,6 +17,9 @@ type AccountAgentIdSource = {
   binding?: {
     agentId?: string | null;
   };
+  config?: {
+    agent_id?: unknown;
+  };
 };
 
 function channelDisplayName(channelId: string): string {
@@ -37,7 +40,12 @@ export function getConfiguredAgentId(config: unknown): string | null {
   const source = config as AccountAgentIdSource;
   return (
     normalizeAgentId(source.agentId) ??
-    normalizeAgentId(source.binding?.agentId)
+    normalizeAgentId(source.binding?.agentId) ??
+    normalizeAgentId(
+      typeof source.config?.agent_id === "string"
+        ? source.config.agent_id
+        : undefined,
+    )
   );
 }
 
