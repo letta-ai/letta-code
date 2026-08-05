@@ -1348,9 +1348,9 @@ export class LocalStore {
       ? this.modelSettingsDefaultsForModel(nextModel)
       : undefined;
     const nextModelSettings = {
+      ...(modelChanged ? (nextModelDefaults ?? {}) : {}),
       ...(modelChanged ? {} : existingRecord.model_settings),
       ...requestedModelSettings,
-      ...(modelChanged ? (nextModelDefaults ?? {}) : {}),
     };
     const updated = {
       ...existingRecord,

@@ -242,6 +242,25 @@ describe("Startup Flow - Smoke", () => {
     expect(result.stderr).not.toContain("--stateless requires");
   });
 
+  test("existing-agent model overrides compose with default and new conversations", async () => {
+    for (const conversationArgs of [["--conv", "default"], ["--new"]]) {
+      const result = await runCli(
+        [
+          "--agent",
+          "agent-123",
+          "--model",
+          "gpt-5.6-sol",
+          ...conversationArgs,
+          "-p",
+          "Say OK",
+        ],
+        { expectExit: 1 },
+      );
+      expect(result.stderr).toContain("Missing LETTA_API_KEY");
+      expect(result.stderr).not.toContain("cannot be used with");
+    }
+  });
+
   test("--stateless rejects MemFS and new-agent combinations", async () => {
     const withMemfs = await runCli(
       ["--agent", "agent-123", "--stateless", "--memfs", "-p", "Say OK"],

@@ -7,6 +7,7 @@ import { configureBackendMode, getBackend } from "@/backend/backend";
 import { createOrUpdateLocalProvider } from "@/backend/local";
 import { LOCAL_BACKEND_DIR_ENV } from "@/backend/local/paths";
 import { clearAvailableModelsCache } from "./available-models";
+import { updateExistingAgentLLMConfig } from "./existing-agent-model-update";
 import {
   __modifyTestUtils,
   updateAgentLLMConfig,
@@ -206,6 +207,56 @@ describe("local model updates", () => {
         expect(
           (updated.model_settings as Record<string, unknown>).max_output_tokens,
         ).toBeUndefined();
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves existing agent caps and temperature across local model changes", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-existing-agent-model-preserve-"),
+    );
+    try {
+      await createOrUpdateLocalProvider({
+        providerType: "openrouter",
+        providerName: "lc-openrouter",
+        apiKey: "dummy",
+        storageDir,
+      });
+
+      await withLocalBackendStorage(storageDir, async () => {
+        const backend = getBackend();
+        const agent = await backend.createAgent({
+          name: "Configured local agent",
+          model: "openrouter/deepseek/deepseek-v4-pro",
+          model_settings: {
+            provider_type: "openrouter",
+            temperature: 0.25,
+          },
+          max_tokens: 1_234,
+          context_window_limit: 12_345,
+        } as never);
+
+        const result = await updateExistingAgentLLMConfig(
+          agent,
+          "openrouter/moonshotai/kimi-k2.6",
+          {
+            context_window: 200_000,
+            max_output_tokens: 64_000,
+            parallel_tool_calls: true,
+          },
+        );
+
+        expect(result.warnings).toEqual([]);
+        expect(result.agent.model).toBe("openrouter/moonshotai/kimi-k2.6");
+        expect(result.agent.llm_config?.context_window).toBe(12_345);
+        expect(result.agent.llm_config?.max_tokens).toBe(1_234);
+        expect(result.agent.model_settings).toMatchObject({
+          provider_type: "openrouter",
+          parallel_tool_calls: true,
+          temperature: 0.25,
+        });
       });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
