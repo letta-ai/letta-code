@@ -76,6 +76,7 @@ type StoredConversation = Conversation & {
   agent_id: string;
   in_context_message_ids: string[];
   hidden?: boolean;
+  tags?: string[];
 };
 
 const DEFAULT_LOCAL_AGENT_NAME = "Letta Code";
@@ -294,6 +295,9 @@ function updateLocalConversationRecord(
   }
   if (typeof bodyRecord.summary === "string" || bodyRecord.summary === null) {
     next.summary = bodyRecord.summary;
+  }
+  if (isStringArray(bodyRecord.tags)) {
+    next.tags = bodyRecord.tags;
   }
   return next;
 }

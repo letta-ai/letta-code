@@ -9,7 +9,7 @@ import type {
 import type WebSocket from "ws";
 import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
-import { getBackend } from "@/backend";
+import { type ConversationUpdateBody, getBackend } from "@/backend";
 import { migratePermissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
@@ -233,6 +233,57 @@ async function resolveRuntimeStartConversation(
   return conversation;
 }
 
+const LEGACY_SUMMARY_PREFIX_BY_SOURCE_TAG: Readonly<Record<string, string>> = {
+  "channel:discord": "discord",
+  "channel:slack": "slack",
+  "channel:telegram": "telegram",
+  "origin:schedule": "schedule",
+};
+
+function removeMatchingSourcePrefix(
+  summary: string | null | undefined,
+  sourceTags: readonly string[],
+): string | null | undefined {
+  if (typeof summary !== "string") return summary;
+
+  const match = summary.match(/^\s*\[([^\]]+)\]\s*/);
+  if (!match) return summary;
+
+  const prefix = match[1]?.trim().toLowerCase();
+  const matchesSourceTag = sourceTags.some(
+    (tag) => LEGACY_SUMMARY_PREFIX_BY_SOURCE_TAG[tag] === prefix,
+  );
+  return matchesSourceTag ? summary.slice(match[0].length) : summary;
+}
+
+async function applyRuntimeStartConversationSourceTags(
+  parsed: RuntimeStartCommand,
+  conversation: Conversation,
+): Promise<Conversation> {
+  const sourceTags = parsed.conversation_source_tags;
+  if (conversation.id === "default" || !sourceTags?.length) {
+    return conversation;
+  }
+
+  const currentTags = Reflect.get(conversation, "tags");
+  const existingTags = Array.isArray(currentTags)
+    ? currentTags.filter((tag): tag is string => typeof tag === "string")
+    : [];
+  const missingTags = sourceTags.filter((tag) => !existingTags.includes(tag));
+  const summary = removeMatchingSourcePrefix(conversation.summary, sourceTags);
+  const summaryChanged = summary !== conversation.summary;
+  if (missingTags.length === 0 && !summaryChanged) {
+    return conversation;
+  }
+
+  return getBackend().updateConversation(conversation.id, {
+    ...(missingTags.length > 0
+      ? { tags: [...new Set([...existingTags, ...missingTags])] }
+      : {}),
+    ...(summaryChanged ? { summary } : {}),
+  } as ConversationUpdateBody);
+}
+
 async function applyRuntimeStartState(
   parsed: RuntimeStartCommand,
   context: RuntimeStartCommandContext,
@@ -298,6 +349,10 @@ export async function handleRuntimeStartCommand(
       parsed,
       agent,
       created,
+    );
+    conversation = await applyRuntimeStartConversationSourceTags(
+      parsed,
+      conversation,
     );
     runtimeScope = buildRuntimeScope(agent, conversation);
     const { connectionId } = context;
