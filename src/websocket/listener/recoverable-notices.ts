@@ -51,11 +51,10 @@ export function getRecoverableStatusNoticeVisibility(
 
 export function getRecoverableRetryNoticeVisibility(
   kind: RecoverableRetryNoticeKind,
-  attempt: number,
 ): "debug_only" | "transcript" {
   switch (kind) {
     case "transient_provider_retry":
-      return attempt === 1 ? "debug_only" : "transcript";
+      return "transcript";
     default:
       return "transcript";
   }
@@ -353,10 +352,7 @@ export function emitRecoverableRetryNotice(
     kind: RecoverableRetryNoticeKind;
   },
 ): void {
-  const visibility = getRecoverableRetryNoticeVisibility(
-    params.kind,
-    params.attempt,
-  );
+  const visibility = getRecoverableRetryNoticeVisibility(params.kind);
 
   if (visibility === "debug_only") {
     debugLog(

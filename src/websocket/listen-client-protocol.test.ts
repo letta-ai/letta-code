@@ -4807,16 +4807,13 @@ describe("listen-client recoverable status notices", () => {
     );
   });
 
-  test("marks the first transient provider retry as debug-only", () => {
+  test("marks every transient provider retry for the transcript", () => {
     expect(
-      getRecoverableRetryNoticeVisibility("transient_provider_retry", 1),
-    ).toBe("debug_only");
-    expect(
-      getRecoverableRetryNoticeVisibility("transient_provider_retry", 2),
+      getRecoverableRetryNoticeVisibility("transient_provider_retry"),
     ).toBe("transcript");
   });
 
-  test("suppresses only the first transient provider retry from transcript", () => {
+  test("emits the first and later transient provider retries", () => {
     const runtime = __listenClientTestUtils.createRuntime();
     const firstSocket = new MockSocket();
     const secondSocket = new MockSocket();
@@ -4867,12 +4864,8 @@ describe("listen-client recoverable status notices", () => {
       }
     }
 
-    expect(firstSocket.sentPayloads).toHaveLength(0);
-    expect(mirroredLines).toHaveLength(1);
-    expect(mirroredLines[0]).toContain(DESKTOP_DEBUG_PANEL_INFO_PREFIX);
-    expect(mirroredLines[0]).toContain(
-      "Anthropic API is overloaded, retrying...",
-    );
+    expect(firstSocket.sentPayloads).toHaveLength(1);
+    expect(mirroredLines).toHaveLength(0);
 
     expect(secondSocket.sentPayloads).toHaveLength(1);
     const payload = JSON.parse(secondSocket.sentPayloads[0] as string) as {
