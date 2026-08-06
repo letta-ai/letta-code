@@ -46,6 +46,7 @@ export class FakeClient implements ChannelGatewayClient {
   readonly startedRuntimes: Array<{
     agent_id?: string;
     conversation_id?: string;
+    ensure_conversation_tags?: readonly string[];
     mode?: string;
     preserve_skill_sources?: boolean;
     external_tools?: unknown;

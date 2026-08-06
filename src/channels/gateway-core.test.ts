@@ -359,6 +359,7 @@ test("runtime registration happens before input submission", async () => {
   const startOpts = client.startedRuntimes[0];
   expect(startOpts?.agent_id).toBe("agent-1");
   expect(startOpts?.conversation_id).toBe("conv-1");
+  expect(startOpts?.ensure_conversation_tags).toEqual(["channel:telegram"]);
   expect(startOpts?.preserve_skill_sources).toBe(true);
   expect(startOpts?.external_tools).toEqual([
     {
@@ -370,6 +371,30 @@ test("runtime registration happens before input submission", async () => {
         },
       ],
     },
+  ]);
+
+  gateway.close();
+});
+
+test("runtime registration follows routed channel sources", async () => {
+  const client = new FakeClient();
+  const { hooks } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+
+  await gateway.registerRuntime(TEST_RUNTIME, [
+    makeSource({ channel: "telegram", chatId: "chat-1" }),
+    makeSource({ channel: "telegram", chatId: "chat-2" }),
+  ]);
+  await gateway.registerRuntime(TEST_RUNTIME, [
+    makeSource({ channel: "slack", chatId: "C123" }),
+  ]);
+
+  expect(client.startedRuntimes).toHaveLength(2);
+  expect(client.startedRuntimes[0]?.ensure_conversation_tags).toEqual([
+    "channel:telegram",
+  ]);
+  expect(client.startedRuntimes[1]?.ensure_conversation_tags).toEqual([
+    "channel:slack",
   ]);
 
   gateway.close();

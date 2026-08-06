@@ -9,7 +9,7 @@ import type {
 import type WebSocket from "ws";
 import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
-import { getBackend } from "@/backend";
+import { type ConversationUpdateBody, getBackend } from "@/backend";
 import { migratePermissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
@@ -233,6 +233,33 @@ async function resolveRuntimeStartConversation(
   return conversation;
 }
 
+async function ensureRuntimeStartConversationTags(
+  parsed: RuntimeStartCommand,
+  conversation: Conversation,
+): Promise<Conversation> {
+  if (
+    conversation.id === "default" ||
+    !parsed.ensure_conversation_tags?.length
+  ) {
+    return conversation;
+  }
+
+  const currentTags = Reflect.get(conversation, "tags");
+  const existingTags = Array.isArray(currentTags)
+    ? currentTags.filter((tag): tag is string => typeof tag === "string")
+    : [];
+  const missingTags = parsed.ensure_conversation_tags.filter(
+    (tag) => !existingTags.includes(tag),
+  );
+  if (missingTags.length === 0) {
+    return conversation;
+  }
+
+  return getBackend().updateConversation(conversation.id, {
+    tags: [...new Set([...existingTags, ...missingTags])],
+  } as ConversationUpdateBody);
+}
+
 async function applyRuntimeStartState(
   parsed: RuntimeStartCommand,
   context: RuntimeStartCommandContext,
@@ -298,6 +325,10 @@ export async function handleRuntimeStartCommand(
       parsed,
       agent,
       created,
+    );
+    conversation = await ensureRuntimeStartConversationTags(
+      parsed,
+      conversation,
     );
     runtimeScope = buildRuntimeScope(agent, conversation);
     const { connectionId } = context;

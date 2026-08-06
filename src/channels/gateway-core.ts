@@ -136,6 +136,10 @@ function uniqueSources(sources: ChannelTurnSource[]): ChannelTurnSource[] {
   return [...byKey.values()];
 }
 
+function channelTagsForSources(sources: ChannelTurnSource[]): string[] {
+  return [...new Set(sources.map((source) => `channel:${source.channel}`))];
+}
+
 function stopReasonFromDelta(
   message: StreamDeltaMessage,
 ): StopReasonType | null {
@@ -446,9 +450,11 @@ export class ChannelGateway {
       delivery.runtime,
       delivery.sources,
     );
+    const conversationTags = channelTagsForSources(delivery.sources);
     const signature = JSON.stringify({
       mode: delivery.defaultPermissionMode ?? null,
       tool,
+      conversationTags,
     });
     if (state.registrationSignature === signature && state.registration) {
       return state.registration;
@@ -458,6 +464,9 @@ export class ChannelGateway {
       .runtimeStart({
         agent_id: delivery.runtime.agent_id,
         conversation_id: delivery.runtime.conversation_id,
+        ...(conversationTags.length > 0
+          ? { ensure_conversation_tags: conversationTags }
+          : {}),
         ...(delivery.defaultPermissionMode
           ? { mode: delivery.defaultPermissionMode }
           : {}),
