@@ -406,9 +406,6 @@ export async function sendMessageStreamWithBackend(
   }
 
   const extraHeaders: Record<string, string> = {};
-  if (process.env.LETTA_RESPONSES_WS === "1") {
-    extraHeaders["X-Experimental-OpenAI-Responses-Websocket"] = "true";
-  }
   if (previousResponseId) {
     extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({
       v: 1,
