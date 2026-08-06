@@ -3,6 +3,7 @@ import { APIError } from "@letta-ai/letta-client/error";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
 import {
+  getConsumerLoopErrorMessage,
   getLoopErrorNoticeDecision,
   getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
@@ -90,4 +91,15 @@ test("terminal error formatting preserves classifications and rejects raw fallba
   expect(getLoopErrorNoticeDecision({ message: "terminated" }).visibility).toBe(
     "debug_only",
   );
+});
+
+test("consumer terminal errors match the plain loop error", () => {
+  expect(
+    getConsumerLoopErrorMessage({
+      message: "The usage limit has been reached",
+    }),
+  ).toBe("The usage limit has been reached");
+  expect(
+    getConsumerLoopErrorMessage({ message: "terminated" }),
+  ).toBeUndefined();
 });

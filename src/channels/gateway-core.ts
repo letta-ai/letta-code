@@ -622,6 +622,9 @@ export class ChannelGateway {
     if (stopReason === "requires_approval" || stopReason === "end_turn") {
       void active.richDraft?.flushPending();
     }
+    // The listener sends a canonical turn_finished event after it classifies
+    // terminal failures. Finalizing from this earlier delta would discard that
+    // user-safe error detail.
   }
 
   private handleTurnFinished(
