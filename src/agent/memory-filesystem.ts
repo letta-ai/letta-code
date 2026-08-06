@@ -443,6 +443,14 @@ export interface ApplyMemfsFlagsResult {
 
 export interface ApplyMemfsFlagsOptions {
   pullOnExistingRepo?: boolean;
+  /**
+   * Run the existing-repo pull without awaiting it. The caller proceeds on
+   * the current checkout while the pull refreshes it in the background —
+   * pullMemory is self-healing (ff-only → rebase → reset-to-remote) and a
+   * failed background pull is retried on the next sync. A missing repo still
+   * clones synchronously regardless of this flag.
+   */
+  backgroundPull?: boolean;
   agentTags?: string[];
   /** Skip the system prompt update (when the agent was created with the correct mode). */
   skipPromptUpdate?: boolean;
@@ -568,8 +576,24 @@ export async function applyMemfsFlags(
     if (!isGitRepo(agentId)) {
       await cloneMemoryRepo(agentId);
     } else if (options?.pullOnExistingRepo) {
-      const result = await pullMemory(agentId);
-      pullSummary = result.summary;
+      if (options.backgroundPull) {
+        void (async () => {
+          try {
+            await pullMemory(agentId);
+          } catch (error) {
+            const { debugWarn } = await import("@/utils/debug");
+            debugWarn(
+              "memfs-git",
+              `Background memory pull failed for agent ${agentId}: ${
+                error instanceof Error ? error.message : String(error)
+              }`,
+            );
+          }
+        })();
+      } else {
+        const result = await pullMemory(agentId);
+        pullSummary = result.summary;
+      }
     }
 
     await seedDefaultPersonalityFiles(

@@ -1,3 +1,4 @@
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getBackend } from "@/backend";
 import { debugWarn } from "@/utils/debug";
 import { ensureMemfsSyncedForAgent } from "./memfs-sync";
@@ -13,42 +14,54 @@ export type ListenerAgentMetadata = {
   lastRunAt: string | null;
 };
 
+export type ListenerAgentWarmState = ListenerAgentMetadata & {
+  /** Full agent state (tags included) reused by turn prep; null if unavailable. */
+  agent: AgentState | null;
+};
+
 export type ListenerWarmupScope = {
   agentId: string;
   conversationId: string;
 };
 
-function getAgentMetadataPromise(
+function getAgentWarmStatePromise(
   listener: ListenerRuntime,
   agentId: string,
-): Promise<ListenerAgentMetadata | null> | null {
+): Promise<ListenerAgentWarmState | null> | null {
   return listener.agentMetadataByAgent.get(agentId) ?? null;
 }
 
-async function fetchListenerAgentMetadata(
-  agentId: string,
-): Promise<ListenerAgentMetadata> {
-  const agent = await getBackend().retrieveAgent(agentId);
-
+function toListenerAgentWarmState(agent: AgentState): ListenerAgentWarmState {
   return {
     name: agent.name ?? null,
     description: agent.description ?? null,
     lastRunAt:
       (agent as { last_run_completion?: string | null }).last_run_completion ??
       null,
+    agent,
   };
+}
+
+async function fetchListenerAgentWarmState(
+  agentId: string,
+): Promise<ListenerAgentWarmState> {
+  const agent = (await getBackend().retrieveAgent(agentId, {
+    include: ["agent.tags"],
+  })) as AgentState;
+
+  return toListenerAgentWarmState(agent);
 }
 
 type ListenerWarmupDeps = {
   ensureMemfsSyncedForAgent: typeof ensureMemfsSyncedForAgent;
   ensureSecretsHydratedForAgent: typeof ensureSecretsHydratedForAgent;
-  fetchListenerAgentMetadata: typeof fetchListenerAgentMetadata;
+  fetchListenerAgentWarmState: typeof fetchListenerAgentWarmState;
 };
 
 const defaultWarmupDeps: ListenerWarmupDeps = {
   ensureMemfsSyncedForAgent,
   ensureSecretsHydratedForAgent,
-  fetchListenerAgentMetadata,
+  fetchListenerAgentWarmState,
 };
 
 let warmupDeps: ListenerWarmupDeps = defaultWarmupDeps;
@@ -62,17 +75,17 @@ let warmupDeps: ListenerWarmupDeps = defaultWarmupDeps;
 export async function ensureListenerWarmStateForTurn(
   listener: ListenerRuntime,
   scope: ListenerWarmupScope,
-): Promise<ListenerAgentMetadata | null> {
+): Promise<ListenerAgentWarmState | null> {
   const { agentId } = scope;
   if (!agentId) {
     return null;
   }
 
   const agentMetadataPromise =
-    getAgentMetadataPromise(listener, agentId) ??
+    getAgentWarmStatePromise(listener, agentId) ??
     (async () => {
       try {
-        return await warmupDeps.fetchListenerAgentMetadata(agentId);
+        return await warmupDeps.fetchListenerAgentWarmState(agentId);
       } catch (error) {
         debugWarn(
           "listener-warmup",
@@ -91,9 +104,16 @@ export async function ensureListenerWarmStateForTurn(
 
   try {
     await Promise.all([
-      warmupDeps.ensureMemfsSyncedForAgent(listener, agentId),
+      // Memfs reuses the warm-state agent fetch (tags included) instead of
+      // issuing its own retrieve; on a failed fetch it falls back internally.
+      agentMetadataPromise.then((warmState) =>
+        warmupDeps.ensureMemfsSyncedForAgent(
+          listener,
+          agentId,
+          warmState?.agent ?? null,
+        ),
+      ),
       warmupDeps.ensureSecretsHydratedForAgent(listener, agentId),
-      agentMetadataPromise,
     ]);
     const agentModAdapter = await ensureListenerAgentModAdapter(
       listener,
@@ -116,6 +136,89 @@ export async function ensureListenerWarmStateForTurn(
   }
 
   return agentMetadataPromise;
+}
+
+const inflightWarmStateRefreshes = new WeakMap<ListenerRuntime, Set<string>>();
+
+function scheduleListenerAgentWarmStateRefresh(
+  listener: ListenerRuntime,
+  agentId: string,
+): void {
+  let inflight = inflightWarmStateRefreshes.get(listener);
+  if (!inflight) {
+    inflight = new Set();
+    inflightWarmStateRefreshes.set(listener, inflight);
+  }
+  if (inflight.has(agentId)) {
+    return;
+  }
+  inflight.add(agentId);
+  void (async () => {
+    try {
+      const fresh = await warmupDeps.fetchListenerAgentWarmState(agentId);
+      listener.agentMetadataByAgent.set(agentId, Promise.resolve(fresh));
+    } catch (error) {
+      // Keep serving the existing cache; the next turn retries the refresh.
+      debugWarn(
+        "listener-warmup",
+        `Background agent state refresh failed for agent ${agentId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    } finally {
+      inflight.delete(agentId);
+    }
+  })();
+}
+
+/**
+ * Agent state for turn prep, served from the session cache without a blocking
+ * refetch. A background refresh runs on every cache hit so external changes
+ * converge by the next turn — the same freshness headless accepts by reusing
+ * its initial agent fetch across the whole run loop.
+ */
+export async function getListenerAgentStateForTurn(
+  listener: ListenerRuntime,
+  agentId: string,
+): Promise<AgentState | null> {
+  const cached = await getAgentWarmStatePromise(listener, agentId);
+  if (cached?.agent) {
+    scheduleListenerAgentWarmStateRefresh(listener, agentId);
+    return cached.agent;
+  }
+
+  try {
+    const fetched = await warmupDeps.fetchListenerAgentWarmState(agentId);
+    listener.agentMetadataByAgent.set(agentId, Promise.resolve(fetched));
+    return fetched.agent;
+  } catch (error) {
+    debugWarn(
+      "listener-warmup",
+      `Failed to fetch agent state for agent ${agentId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
+}
+
+/** Replace the cached warm state after a local mutation returned fresh agent state. */
+export function setListenerAgentWarmState(
+  listener: ListenerRuntime,
+  agent: AgentState,
+): void {
+  listener.agentMetadataByAgent.set(
+    agent.id,
+    Promise.resolve(toListenerAgentWarmState(agent)),
+  );
+}
+
+/** Drop the cached warm state so the next turn refetches (e.g. after a model update). */
+export function invalidateListenerAgentWarmState(
+  listener: ListenerRuntime,
+  agentId: string,
+): void {
+  listener.agentMetadataByAgent.delete(agentId);
 }
 
 /**
