@@ -274,7 +274,7 @@ describe("discord channel registry", () => {
     expect(createConversation).toHaveBeenCalledWith(
       {
         agent_id: "agent-1",
-        summary: "[Discord] DM with Cameron",
+        summary: "DM with Cameron",
       },
       undefined,
     );

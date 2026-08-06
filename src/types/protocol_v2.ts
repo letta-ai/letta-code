@@ -805,6 +805,8 @@ export interface RuntimeStartCommand {
   conversation_id?: string;
   /** Create a new conversation for the resolved agent before starting the runtime. */
   create_conversation?: RuntimeStartCreateConversationOptions;
+  /** Canonical source tags to merge. Matching legacy summary prefixes are removed. */
+  conversation_source_tags?: readonly string[];
   /** Initial working directory for this runtime scope. Null resets to listener boot CWD. */
   cwd?: string | null;
   /** Initial permission mode for this runtime scope. */
