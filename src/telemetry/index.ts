@@ -88,6 +88,7 @@ export interface ErrorData {
   subagent_type?: string;
   model_handle?: string;
   fallback_kind?: string;
+  platform?: string;
 }
 
 export interface UserInputData {
@@ -742,6 +743,7 @@ class TelemetryManager {
       subagent_type: options?.subagentType,
       model_handle: options?.modelHandle,
       fallback_kind: options?.fallbackKind,
+      platform: process.platform,
     };
     this.track("error", data);
   }
