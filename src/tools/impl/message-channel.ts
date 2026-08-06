@@ -9,6 +9,7 @@
 import {
   executeMessageChannel,
   type MessageChannelExecutionResolver,
+  type MessageChannelIdempotencyScope,
 } from "@/channels/message-channel-executor";
 import type { MessageChannelArgs } from "@/channels/message-channel-types";
 import {
@@ -86,6 +87,7 @@ function createLocalMessageChannelResolver(): MessageChannelExecutionResolver {
 
 export async function message_channel(
   args: MessageChannelArgs,
+  idempotencyScope?: MessageChannelIdempotencyScope | null,
 ): Promise<string> {
   if (!getChannelRegistry()) {
     return "Error: Channel system is not initialized. Start with --channels flag.";
@@ -97,5 +99,6 @@ export async function message_channel(
     scope: args.parentScope,
     resolver: createLocalMessageChannelResolver(),
     channelTurnSources: args.channelTurnSources,
+    idempotencyScope,
   });
 }

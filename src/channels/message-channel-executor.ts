@@ -57,6 +57,12 @@ export interface ExecuteMessageChannelOptions {
   scope: MessageChannelExecutionScope;
   resolver: MessageChannelExecutionResolver;
   channelTurnSources?: ChannelTurnSource[];
+  idempotencyScope?: MessageChannelIdempotencyScope | null;
+}
+
+/** Deduplicates MessageChannel side effects within one active channel turn. */
+export interface MessageChannelIdempotencyScope {
+  execute(key: string, effect: () => Promise<string>): Promise<string>;
 }
 
 function firstNonEmptyString(...values: unknown[]): string | undefined {
@@ -280,6 +286,33 @@ async function dispatchMessageChannelAction(params: {
 }
 
 /**
+ * Build a dedup key from the normalized request and resolved route. This is
+ * computed after normalization and route resolution so that alias/whitespace
+ * variants resolving to the same destination share a key.
+ */
+function messageIdempotencyKey(
+  request: ChannelMessageActionRequest,
+  route: ChannelMessageActionRoute,
+): string {
+  return JSON.stringify({
+    action: request.action,
+    channel: request.channel,
+    chatId: route.chatId,
+    accountId: route.accountId ?? null,
+    threadId: request.threadId ?? null,
+    message: request.message ?? null,
+    replyToMessageId: request.replyToMessageId ?? null,
+    messageId: request.messageId ?? null,
+    attachmentId: request.attachmentId ?? null,
+    emoji: request.emoji ?? null,
+    remove: request.remove ?? null,
+    mediaPath: request.mediaPath ?? null,
+    filename: request.filename ?? null,
+    title: request.title ?? null,
+  });
+}
+
+/**
  * Execute the canonical MessageChannel contract against host-owned routing and
  * transport adapters. This owns normalization, scope checks, thread/account
  * inference, action discovery, and outbound formatting without requiring the
@@ -338,14 +371,16 @@ export async function executeMessageChannel(
             context.route.chatType === "direct"
               ? normalized.threadId
               : (context.route.threadId ?? normalized.threadId)));
-      return await dispatchMessageChannelAction({
-        request: buildMessageChannelRequest(
-          normalized,
-          normalized.chatId,
-          requestThreadId,
-        ),
+      const request = buildMessageChannelRequest(
+        normalized,
+        normalized.chatId,
+        requestThreadId,
+      );
+      return await dispatchWithIdempotency(
+        request,
         context,
-      });
+        options.idempotencyScope,
+      );
     }
 
     if (normalized.channel !== "slack") {
@@ -366,16 +401,29 @@ export async function executeMessageChannel(
       transport: proactive.transport,
       messageActions: proactive.messageActions,
     };
-    return await dispatchMessageChannelAction({
-      request: buildMessageChannelRequest(
-        normalized,
-        proactive.target.chatId,
-        proactive.target.threadId,
-      ),
+    const request = buildMessageChannelRequest(
+      normalized,
+      proactive.target.chatId,
+      proactive.target.threadId,
+    );
+    return await dispatchWithIdempotency(
+      request,
       context,
-    });
+      options.idempotencyScope,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
     return `Error sending message to ${normalized.channel}: ${message}`;
   }
+}
+
+function dispatchWithIdempotency(
+  request: ChannelMessageActionRequest,
+  context: ResolvedMessageChannelContext,
+  scope: MessageChannelIdempotencyScope | null | undefined,
+): Promise<string> {
+  const dispatch = () => dispatchMessageChannelAction({ request, context });
+  return scope
+    ? scope.execute(messageIdempotencyKey(request, context.route), dispatch)
+    : dispatch();
 }
