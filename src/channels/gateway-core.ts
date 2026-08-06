@@ -465,7 +465,7 @@ export class ChannelGateway {
         agent_id: delivery.runtime.agent_id,
         conversation_id: delivery.runtime.conversation_id,
         ...(conversationTags.length > 0
-          ? { ensure_conversation_tags: conversationTags }
+          ? { conversation_source_tags: conversationTags }
           : {}),
         ...(delivery.defaultPermissionMode
           ? { mode: delivery.defaultPermissionMode }

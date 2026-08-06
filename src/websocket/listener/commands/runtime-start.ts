@@ -233,14 +233,35 @@ async function resolveRuntimeStartConversation(
   return conversation;
 }
 
-async function ensureRuntimeStartConversationTags(
+const LEGACY_SUMMARY_PREFIX_BY_SOURCE_TAG: Readonly<Record<string, string>> = {
+  "channel:discord": "discord",
+  "channel:slack": "slack",
+  "channel:telegram": "telegram",
+  "origin:schedule": "schedule",
+};
+
+function removeMatchingSourcePrefix(
+  summary: string | null | undefined,
+  sourceTags: readonly string[],
+): string | null | undefined {
+  if (typeof summary !== "string") return summary;
+
+  const match = summary.match(/^\s*\[([^\]]+)\]\s*/);
+  if (!match) return summary;
+
+  const prefix = match[1]?.trim().toLowerCase();
+  const matchesSourceTag = sourceTags.some(
+    (tag) => LEGACY_SUMMARY_PREFIX_BY_SOURCE_TAG[tag] === prefix,
+  );
+  return matchesSourceTag ? summary.slice(match[0].length) : summary;
+}
+
+async function applyRuntimeStartConversationSourceTags(
   parsed: RuntimeStartCommand,
   conversation: Conversation,
 ): Promise<Conversation> {
-  if (
-    conversation.id === "default" ||
-    !parsed.ensure_conversation_tags?.length
-  ) {
+  const sourceTags = parsed.conversation_source_tags;
+  if (conversation.id === "default" || !sourceTags?.length) {
     return conversation;
   }
 
@@ -248,15 +269,18 @@ async function ensureRuntimeStartConversationTags(
   const existingTags = Array.isArray(currentTags)
     ? currentTags.filter((tag): tag is string => typeof tag === "string")
     : [];
-  const missingTags = parsed.ensure_conversation_tags.filter(
-    (tag) => !existingTags.includes(tag),
-  );
-  if (missingTags.length === 0) {
+  const missingTags = sourceTags.filter((tag) => !existingTags.includes(tag));
+  const summary = removeMatchingSourcePrefix(conversation.summary, sourceTags);
+  const summaryChanged = summary !== conversation.summary;
+  if (missingTags.length === 0 && !summaryChanged) {
     return conversation;
   }
 
   return getBackend().updateConversation(conversation.id, {
-    tags: [...new Set([...existingTags, ...missingTags])],
+    ...(missingTags.length > 0
+      ? { tags: [...new Set([...existingTags, ...missingTags])] }
+      : {}),
+    ...(summaryChanged ? { summary } : {}),
   } as ConversationUpdateBody);
 }
 
@@ -326,7 +350,7 @@ export async function handleRuntimeStartCommand(
       agent,
       created,
     );
-    conversation = await ensureRuntimeStartConversationTags(
+    conversation = await applyRuntimeStartConversationSourceTags(
       parsed,
       conversation,
     );

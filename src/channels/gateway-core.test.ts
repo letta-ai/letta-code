@@ -359,7 +359,7 @@ test("runtime registration happens before input submission", async () => {
   const startOpts = client.startedRuntimes[0];
   expect(startOpts?.agent_id).toBe("agent-1");
   expect(startOpts?.conversation_id).toBe("conv-1");
-  expect(startOpts?.ensure_conversation_tags).toEqual(["channel:telegram"]);
+  expect(startOpts?.conversation_source_tags).toEqual(["channel:telegram"]);
   expect(startOpts?.preserve_skill_sources).toBe(true);
   expect(startOpts?.external_tools).toEqual([
     {
@@ -390,10 +390,10 @@ test("runtime registration follows routed channel sources", async () => {
   ]);
 
   expect(client.startedRuntimes).toHaveLength(2);
-  expect(client.startedRuntimes[0]?.ensure_conversation_tags).toEqual([
+  expect(client.startedRuntimes[0]?.conversation_source_tags).toEqual([
     "channel:telegram",
   ]);
-  expect(client.startedRuntimes[1]?.ensure_conversation_tags).toEqual([
+  expect(client.startedRuntimes[1]?.conversation_source_tags).toEqual([
     "channel:slack",
   ]);
 
