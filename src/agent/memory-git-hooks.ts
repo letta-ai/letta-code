@@ -32,6 +32,10 @@ AGENT_EDITABLE_KEYS="description"
 PROTECTED_KEYS="read_only"
 ALL_KNOWN_KEYS="description read_only limit"
 errors=""
+allow_read_only_change=false
+if [ "$LETTA_APPROVED_READ_ONLY_CHANGE" = "1" ]; then
+  allow_read_only_change=true
+fi
 
 # Skills must always be directories: skills/<name>/SKILL.md
 # Reject legacy flat skill files (both current and legacy repo layouts).
@@ -47,6 +51,19 @@ get_fm_value() {
   [ -z "$closing_line" ] && return
   echo "$content" | tail -n +2 | head -n $((closing_line - 1)) | grep "^$key:" | cut -d: -f2- | sed 's/^ *//;s/ *$//'
 }
+
+# Deleting or renaming a read-only file must be rejected too. Deleted paths do
+# not appear in the ACM validation loop below, so inspect their HEAD content
+# separately.
+if [ "$allow_read_only_change" = "false" ]; then
+  for file in $(git diff --cached --no-renames --name-only --diff-filter=D | grep -E '^(memory/)?(system|reference)/.*\\.md$' || true); do
+    head_content=$(git show "HEAD:$file" 2>/dev/null || true)
+    head_ro=$(get_fm_value "$head_content" "read_only")
+    if [ "$head_ro" = "true" ]; then
+      errors="$errors\n  $file: file is read_only and cannot be deleted or renamed"
+    fi
+  done
+fi
 
 # Match .md files under system/ or reference/ (with optional memory/ prefix).
 # Skip skill SKILL.md files — they use a different frontmatter format.
@@ -69,7 +86,7 @@ for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memor
 
   # Check read_only protection against HEAD version
   head_content=$(git show "HEAD:$file" 2>/dev/null || true)
-  if [ -n "$head_content" ]; then
+  if [ "$allow_read_only_change" = "false" ] && [ -n "$head_content" ]; then
     head_ro=$(get_fm_value "$head_content" "read_only")
     if [ "$head_ro" = "true" ]; then
       errors="$errors\\n  $file: file is read_only and cannot be modified"
@@ -110,6 +127,7 @@ for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memor
     # Check if agent is trying to modify a protected key
     for k in $PROTECTED_KEYS; do
       if [ "$key" = "$k" ]; then
+        [ "$allow_read_only_change" = "true" ] && continue
         # Compare against HEAD — if value changed (or key was added), reject
         if [ -n "$head_content" ]; then
           head_val=$(get_fm_value "$head_content" "$key")
@@ -143,7 +161,7 @@ for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memor
   fi
 
   # Check if protected keys were removed (existed in HEAD but not in staged)
-  if [ -n "$head_content" ]; then
+  if [ "$allow_read_only_change" = "false" ] && [ -n "$head_content" ]; then
     for k in $PROTECTED_KEYS; do
       head_val=$(get_fm_value "$head_content" "$k")
       if [ -n "$head_val" ]; then

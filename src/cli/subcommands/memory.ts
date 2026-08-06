@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getMemoryGitStatus, isGitRepo, pullMemory } from "@/agent/memory-git";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import { runMemoryReadOnlyAction } from "./memory-read-only";
 import { runMemoryTokensAction } from "./memory-tokens";
 
 function printUsage(): void {
@@ -18,6 +19,7 @@ Usage:
   letta memory restore --from <backup> --force [--agent <id>]
   letta memory export --agent <id> --out <dir>
   letta memory pull [--agent <id>]
+  letta memory read-only <system/or/reference/file.md> <true|false> [--agent <id>]
   letta memory tokens [--memory-dir <path>] [--agent <id>] [--top <N>]
                      [--format text|json] [--quiet]
 
@@ -34,6 +36,7 @@ Examples:
   letta memory backup --agent agent-123
   letta memory export --agent agent-123 --out /tmp/letta-memory-agent-123
   letta memory tokens
+  letta memory read-only system/persona.md true --agent agent-123
   letta memory tokens --memory-dir ~/.letta/agents/agent-123/memory --format json
 `.trim(),
   );
@@ -132,7 +135,8 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
     return 1;
   }
 
-  const [action] = parsed.positionals;
+  const [action, firstPositional, secondPositional, ...extraPositionals] =
+    parsed.positionals;
 
   if (parsed.values.help || !action || action === "help") {
     printUsage();
@@ -161,6 +165,16 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
   }
 
   try {
+    if (action === "read-only") {
+      return runMemoryReadOnlyAction({
+        agentId,
+        memoryDir: getMemoryRoot(agentId),
+        path: firstPositional,
+        value: secondPositional,
+        extraPositionals,
+      });
+    }
+
     if (action === "status") {
       if (!isGitRepo(agentId)) {
         console.log(
