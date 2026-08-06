@@ -1,5 +1,4 @@
 // src/cli/app/AppCoordinator.tsx
-
 import { join } from "node:path";
 import type {
   AgentState,
@@ -1718,9 +1717,6 @@ export function App({
     );
   }, [isExecutingTool]);
 
-  // Ref indirection: refreshDerived is declared later in the component but
-  // appendTaskNotificationEvents needs to call it. Using a ref avoids a
-  // forward-declaration error while keeping the deps array empty.
   const refreshDerivedRef = useRef<(() => void) | null>(null);
 
   const appendTaskNotificationEvents = useCallback(
@@ -1733,8 +1729,11 @@ export function App({
       ),
     [],
   );
+  const appendModNotification = useCallback(
+    (message: string) => appendTaskNotificationEvents([message]),
+    [appendTaskNotificationEvents],
+  );
 
-  // Consume queued messages for appending to tool results (clears queue).
   // consumeItems fires onDequeued → setQueueDisplay(prev => prev.slice(n))
   // so no direct setQueueDisplay call is needed here.
   const consumeQueuedMessages = useCallback((): QueuedMessage[] | null => {
@@ -2348,6 +2347,7 @@ export function App({
   const modAdapter = useLocalModAdapter(modContext, {
     agentModsDirectory,
     disabled: modsDisabled,
+    onNotification: appendModNotification,
   });
 
   useEffect(() => {

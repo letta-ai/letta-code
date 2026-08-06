@@ -22,7 +22,11 @@ export interface LocalModAdapter {
 
 export function useLocalModAdapter(
   context: ModContext,
-  options: { agentModsDirectory?: string | null; disabled?: boolean } = {},
+  options: {
+    agentModsDirectory?: string | null;
+    disabled?: boolean;
+    onNotification?: (message: string) => void;
+  } = {},
 ): LocalModAdapter {
   const agentModsDirectory = options.agentModsDirectory ?? undefined;
   const disabled = options.disabled;
@@ -33,8 +37,9 @@ export function useLocalModAdapter(
         disabled,
         getBackend,
         getClient,
+        onNotification: options.onNotification,
       }),
-    [agentModsDirectory, disabled],
+    [agentModsDirectory, disabled, options.onNotification],
   );
 
   const snapshot = useSyncExternalStore(

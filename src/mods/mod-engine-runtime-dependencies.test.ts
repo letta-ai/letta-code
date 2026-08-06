@@ -21,11 +21,15 @@ function createTempDir(): string {
   return mkdtempSync(path.join(tmpdir(), "letta-mod-runtime-deps-"));
 }
 
-function createEngine(root: string): ModEngine {
+function createEngine(
+  root: string,
+  onNotification?: (message: string) => void,
+): ModEngine {
   return createModEngine({
     cacheDirectory: path.join(root, "mod-cache"),
     getClient: async () => ({}) as unknown as Letta,
     globalModsDirectory: path.join(root, "global-mods"),
+    onNotification,
   });
 }
 
@@ -77,6 +81,31 @@ describe("mod engine runtime dependencies", () => {
       expect(snapshot.loadedPaths).toEqual([modPath]);
       expect(readlinkSync(reactLink)).toContain("missing-react");
 
+      engine.dispose();
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  test("delivers persistent UI notifications without creating messages", async () => {
+    const root = createTempDir();
+    try {
+      const modDir = path.join(root, "global-mods");
+      mkdirSync(modDir, { recursive: true });
+      writeFileSync(
+        path.join(modDir, "notification.ts"),
+        `export default function(letta) {
+          letta.ui.notify("  plan auto-swapped  ");
+        }`,
+      );
+      const notifications: string[] = [];
+      const engine = createEngine(root, (message) =>
+        notifications.push(message),
+      );
+
+      await engine.reload();
+
+      expect(notifications).toEqual(["plan auto-swapped"]);
       engine.dispose();
     } finally {
       rmSync(root, { force: true, recursive: true });
