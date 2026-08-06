@@ -1,4 +1,5 @@
 import { hostname } from "node:os";
+import { resolve } from "node:path";
 import {
   LETTA_CLOUD_API_URL,
   refreshAccessToken as refreshLettaAccessToken,
@@ -7,12 +8,14 @@ import {
 import { getLettaCodeHeaders } from "@/backend/api/http-headers";
 import {
   getLocalOAuthApiKey,
+  getLocalProviderAuthPath,
   getLocalProviderRecordByName,
   LOCAL_CHATGPT_PROVIDER_NAME,
   type LocalProviderRecord,
 } from "@/backend/local/local-provider-auth-store";
 import type { ProviderStorageTarget } from "@/providers/byok-providers";
 import { type Settings, settingsManager } from "@/settings-manager";
+import { CredentialScopedCache } from "./credential-scoped-cache";
 
 const CHATGPT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const CLOUD_CHATGPT_USAGE_PATH = "/v1/providers/chatgpt-usage";
@@ -97,12 +100,9 @@ export interface ReadChatGPTUsageInput {
 
 type JsonRecord = Record<string, unknown>;
 
-type CachedUsage = {
-  expiresAt: number;
-  result: Extract<ChatGPTUsageReadResult, { success: true }>;
-};
-
-const usageCache = new Map<string, CachedUsage>();
+const usageCache = new CredentialScopedCache<
+  Extract<ChatGPTUsageReadResult, { success: true }>
+>(CACHE_TTL_MS);
 
 function asRecord(value: unknown): JsonRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -799,12 +799,6 @@ async function readCloudChatGPTUsage(
   }
 
   const baseUrl = cloudBaseUrl(settings);
-  const cacheKey = `api:${baseUrl}:${providerName}`;
-  const cached = usageCache.get(cacheKey);
-  if (!input.forceRefresh && cached && cached.expiresAt > now) {
-    return cached.result;
-  }
-
   const auth = await cloudApiKey({
     settings,
     now,
@@ -819,6 +813,9 @@ async function readCloudChatGPTUsage(
       },
     };
   }
+  const cacheIdentity = [baseUrl, providerName, auth.apiKey];
+  const cached = usageCache.get("api", cacheIdentity, now, input.forceRefresh);
+  if (cached) return cached;
 
   const url = new URL(`${baseUrl}${CLOUD_CHATGPT_USAGE_PATH}`);
   url.searchParams.set("provider_name", providerName);
@@ -957,7 +954,7 @@ async function readCloudChatGPTUsage(
       success: true,
       usage,
     };
-    usageCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, result });
+    usageCache.set("api", cacheIdentity, now, result);
     return result;
   } finally {
     clearTimeout(timeout);
@@ -991,12 +988,6 @@ export async function readChatGPTUsage(
     );
   }
 
-  const cacheKey = `${target}:${record.name}`;
-  const cached = usageCache.get(cacheKey);
-  if (!input.forceRefresh && cached && cached.expiresAt > now) {
-    return cached.result;
-  }
-
   let oauthApiKey: Awaited<ReturnType<typeof getLocalOAuthApiKey>>;
   try {
     oauthApiKey = await getLocalOAuthApiKey({
@@ -1026,6 +1017,14 @@ export async function readChatGPTUsage(
       : typeof record.auth.accountId === "string"
         ? record.auth.accountId
         : undefined;
+  const cacheIdentity = [
+    resolve(getLocalProviderAuthPath(input.storageDir)),
+    record.name,
+    accountId ?? "",
+    oauthApiKey.apiKey,
+  ];
+  const cached = usageCache.get(target, cacheIdentity, now, input.forceRefresh);
+  if (cached) return cached;
   const controller = new AbortController();
   let didTimeOut = false;
   const timeout = setTimeout(() => {
@@ -1104,7 +1103,7 @@ export async function readChatGPTUsage(
         nowMs: now,
       }),
     };
-    usageCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, result });
+    usageCache.set(target, cacheIdentity, now, result);
     return result;
   } finally {
     clearTimeout(timeout);

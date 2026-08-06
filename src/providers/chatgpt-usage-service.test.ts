@@ -12,6 +12,7 @@ import {
   normalizeWhamUsageResponse,
   readChatGPTUsage,
 } from "@/providers/chatgpt-usage-service";
+import { createCredentialScopedCacheKey } from "@/providers/credential-scoped-cache";
 
 async function withEnv<T>(
   updates: Record<string, string | undefined>,
@@ -449,5 +450,243 @@ describe("ChatGPT usage service", () => {
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
+  });
+
+  test("isolates local usage caches by storage root and reuses the same account entry", async () => {
+    const storageDirA = await mkdtemp(join(tmpdir(), "chatgpt-usage-a-"));
+    const storageDirB = await mkdtemp(join(tmpdir(), "chatgpt-usage-b-"));
+    try {
+      for (const storageDir of [storageDirA, storageDirB]) {
+        setLocalOAuthProvider({
+          storageDir,
+          providerName: LOCAL_CHATGPT_PROVIDER_NAME,
+          providerType: "chatgpt_oauth",
+          auth: {
+            type: "oauth",
+            access: "shared-storage-access",
+            refresh: "shared-storage-refresh",
+            expires: Date.now() + 60_000,
+            accountId: "shared-storage-account",
+          },
+        });
+      }
+
+      const calls: string[] = [];
+      const fetchMock = mock(
+        async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+          const accountId = new Headers(init?.headers).get(
+            "chatgpt-account-id",
+          );
+          calls.push(accountId ?? "missing");
+          const usedPercent = calls.length === 1 ? 11 : 22;
+          return Response.json({
+            rate_limit: {
+              primary_window: {
+                used_percent: usedPercent,
+              },
+            },
+          });
+        },
+      ) as unknown as typeof fetch;
+      const now = Date.now();
+
+      const firstA = await readChatGPTUsage({
+        target: "local",
+        storageDir: storageDirA,
+        fetch: fetchMock,
+        now: () => now,
+      });
+      const firstB = await readChatGPTUsage({
+        target: "local",
+        storageDir: storageDirB,
+        fetch: fetchMock,
+        now: () => now,
+      });
+      const secondA = await readChatGPTUsage({
+        target: "local",
+        storageDir: storageDirA,
+        fetch: fetchMock,
+        now: () => now,
+      });
+
+      expect(calls).toEqual([
+        "shared-storage-account",
+        "shared-storage-account",
+      ]);
+      expect(firstA.success && firstA.usage.primary?.usedPercent).toBe(11);
+      expect(firstB.success && firstB.usage.primary?.usedPercent).toBe(22);
+      expect(secondA).toEqual(firstA);
+    } finally {
+      await Promise.all(
+        [storageDirA, storageDirB].map((dir) =>
+          rm(dir, { recursive: true, force: true }),
+        ),
+      );
+    }
+  });
+
+  test("isolates local usage caches when the OAuth account changes", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "chatgpt-account-swap-"));
+    try {
+      const setAccount = (accountId: string) =>
+        setLocalOAuthProvider({
+          storageDir,
+          providerName: LOCAL_CHATGPT_PROVIDER_NAME,
+          providerType: "chatgpt_oauth",
+          auth: {
+            type: "oauth",
+            access: "shared-access-token",
+            refresh: "shared-refresh-token",
+            expires: Date.now() + 60_000,
+            accountId,
+          },
+        });
+      const accounts: string[] = [];
+      const fetchMock = mock(
+        async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+          const accountId =
+            new Headers(init?.headers).get("chatgpt-account-id") ?? "missing";
+          accounts.push(accountId);
+          return Response.json({
+            rate_limit: {
+              primary_window: {
+                used_percent: accountId === "oauth-account-a" ? 31 : 47,
+              },
+            },
+          });
+        },
+      ) as unknown as typeof fetch;
+      const now = Date.now();
+
+      setAccount("oauth-account-a");
+      const resultA = await readChatGPTUsage({
+        target: "local",
+        storageDir,
+        fetch: fetchMock,
+        now: () => now,
+      });
+      setAccount("oauth-account-b");
+      const resultB = await readChatGPTUsage({
+        target: "local",
+        storageDir,
+        fetch: fetchMock,
+        now: () => now,
+      });
+
+      expect(accounts).toEqual(["oauth-account-a", "oauth-account-b"]);
+      expect(resultA.success && resultA.usage.primary?.usedPercent).toBe(31);
+      expect(resultB.success && resultB.usage.primary?.usedPercent).toBe(47);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("isolates cloud usage caches when credentials change", async () => {
+    let apiKey = "cloud-credential-a";
+    const authorizations: string[] = [];
+    const fetchMock = mock(
+      async (_url: Parameters<typeof fetch>[0], init?: RequestInit) => {
+        const authorization =
+          new Headers(init?.headers).get("authorization") ?? "missing";
+        authorizations.push(authorization);
+        const usedPercent = authorization.endsWith("cloud-credential-a")
+          ? 14
+          : 28;
+        return Response.json({
+          providerName: "chatgpt-cache-test",
+          fetchedAt: "2026-06-18T12:00:00.000Z",
+          summary: `Usage: ${usedPercent}% used`,
+          primary: {
+            label: "primary",
+            usedPercent,
+            windowDurationMins: 300,
+            resetsAt: null,
+          },
+          secondary: null,
+          additional: [],
+        });
+      },
+    ) as unknown as typeof fetch;
+    const getSettings = async () => ({
+      env: {
+        LETTA_API_KEY: apiKey,
+        LETTA_BASE_URL: "https://cache.test.letta.com",
+      },
+      refreshToken: undefined,
+      tokenExpiresAt: undefined,
+    });
+    const now = Date.parse("2026-06-18T12:00:00Z");
+
+    await withEnv(
+      { LETTA_API_KEY: undefined, LETTA_BASE_URL: undefined },
+      async () => {
+        const resultA = await readChatGPTUsage({
+          target: "api",
+          providerName: "chatgpt-cache-test",
+          fetch: fetchMock,
+          getSettings,
+          now: () => now,
+        });
+        apiKey = "cloud-credential-b";
+        const resultB = await readChatGPTUsage({
+          target: "api",
+          providerName: "chatgpt-cache-test",
+          fetch: fetchMock,
+          getSettings,
+          now: () => now,
+        });
+        const repeatedB = await readChatGPTUsage({
+          target: "api",
+          providerName: "chatgpt-cache-test",
+          fetch: fetchMock,
+          getSettings,
+          now: () => now,
+        });
+        apiKey = "";
+        const loggedOut = await readChatGPTUsage({
+          target: "api",
+          providerName: "chatgpt-cache-test",
+          fetch: fetchMock,
+          getSettings,
+          now: () => now,
+        });
+
+        expect(resultA.success && resultA.usage.primary?.usedPercent).toBe(14);
+        expect(resultB.success && resultB.usage.primary?.usedPercent).toBe(28);
+        expect(repeatedB).toEqual(resultB);
+        expect(loggedOut).toEqual({
+          success: false,
+          error: {
+            code: "unauthorized",
+            message: "Sign in with Letta to read ChatGPT usage.",
+          },
+        });
+      },
+    );
+
+    expect(authorizations).toEqual([
+      "Bearer cloud-credential-a",
+      "Bearer cloud-credential-b",
+    ]);
+  });
+
+  test("credential-scoped cache keys are stable without exposing identity inputs", () => {
+    const rawCredential = "sk-sensitive-cloud-credential";
+    const rawAccountId = "acct-sensitive-id";
+    const rawStorageRoot = "/private/profile/alice";
+    const identity = [rawStorageRoot, rawAccountId, rawCredential];
+    const key = createCredentialScopedCacheKey("usage", identity);
+
+    expect(createCredentialScopedCacheKey("usage", identity)).toBe(key);
+    expect(
+      createCredentialScopedCacheKey("usage", [
+        rawStorageRoot,
+        rawAccountId,
+        "different-credential",
+      ]),
+    ).not.toBe(key);
+    expect(key).not.toContain(rawCredential);
+    expect(key).not.toContain(rawAccountId);
+    expect(key).not.toContain(rawStorageRoot);
   });
 });
