@@ -1,7 +1,7 @@
 import { afterAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 const require = createRequire(import.meta.url);
 const os = require("node:os") as typeof import("node:os");
@@ -47,6 +47,7 @@ for (const key of filesystemEnvKeys) {
 process.env.LETTA_TEST_HOME = testHome;
 process.env.HOME = testHome;
 process.env.USERPROFILE = testHome;
+process.env.LETTA_TEST_SECRETS_SERVICE_PREFIX = `letta-code-test-${process.pid}-${basename(testHome)}`;
 process.env.LETTA_CODE_TELEM ??= "0";
 
 // Bun resolves os.homedir() before preloads run. Patch the shared built-in
