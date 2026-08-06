@@ -1,4 +1,8 @@
 import { memo } from "react";
+import {
+  type AskUserQuestion,
+  parseAskUserQuestions,
+} from "@/cli/helpers/ask-user-questions";
 import type { AdvancedDiffSuccess } from "@/cli/helpers/diff";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
@@ -46,13 +50,6 @@ type TaskInfo = {
   prompt: string;
   model?: string;
   isBackground?: boolean;
-};
-
-type Question = {
-  question: string;
-  header: string;
-  options: Array<{ label: string; description: string }>;
-  multiSelect: boolean;
 };
 
 type Props = {
@@ -327,14 +324,17 @@ function getMemoryFileEditInfo(
   }
 }
 
-// Parse questions from AskUserQuestion args
-function getQuestions(approval: ApprovalRequest): Question[] {
-  try {
-    const args = JSON.parse(approval.toolArgs || "{}");
-    return (args.questions as Question[]) || [];
-  } catch {
-    return [];
-  }
+// Parse questions from AskUserQuestion args. Delegates to the shared
+// parseAskUserQuestions validator (single source of truth shared with the
+// use-approval-flow submit path) so malformed shapes — e.g. `questions` as a
+// JSON string, a non-string `question`/`header`/`description`, or a
+// non-array/empty `options` — are rejected here and ApprovalSwitch falls
+// through to InlineGenericApproval, matching how malformed Bash/Task args are
+// handled. InlineQuestionApproval also coerces/filters `options` as
+// defense-in-depth, but this gate keeps malformed payloads out of the
+// specialized renderer.
+export function getQuestions(approval: ApprovalRequest): AskUserQuestion[] {
+  return parseAskUserQuestions(approval);
 }
 
 /**
