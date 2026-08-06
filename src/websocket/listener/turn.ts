@@ -140,7 +140,6 @@ async function handleIncomingMessageInner(
     conversationId,
   );
 
-  // Get the canonical mutable permission mode state ref for this turn.
   const turnPermissionModeState = getOrCreateConversationPermissionModeStateRef(
     runtime.listener,
     normalizedAgentId,
@@ -275,6 +274,7 @@ async function handleIncomingMessageInner(
     const inboundUserTranscriptLines = setup.inboundUserTranscriptLines;
     const providerFallback = createProviderFallbackState(
       setup.getCachedAgent(),
+      setup.overrideModel,
     );
     let pendingNormalizationInterruptedToolCallIds =
       setup.pendingNormalizationInterruptedToolCallIds;

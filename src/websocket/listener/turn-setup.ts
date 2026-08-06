@@ -60,6 +60,7 @@ export type ListenerTurnSetupResult =
       inboundUserTranscriptLines: Line[];
       pendingNormalizationInterruptedToolCallIds: string[];
       preparedToolContext: PreparedToolContext;
+      overrideModel?: string;
     };
 
 export async function prepareListenerTurn(params: {
@@ -233,12 +234,23 @@ export async function prepareListenerTurn(params: {
         permissionMode: permissionModeState.mode,
         cachedAgent,
       })
-    : ({ cancelled: false, input: messagesToSend } as const);
+    : ({ cancelled: false, handlerCount: 0, input: messagesToSend } as const);
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }
   if (turnStartEmission.cancelled) {
     return { kind: "cancelled", reason: turnStartEmission.reason };
+  }
+
+  let overrideModel: string | undefined;
+  if (turnStartEmission.handlerCount > 0) {
+    try {
+      const conversation =
+        await getBackend().retrieveConversation(conversationId);
+      overrideModel = conversation.model ?? undefined;
+    } catch {
+      // Model refresh is best-effort; mod failures must not block the turn.
+    }
   }
 
   const currentInput = ensureTurnInputMessageOtids(turnStartEmission.input);
@@ -297,5 +309,6 @@ export async function prepareListenerTurn(params: {
       ...queuedInterruptedToolCallIds,
     ],
     preparedToolContext,
+    ...(overrideModel ? { overrideModel } : {}),
   };
 }

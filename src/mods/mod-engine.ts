@@ -166,6 +166,7 @@ export interface LettaModApi {
   };
   ui: {
     closePanel: (id: string) => void;
+    notify: (message: string) => void;
     openPanel: (panel: ModPanelOptions) => ModPanelHandle;
     /** @deprecated Removed. Use openPanel; calls emit a migration diagnostic. */
     setStatus: (key: string, value?: unknown) => void;
@@ -219,6 +220,7 @@ export interface LoadLocalModsOptions extends ResolveLocalModSourcesOptions {
   generation?: number;
   onChange?: () => void;
   onDiagnostic?: (diagnostic: ModDiagnostic) => void;
+  onNotification?: (message: string) => void;
   onRegistryCreated?: (registry: LocalModRegistry) => void;
   registerCapabilitiesGlobally?: boolean;
   reservedToolNames?: Iterable<string>;
@@ -236,14 +238,8 @@ export interface ModEngine {
   subscribe: (listener: () => void) => () => void;
 }
 
-export interface CreateModEngineOptions extends ResolveLocalModSourcesOptions {
-  getClient: () => Promise<Letta>;
+export interface CreateModEngineOptions extends LoadLocalModsOptions {
   getBackend?: () => Backend | undefined;
-  builtinCommandIds?: Iterable<string>;
-  capabilities?: ModCapabilities;
-  onDiagnostic?: (diagnostic: ModDiagnostic) => void;
-  registerCapabilitiesGlobally?: boolean;
-  reservedToolNames?: Iterable<string>;
 }
 
 function getModSourcePriority(scope: ModSourceScope): number {
@@ -527,9 +523,7 @@ function createImportableModPath(
         unlinkSync(path.join(importCacheDirectory, entry));
       }
     }
-  } catch {
-    // Best-effort cache cleanup only.
-  }
+  } catch {}
 
   return importPath;
 }
@@ -554,8 +548,6 @@ function createLazyClient(getClient: () => Promise<Letta>): Letta {
         });
       },
       get(_target, property) {
-        // Keep the proxy from being treated as a Promise when code does
-        // `await letta.client` or Promise.resolve(letta.client).
         if (property === "then") return undefined;
         return createProxy([...path, property]);
       },
@@ -904,6 +896,7 @@ function createLettaModApi(
   getClient: () => Promise<Letta>,
   onChange: () => void,
   onDiagnostic: ((diagnostic: ModDiagnostic) => void) | undefined,
+  onNotification: ((message: string) => void) | undefined,
   builtinCommandIds: Set<string>,
   reservedToolNames: Set<string>,
   signal: AbortSignal,
@@ -1277,11 +1270,14 @@ function createLettaModApi(
       },
       unregister: unregisterPermission,
     },
-    diagnostics: {
-      report: reportDiagnostic,
-    },
+    diagnostics: { report: reportDiagnostic },
     ui: {
       closePanel,
+      notify(message) {
+        if (!capabilities.ui.panels || !message.trim()) return;
+        if (!guardLive({ id: "notify", kind: "panel" })) return;
+        onNotification?.(message.trim());
+      },
       openPanel(panel) {
         if (!capabilities.ui.panels) {
           return createNoopModPanelHandle();
@@ -1485,6 +1481,7 @@ export async function loadLocalMods(
             getConfiguredClient,
             onChange,
             options.onDiagnostic,
+            options.onNotification,
             builtinCommandIds,
             reservedToolNames,
             abortController.signal,
@@ -1782,9 +1779,6 @@ export function createModEngine(options: CreateModEngineOptions): ModEngine {
           onDiagnostic?.(diagnostic);
           return;
         }
-        // Stale handles from a prior generation report through their old
-        // activation callback. Preserve the diagnostic on the current engine
-        // snapshot without reviving the old registry.
         appendModDiagnostic(activeRegistry, diagnostic);
         publish();
         onDiagnostic?.(diagnostic);
