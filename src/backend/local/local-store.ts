@@ -69,6 +69,11 @@ import {
 } from "./local-stream-chunks";
 import type { LocalAgentRecord, StoredMessage } from "./local-types";
 import type { LocalCompiledSystemPrompt } from "./system-prompt-compilation";
+import {
+  readLocalTranscriptJsonl,
+  readLocalTranscriptJsonlSuffix,
+  repairLocalTranscriptJsonlTail,
+} from "./transcript-jsonl";
 export type { LocalAgentRecord, StoredMessage };
 
 type StoredConversation = Conversation & {
@@ -564,48 +569,6 @@ function jsonl<T>(items: readonly T[]): string {
 function readJsonFile<T>(path: string): T | undefined {
   if (!existsSync(path)) return undefined;
   return JSON.parse(readFileSync(path, "utf8")) as T;
-}
-
-function readJsonlFile<T>(path: string): T[] {
-  if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as T);
-}
-
-function readJsonlFileSuffix<T>(
-  path: string,
-  maxBytes: number,
-): { items: T[]; reachedStart: boolean } {
-  if (!existsSync(path)) return { items: [], reachedStart: true };
-  const size = statSync(path).size;
-  if (size === 0) return { items: [], reachedStart: true };
-
-  const bytesToRead = Math.min(size, Math.max(1, maxBytes));
-  const start = size - bytesToRead;
-  const buffer = Buffer.alloc(bytesToRead);
-  const fd = openSync(path, "r");
-  try {
-    readSync(fd, buffer, 0, bytesToRead, start);
-  } finally {
-    closeSync(fd);
-  }
-
-  let text = buffer.toString("utf8");
-  const reachedStart = start === 0;
-  if (!reachedStart) {
-    const firstNewline = text.indexOf("\n");
-    text = firstNewline >= 0 ? text.slice(firstNewline + 1) : "";
-  }
-
-  return {
-    items: text
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as T),
-    reachedStart,
-  };
 }
 
 export const LOCAL_TRANSCRIPT_LEGACY_SCHEMA_VERSION = 1;
@@ -2537,7 +2500,7 @@ export class LocalStore {
     const before = getCursor(body, "before");
     let maxBytes = 64 * 1024;
     for (;;) {
-      const tail = readJsonlFileSuffix<unknown>(
+      const tail = readLocalTranscriptJsonlSuffix<unknown>(
         metadata.messagesPath,
         maxBytes,
       );
@@ -2664,7 +2627,7 @@ export class LocalStore {
 
     let maxBytes = 64 * 1024;
     for (;;) {
-      const tail = readJsonlFileSuffix<unknown>(
+      const tail = readLocalTranscriptJsonlSuffix<unknown>(
         metadata.messagesPath,
         maxBytes,
       );
@@ -2723,7 +2686,7 @@ export class LocalStore {
       return;
     }
 
-    const rawRows = readJsonlFile<unknown>(metadata.messagesPath);
+    const rawRows = readLocalTranscriptJsonl<unknown>(metadata.messagesPath);
     const conversation = this.conversations.get(key);
     const transcript = localTranscriptRowsResult(
       rawRows,
@@ -3384,6 +3347,7 @@ export class LocalStore {
     conversation: StoredConversation,
     messagesPath: string,
   ): void {
+    repairLocalTranscriptJsonlTail(messagesPath);
     if (existsSync(messagesPath) && statSync(messagesPath).size > 0) return;
     writeFileSync(
       messagesPath,

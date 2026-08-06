@@ -17,6 +17,7 @@ import {
   LOCAL_TRANSCRIPT_SCHEMA_VERSION,
   type LocalTranscriptManifest,
 } from "./local-store";
+import { readLocalTranscriptJsonl } from "./transcript-jsonl";
 
 export interface LocalTranscriptMigrationResult {
   storageDir: string;
@@ -32,14 +33,6 @@ export interface LocalTranscriptMigrationResult {
     reason: string;
   }>;
   dryRun: boolean;
-}
-
-function readJsonl(path: string): unknown[] {
-  if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line));
 }
 
 function isLegacyUiMessage(value: unknown): value is Record<string, unknown> {
@@ -451,7 +444,7 @@ export function migrateLocalBackendTranscripts(input: {
     const hasLegacyPiManifest =
       existingManifest?.message_format ===
       LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT;
-    const legacyMessages = readJsonl(messagesPath);
+    const legacyMessages = readLocalTranscriptJsonl<unknown>(messagesPath);
     const hasLegacyUiRows = legacyMessages.some(isLegacyUiMessage);
     if (hasManifest && !hasLegacyUiRows && !hasLegacyPiManifest) {
       result.skipped.push({ conversationDir, reason: "already-versioned" });
